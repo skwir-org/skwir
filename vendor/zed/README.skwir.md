@@ -97,6 +97,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0062-drop-svg` | An SVG given as bytes (`paint_svg`'s `data`) is kept in the atlas at each size it was drawn at until its caller lets it go (`Window::drop_svg`, `App::drop_svg` for every window, as `drop_image`): a page's formulas leave with the page | — |
 | `0063-hitbox-is-frontmost` | A hitbox says whether it is the frontmost one under the mouse (`Hitbox::is_frontmost`): the empty parts of a title bar the application draws move the window, a button over them keeping its press | — |
 | `0064-rounded-masks-meet-at-corners` | Two rounded content masks with a corner at the same point meet there along the larger arc (`ContentMask::intersect`): a card at a window's corner is rounded as the window is | — |
+| `0065-decorations-as-answered` | A Wayland window keeps its decorations until the compositor answers a request, and says while it waits (`Window::decorations_pending`): a compositor that keeps its own (Hyprland's) no longer shows those asked for a frame | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1209,3 +1210,21 @@ Checked: `just gpui-check gpui`
 (`rounded_masks_meet_at_a_corner_along_the_larger_arc`); on headless Weston,
 the files card at the window's bottom-right corner rounded with it. Not
 checked: Windows and macOS (the change is in gpui's shared code).
+
+### 0065: Decorations as the compositor answered
+
+`request_decorations` set the window's decorations to those asked and drew
+them at once, before the compositor's answer (`xdg-decoration`'s
+`configure`, which it sends after `set_mode`). Hyprland keeps its frame
+whatever is asked: an application asking for none drew its own title bar
+for a frame or two, then took it back. The window keeps the decorations it
+has until the answer, which sets them and updates the window (its geometry,
+its opaque region, as the request did); `Window::decorations_pending` says a
+request differing from them waits (none elsewhere, nor where no decoration
+manager answers, where the request still holds at once).
+
+Checked: in a window on headless sway, a window opened asking for none and
+kept in sway's frame (`border pixel`), then switched both ways on the open
+window; a first version holding the state's borrow across the redraw
+panicked at the window's opening, found there. Not checked: Hyprland
+itself; no test (gpui's tests have no compositor to answer).

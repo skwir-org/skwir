@@ -1410,6 +1410,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         self.window_bounds()
     }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
+    /// Whether the decorations last requested wait for the compositor's answer (Wayland's
+    /// `xdg-decoration`): until it comes, `window_decorations` says those it had.
+    fn decorations_pending(&self) -> bool {
+        false
+    }
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
     fn can_start_external_drag(&self) -> bool {

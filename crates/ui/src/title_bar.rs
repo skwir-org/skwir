@@ -6,12 +6,17 @@
 //!
 //! What skwir asks of the system follows the setting: the system's bar
 //! for Automatic and Above, none for the other two. What it draws follows
-//! the answer (`window.window_decorations()`): where the system draws its
-//! bar, skwir draws none of its own whatever the setting says (an X11
-//! session without a compositor, a compositor that keeps its own), so a
-//! window never has two; where it draws none (GNOME, Weston), skwir draws
-//! the one the setting says, Automatic's being the top row, as GNOME's
-//! own applications have it.
+//! the answer (`window.window_decorations()`), never shown before it comes
+//! (`Window::decorations_pending`): where the system frames the window,
+//! Automatic and Above draw nothing of skwir's. A Wayland compositor that
+//! keeps its frame though asked for none (Hyprland's: borders, no title
+//! bar; Wayland cannot say whether a frame has one) gets skwir's bar
+//! inside it for the two values that ask for skwir's; an X11 window
+//! manager that keeps its own (no compositor runs) has a title bar, and
+//! skwir draws none. Where the system draws no frame (GNOME, Weston),
+//! skwir draws its frame and the bar the setting says, Automatic's being
+//! the top row, as GNOME's own applications have it. Beside the setting,
+//! what a refusal means here (`refusal`).
 //!
 //! Drawn by skwir, the window keeps what the system's frame gave it: its
 //! buttons, from the desktop's layout (`App::button_layout`, GNOME's
@@ -107,18 +112,36 @@ pub enum Drawn {
     TopRow,
 }
 
-/// What skwir draws, by what the setting says and what the system draws
-/// (`Window::window_decorations`).
-pub fn drawn(setting: TitleBar, decorations: Decorations, fullscreen: bool) -> Drawn {
+/// What skwir draws, by what the setting says and what the system answered
+/// (`Window::window_decorations`). `x11`: an X11 window manager keeping
+/// its frame keeps its title bar.
+pub fn drawn(setting: TitleBar, decorations: Decorations, fullscreen: bool, x11: bool) -> Drawn {
     if fullscreen {
         return Drawn::None;
     }
     match (decorations, setting) {
-        (Decorations::Server, _) => Drawn::None,
         (Decorations::Client { .. }, TitleBar::Automatic | TitleBar::TopRow) => Drawn::TopRow,
         (Decorations::Client { .. }, TitleBar::Above) => Drawn::Above,
         (Decorations::Client { .. }, TitleBar::Row) => Drawn::Row,
+        // Asked for none, the compositor kept its frame: skwir's bar
+        // inside it, but where it is a window manager's with its title bar.
+        (Decorations::Server, TitleBar::TopRow) if !x11 => Drawn::TopRow,
+        (Decorations::Server, TitleBar::Row) if !x11 => Drawn::Row,
+        (Decorations::Server, _) => Drawn::None,
     }
+}
+
+/// What a refusal means here, said beside the setting: asked for no frame,
+/// the system kept its own.
+pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&'static str> {
+    if asked.asks() != WindowDecorations::Client || !matches!(decorations, Decorations::Server) {
+        return None;
+    }
+    Some(if x11 {
+        "Here the window manager draws the title bar and no compositor runs: On a row of its own and In the top row need one, and skwir draws no bar of its own."
+    } else {
+        "Here the desktop keeps its own frame around windows, whatever skwir asks: On a row of its own and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic."
+    })
 }
 
 /// What Automatic comes to, said beside the setting (`.now`): above where
@@ -138,6 +161,9 @@ pub fn automatic_now(asked: TitleBar, decorations: Decorations) -> Option<&'stat
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
     pub drawn: Drawn,
+    /// Whether skwir draws the window's frame: its margin, shadow and
+    /// corners, the system drawing none.
+    pub framed: bool,
     /// The edges that meet another window or the screen's.
     pub tiling: Tiling,
     /// The buttons at the start of the row, and at its end, in order.
@@ -149,10 +175,13 @@ pub struct Frame {
 
 impl Frame {
     pub fn of(setting: TitleBar, window: &Window, cx: &App) -> Self {
-        let drawn = drawn(setting, window.window_decorations(), window.is_fullscreen());
+        let decorations = window.window_decorations();
+        let fullscreen = window.is_fullscreen();
+        let drawn = drawn(setting, decorations, fullscreen, is_x11(cx));
         if drawn == Drawn::None {
             return Self::default();
         }
+        let framed = matches!(decorations, Decorations::Client { .. }) && !fullscreen;
         let controls = window.window_controls();
         let offered = |button: &WindowButton| match button {
             WindowButton::Close => true,
@@ -165,6 +194,7 @@ impl Frame {
         };
         Self {
             drawn,
+            framed,
             tiling: window.tiling(),
             start: side(&layout.left),
             end: side(&layout.right),
@@ -173,17 +203,17 @@ impl Frame {
         }
     }
 
-    /// Whether skwir draws the window's margin, shadow and corners: while
-    /// it draws its title bar, the system drawing no frame.
-    pub fn framed(&self) -> bool {
-        self.drawn != Drawn::None
-    }
-
     /// The margin on each of the window's edges: none where it meets
     /// another window or the screen's.
     pub fn margin(&self) -> gpui::Edges<f32> {
-        margin(self.framed(), self.tiling)
+        margin(self.framed, self.tiling)
     }
+}
+
+/// Whether the window is X11's, whose window manager keeping its frame
+/// keeps its title bar.
+pub fn is_x11(cx: &App) -> bool {
+    cx.compositor_name() == "X11"
 }
 
 fn margin(framed: bool, tiling: Tiling) -> gpui::Edges<f32> {
@@ -204,7 +234,7 @@ fn margin(framed: bool, tiling: Tiling) -> gpui::Edges<f32> {
 /// window's size (the arrangement, a panel's limits, a popup kept within
 /// the window) reads this, never the viewport. Read from the window
 /// alone: skwir draws its frame exactly where the system draws none and
-/// the window is not fullscreen (`drawn`).
+/// the window is not fullscreen (`Frame::framed`).
 pub fn body(window: &Window) -> gpui::Bounds<gpui::Pixels> {
     let framed = matches!(window.window_decorations(), Decorations::Client { .. })
         && !window.is_fullscreen();
@@ -397,9 +427,9 @@ pub fn bar(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 /// and what it holds kept within them, its shadow under it while nothing
 /// shows through it, and the margin's edges and corners sizing it.
 pub fn framed(frame: &Frame, theme: &Theme, window: &mut Window, body: AnyElement) -> AnyElement {
-    let inset = if frame.framed() { px(MARGIN) } else { px(0.) };
+    let inset = if frame.framed { px(MARGIN) } else { px(0.) };
     window.set_client_inset(inset);
-    if !frame.framed() {
+    if !frame.framed {
         return body;
     }
     let margin = frame.margin();
@@ -549,26 +579,52 @@ mod tests {
         },
     };
 
-    /// Where the system draws its bar, skwir draws none whatever the
-    /// setting says: never two bars.
+    /// Where the system keeps its frame, Automatic and Above draw nothing of
+    /// skwir's; the two that ask for skwir's draw it inside a Wayland
+    /// compositor's frame (Hyprland's has no title bar), never inside an X11
+    /// window manager's, which has one.
     #[test]
-    fn the_system_bar_leaves_no_room_for_another() {
-        for (value, _) in TitleBar::VALUES {
-            let setting = TitleBar::read(Some(value));
-            assert_eq!(drawn(setting, Decorations::Server, false), Drawn::None);
+    fn a_frame_kept_holds_skwirs_bar_only_where_asked_and_not_on_x11() {
+        let server = Decorations::Server;
+        for x11 in [false, true] {
+            assert_eq!(drawn(TitleBar::Automatic, server, false, x11), Drawn::None);
+            assert_eq!(drawn(TitleBar::Above, server, false, x11), Drawn::None);
         }
+        assert_eq!(drawn(TitleBar::TopRow, server, false, false), Drawn::TopRow);
+        assert_eq!(drawn(TitleBar::Row, server, false, false), Drawn::Row);
+        assert_eq!(drawn(TitleBar::TopRow, server, false, true), Drawn::None);
+        assert_eq!(drawn(TitleBar::Row, server, false, true), Drawn::None);
+        assert_eq!(drawn(TitleBar::Row, server, true, false), Drawn::None);
+    }
+
+    /// A refusal is said where the system kept its frame though asked for
+    /// none, as what it means there.
+    #[test]
+    fn a_refusal_is_said_as_what_it_means_here() {
+        assert_eq!(
+            refusal(TitleBar::Automatic, Decorations::Server, false),
+            None
+        );
+        assert_eq!(refusal(TitleBar::Row, CLIENT, false), None, "granted");
+        let wayland = refusal(TitleBar::TopRow, Decorations::Server, false).unwrap();
+        assert!(wayland.contains("inside it"), "{wayland}");
+        let x11 = refusal(TitleBar::Row, Decorations::Server, true).unwrap();
+        assert!(x11.contains("no compositor"), "{x11}");
     }
 
     /// Where it draws none, the setting says which of skwir's: Automatic
     /// the top row, as GNOME's applications have it.
     #[test]
     fn without_one_the_setting_chooses() {
-        assert_eq!(drawn(TitleBar::Automatic, CLIENT, false), Drawn::TopRow);
-        assert_eq!(drawn(TitleBar::Above, CLIENT, false), Drawn::Above);
-        assert_eq!(drawn(TitleBar::Row, CLIENT, false), Drawn::Row);
-        assert_eq!(drawn(TitleBar::TopRow, CLIENT, false), Drawn::TopRow);
         assert_eq!(
-            drawn(TitleBar::Row, CLIENT, true),
+            drawn(TitleBar::Automatic, CLIENT, false, false),
+            Drawn::TopRow
+        );
+        assert_eq!(drawn(TitleBar::Above, CLIENT, false, false), Drawn::Above);
+        assert_eq!(drawn(TitleBar::Row, CLIENT, false, false), Drawn::Row);
+        assert_eq!(drawn(TitleBar::TopRow, CLIENT, false, false), Drawn::TopRow);
+        assert_eq!(
+            drawn(TitleBar::Row, CLIENT, true, false),
             Drawn::None,
             "fullscreen"
         );
@@ -608,6 +664,7 @@ mod tests {
     fn a_tiled_edge_has_no_margin() {
         let frame = Frame {
             drawn: Drawn::TopRow,
+            framed: true,
             tiling: Tiling {
                 top: false,
                 left: true,

@@ -2617,6 +2617,13 @@ impl Window {
         self.platform_window.request_decorations(decorations);
     }
 
+    /// Whether the decorations last requested wait for the compositor's answer (Wayland): until
+    /// it comes, [`Window::window_decorations`] says those the window had. A compositor may keep
+    /// its own whatever is asked: what it answers is what the window has.
+    pub fn decorations_pending(&self) -> bool {
+        self.platform_window.decorations_pending()
+    }
+
     /// Set the exclusive zone for a layer-shell surface: how much screen space it
     /// reserves so other surfaces avoid occluding it (e.g. a panel reserving space).
     /// Positive values reserve that distance from the anchored edge, 0 lets the

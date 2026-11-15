@@ -7,7 +7,9 @@ row, or in skwir's top row, working on every desktop, GNOME's Wayland
 included, and chose the default recommended below, the desktop's way;
 they declined dragging the window from the address field's empty end,
 which edits the path). Built on Linux; macOS and Windows keep the
-system's title bar for now (Consequences).
+system's title bar for now (Consequences). Amended the same day, the user
+finding no controls in any mode on Hyprland and the bar shown a moment
+before going: decisions 2 and 7.
 
 ## Context
 
@@ -38,10 +40,16 @@ system's title bar for now (Consequences).
    none for the other two (`TitleBar::asks`), asked again as the
    setting moves, on the open window (`Window::request_decorations`).
 2. **What skwir draws follows what the system answered**
-   (`title_bar::drawn`): where it draws its frame, skwir draws nothing of
-   its own whatever the setting says (a compositor that keeps its own, an
-   X11 session without a compositor, where gpui falls back to the window
-   manager's), so a window never has two title bars; where it draws none,
+   (`title_bar::drawn`): where it frames the window, Automatic and Above
+   draw nothing of skwir's. Asked for no frame, a system may keep its own
+   (amended): an X11 window manager does where no compositor runs (gpui
+   falls back to it), with its title bar, and skwir draws none; a Wayland
+   compositor does whatever is asked (Hyprland: borders, no title bar),
+   and Wayland cannot say whether its frame has a title bar, so the two
+   values that ask for skwir's (On a row of its own, In the top row) draw
+   it inside that frame, without skwir's margin, shadow, corners or
+   edges; should that frame have a title bar too (Hyprland's hyprbars),
+   Automatic gives the one. Where it draws none,
    the setting says which of skwir's: Above, a bar like a desktop's above
    the window (its own ground, a line under it, the title in its middle);
    On a row of its own, a slim band on the frame above the areas; In the
@@ -79,6 +87,15 @@ system's title bar for now (Consequences).
    the window is (gpui patch 0064). What is sized or placed by the
    window's size reads its body within the margin (`title_bar::body`),
    never the viewport: the arrangement, the panels' limits and edges.
+
+7. **Shown as answered** (amended): the window keeps what it shows until
+   the compositor answers what was asked (gpui patch 0065,
+   `Window::decorations_pending`), so a refusal shows nothing for a
+   frame. What a refusal means here is said beside the setting once seen,
+   for the run (`title_bar::refusal`): the bar drawn inside the desktop's
+   frame, or none where a window manager keeps its title bar. No choice is
+   disabled: the settings have no unavailable choice, and none can be
+   known before it is asked.
 
 ## Consequences
 

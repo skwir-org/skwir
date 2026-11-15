@@ -483,37 +483,60 @@ fn cards_spec() -> SettingSpec {
 }
 
 /// `ui.title_bar` (ADR-138), saying what Automatic comes to once a window
-/// knows whether the system draws its title bar (`show_title_bar`).
-fn title_bar_spec(now: &str) -> SettingSpec {
+/// knows whether the system draws its title bar, and what a refusal of the
+/// system's means here once one was seen (`show_title_bar`).
+fn title_bar_spec(said: TitleBarSaid) -> SettingSpec {
+    let mut description = "Where the window's title and its buttons are. Above: the system's title bar, or one like it where the system draws none (GNOME). On a row of its own: a slim bar of skwir's, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.".to_owned();
+    if let Some(here) = said.here {
+        description.push(' ');
+        description.push_str(here);
+    }
     SettingSpec::choice(
         TITLE_BAR_KEY,
         "Title bar",
-        "Where the window's title and its buttons are. Above: the system's title bar, or one like it where the system draws none (GNOME). On a row of its own: a slim bar of skwir's, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. Where the system keeps its own title bar, skwir draws no other.",
+        &description,
         "auto",
         &crate::title_bar::TitleBar::VALUES,
     )
-    .now(now)
+    .now(said.now)
 }
 
-/// What `ui.title_bar`'s Automatic comes to, last said.
-static TITLE_BAR_NOW: std::sync::Mutex<&str> = std::sync::Mutex::new("");
+/// What `ui.title_bar` says beside itself, last said: what Automatic comes
+/// to, and what a refusal of the system's means here, kept for the run
+/// once seen (a compositor answers the same way while it runs).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct TitleBarSaid {
+    now: &'static str,
+    here: Option<&'static str>,
+}
 
-/// Say beside `ui.title_bar` what its Automatic comes to, when that
-/// changed (a window answered, `title_bar::automatic_now`).
-pub(crate) fn show_title_bar(app: &App, now: &'static str) {
+static TITLE_BAR_SAID: std::sync::Mutex<TitleBarSaid> = std::sync::Mutex::new(TitleBarSaid {
+    now: "",
+    here: None,
+});
+
+/// Say beside `ui.title_bar` what its Automatic comes to and what a
+/// refusal means here, when either changed (a window answered:
+/// `title_bar::automatic_now`, `title_bar::refusal`).
+pub(crate) fn show_title_bar(app: &App, now: Option<&'static str>, here: Option<&'static str>) {
     if !cfg!(target_os = "linux") {
         return;
     }
-    {
-        let mut said = TITLE_BAR_NOW
+    let said = {
+        let mut said = TITLE_BAR_SAID
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *said == now {
+        let next = TitleBarSaid {
+            now: now.unwrap_or(said.now),
+            here: here.or(said.here),
+        };
+        if *said == next {
             return;
         }
-        *said = now;
-    }
-    app.settings.declare(title_bar_spec(now));
+        *said = next;
+        next
+    };
+    app.settings.declare(title_bar_spec(said));
 }
 
 /// The theme's look: Automatic (the desktop's preference, saying the look
@@ -1479,10 +1502,10 @@ pub fn declare(app: &App) {
     // The free desktops' compositors may leave the title bar to skwir;
     // macOS and Windows draw theirs.
     if cfg!(target_os = "linux") {
-        let now = *TITLE_BAR_NOW
+        let said = *TITLE_BAR_SAID
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        app.settings.declare(title_bar_spec(now));
+        app.settings.declare(title_bar_spec(said));
     }
     // 0.3.0's Desktop colors switch, read for the fonts, then the colors.
     if skwir_platform::desktop_style::FONTS {

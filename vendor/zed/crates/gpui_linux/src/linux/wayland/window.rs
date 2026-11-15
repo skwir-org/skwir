@@ -123,6 +123,8 @@ pub struct WaylandWindowState {
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
     decorations: WindowDecorations,
+    /// Asked for others than `decorations`, the compositor's answer awaited.
+    decorations_pending: bool,
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
     maximized: bool,
@@ -633,6 +635,7 @@ impl WaylandWindowState {
             scale: 1.0,
             input_handler: None,
             decorations: WindowDecorations::Client,
+            decorations_pending: false,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
             maximized: false,
@@ -1191,7 +1194,10 @@ impl WaylandWindowStatePtr {
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
-                    self.state.borrow_mut().decorations = WindowDecorations::Server;
+                    let mut state = self.state.borrow_mut();
+                    state.decorations = WindowDecorations::Server;
+                    state.decorations_pending = false;
+                    update_window(state);
                     let callback = self.callbacks.borrow_mut().appearance_changed.take();
                     if let Some(mut fun) = callback {
                         fun();
@@ -1199,7 +1205,10 @@ impl WaylandWindowStatePtr {
                     }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    self.state.borrow_mut().decorations = WindowDecorations::Client;
+                    let mut state = self.state.borrow_mut();
+                    state.decorations = WindowDecorations::Client;
+                    state.decorations_pending = false;
+                    update_window(state);
                     // Update background to be transparent
                     let callback = self.callbacks.borrow_mut().appearance_changed.take();
                     if let Some(mut fun) = callback {
@@ -2224,10 +2233,15 @@ impl PlatformWindow for WaylandWindow {
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
         match state.surface_state.decoration().as_ref() {
+            // The window keeps the decorations it has until the compositor
+            // answers with those it grants (`Configure`, which it sends after a
+            // request): one that keeps its own would otherwise see the asked
+            // ones drawn for a frame, then taken back.
             Some(decoration) => {
                 decoration.set_mode(decorations.to_xdg());
-                state.decorations = decorations;
-                update_window(state);
+                state.decorations_pending = decorations != state.decorations;
+                // Nothing to draw anew before the answer, which draws.
+                return;
             }
             None => {
                 if matches!(decorations, WindowDecorations::Server) {
@@ -2240,6 +2254,10 @@ impl PlatformWindow for WaylandWindow {
             }
         }
         self.0.request_redraw();
+    }
+
+    fn decorations_pending(&self) -> bool {
+        self.borrow().decorations_pending
     }
 
     fn window_controls(&self) -> WindowControls {

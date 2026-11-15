@@ -1086,8 +1086,11 @@ closes an item removes its line; work that leaves one adds it here.
 2026-11-15): built on Linux and tried on headless Weston (which, as
 GNOME's Mutter, draws no title bar) and headless sway. Left: Mutter itself
 and the button layout its portal gives (the reporter's Fedora 45), KWin
-with the application's frame, X11 with a compositor, the right button's
-window menu and a double click (never pressed in a test); macOS and
+with the application's frame, X11 with a compositor, Hyprland itself
+(its refusal tried as sway's `border pixel`), the right button's window
+menu and a double click (never pressed in a test); no choice is disabled
+where it does nothing (the settings have no unavailable choice), its
+note says so; macOS and
 Windows keep the system's title bar, `ui.title_bar` not declared there
 (`docs/PORTING.md`: Windows' caption buttons told to the system for Snap
 Layouts, macOS's traffic lights moved, an open window switched by a gpui

@@ -332,8 +332,12 @@ of bars, split or not. The one exception is the title bar on a row of
 its own, which the user asks for (`ui.title_bar`, below).
 
 - **The title bar** (ADR-138, `title_bar.rs`): the system's wherever it
-  draws one, and then skwir draws none of its own, whatever
-  `ui.title_bar` says (never two). Where it draws none (GNOME, Weston),
+  frames the window, skwir drawing none for Automatic and Above; asked
+  for no frame and keeping its own, a Wayland compositor gets skwir's bar
+  inside it for the values that ask for skwir's (Hyprland frames without
+  a title bar), an X11 window manager none (its frame has one). What is
+  drawn is never ahead of the compositor's answer
+  (`Window::decorations_pending`). Where it draws none (GNOME, Weston),
   skwir's, where the setting says: above the window, on a row of its
   own on the frame, or in the top row (Automatic's), the window's
   buttons then at the ends of what holds the window's tools there, after

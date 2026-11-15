@@ -4630,11 +4630,17 @@ impl Render for Shell {
         // What of the title bar skwir draws, read before anything is
         // built: the rows that hold the window's tools hold its buttons
         // (ADR-138).
-        self.title_bar = crate::title_bar::Frame::of(self.prefs.title_bar, window, cx);
-        if let Some(now) =
-            crate::title_bar::automatic_now(self.prefs.title_bar, window.window_decorations())
-        {
-            crate::settings::show_title_bar(&self.app, now);
+        // While the compositor has not answered what was asked, the window
+        // keeps what it showed (`Window::decorations_pending`).
+        if !window.decorations_pending() {
+            let asked = self.prefs.title_bar;
+            self.title_bar = crate::title_bar::Frame::of(asked, window, cx);
+            let decorations = window.window_decorations();
+            crate::settings::show_title_bar(
+                &self.app,
+                crate::title_bar::automatic_now(asked, decorations),
+                crate::title_bar::refusal(asked, decorations, crate::title_bar::is_x11(cx)),
+            );
         }
         // One frame of map tiles per window frame, whatever maps it draws:
         // what the last frame's maps asked for is kept, the rest cancelled

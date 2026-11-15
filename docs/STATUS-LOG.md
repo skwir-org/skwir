@@ -18048,3 +18048,37 @@ top row, on every desktop, and chose the desktop's way as Automatic
 - Not checked: Mutter, KWin, X11, the window menu, a double click, a
   resize by the margin, macOS and Windows (not declared there).
 
+## 2026-11-15: The title bar kept by the desktop (ADR-138 amended)
+
+On the user's Hyprland, every value showed no controls, and On a row of
+its own or In the top row showed skwir's bar a moment before it went.
+Hyprland answers every `xdg-decoration` request with its own frame (its
+`XDGDecoration.cpp` logs "Ignoring and sending" server-side), a frame of
+borders without a title bar; skwir drew nothing under a kept frame. gpui
+set the decorations asked at once and drew them before the answer.
+
+- **gpui patch 0065**: a Wayland window keeps its decorations until the
+  answer, which sets them and updates the window;
+  `Window::decorations_pending` while a differing request waits. The
+  first version held the state's borrow across the redraw and panicked at
+  every window's opening on a compositor with a decoration manager:
+  found on headless sway, the request now returning before any redraw.
+- **Skwir**: `title_bar::drawn` takes whether the window is X11's
+  (`compositor_name`); a frame kept on Wayland holds skwir's bar for the
+  two values that ask for it, without margin, shadow, corners or edges
+  (`Frame::framed` apart from what is drawn); on X11 none. The shell keeps
+  last frame's title bar while an answer waits. `title_bar::refusal` says
+  beside the setting what a refusal means here, kept for the run
+  (`settings::show_title_bar`); no choice disabled (no such notion in the
+  settings; a refusal is known only once asked).
+- **Tests**: `title_bar` (the kept frame by value and system, the
+  refusal said), UI suite.
+- **In a window** (headless sway, `border pixel 3` for skwir's windows,
+  standing in for Hyprland): the top row opened inside sway's frame with
+  Close (sway offers no other), square corners, no margin; Automatic on
+  the open window gave sway's frame alone, the top row again gave the
+  application's frame (`csd`) with skwir's corners: no panic.
+- Not checked: Hyprland itself (Maximize and Close expected: it offers
+  maximize and fullscreen, not minimize nor the window menu), the moment
+  between request and answer (one frame, not caught by a capture).
+
