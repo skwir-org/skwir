@@ -1,6 +1,6 @@
 # Changes
 
-## 0.5.1 (2026-11-15)
+## 0.5.1 (2026-11-16)
 
 Skwir 0.5.1 plays films on in the AppImage, puts the title bar where you want
 it, and has fields say what they take. The player follows the file it plays,
