@@ -128,9 +128,12 @@ Windows: decision 8.
    (`titlebar_double_click`), and a press there starts the move at once.
 
 9. **Said before asked where it can be** (amended): where X11 runs no
-   compositor, gpui knows before anything is asked that the application's
-   decorations cannot be had (`Window::client_decorations_supported`,
-   gpui patch 0067): Compact and In the top row are offered as choices
+   compositor, or its window manager cannot leave the frame to the
+   application (no `_GTK_FRAME_EXTENTS`: i3 with picom), gpui knows
+   before anything is asked that the application's decorations cannot be
+   had (`Window::client_decorations_supported`, gpui patch 0067, read
+   once as skwir starts: a compositor started or stopped later is seen at
+   the next start): Compact and In the top row are offered as choices
    that do nothing here, with why (`settings.md`, "A choice that does
    nothing here"), the refusal note kept for Wayland. And on Windows, a
    maximized window's decorations meet the screen's edges

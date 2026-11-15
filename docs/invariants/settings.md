@@ -66,7 +66,8 @@ the reasoning.
 - **A choice that does nothing here** says so as it is offered
   (`SettingConstraints::unavailable`, each with why): its owner declares
   what it knows (`SettingSpec::unavailable`: `ui.title_bar`'s two values
-  where X11 runs no compositor), declared again as it changes; a choice
+  where X11's window manager keeps its frame), declared again as it
+  changes; a choice
   that needs a requirement (`tries`, or `needs` for one Automatic does
   not try: MuPDF) is unavailable where the dialog's probe found it
   missing (`SettingsView::spec_shown`, `SettingSpec::with_missing`, its

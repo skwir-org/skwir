@@ -1,16 +1,17 @@
-0067 client-decorations-supported: A window says whether the application's decorations can be had before they are asked for (Window::client_decorations_supported): not where X11 runs no compositor
+0067 client-decorations-supported: A window says whether the application's decorations can be had before they are asked for (Window::client_decorations_supported): not where X11 runs no compositor or its window manager reads no _GTK_FRAME_EXTENTS
 
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 2aa4096..09c51a3 100644
+index 2aa4096..fc6b03b 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -1415,6 +1415,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+@@ -1415,6 +1415,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
      fn decorations_pending(&self) -> bool {
          false
      }
 +    /// Whether the application's decorations can be had here, before they are asked for: not
-+    /// where X11 runs no compositor, the window manager keeping its frame (a Wayland compositor
-+    /// says only once asked).
++    /// where X11 runs no compositor, or its window manager reads no `_GTK_FRAME_EXTENTS`, the
++    /// window manager keeping its frame (read as the app starts; a Wayland compositor says only
++    /// once asked).
 +    fn client_decorations_supported(&self) -> bool {
 +        true
 +    }
@@ -18,16 +19,18 @@ index 2aa4096..09c51a3 100644
      fn start_window_move(&self) {}
      fn can_start_external_drag(&self) -> bool {
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index c958b4d..70dcaf4 100644
+index c958b4d..891e926 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -2639,6 +2639,13 @@ impl Window {
+@@ -2639,6 +2639,15 @@ impl Window {
          self.platform_window.decorations_pending()
      }
  
 +    /// Whether the application's decorations can be had here, before they are asked for: not
-+    /// where X11 runs no compositor, its window manager keeping its frame. A Wayland compositor
-+    /// says only once asked ([`Window::window_decorations`]).
++    /// where X11 runs no compositor, or its window manager reads no `_GTK_FRAME_EXTENTS`, the
++    /// window manager keeping its frame. Read as the app starts: a compositor started or stopped
++    /// later is not seen. A Wayland compositor says only once asked
++    /// ([`Window::window_decorations`]).
 +    pub fn client_decorations_supported(&self) -> bool {
 +        self.platform_window.client_decorations_supported()
 +    }

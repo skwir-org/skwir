@@ -164,8 +164,9 @@ pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&
 
 /// Why Compact and In the top row do nothing where the application's
 /// decorations cannot be had (`Window::client_decorations_supported`: X11
-/// with no compositor), said as they are offered.
-pub const UNSUPPORTED: &str = "No compositor runs: the window manager draws the title bar";
+/// with no compositor, or a window manager that cannot leave its frame to
+/// the application, as seen when skwir started), said as they are offered.
+pub const UNSUPPORTED: &str = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir";
 
 /// What Automatic comes to, said beside the setting (`.now`): above where
 /// the system drew its bar when asked, the top row where it drew none.

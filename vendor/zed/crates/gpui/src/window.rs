@@ -2644,8 +2644,10 @@ impl Window {
     }
 
     /// Whether the application's decorations can be had here, before they are asked for: not
-    /// where X11 runs no compositor, its window manager keeping its frame. A Wayland compositor
-    /// says only once asked ([`Window::window_decorations`]).
+    /// where X11 runs no compositor, or its window manager reads no `_GTK_FRAME_EXTENTS`, the
+    /// window manager keeping its frame. Read as the app starts: a compositor started or stopped
+    /// later is not seen. A Wayland compositor says only once asked
+    /// ([`Window::window_decorations`]).
     pub fn client_decorations_supported(&self) -> bool {
         self.platform_window.client_decorations_supported()
     }

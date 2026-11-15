@@ -1,7 +1,7 @@
 0068 drag-areas-that-keep-the-double-click: A drag area whose double click is the application's (WindowControlArea::DragOnly): Windows moves the window from it but neither maximizes nor restores it there; a non-client release counts the clicks as its press did
 
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 70dcaf4..6498bc5 100644
+index 891e926..63dd050 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -753,6 +753,10 @@ pub(crate) struct HitTest {

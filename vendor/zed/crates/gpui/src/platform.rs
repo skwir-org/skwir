@@ -1416,8 +1416,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     /// Whether the application's decorations can be had here, before they are asked for: not
-    /// where X11 runs no compositor, the window manager keeping its frame (a Wayland compositor
-    /// says only once asked).
+    /// where X11 runs no compositor, or its window manager reads no `_GTK_FRAME_EXTENTS`, the
+    /// window manager keeping its frame (read as the app starts; a Wayland compositor says only
+    /// once asked).
     fn client_decorations_supported(&self) -> bool {
         true
     }

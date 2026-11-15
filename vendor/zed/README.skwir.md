@@ -99,7 +99,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0064-rounded-masks-meet-at-corners` | Two rounded content masks with a corner at the same point meet there along the larger arc (`ContentMask::intersect`): a card at a window's corner is rounded as the window is | — |
 | `0065-decorations-as-answered` | A Wayland window keeps its decorations until the compositor answers a request, and says while it waits (`Window::decorations_pending`): a compositor that keeps its own (Hyprland's) no longer shows those asked for a frame | — |
 | `0066-title-bar-on-windows-and-macos` | An open window's title bar hidden on Windows, made transparent on macOS, as decorations are requested and said (`request_decorations`, `window_decorations`); Windows' `zoom` restores a maximized window; a drag area counts in Windows' hit test where it is frontmost | — |
-| `0067-client-decorations-supported` | A window says whether the application's decorations can be had before they are asked for (`Window::client_decorations_supported`): not where X11 runs no compositor | — |
+| `0067-client-decorations-supported` | A window says whether the application's decorations can be had before they are asked for (`Window::client_decorations_supported`): not where X11 runs no compositor or its window manager reads no `_GTK_FRAME_EXTENTS` | — |
 | `0068-drag-areas-that-keep-the-double-click` | A drag area whose double click is the application's (`WindowControlArea::DragOnly`): Windows moves the window from it but neither maximizes nor restores it there; a non-client release counts the clicks as its press did | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
@@ -1283,11 +1283,14 @@ is at hand.
 
 ### 0067: Client decorations supported
 
-Where X11 runs no compositor, gpui falls back to the window manager's
-frame whatever the application asks (`request_decorations`), which an
-application learned only once it asked. gpui knows before: the
-compositor's selection is read as the window is made
-(`client_side_decorations_supported`). `PlatformWindow` and `Window`
+Where X11 runs no compositor, or its window manager reads no
+`_GTK_FRAME_EXTENTS` (i3 with picom), gpui falls back to the window
+manager's frame whatever the application asks (`request_decorations`),
+which an application learned only once it asked. gpui knows before: the
+compositor's selection and the window manager's supported atoms are read
+as the app starts (`client_side_decorations_supported`), once: a
+compositor started or stopped later is not seen until the app starts
+again (following the selection's owner, XFixes, is left). `PlatformWindow` and `Window`
 `client_decorations_supported` say it: X11's flag; true elsewhere (a
 Wayland compositor answers only once asked). Skwir offers its title bar's
 two values as choices that do nothing there (ADR-138).
