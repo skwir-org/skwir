@@ -277,12 +277,23 @@ Views are in [views.md](views.md); what locations decide, in
 - **One popup at a time,** all through `Shell::toggle_popup` (Activity
   is none: it stays open beside them, under them, and its giving the
   keyboard closes the one open). A press
-  outside closes it and says so (`pointer` in its close command,
-  `Shell::note_dismissed`); if that press is on the popup's own button,
-  it stays closed. Any button's click closes the open popup the same way,
-  but a popup's row that switches one of several choices it shows (which
-  views have a button) keeps it open, its row keeping the keyboard
-  (`Button::keeps_open`), as does a setting's value.
+  outside closes it, and any button's click closes the open popup the
+  same way, but a popup's row that switches one of several choices it
+  shows (which views have a button) keeps it open, its row keeping the
+  keyboard (`Button::keeps_open`), as does a setting's value.
+- **A second click on what opened a popup closes it,** never closes it
+  and opens it again: one rule for every popup and list. A toolbar's
+  popup, opened from any of many buttons and closed on the way by a
+  press or by a click on another button or on one of its rows
+  (`toolbar::invoke`), notes with the press what closed it (`pointer` in
+  its close command, `Shell::note_dismissed`), and its own button's
+  click that follows leaves it closed (`Shell::just_dismissed`). A list
+  hung from its button (a dropdown's, Settings' page menu), which only a
+  press outside closes, leaves a press on that button to the button's
+  click (`PopoverAnchor::outside`): closed by the press, the list was
+  opened again by the click, which found it closed. A context menu's
+  submenu is part of the menu (`MenuState::in_sub`), as a toolbar
+  popup's is of it (`Submenu::area`).
 - **What hears outside acts on its own gesture.** gpui's
   `on_mouse_down_out` and `on_mouse_up_out` fire wherever their element
   is not hovered, and an element a dialog covers never is: under About
@@ -291,11 +302,7 @@ Views are in [views.md](views.md); what locations decide, in
   selection: `Shell::selecting_text`; a seek bar's knob: `media::scrub`)
   and otherwise runs nothing. While About or the overview is open, any
   command closes it (`Shell::admit`): a text preview's release did, and
-  the release on About's ✕ that closed it then opened it again. A list
-  hung from its button (a dropdown's, Settings' page menu) closes on a
-  press outside through its anchor (`PopoverAnchor::outside`), which
-  leaves a press on that button to the button's click: closed by the
-  press, the list was opened again by the click, which found it closed.
+  the release on About's ✕ that closed it then opened it again.
 - **A dialog that holds the window's commands opens over no popup.**
   Settings, the overview and About (`Shell::takes_now`) close the popup
   open as they appear, and what is on its way to one (a menu of places
