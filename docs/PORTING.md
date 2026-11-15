@@ -450,7 +450,9 @@ Left:
   only on macOS and Windows **(c)**: Windows' caption buttons skwir draws
   and Windows presses (Snap Layouts over Maximize), macOS's traffic lights
   moved into skwir's first row, either switched on an open window (gpui
-  patch 0066). Never drawn yet: no Mac here, and no gpui window under Wine.
+  patch 0066); beside the tabs, a caption whose double click opens a tab
+  (patch 0068). Never drawn yet: no Mac here, and no gpui window under
+  Wine.
 
 - **Media keys** (step I): `plugins/mpris` is registered on the free
   desktops only. A Mac's Now Playing and Windows' media controls (SMTC) are

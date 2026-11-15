@@ -10,7 +10,8 @@
 //! button opens the system's menu for the window, where it has one. On
 //! Windows the system does all three: the region is told to it as a
 //! caption (`WindowControlArea::Drag`, where it is frontmost: gpui patch
-//! 0066), so it also snaps the window to the screen's edges. On macOS the
+//! 0066), so it also snaps the window to the screen's edges; beside the
+//! tabs, one whose double click is the row's (`DragOnly`, gpui patch 0068). On macOS the
 //! press itself starts the move (`AppKit` drags from a press), and a double
 //! click does what the system's settings say (`titlebar_double_click`).
 //! Everywhere, the second press of a double click moves nothing: a move
@@ -41,11 +42,15 @@ pub fn area(press: &Press, zooms: bool) -> impl IntoElement + use<> {
         |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
         move |_, hitbox, window, _| {
             if cfg!(target_os = "windows") {
-                // Beside the tabs a double click opens one: Windows would
-                // maximize the window too, so that strip is no caption.
-                if zooms {
-                    window.insert_window_control_hitbox(WindowControlArea::Drag, hitbox);
-                }
+                // Beside the tabs a double click opens one: there Windows
+                // moves the window but leaves its double click to the row
+                // (gpui patch 0068).
+                let area = if zooms {
+                    WindowControlArea::Drag
+                } else {
+                    WindowControlArea::DragOnly
+                };
+                window.insert_window_control_hitbox(area, hitbox);
                 return;
             }
             let armed = press.clone();

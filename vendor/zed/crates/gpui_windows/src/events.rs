@@ -114,9 +114,10 @@ impl WindowsWindowInner {
             // Treat double click as a second single click, since we track the double clicks ourselves.
             // If you don't interact with any elements, this will fall through to the windows default
             // behavior of toggling whether the window is maximized.
-            WM_NCLBUTTONDBLCLK | WM_NCLBUTTONDOWN => {
+            WM_NCLBUTTONDOWN => {
                 self.handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam)
             }
+            WM_NCLBUTTONDBLCLK => self.handle_nc_double_click_msg(handle, wparam, lparam),
             WM_NCRBUTTONDOWN => {
                 self.handle_nc_mouse_down_msg(handle, MouseButton::Right, wparam, lparam)
             }
@@ -952,32 +953,35 @@ impl WindowsWindowInner {
         }
     }
 
+    /// The window control area under the mouse, as the window says.
+    fn window_control_area(&self) -> Option<WindowControlArea> {
+        let mut callback = self.state.callbacks.hit_test_window_control.take()?;
+        let area = callback();
+        self.state
+            .callbacks
+            .hit_test_window_control
+            .set(Some(callback));
+        area
+    }
+
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         if self.state.is_fullscreen() {
             return None;
         }
 
-        let callback = self.state.callbacks.hit_test_window_control.take();
-        let drag_area = if let Some(mut callback) = callback {
-            let area = callback();
-            self.state
-                .callbacks
-                .hit_test_window_control
-                .set(Some(callback));
-            area.and_then(|area| match area {
-                WindowControlArea::Drag if self.is_movable => Some(HTCAPTION as _),
-                WindowControlArea::Drag => None,
-                WindowControlArea::Close => Some(HTCLOSE as _),
-                WindowControlArea::Max if self.is_resizable => Some(HTMAXBUTTON as _),
-                WindowControlArea::Max if self.is_movable => Some(HTCAPTION as _),
-                WindowControlArea::Max => Some(HTNOWHERE as _),
-                WindowControlArea::Min if self.is_minimizable => Some(HTMINBUTTON as _),
-                WindowControlArea::Min if self.is_movable => Some(HTCAPTION as _),
-                WindowControlArea::Min => Some(HTNOWHERE as _),
-            })
-        } else {
-            None
-        };
+        let drag_area = self.window_control_area().and_then(|area| match area {
+            WindowControlArea::Drag | WindowControlArea::DragOnly if self.is_movable => {
+                Some(HTCAPTION as _)
+            }
+            WindowControlArea::Drag | WindowControlArea::DragOnly => None,
+            WindowControlArea::Close => Some(HTCLOSE as _),
+            WindowControlArea::Max if self.is_resizable => Some(HTMAXBUTTON as _),
+            WindowControlArea::Max if self.is_movable => Some(HTCAPTION as _),
+            WindowControlArea::Max => Some(HTNOWHERE as _),
+            WindowControlArea::Min if self.is_minimizable => Some(HTMINBUTTON as _),
+            WindowControlArea::Min if self.is_movable => Some(HTCAPTION as _),
+            WindowControlArea::Min => Some(HTNOWHERE as _),
+        });
 
         if !self.hide_title_bar.get() {
             // If the OS draws the title bar, we don't need to handle hit test messages.
@@ -1090,6 +1094,24 @@ impl WindowsWindowInner {
         }
     }
 
+    /// A double click on the window's caption: Windows maximizes or restores the window, but
+    /// where the area keeps its double click (`WindowControlArea::DragOnly`), which is the
+    /// application's: its press and the release that follows go to the window alone.
+    fn handle_nc_double_click_msg(
+        &self,
+        handle: HWND,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        let handled = self.handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam);
+        if wparam.0 as u32 == HTCAPTION
+            && self.window_control_area() == Some(WindowControlArea::DragOnly)
+        {
+            return Some(0);
+        }
+        handled
+    }
+
     fn handle_nc_mouse_up_msg(
         &self,
         handle: HWND,
@@ -1105,11 +1127,12 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+            // As the press counted them: a double click's release is its second click.
             let input = PlatformInput::MouseUp(MouseUpEvent {
                 button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: current_modifiers(),
-                click_count: 1,
+                click_count: self.state.click_state.current_count.get(),
             });
             let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));

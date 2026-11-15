@@ -100,6 +100,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0065-decorations-as-answered` | A Wayland window keeps its decorations until the compositor answers a request, and says while it waits (`Window::decorations_pending`): a compositor that keeps its own (Hyprland's) no longer shows those asked for a frame | — |
 | `0066-title-bar-on-windows-and-macos` | An open window's title bar hidden on Windows, made transparent on macOS, as decorations are requested and said (`request_decorations`, `window_decorations`); Windows' `zoom` restores a maximized window; a drag area counts in Windows' hit test where it is frontmost | — |
 | `0067-client-decorations-supported` | A window says whether the application's decorations can be had before they are asked for (`Window::client_decorations_supported`): not where X11 runs no compositor | — |
+| `0068-drag-areas-that-keep-the-double-click` | A drag area whose double click is the application's (`WindowControlArea::DragOnly`): Windows moves the window from it but neither maximizes nor restores it there; a non-client release counts the clicks as its press did | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1294,3 +1295,20 @@ two values as choices that do nothing there (ADR-138).
 Checked: on Xvfb with no window manager, Settings › Appearance › Title
 bar offered Compact and In the top row dimmed with why, and a value set
 in the file was kept and said to do nothing there.
+
+### 0068: Drag areas that keep the double click
+
+A `WindowControlArea::Drag` is a caption to Windows, which maximizes or
+restores the window at its double click. Where a double click means
+something of the application's (Skwir's tab strip, where it opens a
+tab), the area was told as nothing, and Windows moved the window from no
+part of it: a maximized window with its tabs shown had only the gaps
+between its buttons to be dragged by. `WindowControlArea::DragOnly` is a
+caption too (`HTCAPTION`, where it is frontmost, as 0066 has a drag
+area), but its double click (`WM_NCLBUTTONDBLCLK`) goes to the window
+alone, never to `DefWindowProc`. The release that follows it counts the
+clicks as its press did (it said one), so the application's click handler
+sees a double click.
+
+Checked: clippy for Windows (`x86_64-pc-windows-gnu`) on Skwir's UI. Not
+run: a gpui window cannot be drawn under Wine.

@@ -128,8 +128,9 @@ new. Intel Macs have no build yet.
    lights in skwir's first row, in its middle, with room before the
    sidebar's button; System gives macOS's back, on the open window too.
    Dragging the row's empty parts moves the window, a double click does
-   what System Settings say (zoom or minimize). Say where the lights sit
-   and whether anything overlaps them (ADR-138).
+   what System Settings say (zoom or minimize), but beside the tabs opens
+   a tab. Say where the lights sit and whether anything overlaps them
+   (ADR-138).
 
 ## Windows
 
@@ -200,8 +201,9 @@ window: everything below is new.
    and In the top row hide Windows' title bar and draw its three buttons at
    the end of skwir's row; Maximize under the pointer shows Snap Layouts,
    Close turns red; dragging the row's empty parts moves and snaps the
-   window, a double click maximizes it, the right button opens its menu;
-   System gives Windows' bar back, on the open window too (ADR-138).
+   window, a double click maximizes it (beside the tabs, opens a tab
+   instead), the right button opens its menu; System gives Windows' bar
+   back, on the open window too, at the window's new size (ADR-138).
 
 ## When a system is ready
 

@@ -118,7 +118,10 @@ Windows: decision 8.
    (`WindowControlArea`), which presses them itself and shows Snap Layouts
    over Maximize; the empty parts are told to it as caption, so it moves,
    snaps and maximizes the window and opens its menu; beside the tabs,
-   where a double click opens a tab, they are not. Skwir draws its own
+   where a double click opens a tab, as a caption that keeps its double
+   click for the row (`WindowControlArea::DragOnly`, gpui patch 0068,
+   amended: first as no caption, which left a maximized window with its
+   tabs shown nothing to be dragged by). Skwir draws its own
    frame on the free desktops alone (`DRAWS_FRAME`). The window is made
    as the setting asks and changed on an open window (gpui patch 0066).
    macOS's double click does what its settings say
@@ -158,3 +161,10 @@ Windows: decision 8.
   window (macOS's style mask changed after it opened).
 - Popups keep 8 px from the viewport's edges, not the body's: one near
   an edge may lie up to 4 px over the margin.
+- **Little to grab, some layouts**: the address field's empty end edits
+  the path (the user's choice), so a pane's row moves the window only by
+  the gaps between its buttons (3 px) and its ends (6 px). Where that row
+  is the top row (no sidebar drawn, one tab) and no gutter lies above the
+  cards (the lines look, or a window maximized or tiled at its top), those
+  gaps are all there is to drag the window by; the sidebar's header and
+  the tab strip have room of their own.

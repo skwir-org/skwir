@@ -753,6 +753,10 @@ pub(crate) struct HitTest {
 pub enum WindowControlArea {
     /// An area that allows dragging of the platform window.
     Drag,
+    /// An area that allows dragging of the platform window whose double click is the
+    /// application's: the platform neither maximizes nor restores the window there (a tab
+    /// strip's empty part, where a double click opens a tab).
+    DragOnly,
     /// An area that allows closing of the platform window.
     Close,
     /// An area that allows maximizing of the platform window.
@@ -2139,7 +2143,7 @@ impl Window {
                         // keeps its press. A button where the mouse is over it.
                         for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
                             let hit = match area {
-                                WindowControlArea::Drag => {
+                                WindowControlArea::Drag | WindowControlArea::DragOnly => {
                                     window.mouse_hit_test.ids.first() == Some(&hitbox.id)
                                 }
                                 _ => window.mouse_hit_test.ids.contains(&hitbox.id),
