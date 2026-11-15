@@ -618,99 +618,160 @@ pub fn framed(frame: &Frame, theme: &Theme, window: &mut Window, body: AnyElemen
         .into_any_element()
 }
 
-/// The margin's edges and corners, each sizing the window from where it
-/// is; none on an edge without margin.
-fn resize_edges(margin: gpui::Edges<f32>) -> Vec<AnyElement> {
-    // A corner reaches along its two edges further than the margin is
-    // deep, as a frame's corner is grabbed.
-    let corner = px(MARGIN * 2.);
-    let edge = |id: &'static str, edge: ResizeEdge| {
-        div().id(id).absolute().cursor(cursor(edge)).on_mouse_down(
-            MouseButton::Left,
-            move |_, window, cx| {
-                cx.stop_propagation();
-                window.start_window_resize(edge);
-            },
-        )
+/// A part of the margin pressed to size the window: the window's edges it
+/// lies against (`at_top`: the top or the bottom, `None` from one to the
+/// other; `at_left` alike), and its size (`None`: the window's length).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Grip {
+    id: &'static str,
+    edge: ResizeEdge,
+    at_top: Option<bool>,
+    at_left: Option<bool>,
+    width: Option<f32>,
+    height: Option<f32>,
+}
+
+/// The margin's edges and corners, none on an edge without margin. A
+/// corner reaches along its two edges further than the margin is deep, as
+/// a frame's corner is grabbed, but within the margin alone: what the
+/// window holds at its corners keeps its press.
+fn grips(margin: gpui::Edges<f32>) -> Vec<Grip> {
+    let reach = MARGIN * 2.;
+    let mut grips = Vec::new();
+    let mut grip = |id, edge, at_top, at_left, width, height| {
+        grips.push(Grip {
+            id,
+            edge,
+            at_top,
+            at_left,
+            width,
+            height,
+        });
     };
-    let (top, right, bottom, left) = (
-        margin.top > 0.,
-        margin.right > 0.,
-        margin.bottom > 0.,
-        margin.left > 0.,
-    );
-    let mut edges = Vec::new();
-    if top {
-        edges.push(
-            edge("resize-top", ResizeEdge::Top)
-                .top_0()
-                .left_0()
-                .right_0()
-                .h(px(margin.top)),
+    let (top, right, bottom, left) = (margin.top, margin.right, margin.bottom, margin.left);
+    if top > 0. {
+        grip(
+            "resize-top",
+            ResizeEdge::Top,
+            Some(true),
+            None,
+            None,
+            Some(top),
         );
     }
-    if bottom {
-        edges.push(
-            edge("resize-bottom", ResizeEdge::Bottom)
-                .bottom_0()
-                .left_0()
-                .right_0()
-                .h(px(margin.bottom)),
+    if bottom > 0. {
+        grip(
+            "resize-bottom",
+            ResizeEdge::Bottom,
+            Some(false),
+            None,
+            None,
+            Some(bottom),
         );
     }
-    if left {
-        edges.push(
-            edge("resize-left", ResizeEdge::Left)
-                .top_0()
-                .bottom_0()
-                .left_0()
-                .w(px(margin.left)),
+    if left > 0. {
+        grip(
+            "resize-left",
+            ResizeEdge::Left,
+            None,
+            Some(true),
+            Some(left),
+            None,
         );
     }
-    if right {
-        edges.push(
-            edge("resize-right", ResizeEdge::Right)
-                .top_0()
-                .bottom_0()
-                .right_0()
-                .w(px(margin.right)),
+    if right > 0. {
+        grip(
+            "resize-right",
+            ResizeEdge::Right,
+            None,
+            Some(false),
+            Some(right),
+            None,
         );
     }
-    if top && left {
-        edges.push(
-            edge("resize-top-left", ResizeEdge::TopLeft)
-                .top_0()
-                .left_0()
-                .size(corner),
+    let corners = [
+        (
+            top,
+            left,
+            ResizeEdge::TopLeft,
+            ["resize-top-left", "resize-left-top"],
+        ),
+        (
+            top,
+            right,
+            ResizeEdge::TopRight,
+            ["resize-top-right", "resize-right-top"],
+        ),
+        (
+            bottom,
+            left,
+            ResizeEdge::BottomLeft,
+            ["resize-bottom-left", "resize-left-bottom"],
+        ),
+        (
+            bottom,
+            right,
+            ResizeEdge::BottomRight,
+            ["resize-bottom-right", "resize-right-bottom"],
+        ),
+    ];
+    for (deep_y, deep_x, edge, [along_x, along_y]) in corners {
+        if deep_y <= 0. || deep_x <= 0. {
+            continue;
+        }
+        let at_top = matches!(edge, ResizeEdge::TopLeft | ResizeEdge::TopRight);
+        let at_left = matches!(edge, ResizeEdge::TopLeft | ResizeEdge::BottomLeft);
+        // Along the top or the bottom edge, as deep as its margin; then
+        // along the side.
+        grip(
+            along_x,
+            edge,
+            Some(at_top),
+            Some(at_left),
+            Some(reach),
+            Some(deep_y),
+        );
+        grip(
+            along_y,
+            edge,
+            Some(at_top),
+            Some(at_left),
+            Some(deep_x),
+            Some(reach),
         );
     }
-    if top && right {
-        edges.push(
-            edge("resize-top-right", ResizeEdge::TopRight)
-                .top_0()
-                .right_0()
-                .size(corner),
-        );
-    }
-    if bottom && left {
-        edges.push(
-            edge("resize-bottom-left", ResizeEdge::BottomLeft)
-                .bottom_0()
-                .left_0()
-                .size(corner),
-        );
-    }
-    if bottom && right {
-        edges.push(
-            edge("resize-bottom-right", ResizeEdge::BottomRight)
-                .bottom_0()
-                .right_0()
-                .size(corner),
-        );
-    }
-    edges
+    grips
+}
+
+/// The margin's grips as elements, each sizing the window from where it
+/// is; the corners after the edges, over them.
+fn resize_edges(margin: gpui::Edges<f32>) -> Vec<AnyElement> {
+    grips(margin)
         .into_iter()
-        .map(IntoElement::into_any_element)
+        .map(|grip| {
+            let edge = grip.edge;
+            let d = div()
+                .id(grip.id)
+                .absolute()
+                .cursor(cursor(edge))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    window.start_window_resize(edge);
+                });
+            let d = match grip.at_top {
+                Some(true) => d.top_0(),
+                Some(false) => d.bottom_0(),
+                None => d.top_0().bottom_0(),
+            };
+            let d = match grip.at_left {
+                Some(true) => d.left_0(),
+                Some(false) => d.right_0(),
+                None => d.left_0().right_0(),
+            };
+            d.when_some(grip.width, |d, width| d.w(px(width)))
+                .when_some(grip.height, |d, height| d.h(px(height)))
+                .into_any_element()
+        })
         .collect()
 }
 
@@ -823,6 +884,44 @@ mod tests {
             Some("system")
         );
         assert_eq!(automatic_now(TitleBar::Compact, CLIENT), None);
+    }
+
+    /// The grips that size the window lie within its margin, a corner
+    /// reaching along its two edges, never into what the window holds; none
+    /// on an edge without margin.
+    #[test]
+    fn grips_lie_within_the_margin() {
+        let margin = |top, right, bottom, left| gpui::Edges {
+            top,
+            right,
+            bottom,
+            left,
+        };
+        let all = grips(margin(MARGIN, MARGIN, MARGIN, MARGIN));
+        assert_eq!(all.len(), 4 + 4 * 2);
+        for grip in &all {
+            // Against a side and no deeper than its margin there.
+            let within = |against: Option<bool>, size: Option<f32>| {
+                against.is_some() && size.is_some_and(|size| size <= MARGIN)
+            };
+            assert!(
+                within(grip.at_left, grip.width) || within(grip.at_top, grip.height),
+                "{grip:?} reaches into the window"
+            );
+        }
+        // Tiled at the left and the bottom: no grip there, nor at the
+        // corners those edges make.
+        let some = grips(margin(MARGIN, MARGIN, 0., 0.));
+        let ids: Vec<&str> = some.iter().map(|grip| grip.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "resize-top",
+                "resize-right",
+                "resize-top-right",
+                "resize-right-top"
+            ]
+        );
     }
 
     /// The margin is on the edges that meet nothing.
