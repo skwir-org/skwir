@@ -615,10 +615,10 @@ impl SettingsView {
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                .on_mouse_down_out(self.pages_anchor.outside(cx.listener(|this, _, _, cx| {
                     this.dropdown = None;
                     cx.notify();
-                }))
+                })))
                 .children(self.page_entries(true, theme, window, cx));
             button = button.child(self.pages_anchor.popup(panel));
         }
@@ -1107,10 +1107,10 @@ impl SettingsView {
             // Its choices scroll in the height the popover leaves them
             // under the row; a long list narrows instead (`long_choices`).
             let mut panel = controls::dropdown_list(format!("choices-{key}"), theme)
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                .on_mouse_down_out(row.anchor.outside(cx.listener(|this, _, _, cx| {
                     this.dropdown = None;
                     cx.notify();
-                }));
+                })));
             let part = size_part(&key);
             for choice in row.spec.constraints.choices.clone() {
                 let selected = choice == row.value;
@@ -1330,9 +1330,9 @@ impl SettingsView {
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
-                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                .on_mouse_down_out(row.anchor.outside(cx.listener(|this, _, window, cx| {
                     this.close_choices(window, cx);
-                }))
+                })))
                 // The field has the keyboard as long as the list is open.
                 .child(div().flex_none().flex().child(controls::field(
                     &narrowed.field,

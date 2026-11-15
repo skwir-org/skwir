@@ -2477,12 +2477,14 @@ impl SettingsView {
                 .text_body()
                 .shadow_lg()
                 .occlude()
-                .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                    if let Some(Dialog::Entry(dialog)) = &mut this.exclusions.dialog {
-                        dialog.category_open = false;
-                        cx.notify();
-                    }
-                }));
+                .on_mouse_down_out(category_anchor.outside(cx.listener(
+                    |this, _: &MouseDownEvent, _, cx| {
+                        if let Some(Dialog::Entry(dialog)) = &mut this.exclusions.dialog {
+                            dialog.category_open = false;
+                            cx.notify();
+                        }
+                    },
+                )));
             for (id, name) in ids {
                 let chosen = id == category;
                 panel = panel.child(

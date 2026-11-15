@@ -273,7 +273,11 @@ Views are in [views.md](views.md); what locations decide, in
   selection: `Shell::selecting_text`; a seek bar's knob: `media::scrub`)
   and otherwise runs nothing. While About or the overview is open, any
   command closes it (`Shell::admit`): a text preview's release did, and
-  the release on About's ✕ that closed it then opened it again.
+  the release on About's ✕ that closed it then opened it again. A list
+  hung from its button (a dropdown's, Settings' page menu) closes on a
+  press outside through its anchor (`PopoverAnchor::outside`), which
+  leaves a press on that button to the button's click: closed by the
+  press, the list was opened again by the click, which found it closed.
 - **A dialog that holds the window's commands opens over no popup.**
   Settings, the overview and About (`Shell::takes_now`) close the popup
   open as they appear, and what is on its way to one (a menu of places

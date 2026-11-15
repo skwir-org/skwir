@@ -316,6 +316,26 @@ impl PopoverAnchor {
         self.0.get()
     }
 
+    /// What a list hung from this anchor runs on a press outside it
+    /// (`on_mouse_down_out`): `close`, but for a press on the anchor, the
+    /// button that opened it. That press is the button's own, and its
+    /// click closes the list: closed by the press first, the list would be
+    /// opened again by the click, the button reading it closed by then.
+    pub fn outside(
+        &self,
+        close: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static {
+        let anchor = self.0.clone();
+        move |event, window, cx| {
+            if !anchor
+                .get()
+                .is_some_and(|bounds| bounds.contains(&event.position))
+            {
+                close(event, window, cx);
+            }
+        }
+    }
+
     /// Mark where the anchor is, for an element that draws what it is
     /// over itself, from its prepaint (the terminal's cursor cell).
     pub fn mark(&self, bounds: Bounds<Pixels>) {

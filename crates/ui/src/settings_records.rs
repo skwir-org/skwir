@@ -1281,10 +1281,10 @@ impl SettingsView {
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                .on_mouse_down_out(anchor.outside(cx.listener(|this, _, _, cx| {
                     this.record_open = None;
                     cx.notify();
-                }));
+                })));
             for (n, (value, label, detail, disabled)) in offered.into_iter().enumerate() {
                 let selected = value == held;
                 let run = run.clone();

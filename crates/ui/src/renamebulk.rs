@@ -561,8 +561,10 @@ fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
     if !open {
         return control.into_any_element();
     }
-    let mut list = controls::dropdown_list("bulk-case-list", theme)
-        .on_mouse_down_out(cx.listener(|this, _, _, cx| this.bulk_case_list(false, cx)));
+    let mut list = controls::dropdown_list("bulk-case-list", theme).on_mouse_down_out(
+        b.case_anchor
+            .outside(cx.listener(|this, _, _, cx| this.bulk_case_list(false, cx))),
+    );
     for (at, &(_, label)) in CASES.iter().enumerate() {
         let focus = b.case_focus.clone();
         list = list.child(

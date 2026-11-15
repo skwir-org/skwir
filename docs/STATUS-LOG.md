@@ -17720,3 +17720,42 @@ The commits between were not built one by one.
   F1's list with no row lit and Tab going on to Cancel, the list held to
   a 440 px window, the card's notes passed over. Not run: release-check,
   bench-check, the whole `just test-windows`.
+
+## 2026-11-15: The bulk rename's case in sight, and lists closed by their own button
+
+The user asked to harmonize the bulk rename's Case with the dialogs'
+other choices, "a switch with multiple options" as Print… has.
+
+- **The case is a row of its values** (`renamebulk::case_control`):
+  Unchanged, lowercase, UPPERCASE, Title Case, Sentence case, each written
+  as it leaves a name, as a form's `Kind::Row` and a setting's choice
+  are drawn (`controls::segmented`). It was one box that cycled through
+  the plugin's own words (`none`, `lower`…) on a click or Ctrl+K, out of
+  Tab's walk and nameless to a screen reader. It is now one stop for Tab
+  after Start, a radio group named Case; the arrows step it, stopping at
+  its ends (`ui.rename_bulk_case` takes a `delta`, place `bulk_case`;
+  held, they repeat); Space gives the next, Enter renames; Ctrl+K still
+  gives the next from any field, said in the footer with the dialog's
+  other keys. Where the row does not fit beside its label (a 620 px
+  window at 100 %; 1280 px holds it), it is a dropdown (`adaptive::Fit`), its list the
+  one Settings' short dropdowns draw, now `controls::dropdown_list` and
+  `dropdown_row` for both; Escape closes the list before the dialog.
+- **A list closes on a press outside, but on its own button**
+  (`PopoverAnchor::outside`): a held click on an open dropdown closed its
+  list on the press, and the click, finding it closed, opened it again.
+  Seen in the new dropdown and in Settings' (Open at startup); the same
+  close ran for Settings' long dropdowns, its page menu, a record's picks
+  and Exclusions' categories, which all close through the anchor now.
+  `docs/invariants/shell.md` says both rules; the guide says the row.
+- **Checks**: rustfmt and clippy (`-D warnings`) on skwir-ui; its tests,
+  700 passed. In a window on Xvfb (1280 px, then 620 and 440): the row
+  clicked, stepped by Right and Up to its ends, Space, Ctrl+K from the
+  template, Tab from the template to the row; the dropdown at 620 px,
+  its list opened by Space, stepped by Up, Escape closing the list alone,
+  a row clicked, a second click on the open dropdown closing it (failed
+  before the fix), a press beside it; Settings' Open at startup and page
+  menu closed by a second click. Not exercised in a window: a record's
+  picks, Exclusions' categories, Settings' long dropdowns (the same
+  change, compiled). The row's commit (185164fe) checked alone in a
+  worktree: `cargo fmt --check` and clippy on skwir-ui. Not run:
+  release-check, a11y-check, check-cross.

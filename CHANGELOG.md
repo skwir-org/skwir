@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A dropdown closes on a second click**: in Settings, clicking an open
+  dropdown (or a narrow window's page menu) to close it opened it again.
 - **Rename Several's case is in sight**: its five choices stand side by
   side, each written as it leaves a name (Unchanged, lowercase, UPPERCASE,
   Title Case, Sentence case), as the Print dialog's and Settings' choices
