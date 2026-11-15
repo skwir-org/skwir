@@ -381,7 +381,16 @@ fn what_shows_stays_while_the_folders_are_asked_about_again() {
     write(&s.root, "pics/a.jpg");
     go(&s, &s.root);
     filter(&s, "kind:image");
-    shows(&s, &["pics"], "found");
+    // Found, by the lens's answer: the view first stays as it was for a
+    // moment (`VIEW_KEPT`), which shows `pics` too, and on a loaded
+    // machine the answer may come after that moment. Dimmed as the way
+    // to a picture, `pics` is shown by the lens.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !(shown(&s) == set(&["pics"]) && only_leads(&s, "pics")) {
+        assert!(Instant::now() < deadline, "found: {:?}", shown(&s));
+        s.app.pump();
+        std::thread::sleep(Duration::from_millis(10));
+    }
     // The hidden files' switch asks again, as a change made here does.
     s.app.dispatch(&Invocation::new("toggle_hidden")).unwrap();
     for _ in 0..20 {
