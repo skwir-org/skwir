@@ -646,7 +646,9 @@ fn selected_items(
 /// else is taken is read from the listing, never from the disk: the
 /// preview runs on every keystroke. In a folder a target is taken when an
 /// entry not selected has that name; elsewhere (search results, the
-/// shelf) the listing cannot say, and applying finds out.
+/// shelf) the listing cannot say, and applying finds out. The workspace
+/// is held only to take the items and to look up each target: working
+/// out 100,000 names never keeps the window's thread waiting on it.
 fn plan_selection(
     app: &App,
     pane: Option<PaneId>,
@@ -655,22 +657,28 @@ fn plan_selection(
     let pane = app.pane_or_active(pane);
     // An agent's call leaves out the private files the user selected.
     let withheld = app.withheld(pane);
-    let ws = app.workspace.read();
-    let p = ws
-        .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    anyhow::ensure!(p.open.is_some(), "pane has no open location");
-    let dir = p.location().and_then(skwir_core::Location::path);
-    let items = selected_items(p, &withheld, usize::MAX);
+    let (dir, items) = {
+        let ws = app.workspace.read();
+        let p = ws
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        anyhow::ensure!(p.open.is_some(), "pane has no open location");
+        let dir = p.location().and_then(skwir_core::Location::path);
+        (dir, selected_items(p, &withheld, usize::MAX))
+    };
     if items.is_empty() {
         return Err(skwir_core::command::NothingSelected.into());
     }
     let exists = |path: &Path| {
         dir.as_deref().is_some_and(|dir| path.parent() == Some(dir))
-            && path
-                .file_name()
-                .and_then(|name| p.listing.find_by_name(name))
-                .is_some_and(|e| !p.selection.contains(e.id))
+            && path.file_name().is_some_and(|name| {
+                let ws = app.workspace.read();
+                ws.pane(pane).is_some_and(|p| {
+                    p.listing
+                        .find_by_name(name)
+                        .is_some_and(|e| !p.selection.contains(e.id))
+                })
+            })
     };
     Ok(plan_bulk_rename_in(&items, exists, spec)?)
 }
