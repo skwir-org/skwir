@@ -3943,6 +3943,8 @@ impl Shell {
             );
         }
         crate::settings::flush_remembered(self, cx);
+        // What a question's text comes to, once said (ADR-137).
+        self.sync_prompt_describe(window, cx);
         // The preview follows what is drawn: the tab left, while it is.
         let drawn = self.drawn_pane();
         self.with_pane(drawn, |this| {

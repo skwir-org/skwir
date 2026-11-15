@@ -1504,13 +1504,18 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   where `ui.ask` is dispatched (an agent's, a script's) and where the
   question opens (`prompts::describe_refused`); an agent's question runs
   it as the agent's call (`describe.agent`, set where the agent's call is
-  dispatched). It runs on a worker with the text as
-  its field at each change, an older answer dropped; its `says` is a
-  line under the field, its error that line in the error's color and the
-  field's frame too, holding the answer back (Enter refused, the answer's
-  button drawn inert) while the text is the one it was said of. Its
-  `reference` gives the field a [?] and F1, as a dialog's (above, Popups
-  and focus).
+  dispatched). It runs at each change with the text as its field, on a
+  worker of the shared lane (it reads nothing a remote holds), as a
+  `latest::Latest`: the ask before is cancelled, and the last with the
+  question; its arguments are made once as the question opens, never
+  copied on the window's thread as it is typed. Its `says` is a line
+  under the field, the last said drawn until a newer one comes; its
+  error is that line in the error's color, the field's frame too, while
+  the text is the one it was said of, holding the answer back (Enter
+  refused, the answer's button inert, disabled for a screen reader). An
+  answer given before the text was said waits for it, and goes on once
+  it is unless it is no answer; a key since forgets it. Its `reference`
+  gives the field a `?` and F1, as a dialog's (above, Popups and focus).
 - **A question names what it is about when asked.** `ui.ask` fills the
   asked command's `pane`, `entries` (the selection) and `in` (the folder
   shown) that the asker left out, as they are when it opens: Rename

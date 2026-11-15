@@ -5,6 +5,7 @@
 //! runs.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
@@ -14,11 +15,13 @@ use skwir_core::command::{CommandSpec, Invocation, Outcome};
 use skwir_core::op::{EntryArg, EntryRef};
 use skwir_core::os_path::PathArg;
 use skwir_core::reference::Reference;
+use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
+use crate::latest::Latest;
 use crate::modal::{self, FocusReturn};
 use crate::reference::FieldHelp;
 use crate::shell::Shell;
@@ -86,9 +89,54 @@ struct Prompted {
     keeping: Option<String>,
     /// What the field takes (ADR-137).
     reference: Option<Reference>,
-    /// What says what the text comes to as it is typed, and whether it
-    /// runs as an agent's call.
-    describe: Option<(Invocation, bool)>,
+    /// What says what the text comes to as it is typed.
+    describe: Option<Describe>,
+}
+
+/// What a text was said to come to: the text, and what it comes to or why
+/// it is no answer.
+type Said = (String, Result<String, String>);
+
+/// What answering does with `text` beside what was last said (`said`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answering {
+    /// It was said to be an answer: it goes.
+    Goes,
+    /// It has yet to be said: it waits for it.
+    Waits,
+    /// It was said to be no answer: held back.
+    Refused,
+}
+
+fn answering(said: Option<&Said>, text: &str) -> Answering {
+    match said {
+        Some((said, Ok(_))) if said == text => Answering::Goes,
+        Some((said, Err(_))) if said == text => Answering::Refused,
+        _ => Answering::Waits,
+    }
+}
+
+/// What says what a question's text comes to as it is typed (`ui.ask`'s
+/// `describe`, ADR-137): a command that only answers, asked at each change
+/// on a worker of the shared lane (it reads nothing a remote holds), the
+/// latest ask alone answered, cancelled by the next and with the question.
+struct Describe {
+    name: Arc<str>,
+    /// Its arguments but the text, made once as the question opens: what
+    /// it is about may be many entries, never copied on the window's
+    /// thread as the text is typed.
+    args: Arc<serde_json::Value>,
+    /// The argument the text is.
+    field: String,
+    /// It runs as an agent's call: an agent asked the question.
+    agent: bool,
+    asked: Latest<Said>,
+    /// The latest answer: drawn until a newer one comes.
+    said: Option<Said>,
+    /// The question was answered (Enter, its button) before its text was
+    /// said: answered once it is, unless it is no answer. A key since
+    /// forgets it.
+    answering: bool,
 }
 
 /// The prompt's Remember switch (a server's password, ADR-082; a volume's
@@ -112,14 +160,8 @@ pub struct PromptState {
     /// F1 and the list under it (`reference.rs`).
     help: Option<FieldHelp>,
     /// What says what the text comes to as it is typed: `ui.ask`'s
-    /// `describe`, run with the text as its field, on a worker; true, as
-    /// an agent's call (the agent asked the question).
-    describe: Option<(Invocation, bool)>,
-    /// Its latest answer, for which text: what it comes to, or why it is
-    /// no answer, which holds the answer back.
-    described: Option<(String, Result<String, String>)>,
-    /// Counts what was asked of it: an older answer is dropped.
-    describe_asked: u64,
+    /// `describe`.
+    describe: Option<Describe>,
     /// Remember in the keyring, where offered.
     pub remember: Option<Remember>,
     /// The answer's button: its verb and its focus, beside Cancel's.
@@ -411,11 +453,18 @@ impl Shell {
                     || app.pane_dir(pane).ok(),
                 );
             }
-            let agent = describe
-                .get("agent")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-            Some((said, agent))
+            Some(Describe {
+                name: said.name,
+                args: Arc::new(said.args),
+                field: field.to_owned(),
+                agent: describe
+                    .get("agent")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                asked: Latest::default(),
+                said: None,
+                answering: false,
+            })
         });
         let ask = Ask {
             command,
@@ -511,7 +560,7 @@ impl Shell {
                     }
                 }
                 InputEvent::Changed => {
-                    this.prompt_describe(window, cx);
+                    this.prompt_describe(cx);
                     if let Some(PromptKind::Find { origin, backward }) =
                         this.prompt.as_ref().map(|p| p.kind)
                     {
@@ -532,8 +581,6 @@ impl Shell {
             note,
             help,
             describe,
-            described: None,
-            describe_asked: 0,
             remember: remember.then(|| Remember {
                 on: false,
                 focus: cx.focus_handle(),
@@ -545,70 +592,105 @@ impl Shell {
             back,
             _sub: sub,
         });
-        self.prompt_describe(window, cx);
+        self.prompt_describe(cx);
         cx.notify();
     }
 
-    /// Ask what the text comes to (`ui.ask`'s `describe`), on a worker:
-    /// the answer said under the field once it comes, for that text.
-    fn prompt_describe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ask what the text comes to (`ui.ask`'s `describe`), on a worker, in
+    /// place of what was asked before: the answer is said under the field
+    /// once it comes (`sync_prompt_describe`).
+    fn prompt_describe(&mut self, cx: &mut Context<Self>) {
+        let app = Arc::clone(&self.app);
+        // Said in this window alone.
+        let wake = self.waker();
         let Some(prompt) = self.prompt.as_mut() else {
             return;
         };
-        let (Some((describe, agent)), Some(ask)) = (prompt.describe.clone(), prompt.ask.as_ref())
-        else {
+        let Some(describe) = prompt.describe.as_mut() else {
             return;
         };
         let text = prompt.input.read(cx).text().trim().to_owned();
-        prompt.describe_asked += 1;
-        let asked = prompt.describe_asked;
-        let mut args = describe.args;
-        args[ask.field.as_str()] = serde_json::json!(text);
-        let invocation = Invocation {
-            name: describe.name,
-            args,
-        };
-        let app = std::sync::Arc::clone(&self.app);
-        self.off_thread_until(
-            self.pane_lane(self.pane),
+        describe.answering = false;
+        let (name, args, field, agent) = (
+            Arc::clone(&describe.name),
+            Arc::clone(&describe.args),
+            describe.field.clone(),
+            describe.agent,
+        );
+        let worker = Arc::clone(&app);
+        describe.asked.ask_waking(
+            &app,
+            Lane::SHARED,
+            app.lifetime(),
+            Priority::Visible,
             "prompt-describe",
-            self.app.lifetime().child(),
-            // An agent's question says it as the agent's call would.
-            move || match if agent {
-                skwir_core::permissions::as_agent(app.privacy(), || app.dispatch(&invocation))
-            } else {
-                app.dispatch(&invocation)
-            } {
-                Ok(Outcome::Value(v)) => Ok(v
-                    .get("says")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned()),
-                Ok(_) => Ok(String::new()),
-                Err(e) => Err(format!("{e:#}")),
+            wake,
+            move |_| {
+                let mut args = Arc::unwrap_or_clone(args);
+                args[field.as_str()] = serde_json::json!(text);
+                let invocation = Invocation { name, args };
+                // An agent's question says it as the agent's call would.
+                let said = if agent {
+                    skwir_core::permissions::as_agent(worker.privacy(), || {
+                        worker.dispatch(&invocation)
+                    })
+                } else {
+                    worker.dispatch(&invocation)
+                };
+                let said = match said {
+                    Ok(Outcome::Value(v)) => Ok(v
+                        .get("says")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()),
+                    Ok(_) => Ok(String::new()),
+                    Err(e) => Err(format!("{e:#}")),
+                };
+                (text, said)
             },
-            move |this, said, _, cx| {
-                if let Some(prompt) = this.prompt.as_mut().filter(|p| p.describe_asked == asked) {
-                    prompt.described = Some((text, said));
-                    cx.notify();
-                }
-            },
-            window,
-            cx,
         );
     }
 
-    /// Whether what is typed was said to be no answer: it is held back.
-    fn prompt_held_back(&self, cx: &gpui::App) -> bool {
-        self.prompt.as_ref().is_some_and(|p| {
-            let text = p.input.read(cx).text().trim();
-            matches!(&p.described, Some((said, Err(_))) if said == text)
-        })
+    /// Take what the question's text was said to come to, as the core
+    /// wakes the window; an answer that waited for it goes on.
+    pub(crate) fn sync_prompt_describe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(describe) = self.prompt.as_mut().and_then(|p| p.describe.as_mut()) else {
+            return;
+        };
+        let Some(said) = describe.asked.take() else {
+            return;
+        };
+        describe.said = Some(said);
+        let answering = std::mem::take(&mut describe.answering);
+        cx.notify();
+        if answering {
+            self.prompt_answer(window, cx);
+        }
+    }
+
+    /// Whether the answer waits: what is typed was said to be no answer,
+    /// or has yet to be said, and is answered once it is.
+    fn prompt_waits(&mut self, cx: &gpui::App) -> bool {
+        let Some(prompt) = self.prompt.as_mut() else {
+            return false;
+        };
+        let text = prompt.input.read(cx).text().trim();
+        let Some(describe) = prompt.describe.as_mut() else {
+            return false;
+        };
+        match answering(describe.said.as_ref(), text) {
+            Answering::Goes => false,
+            Answering::Refused => true,
+            Answering::Waits => {
+                describe.answering = true;
+                true
+            }
+        }
     }
 
     /// Answer the prompt with its text: Enter, or its button.
     fn prompt_answer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.prompt_held_back(cx) {
+        if self.prompt_waits(cx) {
             return;
         }
         let Some(prompt) = self.prompt.as_mut() else {
@@ -761,11 +843,12 @@ pub fn render_prompt(
 ) -> Option<AnyElement> {
     let p = shell.prompt.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    // What the text typed comes to, for that text; what is no answer is
-    // said in the error's color, its frame too.
+    // What the text typed comes to: the last said, until a newer one
+    // comes; what is no answer is said in the error's color, its frame
+    // too, while it is the text's.
     let text = p.input.read(cx).text().trim().to_owned();
-    let described = p.described.as_ref().filter(|(said, _)| *said == text);
-    let refused = matches!(described, Some((_, Err(_))));
+    let said = p.describe.as_ref().and_then(|d| d.said.as_ref());
+    let refused = answering(said, &text) == Answering::Refused;
     let frame = div()
         .h(sized(30.))
         .px_2()
@@ -796,14 +879,13 @@ pub fn render_prompt(
         .gap_2()
         .child(div().text_title().child(p.title.clone()))
         .child(frame)
-        .children(described.map(|(_, said)| {
-            match said {
-                Ok(says) => div()
-                    .text_body()
-                    .text_color(theme.text_muted)
-                    .child(says.clone()),
-                Err(why) => div().text_body().text_color(theme.error).child(why.clone()),
-            }
+        .children(said.and_then(|(_, said)| {
+            let (says, color) = match said {
+                Ok(says) => (says, theme.text_muted),
+                Err(why) if refused => (why, theme.error),
+                Err(why) => (why, theme.text_muted),
+            };
+            (!says.is_empty()).then(|| div().text_body().text_color(color).child(says.clone()))
         }))
         .children(
             p.note
@@ -873,15 +955,24 @@ pub fn render_prompt(
                     cx,
                 ),
                 modal::pressed(
-                    controls::button(
-                        "prompt-accept",
-                        p.accept.clone(),
-                        Some("check"),
-                        ButtonStyle::Plain,
-                        &p.accept_focus,
-                        &theme,
-                    )
-                    .when(refused, |d| d.opacity(0.5)),
+                    // What is typed is no answer: said, not offered.
+                    if refused {
+                        controls::inert_button(
+                            "prompt-accept",
+                            p.accept.clone(),
+                            &p.accept_focus,
+                            &theme,
+                        )
+                    } else {
+                        controls::button(
+                            "prompt-accept",
+                            p.accept.clone(),
+                            Some("check"),
+                            ButtonStyle::Plain,
+                            &p.accept_focus,
+                            &theme,
+                        )
+                    },
                     Shell::prompt_answer,
                     cx,
                 ),
@@ -985,13 +1076,41 @@ mod tests {
     use skwir_core::op::EntryRef;
     use skwir_core::workspace::PaneId;
 
-    use super::asked_about;
+    use super::{Answering, answering, asked_about};
 
     fn selected() -> Vec<EntryRef> {
         vec![EntryRef::new(
             FileId::new(1, 7),
             "/tmp/example/a file's name.txt",
         )]
+    }
+
+    /// A question's answer waits for what its text comes to, goes once it
+    /// is an answer, and is held back while it is no answer: an answer
+    /// said of another text (the one before a key) decides nothing.
+    #[test]
+    fn an_answer_waits_for_its_text_to_be_said() {
+        let said = |text: &str, ok: bool| {
+            (
+                text.to_owned(),
+                if ok {
+                    Ok("rw-r--r--".to_owned())
+                } else {
+                    Err("no mode".to_owned())
+                },
+            )
+        };
+        assert_eq!(answering(None, "644"), Answering::Waits);
+        assert_eq!(answering(Some(&said("64", true)), "644"), Answering::Waits);
+        assert_eq!(
+            answering(Some(&said("64x", false)), "644"),
+            Answering::Waits
+        );
+        assert_eq!(answering(Some(&said("644", true)), "644"), Answering::Goes);
+        assert_eq!(
+            answering(Some(&said("u+", false)), "u+"),
+            Answering::Refused
+        );
     }
 
     /// Rename asks about the file selected when it opens: the answer names

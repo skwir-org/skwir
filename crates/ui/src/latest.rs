@@ -60,12 +60,28 @@ impl<T: Send + 'static> Latest<T> {
         name: &'static str,
         work: impl FnOnce(&CancelToken) -> T + Send + 'static,
     ) {
+        let wake = app.waker_handle();
+        self.ask_waking(app, lane, lifetime, priority, name, wake, work);
+    }
+
+    /// [`ask`](Self::ask), its answer waking with `wake`: the window
+    /// that asked alone (`Shell::waker`, ADR-122), where it asks often.
+    #[allow(clippy::too_many_arguments)] // An ask, whole: `ask`'s and its wake.
+    pub fn ask_waking(
+        &mut self,
+        app: &Arc<App>,
+        lane: Lane,
+        lifetime: &CancelToken,
+        priority: Priority,
+        name: &'static str,
+        wake: skwir_core::location::Waker,
+        work: impl FnOnce(&CancelToken) -> T + Send + 'static,
+    ) {
         self.forget();
         let cancel = lifetime.child();
         self.pending = Some(cancel.clone());
         let asked = self.asked;
         let tx = self.tx.clone();
-        let wake = app.waker_handle();
         app.scheduler
             .spawn_in(lane, priority, name, cancel.clone(), move || {
                 let answer = work(&cancel);
