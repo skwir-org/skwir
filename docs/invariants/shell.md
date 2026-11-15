@@ -223,8 +223,11 @@ Views are in [views.md](views.md); what locations decide, in
   selection, navigation, panels, a dialog's keys) runs at once meanwhile;
   what changes files or the program (`Plans`, `Acts`, what declares
   nothing, Undo and Redo) waits its turn in order, each with what its
-  own key found (`planning::waits`, the one place it is decided). Clicks,
-  scrolling and typing are not commands and never wait. Past
+  own key found; what ends the window (Close Window, Quit, closing its
+  last tab) never waits behind a plan that may not come back: it lets
+  the plan go, as the close button does, and goes at once
+  (`planning::turn`, the one place it is decided). Clicks, scrolling and
+  typing are not commands and never wait. Past
   `work::SHOWN_AFTER` a toast says what is being worked out, by the
   command's title, for as long as it is (`Shell::notice`: not timed, not
   kept in Earlier), with Cancel; Cancel or Escape in the window

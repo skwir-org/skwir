@@ -14,7 +14,7 @@
 //! - **One at a time; what acts waits, what shows does not.** A command
 //!   acts on what the window showed when the user asked. While a plan is
 //!   made, what changes only what the window shows runs at once (its
-//!   `Effect` says so, `waits`: `Shows`, `Reads`, `UserOnly`: the cursor,
+//!   `Effect` says so, `turn`: `Shows`, `Reads`, `UserOnly`: the cursor,
 //!   the selection, navigation, panels, a dialog's own keys), so each key
 //!   finds the screen as the user saw it and the window stays live. What
 //!   changes files or the program (`Plans`, `Acts`, Undo and Redo
@@ -22,7 +22,9 @@
 //!   comes here as that plan) waits its turn in order (`Plans::waiting`),
 //!   each with what its own key found, and runs once the plan is back and
 //!   applied: as if the plan had been made at once. What is not a
-//!   command (a click, scrolling, typing in a field) never waits.
+//!   command (a click, scrolling, typing in a field) never waits, nor
+//!   what ends the window (Close Window, Quit, closing its last tab):
+//!   that lets the plan go, as the close button does, and goes at once.
 //! - **Back on the window's thread**, it is the user's plan as before:
 //!   `making`, `finishing::ran`, `apply_user_plan` for the pane it was
 //!   asked from; an error said, a paste wanting the system's clipboard
@@ -44,7 +46,7 @@ use serde_json::json;
 use skwir_core::CancelToken;
 use skwir_core::app::{Asked, as_asked};
 use skwir_core::command::{Effect, Invocation, Outcome};
-use skwir_core::workspace::PaneId;
+use skwir_core::workspace::{PaneId, WindowId};
 
 use super::{Making, Shell, Shown};
 use crate::toast::{Action, Toast, Tone};
@@ -66,7 +68,7 @@ struct Made {
     /// The toast saying it is worked out, by its generation, once shown.
     noticed: Option<u64>,
     /// What shows that toast once `work::SHOWN_AFTER` is up.
-    _notice: gpui::Task<()>,
+    notice: Option<gpui::Task<()>>,
 }
 
 /// A command the window ran while a plan was made: run in its turn.
@@ -85,10 +87,41 @@ impl Plans {
 
     /// The window goes: the plan being made is let go, and what waited.
     pub(crate) fn cancel(&mut self) {
-        if let Some(made) = self.making.take() {
-            made.cancel.cancel();
-        }
+        self.end(None);
         self.waiting.clear();
+    }
+
+    /// A plan begins to be made, cancelled by `cancel`: its id.
+    fn begin(&mut self, cancel: CancelToken) -> u64 {
+        self.made += 1;
+        self.making = Some(Made {
+            id: self.made,
+            cancel,
+            noticed: None,
+            notice: None,
+        });
+        self.made
+    }
+
+    /// The plan being made stops being made, its token cancelled: the one
+    /// `id` names (its answer came), or whichever (let go of). `None`
+    /// when it is not that plan: an answer to one let go of is forgotten.
+    fn end(&mut self, id: Option<u64>) -> Option<Made> {
+        let mut made = self
+            .making
+            .take_if(|made| id.is_none_or(|id| made.id == id))?;
+        made.cancel.cancel();
+        // Its toast, not shown yet, never will be.
+        drop(made.notice.take());
+        Some(made)
+    }
+
+    /// What waited, next in its turn: none while a plan is made.
+    fn next(&mut self) -> Option<Waiting> {
+        if self.making() {
+            return None;
+        }
+        self.waiting.pop_front()
     }
 }
 
@@ -99,15 +132,43 @@ pub(super) fn plans(app: &skwir_core::App, name: &str) -> bool {
         .is_some_and(|spec| spec.effect == Effect::Plans)
 }
 
-/// Whether `name` waits its turn behind a plan being made: what changes
-/// files or the program (`Plans`, `Acts`, one that declares nothing, and
-/// Undo and Redo whatever they declare) does; what changes only what the
-/// window shows (`Shows`, `Reads`, `UserOnly`) runs at once. The one
-/// place the window decides it.
-pub(super) fn waits(app: &skwir_core::App, name: &str) -> bool {
+/// What a command does behind a plan being made (`turn`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Turn {
+    /// It only shows: it runs at once.
+    Now,
+    /// It acts: it waits its turn.
+    Waits,
+    /// It ends the window: the plan is let go, and it goes at once.
+    EndsWindow,
+}
+
+/// What `name` with `args`, asked in `window`, does behind a plan being
+/// made: the one place the window decides it. What ends the window (Close
+/// Window, Quit, a `tab.close` of its last tab) never waits behind a plan
+/// that may never come back: it lets it go, as the close button does
+/// (`Shell::leave`). What changes files or the program (`Plans`, `Acts`,
+/// one that declares nothing, and Undo and Redo whatever they declare)
+/// waits; what changes only what the window shows (`Shows`, `Reads`,
+/// `UserOnly`) runs at once.
+pub(super) fn turn(
+    app: &skwir_core::App,
+    window: WindowId,
+    name: &str,
+    args: &serde_json::Value,
+) -> Turn {
+    if matches!(name, "ui.close_window" | "ui.quit")
+        || (name == "tab.close" && super::closes_last_window(app, window, args))
+    {
+        return Turn::EndsWindow;
+    }
     match app.commands.get(name).map(|spec| spec.effect) {
-        Some(Effect::Shows | Effect::Reads | Effect::UserOnly) => matches!(name, "undo" | "redo"),
-        Some(Effect::Plans | Effect::Acts) | None => true,
+        Some(Effect::Shows | Effect::Reads | Effect::UserOnly)
+            if !matches!(name, "undo" | "redo") =>
+        {
+            Turn::Now
+        }
+        _ => Turn::Waits,
     }
 }
 
@@ -149,8 +210,7 @@ impl Shell {
             .commands
             .get(&inv.name)
             .map_or_else(|| inv.name.to_string(), |spec| spec.title.clone());
-        self.plans.made += 1;
-        let id = self.plans.made;
+        let id = self.plans.begin(cancel.clone());
         let notice = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(crate::work::SHOWN_AFTER)
@@ -177,12 +237,9 @@ impl Shell {
                 }
             });
         });
-        self.plans.making = Some(Made {
-            id,
-            cancel: cancel.clone(),
-            noticed: None,
-            _notice: notice,
-        });
+        if let Some(made) = self.plans.making.as_mut() {
+            made.notice = Some(notice);
+        }
         let app = std::sync::Arc::clone(&self.app);
         let asked_of = inv.clone();
         self.off_thread_until(
@@ -202,14 +259,9 @@ impl Shell {
     /// The plan being made stops being made: its toast taken away while it
     /// is the one shown. Whether it was plan `id` (any, when `None`).
     fn stop_making(&mut self, id: Option<u64>, cx: &mut Context<Self>) -> bool {
-        let Some(made) = self
-            .plans
-            .making
-            .take_if(|made| id.is_none_or(|id| made.id == id))
-        else {
+        let Some(made) = self.plans.end(id) else {
             return false;
         };
-        made.cancel.cancel();
         if made.noticed == Some(self.toast_shown()) {
             self.dismiss_toast(cx);
         }
@@ -226,11 +278,16 @@ impl Shell {
         cx.notify();
     }
 
+    /// What ends the window goes at once behind a plan being made: the
+    /// plan is let go, and what waited with it, as the close button does.
+    pub(super) fn let_plans_go(&mut self, cx: &mut Context<Self>) {
+        self.stop_making(None, cx);
+        self.plans.waiting.clear();
+    }
+
     /// What waited, in order, until the next plan to be made.
     fn run_waiting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while !self.plans.making()
-            && let Some(waiting) = self.plans.waiting.pop_front()
-        {
+        while let Some(waiting) = self.plans.next() {
             let Waiting { name, args, asked } = waiting;
             if plans(&self.app, &name) {
                 self.carry_out_asked(&name, args, Some(asked), window, cx);
@@ -299,7 +356,9 @@ mod tests {
     use skwir_core::location::Location;
     use skwir_core::workspace::PaneId;
 
-    use super::waits;
+    use skwir_core::CancelToken;
+
+    use super::{Plans, Turn, Waiting, turn};
 
     fn select(app: &App, pane: PaneId, names: &[&str]) {
         let mut ws = app.workspace.write();
@@ -348,11 +407,13 @@ mod tests {
         assert!(app.pump_until_complete(pane, Duration::from_secs(30)));
 
         // Which side each is on, by what it declares.
+        let window = app.workspace.read().active_window_id();
+        let side = |name: &str| turn(&app, window, name, &json!({}));
         for shows in ["select_all", "ui.cursor", "navigate", "ui.plan_cancel"] {
-            assert!(!waits(&app, shows), "{shows} runs at once");
+            assert_eq!(side(shows), Turn::Now, "{shows} runs at once");
         }
         for acts in ["trash", "delete", "undo", "redo", "ui.ask"] {
-            assert!(waits(&app, acts), "{acts} waits its turn");
+            assert_eq!(side(acts), Turn::Waits, "{acts} waits its turn");
         }
 
         // A plan is made of one file, asked at its key.
@@ -376,5 +437,61 @@ mod tests {
         for name in ["one's.txt", "two.txt", "three.txt"] {
             assert!(said.contains(name), "{name}: {said}");
         }
+    }
+
+    /// What ends the window never waits behind a plan that may never come
+    /// back (a server that hangs): Close Window, Quit, and closing the
+    /// last tab of the last window let it go and go at once; closing a
+    /// tab that leaves another only shows, and runs at once.
+    #[test]
+    fn what_ends_the_window_never_waits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        crate::commands::declare_all(&app);
+        let window = app.workspace.read().active_window_id();
+        let side = |name: &str| turn(&app, window, name, &json!({}));
+        for ends in ["ui.close_window", "ui.quit", "tab.close"] {
+            assert_eq!(side(ends), Turn::EndsWindow, "{ends}");
+        }
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(tmp.path()))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(30)));
+        app.dispatch(&Invocation::new("tab.new")).unwrap();
+        assert_eq!(side("tab.close"), Turn::Now, "another tab is left");
+        assert_eq!(side("ui.close_window"), Turn::EndsWindow);
+    }
+
+    /// Cancel, or Escape, lets the plan being made go: its token is
+    /// cancelled, what waited for it runs on, and its answer, when it comes
+    /// later, is forgotten; the next plan's answer is its own. (The worker
+    /// and the window's answer to it, `off_thread_until`, need a window:
+    /// what they hand back is taken by `stop_making`, held here.)
+    #[test]
+    fn a_plan_let_go_forgets_its_answer_and_what_waited_runs_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        let mut plans = Plans::default();
+        let token = CancelToken::new();
+        let first = plans.begin(token.clone());
+        assert!(plans.making());
+        plans.waiting.push_back(Waiting {
+            name: "delete".to_owned(),
+            args: json!({}),
+            asked: app.asked(None),
+        });
+        assert!(plans.next().is_none(), "it waits while the plan is made");
+        // Cancel.
+        assert!(plans.end(None).is_some());
+        assert!(token.is_cancelled());
+        assert!(!plans.making());
+        assert_eq!(plans.next().map(|w| w.name).as_deref(), Some("delete"));
+        // The answer of the plan let go comes: it is no one's.
+        assert!(plans.end(Some(first)).is_none());
+        // A plan made after it takes its own answer, never the old one.
+        let second = plans.begin(CancelToken::new());
+        assert!(plans.end(Some(first)).is_none());
+        assert!(plans.making());
+        assert!(plans.end(Some(second)).is_some());
     }
 }

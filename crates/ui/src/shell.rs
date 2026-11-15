@@ -2964,10 +2964,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // What acts waits its turn behind a plan being made; what shows
-        // runs at once (`planning::waits`).
-        if self.plans.making() && planning::waits(&self.app, name) {
-            return self.wait_turn(name, args, asked);
+        // Behind a plan being made, what acts waits its turn, what shows
+        // runs at once, and what ends the window lets the plan go, as its
+        // close button does, and goes at once (`planning::turn`).
+        if self.plans.making() {
+            match planning::turn(&self.app, self.window_id, name, &args) {
+                planning::Turn::Waits => return self.wait_turn(name, args, asked),
+                planning::Turn::EndsWindow => self.let_plans_go(cx),
+                planning::Turn::Now => {}
+            }
         }
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
@@ -3213,17 +3218,7 @@ impl Shell {
     /// Whether `tab.close` with `args` closes the last tab of the last
     /// window: the tab named, else this window's shown one.
     fn closes_last_window(&self, args: &serde_json::Value) -> bool {
-        let ws = self.app.workspace.read();
-        if ws.windows().len() != 1 {
-            return false;
-        }
-        let tab = match args.get("tab").filter(|tab| !tab.is_null()) {
-            Some(tab) => serde_json::from_value::<skwir_core::workspace::TabId>(tab.clone()).ok(),
-            None => ws.window(self.window_id).map(|w| w.shown().id),
-        };
-        tab.and_then(|tab| ws.window_of_tab(tab))
-            .and_then(|w| ws.window(w))
-            .is_some_and(|w| w.tabs().len() == 1)
+        closes_last_window(&self.app, self.window_id, args)
     }
 
     /// Quit's windows: every one goes, this one first, none forgotten by
@@ -5238,6 +5233,26 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) -> u64 {
         colors: crate::desktop_style::revision(),
     };
     crate::settings::show_resolved(app, shown)
+}
+
+/// Whether `tab.close` with `args`, asked in `window`, closes the last tab
+/// of the last window: the tab named, else that window's shown one.
+fn closes_last_window(
+    app: &App,
+    window: skwir_core::workspace::WindowId,
+    args: &serde_json::Value,
+) -> bool {
+    let ws = app.workspace.read();
+    if ws.windows().len() != 1 {
+        return false;
+    }
+    let tab = match args.get("tab").filter(|tab| !tab.is_null()) {
+        Some(tab) => serde_json::from_value::<skwir_core::workspace::TabId>(tab.clone()).ok(),
+        None => ws.window(window).map(|w| w.shown().id),
+    };
+    tab.and_then(|tab| ws.window_of_tab(tab))
+        .and_then(|w| ws.window(w))
+        .is_some_and(|w| w.tabs().len() == 1)
 }
 
 /// Whether the keyboard is in a toolbar popup (its rows'), whose own keys
