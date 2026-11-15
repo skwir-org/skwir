@@ -85,6 +85,10 @@ pub struct Selection {
     /// Stamped as `revision` is, but only when a selection is chosen: see
     /// [`Selection::chosen`].
     chosen: u64,
+    /// The neighbour `retain_near` selected in place of a selection it
+    /// emptied, while no one chose since: what is put back of that
+    /// selection takes its place again (`put_back`).
+    stand_in: Option<EntryId>,
 }
 
 /// A range held while the cursor moves (yazi's visual mode): what lies
@@ -130,6 +134,7 @@ impl Selection {
     fn touch(&mut self) {
         self.followed();
         self.chosen = self.revision;
+        self.stand_in = None;
     }
 
     /// The items changed by following what they are (a rename, an entry
@@ -473,6 +478,7 @@ impl Selection {
         }
         self.anchor = self.anchor.map(now);
         self.cursor = self.cursor.map(now);
+        self.stand_in = self.stand_in.map(now);
         if let Some(sweep) = &mut self.sweep {
             sweep.from = now(sweep.from);
             sweep.base = sweep.base.iter().map(|id| now(*id)).collect();
@@ -497,6 +503,9 @@ impl Selection {
         }
         if self.cursor.is_some_and(|c| !holds(c)) {
             self.cursor = self.items.last().copied();
+        }
+        if self.stand_in.is_some_and(|s| !holds(s)) {
+            self.stand_in = None;
         }
         if let Some(sweep) = &mut self.sweep {
             if holds(sweep.from) {
@@ -552,7 +561,34 @@ impl Selection {
             self.followed();
             self.items.insert(near);
             self.anchor = Some(near);
+            self.stand_in = Some(near);
         }
+    }
+
+    /// Put `back` what following its entries took out of the selection (a
+    /// rename to a hidden name, shown again), where no one chose since: the
+    /// neighbour `retain_near` selected in its place goes, and the cursor
+    /// goes to the first put back. Still no choice (`chosen` stays): the
+    /// selection is the one the user had, its entries followed.
+    pub fn put_back(&mut self, back: &[EntryId]) {
+        let Some(&first) = back.first() else { return };
+        self.followed();
+        self.sweep = None;
+        if let Some(stand_in) = self.stand_in.take()
+            && self.items.len() == 1
+            && self.items.contains(&stand_in)
+        {
+            self.items.clear();
+        }
+        self.items.extend(back.iter().copied());
+        if self
+            .anchor
+            .is_none_or(|anchor| !self.items.contains(&anchor))
+        {
+            self.anchor = Some(first);
+        }
+        self.cursor = Some(first);
+        self.picked = self.items.len() > 1;
     }
 }
 
@@ -3552,13 +3588,15 @@ impl Pane {
 
     /// Show entries the user just renamed (`ids`, under the names they
     /// have now), once the pane followed them (`follow_renamed`): a hidden
-    /// name the rename gave turns hidden files on, as
-    /// for what is made (`select_revealed`), and those the rename took out
-    /// of the selection are selected again, where it holds nothing but
-    /// what was renamed; those the filter or a folded group leaves out stay
-    /// out, never selected unseen. The window says what was turned on and
-    /// what is still not shown, and brings the rest into view.
-    pub fn show_renamed(&mut self, ids: &[EntryId]) -> ShownRenamed {
+    /// name the rename gave turns hidden files on, as for what is made
+    /// (`select_revealed`), and where no one chose another selection since
+    /// the plan was asked (`asked`, `Selection::chosen` then), those the
+    /// rename took out of the selection are put back in it, the neighbour
+    /// selected in their place let go (`Selection::put_back`); those the
+    /// filter or a folded group leaves out stay out, never selected unseen.
+    /// The window says what was turned on and what is still not shown, and
+    /// brings the rest into view.
+    pub fn show_renamed(&mut self, ids: &[EntryId], asked: Option<u64>) -> ShownRenamed {
         let hidden: Vec<EntryId> = ids
             .iter()
             .copied()
@@ -3567,18 +3605,19 @@ impl Pane {
         let unhid = (!self.sort.show_hidden && !hidden.is_empty()).then(|| hidden[0]);
         if unhid.is_some() {
             self.set_show_hidden(true);
-            let renamed: crate::hashing::Set<EntryId> = ids.iter().copied().collect();
-            if self.selection.iter().all(|id| renamed.contains(&id)) {
-                let back: Vec<EntryId> = hidden
-                    .into_iter()
-                    .filter(|id| !self.selection.contains(*id) && self.is_shown(*id))
-                    .collect();
-                if !back.is_empty() {
-                    self.selection.change(&back, &[]);
-                }
+            if asked == Some(self.selection.chosen()) {
+                let back: Vec<EntryId> = {
+                    let holds = self.shown_test();
+                    hidden
+                        .into_iter()
+                        .filter(|id| !self.selection.contains(*id) && holds(*id))
+                        .collect()
+                };
+                self.selection.put_back(&back);
             }
         }
-        let (shown, left_out) = ids.iter().copied().partition(|id| self.is_shown(*id));
+        let holds = self.shown_test();
+        let (shown, left_out) = ids.iter().copied().partition(|id| holds(*id));
         ShownRenamed {
             unhid,
             shown,
@@ -3959,15 +3998,22 @@ impl Pane {
     /// opened in place, not hidden (a dot file, a companion) and kept by
     /// the filter and the narrowing. What a command selects must be.
     pub fn is_shown(&self, id: EntryId) -> bool {
-        shows(
+        self.shown_test()(id)
+    }
+
+    /// [`Pane::is_shown`] made once, for a test of many entries: what it
+    /// reads of the pane is gathered once, not for each.
+    pub fn shown_test(&self) -> impl Fn(EntryId) -> bool + '_ {
+        let listed = shows(
             &self.listing,
             &self.kept,
             &self.expanded,
             &self.lent,
             self.text_filter(),
             self.sort,
-        )(id)
-            && !self.folded_entries().contains(&id)
+        );
+        let folded = self.folded_entries();
+        move |id| listed(id) && !folded.contains(&id)
     }
 
     /// The entries a folded group holds: not shown (ADR-131, 2).
@@ -6594,9 +6640,11 @@ mod tests {
     }
 
     /// A rename to a dot name, which took the file out of sight and out of
-    /// the selection, shows hidden files and selects it again, as for what
-    /// is made; one the filter leaves out stays out, said; a selection
-    /// holding more than what was renamed is left as it is.
+    /// the selection, shows hidden files and puts it back in the selection,
+    /// the neighbour selected in its place let go, where no one chose since
+    /// (`Selection::chosen`); one the filter leaves out stays out, said. The
+    /// pane orders its entries first, as a live pane's view does, so the
+    /// selection follows as it does there (`retain_near`).
     #[test]
     fn a_rename_out_of_sight_is_shown_again_unless_filtered() {
         use crate::entry::EntryKind;
@@ -6611,35 +6659,64 @@ mod tests {
             file(1, "l'été.txt"),
             file(2, "notes .md"),
             file(3, "Œuvre.png"),
+            file(4, "zèbre.txt"),
         ]));
         p.selection.set([id(1)]);
+        let asked = p.selection.chosen();
+        p.order();
         p.listing
             .apply(ListingEvent::Updated(vec![file(1, ".l'été.txt")]));
         p.retain_shown();
-        assert!(p.selection.is_empty(), "out of sight, out of the selection");
-        let shown = p.show_renamed(&[id(1)]);
+        assert_eq!(
+            items(&p.selection),
+            [2],
+            "out of sight, its neighbour selected in its place"
+        );
+        let shown = p.show_renamed(&[id(1)], Some(asked));
         assert_eq!(shown.unhid, Some(id(1)));
         assert!(p.sort.show_hidden);
-        assert_eq!(items(&p.selection), [1]);
+        assert_eq!(items(&p.selection), [1], "put back, the neighbour let go");
+        assert_eq!(p.selection.cursor, Some(id(1)));
+        assert_eq!(p.selection.chosen(), asked, "still no one chose");
         assert_eq!((shown.shown, shown.left_out), (vec![id(1)], vec![]));
 
-        // Hidden files hidden again; the selection holds another file too.
+        // Hidden files hidden again; the selection holds another file too:
+        // it keeps it, and gets the renamed one back.
         p.set_show_hidden(false);
         p.selection.set([id(2), id(3)]);
+        let asked = p.selection.chosen();
+        p.order();
         p.listing
             .apply(ListingEvent::Updated(vec![file(3, ".Œuvre.png")]));
         p.retain_shown();
-        let shown = p.show_renamed(&[id(3)]);
+        assert_eq!(items(&p.selection), [2]);
+        let shown = p.show_renamed(&[id(3)], Some(asked));
         assert_eq!(shown.unhid, Some(id(3)));
-        assert_eq!(items(&p.selection), [2], "a selection of more is left");
+        assert_eq!(items(&p.selection), [2, 3]);
+
+        // Another selection chosen since: hidden files are shown, the
+        // selection is the one chosen.
+        p.set_show_hidden(false);
+        p.selection.set([id(4)]);
+        let asked = p.selection.chosen();
+        p.order();
+        p.listing
+            .apply(ListingEvent::Updated(vec![file(4, ".zèbre.txt")]));
+        p.retain_shown();
+        p.selection.set([id(2)]);
+        let shown = p.show_renamed(&[id(4)], Some(asked));
+        assert_eq!(shown.unhid, Some(id(4)));
+        assert_eq!(items(&p.selection), [2], "a choice since wins");
 
         // Renamed past the filter: left out, still unselected.
         p.selection.set([id(2)]);
+        let asked = p.selection.chosen();
         p.set_filter(Some("notes"), None);
+        p.order();
         p.listing
             .apply(ListingEvent::Updated(vec![file(2, "draft .md")]));
         p.retain_shown();
-        let shown = p.show_renamed(&[id(2)]);
+        let shown = p.show_renamed(&[id(2)], Some(asked));
         assert_eq!(shown.unhid, None);
         assert_eq!((shown.shown, shown.left_out), (vec![], vec![id(2)]));
         assert!(p.selection.is_empty());

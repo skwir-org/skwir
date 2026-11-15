@@ -185,10 +185,12 @@ around the views is in [shell.md](shell.md).
   and the cursor goes there (`PaneView::reveal_among`). A rename, a bulk
   rename, and their undo and redo alike: each entry is followed through
   the names it took on the way, never to a cycle's temporary one
-  (`renamed_to`). A name that hides it turns hidden files on and selects
-  it again, as for what is made; one the filter or a folded group leaves
-  out stays out, never selected unseen, and is said
-  (`Pane::show_renamed`). A selection chosen meanwhile wins.
+  (`renamed_to`). A name that hides it turns hidden files on and, where
+  no one chose since (`Selection::chosen`), puts it back in the selection
+  it left, the neighbour that stood in for it let go
+  (`Selection::put_back`); one the filter or a folded group leaves out
+  stays out, never selected unseen, and is said (`Pane::show_renamed`).
+  A selection chosen meanwhile wins.
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in

@@ -2014,7 +2014,11 @@ impl Shell {
             }
             Found::Listed(ids) => ids,
         };
-        let Some(pane) = self.reveal.as_ref().map(|reveal| reveal.pane) else {
+        let Some((pane, asked)) = self
+            .reveal
+            .as_ref()
+            .map(|reveal| (reveal.pane, reveal.selected))
+        else {
             return false;
         };
         let (shown, chosen, said) = {
@@ -2022,7 +2026,7 @@ impl Shell {
             let Some(pane) = ws.pane_mut(pane) else {
                 return false;
             };
-            let shown = pane.show_renamed(&ids);
+            let shown = pane.show_renamed(&ids, asked);
             let name = |id: &skwir_core::EntryId| {
                 pane.listing
                     .get(*id)
