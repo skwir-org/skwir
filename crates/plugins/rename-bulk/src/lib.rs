@@ -140,7 +140,7 @@ pub enum BulkRenameError {
     },
     #[error("`{item}` is not a name made of text; rename it on its own")]
     NotText { item: String },
-    #[error("several items would become `{name}`: {}", items.join(", "))]
+    #[error("several items would become `{name}`: {}", a_few(items))]
     Duplicate { name: String, items: Vec<String> },
     #[error("`{item}` would become `{name}`, which already exists")]
     Conflict { item: String, name: String },
@@ -152,6 +152,22 @@ pub enum BulkRenameError {
     /// a preview the user typed past.
     #[error("cancelled")]
     Cancelled,
+}
+
+/// The first few items, and how many more: an error said under a field
+/// or in a toast names a few, never all of a large selection.
+fn a_few(items: &[String]) -> String {
+    const NAMED: usize = 3;
+    let said = items
+        .iter()
+        .take(NAMED)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match items.len().checked_sub(NAMED) {
+        Some(more) if more > 0 => format!("{said} and {more} more"),
+        _ => said,
+    }
 }
 
 /// How many items are worked out between two looks at whether the job
@@ -1426,6 +1442,19 @@ mod tests {
             },
         );
         assert!(matches!(dup, Err(BulkRenameError::Duplicate { .. })));
+        // A clash of many names says a few and how many more, never all.
+        let many: Vec<Item> = (0..1000).map(|i| item(&format!("f{i}"))).collect();
+        let said = plan_bulk_rename(
+            &many,
+            &RenameSpec {
+                template: Some("same".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(said.ends_with(" and 997 more"), "{said}");
+        assert!(said.len() < 100, "{said}");
         let bad = plan_bulk_rename(
             &items,
             &RenameSpec {
