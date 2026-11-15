@@ -100,8 +100,14 @@ one, and every view's field holds the same component (2, 7).
    command run on a worker with the text as its field, its `says` under
    the field, its error there in the error's color, holding the answer
    back, about what the question is about (the `pane`, `entries` and
-   `in` its command was given). With `reference`, a question's field
-   has its `?` and F1. Access
+   `in` its command was given). It runs before anyone answers, at each
+   key, so it only answers: a data command (`CommandSpec::data`); any
+   other, or one unknown, is refused where `ui.ask` is dispatched (an
+   agent's, a script's) and where the question opens (a menu's). An
+   agent's question runs it as the agent's call
+   (`permissions::as_agent`), as `describe.agent` set where the agent's
+   call is dispatched says, whatever the agent wrote. With `reference`,
+   a question's field has its `?` and F1. Access
    passes both: core says a mode's words (`set_access.describe`,
    `op::access::said`, from the parser and `apply` that change the file)
    and how one is written (`op::access::reference`).
