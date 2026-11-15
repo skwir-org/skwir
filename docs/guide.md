@@ -380,7 +380,7 @@ configuration names is run, and nothing is written to it.
   replacement's (`${1}` before a letter). Choose one with `↑` `↓` then
   `Tab` or `Enter`, or a click: a placeholder or a sign is written where
   the cursor is, a recipe fills the regex and the replacement both
-  (`Ctrl+Z` in a field takes back what was written there). While nothing
+  (`Ctrl+Z` in either takes back what was written in both). While nothing
   is chosen, `Tab` still moves between fields. Where a new name sorts a
   file elsewhere, the view follows it: unless one of the renamed files
   is still in view, the first comes to the middle with the cursor on it,

@@ -69,8 +69,10 @@ one, and every view's field holds the same component (2, 7).
    written, what it means, what it gives; the keyboard staying in the
    field, its keys those of 6. A row taken writes its part where the
    caret is (`TextInput::put`) or fills the fields its recipe names, an
-   edit Ctrl+Z takes back; the `?` again puts the list away, F1 again
-   shows the keys of the place.
+   edit Ctrl+Z takes back, one edit of all the fields it filled, which
+   Ctrl+Z in any of them takes back in each and Redo puts back
+   (`TextInput::replace_all_together`); the `?` again puts the list away,
+   F1 again shows the keys of the place.
 3. **The bulk rename** asks its plugin with each preview
    (`rename_bulk.reference`, field by field): the template's placeholders
    each with what it gives the first item as the rename stands (after the

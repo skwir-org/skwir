@@ -138,13 +138,27 @@ pub struct Paint {
 /// The text and selection an edit started from.
 type Snapshot = (SharedString, Range<usize>);
 
+/// One edit made in several fields at once (`TextInput::replace_all_together`:
+/// a recipe's pattern and its replacement), which Ctrl+Z in any of them
+/// takes back in all, and Redo puts back in all: known by its id in each
+/// field's history, with the other fields it was made in.
+#[derive(Clone)]
+struct Together {
+    id: u64,
+    with: Vec<gpui::WeakEntity<TextInput>>,
+}
+
+/// A step of a field's history: the text and selection it goes back to,
+/// and the edit of several fields it is part of, if it is.
+type Step = (Snapshot, Option<Together>);
+
 /// What Ctrl+Z and Ctrl+Shift+Z walk through. A run of characters typed
 /// one after the other is one step, as in any text field; anything else
 /// (a deletion, a paste, a composition, typing somewhere else) starts one.
 #[derive(Default)]
 struct History {
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
     /// Where the last typed character ended, while typing continues there.
     typed_end: Option<usize>,
 }
@@ -160,27 +174,59 @@ impl History {
             .as_ref()
             .is_some_and(|t| self.typed_end == Some(t.start));
         if !continues {
-            if self.undo.len() == Self::DEPTH {
-                self.undo.remove(0);
-            }
-            self.undo.push(before);
+            self.push(before, None);
         }
         self.redo.clear();
         self.typed_end = typed.map(|t| t.end);
     }
 
-    fn undo(&mut self, current: Snapshot) -> Option<Snapshot> {
-        let previous = self.undo.pop()?;
-        self.redo.push(current);
+    /// Before an edit of `before` made in other fields too (`together`):
+    /// a step of its own, never joined to what is typed after it.
+    fn record_together(&mut self, before: Snapshot, together: Together) {
+        self.push(before, Some(together));
+        self.redo.clear();
         self.typed_end = None;
-        Some(previous)
     }
 
-    fn redo(&mut self, current: Snapshot) -> Option<Snapshot> {
-        let next = self.redo.pop()?;
-        self.undo.push(current);
+    fn push(&mut self, before: Snapshot, together: Option<Together>) {
+        if self.undo.len() == Self::DEPTH {
+            self.undo.remove(0);
+        }
+        self.undo.push((before, together));
+    }
+
+    /// The last step taken back, `current` kept for Redo, and the edit of
+    /// several fields it was part of.
+    fn undo(&mut self, current: Snapshot) -> Option<Step> {
+        let (previous, together) = self.undo.pop()?;
+        self.redo.push((current, together.clone()));
         self.typed_end = None;
-        Some(next)
+        Some((previous, together))
+    }
+
+    fn redo(&mut self, current: Snapshot) -> Option<Step> {
+        let (next, together) = self.redo.pop()?;
+        self.undo.push((current, together.clone()));
+        self.typed_end = None;
+        Some((next, together))
+    }
+
+    /// [`History::undo`] where the last step is the edit `id` made in
+    /// several fields, taken back in another of them; nothing where this
+    /// field was edited since (its own edit is never taken back for it).
+    fn undo_together(&mut self, id: u64, current: Snapshot) -> Option<Snapshot> {
+        self.undo
+            .last()
+            .is_some_and(|(_, together)| together.as_ref().is_some_and(|t| t.id == id))
+            .then(|| self.undo(current).map(|(previous, _)| previous))?
+    }
+
+    /// [`History::redo`] alike, for the edit `id` put back elsewhere.
+    fn redo_together(&mut self, id: u64, current: Snapshot) -> Option<Snapshot> {
+        self.redo
+            .last()
+            .is_some_and(|(_, together)| together.as_ref().is_some_and(|t| t.id == id))
+            .then(|| self.redo(current).map(|(next, _)| next))?
     }
 
     fn clear(&mut self) {
@@ -406,10 +452,44 @@ impl TextInput {
     /// takes it back (a completion taken). Held to [`MOST_CHARS`], as
     /// what is typed is.
     pub fn replace_all(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.replace_all_as(text, None, cx);
+    }
+
+    /// Write each text whole in its field, as one edit of them all: Ctrl+Z
+    /// in any of them takes it back in each where it is still the last
+    /// edit, and Redo puts it back alike (a recipe's pattern and its
+    /// replacement, ADR-137). A form that fills several fields at once
+    /// fills them so.
+    pub fn replace_all_together(fields: &[(Entity<TextInput>, &str)], cx: &mut App) {
+        static EDITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        if let [(field, text)] = fields {
+            field.update(cx, |field, cx| field.replace_all(text, cx));
+            return;
+        }
+        let id = EDITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for (at, (field, text)) in fields.iter().enumerate() {
+            let with = fields
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != at)
+                .map(|(_, (other, _))| other.downgrade())
+                .collect();
+            field.update(cx, |field, cx| {
+                field.replace_all_as(text, Some(Together { id, with }), cx);
+            });
+        }
+    }
+
+    /// [`TextInput::replace_all`], as part of the edit `together` when it
+    /// is one of several fields'.
+    fn replace_all_as(&mut self, text: &str, together: Option<Together>, cx: &mut Context<Self>) {
         let text = fitted("", &(0..0), text);
         if !self.masked {
             let before = (self.content.clone(), self.selected_range.clone());
-            self.history.record(before, None);
+            match together {
+                Some(together) => self.history.record_together(before, together),
+                None => self.history.record(before, None),
+            }
         }
         self.content = text.to_owned().into();
         self.styles.clear();
@@ -614,15 +694,43 @@ impl TextInput {
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
         let current = (self.content.clone(), self.selected_range.clone());
-        if let Some(previous) = self.history.undo(current) {
-            self.restore(previous, cx);
+        let Some((previous, together)) = self.history.undo(current) else {
+            return;
+        };
+        self.restore(previous, cx);
+        // An edit of several fields is taken back in each.
+        for other in together
+            .iter()
+            .flat_map(|t| t.with.iter().map(move |w| (t.id, w)))
+        {
+            let (id, other) = other;
+            let _ = other.update(cx, |other, cx| {
+                let current = (other.content.clone(), other.selected_range.clone());
+                if let Some(previous) = other.history.undo_together(id, current) {
+                    other.restore(previous, cx);
+                }
+            });
         }
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
         let current = (self.content.clone(), self.selected_range.clone());
-        if let Some(next) = self.history.redo(current) {
-            self.restore(next, cx);
+        let Some((next, together)) = self.history.redo(current) else {
+            return;
+        };
+        self.restore(next, cx);
+        // And put back in each.
+        for other in together
+            .iter()
+            .flat_map(|t| t.with.iter().map(move |w| (t.id, w)))
+        {
+            let (id, other) = other;
+            let _ = other.update(cx, |other, cx| {
+                let current = (other.content.clone(), other.selected_range.clone());
+                if let Some(next) = other.history.redo_together(id, current) {
+                    other.restore(next, cx);
+                }
+            });
         }
     }
 
@@ -1526,8 +1634,8 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 #[cfg(test)]
 mod tests {
     use super::{
-        History, MOST_CHARS, autoscroll_x, changes_nothing, fitted, held, scrolled, selected_runs,
-        snapped, typed_at, unit_at, units, utf16_to_utf8,
+        History, MOST_CHARS, Snapshot, Together, autoscroll_x, changes_nothing, fitted, held,
+        scrolled, selected_runs, snapped, typed_at, unit_at, units, utf16_to_utf8,
     };
 
     /// A field takes what fits of a paste, whole characters, and all of
@@ -1708,7 +1816,9 @@ mod tests {
         history.record(snap("ab "), typed_at(&(3..3), "c"));
         history.record(snap("ab c"), typed_at(&(3..4), ""));
         let undo = |history: &mut History, now: &str| {
-            history.undo(snap(now)).map(|(text, _)| text.to_string())
+            history
+                .undo(snap(now))
+                .map(|((text, _), _)| text.to_string())
         };
         assert_eq!(undo(&mut history, "ab ").as_deref(), Some("ab c"));
         assert_eq!(undo(&mut history, "ab c").as_deref(), Some("ab "));
@@ -1718,13 +1828,60 @@ mod tests {
         assert_eq!(
             history
                 .redo(snap(""))
-                .map(|(text, _)| text.to_string())
+                .map(|((text, _), _)| text.to_string())
                 .as_deref(),
             Some("ab")
         );
         // A new edit forgets what could be redone.
         history.record(snap("ab"), typed_at(&(2..2), "x"));
-        assert_eq!(history.redo(snap("abx")), None);
+        assert!(history.redo(snap("abx")).is_none());
+    }
+
+    /// An edit of several fields at once (a recipe's pattern and its
+    /// replacement) is a step of each field's history, known by its id:
+    /// taken back in one, it is taken back in the other where it is still
+    /// the last edit, and put back alike; an edit typed after it in a field
+    /// is that field's own, never taken back for the other.
+    #[test]
+    fn an_edit_of_several_fields_is_one_step_of_each() {
+        let snap = |text: &str| -> Snapshot { (text.to_owned().into(), text.len()..text.len()) };
+        let text = |step: Option<Snapshot>| step.map(|(text, _)| text.to_string());
+        let together = |id| Together {
+            id,
+            with: Vec::new(),
+        };
+        let (mut regex, mut replacement) = (History::default(), History::default());
+        regex.record(snap(""), typed_at(&(0..0), "x"));
+        regex.record_together(snap("x"), together(7));
+        replacement.record_together(snap("old"), together(7));
+        // Ctrl+Z in the regex: its step says the edit, which the
+        // replacement takes back too.
+        let (back, said) = regex.undo(snap(r"\s+")).unwrap();
+        assert_eq!(back.0.as_ref(), "x");
+        assert_eq!(said.map(|t| t.id), Some(7));
+        assert_eq!(
+            text(replacement.undo_together(7, snap("_"))).as_deref(),
+            Some("old")
+        );
+        // Redo in the replacement puts both back.
+        let (again, said) = replacement.redo(snap("old")).unwrap();
+        assert_eq!(again.0.as_ref(), "_");
+        assert_eq!(said.map(|t| t.id), Some(7));
+        assert_eq!(
+            text(regex.redo_together(7, snap("x"))).as_deref(),
+            Some(r"\s+")
+        );
+        // Typed on after it, the replacement's last step is its own: the
+        // edit taken back in the regex leaves it.
+        replacement.record(snap("_"), typed_at(&(1..1), "y"));
+        assert!(regex.undo(snap(r"\s+")).is_some());
+        assert!(replacement.undo_together(7, snap("_y")).is_none());
+        assert!(regex.redo_together(8, snap("x")).is_none(), "another edit");
+        // Typing after the edit starts a step of its own.
+        let mut field = History::default();
+        field.record_together(snap(""), together(9));
+        field.record(snap("ab"), typed_at(&(2..2), "c"));
+        assert_eq!(field.undo.len(), 2);
     }
 
     #[test]

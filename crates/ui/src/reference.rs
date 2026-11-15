@@ -28,7 +28,8 @@
 //!   and caret before it closes anything. A press on a row takes it. A
 //!   row taken writes its part where the caret is (`TextInput::put`), in
 //!   place of the part typed, or fills the fields its recipe names
-//!   (`replace_all`): an edit Ctrl+Z takes back. F1 again shows the keys
+//!   (`replace_all_together`): an edit Ctrl+Z takes back, in every field
+//!   it filled from any of them. F1 again shows the keys
 //!   of the place. A screen reader hears a combobox (`modal::options`).
 //! - The field's frame answers these commands itself (`with_help`): they
 //!   come from the field, so the view holding it (`Helps`) is the one
@@ -494,11 +495,14 @@ fn take<V: Helps>(
             input.put(part, cx);
         });
     }
-    for (named, text) in &item.fills {
-        if let Some(filled) = this.field_of(field, named) {
-            filled.update(cx, |filled, cx| filled.replace_all(text, cx));
-        }
-    }
+    // The fields a recipe names, filled as one edit: Ctrl+Z in any takes
+    // it back in all.
+    let filled: Vec<(Entity<TextInput>, &str)> = item
+        .fills
+        .iter()
+        .filter_map(|(named, text)| Some((this.field_of(field, named)?, text.as_str())))
+        .collect();
+    TextInput::replace_all_together(&filled, cx);
     cx.notify();
 }
 
