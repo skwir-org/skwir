@@ -87,6 +87,9 @@ pub struct ColumnsView {
     land: Option<Location>,
     /// The columns scrolled sideways.
     row: ScrollHandle,
+    /// Where the row kept as the pane's column changed height was put
+    /// (`elements::kept`).
+    kept: crate::elements::kept::Memory,
     /// Another folder is shown: the strip goes to its end, where it is.
     to_end: Rc<Cell<bool>>,
     /// The last column's rows as last drawn: its entries, and what arrives
@@ -826,6 +829,8 @@ impl PaneView for ColumnsView {
             ));
         }
         let count = shell.ui().list.sorted.len();
+        // The last column's rows as the last frame drew them.
+        let drawn = self.last_rows.clone();
         // What arrives in the folder shown, among its rows (ADR-135): where
         // the pane placed it, with no heading, which no column draws. Made
         // again only once the pane's rows were.
@@ -863,6 +868,34 @@ impl PaneView for ColumnsView {
                 let height = row_height(shell.row_zoom, files_scale(&theme));
                 crate::views::list::reveal_rows(at, height, 0., self.scroll.clone(), then)
             });
+        // What keeps its place as the column changes height: the cursor's
+        // row, then those selected among the rows it drew, asked only then.
+        let kept = {
+            let order = std::sync::Arc::clone(&shell.ui().list.sorted);
+            let now = rows.clone();
+            let scroll = self.scroll.clone();
+            let height = row_height(shell.row_zoom, files_scale(&theme));
+            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+                this.with_pane(pane, |this| {
+                    let list = &this.ui().list;
+                    crate::views::kept_rows(
+                        this,
+                        (&drawn, &order),
+                        &scroll,
+                        height,
+                        &now,
+                        |_, id| list.index_of(id),
+                    )
+                })
+                .unwrap_or_default()
+            });
+            crate::elements::kept::rows(
+                self.scroll.clone(),
+                self.kept.clone(),
+                (rows.len(), height, 0.),
+                move |window, cx| keep((), window, cx),
+            )
+        };
         let last = uniform_list(
             "column-last",
             rows.len(),
@@ -918,7 +951,8 @@ impl PaneView for ColumnsView {
             .flex_none()
             .border_r_1()
             .border_color(theme.border)
-            // Before the list: it scrolls as this asks, in this frame.
+            // Before the list: it scrolls as these ask, in this frame.
+            .child(kept)
             .children(reveal)
             .child(last)
             .child(

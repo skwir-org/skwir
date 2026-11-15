@@ -15,6 +15,7 @@ pub mod edge;
 pub mod frame;
 pub mod ground;
 pub mod halo;
+pub mod kept;
 pub mod map;
 pub mod marquee;
 pub mod model;

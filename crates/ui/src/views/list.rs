@@ -509,6 +509,9 @@ pub struct ListView {
     /// What a rename moved, brought into view as it draws
     /// (`PaneView::reveal_among`).
     among: Option<crate::view::Among>,
+    /// Where the row kept as the list changed height was put
+    /// (`elements::kept`).
+    kept: crate::elements::kept::Memory,
 }
 
 /// A scroll asked of the list by position (`ListView::asked`).
@@ -535,6 +538,7 @@ impl Default for ListView {
             folds_at: None,
             asked: None,
             among: None,
+            kept: crate::elements::kept::Memory::default(),
         }
     }
 }
@@ -1586,6 +1590,35 @@ impl PaneView for ListView {
                 let at: Vec<usize> = ixs.iter().map(|ix| rows.row_of(*ix)).collect();
                 reveal_rows(at, height, pinned, self.scroll.clone(), then)
             });
+        // What keeps its place as the list changes height: the cursor's
+        // row, then those selected among the rows it drew, asked only then.
+        let kept = {
+            let drawn = self.drawn.clone();
+            let order = std::sync::Arc::clone(&self.drawn_order);
+            let now = rows.clone();
+            let scroll = self.scroll.clone();
+            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+                this.with_pane(pane, |this| {
+                    let list = &this.ui().list;
+                    crate::views::kept_rows(
+                        this,
+                        (&drawn, &order),
+                        &scroll,
+                        height,
+                        &now,
+                        |_, id| list.index_of(id),
+                    )
+                })
+                .unwrap_or_default()
+            });
+            let pinned = if rows.grouped() { height } else { 0. };
+            crate::elements::kept::rows(
+                self.scroll.clone(),
+                self.kept.clone(),
+                (count, height, pinned),
+                move |window, cx| keep((), window, cx),
+            )
+        };
         self.drawn = rows.clone();
         self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let drawn = rows.clone();
@@ -1646,7 +1679,8 @@ impl PaneView for ListView {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    // Before the list: it scrolls as this asks, in this frame.
+                    // Before the list: it scrolls as these ask, in this frame.
+                    .child(kept)
                     .children(reveal)
                     .child(list)
                     .child(marquee)

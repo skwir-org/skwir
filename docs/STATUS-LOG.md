@@ -18303,3 +18303,48 @@ one by one.
   each step, `tools/gpui/check.py gpui` (142) for the gpui patches. Not
   run: release-check, bench-check, the whole `just test-windows`, a
   real Windows or Mac.
+
+## 2026-11-15: What the keys are on keeps its place as a view changes size
+
+The user found the selected files leaving the view as the split opened
+or closed, and chose to keep them in view, for every view and every
+change of size.
+
+- **Seen first** (Xvfb, 400 files): the grid kept its top row as the
+  split narrowed its six columns to three, which pushed the file
+  selected on the fourth row to the eighth, out of view; the list beside
+  lost nothing, the list split one above the other lost a row selected
+  in its lower half. Closing kept the cursor in view, a wider grid
+  pulling its rows up.
+- **The rule** (`elements::kept`, views.md "Scrolling"): the cursor, or
+  the first entry selected in view, stays as far down the view as it
+  was (its middle at the same share of the view), wholly in view; a view
+  scrolled away from both keeps its top. Where it had to move to be
+  wholly in view, how far it was meant to be is remembered while the
+  view stays where it was put (`kept::Memory`): without it, a board's
+  column pulled in from the edge came back 20 px off.
+- **Where**: the grid's element, in its prepaint, from the lines of the
+  last frame and its viewport (`Slots::offset_keeping`, `GridLayout`'s
+  `viewport` and `shown`); before a `uniform_list` a canvas
+  (`kept::rows`): the list and the tree, the columns' own column, each of
+  a board's columns; a board's row of columns (`kept::across`). What is
+  kept is asked only on a frame whose size changed (`cx.processor`),
+  among what the last frame drew (`views::kept`, `views::kept_rows`), so
+  nothing is read per frame. The board's index of its cards is shared
+  for it (`Rc`), made only when asked. The grid's anchor for a reflow
+  now reads the offset before it is clamped to the new content.
+- **Tests**: `elements::kept` (a share kept, only what is wholly in view,
+  kept wholly in view, the memory), the grid's
+  `a_grid_changing_size_keeps_the_first_kept_tile_in_view_where_it_was`;
+  the UI suite, 726 passed.
+- **In a window** (Xvfb :89): the grid split side by side, file-045 on
+  its row, closed, the view as before; split one above the other with it
+  on the lowest whole row, wholly in view, closed, as before; scrolled
+  away from it, the top row kept; the list split one above the other, the
+  row selected near the bottom kept; the columns view at its folder's end,
+  the same; the board, f4-11 in its fourth column: split side by side,
+  the row of columns scrolled to keep that column whole, closed, back
+  flush to the left; split one above the other, its card kept.
+- Not checked: a window resized by dragging its edge, the preview and
+  terminal panels (the same code: a size changed), a grid grouped under
+  pinned headings, Wayland.

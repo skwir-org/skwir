@@ -19,6 +19,7 @@ use crate::sizes::TextSizes;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
@@ -88,15 +89,21 @@ pub struct BoardView {
     /// were those drawn last, a visit before, or none.
     wanted: Option<(usize, ScrollStrategy)>,
     scrolls: HashMap<Location, UniformListScrollHandle>,
+    /// Where the card kept as each column changed height was put
+    /// (`elements::kept`), by the column's location as `scrolls`.
+    kept: HashMap<Location, crate::elements::kept::Memory>,
     /// The row of columns, scrolled sideways.
     row: ScrollHandle,
+    /// Where the column kept as the row changed width was put.
+    kept_across: crate::elements::kept::Memory,
     /// The columns drawn last, by their entry and location, with their
     /// cards: where the keys move.
-    drawn: Vec<Drawn>,
+    drawn: Rc<[Drawn]>,
     /// Where each of `drawn`'s entries is (`index_of_columns`), made the
-    /// first time a key asks after the columns changed: a key walked every
-    /// card of every column to find the cursor's.
-    drawn_index: std::cell::OnceCell<HashMap<EntryId, (usize, Option<usize>)>>,
+    /// first time a key asks after the columns changed (or the board
+    /// changes width, to find the cursor's column): a key walked every card
+    /// of every column to find the cursor's.
+    drawn_index: Rc<DrawnIndex>,
     /// The pane's order when last drawn, to find the card at an index.
     order: Arc<[EntryId]>,
     /// Every column shown since the board showed this place: one emptied
@@ -132,6 +139,9 @@ type Against = (u64, u64);
 
 /// A column drawn: its entry, where it leads, its cards.
 type Drawn = (Option<EntryId>, Location, Arc<[EntryId]>);
+
+/// The columns' index (`index_of_columns`), made once asked.
+type DrawnIndex = std::cell::OnceCell<HashMap<EntryId, (usize, Option<usize>)>>;
 
 /// Where each entry of `drawn` is: its column and its card there, or `None`
 /// for a column's own entry; the first column holding it, and in a column
@@ -416,6 +426,27 @@ fn column(
         .cloned()
         .unwrap_or_else(|| (crate::views::groups::RowMap::flat(ids.len()), Vec::new()));
     let count = rows.len();
+    // What keeps its place as the column changes height: the cursor's card,
+    // then those selected among the cards it drew, asked only then.
+    let kept = {
+        let (drawn, order, was) = (rows.clone(), Arc::clone(&c.ids), scroll.clone());
+        let height = card_height(scale) + 4.;
+        let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+            this.with_pane(pane, |this| {
+                // The column's cards are in the order the last frame drew.
+                crate::views::kept_rows(this, (&drawn, &order), &was, height, &drawn, |at, _| {
+                    Some(at)
+                })
+            })
+            .unwrap_or_default()
+        });
+        crate::elements::kept::rows(
+            scroll.clone(),
+            view.kept.get(&c.location).cloned().unwrap_or_default(),
+            (count, height, 0.),
+            move |window, cx| keep((), window, cx),
+        )
+    };
     let list = uniform_list(
         crate::elements::known_by("board-column", &c.location),
         count,
@@ -494,16 +525,23 @@ fn column(
         .border_color(theme.border)
         .child(header)
         .child(
-            div().flex_1().min_h_0().relative().child(list).child(
-                crate::elements::scrollbar::vertical(
-                    ("board-scrollbar", k),
-                    crate::elements::scrollbar::Scrolls::Offset(
-                        scroll.0.borrow().base_handle.clone(),
-                    ),
-                )
-                // The columns' bar runs along the bottom of them all.
-                .across(view.row.clone()),
-            ),
+            // Before the list: it scrolls as this asks, in this frame.
+            div()
+                .flex_1()
+                .min_h_0()
+                .relative()
+                .child(kept)
+                .child(list)
+                .child(
+                    crate::elements::scrollbar::vertical(
+                        ("board-scrollbar", k),
+                        crate::elements::scrollbar::Scrolls::Offset(
+                            scroll.0.borrow().base_handle.clone(),
+                        ),
+                    )
+                    // The columns' bar runs along the bottom of them all.
+                    .across(view.row.clone()),
+                ),
         );
     // A card from another column moves here (`drop_on_place` tells the
     // column it leaves), files from elsewhere come in as they come in a
@@ -875,18 +913,20 @@ impl PaneView for BoardView {
         let same = drawn.len() == self.drawn.len()
             && drawn
                 .iter()
-                .zip(&self.drawn)
+                .zip(self.drawn.iter())
                 .all(|(a, b)| a.0 == b.0 && a.1 == b.1 && Arc::ptr_eq(&a.2, &b.2));
         if !same {
-            self.drawn = drawn;
-            self.drawn_index = std::cell::OnceCell::new();
+            self.drawn = drawn.into();
+            self.drawn_index = Rc::default();
             // The scrolls of columns gone go with them.
             let shown: HashSet<&Location> = columns.iter().map(|c| &c.location).collect();
             self.scrolls.retain(|location, _| shown.contains(location));
+            self.kept.retain(|location, _| shown.contains(location));
         }
         self.order = Arc::clone(&shell.ui().list.sorted);
         for c in &columns {
             self.scrolls.entry(c.location.clone()).or_default();
+            self.kept.entry(c.location.clone()).or_default();
         }
         // What arrives in each column, among its cards (ADR-135): placed
         // once per placement of what arrives and per columns drawn.
@@ -898,6 +938,26 @@ impl PaneView for BoardView {
         if let Some((ix, strategy)) = self.wanted.take() {
             self.scroll_card(ix, strategy);
         }
+        // What keeps its place as the board changes width: the cursor's
+        // column, found only then.
+        let pane = shell.pane;
+        let across = {
+            let drawn = Rc::clone(&self.drawn);
+            let index = Rc::clone(&self.drawn_index);
+            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+                this.with_pane(pane, |this| {
+                    let cursor = this.cursor_id()?;
+                    let index = index.get_or_init(|| index_of_columns(&drawn));
+                    index.get(&cursor).map(|(k, _)| *k)
+                })
+                .flatten()
+            });
+            crate::elements::kept::across(
+                self.row.clone(),
+                self.kept_across.clone(),
+                move |window, cx| keep((), window, cx),
+            )
+        };
         let mut row = div()
             .id(("board", shell.pane.0 as usize))
             .size_full()
@@ -910,7 +970,6 @@ impl PaneView for BoardView {
         }
         // Another application's files dropped beside the columns land in
         // the place shown, as on the list.
-        let pane = shell.pane;
         let row = row.on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
             this.activate_pane(pane, cx);
             this.drop_external(paths.paths(), window, cx);
@@ -918,6 +977,8 @@ impl PaneView for BoardView {
         div()
             .relative()
             .size_full()
+            // Before the row: it scrolls as this asks, in this frame.
+            .child(across)
             .child(row)
             .child(crate::elements::scrollbar::horizontal(
                 ("board-columns-bar", shell.pane.0 as usize),
@@ -1005,8 +1066,8 @@ impl PaneView for BoardView {
     fn reset(&mut self) {
         self.asked = None;
         self.wanted = None;
-        self.drawn.clear();
-        self.drawn_index = std::cell::OnceCell::new();
+        self.drawn = Rc::from([]);
+        self.drawn_index = Rc::default();
         self.seen.clear();
         self.arriving_for = None;
     }

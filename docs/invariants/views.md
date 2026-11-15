@@ -734,6 +734,21 @@ around the views is in [shell.md](shell.md).
   to the middle unless it is wholly in view (`scroll_to_middle`), as near
   the middle as the order's ends let it be, so what is around it shows.
   A view that cannot falls back on `scroll_to`.
+- **What the keys are on keeps its place as a view changes size**
+  (`elements::kept`): a split opened or closed, a panel beside or under
+  the files, the window resized. The cursor, or, where it is not in
+  view, the first entry selected that is, stays as far down the view as
+  it was (along it, for a board's row of columns), wholly in view; a view
+  scrolled away from both keeps what was at its top. Where it had to
+  move to be wholly in view, how far it was meant to be is remembered
+  while the view stays where it was put (`kept::Memory`), so a split
+  opened and closed again gives back the view it had. What keeps its
+  place is asked only on a frame whose size changed, among what the last
+  frame drew: the grid in its element's prepaint (`UniformGrid::keeps`),
+  a `uniform_list` (the list, the tree, the columns' own column, a
+  board's column) through a canvas drawn before it (`kept::rows`), a
+  board's columns through `kept::across`. A scroll asked in the same frame
+  wins. A zoom changes no size: it keeps what it says above.
 - **What a rename moved** (`PaneView::reveal_among`) is placed as the
   view draws, its entries found in the order as it is then
   (`Among::placed`: entries, never indices taken before), and decided in

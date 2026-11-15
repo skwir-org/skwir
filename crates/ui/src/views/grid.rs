@@ -1183,6 +1183,32 @@ impl PaneView for GridView {
             let tiles: Rc<[usize]> = ixs.iter().map(|ix| rows.tile_of(*ix)).collect();
             self.scroll.reveal_among(tiles, then);
         }
+        // What keeps its place as the grid changes size: the cursor's tile,
+        // then those selected among the tiles it drew, asked only then.
+        let keeps = {
+            let drawn = self.drawn.clone();
+            let order = std::sync::Arc::clone(&self.drawn_order);
+            let rows = rows.clone();
+            let scroll = self.scroll.clone();
+            cx.processor(move |this: &mut Shell, (): (), _, _| {
+                this.with_pane(pane, |this| {
+                    let shown: Vec<EntryId> = scroll
+                        .shown()
+                        .filter_map(|tile| match drawn.at_tile(tile)? {
+                            Tile::Entry(at) => order.get(at).copied(),
+                            Tile::Arriving(_) => None,
+                        })
+                        .collect();
+                    let list = &this.ui().list;
+                    crate::views::kept(this, &shown)
+                        .into_iter()
+                        .filter_map(|at| list.index_of(shown[at]))
+                        .map(|ix| rows.tile_of(ix))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+            })
+        };
         self.drawn = rows.clone();
         self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let count = rows.tiles();
@@ -1288,6 +1314,7 @@ impl PaneView for GridView {
                 .then(|| grid_groups(rows.clone(), scale, shell, cx)),
         )
         .track_scroll(self.scroll.clone())
+        .keeps(move |window, cx| keeps((), window, cx))
         .size_full()
         .px_1();
         let marquee = crate::elements::marquee::Marquee {

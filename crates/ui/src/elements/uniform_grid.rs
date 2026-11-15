@@ -308,6 +308,34 @@ pub mod math {
             self.heading
         }
 
+        /// Where item `ix`'s row starts, and how tall it is.
+        fn extent(&self, ix: usize) -> Option<(f32, f32)> {
+            let row = self.line_of(ix).min(self.rows().checked_sub(1)?);
+            Some((self.tops[row], self.row_height(row)))
+        }
+
+        /// The offset that keeps the first of `items` wholly in view in
+        /// `before` (the lines of the last frame, the view `before_h` tall at
+        /// offset `y`) as far down the view as it was, in these lines and a
+        /// view `now_h` tall (`elements::kept`, `memory` the grid's): what a
+        /// grid changing size keeps, the cursor's tile first. With the tile
+        /// and how far down it is meant to be; `None` when none of them was
+        /// wholly in view. Not clamped to the content.
+        pub fn offset_keeping(
+            &self,
+            (before, before_h): (&Slots, f32),
+            items: &[usize],
+            y: f32,
+            now_h: f32,
+            memory: &crate::elements::kept::Memory,
+        ) -> Option<(usize, f32, f32)> {
+            let extent = |ix| before.extent(ix);
+            let (ix, share) = memory.keep(items, extent, -y, before_h, before.heading)?;
+            let (at, len) = self.extent(ix)?;
+            let start = crate::elements::kept::start(at, len, share, now_h, self.heading);
+            Some((ix, share, -start))
+        }
+
         /// Where a tile's picture begins, from the content's left: where a
         /// heading's words begin, in line with the first column.
         pub fn left(&self) -> f32 {
@@ -638,6 +666,7 @@ where
         render_items: Box::new(render_items),
         interactivity,
         scroll_handle: None,
+        keeps: None,
     }
 }
 
@@ -655,7 +684,12 @@ pub struct UniformGrid {
     render_items: RenderItems,
     interactivity: Interactivity,
     scroll_handle: Option<UniformGridScrollHandle>,
+    /// What keeps its place as the grid changes size (`keeps`).
+    keeps: Option<Keeps>,
 }
+
+/// The tiles that keep their place as a grid changes size, asked only then.
+type Keeps = Box<dyn FnOnce(&mut Window, &mut App) -> Vec<usize>>;
 
 pub struct UniformGridFrameState {
     items: SmallVec<[AnyElement; 32]>,
@@ -669,6 +703,10 @@ pub struct GridLayout {
     /// Where tile coordinates start, from the element's top left (its
     /// border and padding).
     pub origin: (f32, f32),
+    /// The view's width and height, within its border and padding.
+    pub viewport: (f32, f32),
+    /// The tiles drawn.
+    pub shown: Range<usize>,
 }
 
 /// A scroll asked for before the next prepaint, which has the real rows.
@@ -695,6 +733,9 @@ pub struct GridScrollState {
     layout: GridLayout,
     /// What `layout.slots` was built from: rebuilt only when this changes.
     built_from: Option<Built>,
+    /// Where the tile kept as the grid changed size was put
+    /// (`elements::kept`).
+    kept: crate::elements::kept::Memory,
 }
 
 /// What a grid's lines were laid out from: the tiles, the columns, the gap
@@ -801,6 +842,11 @@ impl UniformGridScrollHandle {
         self.0.borrow().layout.slots.clone()
     }
 
+    /// The tiles drawn in the last prepaint, wholly in view or not.
+    pub fn shown(&self) -> Range<usize> {
+        self.0.borrow().layout.shown.clone()
+    }
+
     /// Fully or partly visible rows in the last prepaint.
     pub fn rows_visible(&self) -> usize {
         self.0.borrow().layout.rows_visible.max(1)
@@ -843,6 +889,19 @@ impl UniformGrid {
     /// Draw the order's groups, each under its heading (none: not grouped).
     pub fn groups(mut self, groups: Option<GridGroups>) -> Self {
         self.groups = groups.filter(|g| g.rows.grouped());
+        self
+    }
+
+    /// What keeps its place as the grid changes size (a split, a panel,
+    /// the window resized): the first of `tiles` wholly in view stays as
+    /// far down it as it was (`elements::kept`), the cursor's first, then
+    /// what is selected. None of them in view, the row at the top stays.
+    /// Asked only once the size changed, from what the last frame drew.
+    pub fn keeps(
+        mut self,
+        tiles: impl FnOnce(&mut Window, &mut App) -> Vec<usize> + 'static,
+    ) -> Self {
+        self.keeps = Some(Box::new(tiles));
         self
     }
 
@@ -941,18 +1000,22 @@ impl Element for UniformGrid {
             self.heights.revision,
             groups.as_ref().map(|g| (g.rows.key(), g.height.to_bits())),
         );
-        // The rows before this frame, to find again what was at the top.
-        let (deferred, then, before) = match &self.scroll_handle {
+        // The rows before this frame, to find again what was at the top;
+        // and the last frame's, with its viewport, for what keeps its place
+        // as the grid changes size.
+        let (deferred, then, before, last) = match &self.scroll_handle {
             Some(h) => {
                 let mut s = h.0.borrow_mut();
-                let changed = s.built_from.is_some() && s.built_from != Some(built_from);
+                let drawn = s.built_from.is_some();
+                let changed = drawn && s.built_from != Some(built_from);
                 (
                     s.deferred.take(),
                     s.then.take(),
                     changed.then(|| s.layout.slots.clone()),
+                    drawn.then(|| (s.layout.slots.clone(), s.layout.viewport)),
                 )
             }
-            None => (None, None, None),
+            None => (None, None, None, None),
         };
         let reuse = self
             .scroll_handle
@@ -977,6 +1040,25 @@ impl Element for UniformGrid {
             .scroll_handle
             .as_ref()
             .map(|h| h.0.borrow().base_handle.clone());
+        // Where the last frame left the view, before it is clamped to the
+        // content as it is now.
+        let y_before = base.as_ref().map_or(0., |b| f32::from(b.offset().y));
+        let memory = self
+            .scroll_handle
+            .as_ref()
+            .map(|h| h.0.borrow().kept.clone())
+            .unwrap_or_default();
+        let keeps = self.keeps.take();
+        let kept = last
+            .filter(|(_, (w, h))| {
+                crate::elements::kept::resized(*w, viewport_w)
+                    || crate::elements::kept::resized(*h, viewport_h)
+            })
+            .zip(keeps)
+            .and_then(|((lines, (_, h)), keeps)| {
+                let tiles = keeps(window, cx);
+                slots.offset_keeping((&lines, h), &tiles, y_before, viewport_h, &memory)
+            });
         let item_count = self.item_count;
         let render_items = &self.render_items;
         let handle = self.scroll_handle.clone();
@@ -990,9 +1072,13 @@ impl Element for UniformGrid {
             cx,
             |_style, mut scroll_offset, hitbox, window, cx| {
                 let mut y = f32::from(scroll_offset.y);
-                if let Some(before) = &before {
-                    y = slots.offset_for_anchor(before.anchor(y));
+                if let Some((_, _, kept)) = kept {
+                    y = kept;
+                } else if let Some(before) = &before {
+                    y = slots.offset_for_anchor(before.anchor(y_before));
                 }
+                // A scroll asked meanwhile moves what was kept.
+                let kept = kept.filter(|_| deferred.is_none());
                 match deferred {
                     Some(Deferred::Item { ix, place }) => {
                         let ix = ix.min(item_count.saturating_sub(1));
@@ -1023,6 +1109,9 @@ impl Element for UniformGrid {
                 }
                 let max_scroll = (content_h - viewport_h).max(0.0);
                 y = y.clamp(-max_scroll, 0.0);
+                if let Some((ix, share, _)) = kept {
+                    memory.put(ix, share, -y);
+                }
                 if (y - f32::from(scroll_offset.y)).abs() > 0.01 {
                     scroll_offset.y = px(y);
                     if let Some(b) = &base {
@@ -1031,6 +1120,11 @@ impl Element for UniformGrid {
                 }
 
                 let visible = slots.visible_rows(y, viewport_h);
+                let items_range = if visible.is_empty() {
+                    0..0
+                } else {
+                    slots.items_in(visible.clone())
+                };
                 if let Some(h) = &handle {
                     let mut state = h.0.borrow_mut();
                     state.built_from = Some(built_from);
@@ -1041,6 +1135,8 @@ impl Element for UniformGrid {
                             f32::from(border.left + padding.left),
                             f32::from(border.top + padding.top * 2.),
                         ),
+                        viewport: (viewport_w, viewport_h),
+                        shown: items_range.clone(),
                     };
                 }
                 // Lines without a tile are headings: a grid whose groups are
@@ -1048,7 +1144,6 @@ impl Element for UniformGrid {
                 if visible.is_empty() {
                     return hitbox;
                 }
-                let items_range = slots.items_in(visible.clone());
                 let items = render_items(items_range.clone(), cols, window, cx);
                 let content_mask = ContentMask::new(bounds);
                 window.with_content_mask(Some(content_mask), |window| {
@@ -1253,6 +1348,41 @@ mod tests {
         // The list shrank under the view: the last row, not past it.
         let short = slots(7);
         assert_eq!(short.anchor(short.offset_for_anchor((40, 0.))).0, 5);
+    }
+
+    #[test]
+    fn a_grid_changing_size_keeps_the_first_kept_tile_in_view_where_it_was() {
+        // Rows 100 tall, five a row, then three; the view 500 tall from
+        // 200: tile 21 is wholly in view, its middle halfway down.
+        let wide = Slots::new(Columns::fit(600., 100., 12., 40.), 0., 60, |_| 100.);
+        let narrow = Slots::new(Columns::fit(340., 100., 12., 40.), 0., 60, |_| 100.);
+        assert_eq!((wide.columns.cols, narrow.columns.cols), (5, 3));
+        let memory = crate::elements::kept::Memory::default();
+        let y = |now: &Slots, before, items: &[usize], y, h| {
+            now.offset_keeping(before, items, y, h, &memory)
+                .map(|(ix, _, y)| (ix, y))
+        };
+        // In the eighth row now (21..24), halfway down still.
+        assert_eq!(
+            y(&narrow, (&wide, 500.), &[21], -200., 500.),
+            Some((21, -500.))
+        );
+        // Back as wide, back where it was.
+        assert_eq!(
+            y(&wide, (&narrow, 500.), &[21], -500., 500.),
+            Some((21, -200.))
+        );
+        // Out of view, a tile is passed over; none in view, none kept.
+        assert_eq!(
+            y(&narrow, (&wide, 500.), &[50, 21], -200., 500.),
+            Some((21, -500.))
+        );
+        assert_eq!(y(&narrow, (&wide, 500.), &[50], -200., 500.), None);
+        // Half as tall, it is halfway down that.
+        assert_eq!(
+            y(&wide, (&wide, 500.), &[21], -200., 250.),
+            Some((21, -325.))
+        );
     }
 
     #[test]

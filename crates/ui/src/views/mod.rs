@@ -55,3 +55,58 @@ pub fn named_renderer(id: &str) -> Option<Box<dyn crate::view::PaneView>> {
         _ => None,
     }
 }
+
+/// What keeps its place in a view changing size (`elements::kept`), among
+/// `shown`, what the view drew the last frame, in its order: where the
+/// cursor is there, then where what is selected is. Only one wholly in view
+/// is kept, so only what was drawn is asked of.
+pub fn kept(shell: &crate::shell::Shell, shown: &[skwir_core::EntryId]) -> Vec<usize> {
+    let ws = shell.app.workspace.read();
+    let Some(pane) = ws.pane(shell.pane) else {
+        return Vec::new();
+    };
+    let selection = &pane.selection;
+    let cursor = selection
+        .cursor
+        .and_then(|cursor| shown.iter().position(|id| *id == cursor));
+    let mut kept: Vec<usize> = cursor.into_iter().collect();
+    if !selection.is_empty() {
+        kept.extend(
+            (0..shown.len()).filter(|at| Some(*at) != cursor && selection.contains(shown[*at])),
+        );
+    }
+    kept
+}
+
+/// The rows of a `uniform_list` that keep their place as it changes size
+/// (`elements::kept::rows`): what `kept` says of the rows it drew the last
+/// frame (`drawn` over `order`, `height` tall, where its handle `scroll`
+/// left them), found again in its rows `now` by their place in its order
+/// now (`position`, given their place in `order` and their entry).
+pub fn kept_rows(
+    shell: &crate::shell::Shell,
+    (drawn, order): (&groups::RowMap, &[skwir_core::EntryId]),
+    scroll: &gpui::UniformListScrollHandle,
+    height: f32,
+    now: &groups::RowMap,
+    position: impl Fn(usize, skwir_core::EntryId) -> Option<usize>,
+) -> Vec<usize> {
+    if height <= 0. {
+        return Vec::new();
+    }
+    let base = scroll.0.borrow().base_handle.clone();
+    let top = (-f32::from(base.offset().y)).max(0.);
+    let view = f32::from(base.bounds().size.height);
+    // Every row partly in view: only one wholly in it is kept (`seen`).
+    let first = (top / height).floor() as usize;
+    let end = ((top + view) / height).ceil() as usize;
+    let shown = drawn.entries_in(first..end.max(first));
+    let Some(ids) = order.get(shown.clone()) else {
+        return Vec::new();
+    };
+    kept(shell, ids)
+        .into_iter()
+        .filter_map(|at| position(shown.start + at, ids[at]))
+        .map(|at| now.row_of(at))
+        .collect()
+}
