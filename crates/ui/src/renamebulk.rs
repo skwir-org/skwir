@@ -827,15 +827,27 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     cx,
                 ),
                 modal::pressed(
-                    controls::button(
-                        "bulk-apply",
-                        "Rename",
-                        Some("check"),
-                        ButtonStyle::Plain,
-                        &b.apply_focus,
-                        &theme,
-                    )
-                    .when(!b.applies(), |d| d.opacity(0.5)),
+                    // While nothing would be renamed (no name changes, an
+                    // error, a preview not back yet): said, not offered,
+                    // as a question's answer is.
+                    if b.applies() {
+                        controls::button(
+                            "bulk-apply",
+                            "Rename",
+                            Some("check"),
+                            ButtonStyle::Plain,
+                            &b.apply_focus,
+                            &theme,
+                        )
+                    } else {
+                        controls::inert_button_with(
+                            "bulk-apply",
+                            "Rename",
+                            Some("check"),
+                            &b.apply_focus,
+                            &theme,
+                        )
+                    },
                     Shell::bulk_apply,
                     cx,
                 ),

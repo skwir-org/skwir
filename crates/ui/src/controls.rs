@@ -300,10 +300,25 @@ pub fn inert_button(
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
+    inert_button_with(id, label, None, focus, theme)
+}
+
+/// An [`inert_button`] with the icon its live [`button`] has, muted as its
+/// label: a button that goes inert and live again at each key (a dialog's
+/// answer while what is typed is worked out) keeps its width, and what
+/// stands beside it never moves.
+pub fn inert_button_with(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    leading: Option<&str>,
+    focus: &FocusHandle,
+    theme: &Theme,
+) -> Stateful<Div> {
     let label = label.into();
     button_frame(id, &label, focus, theme)
         .aria_disabled(true)
         .text_color(theme.text_muted)
+        .children(leading.map(|name| icon(name, theme.text_muted, 14.)))
         .child(label)
 }
 
