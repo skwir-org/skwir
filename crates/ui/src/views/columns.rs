@@ -95,6 +95,9 @@ pub struct ColumnsView {
     /// The last column's rows as last drawn: its entries, and what arrives
     /// among them (ADR-135), never an entry.
     last_rows: crate::views::groups::RowMap,
+    /// The pane's order as the last frame drew the last column: what
+    /// `last_rows`' entries were then (`elements::kept`).
+    drawn_order: Arc<[EntryId]>,
     /// What the last column's rows were made for: the pane's rows, held,
     /// and its count. The same, they are not made again.
     last_for: Option<(crate::views::groups::RowMap, usize)>,
@@ -871,7 +874,8 @@ impl PaneView for ColumnsView {
         // What keeps its place as the column changes height: the cursor's
         // row, then those selected among the rows it drew, asked only then.
         let kept = {
-            let order = std::sync::Arc::clone(&shell.ui().list.sorted);
+            // The entries those rows were, in the order they were drawn in.
+            let order = Arc::clone(&self.drawn_order);
             let now = rows.clone();
             let scroll = self.scroll.clone();
             let height = row_height(shell.row_zoom, files_scale(&theme));
@@ -896,6 +900,7 @@ impl PaneView for ColumnsView {
                 move |window, cx| keep((), window, cx),
             )
         };
+        self.drawn_order = Arc::clone(&shell.ui().list.sorted);
         let last = uniform_list(
             "column-last",
             rows.len(),
