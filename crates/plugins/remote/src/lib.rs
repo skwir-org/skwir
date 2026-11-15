@@ -211,6 +211,10 @@ struct State {
     /// When the last of those began: one in `remotes::REFRESHED_WITHIN`,
     /// as the folders shown are read again.
     looked: Option<std::time::Instant>,
+    /// Mounts come while no one looked, not asked yet whether they answer
+    /// (`Remotes::read_again`): asked as a window comes to the front,
+    /// whenever the last read then was.
+    ask_owed: std::collections::HashSet<PathBuf>,
     /// Mounts whose program is being asked whether it still answers: one
     /// question at a time each, never another queued behind one a server
     /// gone holds for good.
@@ -1026,6 +1030,10 @@ impl Remotes {
     /// a window gone back and forth, or several windows in turn, list the
     /// bridges once, and one a program holds holds no more than one read.
     fn looked_at(&self, app: &App) {
+        let owed = std::mem::take(&mut self.state.lock().ask_owed);
+        if !owed.is_empty() {
+            self.ask_again(app, |point| owed.contains(point));
+        }
         let servers = {
             let mut state = self.state.lock();
             if state.looking
@@ -1158,8 +1166,10 @@ impl Remotes {
             // whether it answers only while someone looks: asking costs its
             // server a request, and holds the mount a moment, just as the
             // program that made it may let go of it again (a connection
-            // refused, tried again); the window coming back asks each mount
-            // (`Known::looked_at`). A refresh asked asks every mount; one
+            // refused, tried again); one not asked so is asked as a window
+            // next comes to the front (`State::ask_owed`), and each mount
+            // once in a while then (`Known::looked_at`). A refresh asked
+            // asks every mount; one
             // a told read took the place of, those it knew.
             let changed = !same_mounts(&before, &mounted);
             if newest && (whole || changed) {
@@ -1170,17 +1180,23 @@ impl Remotes {
                     let known: std::collections::HashSet<&Path> =
                         before.iter().map(|m| m.remote.point.as_path()).collect();
                     let looked_at = app.looked_at();
+                    let mut owed = Vec::new();
                     this.ask_alive(
                         &app,
                         mounted.iter().filter(|m| {
                             if known.contains(m.remote.point.as_path()) {
                                 whole
                             } else {
+                                if !looked_at {
+                                    owed.push(m.remote.point.clone());
+                                }
                                 looked_at
                             }
                         }),
                         &lifetime,
                     );
+                    // Asked as a window comes to the front, whenever.
+                    this.state.lock().ask_owed.extend(owed);
                 }
             }
             // The servers kept (Skwir's list, KDE's network folders),
@@ -1323,8 +1339,12 @@ impl Remotes {
         let weak = app.weak();
         for m in mounted {
             let point = m.remote.point.clone();
-            if !self.state.lock().asking.insert(point.clone()) {
-                continue;
+            {
+                let mut state = self.state.lock();
+                state.ask_owed.remove(&point);
+                if !state.asking.insert(point.clone()) {
+                    continue;
+                }
             }
             let asking = Asking(Arc::clone(&self.state), point.clone());
             let (this, weak) = (self.clone(), weak.clone());
@@ -3021,6 +3041,15 @@ mod tests {
         remotes.looked_at(&app);
         until("the window's read ended", &ended);
         assert_eq!(reads.load(Ordering::SeqCst), first + 1);
+        // A mount come while no one looked is asked as a window next comes
+        // to the front, however soon after the last.
+        remotes
+            .state
+            .lock()
+            .ask_owed
+            .insert(PathBuf::from("/example/mounted since"));
+        remotes.looked_at(&app);
+        assert!(remotes.state.lock().ask_owed.is_empty());
     }
 
     /// A refresh that lists the bridges, dropped as older by a read the

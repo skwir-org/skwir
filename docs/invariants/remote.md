@@ -587,8 +587,10 @@ ADR-077 (which revises ADR-021).
   changed (`Asked::Told`), and asks no server: a container's mounts cost
   a read in memory, an unchanged rclone configuration no run of rclone.
   A mount come since is asked whether it answers and how full it is only
-  while someone looks (`App::looked_at`), else as the window comes back
-  (`Known::looked_at`): asked at once, it was busy for the program that
+  while someone looks (`App::looked_at`), else as a window next comes to
+  the front, however soon (`ask_owed`; every mount is asked then too,
+  once in `remotes::REFRESHED_WITHIN`: `Known::looked_at`): asked at
+  once, it was busy for the program that
   made it, letting go of it again (a connection refused, tried again).
   No bridge (GVfs's, kio-fuse's) is listed for it: a change of the table
   never changes what a bridge holds, kept as last listed
