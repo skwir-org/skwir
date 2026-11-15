@@ -82,7 +82,9 @@ Left:
 - `platform/src/access.rs` **(c)**: POSIX ACLs, capabilities, SELinux.
 - `core/src/op/access.rs` **(c)**: on Windows `set_access` sets the
   read-only attribute (the owner's write bit) and refuses a group; with
-  no mode on Windows entries, Properties offers neither (ADR-058). It
+  no mode on Windows entries, Properties offers neither (ADR-058), so
+  the words `set_access.describe` says of the attribute
+  (`said_on_windows`, ADR-137) reach only an agent for now. It
   changes an item by its path, checked to be the item stat-ed and no
   link just before (`op::sys::access::Held`): a link put there between
   the two is followed, where Unix holds the item itself.

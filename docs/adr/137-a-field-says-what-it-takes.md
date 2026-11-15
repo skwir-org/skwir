@@ -150,6 +150,8 @@ one, and every view's field holds the same component (2, 7).
   no dialog draws one of its own.
 - What the reference gives is worked out at each preview (three commands
   beside it, each reading the first selected item alone).
-- Left: Access's words on Windows (the read-only attribute) compiled,
-  not tried there; Run Command… on macOS and Windows (not available
+- Left: Access on Windows, which Properties does not offer while
+  Windows' entries carry no mode (PORTING): there the read-only
+  attribute's words (`set_access.describe`) reach only an agent,
+  compiled, not tried; Run Command… on macOS and Windows (not available
   yet).
