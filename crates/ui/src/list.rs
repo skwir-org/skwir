@@ -353,6 +353,10 @@ pub struct ListState {
     /// (`Pane::order_unfolded`, `sorted` itself while nothing is folded):
     /// what the pane lists, as its footer counts and weighs it.
     pub listed: std::sync::Arc<[EntryId]>,
+    /// Why what the listing holds is not shown, while `sorted` is empty
+    /// (`Listing::unshown`): what the pane says in place of its files, and
+    /// the way to see them. Asked as `sorted` is made, not as it is drawn.
+    pub unshown: skwir_core::location::Unshown,
     /// Where `sorted`'s groups' headings stand among its entries, for the
     /// views that draw them (ADR-130, 9): made with `sorted`, from the
     /// pane as it stood then.
@@ -468,6 +472,7 @@ impl Default for ListState {
         ListState {
             sorted: std::sync::Arc::from([]),
             listed: std::sync::Arc::from([]),
+            unshown: skwir_core::location::Unshown::Nothing,
             rows: crate::views::groups::RowMap::default(),
             heading: None,
             groups: std::sync::Arc::from([]),
@@ -551,6 +556,11 @@ impl ListState {
         self.sorted = sorted;
         self.groups = groups;
         self.listed = pane.order_unfolded();
+        self.unshown = if self.sorted.is_empty() && !listing.is_empty() {
+            listing.unshown(pane.sort)
+        } else {
+            skwir_core::location::Unshown::Nothing
+        };
         if !same {
             self.rows = crate::views::groups::RowMap::new(self.groups.clone(), self.sorted.len());
             // What arrives is placed again among the rows made anew.
@@ -610,6 +620,7 @@ impl ListState {
     fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
         self.listed = std::sync::Arc::from([]);
+        self.unshown = skwir_core::location::Unshown::Nothing;
         self.rows = crate::views::groups::RowMap::default();
         self.heading = None;
         self.groups = std::sync::Arc::from([]);

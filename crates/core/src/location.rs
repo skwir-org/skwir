@@ -2149,14 +2149,33 @@ fn shown_with(
     companions: bool,
     is_named: impl Fn(&OsStr) -> bool,
 ) -> bool {
-    let with_file = slot
-        .beside
-        .as_ref()
-        .is_some_and(|owner| owner.is_empty() || is_named(owner));
-    if with_file {
+    if beside_its_file(slot, is_named) {
         return spec.show_hidden && companions;
     }
     spec.show_hidden || !slot.entry.is_hidden()
+}
+
+/// Whether `slot` is a companion whose file is listed, or a folder of
+/// companions for its whole folder (`TagSpaces`' `.ts`), `is_named` saying
+/// whether a name is listed: hidden even with hidden files (ADR-028).
+fn beside_its_file(slot: &Slot, is_named: impl Fn(&OsStr) -> bool) -> bool {
+    slot.beside
+        .as_ref()
+        .is_some_and(|owner| owner.is_empty() || is_named(owner))
+}
+
+/// Why what a listing holds is not shown ([`Listing::unshown`]): what a
+/// pane with nothing shown says of itself, and the way to see it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Unshown {
+    /// Everything listed is shown, or nothing is listed.
+    #[default]
+    Nothing,
+    /// Hidden files are among it: Show hidden files shows them.
+    Hidden,
+    /// Only companions beside their file (ADR-028): shown with hidden
+    /// files and `core.show_companions` both.
+    Companions,
 }
 
 /// The entries a listing holds, which a sort on a worker shares
@@ -3885,6 +3904,31 @@ impl Listing {
             self.entries
                 .get(&id)
                 .is_some_and(|slot| self.shown(spec, slot, companions))
+        }
+    }
+
+    /// Why the entries listed and not shown under `spec` are not: hidden
+    /// files among them, which Show hidden files shows, or only
+    /// companions beside their file, which need companions shown too
+    /// (ADR-028). Ends at the first hidden file: what a pane showing
+    /// nothing asks once a change, with hidden files the first way out.
+    pub fn unshown(&self, spec: SortSpec) -> Unshown {
+        let companions = self.companions_shown();
+        let mut beside = false;
+        for slot in self.entries.values() {
+            if self.shown(spec, slot, companions) {
+                continue;
+            }
+            // Companions shown, hidden files alone hide one.
+            if companions || !beside_its_file(slot, |owner| self.is_named(owner)) {
+                return Unshown::Hidden;
+            }
+            beside = true;
+        }
+        if beside {
+            Unshown::Companions
+        } else {
+            Unshown::Nothing
         }
     }
 

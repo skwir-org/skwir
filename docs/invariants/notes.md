@@ -185,7 +185,8 @@ registered in `App::notes` by its plugin); all share one model,
   core agrees on them in three places:
   1. **Listing:** marked (`Listing::with_companions`), hidden when their
      file is listed unless hidden files and `core.show_companions` are
-     both on. An orphan is an ordinary file.
+     both on. An orphan is an ordinary file. A pane showing nothing
+     says which of the two hides what it holds (`Listing::unshown`).
   2. **Notes:** a change to a companion is a change to its file's notes.
   3. **Operations:** rename, move, copy, swap, trash, restore and delete
      carry companions in the same step, inverses included; a companion's

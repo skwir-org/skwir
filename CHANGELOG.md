@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A folder of notes files says so**: a folder holding only the files
+  other programs keep notes in (TagSpaces' `.ts`, a Mac's `._` files,
+  XMP sidecars) said "Only hidden files here", and Show hidden files
+  then showed nothing, the folder said empty. It now says "Only
+  companion files here", with a button that shows hidden and companion
+  files (turning on Show companion files, in Settings › Tags and notes,
+  for every folder).
 - **The sidebar follows what other programs change**: the Network
   section shows at once a remote added or removed with `rclone config`,
   a network folder or a place added in Dolphin, an entry of fstab

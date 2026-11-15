@@ -41,7 +41,7 @@ them by topic.
 | [025](025-folders-opened-in-place.md) | Folders opened in place | built; revised by 032 |
 | [026](026-search-hints.md) | Indexes hint, the walk answers | built; amended by 050, and by 094: a proof and a score |
 | [027](027-notes-stores.md) | Notes read from every store, written where the user says | built; amended 2026-11-08 (the volume is asked) |
-| [028](028-companion-files.md) | Files beside a file go where it goes | built, but for orphan matching; amended 2026-11-08 (hidden as a dot hides them) |
+| [028](028-companion-files.md) | Files beside a file go where it goes | built, but for orphan matching; amended 2026-11-08 (hidden as a dot hides them), 2026-11-15 (a folder of companions says so) |
 | [029](029-links-in-text.md) | Links found in text and in the terminal | built |
 | [030](030-text-documents-read-as-text.md) | Text documents read as text, by Skwir or Pandoc | built |
 | [031](031-pictures-by-imagemagick-thumbnailers-isolated.md) | ImageMagick pictures; thumbnailers isolated | built |

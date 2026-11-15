@@ -1610,6 +1610,76 @@ fn companions_hide_beside_their_file_and_orphans_do_not() {
     assert_eq!(shown(true), ["._gone.txt", "._it's a.txt", ".hidden"]);
 }
 
+/// A folder of companions for its whole folder, as `TagSpaces`' `.ts`.
+struct Marks;
+
+impl skwir_core::companions::Companion for Marks {
+    fn id(&self) -> &'static str {
+        "marks"
+    }
+    fn of(&self, name: &std::ffi::OsStr) -> Vec<std::path::PathBuf> {
+        vec![std::path::Path::new(".marks").join(name)]
+    }
+    fn owner(&self, _name: &std::ffi::OsStr) -> Option<std::ffi::OsString> {
+        None
+    }
+    fn is_folder(&self, name: &std::ffi::OsStr) -> bool {
+        name == ".marks"
+    }
+}
+
+/// A folder holding only what keeps others' notes (`.ts`) says why it
+/// shows nothing: hidden files alone do not show it, a file a dot hides
+/// beside it does, and the command that shows hidden and companion files
+/// shows it, turning companions on in the settings.
+#[test]
+fn what_hides_a_folders_entries_is_said() {
+    use skwir_core::location::Unshown;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("it's noted");
+    std::fs::create_dir_all(dir.join(".marks")).unwrap();
+    std::fs::write(dir.join(".marks").join("gone.json"), b"{}").unwrap();
+    let app = app(tmp.path());
+    app.companions.register("test", std::sync::Arc::new(Marks));
+    app.companions.register("test", std::sync::Arc::new(Aside));
+    let pane = active(&app);
+    navigate(&app, &dir);
+    wait(&app, pane, |l| l.len() == 1);
+    let unshown = |hidden: bool| {
+        app.workspace
+            .write()
+            .pane_mut(pane)
+            .unwrap()
+            .sort
+            .show_hidden = hidden;
+        wait(&app, pane, |l| !l.is_sorting());
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        (p.order().len(), p.listing.unshown(p.sort))
+    };
+    assert_eq!(unshown(false), (0, Unshown::Companions));
+    assert_eq!(unshown(true), (0, Unshown::Companions));
+    // An orphan companion is a hidden file as any other.
+    std::fs::write(dir.join("._gone.txt"), b"x").unwrap();
+    wait(&app, pane, |l| l.len() == 2);
+    assert_eq!(unshown(false), (0, Unshown::Hidden));
+    assert_eq!(unshown(true), (1, Unshown::Companions));
+
+    unshown(false);
+    app.dispatch(&skwir_core::command::Invocation::with_args(
+        "show_companions",
+        &serde_json::json!({ "pane": pane }),
+    ))
+    .unwrap();
+    wait_pane(&app, pane, |p| p.order().len() == 2);
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    assert!(p.sort.show_hidden);
+    assert!(app.companions.shown());
+    assert_eq!(app.settings.get(skwir_core::companions::SHOW), Some(true));
+    assert_eq!(p.listing.unshown(p.sort), Unshown::Nothing);
+}
+
 /// Folders first is the user's setting, in every pane: turned off from
 /// the settings' command, the pane shown sorts its folders with its files
 /// (on a worker, the order before shown until then), and a pane made

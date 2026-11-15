@@ -1226,10 +1226,15 @@ of bars, split or not.
   player's strip, what runs) ends the last pane's footer. Side panels
   have no footer.
 - **A pane with only hidden entries says so** (`placeholder.rs`): its
-  listing complete, nothing filtered out, hidden files off, it says "Only
-  hidden files here" with Show hidden files (`toggle_hidden`) rather than
-  what its place says empty (a tag's place listing a hidden folder alone,
-  a folder of dot files).
+  listing complete, nothing filtered out, it says why from what the
+  listing leaves out (`Listing::unshown`, kept by `ListState::sync`):
+  "Only hidden files here" with Show hidden files (`toggle_hidden`)
+  while hidden files are among it, "Only companion files here" with
+  Show hidden and companion files (`show_companions`) while only files
+  keeping another's notes are (ADR-028, a folder holding only `.ts`),
+  rather than what its place says empty (a tag's place listing a hidden
+  folder alone, a folder of dot files). Never "empty" while it holds
+  something.
 - A key whose command needs a selection has `selection` in its `when`,
   so it does nothing rather than report "nothing selected".
 - **Animation:** only a bounded entrance under 200 ms, plus the player's

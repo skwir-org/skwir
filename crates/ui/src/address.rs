@@ -594,8 +594,8 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         "Hidden files",
     )];
     // With hidden files, the files that keep another's notes beside it
-    // (ADR-028): the same setting as General's, where one looks for a file
-    // that seems missing.
+    // (ADR-028): the same setting as Tags and notes', where one looks for
+    // a file that seems missing.
     if spec.show_hidden && !shell.app.companions.is_empty() {
         let shown = shell.app.companions.shown();
         show.push(menu_item(

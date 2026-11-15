@@ -17957,3 +17957,38 @@ folder removed, and `Sources` still counted it watched.
   `plugins_toggle`, `remote_folders` and `remote_configs` (59, at once,
   21 s), clippy on the crate, native and for Windows and macOS. Not run:
   a switch itself (root's), a window.
+
+## 2026-11-15: A folder of companions says so
+
+On the user's report: a folder holding only TagSpaces' `.ts` offered
+"Show hidden files", which then showed nothing. `placeholder::of` asked
+only whether something was listed with hidden files off; companions
+beside their file (ADR-028) are hidden by a second rule, hidden files
+and `core.show_companions` both. With hidden files on, the same folder
+was said empty. The setting existed (Tags and notes; the View menu once
+hidden files are on); ADR-028 still placed it in General.
+
+- **Why nothing shows** (`Listing::unshown` → `Unshown::{Nothing,
+  Hidden, Companions}`): a walk of what the listing leaves out, ended at
+  the first hidden file; a companion counts as hidden while companions
+  are shown, hidden files alone hiding it then. `ListState::sync` asks
+  it once a change while the pane's order is empty, never as it draws.
+- **The note**: `Hidden` says "Only hidden files here" as before;
+  `Companions` says "Only companion files here", what they are, that the
+  setting is every folder's, with "Show hidden and companion files":
+  `show_companions`, a core command (acts: it changes a setting) that
+  shows hidden files in the pane and applies `core.show_companions`
+  through `settings.apply`.
+- **Test**: `what_hides_a_folders_entries_is_said` (core listing): a
+  folder of companions alone, with hidden files off and on, an orphan
+  beside it (a hidden file), then the command, the setting saved.
+- **In a window** (Xvfb :88, fixture XDG folders): a folder with `.ts`
+  alone says the companions' note with hidden files off; its button
+  shows `.ts` and writes `show_companions = true`; the setting turned
+  off in the file with hidden files on says the note again, where it
+  said empty; a folder of `.ts` and a dot file says "Only hidden files
+  here", whose button shows the dot file and not `.ts`.
+- Checked: clippy on core and UI; the core and UI tests (1,542); the
+  binary's `keymap_titles` (the command's title is its own) and
+  `plugins_toggle`. Not run: release-check, check-cross (nothing behind
+  a system's `cfg`).

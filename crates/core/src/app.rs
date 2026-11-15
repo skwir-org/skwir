@@ -4523,6 +4523,34 @@ mod builtin {
         )
         .shows();
 
+        // Companions show only with hidden files (ADR-028): one way to see
+        // a folder that holds nothing else, which either alone leaves
+        // empty. Their setting is the user's, in every folder: it acts.
+        c.register::<PaneArg, _>(
+            "core",
+            Topic::View,
+            "show_companions",
+            "Show hidden and companion files",
+            "Show hidden files in the pane, and turn on Show companion files (`core.show_companions`): the files that keep another file's notes beside it, in every folder",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                if let Some(p) = app.workspace.write().pane_mut(pane)
+                    && !p.sort.show_hidden
+                {
+                    p.set_show_hidden(true);
+                }
+                if !app.companions.shown() {
+                    app.dispatch(&Invocation::with_args(
+                        "settings.apply",
+                        &serde_json::json!({
+                            "changes": { crate::companions::SHOW: "true" }
+                        }),
+                    ))?;
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
         c.register::<PaneArg, _>(
             "core",
             Topic::Select,

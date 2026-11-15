@@ -6,7 +6,7 @@
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, div, prelude::*, px};
-use skwir_core::location::EmptyState;
+use skwir_core::location::{EmptyState, Unshown};
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
@@ -85,6 +85,19 @@ pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
             None => "Show hidden files to see them.".to_owned(),
         },
         action: Some(("Show hidden files", "toggle_hidden")),
+        problem: false,
+    }
+}
+
+/// What is here keeps other files' notes beside them (ADR-028), and
+/// companions are not shown: hidden files alone would show nothing. Its
+/// button shows both, and says the setting it turns on is every folder's.
+pub fn only_companions() -> Placeholder {
+    Placeholder {
+        icon: "eye-off",
+        title: "Only companion files here".to_owned(),
+        detail: "They keep other files' notes: TagSpaces' .ts folder, a Mac's ._ files, XMP sidecars. Showing them turns on Show companion files in Settings (Tags and notes), for every folder.".to_owned(),
+        action: Some(("Show hidden and companion files", "show_companions")),
         problem: false,
     }
 }
@@ -179,13 +192,18 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             problem: false,
         });
     }
-    // Nothing shown, nothing filtered out, yet entries there: hidden ones
-    // only, with hidden files off. Said, with the way to see them, rather
-    // than what the place says empty (a tag's place listing only a hidden
-    // folder, a folder of dot files).
-    if !state.sort.show_hidden && !state.listing.is_empty() {
-        let keys = shell.keys_for("toggle_hidden", &serde_json::Value::Null);
-        return Some(only_hidden(keys.as_deref()));
+    // Nothing shown, nothing filtered out, yet entries there: hidden ones,
+    // or only files that keep others' notes (ADR-028), which hidden files
+    // alone do not show. Said, with the way to see them, rather than what
+    // the place says empty (a tag's place listing only a hidden folder, a
+    // folder of dot files, one holding only `TagSpaces`' `.ts`).
+    match list.unshown {
+        Unshown::Hidden => {
+            let keys = shell.keys_for("toggle_hidden", &serde_json::Value::Null);
+            return Some(only_hidden(keys.as_deref()));
+        }
+        Unshown::Companions => return Some(only_companions()),
+        Unshown::Nothing => {}
     }
     if state.location()?.is_path() {
         let keys = shell.keys_for("ui.mkdir_prompt", &serde_json::Value::Null);

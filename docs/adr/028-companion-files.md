@@ -37,8 +37,8 @@ agree. Declarations are pure functions of names (no I/O):
 - Providers get the folder's names with each batch, so stores find
   companions without reading the folder again.
 - A companion whose file is listed is hidden unless hidden files
-  **and** `core.show_companions` (General, off by default; also in the
-  View menu under Hidden Files) are on: someone showing hidden files
+  **and** `core.show_companions` (Tags and notes, off by default; also
+  in the View menu under Hidden Files) are on: someone showing hidden files
   looks for configuration, not a `._` twin of every photo. The core
   hides them (`SortSpec`, `Pane::order`); with no store enabled nothing
   is hidden.
@@ -121,3 +121,21 @@ Decided:
   through FUSE or before Linux 6.7) leaves files as they were, and no
   edit or copy fails for it. Linux's copies carry no DOS attributes
   otherwise: only what Skwir makes is marked.
+
+### 2026-11-15: a folder of companions says so
+
+A folder holding only TagSpaces' `.ts` said "Only hidden files here",
+and Show hidden files then showed nothing, the pane saying "This folder
+is empty": the empty state knew hidden files, not companions.
+
+Decided:
+
+- **The listing says why nothing shows** (`Listing::unshown`): hidden
+  files among what it leaves out, or only companions beside their file.
+  The pane asks it as its order is made, not as it is drawn.
+- **Only companions:** "Only companion files here", what they are, and
+  "Show hidden and companion files" (`show_companions`): hidden files in
+  the pane and `core.show_companions` on, every folder's, which the note
+  says. Either alone would still show nothing.
+- Companions stay hidden files too: `._x` and `.ts` are dot files, and
+  someone showing hidden files still looks for configuration.
