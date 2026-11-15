@@ -296,15 +296,20 @@ impl Item {
 }
 
 /// The signs of a regular expression, as the `regex` crate reads them
-/// (a bulk rename's pattern, a search's `content:/…/`): what it matches,
-/// how often, where, and in groups. Its caller says what "the start" is
-/// the start of (a name, a line).
+/// (a bulk rename's pattern, a search's `content:/…/`, an exclusion's
+/// `regex:`): what it matches, how often, where, and in groups. Its
+/// caller says what "the start" is the start of (a name, a line), and
+/// what a group's match is for where something reads it after (a
+/// replacement's `$1`).
 pub fn regex_pattern() -> Group {
     Group::new("Pattern")
         .item(Item::new(".", "Any character"))
         .item(Item::new(r"\d", "A digit"))
         .item(Item::new(r"\w", "A letter, a digit or _"))
-        .item(Item::new(r"\s", "A space or a tab"))
+        .item(Item::new(
+            r"\s",
+            "Any space: a space, a tab, a line's end, any other",
+        ))
         .item(Item::new("[abc]", "One of these").inserting("[]"))
         .item(Item::new("[^abc]", "One of anything but these").inserting("[^]"))
         .item(Item::new("[a-z]", "One in this range"))
@@ -320,11 +325,8 @@ pub fn regex_pattern() -> Group {
         .item(Item::new("$", "The end"))
         .item(Item::new(r"\b", "Where a word starts or ends"))
         .item(Item::new("a|b", "Either"))
-        .item(Item::new("(…)", "A group: what it held is $1, $2… after").inserting("()"))
-        .item(Item::new(
-            r"(?<year>\d{4})",
-            "A group with a name: ${year} after",
-        ))
+        .item(Item::new("(…)", "A group, which a sign after it takes whole: (ab)+").inserting("()"))
+        .item(Item::new(r"(?<year>\d{4})", "A group with a name: year"))
         .item(Item::new(
             r"\.",
             r"A sign itself: \. \( \[ \* \+ \? \$ \^ \|",

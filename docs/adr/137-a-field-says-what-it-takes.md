@@ -48,8 +48,10 @@ one, and every view's field holds the same component (2, 7).
    the caret; a whole value (a mode in digits, an exclusion's example)
    is written in place of what its field holds (`Item::whole_in`), never
    beside what is typed (`6` and `755` would make `6755`). The signs of
-   a regular expression, which two plugins read
-   with one crate, are said once there (`regex_pattern`).
+   a regular expression, which two plugins and the exclusions read with
+   one crate, are said once there (`regex_pattern`), each reader saying
+   what its start is and what a group's match is for after it (a
+   replacement's `$1`).
 2. **A field that says what it takes has a `?` inside its frame at its
    end** (first a [?] after the field), as a form's list button
    (`inner_chevron`) and the address's own buttons are: what is about

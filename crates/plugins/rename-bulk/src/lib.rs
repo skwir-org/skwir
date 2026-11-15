@@ -717,10 +717,18 @@ pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Refer
             .escapes(&["{{", "}}"]),
         Field::Regex => Reference::new("Regex")
             .group(recipes(first))
-            .group(skwir_core::reference::regex_pattern().note(
-                "^ and $ are the start and the end of the name. It runs on the whole name, \
-                 extension included, every match replaced; the template comes after it.",
-            ))
+            .group(
+                skwir_core::reference::regex_pattern()
+                    .note(
+                        "^ and $ are the start and the end of the name. It runs on the whole \
+                         name, extension included, every match replaced; the template comes \
+                         after it.",
+                    )
+                    .note(
+                        "What a group held is $1, $2… in the replacement; what a group named \
+                         year held, ${year}.",
+                    ),
+            )
             .starts(&["\\", "(?"])
             .escapes(&["\\\\"]),
         Field::Replacement => Reference::new("Replacement")
