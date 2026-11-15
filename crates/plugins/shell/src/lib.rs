@@ -651,10 +651,11 @@ impl Plugin for ShellPlugin {
 mod tests {
     use super::*;
     use skwir_core::app::AppConfig;
-    #[cfg(unix)]
+    // What the tests run in a terminal read (not on a Mac, where none runs).
+    #[cfg(all(unix, not(target_os = "macos")))]
     use skwir_core::location::Location;
     use std::sync::Arc;
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     use std::time::Duration;
 
     #[test]
