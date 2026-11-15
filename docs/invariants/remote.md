@@ -584,9 +584,9 @@ ADR-077 (which revises ADR-021).
   never changes what a bridge holds, kept as last listed
   (`Bridges::Kept`), a bridge new to the table listed. Its program waits
   while all it has waits on a server that stopped (Samba stopped under
-  GVfs), and what lists it waits too, on workers every folder shares.
-  GVfs's signals and a refresh asked list them; the window coming back
-  too, on a thread of its own.
+  GVfs), and what lists it waits too: GVfs's signals, a refresh asked
+  and the window coming back list them, each on a thread of its own,
+  never on the workers every folder shares.
 - **What names no server is never looked up** (`Address::server_name`):
   a device, a remote of rclone's configuration, an S3 bucket. A bucket's
   name sent to the resolvers waited on each (LLMNR and mDNS for a single
@@ -598,7 +598,11 @@ ADR-077 (which revises ADR-021).
   newest read stores, and one the system told that began after a
   refresh asked shows all and asks the mounts known as that refresh
   would have (an rclone mount's features among them), its own read
-  dropped as older. What no watch tells (a folder
+  dropped as older; nor is what it listed of the bridges: each listing
+  is kept with when it began, a slower one begun before never in its
+  place, and a read dropped as older that listed a bridge later than
+  what is shown reads the mounts again from it (`State::shown_bridges`).
+  What no watch tells (a folder
   kio-fuse holds more of, a share another program connected) is read
   again as a window comes to the front (`Plugin::on_looked_at`): one
   such read at a time, never another started behind one a bridge's

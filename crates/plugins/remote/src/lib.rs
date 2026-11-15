@@ -181,8 +181,13 @@ struct State {
     /// (`Remotes::refreshes`): not what the system told.
     refreshes: (u64, u64),
     /// What each bridge held when last listed (`Bridges::Kept`), by its
-    /// point.
-    bridged: HashMap<PathBuf, Vec<Arc<Remote>>>,
+    /// point, with when that listing began (`mounts_generation` then): a
+    /// slower listing begun before never takes the place of a later one.
+    bridged: HashMap<PathBuf, (u64, Vec<Arc<Remote>>)>,
+    /// When the listing of each bridge `mounted` shows began: a read
+    /// dropped as older that listed a bridge later reads the mounts again
+    /// from its listing (`Remotes::read_again`).
+    shown_bridges: HashMap<PathBuf, u64>,
     /// What a whole refresh owes, of the mounts and of the servers (all
     /// shown, every mount asked whether it answers), until the newest read
     /// ends: a read told by the system that began after it takes its
@@ -214,6 +219,27 @@ struct State {
 }
 
 impl State {
+    /// Keep what the bridge at `point` held, listed from `at`: never in
+    /// place of a listing begun later.
+    fn keep_listing(&mut self, point: PathBuf, at: u64, held: Vec<Arc<Remote>>) {
+        match self.bridged.entry(point) {
+            std::collections::hash_map::Entry::Occupied(kept) if kept.get().0 > at => {}
+            entry => {
+                entry.insert_entry((at, held));
+            }
+        }
+    }
+
+    /// Whether `used`, what a read showed of the bridges (each by when its
+    /// listing began), holds a bridge still mounted listed later than
+    /// `mounted` shows it.
+    fn listed_later(&self, used: &HashMap<PathBuf, u64>) -> bool {
+        used.iter().any(|(point, at)| {
+            self.bridged.contains_key(point)
+                && self.shown_bridges.get(point).is_none_or(|shown| shown < at)
+        })
+    }
+
     /// Whether each mount's server is near, where its name says so (an
     /// address, `nas.local`); a name to resolve is found out after. What
     /// names no server (a device, a bucket) is never looked up
@@ -238,7 +264,7 @@ enum Bridges {
     /// Each listed: GVfs said its mounts changed, the window came back, a
     /// refresh asked. Its program answers from memory, but waits while
     /// all it has waits on a server that stopped (Samba stopped under
-    /// GVfs): what lists it waits too.
+    /// GVfs): what lists it waits too, on a thread of its own.
     Listed,
     /// As last listed, a bridge new to the table listed: a change of the
     /// table, which every process following it hears, never changes what
@@ -684,38 +710,51 @@ impl Remotes {
     /// a bridge's (GVfs's, kio-fuse's) one by one. Lists the bridges, which
     /// answer from memory: on a worker.
     fn mounted(&self) -> Vec<Mounted> {
-        self.mounted_with(Bridges::Listed)
+        self.mounted_with(Bridges::Listed).0
     }
 
     /// [`Remotes::mounted`], what the bridges hold listed or as last
-    /// listed (`bridges`).
-    fn mounted_with(&self, bridges: Bridges) -> Vec<Mounted> {
-        let (offered, kept): (Vec<Offered>, HashMap<PathBuf, Vec<Arc<Remote>>>) = {
+    /// listed (`bridges`), and when the listing of each bridge it shows
+    /// began (`State::shown_bridges`).
+    fn mounted_with(&self, bridges: Bridges) -> (Vec<Mounted>, HashMap<PathBuf, u64>) {
+        let (offered, kept, at) = {
             let state = self.state.lock();
             (
-                state.devices.values().flatten().cloned().collect(),
+                state
+                    .devices
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<Offered>>(),
                 state.bridged.clone(),
+                state.mounts_generation,
             )
         };
         let table = reach::all();
         let mut listed: HashMap<PathBuf, Vec<Arc<Remote>>> = HashMap::new();
+        let mut used: HashMap<PathBuf, u64> = HashMap::new();
         let held: Vec<Arc<Remote>> = table
             .iter()
             .flat_map(|remote| {
                 if !reach::is_bridge(remote) {
                     return vec![Arc::clone(remote)];
                 }
-                if let (Bridges::Kept, Some(held)) = (bridges, kept.get(&remote.point)) {
+                if let (Bridges::Kept, Some((listed_at, held))) = (bridges, kept.get(&remote.point))
+                {
+                    used.insert(remote.point.clone(), *listed_at);
                     return held.clone();
                 }
                 let held = reach::bridged(remote);
                 listed.insert(remote.point.clone(), held.clone());
+                used.insert(remote.point.clone(), at);
                 held
             })
             .collect();
         {
             let mut state = self.state.lock();
-            state.bridged.extend(listed);
+            for (point, held) in listed {
+                state.keep_listing(point, at, held);
+            }
             let bridges: std::collections::HashSet<&Path> = table
                 .iter()
                 .filter(|r| reach::is_bridge(r))
@@ -725,7 +764,8 @@ impl Remotes {
                 .bridged
                 .retain(|point, _| bridges.contains(point.as_path()));
         }
-        held.into_iter()
+        let mounted = held
+            .into_iter()
             .filter_map(|remote| {
                 let known = self.connectors.iter().find_map(|c| {
                     let mut recognised = c.recognises(&remote)?;
@@ -763,7 +803,8 @@ impl Remotes {
                     },
                 })
             })
-            .collect()
+            .collect();
+        (mounted, used)
     }
 
     /// Where `address` is on this machine: in a mount there already, else
@@ -1052,16 +1093,23 @@ impl Remotes {
             if lifetime.is_cancelled() {
                 return;
             }
-            let mounted = Arc::new(this.mounted_with(bridges));
-            let (newest, before, whole) = {
+            let (mounted, used) = this.mounted_with(bridges);
+            let mounted = Arc::new(mounted);
+            let (newest, before, whole, fresher) = {
                 let mut state = this.state.lock();
                 let newest = state.mounts_generation == mounts_at;
                 let before = Arc::clone(&state.mounted);
+                // Dropped as older, but a bridge listed later than what the
+                // newest read showed (that read kept it as listed before,
+                // `Bridges::Kept`): the mounts are read again from this
+                // listing, never lost to it.
+                let fresher = !newest && state.listed_later(&used);
                 // What a whole refresh this one took the place of owed.
                 let whole =
                     newest && (std::mem::take(&mut state.whole_owed.0) || asked == Asked::Whole);
                 if newest {
                     state.mounted = Arc::clone(&mounted);
+                    state.shown_bridges = used;
                     state.note_said();
                     state
                         .lost
@@ -1073,8 +1121,11 @@ impl Remotes {
                         .features
                         .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                 }
-                (newest, before, whole)
+                (newest, before, whole, fresher)
             };
+            if fresher && let Some(app) = weak.upgrade() {
+                this.mounts_told(&app);
+            }
             // A later whole refresh reads the servers: not this one.
             let servers = servers && this.state.lock().servers_generation == servers_at;
             if !newest && !servers {
@@ -1211,12 +1262,12 @@ impl Remotes {
                 this.publish(&app);
             }
         };
-        if servers || (asked == Asked::Told && bridges == Bridges::Listed) {
+        if servers || bridges == Bridges::Listed {
             // A tool asked its servers is waited for as long as it takes,
             // until the next read of them cancels it (`Connector::servers`),
-            // and a bridge listed as the window comes back may wait on its
-            // program: on a thread of its own, never holding one of the
-            // workers every folder shares meanwhile.
+            // and a bridge listed may wait on its program (all it has waits
+            // on a server that stopped): on a thread of its own, never
+            // holding one of the workers every folder shares meanwhile.
             if let Err(error) = std::thread::Builder::new()
                 .name("skwir-remote-servers".into())
                 .spawn(refresh)
@@ -1340,11 +1391,12 @@ impl Remotes {
     /// must find what its program is told (`Known::forget`). A refresh
     /// that began before stores nothing older.
     fn publish_mounted(&self, app: &App) {
-        let mounted = Arc::new(self.mounted());
+        let (mounted, used) = self.mounted_with(Bridges::Listed);
         {
             let mut state = self.state.lock();
             state.mounts_generation += 1;
-            state.mounted = mounted;
+            state.mounted = Arc::new(mounted);
+            state.shown_bridges = used;
             state.note_said();
         }
         self.publish(app);
@@ -2897,8 +2949,8 @@ mod tests {
 
     /// A window coming to the front reads what no watch tells once in
     /// `REFRESHED_WITHIN`, one read at a time, and the servers only where
-    /// where they were read could not be watched: a window gone back and
-    /// forth asks nothing of the tools whose files are followed.
+    /// what they were read from could not be watched: a window gone back
+    /// and forth asks nothing of the tools whose files are followed.
     #[test]
     fn coming_to_the_front_reads_again_once_and_only_what_is_not_watched() {
         use std::sync::atomic::Ordering;
@@ -2946,6 +2998,52 @@ mod tests {
         remotes.looked_at(&app);
         until("the window's read ended", &ended);
         assert_eq!(reads.load(Ordering::SeqCst), first + 1);
+    }
+
+    /// A refresh that lists the bridges, dropped as older by a read the
+    /// table told that kept them as listed before, is told it listed later
+    /// (the mounts read again from its listing): never lost to it. A
+    /// slower listing begun before never takes a later one's place.
+    #[test]
+    fn a_bridge_listed_later_is_never_lost_to_a_read_that_kept_it() {
+        let point = PathBuf::from("/run/user/1000/gvfs");
+        let share = |name: &str| {
+            Arc::new(Remote {
+                point: point.join(name),
+                fstype: "fuse.gvfsd-fuse".into(),
+                source: "gvfsd-fuse".into(),
+                device: None,
+            })
+        };
+        let at = |n: u64| HashMap::from([(point.clone(), n)]);
+        let mut state = State::default();
+        state.keep_listing(
+            point.clone(),
+            3,
+            vec![share("smb-share:server=nas,share=a")],
+        );
+        state.shown_bridges = at(3);
+        // A refresh lists from 5, a share GVfs mounted since among them;
+        // a read the table told began at 6, kept the listing of 3, and
+        // stored as the newest.
+        state.keep_listing(
+            point.clone(),
+            5,
+            vec![
+                share("smb-share:server=nas,share=a"),
+                share("smb-share:server=nas,share=b's"),
+            ],
+        );
+        state.shown_bridges = at(3);
+        assert!(state.listed_later(&at(5)), "the refresh's listing is read");
+        assert!(!state.listed_later(&at(3)), "what is shown is no later");
+        state.keep_listing(point.clone(), 4, Vec::new());
+        assert_eq!(state.bridged[&point].0, 5, "a slower listing begun before");
+        assert_eq!(state.bridged[&point].1.len(), 2);
+        state.shown_bridges = at(5);
+        assert!(!state.listed_later(&at(5)), "shown: nothing left to read");
+        state.bridged.clear();
+        assert!(!state.listed_later(&at(9)), "a bridge let go of");
     }
 
     /// What an address names below a mount is the mount's: never a folder
