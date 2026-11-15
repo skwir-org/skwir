@@ -95,11 +95,16 @@ one, and every view's field holds the same component (2, 7).
    and how one is written (`op::access::reference`).
 6. **A field offers, as it is typed, what goes on with a part begun**
    (amended): a reference names what begins a part (`starts`: `{` in the
-   template, `\` and `(?` in a pattern, `$` in a replacement), and the
-   items whose part goes on with what is typed since the last of them
-   are listed under the field (`Reference::offered`, the window knowing
-   no language). The keyboard stays in the field (`offers` in its key
-   context, `ui.field_complete`): Up and Down move the highlight from
+   template, `\` and `(?` in a pattern, `$` in a replacement) and what
+   writes such a sign itself (`escapes`: `{{`, `\\`, `$$`, which begin
+   none), and the items whose part goes on with what is typed since the
+   last of them are listed under the field (`Reference::offered`, the
+   window knowing no language). A caret inside a part already whole (put
+   there by a press or the arrows) offers nothing; inside a part begun,
+   the part runs over what follows the caret as far as an item goes on
+   so, and the item taken replaces it whole. The keyboard stays in the
+   field (`offers` in its key context, `ui.field_complete`): Up and Down
+   move the highlight from
    the first row, Tab takes the row lit, Enter only one the arrows chose
    (else it answers the dialog), Escape puts the list away until the text
    or the caret moves; a press on a row takes it. The item takes the

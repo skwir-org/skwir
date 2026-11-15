@@ -632,14 +632,17 @@ struct ReferenceArgs {
 /// these: a placeholder, a sign, a group's.
 pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Reference {
     match field {
-        Field::Template => template_reference(first, spec).starts(&["{"]),
+        Field::Template => template_reference(first, spec)
+            .starts(&["{"])
+            .escapes(&["{{", "}}"]),
         Field::Regex => Reference::new("Regex")
             .group(recipes(first))
             .group(skwir_core::reference::regex_pattern().note(
                 "^ and $ are the start and the end of the name. It runs on the whole name, \
                  extension included, every match replaced; the template comes after it.",
             ))
-            .starts(&["\\", "(?"]),
+            .starts(&["\\", "(?"])
+            .escapes(&["\\\\"]),
         Field::Replacement => Reference::new("Replacement")
             .group(
                 Group::new("What a match becomes")
@@ -652,7 +655,8 @@ pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Refer
                     .note("Left empty, what the pattern matched is taken away."),
             )
             .group(recipes(first))
-            .starts(&["$"]),
+            .starts(&["$"])
+            .escapes(&["$$"]),
     }
 }
 
@@ -1072,6 +1076,10 @@ mod tests {
         assert!(regex.offered("(?", 2).is_some());
         let replacement = reference(Field::Replacement, None, &RenameSpec::default());
         assert_eq!(replacement.offered("$", 1).map(|o| o.items.len()), Some(5));
+        // A sign written twice is the sign itself, and begins nothing.
+        assert_eq!(said.offered("a{{", 3), None);
+        assert_eq!(regex.offered(r"\\", 2), None);
+        assert_eq!(replacement.offered("$$", 2), None);
         // Without an item, nothing is given, and all is still said.
         let said = reference(Field::Template, None, &RenameSpec::default());
         assert!(said.items().all(|(_, _, item)| item.gives.is_none()));

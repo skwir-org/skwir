@@ -33,11 +33,16 @@ pub struct Reference {
     /// (`{` in a template, `\` in a pattern); none, nothing is offered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub starts: Vec<String>,
+    /// What writes a sign of `starts` itself and begins no part (`{{` in
+    /// a template, `\\` in a pattern, `$$` in a replacement).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escapes: Vec<String>,
 }
 
 /// What a field offers as it is typed ([`Reference::offered`]): the part
-/// typed (byte offsets into the text), which an item chosen takes the
-/// place of, and the items that go on with it, by their group's place and
+/// begun (byte offsets into the text: from its sign, over what follows
+/// the caret and goes on with it), which an item chosen takes the place
+/// of, and the items that go on with it, by their group's place and
 /// their own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offered {
@@ -84,6 +89,7 @@ impl Reference {
             title: title.into(),
             groups: Vec::new(),
             starts: Vec::new(),
+            escapes: Vec::new(),
         }
     }
 
@@ -95,36 +101,71 @@ impl Reference {
         self
     }
 
-    /// What `text` offers with its caret at `caret`: the part typed since
-    /// the last sign that begins one, and the items whose `inserts` go on
-    /// with it (longer than it, starting with it). `None` where nothing
-    /// does: no such sign before the caret, or the part already whole.
+    /// What writes a sign itself, beginning no part: `{{`.
+    #[must_use]
+    pub fn escapes(mut self, escapes: &[&str]) -> Self {
+        self.escapes = escapes.iter().map(|s| (*s).to_owned()).collect();
+        self
+    }
+
+    /// What `text` offers with its caret at `caret`: the part begun by the
+    /// last sign of `starts` before the caret that no escape writes, and
+    /// the items whose `inserts` go on with what is typed of it (longer
+    /// than it, starting with it). The part runs over what follows the
+    /// caret as far as one of them goes on so (`{na|m` takes `{nam`
+    /// whole). `None` where nothing does: no such sign before the caret,
+    /// or a part already whole there (an item written from the sign over
+    /// the caret: `{n|ame}`), which the caret only passes through.
     pub fn offered(&self, text: &str, caret: usize) -> Option<Offered> {
-        let caret = (0..=caret.min(text.len()))
-            .rev()
-            .find(|at| text.is_char_boundary(*at))
-            .unwrap_or(0);
-        let before = &text[..caret];
-        let start = self
-            .starts
-            .iter()
-            .filter(|start| !start.is_empty())
-            .filter_map(|start| before.rfind(start.as_str()))
-            .max()?;
-        let typed = &before[start..];
-        let items: Vec<(usize, usize)> = self
-            .items()
-            .filter(|(_, _, item)| {
-                item.inserts
-                    .as_deref()
-                    .is_some_and(|part| part.len() > typed.len() && part.starts_with(typed))
+        let caret = floor_boundary(text, caret);
+        let start = self.part_begun(&text[..caret])?;
+        let (typed, after) = (&text[start..caret], &text[caret..]);
+        let parts = || {
+            self.items()
+                .filter_map(|(group, at, item)| Some((group, at, item.inserts.as_deref()?)))
+        };
+        let whole = parts()
+            .any(|(_, _, part)| text[start..].starts_with(part) && part.len() >= typed.len());
+        if whole {
+            return None;
+        }
+        let mut end = caret;
+        let items: Vec<(usize, usize)> = parts()
+            .filter(|(_, _, part)| part.len() > typed.len() && part.starts_with(typed))
+            .map(|(group, at, part)| {
+                end = end.max(caret + common_prefix(&part[typed.len()..], after));
+                (group, at)
             })
-            .map(|(group, at, _)| (group, at))
             .collect();
         (!items.is_empty()).then_some(Offered {
-            range: start..caret,
+            range: start..end,
             items,
         })
+    }
+
+    /// Where the last part begun in `before` starts: a sign of `starts`
+    /// that no escape writes, read from the start (`{{{` begins one at
+    /// its third brace).
+    fn part_begun(&self, before: &str) -> Option<usize> {
+        let at_sign = |rest: &str, of: &[String]| {
+            of.iter()
+                .find(|sign| !sign.is_empty() && rest.starts_with(sign.as_str()))
+                .map(String::len)
+        };
+        let mut begun = None;
+        let mut at = 0;
+        while at < before.len() {
+            let rest = &before[at..];
+            if let Some(len) = at_sign(rest, &self.escapes) {
+                at += len;
+                continue;
+            }
+            if at_sign(rest, &self.starts).is_some() {
+                begun = Some(at);
+            }
+            at += rest.chars().next().map_or(1, char::len_utf8);
+        }
+        begun
     }
 
     #[must_use]
@@ -155,6 +196,26 @@ impl Reference {
             .iter()
             .all(|g| g.items.is_empty() && g.notes.is_empty())
     }
+}
+
+/// `at` moved back to the start of the character it falls in (a caret is
+/// a byte offset; one inside a character stands before it).
+pub fn floor_boundary(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+/// The length in bytes of what `a` and `b` begin with alike, whole
+/// characters.
+fn common_prefix(a: &str, b: &str) -> usize {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(x, y)| x == y)
+        .map(|(c, _)| c.len_utf8())
+        .sum()
 }
 
 impl Group {
@@ -307,23 +368,80 @@ mod tests {
                     .item(Item::new("{name}", "The name"))
                     .item(Item::new("{n}", "The counter"))
                     .item(Item::new("{n:03}", "Three digits"))
+                    .item(Item::new("{{", "A brace"))
                     .item(Item::new("recipe", "Fills").fills("regex", "x")),
             )
-            .starts(&["{"]);
+            .starts(&["{"])
+            .escapes(&["{{", "}}"]);
         let at = |text: &str, caret: usize| reference.offered(text, caret);
         let offered = at("a-{n", 4).unwrap();
         assert_eq!(offered.range, 2..4);
         assert_eq!(offered.items, [(0, 0), (0, 1), (0, 2)]);
-        assert_eq!(at("{name}-{", 8).unwrap().items.len(), 3);
+        assert_eq!(at("{name}-{", 8).unwrap().items.len(), 4);
         assert_eq!(at("{n:0", 4).unwrap().items, [(0, 2)]);
         assert_eq!(at("{name}", 6), None, "whole already");
         assert_eq!(at("{name}-x", 8), None, "nothing goes on with it");
         assert_eq!(at("name", 4), None, "no sign before the caret");
         // Where the caret is, not the text's end.
-        assert_eq!(at("{n} {name}", 2).unwrap().range, 0..2);
+        assert_eq!(at("{n x", 2).unwrap().range, 0..2);
         // A caret inside a character is taken back to its start.
         assert_eq!(at("{é", 2).map(|o| o.range), Some(0..1));
         assert_eq!(Reference::new("None").offered("{n", 2), None);
+    }
+
+    /// A caret put inside a part already whole (clicked, or moved by the
+    /// arrows) offers nothing: taking a row there would write the part
+    /// twice (`{full}ll}`). Inside a part begun, the part runs over what
+    /// follows the caret and goes on with it, which a row taken replaces.
+    #[test]
+    fn a_whole_part_offers_nothing_and_a_part_begun_runs_past_the_caret() {
+        let reference = Reference::new("Template")
+            .group(
+                Group::new("Parts")
+                    .item(Item::new("{full}", "The whole name"))
+                    .item(Item::new("{n}", "The counter"))
+                    .item(Item::new("{n:03}", "Three digits")),
+            )
+            .starts(&["{"]);
+        let at = |text: &str, caret: usize| reference.offered(text, caret);
+        for caret in 1..=6 {
+            assert_eq!(at("{full}", caret), None, "{{full}} at {caret}");
+        }
+        assert_eq!(at("{n} {full}", 2), None);
+        assert_eq!(at("{n:03}-x", 3), None);
+        // `{fu|l` begun: the part is `{ful`, past the caret.
+        let offered = at("{ful x", 3).unwrap();
+        assert_eq!(offered.range, 0..4);
+        assert_eq!(offered.items, [(0, 0)]);
+        // What follows goes on with none of them: the part ends at the caret.
+        assert_eq!(at("{nx}", 2).unwrap().range, 0..2);
+        // Over whole characters only.
+        assert_eq!(at("{fé", 2).unwrap().range, 0..2);
+    }
+
+    /// An escape writes a sign itself and begins no part: a brace typed
+    /// twice is a brace, the third begins a placeholder.
+    #[test]
+    fn an_escape_begins_no_part() {
+        let pattern = Reference::new("Pattern")
+            .group(
+                Group::new("Signs")
+                    .item(Item::new(r"\d", "A digit"))
+                    .item(Item::new(r"\w", "A letter")),
+            )
+            .starts(&["\\"])
+            .escapes(&["\\\\"]);
+        assert_eq!(pattern.offered(r"a\\", 3), None);
+        assert_eq!(pattern.offered(r"\\d", 3), None);
+        assert_eq!(pattern.offered(r"\\\", 3).map(|o| o.range), Some(2..3));
+        let template = Reference::new("Template")
+            .group(Group::new("Parts").item(Item::new("{name}", "The name")))
+            .starts(&["{"])
+            .escapes(&["{{", "}}"]);
+        assert_eq!(template.offered("a{{", 3), None);
+        assert_eq!(template.offered("{{na", 4), None);
+        assert_eq!(template.offered("{{{na", 5).map(|o| o.range), Some(2..5));
+        assert_eq!(template.offered("}}{na", 5).map(|o| o.range), Some(2..5));
     }
 
     #[test]
