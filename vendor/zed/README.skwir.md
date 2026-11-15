@@ -1223,7 +1223,14 @@ for a frame or two, then took it back. The window keeps the decorations it
 has until the answer, which sets them and updates the window (its geometry,
 its opaque region, as the request did); `Window::decorations_pending` says a
 request differing from them waits (none elsewhere, nor where no decoration
-manager answers, where the request still holds at once).
+manager answers, where the request still holds at once). The answer is the
+surface's `configure` that follows the request, which the protocol
+promises; the decoration's own `configure` before it may be missing where
+the mode stays (amended: waiting for the decoration's alone, a compositor
+keeping its mode left the request waiting for good). A wait that ends
+unchanged tells the window as a change does (`appearance_changed`). A
+configure sent before the compositor read the request ends the wait early:
+the window then draws what it has, never what was asked.
 
 Checked: in a window on headless sway, a window opened asking for none and
 kept in sway's frame (`border pixel`), then switched both ways on the open

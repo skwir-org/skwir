@@ -1322,12 +1322,12 @@ fn open_window(
     // `ui.title_bar` says, asked again as it moves (`Shell::sync`). On
     // macOS and Windows the window is made so (its title bar transparent,
     // or hidden), as asking once it is open would show the other a moment.
-    let asks = crate::title_bar::TitleBar::read(
+    let title_bar = crate::title_bar::TitleBar::read(
         app.settings
             .get::<String>(crate::settings::TITLE_BAR_KEY)
             .as_deref(),
-    )
-    .asks();
+    );
+    let asks = title_bar.asks();
     let opened = cx.open_window(
         gpui::WindowOptions {
             window_bounds: Some(opening.bounds),
@@ -1341,7 +1341,16 @@ fn open_window(
             window_decorations: Some(asks),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Shell::new(app, id, start, keymap, work, window, cx)),
+        |window, cx| {
+            cx.new(|cx| {
+                let mut shell = Shell::new(app, id, start, keymap, work, window, cx);
+                // What the window was made asking: not asked again at its
+                // first sync, whose answer would wait on the first.
+                shell.prefs.title_bar = title_bar;
+                shell.title_bar.answered = title_bar;
+                shell
+            })
+        },
     );
     let window = match opened {
         Ok(window) => window,

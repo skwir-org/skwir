@@ -1108,9 +1108,17 @@ impl WaylandWindowStatePtr {
         if let xdg_surface::Event::Configure { serial } = event {
             {
                 let mut state = self.state.borrow_mut();
-                if let Some(window_controls) = state.in_progress_window_controls.take() {
+                // The configure that follows a request of decorations answers
+                // it, with the decoration's own `configure` before it or
+                // without (a compositor keeping the mode it has may send
+                // none): from here the window draws those it has.
+                let answered = std::mem::take(&mut state.decorations_pending);
+                let controls = state.in_progress_window_controls.take();
+                let changed = answered || controls.is_some();
+                if let Some(window_controls) = controls {
                     state.window_controls = window_controls;
-
+                }
+                if changed {
                     drop(state);
                     let mut callbacks = self.callbacks.borrow_mut();
                     if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
@@ -1194,10 +1202,11 @@ impl WaylandWindowStatePtr {
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
-                    let mut state = self.state.borrow_mut();
-                    state.decorations = WindowDecorations::Server;
-                    state.decorations_pending = false;
-                    update_window(state);
+                    {
+                        let mut state = self.state.borrow_mut();
+                        state.decorations = WindowDecorations::Server;
+                        state.decorations_pending = false;
+                    }
                     let callback = self.callbacks.borrow_mut().appearance_changed.take();
                     if let Some(mut fun) = callback {
                         fun();
@@ -1205,10 +1214,11 @@ impl WaylandWindowStatePtr {
                     }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    let mut state = self.state.borrow_mut();
-                    state.decorations = WindowDecorations::Client;
-                    state.decorations_pending = false;
-                    update_window(state);
+                    {
+                        let mut state = self.state.borrow_mut();
+                        state.decorations = WindowDecorations::Client;
+                        state.decorations_pending = false;
+                    }
                     // Update background to be transparent
                     let callback = self.callbacks.borrow_mut().appearance_changed.take();
                     if let Some(mut fun) = callback {
@@ -2234,9 +2244,10 @@ impl PlatformWindow for WaylandWindow {
         let mut state = self.borrow_mut();
         match state.surface_state.decoration().as_ref() {
             // The window keeps the decorations it has until the compositor
-            // answers with those it grants (`Configure`, which it sends after a
-            // request): one that keeps its own would otherwise see the asked
-            // ones drawn for a frame, then taken back.
+            // answers, with the surface's `configure` that follows a request
+            // (the decoration's before it where the mode changes): one that
+            // keeps its own would otherwise see the asked ones drawn for a
+            // frame, then taken back.
             Some(decoration) => {
                 decoration.set_mode(decorations.to_xdg());
                 state.decorations_pending = decorations != state.decorations;

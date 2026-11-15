@@ -94,10 +94,15 @@ Windows: decision 8.
    window's size reads its body within the margin (`title_bar::body`),
    never the viewport: the arrangement, the panels' limits and edges.
 
-7. **Shown as answered** (amended): the window keeps what it shows until
-   the compositor answers what was asked (gpui patch 0065,
-   `Window::decorations_pending`), so a refusal shows nothing for a
-   frame. What a refusal means here is said beside the setting once seen,
+7. **Shown as answered** (amended): what depends on the decorations stays
+   as the last answer gave it until the compositor answers what was asked
+   (gpui patch 0065, `Window::decorations_pending`, `Frame::answered`), so
+   a refusal shows nothing for a frame; fullscreen, tiling and the buttons
+   are read anew meanwhile. The answer is the surface's configure that
+   follows the request, which the protocol promises (the decoration's own
+   may not come where the mode stays), and the window opens with what it
+   asked, not asked again at its first sync. What a refusal means here is
+   said beside the setting once seen,
    for the run (`title_bar::refusal`): the bar drawn inside the desktop's
    frame, or none where a window manager keeps its title bar. No choice is
    disabled: the settings have no unavailable choice, and none can be

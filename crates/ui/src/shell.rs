@@ -4734,11 +4734,18 @@ impl Render for Shell {
         // What of the title bar skwir draws, read before anything is
         // built: the rows that hold the window's tools hold its buttons
         // (ADR-138).
-        // While the compositor has not answered what was asked, the window
-        // keeps what it showed (`Window::decorations_pending`).
-        if !window.decorations_pending() {
-            let asked = self.prefs.title_bar;
-            self.title_bar = crate::title_bar::Frame::of(asked, window, cx);
+        // While the compositor has not answered what was asked, what depends
+        // on the decorations stays the last answer's: the setting it answered
+        // (`Window::decorations_pending`, `Frame::answered`); fullscreen,
+        // tiling and the buttons are read anew.
+        let pending = window.decorations_pending();
+        let asked = if pending {
+            self.title_bar.answered
+        } else {
+            self.prefs.title_bar
+        };
+        self.title_bar = crate::title_bar::Frame::of(asked, window, cx);
+        if !pending {
             let decorations = window.window_decorations();
             crate::settings::show_title_bar(
                 &self.app,

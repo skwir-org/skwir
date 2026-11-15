@@ -183,6 +183,11 @@ pub fn automatic_now(asked: TitleBar, decorations: Decorations) -> Option<&'stat
 /// anything is built.
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
+    /// The setting what is drawn answers: the one asked when the system
+    /// last answered. While an answer waits (`Window::decorations_pending`),
+    /// the decorations are those that answered it, and so is what is drawn
+    /// of them; the rest (fullscreen, tiling, the buttons) is read anew.
+    pub answered: TitleBar,
     pub drawn: Drawn,
     /// Whether skwir draws the window's frame: its margin, shadow and
     /// corners, the system drawing none.
@@ -202,7 +207,10 @@ impl Frame {
         let fullscreen = window.is_fullscreen();
         let drawn = drawn(setting, decorations, fullscreen, is_x11(cx));
         if drawn == Drawn::None {
-            return Self::default();
+            return Self {
+                answered: setting,
+                ..Self::default()
+            };
         }
         let framed =
             DRAWS_FRAME && matches!(decorations, Decorations::Client { .. }) && !fullscreen;
@@ -217,6 +225,7 @@ impl Frame {
             buttons.iter().flatten().copied().filter(offered).collect()
         };
         Self {
+            answered: setting,
             drawn,
             framed,
             tiling: window.tiling(),
