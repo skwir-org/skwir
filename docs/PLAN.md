@@ -1040,6 +1040,21 @@ tiles asked again after a plan, the speaker's tooltip, rclone's port read
 from its own line alone, a film after a film standing still for good).
 Checks in `docs/STATUS-LOG.md` (2026-11-14).
 
+## Review fixes (2026-11-15)
+
+A review of what came after (8c82a1bf..3092b502, 3 commits: ADR-137, a
+field says what it takes) made 39 findings, two high: a question's
+`describe` ran any command as the user's, an agent's question included,
+at each key before anyone answered (UI-1); Run Command…'s line said
+other paths, quoted for another shell, than the command was given
+(RB-1). CO 12 (core's references, Access's words, Exclusions, the
+search's reference), UI 11 (the list under a field, the questions, the
+address's card), RB 16 (the bulk rename, Run Command…). The user asked
+for them fixed: the three reviewers fixed their own at once in one tree,
+22 commits (2abd14eb..b2d18ea5, not pushed): all fixed but two, and one
+in part (in What is left, below).
+Checks in `docs/STATUS-LOG.md` (2026-11-15).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1053,8 +1068,10 @@ and by their `?`, writing at the caret, a recipe filling two fields,
 the preview's marks, what each field offers as it is typed; Access's
 words, a mode refused, its reference, a change applied and undone; the
 address's F1, its `?`, Escape and `?` alone; Settings › Exclusions'
-fields and Run Command…'s line and list). Left: Access's words on
-Windows (the read-only attribute) not tried there.
+fields and Run Command…'s line and list). Left: on Windows Properties
+offers no Access, so its words (the read-only attribute) reach only an
+agent, compiled and not tried there; Run Command… waits for a terminal
+on macOS and Windows.
 
 **The player follows its tracks** (ADR-136, 2026-11-14): built on
 Linux, tried in a window there (a rename, a move, Undo, a deletion
@@ -1265,6 +1282,26 @@ by the user's choice: AV1 in software is aom's, slower than dav1d (bad's
 dav1d is gst-plugins-rs's now: a Rust plugin, cargo-c and a newer dav1d
 than Jammy's); base keeps Ubuntu's features beside ADR-076's set (CD
 audio, visualizations, Xv, which the player does not use).
+
+**From the review of ADR-137** (2026-11-15):
+- Enter in Rename Several still plans every rename on the window's
+  thread (no I/O, the workspace held only for a moment since aef37f38):
+  planning a plan command on a worker and applying it on its return
+  wants a worker form of `carry_out` for every plan command the window
+  runs.
+- One Ctrl+Z takes back what a recipe wrote in one field, not in both
+  it filled: a step linked across two inputs' histories.
+- The bulk rename's recipes are compiled again at each key (about
+  sixteen small patterns, on a worker, unmeasured); kept for the
+  program's life they would cost memory after the dialog closes.
+- Enter waiting for a question's words to be said shows no sign of it: a
+  slow data command from a plugin from outside holds Enter until Cancel.
+- Not seen in a window: the list standing above its field where the
+  window's foot leaves too little; an address answer arriving after F1
+  (UI-6); Enter waiting on a slow answer; Rename Several's "No name
+  changes" and its Rename inert. Seen once on Xvfb, not chased and
+  believed older: the card's last row coming into view half under the
+  footer after Up from the first.
 
 **From the review since 0.5.0** (2026-11-14):
 - Not seen in a window: the pin's two words told in either order, another

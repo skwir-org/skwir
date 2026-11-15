@@ -17620,3 +17620,103 @@ for Settings › Exclusions and Run Command… (ADR-137 amended).
   freed 39 GB and they ran again: clippy clean, 2390 tests passed,
   `just check-windows` green; after the flicker's fix, the UI's and the
   binary's 926 tests.
+
+## 2026-11-15: Review fixes of ADR-137
+
+The user asked for a review of the commits another session made after the
+last one (8c82a1bf..3092b502, 3 commits: ADR-137, a field says what it
+takes), and for what it found fixed. `just prune` first (8.6 → 40 GB
+free). Three reviewers, one area each, read the code (no builds) and made
+39 findings, two high: core's references, Access's words, Exclusions and
+the search's reference (CO, 12), the list under a field, the questions
+and the address's card (UI, 11), the bulk rename and Run Command… (RB,
+16). Each reviewer then fixed its own, three at once in one tree, each
+owning its files, builds one at a time in capped scopes, each step handed
+over as a patch of its own hunks and committed as it came (2abd14eb..
+0a8b9453, 21 commits, the last mine: a comment the fixing left stale;
+then b2d18ea5, which `check-macos` asked for).
+The commits between were not built one by one.
+
+- **What a question runs as it is typed** (UI-1, high, `dc881b47`;
+  `4c9458f4`, `e68a00ed`): `ui.ask`'s `describe` ran any command, at the
+  question's opening and at each key, as the user's, an agent's question
+  included: an allowed question could start a terminal (`shell.run`) or
+  change settings before anyone answered. A describe now names a data
+  command, any other (or one unknown) refused where `ui.ask` is
+  dispatched and where the question opens, and an agent's question runs
+  it as the agent's call (`describe.agent`, set at dispatch whatever the
+  agent wrote). It is a `latest::Latest` on the shared lane (the pane's
+  remote lane held Access's words on a hung server), cancelled by the
+  next key and with the question, waking its window alone; its arguments
+  are made once and shared (the selection was copied as JSON on the
+  window's thread at each key); the last answer stays drawn until the
+  next, and Enter before the text is said waits for it.
+- **Run Command…** (RB-1, high, `ee0015b2`): the line under the field
+  named the files relative to the folder and POSIX-quoted, while the
+  command was given absolute paths (`-n` read as an option, a name after
+  `;` as a program) and fish was shown quotes it does not read. What is
+  said and what runs are one `Line`: the paths whole, quoted as the
+  program reads them (fish's own quotes), after the command unless it
+  names its arguments (`"$@"`, `$1`…, `${N}`, `$argv`, outside single
+  quotes and escapes), then only there. A test types the line said in
+  bash and fish and gets the argv's arguments byte for byte. The line
+  reads only the four paths it shows. With nothing selected (a folder's
+  background) it runs in the folder (`shell.run_here`, its own describe):
+  before, it never ran. On macOS and Windows both commands say it is not
+  available yet, and the menu has no Run Command….
+- **The list under a field** (UI, `c88ce553`, `4362c73e`, `e99543dd`,
+  `4bcb1009`; CO, `2abd14eb`, `1d44f757`, `c8eb18e0`): a caret inside a
+  part already whole offers nothing (Tab, which moves between the bulk
+  rename's fields, wrote `{full}ll}`), and a part begun runs past the
+  caret as far as an item goes on with it; a reference names its escapes
+  (`{{`, `\\`, `$$`). F1's whole list lights no row until the arrows move,
+  and Tab takes a row only while one is lit (`lists`, `offers`). The list
+  is a list box a screen reader follows (`modal::options`), never wider
+  than the window, above the field where the window's foot leaves too
+  little (`PopoverAnchor::popup_under`); a field's help is found by its
+  input, not its name (a question over the bulk rename took its `?`).
+  `ui.field_reference` and `ui.field_complete` are the user's hand
+  alone. A whole value fills its field (`Item::whole_in`: Access's `6`
+  then `755` made `6755`); an item written as data puts what it says
+  unless `read_only`. A late address answer no longer replaces F1's
+  card; the card's notes are passed over by the arrows and drawn as
+  notes.
+- **What the references say** (CO, `1d87d31a`, `f32b4394`, `9d73f66a`,
+  `73b1aaf9`, `a75e7268`, `dfa37558`): Exclusions' path from the root is
+  `C:/srv/cache` on Windows, where `/srv/cache` was refused by the rules
+  it was offered for. Groups and `$1` are said only by the bulk rename's
+  regex; `\s` is any Unicode space. A search's term is written past the
+  word, quote or `/…/` the caret is in and apart from the word after it,
+  joining a `-` or `(`; each group's notes reach the card; periods, size
+  and duration units and regex flags are each one table the parser reads
+  and the reference says. Access's words come from `apply`'s own masks
+  (`o+s`, `u+t` said as giving nothing; the umask named where it leaves
+  something out; files and folders said apart). Its words on Windows
+  reach only an agent: Properties offers no Access there.
+- **The bulk rename** (RB, `d9cda998`, `67295011`, `aef37f38`): the regex
+  and replacement are taken as typed (a replacement that is a space was
+  trimmed to none, and two recipes took the underscores away); Rename is
+  inert while no name changes. A name's extension is core's one rule
+  (`location::extension_start`): a folder has none, `notes.` keeps its
+  dot. The reference reads the first entry named alone; a counter wider
+  than 255 is refused; two recipes fixed (`001.jpg`, nested brackets);
+  one `PLACEHOLDERS` list held to `render`, the reference and the schema.
+  The preview takes its items under the workspace's lock and lets it go
+  before working out the names.
+- **Left** (PLAN, What is left): Enter still plans every rename on the
+  window's thread; one Ctrl+Z for both fields a recipe filled; the
+  recipes compiled at each key; no sign while Enter waits for a slow
+  describe; the list above its field, the late address answer, Enter
+  waiting and "No name changes" not seen in a window.
+- **Checks** (HEAD, b2d18ea5): `just lint` green; `just test` 3,618
+  passed (32 skipped); `just check-windows` green; `just check-macos`
+  green once two test imports were gated as their tests are
+  (b2d18ea5); under Wine the shell and bulk rename plugins' tests, 16
+  passed; `just a11y-check` passed, with its new checks of a field's
+  list (F1 lights no row, Down says the first as focused, Escape puts it
+  away). The fixers ran their crates' clippy and tests at each step, the
+  shell plugin's typing its line in bash and fish. In a window on Xvfb
+  (ui's): Access's words, a mode refused (the frame red, Change inert),
+  F1's list with no row lit and Tab going on to Cancel, the list held to
+  a 440 px window, the card's notes passed over. Not run: release-check,
+  bench-check, the whole `just test-windows`.

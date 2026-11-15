@@ -7,19 +7,22 @@
   takes: each placeholder with what it gives the first file, date
   formats, recipes for common renames (spaces to underscores, what is in
   brackets taken away, two parts swapped) and a pattern's and a
-  replacement's signs; one chosen is written where the cursor is. As you
+  replacement's signs; a placeholder or a sign chosen is written where
+  the cursor is, a recipe fills the regex and the replacement. As you
   type `{`, `\` or `$` there, the field lists what can go on from there,
-  `Tab` taking one. The preview tints what the regex matched and what it
+  `Tab` taking the first. The preview tints what the regex matched and what it
   put there. The dialog starts from the names as they are (it started
   from them without their extensions), and `{.ext}` writes an extension
   with its dot, nothing for a file that has none. In the address, `F1`
   or the `?` inside it lists everything a search takes without losing
   what is typed. Properties' Access says, as you type, what a mode comes
   to, refuses one `chmod` would not take before Change, and has its `?`
-  too, as do Settings › Exclusions' fields; Run Command… shows, as you
-  type, the very line that will run, with the selected paths after it.
-  What a field takes shows in a list under it, as the address's does,
-  the keyboard staying in the field.
+  too, as do Settings › Exclusions' fields, an example of a whole mode
+  or path taking the field's place; Run Command… shows, as you type, the
+  very line that will run, the selected paths whole and quoted as your
+  shell reads them. What a field takes shows in a list under it, as the
+  address's does, the keyboard staying in the field, and a screen reader
+  hears it.
 - **The player follows the file it plays.** Renamed or moved, by Skwir
   or by another program in a folder a window shows, the track plays on
   under its new name, its mark and the desktop's controls with it.
@@ -102,6 +105,22 @@
   read every name taken again for each row it drew.
 - **A large folder renamed beside folders opened in place** no longer costs
   their count times its size on the window's thread.
+- **Run Command… on a folder's background runs** (Open Folder With): with
+  nothing selected it asked for a selection and never ran; it runs in the
+  folder, with no paths after the command.
+- **A command that names its arguments is given them once**: `cp "$@"
+  /backup`, `"$1"` or fish's `$argv` were given the paths a second time
+  after the command; they now go only where it names them.
+- **Run Command… is no longer offered on macOS and Windows**, where it
+  could not start a terminal; asked by an agent or a script, it says it
+  is not available there yet.
+- **Rename Several** gives a folder no extension (`v1.2` stays whole under
+  `{name}` and a case) and keeps the dot a name ends with; a replacement
+  that is a space, or has spaces around it, is taken as typed, no longer
+  trimmed to nothing; a counter wider than a name can be (`{n:256}`) is
+  refused rather than built for every file; Rename waits while no name
+  changes; and its preview of many files no longer holds the window back
+  at each key.
 
 ## 0.5.0 (2026-11-14)
 
