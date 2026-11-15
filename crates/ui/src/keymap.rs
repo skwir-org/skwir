@@ -1530,7 +1530,9 @@ pub(crate) const PLACES: &[Place] = &[
     inside("form", FORM, "Forms"),
     inside("tag_editor", TAG_EDITOR, "Tag editor"),
     inside("bulk", BULK, "Bulk rename"),
-    inside("bulk_case", BULK_CASE, "Bulk rename"),
+    // Apart from the fields' keys: the arrows step the case on its row
+    // alone, and move the caret in a field.
+    inside("bulk_case", BULK_CASE, "Bulk rename's case"),
     inside("review", REVIEW, "Plan review"),
     inside("confirm", CONFIRM, "Confirmation dialogs"),
     inside("menu", MENU, "Context menu"),

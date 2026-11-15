@@ -1550,11 +1550,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   to a screen reader, as a form's `Kind::Row`, a setting's choice and
   the bulk rename's Case are; never a button that cycles through values
   it hides. Where they do not fit beside their label, a dropdown
-  (`elements::adaptive::Fit`), its list a `controls::dropdown_list`. The
-  arrows step the choice, Space gives the next, Enter answers the dialog
-  as from a field. A value is written as it leaves what it changes where
-  it can be (the bulk rename's lowercase, UPPERCASE), as a text size's
-  choice is written at its size.
+  (`elements::adaptive::Fit`), its list a `controls::dropdown_list`, which
+  closes once the row is drawn as segments again. The arrows step the
+  choice; Space gives the next on the row and opens a dropdown's list;
+  Enter answers the dialog as from a field. A value is written as it
+  leaves what it changes where it can be (the bulk rename's lowercase,
+  UPPERCASE), as a text size's choice is written at its size.
 - **A form is described, never drawn, by its plugin** (`skwir_core::form`,
   `form.rs`, ADR-086): fields of text, numbers, secrets, switches,
   choices, picks, and rows of a few choices side by side (`Kind::Row`: a

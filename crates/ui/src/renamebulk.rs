@@ -312,10 +312,7 @@ impl Shell {
     /// round the last (Ctrl+K from any of its fields, Space on the row).
     pub fn bulk_case(&mut self, delta: Option<isize>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(b) = &self.bulk else { return };
-        let next = match delta {
-            None => (b.case + 1) % CASES.len(),
-            Some(delta) => b.case.saturating_add_signed(delta).min(CASES.len() - 1),
-        };
+        let next = case_stepped(b.case, delta);
         self.bulk_choose_case(next, window, cx);
     }
 
@@ -458,6 +455,15 @@ impl Shell {
     }
 }
 
+/// The case `delta` steps from `case`, stopping at the ends; without one,
+/// the next, round the last (`Shell::bulk_case`).
+fn case_stepped(case: usize, delta: Option<isize>) -> usize {
+    match delta {
+        None => (case + 1) % CASES.len(),
+        Some(delta) => case.saturating_add_signed(delta).min(CASES.len() - 1),
+    }
+}
+
 /// The rename the fields ask (`FIELDS`' texts, the case chosen) for the
 /// pane it was opened for. The template and the start are read without
 /// what is around them; the regex and the replacement as typed, a space
@@ -518,6 +524,25 @@ fn case_segments(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
         .aria_label("Case")
         .key_context(keymap::BULK_CASE)
         .on_click(keyboard);
+    // Drawn as segments, the dropdown's list has nothing to hang from (the
+    // window widened while it was open): it is closed, never left to show
+    // again unasked when the row narrows.
+    if b.case_open {
+        let shell = cx.entity().downgrade();
+        frame = frame.child(
+            gpui::canvas(
+                move |_, _, cx| {
+                    cx.defer(move |cx| {
+                        shell
+                            .update(cx, |shell, cx| shell.bulk_case_list(false, cx))
+                            .ok();
+                    });
+                },
+                |_, (), _, _| {},
+            )
+            .absolute(),
+        );
+    }
     for (at, &(_, label)) in CASES.iter().enumerate() {
         let focus = b.case_focus.clone();
         frame = frame.child(
@@ -824,5 +849,23 @@ mod tests {
         assert!(spec["template"].is_null() && spec["regex"].is_null());
         assert!(spec["replacement"].is_null() && spec["case"].is_null());
         assert_eq!(spec["start"], 1);
+    }
+
+    /// The arrows step the case and stop at its ends; Ctrl+K and Space
+    /// give the next, round the last. Each but Unchanged asks the plugin
+    /// for its own value.
+    #[test]
+    fn the_case_steps_and_goes_round() {
+        let last = CASES.len() - 1;
+        assert_eq!(case_stepped(0, Some(-1)), 0, "stops at the first");
+        assert_eq!(case_stepped(0, Some(1)), 1);
+        assert_eq!(case_stepped(last, Some(1)), last, "stops at the last");
+        assert_eq!(case_stepped(2, Some(-1)), 1);
+        assert_eq!(case_stepped(0, None), 1);
+        assert_eq!(case_stepped(last, None), 0, "round the last");
+        let texts = ["{full}", "", "", ""].map(str::to_owned);
+        for (at, &(value, _)) in CASES.iter().enumerate().skip(1) {
+            assert_eq!(spec_of(&texts, at, PaneId(1))["case"], value);
+        }
     }
 }

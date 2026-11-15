@@ -152,3 +152,53 @@ fn what_only_reads_is_data_unless_the_window_shows_its_answer() {
         .collect();
     assert!(data.is_empty(), "data offered: {data:?}");
 }
+
+/// The bulk rename's case row offers each case its plugin reads, by the
+/// plugin's own words (`renamebulk::CASES`, Unchanged asking none): a case
+/// renamed in one and not the other is caught here, where both are built,
+/// the window naming no plugin's crate.
+#[test]
+fn the_bulk_rename_offers_the_cases_its_plugin_reads() {
+    fn words(schema: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+        match schema {
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    match (key.as_str(), value) {
+                        ("enum", serde_json::Value::Array(all)) => {
+                            out.extend(all.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+                        }
+                        ("const", serde_json::Value::String(one)) => {
+                            out.insert(one.clone());
+                        }
+                        _ => words(value, out),
+                    }
+                }
+            }
+            serde_json::Value::Array(all) => all.iter().for_each(|v| words(v, out)),
+            _ => {}
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = Arc::new(App::new(AppConfig::ephemeral(tmp.path())).unwrap());
+    for plugin in skwir::plugins() {
+        let id = plugin.id();
+        let on = plugin.enabled_by_default();
+        app.plugins.add(plugin, &app);
+        if !on {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+    }
+    let spec = app.commands.get("rename_bulk").expect("the bulk rename");
+    let schema = spec.args_schema.get().as_value();
+    let case = ["$defs", "definitions"]
+        .into_iter()
+        .find_map(|defs| schema.get(defs)?.get("Case"))
+        .expect("the rename's cases in its schema");
+    let mut read = std::collections::BTreeSet::new();
+    words(case, &mut read);
+    let (unchanged, offered) = skwir_ui::renamebulk::CASES.split_first().expect("cases");
+    let offered: std::collections::BTreeSet<String> =
+        offered.iter().map(|&(value, _)| value.to_owned()).collect();
+    assert_eq!(offered, read, "the window's cases and the plugin's");
+    assert!(!read.contains(unchanged.0), "Unchanged asks no case");
+}
