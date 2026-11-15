@@ -175,7 +175,11 @@ around the views is in [shell.md](shell.md).
   nothing (`Shell::presented_ui`, `with_pane`: `None` for a pane not
   presented, never another's). A selection that only followed
   its entries (renamed, gone, no longer shown) was not chosen
-  (`Selection::chosen`, not `revision`). Where it went is told by the
+  (`Selection::chosen`, not `revision`), nor is one a plan's end made
+  (`Pane::select_made`, `Selection::select_followed`): two plans ended
+  one after the other (two pastes, two quick Ctrl+Z) each select their
+  own, the first's let go; a link followed or a path typed is chosen
+  (`select_revealed`). Where it went is told by the
   executor (`Change::placed`), never read from the plan on the window's
   thread: a name taken settled (`photos (copy)`), and a folder merged
   into as itself, though its steps fill it (`Items::placed`). An undo or
@@ -199,11 +203,14 @@ around the views is in [shell.md](shell.md).
   and the cursor goes there (`PaneView::reveal_among`). A rename, a bulk
   rename, and their undo and redo alike: each entry is followed through
   the names it took on the way, never to a cycle's temporary one
-  (`renamed_to`). A name that hides it turns hidden files on and, where
-  no one chose since (`Selection::chosen`), puts it back in the selection
-  it left, the neighbour that stood in for it let go
-  (`Selection::put_back`); one the filter or a folded group leaves out
-  stays out, never selected unseen, and is said (`Pane::show_renamed`).
+  (`renamed_to`). Where no one chose since (`Selection::chosen`), what it
+  renamed is the selection, as what a plan puts is, what was selected
+  besides let go (the neighbour that stood in for a file a dot name hid,
+  the file an earlier undo brought back): cursor and selection never
+  part, so Delete never takes a file out of view
+  (`Selection::select_followed`). A name that hides it turns hidden files
+  on; one the filter or a folded group leaves out stays out, never
+  selected unseen, and is said (`Pane::show_renamed`).
   A selection chosen meanwhile wins.
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A

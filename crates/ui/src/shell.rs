@@ -1796,12 +1796,18 @@ impl Shell {
             }
             return;
         };
-        let pane = reveal.pane;
+        let (pane, made) = (reveal.pane, reveal.plan.is_some());
         let whole = ids.len() >= reveal.names.len();
         let selected = {
             let mut ws = self.app.workspace.write();
             ws.pane_mut(pane).map(|pane| {
-                pane.select_revealed(&ids);
+                // What a plan put is selected as no choice: the next plan's
+                // end selects its own in turn. A link followed is chosen.
+                if made {
+                    pane.select_made(&ids);
+                } else {
+                    pane.select_revealed(&ids);
+                }
                 pane.selection.chosen()
             })
         };
@@ -2026,7 +2032,13 @@ impl Shell {
         };
         let names = in_folder(placed);
         if !names.is_empty() {
-            self.wait_reveal(Reveal::new(shown.pane, names).of(plan));
+            // The selection as the plan found it, which a choice since wins
+            // over from its first look.
+            let reveal = Reveal {
+                selected: Some(shown.selection),
+                ..Reveal::new(shown.pane, names)
+            };
+            self.wait_reveal(reveal.of(plan));
             return;
         }
         // What it renamed is followed in the pane it was asked from alone:
