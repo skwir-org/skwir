@@ -599,11 +599,16 @@ ADR-077 (which revises ADR-021).
   refresh asked shows all and asks the mounts known as that refresh
   would have (an rclone mount's features among them), its own read
   dropped as older. What no watch tells (a folder
-  kio-fuse holds more of, a share another program connected, a source
-  that could not be watched) is read again as a window comes to the
-  front (`Plugin::on_looked_at`), the servers unless a read of them is
-  under way. A refresh asked counts in `Remotes::refreshes`; what the
-  system told does not.
+  kio-fuse holds more of, a share another program connected) is read
+  again as a window comes to the front (`Plugin::on_looked_at`): one
+  such read at a time, never another started behind one a bridge's
+  program holds, and once in `remotes::REFRESHED_WITHIN` (a window gone
+  back and forth, several windows in turn); the servers with it only
+  where a source could not be watched (`Sources::misses`), and unless a
+  read of them is under way. Which remotes connect at login is asked of
+  their manager (on Windows, `schtasks` run) only once what is listed
+  names others, or a refresh is asked. A refresh asked counts in
+  `Remotes::refreshes`; what the system told does not.
 - **KDE is told what Skwir changes in its network folders** as KDE's
   own Add Network Folder (`knetattach`) tells it: `org.kde.KDirNotify`'s
   `FilesAdded` of `remote:/` on the session bus, after an entry written,

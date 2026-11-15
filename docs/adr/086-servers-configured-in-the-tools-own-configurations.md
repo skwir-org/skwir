@@ -232,7 +232,9 @@ followed the files the servers are read from, nor the table of mounts.
   with the fix, none over 71 ms.
 - **What no watch tells is read again as a window comes to the front**
   (`Plugin::on_looked_at`): a folder kio-fuse holds more of, a share
-  another program connected, a file that could not be watched.
+  another program connected, the servers where a file could not be
+  watched; one such read at a time, once in ten seconds, as the
+  folders shown are read again.
 - **KDE is told what Skwir changes in its network folders** as KDE's own
   Add Network Folder (`knetattach`) tells it: `KDirNotify`'s
   `FilesAdded` of `remote:/` on the session bus, after an entry is

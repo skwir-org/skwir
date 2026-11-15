@@ -193,6 +193,17 @@ struct State {
     mounted: Arc<Vec<Mounted>>,
     /// The remotes connected at login, by their entry's id (`login::id_of`).
     at_login: std::collections::HashSet<String>,
+    /// The ids `at_login` was asked for: asked again only once what is
+    /// listed names others, or a refresh is asked (on Windows each asking
+    /// runs `schtasks`).
+    login_ids: std::collections::HashSet<String>,
+    /// The read as a window comes to the front under way
+    /// (`Remotes::looked_at`): one at a time, never another started
+    /// behind one a bridge's program holds.
+    looking: bool,
+    /// When the last of those began: one in `remotes::REFRESHED_WITHIN`,
+    /// as the folders shown are read again.
+    looked: Option<std::time::Instant>,
     /// Mounts whose program is being asked whether it still answers: one
     /// question at a time each, never another queued behind one a server
     /// gone holds for good.
@@ -250,18 +261,24 @@ enum Asked {
     Told,
 }
 
-/// A read of the servers under way (`State::servers_reading`), no longer
-/// once it ends, unless a later one began.
-struct ServersRead {
+/// What a read of the remotes holds until it ends, run or dropped unrun:
+/// the read of the servers under way (`State::servers_reading`), no
+/// longer unless a later one began, and the window's read
+/// (`State::looking`).
+struct ReadEnds {
     state: Arc<Mutex<State>>,
-    at: u64,
+    servers_at: Option<u64>,
+    looked: bool,
 }
 
-impl Drop for ServersRead {
+impl Drop for ReadEnds {
     fn drop(&mut self) {
         let mut state = self.state.lock();
-        if state.servers_generation == self.at {
+        if self.servers_at == Some(state.servers_generation) {
             state.servers_reading = None;
+        }
+        if self.looked {
+            state.looking = false;
         }
     }
 }
@@ -933,7 +950,7 @@ impl Remotes {
     /// is near take longer, and are published after, unless a later
     /// refresh began meanwhile: the mounts never wait on them.
     fn refresh(&self, app: &App) {
-        self.read_again(app, true, Asked::Whole, Bridges::Listed);
+        self.read_again(app, true, Asked::Whole, Bridges::Listed, false);
     }
 
     /// Read again what is mounted, and publish it, without the servers the
@@ -942,36 +959,58 @@ impl Remotes {
     /// program started).
     #[cfg(target_os = "linux")]
     fn refresh_mounts(&self, app: &App) {
-        self.read_again(app, false, Asked::Whole, Bridges::Listed);
+        self.read_again(app, false, Asked::Whole, Bridges::Listed, false);
     }
 
     /// The system's table of mounts changed (`reach::follow`), whoever
     /// mounted or let go: what is mounted is read again, and shown where
     /// it changed.
     fn mounts_told(&self, app: &App) {
-        self.read_again(app, false, Asked::Told, Bridges::Kept);
+        self.read_again(app, false, Asked::Told, Bridges::Kept, false);
     }
 
     /// A file the servers are read from changed (`sources`), whoever
     /// wrote it: the servers are read again, and shown where they changed.
     fn sources_told(&self, app: &App) {
-        self.read_again(app, true, Asked::Told, Bridges::Kept);
+        self.read_again(app, true, Asked::Told, Bridges::Kept, false);
     }
 
     /// The window came to the front: what no watch tells is read again
     /// (a folder kio-fuse holds more of, a share another program
-    /// connected, a source that could not be watched), shown where it
-    /// changed; the servers too, unless a read of them is under way.
+    /// connected), shown where it changed; the servers too where a source
+    /// could not be watched (`Sources::misses`), unless a read of them is
+    /// under way. One at a time, and once in `remotes::REFRESHED_WITHIN`:
+    /// a window gone back and forth, or several windows in turn, list the
+    /// bridges once, and one a program holds holds no more than one read.
     fn looked_at(&self, app: &App) {
-        let reading = self.state.lock().servers_reading.is_some();
-        self.read_again(app, !reading, Asked::Told, Bridges::Listed);
+        let servers = {
+            let mut state = self.state.lock();
+            if state.looking
+                || state
+                    .looked
+                    .is_some_and(|at| at.elapsed() < skwir_core::remotes::REFRESHED_WITHIN)
+            {
+                return;
+            }
+            state.looking = true;
+            state.looked = Some(std::time::Instant::now());
+            state.servers_reading.is_none()
+                && state.sources.as_ref().is_none_or(sources::Sources::misses)
+        };
+        self.read_again(app, servers, Asked::Told, Bridges::Listed, true);
     }
 
     /// [`Remotes::refresh`], the servers read again where `servers`, else
     /// [`Remotes::refresh_mounts`]. Each kind of read stores only while no
     /// later one of its kind began: a read of the mounts alone never drops
     /// the servers a whole refresh reads.
-    fn read_again(&self, app: &App, servers: bool, asked: Asked, bridges: Bridges) {
+    fn read_again(&self, app: &App, servers: bool, asked: Asked, bridges: Bridges, looked: bool) {
+        // Held until the read ends, run or dropped unrun.
+        let mut ends = ReadEnds {
+            state: Arc::clone(&self.state),
+            servers_at: None,
+            looked,
+        };
         let Some(lifetime) = self.lifetime() else {
             return;
         };
@@ -1004,10 +1043,7 @@ impl Remotes {
         };
         // The read of the servers under way no longer once this one ends,
         // unless a later one began.
-        let ends = servers.then(|| ServersRead {
-            state: Arc::clone(&self.state),
-            at: servers_at,
-        });
+        ends.servers_at = servers.then_some(servers_at);
         let this = self.clone();
         let weak = app.weak();
         let token = lifetime.clone();
@@ -1116,25 +1152,28 @@ impl Remotes {
                 .map(|host| (host.to_owned(), lan::local(host)))
                 .collect();
             // Which of them connect at login: their manager's files (on
-            // Windows its program, run), asked again where what is listed
-            // may have changed: not for what the system told that changed
-            // nothing here.
-            let at_login = (whole || servers || changed).then(|| {
-                let kept = listed
-                    .clone()
-                    .unwrap_or_else(|| this.state.lock().servers.clone());
-                this.login_manager().map_or_else(
-                    |_| std::collections::HashSet::new(),
-                    |manager| {
-                        manager.installed_of(
-                            mounted
-                                .iter()
-                                .filter_map(|m| m.recognised.address.clone())
-                                .chain(kept.iter().map(|s| s.address.clone()))
-                                .filter_map(|a| configure::login_id(&a)),
-                        )
-                    },
+            // Windows its program, run), asked again once what is listed
+            // names others, or a refresh was asked (Skwir's own changes
+            // to them ask one): never for what changed nothing here.
+            let (asked_ids, kept) = {
+                let state = this.state.lock();
+                (
+                    state.login_ids.clone(),
+                    listed.clone().unwrap_or_else(|| state.servers.clone()),
                 )
+            };
+            let ids: std::collections::HashSet<String> = mounted
+                .iter()
+                .filter_map(|m| m.recognised.address.as_ref())
+                .chain(kept.iter().map(|s| &s.address))
+                .filter_map(configure::login_id)
+                .collect();
+            let at_login = (whole || asked == Asked::Whole || ids != asked_ids).then(|| {
+                let at_login = this.login_manager().map_or_else(
+                    |_| std::collections::HashSet::new(),
+                    |manager| manager.installed_of(ids.iter().cloned()),
+                );
+                (at_login, ids)
             });
             let found = !near.is_empty();
             let shown = {
@@ -1157,13 +1196,15 @@ impl Remotes {
                     || (servers
                         && (std::mem::take(&mut state.whole_owed.1) || asked == Asked::Whole));
                 let listed = listed.unwrap_or_else(|| state.servers.clone());
-                let at_login = at_login.unwrap_or_else(|| state.at_login.clone());
+                let (at_login, ids) =
+                    at_login.unwrap_or_else(|| (state.at_login.clone(), state.login_ids.clone()));
                 let kept_changed = state.servers != listed || state.at_login != at_login;
                 if kept_changed {
                     this.records.changed();
                 }
                 state.servers = listed;
                 state.at_login = at_login;
+                state.login_ids = ids;
                 whole || kept_changed || found
             };
             if shown && let Some(app) = weak.upgrade() {
@@ -2816,6 +2857,95 @@ mod tests {
             !listed("sftp://me@example.com/")
         });
         assert_eq!(remotes.refreshes(), before, "no refresh was asked");
+    }
+
+    /// [`Configured`], counting how often its servers are read.
+    struct Counted(Configured, Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Connector for Counted {
+        fn id(&self) -> &'static str {
+            "counted"
+        }
+        fn title(&self) -> &'static str {
+            "counted"
+        }
+        fn schemes(&self) -> &'static [Scheme] {
+            &[Scheme::Sftp]
+        }
+        fn unavailable(&self) -> Option<String> {
+            None
+        }
+        fn connect(
+            &self,
+            _: &Address,
+            _: &Arc<dyn Ask>,
+            _: &CancelToken,
+        ) -> anyhow::Result<Connected> {
+            anyhow::bail!("connects nothing")
+        }
+        fn recognises(&self, _: &Remote) -> Option<Recognised> {
+            None
+        }
+        fn disconnect(&self, _: &Remote, _: &Recognised, _: &CancelToken) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn servers(&self, cancel: &CancelToken) -> connector::Named {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.0.servers(cancel)
+        }
+    }
+
+    /// A window coming to the front reads what no watch tells once in
+    /// `REFRESHED_WITHIN`, one read at a time, and the servers only where
+    /// where they were read could not be watched: a window gone back and
+    /// forth asks nothing of the tools whose files are followed.
+    #[test]
+    fn coming_to_the_front_reads_again_once_and_only_what_is_not_watched() {
+        use std::sync::atomic::Ordering;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
+            tmp.path().join("app"),
+        ))
+        .unwrap();
+        let file = tmp.path().join("servers");
+        std::fs::write(&file, "sftp://me@example.com/\n").unwrap();
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let remotes =
+            Remotes::with(vec![
+                Arc::new(Counted(Configured(file.clone()), Arc::clone(&reads)))
+                    as Arc<dyn Connector>,
+            ]);
+        app.plugins
+            .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
+        let until = |what: &str, done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(std::time::Instant::now() < deadline, "{what}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let ended = || {
+            let state = remotes.state.lock();
+            state.servers_reading.is_none() && !state.looking
+        };
+        until("the first read ended", &ended);
+        let first = reads.load(Ordering::SeqCst);
+        remotes.looked_at(&app);
+        let looked = remotes.state.lock().looked;
+        assert!(looked.is_some(), "read as the window came to the front");
+        until("the window's read ended", &ended);
+        assert_eq!(reads.load(Ordering::SeqCst), first, "its file is followed");
+        remotes.looked_at(&app);
+        assert_eq!(remotes.state.lock().looked, looked, "once in a while");
+        // Where they were read could not be watched: read again.
+        {
+            let mut state = remotes.state.lock();
+            state.looked = None;
+            state.sources = None;
+        }
+        remotes.looked_at(&app);
+        until("the window's read ended", &ended);
+        assert_eq!(reads.load(Ordering::SeqCst), first + 1);
     }
 
     /// What an address names below a mount is the mount's: never a folder

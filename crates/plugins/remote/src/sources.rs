@@ -36,6 +36,9 @@ pub struct Sources {
     /// What counts among the events: shared with the watcher's handler.
     followed: Arc<Mutex<Vec<Source>>>,
     watched: HashSet<PathBuf>,
+    /// Whether a folder followed could not be watched: what it holds is
+    /// read again as a window comes to the front (`Sources::misses`).
+    misses: bool,
 }
 
 impl Sources {
@@ -55,6 +58,7 @@ impl Sources {
             watcher,
             followed,
             watched: HashSet::new(),
+            misses: false,
         })
     }
 
@@ -76,13 +80,22 @@ impl Sources {
             self.watcher.unwatch(&gone);
             self.watched.remove(&gone);
         }
+        self.misses = false;
         for folder in folders {
             if self.watcher.watch(&folder) {
                 self.watched.insert(folder);
             } else {
+                self.misses = true;
                 self.watched.remove(&folder);
             }
         }
+    }
+
+    /// Whether a folder followed could not be watched (the system's
+    /// watches all taken): the servers are read again as a window comes to
+    /// the front, no change there told.
+    pub fn misses(&self) -> bool {
+        self.misses
     }
 
     /// The folders watched now: what a test asks.
