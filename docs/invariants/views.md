@@ -184,7 +184,9 @@ around the views is in [shell.md](shell.md).
   The command hands the window the id each run will go by (`runs`,
   `Executor::undo`), and the window follows those alone
   (`finishing::ran`): two quick Ctrl+Z are each followed as it runs, an
-  agent's or a script's undo never.
+  agent's or a script's undo never. Every id handed out is told an end:
+  one that never begins (nothing to take back at its turn, cancelled
+  before it) is told `ExecEvent::Finished` alone, unsaid, and let go.
   What it says (hidden files turned on) joins the plan's answer, whose
   Undo stays, said again whole as a toast of its own: timed for what it
   says now, and heard (`Shell::say_with`) (`Shell::made`).

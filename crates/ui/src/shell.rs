@@ -1975,6 +1975,9 @@ impl Shell {
         done: bool,
         items: Option<&skwir_core::op::Items>,
     ) {
+        // An undo or a redo asked that never began (nothing to take back
+        // at its turn) is told its end alone: let go of.
+        self.replaying.remove(&plan);
         let taken = match self.making.take_if(|m| m.plan == plan) {
             Some(making) => Some(making),
             None => self

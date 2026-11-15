@@ -218,6 +218,11 @@ pub enum ExecEvent {
     Resumed {
         plan: PlanId,
     },
+    /// The run ended. One that never began (an undo or a redo that found
+    /// nothing to take back at its turn, one cancelled before it, one of a
+    /// chain stopped first) is told this alone, without `Started`: every
+    /// id handed out ([`Executor::undo`]) is told an end, and nothing is
+    /// said of one that did nothing.
     Finished {
         plan: PlanId,
         applied: usize,
@@ -4183,8 +4188,34 @@ impl Executor {
             Never(JournalEntry),
             Goes(Plan, String, u64),
         }
+        // A run that never begins (cancelled before its turn, one of a
+        // chain stopped before it; nothing to take back at its turn) is
+        // told ended all the same, and unsaid: `Finished` alone, no
+        // `Started`, so whoever was handed its id (the window, which
+        // follows it) lets it go.
+        let unbegun = |cancelled: bool| {
+            self.told(seq);
+            let nothing = match direction {
+                Direction::Undo => "nothing to undo",
+                Direction::Redo => "nothing to redo",
+            };
+            self.emit(ExecEvent::Finished {
+                plan: id,
+                applied: 0,
+                skipped: 0,
+                error: (!cancelled).then(|| nothing.to_owned()),
+                cancelled,
+                undoable: false,
+                items: None,
+                said: Vec::new(),
+                moved: 0,
+                ran: Duration::ZERO,
+                tally: None,
+            });
+            None
+        };
         if cancel.is_cancelled() {
-            return None;
+            return unbegun(true);
         }
         let refuse = |title: Option<String>, reason: String| {
             let (named, run) = match direction {
@@ -4210,11 +4241,16 @@ impl Executor {
         if let Some((title, reason)) = refused {
             return Some(refuse(title, reason));
         }
-        let target = target?;
+        let Some(target) = target else {
+            return unbegun(false);
+        };
         let found = {
             let mut j = self.journal.lock();
             let stack = j.stack(direction);
-            let at = stack.iter().position(|e| e.stacked == target)?;
+            let Some(at) = stack.iter().position(|e| e.stacked == target) else {
+                drop(j);
+                return unbegun(false);
+            };
             let entry = &stack[at];
             // One that cannot be undone says it first.
             let held = stack
@@ -6089,6 +6125,58 @@ mod tests {
         assert!(
             [undo, refused, redo].iter().all(|id| *id != rename.id),
             "each run its own"
+        );
+    }
+
+    /// A run that never begins is told an end all the same, unsaid: a
+    /// redo asked while a plan runs, finding nothing to redo at its turn,
+    /// and an undo cancelled before its turn, each `Finished` alone, so
+    /// that what holds its id lets it go.
+    #[test]
+    fn a_run_that_never_begins_is_told_its_end() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let ended = |id: PlanId| move |e: &ExecEvent| matches!(e, ExecEvent::Finished { plan, .. } if *plan == id);
+        let began = |seen: &[ExecEvent], id: PlanId| {
+            seen.iter()
+                .any(|e| matches!(e, ExecEvent::Started { plan, .. } if *plan == id))
+        };
+        let running = Gate::new("/disk/notes/später", true, false, &log);
+        executor.execute(running.plan(), CancelToken::new());
+        assert!(logged(&log, "began /disk/notes/später"));
+        let redo = executor
+            .redo(CancelToken::new())
+            .expect("asked while a plan runs");
+        let seen = events_until(&executor, ended(redo));
+        assert!(!began(&seen, redo), "nothing began, nothing is said");
+        assert!(matches!(
+            seen.last(),
+            Some(ExecEvent::Finished {
+                error: Some(_),
+                cancelled: false,
+                ..
+            })
+        ));
+        running.opened();
+
+        let rename = Gate::new("/disk/notes/l'été.txt", false, true, &log).plan();
+        executor.execute_blocking(&rename, &CancelToken::new());
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let undo = executor.undo(cancel).expect("something to undo");
+        let seen = events_until(&executor, ended(undo));
+        assert!(!began(&seen, undo));
+        assert!(matches!(
+            seen.last(),
+            Some(ExecEvent::Finished {
+                cancelled: true,
+                ..
+            })
+        ));
+        assert!(
+            !log.lock()
+                .iter()
+                .any(|l| l == "undid /disk/notes/l'été.txt")
         );
     }
 
