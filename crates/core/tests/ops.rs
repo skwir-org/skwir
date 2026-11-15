@@ -1217,7 +1217,7 @@ fn undos_run_in_journal_order_after_the_plans_before_them() {
     );
     app.executor.execute(first, app.lifetime().child());
     app.executor.execute(second, app.lifetime().child());
-    assert!(app.executor.undo(app.lifetime().child()));
+    assert!(app.executor.undo(app.lifetime().child()).is_some());
     // The second undo takes the first rename's entry, and waits for the
     // first undo, which shares a name with it.
     let undone = app.executor.undo_blocking(app.lifetime()).unwrap();

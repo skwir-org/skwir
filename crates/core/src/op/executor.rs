@@ -801,6 +801,10 @@ struct Job {
     /// One undo of Undo with what came after ([`Executor::undo_with_after`]),
     /// and whether it is the last, the entry asked for.
     chain: Option<(Arc<Chain>, bool)>,
+    /// The id its run goes by (`ExecEvent::Started`): a plan's own; an
+    /// undo's or a redo's made as it is asked and handed to the asker
+    /// (`Executor::undo`), so that the window follows its own runs alone.
+    run: PlanId,
 }
 
 /// Undo with what came after, as one action (ADR-079, 13): its undos run
@@ -2391,15 +2395,13 @@ impl Executor {
     }
 
     /// Undo the last plan asked (ADR-079): once it ends where it runs,
-    /// beside what it shares nothing with. Returns false if there is
-    /// nothing to undo and nothing that could add to the journal is queued
-    /// or running.
-    pub fn undo(self: &Arc<Self>, cancel: CancelToken) -> bool {
-        let available = self.is_busy() || self.can_undo();
-        if available {
-            self.submit(Work::Replay(Direction::Undo, None), cancel);
-        }
-        available
+    /// beside what it shares nothing with. The id its run goes by
+    /// (`ExecEvent::Started`, which an undo that finds nothing at its turn
+    /// never sends); `None` if there is nothing to undo and nothing that
+    /// could add to the journal is queued or running.
+    pub fn undo(self: &Arc<Self>, cancel: CancelToken) -> Option<PlanId> {
+        (self.is_busy() || self.can_undo())
+            .then(|| self.submit(Work::Replay(Direction::Undo, None), cancel))
     }
 
     /// Undo when its turn comes (module documentation), waiting for it.
@@ -2414,9 +2416,9 @@ impl Executor {
     /// touched what it did, since those share nothing and their inverses
     /// give the same result in either order (ADR-079, 8); otherwise it
     /// does nothing and says why, as an undo's error. A plan that has not
-    /// ended is waited for, as Undo does.
-    pub fn undo_of(self: &Arc<Self>, plan: PlanId, cancel: CancelToken) {
-        self.submit(Work::Replay(Direction::Undo, Some(Of::Plan(plan))), cancel);
+    /// ended is waited for, as Undo does. The id its run goes by.
+    pub fn undo_of(self: &Arc<Self>, plan: PlanId, cancel: CancelToken) -> PlanId {
+        self.submit(Work::Replay(Direction::Undo, Some(Of::Plan(plan))), cancel)
     }
 
     /// [`Executor::undo_of`] when its turn comes, waiting for it. `None`
@@ -2429,12 +2431,12 @@ impl Executor {
     /// place in the order asked, ADR-079, 13), as [`Executor::undo_of`]
     /// takes a plan's: alone when nothing asked after it touched what it
     /// did, else refused, saying what did; an action that has not ended
-    /// waited for.
-    pub fn undo_entry(self: &Arc<Self>, entry: u64, cancel: CancelToken) {
+    /// waited for. The id its run goes by.
+    pub fn undo_entry(self: &Arc<Self>, entry: u64, cancel: CancelToken) -> PlanId {
         self.submit(
             Work::Replay(Direction::Undo, Some(Of::Entry(entry))),
             cancel,
-        );
+        )
     }
 
     /// [`Executor::undo_entry`] when its turn comes, waiting for it.
@@ -2447,11 +2449,12 @@ impl Executor {
 
     /// Redo the undone entry at `entry` (ADR-079, 13): alone when nothing
     /// undone after it touched what it did, else refused, saying what did.
-    pub fn redo_entry(self: &Arc<Self>, entry: u64, cancel: CancelToken) {
+    /// The id its run goes by.
+    pub fn redo_entry(self: &Arc<Self>, entry: u64, cancel: CancelToken) -> PlanId {
         self.submit(
             Work::Replay(Direction::Redo, Some(Of::Entry(entry))),
             cancel,
-        );
+        )
     }
 
     /// [`Executor::redo_entry`] when its turn comes, waiting for it.
@@ -2501,24 +2504,27 @@ impl Executor {
     /// when the one before it ended (`entry_of`), as one action: the first
     /// that does not go (an error, a refusal, Cancel) stops those still
     /// waiting, which do nothing, and the undo of `entry` says why, once.
-    /// How many were asked.
-    pub fn undo_with_after(self: &Arc<Self>, entry: u64, cancel: &CancelToken) -> usize {
+    /// The ids the runs asked go by, one for each.
+    pub fn undo_with_after(self: &Arc<Self>, entry: u64, cancel: &CancelToken) -> Vec<PlanId> {
         let entries = self.with_after(entry);
         let chain = Arc::new(Chain {
             stopped: Mutex::new(None),
         });
-        for &seq in &entries {
-            let last = seq == entry;
-            self.enqueue_in(
-                Work::Replay(Direction::Undo, Some(Of::Entry(seq))),
-                cancel.child(),
-                None,
-                (entries.len() > 1).then(|| (Arc::clone(&chain), last)),
-            );
-        }
+        let runs = entries
+            .iter()
+            .map(|&seq| {
+                let last = seq == entry;
+                self.enqueue_in(
+                    Work::Replay(Direction::Undo, Some(Of::Entry(seq))),
+                    cancel.child(),
+                    None,
+                    (entries.len() > 1).then(|| (Arc::clone(&chain), last)),
+                )
+            })
+            .collect();
         self.wake();
         self.dispatch_elsewhere();
-        entries.len()
+        runs
     }
 
     /// The history as the History panel lists it (ADR-079, 13): every
@@ -2620,13 +2626,10 @@ impl Executor {
     }
 
     /// Redo the most recently undone plan when its turn comes (module
-    /// documentation).
-    pub fn redo(self: &Arc<Self>, cancel: CancelToken) -> bool {
-        let available = self.is_busy() || self.can_redo();
-        if available {
-            self.submit(Work::Replay(Direction::Redo, None), cancel);
-        }
-        available
+    /// documentation): the id its run goes by, as [`Executor::undo`]'s.
+    pub fn redo(self: &Arc<Self>, cancel: CancelToken) -> Option<PlanId> {
+        (self.is_busy() || self.can_redo())
+            .then(|| self.submit(Work::Replay(Direction::Redo, None), cancel))
     }
 
     /// Redo when its turn comes, waiting for it.
@@ -2930,11 +2933,13 @@ impl Executor {
         handing || !lane.started.is_empty() || !lane.queue.is_empty()
     }
 
-    fn submit(&self, work: Work, cancel: CancelToken) {
-        self.enqueue(work, cancel, None);
+    /// Queue `work` and start what may start: the id its run goes by.
+    fn submit(&self, work: Work, cancel: CancelToken) -> PlanId {
+        let run = self.enqueue(work, cancel, None);
         // Behind what it waits for, whoever shows the plans says it waits.
         self.wake();
         self.dispatch_elsewhere();
+        run
     }
 
     /// Work out what the queued jobs touch and start what may start, on a
@@ -2974,8 +2979,13 @@ impl Executor {
         rx.recv().ok().flatten()
     }
 
-    fn enqueue(&self, work: Work, cancel: CancelToken, reply: Option<Sender<Option<ExecResult>>>) {
-        self.enqueue_in(work, cancel, reply, None);
+    fn enqueue(
+        &self,
+        work: Work,
+        cancel: CancelToken,
+        reply: Option<Sender<Option<ExecResult>>>,
+    ) -> PlanId {
+        self.enqueue_in(work, cancel, reply, None)
     }
 
     /// [`Executor::enqueue`], one undo of a `chain`.
@@ -2985,7 +2995,7 @@ impl Executor {
         cancel: CancelToken,
         reply: Option<Sender<Option<ExecResult>>>,
         chain: Option<(Arc<Chain>, bool)>,
-    ) {
+    ) -> PlanId {
         // What it brings is noted before it may start (ADR-135): a run
         // started by another thread's dispatch as soon as it is queued
         // finds what it was asked as, and its end lets it go.
@@ -3017,6 +3027,10 @@ impl Executor {
             Work::Execute { plan, .. } => Some((Arc::clone(plan), cancel.clone())),
             Work::Replay(..) => None,
         };
+        let run = match &work {
+            Work::Execute { plan, .. } => plan.id,
+            Work::Replay(..) => PlanId::fresh(),
+        };
         lane.queue.push_back(Job {
             seq,
             work,
@@ -3030,11 +3044,13 @@ impl Executor {
             target: None,
             refused: None,
             chain,
+            run,
         });
         drop(lane);
         if let Some((plan, _)) = brings {
             self.read_arrivals(plan);
         }
+        run
     }
 
     /// What `plan`, just asked (and noted, `enqueue_in`), brings into
@@ -3723,7 +3739,7 @@ impl Executor {
                 direction,
                 job.target,
                 job.refused,
-                job.seq,
+                (job.seq, job.run),
                 (&touched, kept, exact),
                 &job.cancel,
             ),
@@ -4155,7 +4171,7 @@ impl Executor {
         direction: Direction,
         target: Option<u64>,
         refused: Option<(Option<String>, String)>,
-        seq: u64,
+        (seq, id): (u64, PlanId),
         (touched, kept, exact): (&Arc<Footprint>, Option<Arc<Kept>>, Option<Arc<Kept>>),
         cancel: &CancelToken,
     ) -> Option<ExecResult> {
@@ -4184,7 +4200,10 @@ impl Executor {
                 ),
             };
             self.told(seq);
-            let mut r = self.refuse(&Plan::new(named), run, reason, None);
+            // Its run goes by the id its asker was handed.
+            let mut plan = Plan::new(named);
+            plan.id = id;
+            let mut r = self.refuse(&plan, run, reason, None);
             r.entry_title = title;
             r
         };
@@ -4231,7 +4250,6 @@ impl Executor {
                     Direction::Redo => entry.title.clone(),
                 };
                 let error = format!("“{}” cannot be undone", entry.title);
-                let id = Plan::new(title.clone()).id;
                 self.told(seq);
                 self.emit(ExecEvent::Started {
                     plan: id,
@@ -4274,7 +4292,9 @@ impl Executor {
             Direction::Undo => format!("undo {entry_title}"),
             Direction::Redo => entry_title.clone(),
         };
-        let id = run.id;
+        // Its run goes by the id its asker was handed: what follows it (the
+        // entry's `asked`, a toast's Redo) names that one.
+        run.id = id;
         // What it brings back into folders (an undo of a move, of a move to
         // the Trash), as its run's (ADR-135), let go of as it ends.
         self.arriving.asked(id, cancel);
@@ -5646,7 +5666,7 @@ mod tests {
         let made = Gate::new("/stick/back/it's here", true, true, &log).undo_held(&held);
         let r = executor.execute_blocking(&made.plan(), &CancelToken::new());
         assert_eq!(r.applied, 1);
-        assert!(executor.undo(CancelToken::new()));
+        assert!(executor.undo(CancelToken::new()).is_some());
         assert!(logged(&log, "undid /stick/back/it's here"));
         let dest = Path::new("/stick/back");
         let names: Vec<String> = executor
@@ -5749,7 +5769,7 @@ mod tests {
         let second = Gate::new("/stick/photos/2027", false, true, &log);
         executor.execute(second.plan(), CancelToken::new());
         assert!(
-            executor.undo(CancelToken::new()),
+            executor.undo(CancelToken::new()).is_some(),
             "an undo waits for the copy"
         );
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -5968,7 +5988,7 @@ mod tests {
             executor.undo_target(),
             Some(("/stick/photos".to_owned(), true))
         );
-        assert!(executor.undo(CancelToken::new()));
+        assert!(executor.undo(CancelToken::new()).is_some());
         std::thread::sleep(Duration::from_millis(100));
         assert!(!log.lock().iter().any(|l| l == "undid /stick/photos"));
         copy.opened();
@@ -6031,6 +6051,47 @@ mod tests {
         assert!(logged(&log, "undid /disk/notes/later"));
     }
 
+    /// An undo or a redo asked hands its asker the id its run goes by,
+    /// taken back or refused alike: the window follows its own runs by it,
+    /// never another's.
+    #[test]
+    fn an_undo_asked_is_told_by_the_id_it_was_handed() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let rename = Gate::new("/disk/notes/l'été.txt", false, true, &log).plan();
+        executor.execute_blocking(&rename, &CancelToken::new());
+        executor.events().try_iter().for_each(drop);
+        let ended = |id: PlanId| move |e: &ExecEvent| matches!(e, ExecEvent::Finished { plan, .. } if *plan == id);
+        let started = |seen: &[ExecEvent], id: PlanId, kind: RunKind| {
+            seen.iter().any(|e| {
+                matches!(e, ExecEvent::Started { plan, run, .. } if *plan == id && *run == kind)
+            })
+        };
+        let undo = executor
+            .undo(CancelToken::new())
+            .expect("something to undo");
+        let seen = events_until(&executor, ended(undo));
+        assert!(started(&seen, undo, RunKind::Undo));
+        assert!(logged(&log, "undid /disk/notes/l'été.txt"));
+        // Undone already: refused, by the id it was handed.
+        let refused = executor.undo_of(rename.id, CancelToken::new());
+        let seen = events_until(&executor, ended(refused));
+        assert!(started(&seen, refused, RunKind::Undo));
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            ExecEvent::Finished { plan, error: Some(_), .. } if *plan == refused
+        )));
+        let redo = executor
+            .redo(CancelToken::new())
+            .expect("something to redo");
+        let seen = events_until(&executor, ended(redo));
+        assert!(started(&seen, redo, RunKind::Redo));
+        assert!(
+            [undo, refused, redo].iter().all(|id| *id != rename.id),
+            "each run its own"
+        );
+    }
+
     /// The history says what each Undo can do (ADR-079, 13): alone, or
     /// after the action that touched what it did, which it names; Undo
     /// with what came after takes that one first, then it; an undone
@@ -6081,7 +6142,10 @@ mod tests {
         // With what came after: the folder first, then the rename.
         let version = executor.history_version();
         assert_eq!(executor.with_after(rename), [folder, rename]);
-        assert_eq!(executor.undo_with_after(rename, &CancelToken::new()), 2);
+        assert_eq!(
+            executor.undo_with_after(rename, &CancelToken::new()).len(),
+            2
+        );
         assert!(logged(&log, "undid /disk/notes/it’s a.txt"));
         let undid: Vec<String> = log
             .lock()
@@ -6281,7 +6345,7 @@ mod tests {
         assert_eq!(h[2].with, [c, b]);
         assert_eq!(executor.with_after(a), [c, b, a]);
         let _ = executor.events().try_iter().count();
-        assert_eq!(executor.undo_with_after(a, &CancelToken::new()), 3);
+        assert_eq!(executor.undo_with_after(a, &CancelToken::new()).len(), 3);
         assert!(logged(&log, "undid /disk/notes/y"));
         // Being undone, it stays listed, and holds the others by its undo.
         let h = executor.history().rows;
@@ -6295,7 +6359,7 @@ mod tests {
             "a chain through one being undone waits"
         );
         // A plain Undo meanwhile, then the chain's first undo cancelled.
-        assert!(executor.undo(CancelToken::new()));
+        assert!(executor.undo(CancelToken::new()).is_some());
         let undoing = executor
             .running()
             .into_iter()

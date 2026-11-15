@@ -181,6 +181,10 @@ around the views is in [shell.md](shell.md).
   into as itself, though its steps fill it (`Items::placed`). An undo or
   a redo the user asked is such a plan too: which one it takes back is
   known once its run begins (`work::Taken::Replays`, `Shell::replays`).
+  The command hands the window the id each run will go by (`runs`,
+  `Executor::undo`), and the window follows those alone
+  (`finishing::ran`): two quick Ctrl+Z are each followed as it runs, an
+  agent's or a script's undo never.
   What it says (hidden files turned on) joins the plan's answer, whose
   Undo stays (`Shell::say_with`) (`Shell::made`).
 - **What the user renames is followed into view.** A rename keeps its

@@ -709,10 +709,15 @@ pub struct Shell {
     /// The plan being made off the window's thread, and what the window
     /// ran meanwhile, waiting its turn (`shell/planning.rs`).
     plans: planning::Plans,
-    /// An undo or a redo the user asked, with its arguments, until its run
-    /// begins: which plan it takes back is known only then
-    /// (`Shell::replays`).
-    replaying: Option<serde_json::Value>,
+    /// The undos and redos this window asked, by the id each run goes by
+    /// (as the command answered it), with the pane each was asked from,
+    /// until its run begins (`Shell::replays`): which plan it takes back is
+    /// known only then. Another's undo (an agent's, a script's) is never
+    /// among them.
+    replaying: HashMap<skwir_core::op::PlanId, PaneId>,
+    /// Those of them under way, each shown as a plan asked is (`made`),
+    /// beside the latest plan asked (`making`).
+    replayed: Vec<Making>,
     /// The window's commands asked from elsewhere (an agent, a script)
     /// that the dialog open would take instead (`Shell::takes_now`),
     /// oldest first: they run once it closes.
@@ -1017,7 +1022,8 @@ impl Shell {
             reveal_asked: 0,
             making: None,
             plans: planning::Plans::default(),
-            replaying: None,
+            replaying: HashMap::new(),
+            replayed: Vec::new(),
             front_waiting: VecDeque::new(),
             links: crate::links::LinkState::default(),
             stored_session: None,
@@ -1876,20 +1882,56 @@ impl Shell {
             .collect()
     }
 
-    /// An undo or a redo began (`work::Taken::Replays`): the one this
-    /// window asked for last is the user's plan, what it puts back or
-    /// renames shown as what a plan makes (`made`).
-    pub(crate) fn replays(&mut self, plan: skwir_core::op::PlanId) {
-        if let Some(args) = self.replaying.take() {
-            self.making = self.making(plan, &args);
+    /// The undos or redos this window asked began, by the ids their runs
+    /// go by (`value`, the command's answer), from the pane `args` names:
+    /// followed as the user's plans once each begins (`replays`), told
+    /// to this window (`finishing::ran`).
+    fn asked_replays(
+        &mut self,
+        value: &serde_json::Value,
+        args: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(runs) = value.get("runs").and_then(|runs| {
+            serde_json::from_value::<Vec<skwir_core::op::PlanId>>(runs.clone()).ok()
+        }) else {
+            return;
+        };
+        let asked = args
+            .get("pane")
+            .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok());
+        let pane = self.app.pane_or_active(asked);
+        for run in runs {
+            self.replaying.insert(run, pane);
+            crate::finishing::ran(cx, run, self.window_id);
         }
+    }
+
+    /// An undo or a redo began (`work::Taken::Replays`): one this window
+    /// asked (`asked_replays`) is the user's plan, what it puts back or
+    /// renames shown as what a plan makes (`made`); another's is not.
+    pub(crate) fn replays(&mut self, plan: skwir_core::op::PlanId) {
+        if let Some(pane) = self.replaying.remove(&plan)
+            && let Some(making) = self.making(plan, &serde_json::json!({ "pane": pane }))
+        {
+            self.replayed.push(making);
+        }
+    }
+
+    /// What the window keeps of plan `plan` it shows the end of: the
+    /// latest asked, or an undo or a redo under way.
+    fn making_of(&mut self, plan: skwir_core::op::PlanId) -> Option<&mut Making> {
+        self.making
+            .as_mut()
+            .filter(|m| m.plan == plan)
+            .or_else(|| self.replayed.iter_mut().find(|m| m.plan == plan))
     }
 
     /// A step of the plan asked last ended (`ExecEvent::Step`), as it was
     /// applied: where it put something, in a folder shown, is kept for its
     /// end (`Change::placed`, a name taken settled).
     pub(crate) fn made_step(&mut self, progress: &skwir_core::op::Progress) {
-        let Some(making) = self.making.as_mut().filter(|m| m.plan == progress.plan) else {
+        let Some(making) = self.making_of(progress.plan) else {
             return;
         };
         if progress.error.is_some() {
@@ -1929,7 +1971,15 @@ impl Shell {
         done: bool,
         items: Option<&skwir_core::op::Items>,
     ) {
-        let Some(making) = self.making.take_if(|m| m.plan == plan) else {
+        let taken = match self.making.take_if(|m| m.plan == plan) {
+            Some(making) => Some(making),
+            None => self
+                .replayed
+                .iter()
+                .position(|m| m.plan == plan)
+                .map(|at| self.replayed.swap_remove(at)),
+        };
+        let Some(making) = taken else {
             return;
         };
         if !done {
@@ -2973,9 +3023,10 @@ impl Shell {
         }
         match self.app.dispatch(&inv) {
             // An undo or a redo runs when its turn comes: what it puts back
-            // is shown once its run begins (`replays`).
-            Ok(Outcome::Done) if matches!(name, "undo" | "redo") => {
-                self.replaying = Some(inv.args.clone());
+            // is shown once its run begins (`replays`), known by the id the
+            // command answered.
+            Ok(Outcome::Value(value)) if matches!(name, "undo" | "redo") => {
+                self.asked_replays(&value, &inv.args, cx);
             }
             Ok(Outcome::Done | Outcome::Value(_)) => {}
             Ok(Outcome::Clipboard { text, said }) => {

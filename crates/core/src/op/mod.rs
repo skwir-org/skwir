@@ -1006,6 +1006,15 @@ pub struct PlanId(pub u64);
 
 static NEXT_PLAN: AtomicU64 = AtomicU64::new(1);
 
+impl PlanId {
+    /// An id no plan of this process has: a new plan's, or the one an
+    /// undo's or a redo's run will go by, made as it is asked
+    /// (`Executor::undo`).
+    pub fn fresh() -> Self {
+        PlanId(NEXT_PLAN.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// An ordered list of operations. The unit of apply, review, and undo.
 #[derive(Clone, Debug)]
 pub struct Plan {
@@ -1165,7 +1174,7 @@ pub struct PlanDiff {
 impl Plan {
     pub fn new(title: impl Into<String>) -> Self {
         Plan {
-            id: PlanId(NEXT_PLAN.fetch_add(1, Ordering::Relaxed)),
+            id: PlanId::fresh(),
             title: title.into(),
             note: None,
             steps: Vec::new(),

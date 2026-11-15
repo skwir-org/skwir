@@ -5221,7 +5221,7 @@ mod builtin {
             "core", Topic::Files,
             "undo",
             "Undo",
-            "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after, with an entry: with the entries after it that did, newest first); asked from outside the window, says what it took back, by the titles of the history's entries",
+            "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after, with an entry: with the entries after it that did, newest first); asked from outside the window, says what it took back, by the titles of the history's entries; from the window, it answers the ids its runs go by (runs), for the window to follow its own runs alone",
             |a, app| {
                 anyhow::ensure!(
                     !(a.plan.is_some() && a.entry.is_some()),
@@ -5233,18 +5233,21 @@ mod builtin {
                 );
                 if crate::scheduler::on_window_thread() {
                     let cancel = app.lifetime().child();
-                    match (a.plan, a.entry) {
-                        // Its run says what it did, or why it could not.
-                        (Some(plan), _) => app.executor.undo_of(plan, cancel),
+                    // Its run says what it did, or why it could not; the
+                    // window follows it by the id it goes by.
+                    let runs = match (a.plan, a.entry) {
+                        (Some(plan), _) => vec![app.executor.undo_of(plan, cancel)],
                         (None, Some(entry)) if a.with_after => {
-                            app.executor.undo_with_after(entry, &cancel);
+                            app.executor.undo_with_after(entry, &cancel)
                         }
-                        (None, Some(entry)) => app.executor.undo_entry(entry, cancel),
-                        (None, None) => {
-                            anyhow::ensure!(app.executor.undo(cancel), "nothing to undo");
-                        }
-                    }
-                    return Ok(Outcome::Done);
+                        (None, Some(entry)) => vec![app.executor.undo_entry(entry, cancel)],
+                        (None, None) => vec![
+                            app.executor
+                                .undo(cancel)
+                                .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?,
+                        ],
+                    };
+                    return Ok(Outcome::Value(serde_json::json!({ "runs": runs })));
                 }
                 // A script or an agent waits, and is told what it took back:
                 // the entries its runs took back, by their titles.
@@ -5295,15 +5298,18 @@ mod builtin {
             "core", Topic::Files,
             "redo",
             "Redo",
-            "Redo the most recently undone plan, or the undone history entry named when nothing undone after it touched what it did; asked from outside the window, says what it applied again",
+            "Redo the most recently undone plan, or the undone history entry named when nothing undone after it touched what it did; asked from outside the window, says what it applied again; from the window, it answers the id its run goes by (runs), as Undo does",
             |a, app| {
                 if crate::scheduler::on_window_thread() {
                     let cancel = app.lifetime().child();
-                    match a.entry {
+                    let run = match a.entry {
                         Some(entry) => app.executor.redo_entry(entry, cancel),
-                        None => anyhow::ensure!(app.executor.redo(cancel), "nothing to redo"),
-                    }
-                    return Ok(Outcome::Done);
+                        None => app
+                            .executor
+                            .redo(cancel)
+                            .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?,
+                    };
+                    return Ok(Outcome::Value(serde_json::json!({ "runs": [run] })));
                 }
                 let cancel = app.lifetime().child();
                 let result = match a.entry {
