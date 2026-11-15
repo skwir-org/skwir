@@ -172,7 +172,7 @@ pub struct Omni {
     pub token: bool,
     /// The list of scopes is open (the token clicked, Down on it, Alt+Down).
     scopes: bool,
-    /// F1 or the card's [?]: the card says what the field takes, whole,
+    /// F1 or the field's `?`: the card says what the field takes, whole,
     /// as `?` alone does (`Typed::Help`), the text kept, each row writing
     /// its part where the caret is (ADR-137). Until the text changes, or
     /// Escape.

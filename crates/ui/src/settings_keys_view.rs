@@ -78,6 +78,22 @@ struct Asked {
 }
 
 impl KeysPage {
+    /// The keys bound to `command` without arguments, as people read
+    /// them: the binding of the highest layer that no later one hides.
+    /// What a tooltip names beside a control (a field's `?`, ADR-137).
+    pub(crate) fn keys_for(&self, command: &str) -> Option<String> {
+        self.bound
+            .iter()
+            .filter(|bound| {
+                bound.hidden_by.is_none()
+                    && bound.command.as_ref().is_some_and(|(name, args)| {
+                        name == command && args.as_object().is_none_or(serde_json::Map::is_empty)
+                    })
+            })
+            .max_by_key(|bound| bound.layer)
+            .map(|bound| crate::keymap::display_keys(&bound.keys))
+    }
+
     pub fn new(bound: Arc<Vec<Bound>>, cx: &mut App) -> Self {
         KeysPage {
             bound,

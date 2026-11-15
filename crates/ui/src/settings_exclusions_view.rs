@@ -2220,6 +2220,8 @@ impl SettingsView {
             dialog.what.clone(),
         );
         let helps = dialog.helps.clone();
+        // F1's, as the `?` says them.
+        let help_keys = self.keys.keys_for("ui.field_reference");
         let problem = dialog.problem.clone();
         let means = dialog.means.clone();
         let already = dialog.already.clone();
@@ -2263,7 +2265,9 @@ impl SettingsView {
                 Field::What => None,
             };
             match help {
-                Some(help) => crate::reference::with_help(frame, help, input, None, window, cx),
+                Some(help) => {
+                    crate::reference::with_help(frame, help, input, help_keys.clone(), window, cx)
+                }
                 None => frame,
             }
         };

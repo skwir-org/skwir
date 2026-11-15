@@ -367,14 +367,18 @@ configuration names is run, and nothing is written to it.
   there tinted (`Tab` moves between fields, `Ctrl+K` changes case). It
   starts from `{full}`, the names as they are. As you type `{` in the
   template, `\` in the regex or `$` in the replacement, the field lists
-  what can go on from there: `↑` `↓` choose, `Tab` takes one, `Escape`
-  puts the list away. The `?` inside the template, the regex and the
-  replacement, or `F1` in one, lists under it what it takes: the
-  placeholders with what each gives the first file (`{name}`, `{.ext}`,
-  `{n:03}`, `{date:%Y%m%d}`…), recipes for what names often need (spaces
-  to underscores, what is in brackets taken away, two parts swapped), a
-  pattern's signs and a replacement's (`${1}` before a letter). Choose
-  one and it is written where the cursor is.
+  what can go on from there: `Tab` takes the first, `↑` `↓` choose
+  another (then `Tab` or `Enter`), `Escape` puts the list away. The `?`
+  inside the template, the regex and the replacement, or `F1` in one,
+  lists under it what it takes: the placeholders with what each gives
+  the first file (`{name}`, `{.ext}`, `{n:03}`, `{date:%Y%m%d}`…),
+  recipes for what names often need (spaces to underscores, what is in
+  brackets taken away, two parts swapped), a pattern's signs and a
+  replacement's (`${1}` before a letter). Choose one with `↑` `↓` then
+  `Tab` or `Enter`, or a click: a placeholder or a sign is written where
+  the cursor is, a recipe fills the regex and the replacement both
+  (`Ctrl+Z` in a field takes back what was written there). While nothing
+  is chosen, `Tab` still moves between fields.
 - **Run a command** on the selection: Open With › Run Command…. What you
   type runs in a terminal, in the folder holding the files, with their
   paths after it, each one argument, or only where it names them

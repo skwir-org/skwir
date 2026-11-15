@@ -620,6 +620,29 @@ def run(w):
           hears(w, "entry 'Rename' focused") and within(w.focused())[0] == "Rename")
     w.keys("Escape")
 
+    # A field that says what it takes (ADR-137): F1 lists it under the
+    # field, a list box the field keeps the keyboard beside; no row is lit
+    # before the arrows move, Down lights the first, said as focused, and
+    # Escape puts the list away, the field heard again.
+    w.cmd("ui.ask", {
+        "title": "Mode", "command": "set_access", "field": "mode",
+        "reference": {"title": "Modes", "groups": [{"title": "Examples", "items": [
+            {"written": "u+x", "says": "Its owner may run it", "inserts": "u+x"},
+            {"written": "644", "says": "Read by all, written by its owner",
+             "inserts": "644"},
+        ]}]},
+    })
+    check("a question that says what it takes: its field", hears(w, "entry 'Mode' focused"))
+    w.keys("F1")
+    check("F1: no row lit, the field keeps the keyboard", hears(w, "entry 'Mode' focused"))
+    w.keys("Down")
+    check("Down: the first of what it takes, said as focused, in its list",
+          hears(w, "list item 'u+x, Its owner may run it' 1 of 2 selected focused")
+          and within(w.focused())[0] == "Modes")
+    w.keys("Escape")
+    check("Escape: the list put away, the field heard", hears(w, "entry 'Mode' focused"))
+    w.keys("Escape")
+
     w.keys("ctrl+comma")
     check("Ctrl+,: the settings, their page said as the selected tab",
           hears(w, "page tab 'General' selected focused")
