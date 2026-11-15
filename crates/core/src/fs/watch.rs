@@ -771,12 +771,18 @@ mod imp {
     }
 }
 
+/// The longest a burst of changes is let settle ([`Settled`], the table
+/// of mounts followed): one that goes on (a test suite mounting, a
+/// container starting again and again, a tool writing its file all the
+/// while) is told at least this often, never held back while it lasts.
+pub(crate) const SETTLED_WITHIN: Duration = Duration::from_secs(2);
+
 /// Files a plugin reads, followed: their changes (never their reads:
 /// notify reports a file opened, and a watcher that rescans on that
 /// rescans forever on its own reads) are let settle, then `then` runs
 /// once, on a thread of the watcher's own that ends when it is dropped, so
 /// no shared worker waits. A burst (a disk bringing several partitions)
-/// makes one call.
+/// makes one call, one at least every [`SETTLED_WITHIN`] while it lasts.
 pub struct Settled {
     watcher: notify::RecommendedWatcher,
 }
@@ -805,7 +811,10 @@ impl Settled {
             .name(name.to_owned())
             .spawn(move || {
                 while rx.recv().is_ok() {
-                    while rx.recv_timeout(settle).is_ok() {}
+                    let ceiling = std::time::Instant::now() + SETTLED_WITHIN;
+                    while let Some(left) = ceiling.checked_duration_since(std::time::Instant::now())
+                        && rx.recv_timeout(settle.min(left)).is_ok()
+                    {}
                     if !then() {
                         return;
                     }
@@ -887,6 +896,37 @@ mod tests {
         for (dir, _, rx) in &watches {
             assert!(told(rx, "new"), "{} was not followed", dir.display());
         }
+    }
+
+    /// A burst that goes on (a file written all the while) is told at
+    /// least every `SETTLED_WITHIN`, never held back while it lasts.
+    #[test]
+    fn a_burst_that_goes_on_is_told_while_it_lasts() {
+        let root = tempfile::tempdir().unwrap();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut settled = Settled::start(
+            "skwir-test-settled",
+            Duration::from_millis(300),
+            |_| true,
+            move || tx.send(()).is_ok(),
+        )
+        .unwrap();
+        assert!(settled.watch(root.path()));
+        let began = std::time::Instant::now();
+        let mut told = false;
+        while !told && began.elapsed() < SETTLED_WITHIN * 3 {
+            std::fs::write(
+                root.path().join("it's a log"),
+                format!("{:?}", began.elapsed()),
+            )
+            .unwrap();
+            told = rx.recv_timeout(Duration::from_millis(100)).is_ok();
+        }
+        assert!(told, "told while the burst went on");
+        assert!(
+            began.elapsed() >= Duration::from_millis(300),
+            "it settled first"
+        );
     }
 
     /// Two watches of one folder share its descriptor: either let go, the

@@ -23,7 +23,8 @@ ADR-077 (which revises ADR-021).
   unmount of the namespace, on macOS kqueue's file system filter
   (`EVFILT_FS`) says one, on Windows the folders programs mount in
   (`reach::mounts_in`) are watched; a burst settles (250 ms) into one
-  call. Elsewhere nothing is told, and what shows mounts reads them again
+  call, one at least every 2 s while it goes on (`watch::SETTLED_WITHIN`:
+  a test suite mounting, a container started again and again). Elsewhere nothing is told, and what shows mounts reads them again
   as a window comes to the front. A follower starts work and never waits
   for it. Tested in a user and mount namespace of the test's own
   (`the_table_is_followed`), never by mounting in the session's.
@@ -572,7 +573,8 @@ ADR-077 (which revises ADR-021).
   there being replaced: the Nix store). The way is walked where the
   servers were read, not under the plugin's lock, and each folder is
   watched anew at each read: one removed and made again is another.
-  Once a change settles (400 ms) the servers are read again, which
+  Once a change settles (400 ms, at most 2 s while changes go on) the
+  servers are read again, which
   follows what they then name. What the system told is shown only where the section
   changed (`Asked::Told`), and asks no server: a container's mounts cost
   a read in memory, an unchanged rclone configuration no run of rclone.

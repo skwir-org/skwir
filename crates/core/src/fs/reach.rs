@@ -703,9 +703,10 @@ enum Heard {
     Failed,
 }
 
-/// Wait on `heard` for as long as it takes, then for the rest of a burst,
-/// and tell the followers ([`told`]): on a thread of its own, until the
-/// system refuses a wait. Whether the thread started.
+/// Wait on `heard` for as long as it takes, then for the rest of a burst
+/// (at most `watch::SETTLED_WITHIN`), and tell the followers ([`told`]):
+/// on a thread of its own, until the system refuses a wait. Whether the
+/// thread started.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn follow_with(heard: impl Fn(Option<Duration>) -> Heard + Send + 'static) -> bool {
     std::thread::Builder::new()
@@ -718,8 +719,10 @@ fn follow_with(heard: impl Fn(Option<Duration>) -> Heard + Send + 'static) -> bo
                     Heard::Failed => return,
                 }
                 let mut ended = false;
-                loop {
-                    match heard(Some(SETTLE)) {
+                // Told at least every `SETTLED_WITHIN` while a burst goes on.
+                let ceiling = Instant::now() + crate::fs::watch::SETTLED_WITHIN;
+                while let Some(left) = ceiling.checked_duration_since(Instant::now()) {
+                    match heard(Some(SETTLE.min(left))) {
                         Heard::Changed => {}
                         Heard::Quiet => break,
                         Heard::Failed => {

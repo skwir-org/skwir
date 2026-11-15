@@ -208,7 +208,8 @@ followed the files the servers are read from, nor the table of mounts.
   manager's; NixOS's `/etc/fstab`, through `/etc/static`, which a
   switch re-points), but no folder on a volume mounted read-only (the
   Nix store: nothing there is replaced, what leads there is). A
-  change by any program settles (400 ms), then the servers are read
+  change by any program settles (400 ms, at most 2 s while changes go
+  on), then the servers are read
   again, which follows what they then name.
 - **The table of mounts is followed** (`reach::follow`, ADR-077
   amended): a mount made or let go of by any program is read again.
