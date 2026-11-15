@@ -2721,7 +2721,7 @@ mod tests {
         };
         // Off Linux, the system's own shares first, whatever the desktop.
         if cfg!(any(windows, target_os = "macos")) {
-            assert_eq!(on(&["KDE"]), "system rclone sshfs fstab gvfs kio");
+            assert_eq!(on(&["KDE"]), "system rclone sshfs fstab gvfs kio kmtp");
             return;
         }
         assert_eq!(on(&["KDE"]), "sshfs kio kmtp gvfs rclone fstab");
