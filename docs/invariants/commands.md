@@ -132,6 +132,18 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   targets open until all named targets have resolved successfully.
 - A command that makes something somewhere takes the folder too (`mkdir`'s
   `in`).
+- **A plan the window asks for is made off its thread, as asked at the
+  key.** The window makes a command that answers a plan
+  (`Effect::Plans`) on a worker (`shell/planning.rs`), under what the key
+  found (`App::asked`, run with `app::as_asked`: the pane, its selection
+  and cursor, the location it showed). So a command reads the pane, the
+  selection and the folder only through the seam that answers it:
+  `App::pane_or_active`, `targets`, `selected_refs`, `selected_typed`,
+  `pane_location`, `pane_dir`, `work_dir`, and, under the workspace's
+  guard, `app::chosen(pane)` for a pane's selection and
+  `app::asked_or_active(&ws)` for the active pane; never
+  `Pane::selection` or `Workspace::active_id` directly, which are what
+  the user did since (`crates/skwir/tests/plans_as_asked.rs`).
 - A command whose plan copies, moves or links takes what becomes of a
   name taken there (`on_conflict`, ADR-054), carried by the plan: a script
   never answers a dialog, and without it a plan applied with no window

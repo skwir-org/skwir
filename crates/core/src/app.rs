@@ -23,7 +23,7 @@ use crate::plugin::PluginHost;
 use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
-use crate::workspace::{PaneId, StepFilter, WindowId, Workspace};
+use crate::workspace::{Pane, PaneId, Selection, StepFilter, WindowId, Workspace};
 
 /// Folders being looked into for a lens (`App::find_where_folders_lead`),
 /// by a few workers taking the next one each.
@@ -276,6 +276,80 @@ impl AppConfig {
             workers: 0,
             stand_ins: true,
             batch_size: 1024,
+        }
+    }
+}
+
+/// What a command the window asked for acts on, as it stood at the key
+/// (`App::asked`): the pane, its selection and cursor, the location it
+/// showed. A plan the window makes on a worker runs under it
+/// (`as_asked`): what the user did since (an arrow, a click, another tab)
+/// changes nothing of what the key asked, and every command reads it
+/// through one seam (`chosen`, `asked_or_active` and the accessors built
+/// on them: `pane_or_active`, `selected_refs`, `targets`, `pane_dir`…).
+#[derive(Clone, Debug)]
+pub struct Asked {
+    pub pane: PaneId,
+    selection: Arc<Selection>,
+    location: Option<Location>,
+}
+
+thread_local! {
+    /// What the command running on this thread was asked about.
+    static ASKED: std::cell::RefCell<Option<Asked>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` as asked (`Asked`): the command it dispatches reads the pane,
+/// selection and location as they stood at the key, whatever they are
+/// now. Only the window's worker that makes a plan runs so; a command
+/// that hands its work to another thread reads them live there.
+pub fn as_asked<T>(asked: Asked, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Asked>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            ASKED.with(|now| *now.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(ASKED.with(|now| now.borrow_mut().replace(asked)));
+    f()
+}
+
+/// What the command running on this thread was asked about, if it runs
+/// as asked.
+fn asked_now() -> Option<Asked> {
+    ASKED.with(|now| now.borrow().clone())
+}
+
+/// The selection a command acts on in `p`: the one asked when it was asked
+/// of `p` (`as_asked`), else `p`'s own. The one way a command reads a
+/// pane's selection, under the workspace's guard too.
+pub fn chosen(p: &Pane) -> Chosen<'_> {
+    match asked_now().filter(|asked| asked.pane == p.id) {
+        Some(asked) => Chosen::Asked(asked.selection),
+        None => Chosen::Live(&p.selection),
+    }
+}
+
+/// The pane a command names none of acts on: the one it was asked of
+/// (`as_asked`), else the active one. For a caller holding the
+/// workspace's guard; others ask `App::pane_or_active`.
+pub fn asked_or_active(ws: &Workspace) -> PaneId {
+    asked_now().map_or_else(|| ws.active_id(), |asked| asked.pane)
+}
+
+/// A pane's selection as a command reads it (`chosen`).
+pub enum Chosen<'a> {
+    Live(&'a Selection),
+    Asked(Arc<Selection>),
+}
+
+impl std::ops::Deref for Chosen<'_> {
+    type Target = Selection;
+    fn deref(&self) -> &Selection {
+        match self {
+            Chosen::Live(selection) => selection,
+            Chosen::Asked(selection) => selection,
         }
     }
 }
@@ -1641,7 +1715,7 @@ impl App {
 
     /// The entry `pane`'s cursor is on, which its history keeps.
     fn cursor_of(&self, pane: PaneId) -> Option<crate::EntryId> {
-        self.workspace.read().pane(pane)?.selection.cursor
+        chosen(self.workspace.read().pane(pane)?).cursor
     }
 
     /// Show `location` in `pane`, the pane's lens brought in (ADR-107),
@@ -3084,7 +3158,7 @@ impl App {
     pub fn selection_kept(&self, pane: PaneId) -> Option<crate::entry::Kept> {
         let ws = self.workspace.read();
         let p = ws.pane(pane)?;
-        crate::entry::kept_by_other_names(p.selection.iter().filter_map(|id| p.entry(id)))
+        crate::entry::kept_by_other_names(chosen(p).iter().filter_map(|id| p.entry(id)))
     }
 
     /// Entry references for the current selection of a pane, in selection order.
@@ -3094,7 +3168,7 @@ impl App {
             let Some(p) = ws.pane(pane) else {
                 return Vec::new();
             };
-            p.selection
+            chosen(p)
                 .iter()
                 .filter_map(|id| {
                     let only = p.entry(id).is_some_and(Entry::is_only_name);
@@ -3129,7 +3203,7 @@ impl App {
             let Some(p) = ws.pane(pane) else {
                 return Vec::new();
             };
-            p.selection
+            chosen(p)
                 .iter()
                 .filter_map(|id| {
                     let path = p.path_of(id)?;
@@ -3348,16 +3422,29 @@ impl App {
     /// already, ask the guard's `active_id` instead (a second read waits
     /// behind any writer queued between the two, forever).
     pub fn pane_or_active(&self, pane: Option<PaneId>) -> PaneId {
-        pane.unwrap_or_else(|| self.workspace.read().active_id())
+        pane.or_else(|| asked_now().map(|asked| asked.pane))
+            .unwrap_or_else(|| self.workspace.read().active_id())
     }
 
-    /// The location a pane shows, if it shows one.
+    /// The location a pane shows, if it shows one: the one it showed when
+    /// a command running as asked (`as_asked`) was asked of it.
     pub fn pane_location(&self, pane: PaneId) -> Option<Location> {
+        if let Some(asked) = asked_now().filter(|asked| asked.pane == pane) {
+            return asked.location;
+        }
         self.workspace.read().pane(pane)?.location().cloned()
     }
 
-    /// The directory a pane shows, or an error a command can return as is.
+    /// The directory a pane shows (as `pane_location` reads it), or an
+    /// error a command can return as is.
     pub fn pane_dir(&self, pane: PaneId) -> anyhow::Result<PathBuf> {
+        if let Some(asked) = asked_now().filter(|asked| asked.pane == pane) {
+            return asked
+                .location
+                .as_ref()
+                .and_then(Location::path)
+                .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"));
+        }
         let ws = self.workspace.read();
         let p = ws
             .pane(pane)
@@ -3365,6 +3452,21 @@ impl App {
         p.location()
             .and_then(Location::path)
             .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
+    }
+
+    /// What a command asked of `pane` (else the active pane) acts on, as it
+    /// stands now: its selection and cursor, the location it shows. Taken
+    /// on the window's thread at the key, a copy of the selection's ids
+    /// and no more, for the plan made on a worker (`as_asked`).
+    pub fn asked(&self, pane: Option<PaneId>) -> Asked {
+        let ws = self.workspace.read();
+        let pane = pane.unwrap_or_else(|| ws.active_id());
+        let p = ws.pane(pane);
+        Asked {
+            pane,
+            selection: Arc::new(p.map(|p| p.selection.clone()).unwrap_or_default()),
+            location: p.and_then(|p| p.location().cloned()),
+        }
     }
 
     /// The folder work on `pane` happens in (a terminal, a command): the

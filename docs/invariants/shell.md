@@ -213,6 +213,24 @@ Views are in [views.md](views.md); what locations decide, in
 - **A press cancels a tooltip waiting to show** (gpui patch 0038): what
   the press opens is never covered by the tooltip of what was pressed.
   A tooltip already shown goes at the press, as upstream has it.
+- **A plan is made off the window's thread** (`shell/planning.rs`): a
+  command the window carries out that answers a plan (`Effect::Plans`)
+  is made on a worker of its pane's lane, as asked at the key
+  (`App::asked`), then applied on return as the user's (`making`,
+  `finishing::ran`, `apply_user_plan`). One at a time per window, and a
+  command acts on what the window showed when the user asked: what only
+  shows (`Effect::Shows`, `Reads`, `UserOnly`: the cursor, the
+  selection, navigation, panels, a dialog's keys) runs at once meanwhile;
+  what changes files or the program (`Plans`, `Acts`, what declares
+  nothing, Undo and Redo) waits its turn in order, each with what its
+  own key found (`planning::waits`, the one place it is decided). Clicks,
+  scrolling and typing are not commands and never wait. Past
+  `work::SHOWN_AFTER` a toast says what is being worked out, by the
+  command's title, for as long as it is (`Shell::notice`: not timed, not
+  kept in Earlier), with Cancel; Cancel or Escape in the window
+  (`ui.plan_cancel`, `planning` in the window's key context) lets it go,
+  its answer forgotten if it comes, and what waited runs on. Closing the
+  window cancels it.
 - **Focus never dangles:** when the focused element leaves the window,
   the shell's focus-lost listener gives the keyboard to the pane drawn as
   active (`Shell::drawn_focus`), or to the Settings dialog while it is

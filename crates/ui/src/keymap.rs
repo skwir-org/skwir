@@ -284,6 +284,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("secondary-enter", "tab.open", Some("pane selection")),
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
+    // A plan being worked out for what was asked (`shell/planning.rs`):
+    // Escape lets it go, where nothing nearer takes Escape.
+    ("escape", "ui.plan_cancel", Some("planning")),
     ("space", "ui.peek", Some("pane")),
     // The space bar with Shift is Space whatever the layout types there (a
     // narrow no-break space on French Ergo-L): gpui patch 0039, on Linux.
@@ -1628,6 +1631,7 @@ pub(crate) fn condition(flag: &str) -> String {
         "reference" => "in a field that says what it takes",
         "lists" => "while a field's list shows",
         "offers" => "while a field offers a row to take",
+        "planning" => "while a plan is worked out",
         other => other,
     }
     .to_owned()

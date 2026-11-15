@@ -450,6 +450,17 @@ impl Shell {
         self.show_toast(toast, cx);
     }
 
+    /// Show `toast` for as long as what it says lasts (a plan being worked
+    /// out, `shell/planning.rs`): not kept in Earlier, and not timed. It
+    /// goes when its caller dismisses it, or another toast replaces it.
+    pub(crate) fn notice(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        self.toasts.current = Some(toast);
+        self.toasts.generation += 1;
+        // Its time is its caller's: never started (`Toasts::drawn`).
+        self.toasts.timed = true;
+        cx.notify();
+    }
+
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer, and a long
     /// one (what a plan's steps said after what it did) as long as it

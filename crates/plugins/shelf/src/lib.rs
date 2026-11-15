@@ -281,7 +281,7 @@ fn selection_items(
         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
     anyhow::ensure!(p.open.is_some(), "pane has no open location");
     let chosen: Vec<EntryId> = if ids.is_empty() {
-        p.selection.iter().collect()
+        skwir_core::app::chosen(p).iter().collect()
     } else {
         ids.to_vec()
     };
@@ -621,9 +621,12 @@ impl Plugin for ShelfPlugin {
                 let ids = if a.ids.is_empty() {
                     let ws = app.workspace.read();
                     let pane = ws
-                        .pane(a.pane.unwrap_or_else(|| ws.active_id()))
+                        .pane(
+                            a.pane
+                                .unwrap_or_else(|| skwir_core::app::asked_or_active(&ws)),
+                        )
                         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                    pane.selection.iter().collect()
+                    skwir_core::app::chosen(pane).iter().collect()
                 } else {
                     a.ids
                 };

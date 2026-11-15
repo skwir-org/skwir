@@ -3,6 +3,8 @@
 
 use crate::sizes::TextSizes;
 use std::collections::{HashMap, HashSet, VecDeque};
+
+mod planning;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -704,6 +706,9 @@ pub struct Shell {
     /// The latest plan the user asked, what it puts in a folder shown to
     /// select once it is done.
     making: Option<Making>,
+    /// The plan being made off the window's thread, and what the window
+    /// ran meanwhile, waiting its turn (`shell/planning.rs`).
+    plans: planning::Plans,
     /// An undo or a redo the user asked, with its arguments, until its run
     /// begins: which plan it takes back is known only then
     /// (`Shell::replays`).
@@ -1011,6 +1016,7 @@ impl Shell {
             reveal: None,
             reveal_asked: 0,
             making: None,
+            plans: planning::Plans::default(),
             replaying: None,
             front_waiting: VecDeque::new(),
             links: crate::links::LinkState::default(),
@@ -1841,9 +1847,21 @@ impl Shell {
             .get("pane")
             .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok());
         let asked = self.app.pane_or_active(asked);
+        let shown = self.shown_now();
+        (!shown.is_empty()).then_some(Making {
+            plan,
+            asked,
+            shown,
+            placed: Vec::new(),
+            renamed: Vec::new(),
+        })
+    }
+
+    /// The folders this window's panes show, and what they select, as a
+    /// plan asked now finds them (`Making`).
+    fn shown_now(&self) -> Vec<Shown> {
         let ws = self.app.workspace.read();
-        let shown: Vec<Shown> = self
-            .panes
+        self.panes
             .iter()
             .filter_map(|ui| {
                 let pane = ws.pane(ui.id)?;
@@ -1855,14 +1873,7 @@ impl Shell {
                     selection: pane.selection.chosen(),
                 })
             })
-            .collect();
-        (!shown.is_empty()).then_some(Making {
-            plan,
-            asked,
-            shown,
-            placed: Vec::new(),
-            renamed: Vec::new(),
-        })
+            .collect()
     }
 
     /// An undo or a redo began (`work::Taken::Replays`): the one this
@@ -2882,6 +2893,25 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.carry_out_asked(name, args, None, window, cx);
+    }
+
+    /// `carry_out`, a plan command `asked` about what it was at its key
+    /// (`shell/planning.rs`), else now. While a plan is made off the
+    /// window's thread, anything waits its turn behind it.
+    fn carry_out_asked(
+        &mut self,
+        name: &str,
+        args: serde_json::Value,
+        asked: Option<skwir_core::app::Asked>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // What acts waits its turn behind a plan being made; what shows
+        // runs at once (`planning::waits`).
+        if self.plans.making() && planning::waits(&self.app, name) {
+            return self.wait_turn(name, args, asked);
+        }
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
             tracing::debug!(name, %args, "run");
@@ -2936,6 +2966,11 @@ impl Shell {
             name: name.into(),
             args,
         };
+        // A plan is made on a worker, as asked at the key.
+        if planning::plans(&self.app, name) {
+            let asked = asked.unwrap_or_else(|| self.asked_now(&inv.args));
+            return self.plan_off(inv, asked, window, cx);
+        }
         match self.app.dispatch(&inv) {
             // An undo or a redo runs when its turn comes: what it puts back
             // is shown once its run begins (`replays`).
@@ -3089,6 +3124,8 @@ impl Shell {
         }
         let held = self.take_held();
         self.left = true;
+        // A plan being made for it, and what waited, go with it.
+        self.plans.cancel();
         // A window closed with the keyboard may not be told it lost it.
         self.app.set_window_focused(self.window_id, false);
         // What it played stops with it (ADR-122), and the desktop's
@@ -3216,6 +3253,7 @@ impl Shell {
                 self.omnibox_begin(crate::omnibox::Begin::Path, None, window, cx);
             }
             "focus_pane" => window.focus(&self.ui().focus, cx),
+            "plan_cancel" => self.plan_cancel(window, cx),
             "settings" => self.open_settings(args, window, cx),
             // A dialog's field answers what its keys run itself
             // (`reference::with_help`); the address says what it takes in
@@ -4882,7 +4920,15 @@ impl Render for Shell {
         ];
 
         let root = div()
-            .key_context(keymap::ROOT)
+            .key_context({
+                // While a plan is made, Escape lets it go (`planning`).
+                let mut context = gpui::KeyContext::default();
+                context.add(keymap::ROOT);
+                if self.plans.making() {
+                    context.add("planning");
+                }
+                context
+            })
             .capture_action(cx.listener(Self::capture_run_command))
             .on_action(cx.listener(Self::on_run_command))
             .capture_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, window, cx| {

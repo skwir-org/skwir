@@ -2219,6 +2219,12 @@ pub fn declare_all(app: &App) {
     );
     none(
         Topic::Files,
+        "ui.plan_cancel",
+        "Stop working out",
+        "Let go of the plan being worked out for what was asked (Escape while it is): its answer is forgotten, and what waited for it runs on",
+    );
+    none(
+        Topic::Files,
         "ui.activity_pause_all",
         "Pause all actions",
         "Pause every action under way, or resume them all once every one is paused; what waits keeps waiting",

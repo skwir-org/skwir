@@ -638,11 +638,13 @@ fn selected_items(
     at_most: usize,
 ) -> Vec<Item> {
     let mut items = Vec::new();
+    // As it stood when asked, where the window made it a plan on a worker.
+    let chosen = skwir_core::app::chosen(p);
     for id in p.order().iter().copied() {
         if items.len() == at_most {
             break;
         }
-        if !p.selection.contains(id) || withheld.contains(&id) {
+        if !chosen.contains(id) || withheld.contains(&id) {
             continue;
         }
         let Some(e) = p.entry(id) else { continue };
@@ -696,7 +698,7 @@ fn plan_selection(
                 ws.pane(pane).is_some_and(|p| {
                     p.listing
                         .find_by_name(name)
-                        .is_some_and(|e| !p.selection.contains(e.id))
+                        .is_some_and(|e| !skwir_core::app::chosen(p).contains(e.id))
                 })
             })
     };
