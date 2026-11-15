@@ -2371,15 +2371,26 @@ fn collated(text: &str) -> Box<[u8]> {
 }
 
 /// The extension of `e`'s name, as a sort and a group by extension read
-/// it: none for a folder, nor for a name that only starts with a dot.
+/// it ([`extension_start`]).
 pub fn extension_of(e: &Entry) -> Option<&str> {
-    if e.is_dir() {
+    let name = e.name.as_encoded_bytes();
+    let at = extension_start(name, e.is_dir())?;
+    std::str::from_utf8(&name[at..]).ok()
+}
+
+/// Where the extension of `name` (a name's bytes,
+/// `OsStr::as_encoded_bytes`, or a `str`'s) starts, after its last dot:
+/// what a sort, a group by extension and a bulk rename read alike. None
+/// for a folder, nor for a name that only starts with a dot (`.bashrc`),
+/// nor after a dot that ends it (`notes.` keeps its dot); `archive.tar.gz`
+/// has `gz`. A dot is one byte whatever the encoding, so both sides of it
+/// are names still.
+pub fn extension_start(name: &[u8], is_dir: bool) -> Option<usize> {
+    if is_dir {
         return None;
     }
-    Path::new(&e.name)
-        .extension()
-        .and_then(OsStr::to_str)
-        .filter(|ext| !ext.is_empty())
+    let dot = name.iter().rposition(|&b| b == b'.')?;
+    (dot > 0 && dot + 1 < name.len()).then_some(dot + 1)
 }
 
 /// `e`'s tags as one set, A to Z, as a sort and a group by tags read
@@ -6304,6 +6315,24 @@ mod tests {
             }
         }));
         k
+    }
+
+    /// One rule says where an extension starts, for a sort and a bulk
+    /// rename alike: after the last dot, none for a folder, a name that
+    /// only starts with a dot or one that ends with it.
+    #[test]
+    fn an_extension_starts_after_the_last_dot() {
+        fn ext(name: &str, is_dir: bool) -> Option<&str> {
+            extension_start(name.as_bytes(), is_dir).map(|at| &name[at..])
+        }
+        assert_eq!(ext("photo.jpg", false), Some("jpg"));
+        assert_eq!(ext("archive.tar.gz", false), Some("gz"));
+        assert_eq!(ext(".config.bak", false), Some("bak"));
+        for none in [".bashrc", "notes", "notes.", "a.b.", ".", "..", "", "été"] {
+            assert_eq!(ext(none, false), None, "{none}");
+        }
+        assert_eq!(ext("v1.2", true), None, "a folder has none");
+        assert_eq!(ext("café.txt", false), Some("txt"));
     }
 
     /// An extension and a set of tags sort as words, case folded, none the

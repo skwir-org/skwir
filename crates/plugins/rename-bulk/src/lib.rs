@@ -3,18 +3,11 @@
 //! collide with old ones (swaps and chains).
 //!
 //! Per item, in this order: the regex replacement on the full name, then
-//! the template, then the case rule. Template placeholders:
-//!
-//! - `{name}` stem, `{ext}` extension without the dot, `{.ext}` with its dot
-//!   (nothing without one), `{full}` the whole name
-//! - `{n}` counter from `start` by `step`; `{n:03}` zero-padded to 3
-//! - `{date}` the entry's modification time as `%Y-%m-%d`; `{date:%Y-%m-%d_%H%M}`
-//!   with any `strftime` format (local time zone)
-//! - `{parent}` the parent directory's name
-//! - `{{` and `}}` for literal braces
-//!
-//! Case rules (`lower`, `upper`, `title`, `sentence`) apply to the stem and
-//! leave the extension alone.
+//! the template (its placeholders: [`PLACEHOLDERS`], said in
+//! [`RenameSpec::template`] and the reference), then the case rule
+//! (`lower`, `upper`, `title`, `sentence`), which applies to the stem and
+//! leaves the extension alone. A name's extension is the one a sort by
+//! extension reads (`location::extension_start`): a folder has none.
 //!
 //! What the template, the regex and its replacement take is said as data
 //! (`rename_bulk.reference`, ADR-137): each placeholder with what it gives
@@ -55,16 +48,23 @@ pub enum Case {
     Sentence,
 }
 
+/// The keys the template reads (`{name}`, `{n:03}`: the key before any
+/// `:`); `render` refuses any other. What `rename_bulk.reference` offers
+/// and what the schema says of the template are held to this list by a
+/// test, so the three never drift apart.
+pub const PLACEHOLDERS: [&str; 7] = ["name", "ext", ".ext", "full", "parent", "n", "date"];
+
 /// What to do to each name: the regex first, then the template, then the
 /// case. `rename_bulk.reference` says what each field takes, with what it
 /// gives for the first item.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct RenameSpec {
     /// The new name, text and placeholders: `{name}` (without its
-    /// extension), `{ext}`, `{.ext}` (with its dot, nothing without one),
-    /// `{full}`, `{parent}`, `{n}` and `{n:03}` (the counter), `{date}`
-    /// and `{date:%Y%m%d}` (when it was modified, any strftime format);
-    /// `{{` and `}}` for braces. The name the regex left when there is one.
+    /// extension; a folder has none), `{ext}`, `{.ext}` (with its dot,
+    /// nothing without one), `{full}`, `{parent}`, `{n}` and `{n:03}` (the
+    /// counter, 255 digits at most), `{date}` and `{date:%Y%m%d}` (when it
+    /// was modified, any strftime format); `{{` and `}}` for braces. The
+    /// name the regex left when there is one.
     #[serde(default)]
     pub template: Option<String>,
     /// A pattern (the `regex` crate's syntax) over the whole name,
@@ -155,18 +155,53 @@ pub enum BulkRenameError {
 /// was cancelled.
 const LOOK_EVERY: usize = 256;
 
-/// One input item: where it is, what it is called, and when it changed.
-pub type Item = (EntryRef, OsString, Option<SystemTime>);
+/// The widest a counter is written (`{n:03}`): a name holds 255 bytes at
+/// most on the file systems of every system, so a wider one names
+/// nothing, and written for each of a selection it would hold that much
+/// for every item before the names were refused.
+const WIDEST_COUNTER: usize = 255;
 
-fn split_ext(name: &str) -> (&str, &str) {
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => (stem, ext),
-        _ => (name, ""),
+/// One input item: where it is, what it is called, when it changed, and
+/// whether it is a folder (whose name has no extension).
+#[derive(Clone, Debug)]
+pub struct Item {
+    pub entry: EntryRef,
+    pub name: OsString,
+    pub modified: Option<SystemTime>,
+    pub is_dir: bool,
+}
+
+impl Item {
+    /// A file at `entry`, called `name`, changed at `modified`.
+    pub fn new(entry: EntryRef, name: impl Into<OsString>, modified: Option<SystemTime>) -> Self {
+        Item {
+            entry,
+            name: name.into(),
+            modified,
+            is_dir: false,
+        }
+    }
+
+    /// The same, a folder when `is_dir`.
+    #[must_use]
+    pub fn folder(mut self, is_dir: bool) -> Self {
+        self.is_dir = is_dir;
+        self
     }
 }
 
-fn apply_case(name: &str, case: Case) -> String {
-    let (stem, ext) = split_ext(name);
+/// A name's stem and its extension without the dot, as a sort and a group
+/// by extension read it (`location::extension_start`): a folder has none,
+/// nor `.bashrc`, and `notes.` keeps its dot in its stem.
+fn split_ext(name: &str, is_dir: bool) -> (&str, &str) {
+    match skwir_core::location::extension_start(name.as_bytes(), is_dir) {
+        Some(at) => (&name[..at - 1], &name[at..]),
+        None => (name, ""),
+    }
+}
+
+fn apply_case(name: &str, case: Case, is_dir: bool) -> String {
+    let (stem, ext) = split_ext(name, is_dir);
     let new_stem = match case {
         Case::Lower => stem.to_lowercase(),
         Case::Upper => stem.to_uppercase(),
@@ -204,16 +239,18 @@ fn apply_case(name: &str, case: Case) -> String {
     }
 }
 
-/// Expand the template for one item. `name` is the (regex-transformed) name.
+/// Expand the template for one item. `name` is the (regex-transformed)
+/// name of `item`, a folder when `is_dir`.
 fn render(
     template: &str,
     name: &str,
+    is_dir: bool,
     parent: &str,
     n: u64,
     mtime: Option<SystemTime>,
     item: &str,
 ) -> Result<String, BulkRenameError> {
-    let (stem, ext) = split_ext(name);
+    let (stem, ext) = split_ext(name, is_dir);
     let mut out = String::with_capacity(template.len() + 16);
     let mut chars = template.chars().peekable();
     while let Some(c) = chars.next() {
@@ -242,6 +279,11 @@ fn render(
                 let (key, arg) = token
                     .split_once(':')
                     .map_or((token.as_str(), None), |(k, a)| (k, Some(a)));
+                if !PLACEHOLDERS.contains(&key) {
+                    return Err(BulkRenameError::Template(format!(
+                        "unknown placeholder `{{{key}}}`"
+                    )));
+                }
                 match key {
                     "name" => out.push_str(stem),
                     "ext" => out.push_str(ext),
@@ -269,6 +311,12 @@ fn render(
                                     BulkRenameError::Template(format!("bad counter width `{a}`"))
                                 })?,
                         };
+                        if width > WIDEST_COUNTER {
+                            return Err(BulkRenameError::Template(format!(
+                                "a counter {width} digits wide is wider than a name can be \
+                                 ({WIDEST_COUNTER} at most)"
+                            )));
+                        }
                         let _ = write!(out, "{n:0width$}");
                     }
                     "date" => {
@@ -286,9 +334,10 @@ fn render(
                         })?;
                         out.push_str(&s);
                     }
+                    // Listed, never read: the test of `PLACEHOLDERS` fails.
                     other => {
                         return Err(BulkRenameError::Template(format!(
-                            "unknown placeholder `{{{other}}}`"
+                            "placeholder `{{{other}}}` not read yet"
                         )));
                     }
                 }
@@ -362,7 +411,13 @@ fn worked_out(
     let re = pattern(spec)?;
     let replacement = spec.replacement.clone().unwrap_or_default();
     let mut out = Vec::with_capacity(items.len());
-    for (i, (entry, original, mtime)) in items.iter().enumerate() {
+    for (i, item) in items.iter().enumerate() {
+        let Item {
+            entry,
+            name: original,
+            modified: mtime,
+            is_dir,
+        } = item;
         if i % LOOK_EVERY == 0 && skwir_core::scheduler::job_cancelled() {
             return Err(BulkRenameError::Cancelled);
         }
@@ -375,10 +430,18 @@ fn worked_out(
         // What the regex made, to tell whether what follows kept it.
         let made = (!marks.put.is_empty()).then(|| n.clone());
         if let Some(t) = &spec.template {
-            n = render(t, &n, &parent_of(entry), counter(i, spec)?, *mtime, &name)?;
+            n = render(
+                t,
+                &n,
+                *is_dir,
+                &parent_of(entry),
+                counter(i, spec)?,
+                *mtime,
+                &name,
+            )?;
         }
         if let Some(case) = spec.case {
-            n = apply_case(&n, case);
+            n = apply_case(&n, case, *is_dir);
         }
         if made.as_deref() != Some(n.as_str()) {
             marks.put.clear();
@@ -415,12 +478,12 @@ pub fn plan_bulk_rename_in(
     let requests: Vec<RenameRequest> = items
         .iter()
         .zip(new)
-        .map(|((entry, _, _), new_name)| RenameRequest {
-            entry: entry.clone(),
+        .map(|(item, new_name)| RenameRequest {
+            entry: item.entry.clone(),
             new_name,
         })
         .collect();
-    let old = |i: usize| items[i].1.to_string_lossy().into_owned();
+    let old = |i: usize| items[i].name.to_string_lossy().into_owned();
     let steps = order_renames(&requests, exists).map_err(|e| match e {
         RenameOrderError::InvalidName { item, reason } => BulkRenameError::InvalidName {
             item: old(item),
@@ -476,6 +539,8 @@ pub fn plan_bulk_rename(items: &[Item], spec: &RenameSpec) -> Result<BulkRename,
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct Args {
+    /// The pane whose selection is renamed when no entries are given; the
+    /// active pane when omitted.
     #[serde(default)]
     pane: Option<PaneId>,
     /// The files to rename, by absolute path, in this order; the pane's
@@ -493,6 +558,8 @@ struct Args {
 struct PreviewArgs {
     #[serde(flatten)]
     args: Args,
+    /// How many of the renames to say at most, the first; all when
+    /// omitted. `count` says how many there are in all.
     #[serde(default)]
     limit: Option<usize>,
 }
@@ -516,30 +583,31 @@ fn plan_named(
 ) -> anyhow::Result<BulkRename> {
     let items = named_items(entries, usize::MAX)?;
     let renamed: std::collections::HashSet<&Path> =
-        items.iter().map(|(r, _, _)| r.path.as_path()).collect();
+        items.iter().map(|item| item.entry.path.as_path()).collect();
     let exists = |path: &Path| !renamed.contains(path) && std::fs::symlink_metadata(path).is_ok();
     Ok(plan_bulk_rename_in(&items, exists, spec)?)
 }
 
 /// The first `at_most` of the files named by path, read on the thread of
-/// whoever named them: their times as a listing shows them (a link's,
-/// what it leads to).
+/// whoever named them, those alone: their times as a listing shows them
+/// (a link's, what it leads to), and whether each is a folder (a link to
+/// one too).
 fn named_items(
     entries: Vec<skwir_core::op::EntryArg>,
     at_most: usize,
 ) -> anyhow::Result<Vec<Item>> {
-    Ok(skwir_core::op::EntryArg::refs(entries)?
+    entries
         .into_iter()
         .take(at_most)
-        .map(|r| {
+        .map(|entry| {
+            let r = entry.into_ref()?;
             let name = r.path.file_name().unwrap_or_default().to_owned();
-            let mtime = std::fs::metadata(&r.path)
-                .or_else(|_| std::fs::symlink_metadata(&r.path))
-                .and_then(|m| m.modified())
-                .ok();
-            (r, name, mtime)
+            let read = std::fs::metadata(&r.path).or_else(|_| std::fs::symlink_metadata(&r.path));
+            let modified = read.as_ref().ok().and_then(|m| m.modified().ok());
+            let is_dir = read.is_ok_and(|m| m.is_dir());
+            Ok(Item::new(r, name, modified).folder(is_dir))
         })
-        .collect())
+        .collect()
 }
 
 /// The first `at_most` of what `p` selects, in the order shown (folders
@@ -562,11 +630,14 @@ fn selected_items(
             continue;
         };
         let mtime = e.metadata.value(keys::MODIFIED).and_then(Value::as_time);
-        items.push((
-            EntryRef::new(id.file, path).with_only_name(e.is_only_name()),
-            e.name.clone(),
-            mtime,
-        ));
+        items.push(
+            Item::new(
+                EntryRef::new(id.file, path).with_only_name(e.is_only_name()),
+                e.name.clone(),
+                mtime,
+            )
+            .folder(e.is_dir()),
+        );
     }
     items
 }
@@ -620,6 +691,7 @@ pub enum Field {
 /// placeholder gives the first item.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ReferenceArgs {
+    /// The field whose reference is asked.
     field: Field,
     #[serde(flatten)]
     args: Args,
@@ -664,25 +736,28 @@ pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Refer
 fn template_reference(first: Option<&Item>, spec: &RenameSpec) -> Reference {
     // What the regex leaves of the first item's name: what the template
     // reads.
-    let read = first.and_then(|(entry, original, mtime)| {
-        let name = original.to_str()?;
+    let read = first.and_then(|first| {
+        let name = first.name.to_str()?;
         let name = match pattern(spec).ok()? {
             Some(re) => replaced(&re, name, spec.replacement.as_deref().unwrap_or("")).0,
             None => name.to_owned(),
         };
         Some((
             name,
-            parent_of(entry),
-            *mtime,
-            original.to_string_lossy().into_owned(),
+            parent_of(&first.entry),
+            first.modified,
+            first.name.to_string_lossy().into_owned(),
+            first.is_dir,
         ))
     });
     let start = spec.start;
     let item = |written: &str, says: &str| {
         let said = Said::new(written, says);
-        match read.as_ref().and_then(|(name, parent, mtime, item)| {
-            render(written, name, parent, start, *mtime, item).ok()
-        }) {
+        match read
+            .as_ref()
+            .and_then(|(name, parent, mtime, item, is_dir)| {
+                render(written, name, *is_dir, parent, start, *mtime, item).ok()
+            }) {
             Some(gives) => said.gives(gives),
             None => said,
         }
@@ -695,7 +770,7 @@ fn template_reference(first: Option<&Item>, spec: &RenameSpec) -> Reference {
                 .item(item("{.ext}", "The extension with its dot; nothing when there is none"))
                 .item(item("{full}", "The whole name"))
                 .item(item("{parent}", "The folder it is in"))
-                .note("The regex runs first: these are the name it leaves. The case comes last, and leaves the extension as it is."),
+                .note("The regex runs first: these are the name it leaves. The case comes last, and leaves the extension as it is. A folder has no extension."),
         )
         .group(
             Group::new("Counter")
@@ -721,7 +796,7 @@ fn template_reference(first: Option<&Item>, spec: &RenameSpec) -> Reference {
 /// Patterns and their replacements for what names often need, each
 /// giving what it makes of `first` when it changes it.
 fn recipes(first: Option<&Item>) -> Group {
-    let name = first.and_then(|(_, original, _)| original.to_str());
+    let name = first.and_then(|first| first.name.to_str());
     // Written as its pattern; what it is for, then what replaces the
     // pattern (`shown`, words where the replacement is a space), said.
     let recipe = |task: &str, pattern: &str, replacement: &str, shown: Option<&str>| {
@@ -752,15 +827,19 @@ fn recipes(first: Option<&Item>) -> Group {
             Some("a space"),
         ))
         .item(recipe("Take away a start (IMG_)", "^IMG_", "", None))
+        // A pair of one kind, holding no other: never a bracket left
+        // alone (`Song).mp3`), nor `(a]` taken.
         .item(recipe(
             "Take away what is in brackets",
-            r"\s*[\[(][^\])]*[\])]",
+            r"\s*(?:\([^()]*\)|\[[^\[\]]*\])",
             "",
             None,
         ))
+        // A dot only with a separator after it: `001.jpg` keeps its
+        // extension.
         .item(recipe(
             "Take away the numbers at the start",
-            r"^\d+[\s._-]*",
+            r"^\d+(?:[\s_-]+|\.[\s_-]+)",
             "",
             None,
         ))
@@ -905,7 +984,7 @@ mod tests {
     use std::sync::Arc;
 
     fn item(name: &str) -> Item {
-        (
+        Item::new(
             EntryRef::new(
                 FileId::new(
                     1,
@@ -913,7 +992,7 @@ mod tests {
                 ),
                 format!("/d/{name}"),
             ),
-            name.into(),
+            name,
             None,
         )
     }
@@ -979,6 +1058,49 @@ mod tests {
         assert_eq!(names(&items, &spec), ["photo.jpg", "notes", ".hidden"]);
     }
 
+    /// A name's extension is the one a sort and a group by extension read
+    /// (`location::extension_start`): a folder has none, `notes.` keeps its
+    /// dot, `archive.tar.gz` has `gz`; the case leaves it as it is.
+    #[test]
+    fn an_extension_is_read_as_the_views_read_it() {
+        let items = [
+            item("v1.2").folder(true),
+            item("Notes."),
+            item("archive.tar.gz"),
+            item(".bashrc"),
+        ];
+        let spec = RenameSpec {
+            template: Some("{name}-{n}{.ext}".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            names(&items, &spec),
+            ["v1.2-1", "Notes.-2", "archive.tar-3.gz", ".bashrc-4"]
+        );
+        let spec = RenameSpec {
+            case: Some(Case::Upper),
+            ..Default::default()
+        };
+        assert_eq!(
+            names(&items, &spec),
+            ["V1.2", "NOTES.", "ARCHIVE.TAR.gz", ".BASHRC"]
+        );
+        let spec = RenameSpec {
+            case: Some(Case::Lower),
+            ..Default::default()
+        };
+        assert_eq!(names(&[item("Notes.")], &spec), ["notes."], "the dot stays");
+        // What the reference gives a folder first is what renaming it does.
+        let said = reference(Field::Template, Some(&items[0]), &RenameSpec::default());
+        let gives = |written: &str| {
+            said.items()
+                .find(|(_, _, item)| item.written == written)
+                .and_then(|(_, _, item)| item.gives.clone())
+        };
+        assert_eq!(gives("{name}").as_deref(), Some("v1.2"));
+        assert_eq!(gives("{.ext}").as_deref(), Some(""));
+    }
+
     /// The preview marks where the regex matched in the old name, and what
     /// it put in the new one while nothing after it changed the name.
     #[test]
@@ -1017,9 +1139,9 @@ mod tests {
     #[test]
     fn the_template_reference_says_what_render_reads() {
         let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        let first: Item = (
+        let first = Item::new(
             EntryRef::new(FileId::new(1, 1), "/Holidays/IMG_0042.jpg"),
-            "IMG_0042.jpg".into(),
+            "IMG_0042.jpg",
             Some(t),
         );
         let spec = RenameSpec {
@@ -1042,6 +1164,7 @@ mod tests {
             let rendered = render(
                 inserts,
                 "IMG_0042.jpg",
+                false,
                 "Holidays",
                 7,
                 Some(t),
@@ -1086,6 +1209,48 @@ mod tests {
         assert!(said.items().count() > 10);
     }
 
+    /// One list says what the template reads: `render` reads each of
+    /// `PLACEHOLDERS` and refuses any other, the reference offers each and
+    /// no other, and the schema says each.
+    #[test]
+    fn one_list_of_placeholders() {
+        let t = SystemTime::UNIX_EPOCH;
+        for key in PLACEHOLDERS {
+            let rendered = render(
+                &format!("{{{key}}}"),
+                "a.txt",
+                false,
+                "d",
+                1,
+                Some(t),
+                "a.txt",
+            );
+            assert!(rendered.is_ok(), "{key}: {rendered:?}");
+        }
+        assert!(matches!(
+            render("{size}", "a.txt", false, "d", 1, Some(t), "a.txt"),
+            Err(BulkRenameError::Template(_))
+        ));
+        let said = reference(Field::Template, None, &RenameSpec::default());
+        let offered: std::collections::BTreeSet<&str> = said
+            .items()
+            .filter_map(|(_, _, item)| item.inserts.as_deref()?.strip_prefix('{'))
+            .filter(|rest| !rest.starts_with('{'))
+            .filter_map(|rest| rest.split([':', '}']).next())
+            .collect();
+        assert_eq!(offered, PLACEHOLDERS.into_iter().collect());
+        let schema = serde_json::to_value(schemars::schema_for!(RenameSpec)).unwrap();
+        let described = schema["properties"]["template"]["description"]
+            .as_str()
+            .unwrap();
+        for key in PLACEHOLDERS {
+            assert!(
+                described.contains(&format!("{{{key}")),
+                "{key}: {described}"
+            );
+        }
+    }
+
     /// Each recipe is a pattern that reads, and does what it says on a
     /// name that needs it; the first item shows what it makes of it.
     #[test]
@@ -1114,10 +1279,32 @@ mod tests {
             made("Take away what is in brackets", "Song (live) [2019].mp3"),
             "Song.mp3"
         );
+        // Nested, the innermost pair goes, and no bracket is left alone.
+        assert_eq!(
+            made("Take away what is in brackets", "Song (live (2019)).mp3"),
+            "Song (live).mp3"
+        );
+        assert_eq!(
+            made("Take away what is in brackets", "Song (a].mp3"),
+            "Song (a].mp3"
+        );
         assert_eq!(
             made("Take away the numbers at the start", "03 - Song.mp3"),
             "Song.mp3"
         );
+        for (name, made_of) in [
+            ("01. Song.mp3", "Song.mp3"),
+            ("01_Song.mp3", "Song.mp3"),
+            ("2019 report.pdf", "report.pdf"),
+            // Numbers alone keep their extension.
+            ("001.jpg", "001.jpg"),
+        ] {
+            assert_eq!(
+                made("Take away the numbers at the start", name),
+                made_of,
+                "{name}"
+            );
+        }
         assert_eq!(
             made("Swap two parts around “ - ”", "Artist - Title.mp3"),
             "Title - Artist.mp3"
@@ -1192,9 +1379,9 @@ mod tests {
     #[test]
     fn date_uses_mtime() {
         let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        let items = [(
+        let items = [Item::new(
             EntryRef::new(FileId::new(1, 1), "/d/a.txt"),
-            "a.txt".into(),
+            "a.txt",
             Some(t),
         )];
         let spec = RenameSpec {
@@ -1239,6 +1426,24 @@ mod tests {
     #[test]
     fn large_counters_are_refused_not_wrapped() {
         let items = [item("a"), item("b")];
+        // As wide as a name, and no wider: never a string that long for
+        // each item before the names are refused.
+        let wide = |width: &str| {
+            new_names(
+                &items,
+                &RenameSpec {
+                    template: Some(format!("{{n:{width}}}")),
+                    ..Default::default()
+                },
+            )
+        };
+        assert_eq!(wide("255").unwrap()[0].len(), 255);
+        for wider in ["256", "65536", "99999999999999999999999"] {
+            assert!(
+                matches!(wide(wider), Err(BulkRenameError::Template(_))),
+                "{wider}"
+            );
+        }
         let spec = RenameSpec {
             template: Some("{n}".into()),
             start: u64::MAX,
@@ -1252,9 +1457,9 @@ mod tests {
             template: Some("{date:x%}".into()),
             ..Default::default()
         };
-        let dated = [(
+        let dated = [Item::new(
             EntryRef::new(FileId::new(1, 1), "/d/a"),
-            "a".into(),
+            "a",
             Some(SystemTime::UNIX_EPOCH),
         )];
         assert!(matches!(
@@ -1268,7 +1473,7 @@ mod tests {
     fn names_that_are_not_text_are_never_mangled() {
         use std::os::unix::ffi::OsStringExt;
         let raw = OsString::from_vec(b"caf\xe9".to_vec());
-        let items = [(
+        let items = [Item::new(
             EntryRef::new(FileId::new(1, 1), Path::new("/d").join(&raw)),
             raw.clone(),
             None,
@@ -1292,7 +1497,7 @@ mod tests {
         for n in names {
             let p = tmp.path().join(n);
             std::fs::write(&p, n.as_bytes()).unwrap();
-            items.push((EntryRef::from_path(&p).unwrap(), (*n).into(), None));
+            items.push(Item::new(EntryRef::from_path(&p).unwrap(), *n, None));
         }
         let app = App::new(skwir_core::app::AppConfig::ephemeral(
             tmp.path().join("app"),
