@@ -273,7 +273,12 @@ class Session:
 
 def decode(perf, binary, data):
     """What a trace ran, as (file offset, first seen)."""
-    events = subprocess.run([perf, "script", "-i", str(data), "--show-mmap-events"],
+    # Where the code was mapped, among the events alone: left to itself,
+    # perf script decodes every call of a processor trace with them
+    # (`--itrace=ce`), gigabytes of a start held here for one line, which
+    # filled the memory of a machine (2026-11-15).
+    events = subprocess.run([perf, "script", "-i", str(data), "--show-mmap-events",
+                             "--itrace=e"],
                             capture_output=True, text=True, check=False).stdout
     mapped = re.search(r"MMAP2?.*\[(0x[0-9a-f]+)\((0x[0-9a-f]+)\) @ (0x[0-9a-f]+)[^\]]*\]: r-xp "
                        + re.escape(str(binary)), events)
