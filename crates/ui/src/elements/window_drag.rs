@@ -13,6 +13,9 @@
 //! 0066), so it also snaps the window to the screen's edges. On macOS the
 //! press itself starts the move (`AppKit` drags from a press), and a double
 //! click does what the system's settings say (`titlebar_double_click`).
+//! Everywhere, the second press of a double click moves nothing: a move
+//! takes the release, and a row whose double click is its own (beside the
+//! tabs) needs it for its click.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -51,12 +54,19 @@ pub fn area(press: &Press, zooms: bool) -> impl IntoElement + use<> {
                     return;
                 }
                 match event.button {
-                    MouseButton::Left if zooms && event.click_count == 2 => {
+                    // The second press of a double click never moves the
+                    // window: it maximizes or restores it, or, where a
+                    // double click is the row's own, the row has it (a move
+                    // begun takes the release its click needs: on macOS,
+                    // from a press).
+                    MouseButton::Left if event.click_count >= 2 => {
                         armed.set(false);
-                        if cfg!(target_os = "macos") {
-                            window.titlebar_double_click();
-                        } else {
-                            window.zoom_window();
+                        if zooms && event.click_count == 2 {
+                            if cfg!(target_os = "macos") {
+                                window.titlebar_double_click();
+                            } else {
+                                window.zoom_window();
+                            }
                         }
                     }
                     MouseButton::Left if cfg!(target_os = "macos") => window.start_window_move(),
