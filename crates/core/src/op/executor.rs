@@ -5546,21 +5546,33 @@ mod tests {
         let cancel = CancelToken::new();
         executor.execute(third.plan(), cancel.clone());
         let dest = Path::new("/stick/dest");
-        let brought = |names: &[&str]| {
+        // What arrives there once it is as `wanted` says, names and states,
+        // within a deadline: a run that ends starts the next on another
+        // thread, so its names can be told before its state.
+        let brought = |wanted: &[(&str, Arrives)]| {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 let arriving = executor.arriving_in(dest);
-                let now: Vec<String> = arriving
+                let now: Vec<(String, Arrives)> = arriving
                     .iter()
-                    .map(|a| a.arrival.name.to_string_lossy().into_owned())
+                    .map(|a| (a.arrival.name.to_string_lossy().into_owned(), a.state))
                     .collect();
-                if now == names || Instant::now() > deadline {
+                let met = now.len() == wanted.len()
+                    && now
+                        .iter()
+                        .zip(wanted)
+                        .all(|((name, state), (want, wants))| name == want && state == wants);
+                if met || Instant::now() > deadline {
                     break arriving;
                 }
                 std::thread::sleep(Duration::from_millis(5));
             }
         };
-        let arriving = brought(&["it's one", "two", "three"]);
+        let arriving = brought(&[
+            ("it's one", Arrives::Starting),
+            ("two", Arrives::Waiting),
+            ("three", Arrives::Waiting),
+        ]);
         let states: Vec<Arrives> = arriving.iter().map(|a| a.state).collect();
         assert_eq!(
             states,
@@ -5574,9 +5586,9 @@ mod tests {
         cancel.cancel();
         assert_eq!(executor.arriving_in(dest).len(), 2, "cancelled, at once");
         first.opened();
-        let arriving = brought(&["two"]);
+        let arriving = brought(&[("two", Arrives::Starting)]);
         assert_eq!(arriving.len(), 1);
-        assert_eq!(arriving[0].state, Arrives::Starting);
+        assert_eq!(arriving[0].state, Arrives::Starting, "the next one runs");
         second.opened();
         assert!(brought(&[]).is_empty(), "every run ended");
     }
