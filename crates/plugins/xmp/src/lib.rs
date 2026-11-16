@@ -188,8 +188,8 @@ impl NotesStore for XmpStore {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "XMP sidecars (darktable, digiKam, Lightroom)"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(xmp_store_title = "XMP sidecars (darktable, digiKam, Lightroom)")
     }
     fn kept(&self) -> Kept {
         Kept::Beside
@@ -409,11 +409,13 @@ impl Plugin for XmpPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "XMP"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(xmp_plugin_title = "XMP")
     }
-    fn description(&self) -> &'static str {
-        "Tags, ratings and descriptions in XMP sidecars, as photo applications keep them; XMP inside pictures and PDFs shown in Properties"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            xmp_plugin_description = "Tags, ratings and descriptions in XMP sidecars, as photo applications keep them; XMP inside pictures and PDFs shown in Properties"
+        )
     }
     fn category(&self) -> Category {
         Category::Files

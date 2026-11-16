@@ -25,11 +25,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "archives"
     }
-    fn title(&self) -> &'static str {
-        "Archives"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(archives_plugin_title = "Archives")
     }
-    fn description(&self) -> &'static str {
-        "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, extract them (Extract Here, in an archive's menu and a drop's), and make them (Compress, in the menu of what you select)"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            archives_plugin_description = "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, extract them (Extract Here, in an archive's menu and a drop's), and make them (Compress, in the menu of what you select)"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

@@ -1160,12 +1160,15 @@ impl Plugin for TrashPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Trash"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(trash_plugin_title = "Trash")
     }
 
-    fn description(&self) -> &'static str {
-        "The trash as a place: restore its files, delete them for good, empty it"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            trash_plugin_description =
+                "The trash as a place: restore its files, delete them for good, empty it"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

@@ -15,11 +15,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "comics"
     }
-    fn title(&self) -> &'static str {
-        "Comics"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(comics_plugin_title = "Comics")
     }
-    fn description(&self) -> &'static str {
-        "Read CBZ and CBR comic books, continuously or a page at a time, and show their covers"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            comics_plugin_description = "Read CBZ and CBR comic books, continuously or a page at a time, and show their covers"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

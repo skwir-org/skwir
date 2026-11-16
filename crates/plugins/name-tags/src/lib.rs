@@ -165,10 +165,18 @@ impl NotesStore for NameStore {
             Convention::Filetags => "filetags",
         }
     }
-    fn title(&self) -> &'static str {
+    fn title(&self) -> skwir_core::words::Words {
         match self.convention {
-            Convention::Tagspaces => "Tags in names, as TagSpaces writes them: name[a b].ext",
-            Convention::Filetags => "Tags in names, as filetags writes them: name -- a b.ext",
+            Convention::Tagspaces => skwir_core::words!(
+                name_tags_store_tagspaces =
+                    "Tags in names, as TagSpaces writes them: name[a b].ext",
+                note = "name[a b].ext is an example of a file name; keep it as it is."
+            ),
+            Convention::Filetags => skwir_core::words!(
+                name_tags_store_filetags =
+                    "Tags in names, as filetags writes them: name -- a b.ext",
+                note = "name -- a b.ext is an example of a file name; keep it as it is."
+            ),
         }
     }
     fn kept(&self) -> Kept {
@@ -475,11 +483,13 @@ impl Plugin for NameTagsPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Tags in names"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(name_tags_plugin_title = "Tags in names")
     }
-    fn description(&self) -> &'static str {
-        "Tags written in file names, as TagSpaces (name[a b].ext) and filetags (name -- a b.ext) do: read with the other notes, written by renaming, on request or as an edit changes them (Tags and notes page)"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            name_tags_plugin_description = "Tags written in file names, as TagSpaces (name[a b].ext) and filetags (name -- a b.ext) do: read with the other notes, written by renaming, on request or as an edit changes them (Tags and notes page)"
+        )
     }
     fn category(&self) -> Category {
         Category::Files

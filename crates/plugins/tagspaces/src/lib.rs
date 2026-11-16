@@ -205,8 +205,8 @@ impl NotesStore for TagSpacesStore {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "TagSpaces sidecars (.ts folders)"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(tagspaces_store_title = "TagSpaces sidecars (.ts folders)")
     }
     fn kept(&self) -> Kept {
         Kept::Beside
@@ -446,11 +446,13 @@ impl Plugin for TagSpacesPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "TagSpaces"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(tagspaces_plugin_title = "TagSpaces")
     }
-    fn description(&self) -> &'static str {
-        "Tags and descriptions in TagSpaces' .ts sidecars, read and kept in step; its location index as a search hint"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            tagspaces_plugin_description = "Tags and descriptions in TagSpaces' .ts sidecars, read and kept in step; its location index as a search hint"
+        )
     }
     fn category(&self) -> Category {
         Category::Files

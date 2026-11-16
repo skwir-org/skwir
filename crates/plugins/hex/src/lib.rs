@@ -12,11 +12,11 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "hex"
     }
-    fn title(&self) -> &'static str {
-        "Hexadecimal"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(hex_plugin_title = "Hexadecimal")
     }
-    fn description(&self) -> &'static str {
-        "Inspect any file as hexadecimal bytes"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(hex_plugin_description = "Inspect any file as hexadecimal bytes")
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

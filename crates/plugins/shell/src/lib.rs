@@ -500,11 +500,14 @@ impl Plugin for ShellPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Shell"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(shell_plugin_title = "Shell")
     }
-    fn description(&self) -> &'static str {
-        "Copy selected paths for a shell; run a command on the selection in a terminal"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            shell_plugin_description =
+                "Copy selected paths for a shell; run a command on the selection in a terminal"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Desktop

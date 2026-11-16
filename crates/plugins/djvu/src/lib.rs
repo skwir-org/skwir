@@ -25,11 +25,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "DjVu"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(djvu_plugin_title = "DjVu")
     }
-    fn description(&self) -> &'static str {
-        "Read DjVu documents, scanned books mostly: continuous scrolling, search, text selection, links and contents; and show their first pages as thumbnails"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            djvu_plugin_description = "Read DjVu documents, scanned books mostly: continuous scrolling, search, text selection, links and contents; and show their first pages as thumbnails"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

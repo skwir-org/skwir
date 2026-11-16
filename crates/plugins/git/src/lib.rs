@@ -34,11 +34,13 @@ impl Plugin for GitPlugin {
     fn id(&self) -> &'static str {
         "git"
     }
-    fn title(&self) -> &'static str {
-        "Git"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(git_plugin_title = "Git")
     }
-    fn description(&self) -> &'static str {
-        "A folder's and a file's history of commits in a Git repository, the graph of its merges and what each commit changed, and the files' state marked in the views"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            git_plugin_description = "A folder's and a file's history of commits in a Git repository, the graph of its merges and what each commit changed, and the files' state marked in the views"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

@@ -12,11 +12,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "structured-data"
     }
-    fn title(&self) -> &'static str {
-        "Structured data"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(structured_data_plugin_title = "Structured data")
     }
-    fn description(&self) -> &'static str {
-        "Show JSON (with comments, and JSON5), YAML and TOML with syntax colors and foldable blocks"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            structured_data_plugin_description = "Show JSON (with comments, and JSON5), YAML and TOML with syntax colors and foldable blocks"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

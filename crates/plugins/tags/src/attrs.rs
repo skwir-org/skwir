@@ -120,7 +120,9 @@ impl AttributesProvider {
                     self.stores
                         .titles(ids)
                         .into_iter()
-                        .map(|t| Value::Text(Arc::from(t)))
+                        // Said as read: the field should keep the stores'
+                        // ids and say their titles where it is shown.
+                        .map(|t| Value::Text(Arc::from(t.say())))
                         .collect(),
                 )
             };

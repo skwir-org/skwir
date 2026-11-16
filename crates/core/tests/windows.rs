@@ -685,8 +685,8 @@ impl skwir_core::plugin::Plugin for Looking {
     fn id(&self) -> &'static str {
         "looking"
     }
-    fn title(&self) -> &'static str {
-        "Looking"
+    fn title(&self) -> skwir_core::words::Words {
+        "Looking".into()
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Files

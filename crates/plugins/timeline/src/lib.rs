@@ -1095,11 +1095,14 @@ impl Plugin for TimelinePlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Timeline"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(timeline_plugin_title = "Timeline")
     }
-    fn description(&self) -> &'static str {
-        "Files by modification date, as a histogram you can scrub"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            timeline_plugin_description =
+                "Files by modification date, as a histogram you can scrub"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Browsing

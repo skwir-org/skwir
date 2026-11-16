@@ -936,8 +936,8 @@ mod tests {
         fn id(&self) -> &'static str {
             "refused"
         }
-        fn title(&self) -> &'static str {
-            "Refused"
+        fn title(&self) -> skwir_core::words::Words {
+            "Refused".into()
         }
         fn kept(&self) -> Kept {
             Kept::Attributes
@@ -972,8 +972,8 @@ mod tests {
         fn id(&self) -> &'static str {
             "declines"
         }
-        fn title(&self) -> &'static str {
-            "Declines"
+        fn title(&self) -> skwir_core::words::Words {
+            "Declines".into()
         }
         fn kept(&self) -> Kept {
             Kept::Beside
@@ -1018,8 +1018,8 @@ mod tests {
         fn id(&self) -> &'static str {
             self.0
         }
-        fn title(&self) -> &'static str {
-            self.0
+        fn title(&self) -> crate::words::Words {
+            self.0.into()
         }
         fn kept(&self) -> Kept {
             Kept::Beside

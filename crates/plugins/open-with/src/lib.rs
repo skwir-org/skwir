@@ -1270,12 +1270,14 @@ impl Plugin for OpenWithPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Open with"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(open_with_plugin_title = "Open with")
     }
 
-    fn description(&self) -> &'static str {
-        "Open files with their default application or one you choose, and open a terminal here"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            open_with_plugin_description = "Open files with their default application or one you choose, and open a terminal here"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

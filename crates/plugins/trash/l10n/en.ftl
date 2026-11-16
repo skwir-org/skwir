@@ -19,6 +19,10 @@ trash_list = List the trash
 
 trash_list_description = Return the files in the trash: each one's name, where it came from, where it is, and when it was put there
 
+trash_plugin_description = The trash as a place: restore its files, delete them for good, empty it
+
+trash_plugin_title = Trash
+
 trash_put = Put in the trash
 
 # Read by agents and in F1's list of actions.

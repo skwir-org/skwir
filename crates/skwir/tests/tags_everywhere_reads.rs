@@ -39,8 +39,8 @@ impl NotesStore for Counting {
     fn id(&self) -> &'static str {
         "test.counting"
     }
-    fn title(&self) -> &'static str {
-        "Counting"
+    fn title(&self) -> skwir_core::words::Words {
+        "Counting".into()
     }
     fn kept(&self) -> Kept {
         Kept::Beside

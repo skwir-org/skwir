@@ -34,6 +34,15 @@ op_redo_title = redo { $title }
 # What an undo is called while it waits or runs, and in the History: undo, then the action it takes back (undo copy 3 items to Docs). Begins in lower case: said inside other words too.
 op_undo_title = undo { $title }
 
+# A heading above plugins in the settings.
+plugins_browsing = Browsing and finding
+
+plugins_desktop = Desktop integration
+
+plugins_files = Working with files
+
+plugins_previews = Previews and thumbnails
+
 # A heading of the list of keys: doing something to files (copying, renaming, trashing).
 topic_files = Files
 

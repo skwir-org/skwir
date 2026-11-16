@@ -14,11 +14,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "fonts"
     }
-    fn title(&self) -> &'static str {
-        "Fonts"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(fonts_plugin_title = "Fonts")
     }
-    fn description(&self) -> &'static str {
-        "Show a specimen of font files without installing them"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            fonts_plugin_description = "Show a specimen of font files without installing them"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

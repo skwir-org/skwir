@@ -105,11 +105,12 @@ impl Plugin for External {
     fn id(&self) -> &'static str {
         self.id
     }
-    fn title(&self) -> &str {
-        &self.manifest.title
+    fn title(&self) -> skwir_core::words::Words {
+        // Its own words, as its manifest writes them.
+        skwir_core::words::Words::as_written(self.manifest.title.clone())
     }
-    fn description(&self) -> &'static str {
-        self.description
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words::Words::as_written(self.description)
     }
     fn category(&self) -> Category {
         match self.manifest.category {

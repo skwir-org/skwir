@@ -19,11 +19,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "markdown"
     }
-    fn title(&self) -> &'static str {
-        "Markdown, HTML and notebooks"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(markdown_plugin_title = "Markdown, HTML and notebooks")
     }
-    fn description(&self) -> &'static str {
-        "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, formulas, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            markdown_plugin_description = "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, formulas, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

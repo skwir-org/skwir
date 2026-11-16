@@ -1431,12 +1431,14 @@ impl Plugin for PlacesPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Places"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(places_plugin_title = "Places")
     }
 
-    fn description(&self) -> &'static str {
-        "Sidebar entries from your home, XDG user folders, GTK bookmarks, and mounted volumes"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            places_plugin_description = "Sidebar entries from your home, XDG user folders, GTK bookmarks, and mounted volumes"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

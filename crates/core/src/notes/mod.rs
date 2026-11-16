@@ -244,7 +244,7 @@ pub struct Probe<'a> {
 pub trait NotesStore: Send + Sync {
     fn id(&self) -> &'static str;
     /// Its name in the settings and the review ("The desktop's attributes").
-    fn title(&self) -> &'static str;
+    fn title(&self) -> crate::words::Words;
     fn kept(&self) -> Kept;
     fn holds(&self) -> Holds;
     /// How it is written unless the user chose otherwise. A store in names
@@ -767,7 +767,7 @@ impl NoteStores {
     }
 
     /// The titles of stores, by id, for the user.
-    pub fn titles(&self, ids: &[&str]) -> Vec<&'static str> {
+    pub fn titles(&self, ids: &[&str]) -> Vec<crate::words::Words> {
         ids.iter()
             .filter_map(|id| self.get(id).map(|s| s.title()))
             .collect()

@@ -119,11 +119,13 @@ impl Plugin for GeoPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Maps"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(geo_plugin_title = "Maps")
     }
-    fn description(&self) -> &'static str {
-        "Show GPS tracks and routes (GPX, KML, KMZ, GeoJSON, TCX, FIT, IGC, NMEA), flight plans (Garmin, Flight Simulator, X-Plane, Little Navmap) and drone missions (QGroundControl, MAVLink, Litchi, DJI) on a map, with their distance, time and climb, and the pictures and videos of a folder in the Map view. Nothing a file links to is fetched"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            geo_plugin_description = "Show GPS tracks and routes (GPX, KML, KMZ, GeoJSON, TCX, FIT, IGC, NMEA), flight plans (Garmin, Flight Simulator, X-Plane, Little Navmap) and drone missions (QGroundControl, MAVLink, Litchi, DJI) on a map, with their distance, time and climb, and the pictures and videos of a folder in the Map view. Nothing a file links to is fetched"
+        )
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![geotag::requirement()]

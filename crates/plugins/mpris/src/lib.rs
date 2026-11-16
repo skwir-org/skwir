@@ -35,11 +35,13 @@ impl Plugin for MprisPlugin {
     fn id(&self) -> &'static str {
         "mpris"
     }
-    fn title(&self) -> &'static str {
-        "Media controls"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(mpris_plugin_title = "Media controls")
     }
-    fn description(&self) -> &'static str {
-        "Let the desktop show and steer what is playing: media keys, the panel's player, headset buttons (MPRIS)"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            mpris_plugin_description = "Let the desktop show and steer what is playing: media keys, the panel's player, headset buttons (MPRIS)"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Desktop

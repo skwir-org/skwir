@@ -18,8 +18,8 @@ impl Plugin for Preferences {
     fn id(&self) -> &'static str {
         "sample"
     }
-    fn title(&self) -> &'static str {
-        "Sample"
+    fn title(&self) -> skwir_core::words::Words {
+        "Sample".into()
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Files
@@ -737,8 +737,8 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
         fn former_ids(&self) -> &'static [&'static str] {
             &["stale"]
         }
-        fn title(&self) -> &'static str {
-            "Fresh"
+        fn title(&self) -> skwir_core::words::Words {
+            "Fresh".into()
         }
         fn category(&self) -> skwir_core::plugin::Category {
             skwir_core::plugin::Category::Files

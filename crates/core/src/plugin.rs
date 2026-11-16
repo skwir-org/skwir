@@ -63,9 +63,12 @@ pub trait Plugin: Send + Sync {
     fn former_ids(&self) -> &'static [&'static str] {
         &[]
     }
-    fn title(&self) -> &str;
-    fn description(&self) -> &'static str {
-        ""
+    /// Its name where plugins are listed: a message (`words!`), or a
+    /// plugin from outside's own title as written.
+    fn title(&self) -> crate::words::Words;
+    /// What it does, under its name.
+    fn description(&self) -> crate::words::Words {
+        crate::words::Words::as_written("")
     }
     /// Where the plugin is listed among the others.
     fn category(&self) -> Category;
@@ -131,12 +134,16 @@ impl Category {
     ];
 
     /// The heading a settings UI shows above the category's plugins.
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> crate::words::Words {
+        use crate::words;
         match self {
-            Category::Browsing => "Browsing and finding",
-            Category::Files => "Working with files",
-            Category::Previews => "Previews and thumbnails",
-            Category::Desktop => "Desktop integration",
+            Category::Browsing => words!(
+                plugins_browsing = "Browsing and finding",
+                note = "A heading above plugins in the settings."
+            ),
+            Category::Files => words!(plugins_files = "Working with files"),
+            Category::Previews => words!(plugins_previews = "Previews and thumbnails"),
+            Category::Desktop => words!(plugins_desktop = "Desktop integration"),
         }
     }
 }
@@ -267,8 +274,8 @@ pub(crate) fn register(app: &App) {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct PluginInfo {
     pub id: &'static str,
-    pub title: String,
-    pub description: String,
+    pub title: crate::words::Words,
+    pub description: crate::words::Words,
     pub category: Category,
     pub enabled: bool,
     /// Whether skwir comes with it on (`Plugin::enabled_by_default`).
@@ -436,8 +443,8 @@ impl PluginHost {
             .iter()
             .map(|(p, e)| PluginInfo {
                 id: p.id(),
-                title: p.title().into(),
-                description: p.description().into(),
+                title: p.title(),
+                description: p.description(),
                 category: p.category(),
                 enabled: *e,
                 enabled_by_default: p.enabled_by_default(),

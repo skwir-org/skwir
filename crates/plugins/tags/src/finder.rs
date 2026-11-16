@@ -299,8 +299,8 @@ impl NotesStore for FinderStore {
     fn id(&self) -> &'static str {
         "finder"
     }
-    fn title(&self) -> &'static str {
-        "A Mac's Finder tags and comments"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(tags_store_finder = "A Mac's Finder tags and comments")
     }
     fn kept(&self) -> Kept {
         Kept::Attributes

@@ -753,12 +753,14 @@ impl Plugin for QueryPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Query"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(query_plugin_title = "Query")
     }
 
-    fn description(&self) -> &'static str {
-        "Search as a location: name, size, date, tag, MIME, and content queries; saved searches in the sidebar"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            query_plugin_description = "Search as a location: name, size, date, tag, MIME, and content queries; saved searches in the sidebar"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

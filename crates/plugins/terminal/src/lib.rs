@@ -98,11 +98,13 @@ impl Plugin for TerminalPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Terminal"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(terminal_plugin_title = "Terminal")
     }
-    fn description(&self) -> &'static str {
-        "A terminal under the panes (F4) that goes where the pane goes, and takes the pane where you cd"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            terminal_plugin_description = "A terminal under the panes (F4) that goes where the pane goes, and takes the pane where you cd"
+        )
     }
     fn category(&self) -> Category {
         Category::Desktop

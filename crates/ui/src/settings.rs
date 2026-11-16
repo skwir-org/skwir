@@ -2382,7 +2382,7 @@ pub(crate) fn page_title_of(spec: &SettingSpec, plugins: &[PluginInfo]) -> Strin
         Page::Plugin(id) => plugins
             .iter()
             .find(|plugin| plugin.id == id)
-            .map_or(id, |plugin| plugin.title.clone()),
+            .map_or(id, |plugin| plugin.title.say()),
         page => page
             .builtin()
             .map_or_else(|| spec.owner().to_owned(), |b| b.title.to_owned()),
@@ -2930,7 +2930,7 @@ impl SettingsView {
         self.plugins
             .iter()
             .find(|plugin| plugin.id == id)
-            .map_or_else(|| id.to_owned(), |plugin| plugin.title.clone())
+            .map_or_else(|| id.to_owned(), |plugin| plugin.title.say())
     }
 
     pub(crate) fn page_title(&self, page: &Page) -> String {

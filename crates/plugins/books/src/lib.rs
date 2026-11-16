@@ -33,11 +33,13 @@ impl Plugin for PreviewPlugin {
     fn former_ids(&self) -> &'static [&'static str] {
         &["epub"]
     }
-    fn title(&self) -> &'static str {
-        "Books"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(books_plugin_title = "Books")
     }
-    fn description(&self) -> &'static str {
-        "Read EPUB, FB2 and MOBI books with their table of contents"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            books_plugin_description = "Read EPUB, FB2 and MOBI books with their table of contents"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

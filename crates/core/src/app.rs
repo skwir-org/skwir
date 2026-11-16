@@ -762,7 +762,7 @@ impl App {
                 ),
                 store.default_read(),
             )
-            .section_of(format!("notes.{id}"), title)
+            .section_of(format!("notes.{id}"), title.clone())
             .essential(),
         );
         self.notes.declared(owner, read);

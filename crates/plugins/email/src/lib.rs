@@ -17,11 +17,14 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         "email"
     }
-    fn title(&self) -> &'static str {
-        "Email"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(email_plugin_title = "Email")
     }
-    fn description(&self) -> &'static str {
-        "Read EML messages: headers, body and attachments, with remote content blocked"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            email_plugin_description =
+                "Read EML messages: headers, body and attachments, with remote content blocked"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

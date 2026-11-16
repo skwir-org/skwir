@@ -316,14 +316,15 @@ impl Snapshot {
 /// Plugins as the settings list them: by name, as file names are
 /// (`collate`).
 fn by_name(plugins: &mut [PluginInfo]) {
-    plugins.sort_by_cached_key(|plugin| collate::sort_key(std::ffi::OsStr::new(&plugin.title)));
+    plugins
+        .sort_by_cached_key(|plugin| collate::sort_key(std::ffi::OsStr::new(&plugin.title.say())));
 }
 
 /// The plugins' categories as the Plugins page heads them: by name, as
 /// the Exclusions page's are.
 fn categories_by_name() -> Vec<Category> {
     let mut categories = Category::ALL.to_vec();
-    categories.sort_by_cached_key(|c| collate::sort_key(std::ffi::OsStr::new(c.title())));
+    categories.sort_by_cached_key(|c| collate::sort_key(std::ffi::OsStr::new(&c.title().say())));
     categories
 }
 
@@ -334,11 +335,11 @@ fn categories_by_name() -> Vec<Category> {
 /// folded, every word in one of the texts).
 fn plugin_found(plugin: &PluginInfo, words: &collate::Words) -> bool {
     words.found_in(&[
-        &plugin.title,
-        &plugin.description,
+        &plugin.title.say(),
+        &plugin.description.say(),
         plugin.id,
         plugin.origin.as_deref().unwrap_or_default(),
-        plugin.category.title(),
+        &plugin.category.title().say(),
     ])
 }
 
@@ -1819,12 +1820,12 @@ impl SettingsView {
         let pending = self.toggling.contains_key(id);
         let shown = self.toggling.get(id).copied().unwrap_or(plugin.enabled);
         let title = if link {
-            plugin.title.clone()
+            plugin.title.say()
         } else {
             "Enabled".to_owned()
         };
         let texts = {
-            let mut texts = Self::texts(title, plugin.description.clone(), theme);
+            let mut texts = Self::texts(title, plugin.description.say(), theme);
             // What it may do (ADR-044), and where one from outside skwir is.
             let may = plugin
                 .capabilities
@@ -1893,7 +1894,7 @@ impl SettingsView {
         self.stop(&focus, Some(item), None);
         end = end.child(
             controls::switch(format!("plugin-{id}"), shown, &focus, theme)
-                .when(self.a11y, |d| d.aria_label(plugin.title.clone()))
+                .when(self.a11y, |d| d.aria_label(plugin.title.say()))
                 .when(pending, |d| d.opacity(0.5))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if !this.toggling.contains_key(id) {
@@ -1956,7 +1957,7 @@ impl SettingsView {
             }
             shown += plugins.len();
             by_name(&mut plugins);
-            Self::caption(items, category.title(), theme);
+            Self::caption(items, category.title().say(), theme);
             for (index, plugin) in plugins.iter().enumerate() {
                 let edge = Edge {
                     first: index == 0,
@@ -2460,9 +2461,9 @@ mod tests {
     #[test]
     fn plugins_and_their_categories_stand_by_name() {
         use skwir_core::plugin::{Category, PluginInfo};
-        let titles: Vec<&str> = super::categories_by_name()
+        let titles: Vec<String> = super::categories_by_name()
             .into_iter()
-            .map(Category::title)
+            .map(|c| c.title().english())
             .collect();
         assert_eq!(
             titles,
@@ -2476,7 +2477,7 @@ mod tests {
         let plugin = |title: &str| PluginInfo {
             id: "x",
             title: title.into(),
-            description: String::new(),
+            description: "".into(),
             category: Category::Files,
             enabled: true,
             enabled_by_default: true,
@@ -2490,7 +2491,7 @@ mod tests {
             plugin("Audio 9"),
         ];
         super::by_name(&mut plugins);
-        let names: Vec<&str> = plugins.iter().map(|p| p.title.as_str()).collect();
+        let names: Vec<String> = plugins.iter().map(|p| p.title.english()).collect();
         assert_eq!(names, ["Audio 9", "Audio 10", "éditeur", "Zip"]);
     }
 
@@ -2517,7 +2518,7 @@ mod tests {
         assert!(found("pdf-reader"), "its id");
         assert!(found("somewhere"), "where it comes from");
         assert!(
-            found(&Category::ALL[0].title().to_lowercase()),
+            found(&Category::ALL[0].title().english().to_lowercase()),
             "its category"
         );
         assert!(!found("pdf audio"), "every word");

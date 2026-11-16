@@ -518,8 +518,10 @@ impl NotesStore for AppleDoubleStore {
     fn id(&self) -> &'static str {
         "appledouble"
     }
-    fn title(&self) -> &'static str {
-        "A Mac's ._ files, beside files on volumes without attributes"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            tags_store_appledouble = "A Mac's ._ files, beside files on volumes without attributes"
+        )
     }
     fn kept(&self) -> Kept {
         Kept::Beside

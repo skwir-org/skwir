@@ -60,11 +60,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Documents"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(documents_plugin_title = "Documents")
     }
-    fn description(&self) -> &'static str {
-        "Read PDF and office documents: continuous scrolling, search, text selection, links and contents; Word and OpenDocument text also as text that fits the panel"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            documents_plugin_description = "Read PDF and office documents: continuous scrolling, search, text selection, links and contents; Word and OpenDocument text also as text that fits the panel"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

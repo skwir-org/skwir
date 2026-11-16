@@ -648,12 +648,14 @@ impl Plugin for ChecksumsPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Checksums"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(checksums_plugin_title = "Checksums")
     }
 
-    fn description(&self) -> &'static str {
-        "A file's SHA-256, MD5 and BLAKE3 in Properties, computed when asked, and compared with one copied"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            checksums_plugin_description = "A file's SHA-256, MD5 and BLAKE3 in Properties, computed when asked, and compared with one copied"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

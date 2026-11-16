@@ -503,11 +503,14 @@ impl Plugin for JumpPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Jump"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(jump_plugin_title = "Jump")
     }
-    fn description(&self) -> &'static str {
-        "Frecency jump from zoxide and recently used files; the recent: location"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            jump_plugin_description =
+                "Frecency jump from zoxide and recently used files; the recent: location"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Browsing

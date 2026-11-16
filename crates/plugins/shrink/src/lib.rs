@@ -106,12 +106,14 @@ impl Plugin for ShrinkPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Smaller copies"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(shrink_plugin_title = "Smaller copies")
     }
 
-    fn description(&self) -> &'static str {
-        "Make smaller copies of pictures and PDFs beside them: Reduce Size…, in Compress and in a preview's menu"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            shrink_plugin_description = "Make smaller copies of pictures and PDFs beside them: Reduce Size…, in Compress and in a preview's menu"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

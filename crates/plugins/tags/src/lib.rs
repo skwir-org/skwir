@@ -767,11 +767,13 @@ impl Plugin for TagsPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Tags"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(tags_plugin_title = "Tags")
     }
-    fn description(&self) -> &'static str {
-        "Tags, ratings and comments kept in the files' extended attributes, no database; where downloads came from"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            tags_plugin_description = "Tags, ratings and comments kept in the files' extended attributes, no database; where downloads came from"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Files
@@ -2502,10 +2504,8 @@ mod tests {
                 .find_by_name("it's both.txt".as_ref())
                 .and_then(|e| e.metadata.value(keys::NOTES_DIFFER).cloned());
             if let Some(Value::List(titles)) = differ {
-                assert_eq!(
-                    titles[0].as_str(),
-                    Some(skwir_core::notes::NotesStore::title(&xdg::XdgStore))
-                );
+                let xdg = skwir_core::notes::NotesStore::title(&xdg::XdgStore).english();
+                assert_eq!(titles[0].as_str(), Some(xdg.as_str()));
                 break;
             }
             assert!(std::time::Instant::now() < deadline);

@@ -551,12 +551,15 @@ impl Plugin for ShelfPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Shelf"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(shelf_plugin_title = "Shelf")
     }
 
-    fn description(&self) -> &'static str {
-        "Collect entries from anywhere and move, copy, or trash them together"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            shelf_plugin_description =
+                "Collect entries from anywhere and move, copy, or trash them together"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

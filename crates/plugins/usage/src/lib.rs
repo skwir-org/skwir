@@ -326,11 +326,13 @@ impl Plugin for UsagePlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Disk usage"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(usage_plugin_title = "Disk usage")
     }
-    fn description(&self) -> &'static str {
-        "Browse folder sizes in a treemap with live updates"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            usage_plugin_description = "Browse folder sizes in a treemap with live updates"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Browsing

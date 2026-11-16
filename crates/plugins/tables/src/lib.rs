@@ -29,11 +29,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Tables"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(tables_plugin_title = "Tables")
     }
-    fn description(&self) -> &'static str {
-        "Show CSV, TSV and JSON Lines files, spreadsheets and SQLite databases as aligned tables"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            tables_plugin_description = "Show CSV, TSV and JSON Lines files, spreadsheets and SQLite databases as aligned tables"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

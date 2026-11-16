@@ -314,12 +314,14 @@ impl Plugin for ThumbnailsPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Thumbnails"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(thumbnails_plugin_title = "Thumbnails")
     }
 
-    fn description(&self) -> &'static str {
-        "Thumbnails from the desktop cache, an image decoder, installed thumbnailers and ImageMagick"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            thumbnails_plugin_description = "Thumbnails from the desktop cache, an image decoder, installed thumbnailers and ImageMagick"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

@@ -550,12 +550,14 @@ impl Plugin for OpsBasicPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Basic operations"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(ops_basic_plugin_title = "Basic operations")
     }
 
-    fn description(&self) -> &'static str {
-        "Default key bindings, context menu, and clipboard"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            ops_basic_plugin_description = "Default key bindings, context menu, and clipboard"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

@@ -1907,12 +1907,14 @@ impl Plugin for RemotePlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Remote folders"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(remote_plugin_title = "Remote folders")
     }
 
-    fn description(&self) -> &'static str {
-        "Open SFTP, SMB, WebDAV, FTP, NFS and rclone addresses as folders, through sshfs, GVfs, rclone or the system's mounts; phones and cameras through GVfs"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            remote_plugin_description = "Open SFTP, SMB, WebDAV, FTP, NFS and rclone addresses as folders, through sshfs, GVfs, rclone or the system's mounts; phones and cameras through GVfs"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

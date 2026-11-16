@@ -268,12 +268,14 @@ impl Plugin for VimPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Vim keys"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(vim_plugin_title = "Vim keys")
     }
 
-    fn description(&self) -> &'static str {
-        "The keys of yazi in the file list: hjkl to move, Space to pick, v to select a range, y x p to copy, cut and paste, / to find, g and , sequences. Letters stop jumping to names while it is on."
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            vim_plugin_description = "The keys of yazi in the file list: hjkl to move, Space to pick, v to select a range, y x p to copy, cut and paste, / to find, g and , sequences. Letters stop jumping to names while it is on."
+        )
     }
 
     fn category(&self) -> Category {

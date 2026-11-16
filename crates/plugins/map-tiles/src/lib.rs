@@ -114,11 +114,13 @@ impl Plugin for MapTilesPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Map backgrounds"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(map_tiles_plugin_title = "Map backgrounds")
     }
-    fn description(&self) -> &'static str {
-        "Draw maps on the outline of the land, offline, or on OpenStreetMap or tile servers you add once you choose one, and preview maps kept in files (PMTiles, MBTiles). Only this plugin uses the network"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            map_tiles_plugin_description = "Draw maps on the outline of the land, offline, or on OpenStreetMap or tile servers you add once you choose one, and preview maps kept in files (PMTiles, MBTiles). Only this plugin uses the network"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

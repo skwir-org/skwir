@@ -173,12 +173,14 @@ impl Plugin for PrintPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Printing"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(print_plugin_title = "Printing")
     }
 
-    fn description(&self) -> &'static str {
-        "Print what a preview shows, as it is, as a booklet or as a contact sheet, or save it as a PDF"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            print_plugin_description = "Print what a preview shows, as it is, as a booklet or as a contact sheet, or save it as a PDF"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

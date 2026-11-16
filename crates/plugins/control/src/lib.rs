@@ -105,11 +105,13 @@ impl Plugin for Control {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Agents and scripts"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(control_plugin_title = "Agents and scripts")
     }
-    fn description(&self) -> &'static str {
-        "Let AI agents (over MCP: skwir mcp) and scripts (skwir cmd) drive this window. What they would change is proposed for your review. Any program running as you can then use it."
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            control_plugin_description = "Let AI agents (over MCP: skwir mcp) and scripts (skwir cmd) drive this window. What they would change is proposed for your review. Any program running as you can then use it."
+        )
     }
     fn category(&self) -> Category {
         Category::Desktop

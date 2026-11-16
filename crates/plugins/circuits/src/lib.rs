@@ -39,11 +39,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "Circuit boards and schematics"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(circuits_plugin_title = "Circuit boards and schematics")
     }
-    fn description(&self) -> &'static str {
-        "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Properties"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            circuits_plugin_description = "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Properties"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

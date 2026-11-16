@@ -104,8 +104,8 @@ impl NotesStore for XdgStore {
     fn id(&self) -> &'static str {
         "xdg"
     }
-    fn title(&self) -> &'static str {
-        "The desktop's attributes (KDE, Dolphin, Baloo)"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(tags_store_xdg = "The desktop's attributes (KDE, Dolphin, Baloo)")
     }
     fn kept(&self) -> Kept {
         Kept::Attributes

@@ -657,12 +657,15 @@ impl Plugin for EditAsBufferPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Edit as text"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(edit_as_buffer_plugin_title = "Edit as text")
     }
 
-    fn description(&self) -> &'static str {
-        "Edit the listing in your editor; the difference becomes a plan to review"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            edit_as_buffer_plugin_description =
+                "Edit the listing in your editor; the difference becomes a plan to review"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

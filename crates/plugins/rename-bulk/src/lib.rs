@@ -920,12 +920,15 @@ impl Plugin for RenameBulkPlugin {
         ID
     }
 
-    fn title(&self) -> &'static str {
-        "Bulk rename"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(rename_bulk_plugin_title = "Bulk rename")
     }
 
-    fn description(&self) -> &'static str {
-        "Rename the selection from a template, a regex, and case rules"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            rename_bulk_plugin_description =
+                "Rename the selection from a template, a regex, and case rules"
+        )
     }
 
     fn category(&self) -> skwir_core::plugin::Category {

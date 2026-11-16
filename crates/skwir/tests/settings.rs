@@ -152,10 +152,9 @@ fn every_setting_has_a_title_and_a_description_in_sentences() {
         if !title.starts_with(char::is_uppercase) {
             problems.push(format!("{key}: its title starts in lowercase"));
         }
-        if plugins
-            .iter()
-            .any(|plugin| plugin.id == spec.owner() && plugin.title.eq_ignore_ascii_case(&title))
-        {
+        if plugins.iter().any(|plugin| {
+            plugin.id == spec.owner() && plugin.title.english().eq_ignore_ascii_case(&title)
+        }) {
             problems.push(format!("{key}: its title is its plugin's name"));
         }
         if !description.ends_with('.') {

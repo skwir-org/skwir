@@ -44,11 +44,13 @@ impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
         ID
     }
-    fn title(&self) -> &'static str {
-        "3D models and prints"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(models_plugin_title = "3D models and prints")
     }
-    fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths, the meshes Rhino models keep and STL, OBJ, PLY, OFF, glTF, STEP and IGES models; print time, filament, size, volume and version in Properties"
+    fn description(&self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            models_plugin_description = "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths, the meshes Rhino models keep and STL, OBJ, PLY, OFF, glTF, STEP and IGES models; print time, filament, size, volume and version in Properties"
+        )
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

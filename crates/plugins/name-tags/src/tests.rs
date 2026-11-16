@@ -68,8 +68,8 @@ impl NotesStore for Attributes {
     fn id(&self) -> &'static str {
         "attributes"
     }
-    fn title(&self) -> &'static str {
-        "Attributes"
+    fn title(&self) -> skwir_core::words::Words {
+        skwir_core::words!(name_tags_store_title = "Attributes")
     }
     fn kept(&self) -> Kept {
         Kept::Attributes

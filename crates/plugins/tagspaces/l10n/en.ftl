@@ -1,0 +1,7 @@
+# Made from the code by `just words` (tools/words/extract.py): never edit by hand.
+
+tagspaces_plugin_description = Tags and descriptions in TagSpaces' .ts sidecars, read and kept in step; its location index as a search hint
+
+tagspaces_plugin_title = TagSpaces
+
+tagspaces_store_title = TagSpaces sidecars (.ts folders)
