@@ -1399,11 +1399,17 @@ left):
 
 **From the review of what the keys keep in place** (2026-11-15,
 evening):
-- `kept::Memory` knows what it placed by its row's index: an order
-  changed while the view stays where it was put can give another row the
-  share meant for the first (a second review, 2026-11-16, agreed: that
-  row is where the first was, so it lands as the first would have; keying
-  it by entry would make it exact).
+- `kept::Memory` knows what it placed by its row's index. It counts only
+  where the item was pulled in from an edge, and a scroll forgets it.
+  An order changed while the view stays where it was put (found again
+  by a second review, 2026-11-16) does two things. The item moved is not
+  known on the way back: it stays wholly in view, up to about a row
+  from where it was. Another row come to its place, the cursor on it,
+  takes the first's share and lands where the first was: the view comes
+  back as it was. Keying it by entry would set the first right and the
+  second a little off, and needs a key passed through the list, grid,
+  columns and board: left as it is, for less than a row's drift in a
+  sequence that rare.
 - (Fixed 2026-11-16, 955daa2b: what keeps its place is judged at the
   rows' height the last frame drew, a text size changing a row's height
   and the view's in one frame.)
