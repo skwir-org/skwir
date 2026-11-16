@@ -59,6 +59,7 @@ mod kde_scheme;
 pub mod keyfile;
 mod line_channel;
 pub mod links;
+pub mod locale;
 pub mod magick;
 pub mod math;
 pub mod media;

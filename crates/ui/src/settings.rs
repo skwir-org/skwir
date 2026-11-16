@@ -2176,9 +2176,10 @@ static BUILTIN: [Builtin; 13] = [
         owner: Some(CORE_OWNER),
         title: "General",
         icon: "sliders",
-        intro: "What skwir does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
+        intro: "The language skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
         when_used: false,
         sections: &[
+            section::LANGUAGE,
             section::STARTUP,
             section::TABS,
             section::SPLIT,
@@ -4485,6 +4486,7 @@ mod tests {
         assert_eq!(
             sections(&specs, &Page::General),
             [
+                "Language",
                 "Startup",
                 "Tabs",
                 "Split",

@@ -70,8 +70,9 @@ const MARGIN: f32 = 15.0 * POINTS_PER_MM;
 
 /// The paper this system and its user write on, when no dialog says:
 /// `$PAPERSIZE`, then libpaper's `/etc/papersize`, then the region of
-/// the locale (`LC_PAPER`, `LC_ALL`, `LANG`): Letter in the Americas
-/// that use it and the Philippines, A4 elsewhere.
+/// the locale paper is read in (`locale::Category::Paper`: on Linux
+/// `LC_ALL`, `LC_PAPER`, `LANG`): Letter in the Americas that use it and
+/// the Philippines, A4 elsewhere.
 pub fn paper() -> Paper {
     Paper::named(paper_name()).unwrap_or_else(Paper::a4)
 }
@@ -87,10 +88,7 @@ pub fn paper_name() -> &'static str {
     if let Some(name) = named.as_deref().and_then(name_in) {
         return name;
     }
-    let locale = ["LC_PAPER", "LC_ALL", "LANG"]
-        .iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
-        .unwrap_or_default();
+    let locale = crate::locale::of(crate::locale::Category::Paper).unwrap_or_default();
     name_of_locale(&locale)
 }
 
@@ -111,10 +109,11 @@ fn name_in(text: &str) -> Option<&'static str> {
 /// A4, or Letter where the locale's region writes on Letter.
 fn name_of_locale(locale: &str) -> &'static str {
     const LETTER: [&str; 7] = ["US", "CA", "MX", "CL", "CO", "VE", "PH"];
+    // A BCP 47 tag's region (`en-US`, `es-Latn-MX`).
     let region = locale
-        .split(['.', '@'])
-        .next()
-        .and_then(|name| name.split('_').nth(1))
+        .split('-')
+        .skip(1)
+        .find(|subtag| subtag.len() == 2)
         .unwrap_or_default();
     if LETTER.contains(&region) {
         "letter"
@@ -1461,10 +1460,12 @@ mod tests {
 
     #[test]
     fn the_paper_is_the_locale_s_unless_libpaper_says() {
-        assert_eq!(name_of_locale("en_US.UTF-8"), "letter");
-        assert_eq!(name_of_locale("fr_CA.UTF-8@euro"), "letter");
-        assert_eq!(name_of_locale("fr_FR.UTF-8"), "a4");
-        assert_eq!(name_of_locale("C"), "a4");
+        // The region of the locale paper is read in, as a tag.
+        assert_eq!(name_of_locale("en-US"), "letter");
+        assert_eq!(name_of_locale("fr-CA"), "letter");
+        assert_eq!(name_of_locale("es-Latn-MX"), "letter");
+        assert_eq!(name_of_locale("fr-FR"), "a4");
+        assert_eq!(name_of_locale(""), "a4");
         assert_eq!(name_in("# a comment\nletter\n"), Some("letter"));
         assert_eq!(name_in("A5"), Some("a5"));
         assert_eq!(name_in("tabloid"), None);

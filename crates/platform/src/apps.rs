@@ -71,7 +71,7 @@ pub struct Catalog {
 /// a link into the store, whose every folder is dated 1970, so switching
 /// to another changes only where it leads.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stamp(Vec<(Option<PathBuf>, Option<SystemTime>)>);
+pub struct Stamp(Vec<(Option<PathBuf>, Option<SystemTime>)>, u64);
 
 impl Stamp {
     /// Stats the directories and lists: call from a worker.
@@ -109,6 +109,9 @@ impl Stamp {
                     )
                 })
                 .collect(),
+            // The names are read in the languages skwir speaks: another
+            // language is another catalog (ADR-139, 6).
+            skwir_core::locale::revision(),
         )
     }
 }
@@ -185,7 +188,7 @@ impl Catalog {
         Self::read(
             &sources.app_dirs,
             &sources.lists,
-            &Locale::from_env(),
+            &Locale::from_languages(&skwir_core::locale::languages()),
             &current_desktops(),
         )
     }
@@ -381,12 +384,44 @@ pub(crate) struct Locale {
 }
 
 impl Locale {
-    fn from_env() -> Self {
-        let value = ["LC_ALL", "LC_MESSAGES", "LANG"]
-            .into_iter()
-            .find_map(|v| std::env::var(v).ok().filter(|v| !v.is_empty()))
-            .unwrap_or_default();
-        Self::parse(&value)
+    /// The languages skwir speaks (`skwir_core::locale`: the user's
+    /// choice, then the system's), as keys: those of each, most wanted
+    /// first, up to English, which a desktop entry's plain value is.
+    fn from_languages(languages: &[String]) -> Self {
+        let mut keys = Vec::new();
+        for language in languages {
+            let mut subtags = language.split('-');
+            let lang = subtags.next().unwrap_or_default();
+            let (mut country, mut modifier) = (None, None);
+            for subtag in subtags {
+                match subtag {
+                    "Latn" => modifier = Some("latin"),
+                    "Cyrl" => modifier = Some("cyrillic"),
+                    "Deva" => modifier = Some("devanagari"),
+                    "valencia" => modifier = Some("valencia"),
+                    region if region.len() == 2 => country = Some(region),
+                    _ => {}
+                }
+            }
+            let mut posix = lang.to_owned();
+            if let Some(country) = country {
+                posix = format!("{posix}_{country}");
+            }
+            if let Some(modifier) = modifier {
+                posix = format!("{posix}@{modifier}");
+            }
+            for key in Self::parse(&posix).keys {
+                // English is the plain value: a key of it past its region
+                // would only reach another language's.
+                if key == "en" {
+                    return Locale { keys };
+                }
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        Locale { keys }
     }
 
     /// `lang_COUNTRY.ENCODING@MODIFIER`, per the desktop entry spec.
@@ -958,6 +993,25 @@ mod tests {
             ["fr_FR@euro", "fr_FR", "fr@euro", "fr"]
         );
         assert!(Locale::parse("C.UTF-8").keys.is_empty());
+    }
+
+    /// The languages skwir speaks, as a desktop entry's keys: each most
+    /// specific first, up to English, whose words are the plain value.
+    #[test]
+    fn the_languages_skwir_speaks_are_an_entry_s_keys() {
+        let keys = |languages: &[&str]| {
+            let languages: Vec<String> = languages.iter().map(|l| (*l).to_owned()).collect();
+            Locale::from_languages(&languages).keys
+        };
+        assert_eq!(keys(&["fr-FR", "en"]), ["fr_FR", "fr"]);
+        assert_eq!(
+            keys(&["sr-Latn-RS", "de", "en"]),
+            ["sr_RS@latin", "sr_RS", "sr@latin", "sr", "de"]
+        );
+        // English chosen before the system's French: the plain value.
+        assert!(keys(&["en", "fr-FR"]).is_empty());
+        assert_eq!(keys(&["en-GB", "fr"]), ["en_GB"]);
+        assert!(keys(&["en"]).is_empty());
     }
 
     // The free desktops' files (step E, ADR-035).

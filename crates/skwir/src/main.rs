@@ -96,6 +96,8 @@ fn main() -> anyhow::Result<()> {
         tracing::debug!(%disabled, "restricting Vulkan drivers");
     }
 
+    // The system's languages, before anything says a word (ADR-139, 6).
+    skwir_core::locale::set_system(skwir_platform::locale::languages());
     let app = App::new(AppConfig::default())?;
 
     // Plugins: each registers its commands, bindings, menus, and places, and

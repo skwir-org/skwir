@@ -85,6 +85,7 @@ pub mod section {
     use super::Section;
 
     // General.
+    pub const LANGUAGE: Section = Section::new("language", "Language");
     pub const STARTUP: Section = Section::new("startup", "Startup");
     pub const TABS: Section = Section::new("tabs", "Tabs");
     pub const SPLIT: Section = Section::new("split", "Split");
@@ -1363,6 +1364,24 @@ pub(crate) fn register(app: &crate::App) {
     apply_size_units(app);
     app.settings.declare(
         SettingSpec::choice(
+            crate::locale::LANGUAGE_KEY,
+            "Language",
+            "The language skwir's window speaks. Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
+            crate::locale::AUTOMATIC,
+            &[
+                (crate::locale::AUTOMATIC, "Automatic"),
+                (crate::locale::ENGLISH, "English"),
+            ],
+        )
+        // English is all skwir speaks yet.
+        .now(crate::locale::ENGLISH)
+        .page(page::GENERAL)
+        .section(section::LANGUAGE)
+        .essential(),
+    );
+    apply_language(app);
+    app.settings.declare(
+        SettingSpec::choice(
             CLOSE_SPLIT,
             "Pane that closes",
             "Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
@@ -1488,6 +1507,15 @@ pub(crate) fn register(app: &crate::App) {
 
 /// Give every pane, and every pane made from now, the user's choice of
 /// folders before files (`location::FOLDERS_FIRST`).
+/// Speak the language the setting chooses (`locale`, ADR-139, 6).
+fn apply_language(app: &crate::App) {
+    let value = app
+        .settings
+        .get::<String>(crate::locale::LANGUAGE_KEY)
+        .unwrap_or_default();
+    crate::locale::set_chosen(crate::locale::chosen_of(&value));
+}
+
 /// Count sizes as the setting says (`fs::size_units`, ADR-139, 9).
 fn apply_size_units(app: &crate::App) {
     let units = app
@@ -1529,6 +1557,11 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
     }
     if keys.iter().any(|key| key == crate::location::FOLDERS_FIRST) {
         apply_folders_first(app);
+        app.wake();
+    }
+    // What reads the languages reads them anew (`locale::revision`).
+    if keys.iter().any(|key| key == crate::locale::LANGUAGE_KEY) {
+        apply_language(app);
         app.wake();
     }
     // Every size is said anew where it is drawn.

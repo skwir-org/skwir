@@ -90,7 +90,7 @@ windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI", "U
 # the tree.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSCalendar", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSProcessInfo", "NSString", "NSURL", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSCalendar", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSLocale", "NSProcessInfo", "NSString", "NSURL", "NSValue"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
 # The system's icons, drawn by NSImage (system_icons). The dock tile's
 # badge (`desktop`).

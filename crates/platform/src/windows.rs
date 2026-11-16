@@ -110,6 +110,55 @@ pub fn first_weekday() -> Option<i8> {
     String::from_utf16(text.get(..n)?).ok()?.parse().ok()
 }
 
+/// The display languages the user prefers, most wanted first, as Windows
+/// names them (`fr-FR`): only those installed (ADR-139, 6).
+pub fn preferred_ui_languages() -> Vec<String> {
+    use windows_sys::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+    let (mut count, mut length) = (0u32, 0u32);
+    // SAFETY: a null buffer asks for the length, in UTF-16 units.
+    let asked = unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &raw mut count,
+            std::ptr::null_mut(),
+            &raw mut length,
+        )
+    };
+    if asked == 0 || length == 0 {
+        return Vec::new();
+    }
+    let mut buffer = vec![0u16; length as usize];
+    // SAFETY: a buffer of the length the first call said.
+    let read = unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &raw mut count,
+            buffer.as_mut_ptr(),
+            &raw mut length,
+        )
+    };
+    if read == 0 {
+        return Vec::new();
+    }
+    // Names one after another, each ended by a NUL, the list by another.
+    buffer
+        .split(|&unit| unit == 0)
+        .filter(|name| !name.is_empty())
+        .map(String::from_utf16_lossy)
+        .collect()
+}
+
+/// The name of the user's locale, its formats' (`fr-FR`).
+pub fn user_locale_name() -> Option<String> {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    // LOCALE_NAME_MAX_LENGTH.
+    let mut name = [0u16; 85];
+    // SAFETY: a buffer of the length given.
+    let n = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), 85) };
+    let n = usize::try_from(n).ok()?.checked_sub(1)?;
+    String::from_utf16(name.get(..n)?).ok()
+}
+
 /// What a drive says of itself: its label (empty when it has none) and
 /// its filesystem (`NTFS`, `FAT32`, `exFAT`).
 pub fn volume_information(root: &Path) -> Option<(String, String)> {

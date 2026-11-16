@@ -46,6 +46,7 @@ pub mod hashing;
 pub mod hints;
 pub mod jsonl;
 pub mod keymap;
+pub mod locale;
 pub mod location;
 pub mod lru;
 pub mod map_points;

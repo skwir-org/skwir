@@ -18750,3 +18750,57 @@ the default units (kB) and does not follow Binary.
   - 27 tests that pinned 1024-based "KB" strings, updated to the default.
 
 **Not run:** `just check-cross`, the workers, a window.
+
+## 2026-11-16: The languages skwir speaks, read from the system (ADR-139, step C)
+
+**`skwir_platform::locale`** reads two things, each as a BCP 47 tag: the
+languages messages are wanted in, most wanted first, and the locale each
+kind of format is read in (dates, numbers, the order of names, paper).
+- **Linux, gettext's rules:**
+  - messages from `LC_ALL`, else `LC_MESSAGES`, else `LANG`;
+  - `LANGUAGE`, a list, comes first, unless the locale is C (`C`,
+    `C.UTF-8`, `POSIX`), which means English and ignores it;
+  - each kind of format from `LC_ALL`, else its own variable, else
+    `LANG`;
+  - a variable set to nothing counts as not set;
+  - POSIX names are mapped to tags: `sr_RS@latin` is `sr-Latn-RS`,
+    `ca_ES@valencia` is `ca-ES-valencia`, `@euro` is dropped.
+- **macOS:** the preferred languages and the region's locale
+  (`NSLocale`).
+- **Windows:** the display languages and the user's locale
+  (`GetUserPreferredUILanguages`, `GetUserDefaultLocaleName`, beside the
+  other system calls in `windows.rs`).
+
+**`skwir_core::locale`** holds the languages skwir speaks: the one the
+user chose (`core.language`), then the system's, which the binary hands
+in as it starts, then English, each once. A revision moves whenever they
+would change.
+
+**`core.language`** is on General › Language: Automatic, which comes to
+English, or English, the only language there is yet. A change is applied
+at once.
+
+**What reads them:**
+- **Desktop entries' names** for Open With: each language's keys, most
+  specific first, up to English, whose words are an entry's plain value.
+  Chosen English before a French system gives the plain names. Before
+  this, `LANGUAGE` was not read. The catalog's stamp holds the languages'
+  revision, so a change reads the names anew.
+- **The paper size**, from the locale paper is read in. Before this,
+  `LC_PAPER` was read before `LC_ALL`, against POSIX's order, and Windows
+  and macOS read nothing, so it was always A4 there.
+
+**Checked:**
+- Tests of the C locale, `LANGUAGE` under it, empty variables, the order
+  of the variables, the mapping of names, the order of the languages and
+  a chosen one, an entry's keys, the paper's region.
+- `cargo nextest run` of skwir-core, skwir-platform and skwir-ui: 2070
+  passed. The binary's settings, plugins_toggle and keymap_titles tests:
+  16 passed.
+- **Windows under Wine:** the locale's tests, and a test that asks
+  Windows itself (under `fr_FR.UTF-8` it answers `fr-FR` for both).
+- **Linted for Windows and macOS:** clippy `-D warnings` on skwir-core,
+  skwir-platform and skwir-plugin-places, for `x86_64-pc-windows-gnu`
+  and `aarch64-apple-darwin`.
+
+**Not run:** macOS itself, a window.

@@ -3640,7 +3640,7 @@ their budgets in every language.
     a 1 TB disk); a saved `size>10M` unchanged; `10MB` and `10MiB` read.
   - *Done when:* every size on screen follows the setting in a window on
     Xvfb, and `bench-check` holds.
-- **C. The locale.**
+- **C. The locale.** Built 2026-11-16 (`docs/STATUS-LOG.md`).
   - `skwir_platform::locale`: the messages' languages and the formats'
     locale on each system, as BCP 47 names. On Linux, gettext's rules;
     on macOS, the preferred languages and the region; on Windows, the
