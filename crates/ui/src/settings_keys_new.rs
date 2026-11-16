@@ -183,10 +183,13 @@ fn candidates(app: &skwir_core::App) -> Vec<Candidate> {
         }
         let takes = properties(&spec).is_some_and(|p| !p.is_empty());
         if takes || spec.forms.is_empty() {
+            // An action that asks more says so by its `…` (until each
+            // title is a message that says it, PLAN.md, step E).
+            let said = spec.title.say();
             let title = if takes {
-                format!("{}…", spec.title.trim_end_matches('…'))
+                format!("{}…", said.trim_end_matches('…'))
             } else {
-                spec.title.clone()
+                said
             };
             let fixed = (!takes).then(|| serde_json::json!({}));
             all.push((spec, fixed, title));

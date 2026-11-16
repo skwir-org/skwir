@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::App;
 use crate::op::Plan;
+use crate::words::Words;
 
 /// A command invocation as it travels: over a keybinding, a palette entry, a
 /// socket, or an agent's tool call.
@@ -518,8 +519,10 @@ pub fn always(_: &serde_json::Value) -> bool {
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandSpec {
     pub name: Arc<str>,
-    pub title: String,
-    pub description: String,
+    /// What every list of actions calls it, said where it is drawn; in
+    /// English to agents and scripts (ADR-139, 7).
+    pub title: Words,
+    pub description: Words,
     pub args_schema: ArgsSchema,
     /// Plugin id, or `core`.
     pub owner: Arc<str>,
@@ -583,13 +586,13 @@ impl CommandSpec {
         self.forms.iter().find(|form| form.args == *args)
     }
 
-    /// What it is called run with `args`: their form's title, else its
-    /// own, with the arguments no form names said after it, so two ways
-    /// to run it never read alike.
+    /// What it is called run with `args`, said in the user's language:
+    /// their form's title, else its own, with the arguments no form names
+    /// said after it, so two ways to run it never read alike.
     pub fn title_for(&self, args: &serde_json::Value) -> String {
         match self.form(args) {
             Some(form) => form.title.clone(),
-            None => with_args(&self.title, args),
+            None => with_args(&self.title.say(), args),
         }
     }
 
@@ -745,8 +748,8 @@ impl CommandRegistry {
         owner: &str,
         topic: Topic,
         name: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         handler: F,
     ) -> Declared<'_>
     where
@@ -790,8 +793,8 @@ impl CommandRegistry {
         owner: &str,
         topic: Topic,
         name: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         handler: F,
     ) -> Declared<'_>
     where
@@ -825,8 +828,8 @@ impl CommandRegistry {
         owner: &str,
         topic: Topic,
         name: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         schema: serde_json::Value,
         handler: F,
     ) -> Declared<'_>
@@ -912,8 +915,8 @@ impl CommandRegistry {
         owner: &str,
         topic: Topic,
         name: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         takes: Arc<Takes>,
         h: Handlers,
     ) -> Declared<'_>
@@ -934,8 +937,8 @@ impl CommandRegistry {
         owner: &str,
         topic: Topic,
         name: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         args_schema: ArgsSchema,
         v: Validator,
         h: Handlers,

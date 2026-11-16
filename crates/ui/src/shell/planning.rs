@@ -209,7 +209,7 @@ impl Shell {
             .app
             .commands
             .get(&inv.name)
-            .map_or_else(|| inv.name.to_string(), |spec| spec.title.clone());
+            .map_or_else(|| inv.name.to_string(), |spec| spec.title.say());
         let id = self.plans.begin(cancel.clone());
         let notice = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()

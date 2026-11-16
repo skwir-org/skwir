@@ -48,8 +48,9 @@ pub(crate) fn register(app: &App, plugin: &External) {
                 runner.id,
                 topic_of(plugin, declared.topic),
                 &declared.name,
-                &declared.title,
-                &declared.description,
+                // A plugin from outside says its own words (protocol 1).
+                skwir_core::words::Words::as_written(declared.title.clone()),
+                skwir_core::words::Words::as_written(declared.description.clone()),
                 schema,
                 move |args, app| run(app, &runner, &name, &title, args),
             )

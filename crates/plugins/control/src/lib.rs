@@ -316,20 +316,22 @@ impl Tools {
                 if gate == AgentGate::Refused {
                     return None;
                 }
+                // Agents read English (ADR-139, 7): MCP clients keep tool
+                // lists, which must not move with the window's language.
                 let description = if gate == AgentGate::Asks {
                     format!(
                         "{} (asks the user in skwir's window first)",
-                        spec.description
+                        spec.description.english()
                     )
                 } else {
-                    spec.description.clone()
+                    spec.description.english()
                 };
                 let mut tool = Tool::new(
                     tool_name(&spec.name),
                     description,
                     input_schema(&spec.args_schema),
                 );
-                tool.title = Some(spec.title.clone());
+                tool.title = Some(spec.title.english());
                 let read_only = matches!(spec.effect, Effect::Reads | Effect::Shows);
                 Some(tool.annotate(ToolAnnotations::new().read_only(read_only)))
             })

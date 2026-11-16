@@ -18966,3 +18966,29 @@ spaces. `just lint` runs it with `--check`.
 **Not run:** the plugins' tests. Twice the disk filled as the default
 members' tests were built, so only the crates this changes were tested.
 Also not run: check-cross, a window.
+
+## 2026-11-16: Commands say their words where they are shown (ADR-139, step D)
+
+A command's title and description are `Words` (`CommandSpec`).
+- **Registration takes anything that becomes words.** `From<&str>` now
+  takes any `&str` (text as written, copied) rather than only
+  `'static`, so every registration compiles as it was until step E makes
+  its titles messages.
+- **Agents read English:** the control plugin gives MCP each tool's
+  English title and description, so a tool list does not move with the
+  window's language. JSON answers carry English, since `Words`
+  serialises as its English.
+- **A plugin from outside** says its commands' words as it writes them
+  (protocol 1).
+- **The window says them** where they are shown: `title_for`, the
+  palette, the keyboard page, the plan being worked out. The keyboard
+  page's `…` added to a said title waits for step E.
+- **The languages are kept per thread** by `Words::say`, read again only
+  when their revision moves (a frame says many words).
+
+A `Words` read through `Display` is English. A `format!` of a title would
+compile and show English in a translated window, so every reader of a
+command's words was looked for by hand.
+
+**Checked:** `just lint`; `cargo nextest run` of skwir-core, skwir-ui,
+skwir-plugin-control, skwir-extend and the binary's tests: 1848 passed.

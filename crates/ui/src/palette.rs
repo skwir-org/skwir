@@ -389,7 +389,7 @@ pub fn offered(
         }
         offers.push(Offer {
             required: spec.required_args(),
-            ..Offer::of(&spec.name, serde_json::json!({}), spec.title.clone())
+            ..Offer::of(&spec.name, serde_json::json!({}), spec.title.say())
         });
         for form in &spec.forms {
             // A sort by what no column shows here is not offered, as the

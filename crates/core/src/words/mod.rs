@@ -196,9 +196,21 @@ impl Words {
     }
 
     /// Said in the languages Skwir speaks to the user (`locale::languages`):
-    /// what the window draws.
+    /// what the window draws. The languages are kept on each thread, read
+    /// again only when they move (`revision`): a frame says many words.
     pub fn say(&self) -> String {
-        self.say_in(&crate::locale::languages())
+        thread_local! {
+            static SAID_IN: std::cell::RefCell<(u64, Vec<String>)> =
+                const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
+        }
+        let now = revision();
+        SAID_IN.with_borrow_mut(|(at, languages)| {
+            if *at != now {
+                *languages = crate::locale::languages();
+                *at = now;
+            }
+            self.say_in(languages)
+        })
     }
 
     /// Said in English: what agents, scripts and logs read.
@@ -428,11 +440,11 @@ impl fmt::Display for Words {
     }
 }
 
-impl From<&'static str> for Words {
+impl From<&str> for Words {
     /// Transitional (PLAN.md, step E): text not yet a message, shown as it
     /// is. Goes once every crate is converted.
-    fn from(text: &'static str) -> Self {
-        Words::as_written(text)
+    fn from(text: &str) -> Self {
+        Words::as_written(text.to_owned())
     }
 }
 
