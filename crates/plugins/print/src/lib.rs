@@ -38,6 +38,8 @@ use skwir_core::print::{PageSet, Pages};
 use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::shrink::Quality;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 mod dialog;
@@ -63,6 +65,151 @@ const LISTS: &str = "empty";
 /// whose items the window runs with what the preview shows
 /// (`ui.preview_invoke`).
 const PREVIEW: &str = "preview";
+
+/// What is printed, as the words that say it name it: a message chooses
+/// its words by `kind` and places `name` and `count` (`print_title`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Printed {
+    /// A file, by its name.
+    File(String),
+    /// Several files, how many.
+    Files(usize),
+    /// A contact sheet.
+    #[default]
+    Sheet,
+    /// The listing of a place, by its name as shown.
+    Listing(String),
+}
+
+impl Printed {
+    /// The word its messages choose by.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Printed::File(_) => "file",
+            Printed::Files(_) => "files",
+            Printed::Sheet => "sheet",
+            Printed::Listing(_) => "listing",
+        }
+    }
+
+    /// The file's or the place's name; none for the others.
+    pub(crate) fn name(&self) -> Name {
+        match self {
+            Printed::File(name) | Printed::Listing(name) => Name(name.clone()),
+            Printed::Files(_) | Printed::Sheet => Name(String::new()),
+        }
+    }
+
+    /// How many files; none for the others.
+    pub(crate) fn count(&self) -> usize {
+        match self {
+            Printed::Files(count) => *count,
+            _ => 0,
+        }
+    }
+}
+
+/// Print and what is printed: the dialog's title and the card of a print
+/// under way.
+pub(crate) fn print_title(printed: &Printed) -> Words {
+    words!(
+        print_title = "{ $what ->
+            [file] Print { $name }
+            [files] { $count ->
+                [one] Print { $count } file
+               *[other] Print { $count } files
+            }
+            [sheet] Print a contact sheet
+           *[listing] Print the listing of { $name }
+        }",
+        what = printed.kind(),
+        name = printed.name(),
+        count = printed.count(),
+        note = "The title of the Print dialog, and of a print under way in Activity: a file by its name, several by how many, a contact sheet, or the listing of a folder or a place by its name."
+    )
+}
+
+/// `said`, then `then`: two sentences of one notice, the first without
+/// its full stop.
+pub(crate) fn then(said: Words, then: Words) -> Words {
+    words!(
+        print_then = "{ $said }. { $then }",
+        said = said,
+        then = then,
+        note = "Two sentences said one after the other in a notice; the first has no full stop of its own."
+    )
+}
+
+/// Sentences one after the other, as `then` puts them; none for none.
+pub(crate) fn sentences(said: Vec<Words>) -> Option<Words> {
+    said.into_iter().reduce(then)
+}
+
+/// The error of a pane asked that is not there (closed meanwhile).
+pub(crate) fn no_such_pane() -> Words {
+    words!(
+        print_no_such_pane = "No such pane",
+        note = "An error: the pane whose listing is printed is not there any more."
+    )
+}
+
+/// The error of a pane that shows nothing yet.
+pub(crate) fn shows_nothing() -> Words {
+    words!(
+        print_shows_nothing = "The pane shows nothing",
+        note = "An error: the pane whose listing is printed shows no folder or place."
+    )
+}
+
+/// Why nothing was made: the program is closing.
+pub(crate) fn closing() -> Words {
+    words!(
+        print_closing = "Skwir is closing",
+        note = "Why a print or a PDF was not made. Skwir is the program's name."
+    )
+}
+
+/// Why nothing was printed: it was cancelled.
+pub(crate) fn cancelled() -> Words {
+    words!(print_cancelled = "Printing was cancelled")
+}
+
+/// Why nothing was printed: nothing was named.
+fn nothing_to_print() -> Words {
+    words!(print_nothing_to_print = "Nothing to print")
+}
+
+/// What could not be made, before why: the folder the PDF is made in.
+fn work_folder() -> Words {
+    words!(
+        print_work_folder = "A folder to make the document in",
+        note = "What could not be made, before why: a temporary folder the PDF is made in."
+    )
+}
+
+/// The error of a file named that is a root.
+fn in_no_folder() -> Words {
+    words!(
+        print_in_no_folder = "The file is in no folder",
+        note = "An error an agent or a script reads: the file named is a root."
+    )
+}
+
+/// Print…: the command, the menus' items.
+fn print_menu() -> Words {
+    words!(
+        print_print = "Print…",
+        note = "A menu item and the action's name: asks how to print, then the system's dialog chooses the printer."
+    )
+}
+
+/// Print Listing…: what the pane lists, printed.
+fn print_listing_menu() -> Words {
+    words!(
+        print_print_listing = "Print Listing…",
+        note = "A menu item, with nothing selected: prints what the pane lists, as a table."
+    )
+}
 
 /// How what is printed is laid out.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -214,18 +361,21 @@ impl Plugin for PrintPlugin {
             ID,
             Topic::Files,
             "print.print",
-            "Print…",
-            "Print files as their previews show them, one job in their order (`layout`: as shown, a booklet folded in signatures of `signature` pages with `trim`, a contact sheet of the pictures, a pane's listing), the `pages` chosen; the window asks first in Skwir's dialog without `asked`, then the system's dialog chooses the printer, the paper and the sides",
+            print_menu(),
+            words!(
+                print_print_description = "Print files as their previews show them, one job in their order (`layout`: as shown, a booklet folded in signatures of `signature` pages with `trim`, a contact sheet of the pictures, a pane's listing), the `pages` chosen; the window asks first in Skwir's dialog without `asked`, then the system's dialog chooses the printer, the paper and the sides",
+                note = "Read by agents and in F1's list of actions: the words in backticks are the command's arguments, as written."
+            ),
             move |a, app| {
                 if a.asked || !app.window_shown() {
                     match request(app, &a) {
                         Ok(request) => start(app, request),
-                        Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                        Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
                     }
                 } else {
                     match resolved(app, a) {
                         Ok(args) => ask_first(app, args, held.clone()),
-                        Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                        Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
                     }
                 }
                 Ok(Outcome::Done)
@@ -234,7 +384,7 @@ impl Plugin for PrintPlugin {
         // Ctrl+P and Print Listing… with nothing selected.
         print.forms([skwir_core::command::Form::new(
             serde_json::json!({ "layout": "listing" }),
-            "Print Listing…",
+            print_listing_menu(),
         )]);
         let saving = self.held.app.clone();
         app.commands
@@ -242,8 +392,14 @@ impl Plugin for PrintPlugin {
                 ID,
                 Topic::Files,
                 "print.save_pdf",
-                "Save as PDF",
-                "Make a PDF of each file as its preview shows it, beside it or in `dest` (one of them all with `together`), on the paper of the system's locale, laid out and of the pages Print… takes (plan)",
+                words!(
+                    print_save_pdf = "Save as PDF",
+                    note = "The action's name, in F1's list of actions."
+                ),
+                words!(
+                    print_save_pdf_description = "Make a PDF of each file as its preview shows it, beside it or in `dest` (one of them all with `together`), on the paper of the system's locale, laid out and of the pages Print… takes (plan)",
+                    note = "Read by agents and in F1's list of actions: the words in backticks are the command's arguments, as written."
+                ),
                 move |a, app| {
                     let request = request(app, &a.print)?;
                     let dest = a
@@ -254,7 +410,11 @@ impl Plugin for PrintPlugin {
                     if let Some(paper) = a.paper.as_deref() {
                         anyhow::ensure!(
                             skwir_core::print::Paper::named(paper).is_some(),
-                            "“{paper}” is no paper: a4, letter, a5, a3 or legal"
+                            words!(
+                                print_no_paper = "“{ $paper }” is no paper: a4, letter, a5, a3 or legal",
+                                paper = paper.to_owned(),
+                                note = "An error an agent or a script reads: the paper it gave, and those the command takes, as written."
+                            )
                         );
                     }
                     let name = a
@@ -314,17 +474,22 @@ impl Plugin for PrintPlugin {
 /// listing, named as the palette names it, so what is printed is said.
 fn menus(app: &App) {
     for (menu, when, title, invocation) in [
-        ("context", FILES, "Print…", Invocation::new("print.print")),
+        (
+            "context",
+            FILES,
+            print_menu(),
+            Invocation::new("print.print"),
+        ),
         (
             "context",
             LISTS,
-            "Print Listing…",
+            print_listing_menu(),
             Invocation::new("print.print").with("layout", "listing"),
         ),
         (
             PREVIEW,
             "pages|picture|text",
-            "Print…",
+            print_menu(),
             Invocation::new("ui.preview_invoke").with("command", "print.print"),
         ),
     ] {
@@ -390,7 +555,7 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
         ),
         Arrange::AsShown | Arrange::Booklet => {
             let entries = app.targets(args.pane, args.entries.clone())?;
-            anyhow::ensure!(!entries.is_empty(), "Nothing to print");
+            anyhow::ensure!(!entries.is_empty(), nothing_to_print());
             // What the preview shows is of the one file it shows.
             let shown = if entries.len() == 1 {
                 Shown {
@@ -417,11 +582,23 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
     {
         None | Some("all") => Pages::All,
         Some("current") => {
-            anyhow::ensure!(shown.page.is_some(), "No page of it is shown");
+            anyhow::ensure!(
+                shown.page.is_some(),
+                words!(
+                    print_no_page_shown = "No page of it is shown",
+                    note = "An error an agent or a script reads: it asked the page shown, and the preview shows none."
+                )
+            );
             Pages::Current
         }
         Some("selection") => {
-            anyhow::ensure!(shown.selection.is_some(), "Nothing of it is selected");
+            anyhow::ensure!(
+                shown.selection.is_some(),
+                words!(
+                    print_nothing_selected = "Nothing of it is selected",
+                    note = "An error an agent or a script reads: it asked what is selected in the preview, and nothing is."
+                )
+            );
             Pages::Selection
         }
         Some(typed) => Pages::Ranges(skwir_core::print::parse(typed).map_err(anyhow::Error::msg)?),
@@ -440,7 +617,16 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
     let per_side = match args.per_side {
         None => skwir_core::print::booklet::PerSide::default(),
         Some(count) => skwir_core::print::booklet::PerSide::of_count(count)
-            .with_context(|| format!("{count} pages a side: a booklet has 2, 4 or 8"))?,
+            .with_context(|| {
+                words!(
+                    print_per_side = "{ $count ->
+                        [one] { $count } page a side: a booklet has 2, 4 or 8
+                       *[other] { $count } pages a side: a booklet has 2, 4 or 8
+                    }",
+                    count = count,
+                    note = "An error an agent or a script reads: the pages to a side of a booklet's sheet it gave."
+                )
+            })?,
     };
     let booklet = (args.layout == Arrange::Booklet).then_some(Booklet {
         per_side,
@@ -486,9 +672,18 @@ fn offers(
         let (location, filter) = shown(app, pane)?;
         let own = own_folder(app, &location);
         let said = match (location.is_path(), own.is_some()) {
-            (true, _) => "The folder listed",
-            (false, true) => "The folder it is of",
-            (false, false) => "It has no folder of its own",
+            (true, _) => words!(
+                print_folder_listed = "The folder listed",
+                note = "Under a folder offered where a listing's PDF is saved: the folder whose listing it is."
+            ),
+            (false, true) => words!(
+                print_folder_of = "The folder it is of",
+                note = "Under a folder offered where a listing's PDF is saved: the folder a search or a tag is of."
+            ),
+            (false, false) => words!(
+                print_no_folder_of_its_own = "It has no folder of its own",
+                note = "Under the folder offered where a listing's PDF is saved, for a place of no folder (the trash): the user's Documents."
+            ),
         };
         let folder = own.or_else(|| documents.clone());
         let named = listing_named(app, &location, filter.as_deref());
@@ -496,15 +691,26 @@ fn offers(
             .to_string_lossy()
             .into_owned();
         return Ok(dialog::Offers {
-            what: format!("the listing of “{named}”"),
+            what: Printed::Listing(named),
             subject: dialog::Subject::Listing,
             saved: dialog::Saved {
                 beside: folder.as_deref().map_or_else(
-                    || "In the folder listed".to_owned(),
-                    |folder| format!("In “{}”", display_name(folder)),
+                    || {
+                        words!(
+                            print_in_folder_listed = "In the folder listed",
+                            note = "Under Save as, where a name typed alone goes."
+                        )
+                    },
+                    |folder| {
+                        words!(
+                            print_in_folder = "In { $folder }",
+                            folder = Name::of(folder),
+                            note = "Under Save as, where a name typed alone goes: this folder."
+                        )
+                    },
                 ),
                 folder,
-                said: said.to_owned(),
+                said,
                 other,
                 documents,
                 opens,
@@ -533,18 +739,25 @@ fn offers(
                 .into_owned()
         })
     };
+    let beside_them = || {
+        words!(
+            print_beside = "{ $count ->
+                [1] Beside it
+               *[other] Beside them
+            }",
+            count = typed.len(),
+            note = "Under the folder offered where a PDF is saved, and under Save as: the folder of the file printed, or of the files."
+        )
+    };
     let saved = dialog::Saved {
-        said: match typed.len() {
-            1 => "Beside it",
-            _ => "Beside them",
-        }
-        .to_owned(),
-        beside: match (&folder, typed.len()) {
-            (Some(_), 1) => "Beside it",
-            (Some(_), _) => "Beside them",
-            (None, _) => "Beside each file; one PDF of them all beside the first",
-        }
-        .to_owned(),
+        said: beside_them(),
+        beside: match &folder {
+            Some(_) => beside_them(),
+            None => words!(
+                print_beside_each = "Beside each file; one PDF of them all beside the first",
+                note = "Under Save as, where files of several folders are saved."
+            ),
+        },
         folder,
         other,
         documents,
@@ -559,8 +772,8 @@ fn offers(
     };
     let mime = |name: &Option<OsString>| name.as_deref().and_then(skwir_platform::mime::by_name);
     let what = match typed.as_slice() {
-        [(entry, _)] => format!("“{}”", display_name(&entry.path)),
-        many => format!("{} files", many.len()),
+        [(entry, _)] => Printed::File(display_name(&entry.path)),
+        many => Printed::Files(many.len()),
     };
     let several = typed.len() > 1;
     let sheet = several
@@ -696,11 +909,8 @@ fn soon<T: Send + 'static>(
 /// The location `pane` shows and the words filtering it.
 fn shown(app: &App, pane: PaneId) -> anyhow::Result<(Location, Option<String>)> {
     let ws = app.workspace.read();
-    let shown = ws.pane(pane).context("No such pane")?;
-    let location = shown
-        .location()
-        .cloned()
-        .context("The pane shows nothing")?;
+    let shown = ws.pane(pane).with_context(no_such_pane)?;
+    let location = shown.location().cloned().with_context(shows_nothing)?;
     Ok((location, shown.filter().map(str::to_owned)))
 }
 
@@ -814,7 +1024,7 @@ fn ask_first(app: &App, args: PrintArgs, held: Held) {
             match chosen_then(&app, args, &held, &cancel) {
                 Ok(Some(said)) => app.notify(NotifyLevel::Info, said),
                 Ok(None) => {}
-                Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
             }
             app.wake();
         },
@@ -828,7 +1038,7 @@ fn chosen_then(
     args: PrintArgs,
     held: &Held,
     cancel: &CancelToken,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<Words>> {
     let offers = offers(app, &args, &held.last, cancel)?;
     let is_folder = |path: &Path| is_folder(app, path, cancel);
     let Some(chosen) = dialog::ask(app, &offers, &held.last, &is_folder, cancel) else {
@@ -879,7 +1089,7 @@ fn start(app: &App, request: Request) {
             match print(&app, request, &cancel) {
                 Ok(Some(said)) => app.notify(NotifyLevel::Info, said),
                 Ok(None) => {}
-                Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
             }
             app.wake();
         },
@@ -889,7 +1099,7 @@ fn start(app: &App, request: Request) {
 /// Print `request`: `None` when the system's dialog was closed, else what
 /// to say. What reads files (a listing, the files, the helpers) runs in
 /// their remote's lane; the dialog waits on this worker, holding none.
-fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
+fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Result<Option<Words>> {
     let Request {
         what,
         pages,
@@ -897,17 +1107,25 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
     } = request;
     // What it is printed as, named before the dialog asks: the files by
     // their names when asked, a listing as it stands when asked.
+    // The job's title is said here: the system's dialog and the PDF's
+    // header take text.
     let (what, title, lane, made) = match what {
         What::Files { entries, shown } => {
             let (what, title) = match entries.as_slice() {
-                [] => anyhow::bail!("Nothing to print"),
+                [] => anyhow::bail!(nothing_to_print()),
                 [entry] => (
-                    format!("“{}”", display_name(&entry.path)),
+                    Printed::File(display_name(&entry.path)),
                     display_name(&entry.path),
                 ),
                 [first, rest @ ..] => (
-                    format!("{} files", entries.len()),
-                    format!("{} and {} more", display_name(&first.path), rest.len()),
+                    Printed::Files(entries.len()),
+                    words!(
+                        print_job_files = "{ $first } and { $more } more",
+                        first = display_name(&first.path),
+                        more = rest.len(),
+                        note = "The title of a print of several files, in the system's print dialog and the queue: the first's name, then how many more."
+                    )
+                    .say(),
                 ),
             };
             let lane = skwir_core::fs::reach::lane(&entries[0].path);
@@ -915,10 +1133,10 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         }
         What::Sheet(entries) => {
             let lane =
-                skwir_core::fs::reach::lane(&entries.first().context("Nothing to print")?.path);
+                skwir_core::fs::reach::lane(&entries.first().with_context(nothing_to_print)?.path);
             (
-                "a contact sheet".to_owned(),
-                "Contact sheet".to_owned(),
+                Printed::Sheet,
+                contact_sheet_title().say(),
                 lane,
                 Make::Sheet(entries),
             )
@@ -928,7 +1146,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
             // reads none, in the shared one.
             let listed = listing::listing(app, pane, cancel)?;
             (
-                format!("the listing of “{}”", listed.title),
+                Printed::Listing(listed.title.clone()),
                 listed.title.clone(),
                 Lane::SHARED,
                 Make::Listing(listed),
@@ -965,7 +1183,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
     // While it is made and sent, the window shows it, with Cancel: a
     // print is no plan, and nothing else would show it.
     let working = cancel.child();
-    let task = Arc::new(app.tasks.start(format!("Print {what}"), working.clone()));
+    let task = Arc::new(app.tasks.start(print_title(&what).say(), working.clone()));
     let (weak, token, sent_as, held) = (
         app.weak(),
         working.clone(),
@@ -973,11 +1191,11 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         Arc::clone(&task),
     );
     let printed = in_lane(app, lane, "print", &working, move || {
-        let app = weak.upgrade().context("Skwir is closing")?;
+        let app = weak.upgrade().with_context(closing)?;
         let work = tempfile::Builder::new()
             .prefix("skwir-print-")
             .tempdir()
-            .context("A folder to make the document in")?;
+            .with_context(work_folder)?;
         // Made, then sent: the sending its last tenth.
         let went = |fraction: f64| held.went(fraction * 0.9);
         let never = || false;
@@ -987,7 +1205,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         make::open_made(&ready, work.path())?;
         held.went(0.9);
         let answered = skwir_platform::print::send(&sent_as, &title, &ready.pdf, &token)?;
-        let notice = [ready.notice, ready.folding.map(str::to_owned)];
+        let notice = [ready.notice, ready.folding];
         Ok((
             answered,
             ready.pages,
@@ -997,42 +1215,119 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
     drop(task);
     // Cancelled by its card, not by Skwir closing: said, as no error.
     if working.is_cancelled() && !cancel.is_cancelled() {
-        return Ok(Some(format!("{} was not printed", capitalized(&what))));
+        return Ok(Some(not_printed(&what)));
     }
-    let (answered, pages, notice) =
-        printed.with_context(|| format!("{} was not printed", capitalized(&what)))?;
+    let (answered, pages, notice) = printed.with_context(|| not_printed(&what))?;
     // Cancelled in a dialog the desktop's printing showed again: as the
     // first one closed, nothing is said.
     if answered == skwir_platform::print::Sent::Cancelled {
         return Ok(None);
     }
-    let sent = match pages {
-        Some(1) => "1 page of ".to_owned(),
-        Some(pages) => format!("{pages} pages of "),
-        None => String::new(),
+    // Where it went: a file, a printer by its name, else the printer.
+    let (to, target, printer_name) = match (&chosen.to_file, &chosen.printer) {
+        (Some(file), _) => ("file", Name::of(file), String::new()),
+        (None, Some(named)) => ("printer", Name(String::new()), named.clone()),
+        (None, None) => ("system", Name(String::new()), String::new()),
     };
-    let to = match (&chosen.to_file, &chosen.printer) {
-        (Some(file), _) => format!("to “{}”", display_name(file)),
-        (None, Some(named)) => format!("to {named}"),
-        (None, None) => "to the printer".to_owned(),
-    };
+    let pages = pages.unwrap_or(0);
     let mut said = match answered {
         // What the portal answers when its back end failed, too.
-        skwir_platform::print::Sent::Unconfirmed => format!(
-            "Handed {sent}{what} to the desktop's printing for {}, which did not confirm it took it",
-            to.strip_prefix("to ").unwrap_or(&to)
+        skwir_platform::print::Sent::Unconfirmed => words!(
+            print_handed = "Handed { $pages ->
+                    [0] {\"\"}
+                    [one] { $pages } page of{\" \"}
+                   *[other] { $pages } pages of{\" \"}
+                }{ $what ->
+                    [file] { $name }
+                    [files] { $count ->
+                        [one] { $count } file
+                       *[other] { $count } files
+                    }
+                    [sheet] a contact sheet
+                   *[listing] the listing of { $name }
+                } to the desktop's printing for { $to ->
+                    [file] { $target }
+                    [printer] { $printer }
+                   *[system] the printer
+                }, which did not confirm it took it",
+            pages = pages,
+            what = what.kind(),
+            name = what.name(),
+            count = what.count(),
+            to = to,
+            target = target,
+            printer = printer_name,
+            note = "Said once a print was handed to the desktop's printing, which did not say it took it: how many pages (0 when not counted), what (a file, several, a contact sheet, a listing), and where (a file, a printer by its name, or the printer)."
         ),
-        _ => format!("Sent {sent}{what} {to}"),
+        _ => words!(
+            print_sent = "Sent { $pages ->
+                    [0] {\"\"}
+                    [one] { $pages } page of{\" \"}
+                   *[other] { $pages } pages of{\" \"}
+                }{ $what ->
+                    [file] { $name }
+                    [files] { $count ->
+                        [one] { $count } file
+                       *[other] { $count } files
+                    }
+                    [sheet] a contact sheet
+                   *[listing] the listing of { $name }
+                } { $to ->
+                    [file] to { $target }
+                    [printer] to { $printer }
+                   *[system] to the printer
+                }",
+            pages = pages,
+            what = what.kind(),
+            name = what.name(),
+            count = what.count(),
+            to = to,
+            target = target,
+            printer = printer_name,
+            note = "Said once a print was sent: how many pages (0 when not counted), what (a file, several, a contact sheet, a listing), and where (a file, a printer by its name, or the printer)."
+        ),
     };
     if booklet.is_some() && chosen.duplex == skwir_core::print::Duplex::Simplex {
-        said = format!(
-            "{said}. A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even"
+        said = then(
+            said,
+            words!(
+                print_booklet_one_side = "A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even",
+                note = "Said after a booklet was sent to a printer printing on one side."
+            ),
         );
     }
     for notice in notice {
-        said = format!("{said}. {notice}");
+        said = then(said, notice);
     }
     Ok(Some(said))
+}
+
+/// What is said when `what` was not printed.
+fn not_printed(what: &Printed) -> Words {
+    words!(
+        print_not_printed = "{ $what ->
+            [file] { $name } was not printed
+            [files] { $count ->
+                [one] { $count } file was not printed
+               *[other] { $count } files were not printed
+            }
+            [sheet] A contact sheet was not printed
+           *[listing] The listing of { $name } was not printed
+        }",
+        what = what.kind(),
+        name = what.name(),
+        count = what.count(),
+        note = "Said when a print was cancelled or failed (why follows): a file by its name, several by how many, a contact sheet, or the listing of a place by its name."
+    )
+}
+
+/// A contact sheet's title, as its PDF and the system's print dialog say.
+fn contact_sheet_title() -> Words {
+    words!(
+        print_contact_sheet_title = "Contact sheet",
+        note =
+            "The title of a contact sheet's document, in its header and the system's print dialog."
+    )
 }
 
 /// The paths `entries` name now.
@@ -1087,14 +1382,6 @@ fn made_ready(
     }
 }
 
-/// `text` with its first letter a capital.
-fn capitalized(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
-}
-
 /// How Save as PDF saves, besides what: where, named how, one PDF of
 /// several files or one each, made smaller, on what paper.
 struct Saving<'a> {
@@ -1141,14 +1428,12 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
         app: reach,
     } = *saving;
     let booklet = request.booklet;
-    let what = if booklet.is_some() { "booklet" } else { "PDF" };
+    // What a plan's title says it is saved as.
+    let form = if booklet.is_some() { "booklet" } else { "pdf" };
     let folder_of = |path: &Path| -> anyhow::Result<PathBuf> {
         match dest {
             Some(dest) => Ok(dest.to_owned()),
-            None => Ok(path
-                .parent()
-                .context("The file is in no folder")?
-                .to_owned()),
+            None => Ok(path.parent().with_context(in_no_folder)?.to_owned()),
         }
     };
     let step = |of: Of, dest_dir: PathBuf, name: OsString| MakePdf {
@@ -1164,9 +1449,45 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
     let plan = match &request.what {
         What::Files { entries, shown } => {
             let mut plan = Plan::new(match entries.as_slice() {
-                [entry] => format!("save “{}” as {what}", display_name(&entry.path)),
-                many if together => format!("save {} files as one {what}", many.len()),
-                many => format!("save {} files as {what}s", many.len()),
+                [entry] => words!(
+                    print_save_one = "{ $form ->
+                        [booklet] save { $name } as booklet
+                       *[pdf] save { $name } as PDF
+                    }",
+                    form = form,
+                    name = Name::of(&entry.path),
+                    note = "A plan's title, in its review, Activity and the History: a file saved as a PDF, or as a booklet's PDF. Begins in lower case: said inside other words too."
+                ),
+                many if together => words!(
+                    print_save_together = "{ $count ->
+                        [one] { $form ->
+                            [booklet] save { $count } file as one booklet
+                           *[pdf] save { $count } file as one PDF
+                        }
+                       *[other] { $form ->
+                            [booklet] save { $count } files as one booklet
+                           *[pdf] save { $count } files as one PDF
+                        }
+                    }",
+                    count = many.len(),
+                    form = form,
+                    note = "A plan's title: several files saved as one PDF, or one booklet's. Begins in lower case."
+                ),
+                many => words!(
+                    print_save_each = "{ $count ->
+                        [one] { $form ->
+                            [booklet] save { $count } file as booklets
+                           *[pdf] save { $count } file as PDFs
+                        }
+                       *[other] { $form ->
+                            [booklet] save { $count } files as booklets
+                           *[pdf] save { $count } files as PDFs
+                        }
+                    }",
+                    count = many.len(),
+                    form = form,
+                    note = "A plan's title: several files saved as a PDF each, or a booklet's each. Begins in lower case."
+                ),
             });
             // Together: one step, the others' pages after the first's.
             let groups: Vec<Vec<EntryRef>> = if together {
@@ -1176,7 +1497,10 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
             };
             anyhow::ensure!(
                 given.is_none() || groups.len() == 1,
-                "A name is a PDF's: these files make one each (`together` makes one of them all)"
+                words!(
+                    print_name_of_one = "A name is a PDF's: these files make one each (`together` makes one of them all)",
+                    note = "An error an agent or a script reads: `together` is the command's argument, as written."
+                )
             );
             for group in groups {
                 let Some(first) = group.first() else { continue };
@@ -1200,10 +1524,14 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
             plan
         }
         What::Sheet(entries) => {
-            let first = entries.first().context("Nothing to print")?;
-            let mut plan = Plan::new(format!(
-                "save a contact sheet of {} files as PDF",
-                entries.len()
+            let first = entries.first().with_context(nothing_to_print)?;
+            let mut plan = Plan::new(words!(
+                print_save_sheet = "{ $count ->
+                    [one] save a contact sheet of { $count } file as PDF
+                   *[other] save a contact sheet of { $count } files as PDF
+                }",
+                count = entries.len(),
+                note = "A plan's title: a contact sheet of the pictures among these files saved as a PDF. Begins in lower case."
             ));
             plan.push(step(
                 Of::Sheet {
@@ -1219,10 +1547,18 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
             let named = listing_named(app, &location, filter.as_deref());
             let dest_dir = match dest {
                 Some(dest) => dest.to_owned(),
-                None => listing_folder(app, &location)
-                    .context("There is no folder to save the listing in: choose one")?,
+                None => listing_folder(app, &location).with_context(|| {
+                    words!(
+                        print_no_listing_folder = "There is no folder to save the listing in: choose one",
+                        note = "An error: the place listed has no folder, and the user has no Documents nor home folder."
+                    )
+                })?,
             };
-            let mut plan = Plan::new(format!("save the listing of “{named}” as PDF"));
+            let mut plan = Plan::new(words!(
+                print_save_listing = "save the listing of { $name } as PDF",
+                name = Name(named.clone()),
+                note = "A plan's title: what a folder or a place lists saved as a PDF table. Begins in lower case."
+            ));
             plan.push(step(
                 Of::Listing {
                     pane: *pane,
@@ -1414,66 +1750,128 @@ impl op::Effect for MakePdf {
     }
 
     fn describe(&self) -> Change {
-        let what = match &self.of {
+        // What it is of, for its words' selectors: a file, a file and how
+        // many more, a contact sheet of how many, a place's listing.
+        let (what, subject, more, count) = match &self.of {
             Of::Files { entries, .. } => match entries.as_slice() {
                 [first, rest @ ..] if !rest.is_empty() => {
-                    format!("“{}” and {} more", display_name(&first.path), rest.len())
+                    ("files", display_name(&first.path), rest.len(), 0)
                 }
-                _ => format!("“{}”", display_name(&self.of.from())),
+                _ => ("file", display_name(&self.of.from()), 0, 0),
             },
-            Of::Sheet { entries } => format!("a contact sheet of {} files", entries.len()),
-            Of::Listing { named, .. } => format!("the listing of “{named}”"),
+            Of::Sheet { entries } => ("sheet", String::new(), 0, entries.len()),
+            Of::Listing { named, .. } => ("listing", named.clone(), 0, 0),
         };
         // Where it goes said too: Save as may put it anywhere.
-        let (pdf, folder) = (display_name(&self.target()), display_name(&self.dest_dir));
+        let (pdf, folder) = (|| Name::of(&self.target()), || Name::of(&self.dest_dir));
+        let name = || Name(subject.clone());
         Change::Create {
             path: self.target(),
             directory: false,
             words: Some(Tenses {
-                will: format!("save {what} as “{pdf}” in “{folder}”").into(),
-                did: format!("saved {what} as “{pdf}” in “{folder}”").into(),
-                already: Some(format!("{what} was already saved as “{pdf}” in “{folder}”").into()),
+                will: words!(
+                    print_save_step = "{ $what ->
+                        [file] save { $name } as { $pdf } in { $folder }
+                        [files] save { $name } and { $more } more as { $pdf } in { $folder }
+                        [sheet] { $count ->
+                            [one] save a contact sheet of { $count } file as { $pdf } in { $folder }
+                           *[other] save a contact sheet of { $count } files as { $pdf } in { $folder }
+                        }
+                       *[listing] save the listing of { $name } as { $pdf } in { $folder }
+                    }",
+                    what = what,
+                    name = name(),
+                    more = more,
+                    count = count,
+                    pdf = pdf(),
+                    folder = folder(),
+                    note = "A step of a plan, in its review: what is saved (a file; a file and how many more; a contact sheet of how many files; a place's listing), the PDF's name and its folder. Begins in lower case."
+                ),
+                did: words!(
+                    print_saved_step = "{ $what ->
+                        [file] saved { $name } as { $pdf } in { $folder }
+                        [files] saved { $name } and { $more } more as { $pdf } in { $folder }
+                        [sheet] { $count ->
+                            [one] saved a contact sheet of { $count } file as { $pdf } in { $folder }
+                           *[other] saved a contact sheet of { $count } files as { $pdf } in { $folder }
+                        }
+                       *[listing] saved the listing of { $name } as { $pdf } in { $folder }
+                    }",
+                    what = what,
+                    name = name(),
+                    more = more,
+                    count = count,
+                    pdf = pdf(),
+                    folder = folder(),
+                    note = "What a step did, said once its plan ran. Begins in lower case."
+                ),
+                already: Some(words!(
+                    print_already_saved = "{ $what ->
+                        [file] { $name } was already saved as { $pdf } in { $folder }
+                        [files] { $name } and { $more } more were already saved as { $pdf } in { $folder }
+                        [sheet] { $count ->
+                            [one] a contact sheet of { $count } file was already saved as { $pdf } in { $folder }
+                           *[other] a contact sheet of { $count } files was already saved as { $pdf } in { $folder }
+                        }
+                       *[listing] the listing of { $name } was already saved as { $pdf } in { $folder }
+                    }",
+                    what = what,
+                    name = name(),
+                    more = more,
+                    count = count,
+                    pdf = pdf(),
+                    folder = folder(),
+                    note = "Said after saving, when the PDF of that name was this already."
+                )),
             }),
         }
     }
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        let conflict = |reason: String| StepStatus::Conflict { reason };
+        // Said here: a conflict's reason is text (`StepStatus`).
+        let conflict = |reason: Words| StepStatus::Conflict {
+            reason: reason.say(),
+        };
+        let not_a_folder = |folder: &Path| {
+            words!(
+                print_not_a_folder = "{ $name } is not a folder",
+                name = Name::of(folder),
+                note = "Why a PDF is not saved: the folder listed, or the one it goes in, is no folder."
+            )
+        };
         if let Err(invalid) = op::valid_file_name(&self.name) {
-            return conflict(invalid.to_string());
+            return conflict(Words::of_error(invalid));
         }
         if self.of.entries().is_empty() && !matches!(self.of, Of::Listing { .. }) {
-            return conflict("There is nothing to print".to_owned());
+            return conflict(words!(print_nothing_there = "There is nothing to print"));
         }
         for entry in self.of.entries() {
             if let Err(error) = entry.resolve() {
-                return conflict(error.to_string());
+                return conflict(Words::as_written(error.to_string()));
             }
         }
         if let Of::Listing { location, .. } = &self.of
             && let Some(folder) = location.path()
             && !ctx.is_folder(&folder)
         {
-            return conflict(format!("“{}” is not a folder", display_name(&folder)));
+            return conflict(not_a_folder(&folder));
         }
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
-            ));
+            return conflict(not_a_folder(&self.dest_dir));
         }
         // A PDF is made aside and moved into place, which a folder that
         // takes only copies written in place (a camera) does not do.
         if !StepContext::stages_in(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” takes only copies: no PDF is made there",
-                display_name(&self.dest_dir)
+            return conflict(words!(
+                print_copies_only = "{ $name } takes only copies: no PDF is made there",
+                name = Name::of(&self.dest_dir),
+                note = "Why a PDF is not saved: the folder (a camera's) cannot take a file made aside and moved in."
             ));
         }
         if ctx.exists(&self.target()) {
-            return conflict(format!(
-                "“{}” is already there",
-                display_name(&self.target())
+            return conflict(words!(
+                print_already_there = "{ $name } is already there",
+                name = Name::of(&self.target())
             ));
         }
         StepStatus::Pending { reversible: true }
@@ -1507,10 +1905,12 @@ impl op::Effect for MakePdf {
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let target = self.target();
-        let app = self
-            .app
-            .get()
-            .context("Saving as PDF needs the print plugin on")?;
+        let app = self.app.get().with_context(|| {
+            words!(
+                print_plugin_off = "Saving as PDF needs the print plugin on",
+                note = "Why a step of a plan made before was refused: the Printing plugin was turned off since."
+            )
+        })?;
         let cancel = ctx.cancel_token();
         // What it is made of, named now: a listing as its pane shows it.
         let made = match &self.of {
@@ -1534,14 +1934,20 @@ impl op::Effect for MakePdf {
                 // The pane's listing: it must show that place still.
                 anyhow::ensure!(
                     app.pane_location(*pane).as_ref() == Some(location),
-                    "“{named}” is no longer shown, so its listing is not known",
+                    words!(
+                        print_no_longer_shown =
+                            "{ $name } is no longer shown, so its listing is not known",
+                        name = Name(named.clone()),
+                        note = "Why a listing's PDF was not saved: the pane whose listing it is shows another place now."
+                    )
                 );
                 // Read in its files' lanes, from this thread.
                 Make::Listing(listing::listing(&app, *pane, cancel)?)
             }
         };
+        // Said here: the PDF's title is text.
         let title = match &self.of {
-            Of::Sheet { .. } => "Contact sheet".to_owned(),
+            Of::Sheet { .. } => contact_sheet_title().say(),
             of => display_name(&of.from()),
         };
         let layout = Layout {
@@ -1563,13 +1969,13 @@ impl op::Effect for MakePdf {
         let work = tempfile::Builder::new()
             .prefix("skwir-print-")
             .tempdir()
-            .context("A folder to make the document in")?;
+            .with_context(work_folder)?;
         let (weak, token, at) = (app.weak(), cancel.clone(), work.path().to_owned());
         let smaller = self.smaller;
         let (gauge, inputs) = (ctx.gauge(), self.of.entries().to_vec());
         let lane = skwir_core::fs::reach::lane(&self.of.from());
         let ready = in_lane(&app, lane, "print-save", cancel, move || {
-            let app = weak.upgrade().context("Skwir is closing")?;
+            let app = weak.upgrade().with_context(closing)?;
             // What it is made of announced, read here in its lane, so the
             // window shows it being made, with Cancel: one PDF is one step,
             // which shows nothing otherwise. A listing reads no file.
@@ -1634,11 +2040,13 @@ impl op::Effect for MakePdf {
             staging.place(&made, &target).with_context(|| {
                 skwir_core::op::Couldnt::new(
                     &target,
-                    format!(
-                        "“{}” could not be placed in “{}”",
-                        display_name(&target),
-                        display_name(&self.dest_dir)
-                    ),
+                    words!(
+                        print_not_placed = "{ $name } could not be placed in { $folder }",
+                        name = Name::of(&target),
+                        folder = Name::of(&self.dest_dir),
+                        note = "A PDF made could not be put in place; why follows."
+                    )
+                    .say(),
                 )
             })
         });
@@ -1650,15 +2058,28 @@ impl op::Effect for MakePdf {
         }
         result?;
         // What was left out, and how to fold it, said with what was made:
-        // the folding once for several booklets alike.
-        if let Some(notice) = &ready.notice {
-            ctx.say(format!("“{}”: {notice}", display_name(&target)));
+        // the folding once for several booklets alike. Said here: what a
+        // step says beside what it did is text.
+        if let Some(notice) = ready.notice {
+            ctx.say(
+                words!(
+                    print_notice_of = "{ $name }: { $notice }",
+                    name = Name::of(&target),
+                    notice = notice,
+                    note = "Said once PDFs were saved: what was left out of this one."
+                )
+                .say(),
+            );
         }
         if let Some(folding) = ready.folding {
-            ctx.say(folding);
+            ctx.say(folding.say());
         }
-        let made = EntryRef::from_path(&target)
-            .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
+        let made = EntryRef::from_path(&target).with_context(|| {
+            words!(
+                print_went_missing = "{ $name } went missing as it was made",
+                name = Name::of(&target)
+            )
+        })?;
         // Undone to the trash, as a copy is: it may have been changed since.
         Ok(Some(Box::new(op::Trash { entry: made })))
     }
@@ -1676,7 +2097,12 @@ fn smaller_pdf(
     follow: &skwir_platform::process::Follow<'_>,
 ) -> anyhow::Result<PathBuf> {
     let folder = work.join("smaller");
-    std::fs::create_dir(&folder).context("A folder to make the PDF smaller in")?;
+    std::fs::create_dir(&folder).with_context(|| {
+        words!(
+            print_smaller_folder = "A folder to make the PDF smaller in",
+            note = "What could not be made, before why: a temporary folder."
+        )
+    })?;
     let job = skwir_core::shrink::Job {
         kind: skwir_core::shrink::Kind::Pdf,
         input: pdf.clone(),
@@ -1692,7 +2118,7 @@ fn smaller_pdf(
     // first left it while it runs.
     let (copy, _) =
         skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel, follow, &|| {})
-            .context("The PDF could not be made smaller")?;
+            .with_context(|| words!(print_not_smaller = "The PDF could not be made smaller"))?;
     Ok(copy.map_or(pdf, |copy| copy.path))
 }
 

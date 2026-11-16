@@ -21,6 +21,8 @@ use skwir_core::op::{
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
+use skwir_core::words;
+use skwir_core::words::{Folder, Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::{archive, mime};
 
@@ -135,7 +137,12 @@ fn only_compressed(path: &Path) -> bool {
 
 /// What is said when a password is needed and no one can be asked.
 pub(crate) fn unasked(archive: &str) -> anyhow::Error {
-    anyhow::anyhow!("“{archive}” is encrypted: its password is asked in Skwir's window")
+    words!(
+        archives_unasked = "{ $name } is encrypted: its password is asked in Skwir's window",
+        name = Name(archive.to_owned()),
+        note = "Why an archive was not read or made where no window can ask its password (a script's, an agent's). Skwir is the program's name."
+    )
+    .into()
 }
 
 fn display_name(path: &Path) -> String {
@@ -145,10 +152,31 @@ fn display_name(path: &Path) -> String {
         .into_owned()
 }
 
-fn conflict(reason: impl Into<String>) -> StepStatus {
+/// A step's conflict, said here: its reason is text (`StepStatus`).
+fn conflict(reason: impl Into<Words>) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.into(),
+        reason: reason.into().say(),
     }
+}
+
+/// An archive whose listing could not be read to its end.
+fn cannot_list_whole(archive: &Path) -> Words {
+    words!(
+        archives_cannot_list_whole = "{ $name } cannot be listed whole",
+        name = Name::of(archive),
+        note = "Why an archive is not extracted into a folder already there: what it holds must be known, member by member."
+    )
+}
+
+/// What an extraction into a folder already there says when it finds it
+/// done: as its step says, and as its run finds nothing to do.
+fn already_extracted_into(archive: &Path, into: String) -> Words {
+    words!(
+        archives_already_extracted_into = "{ $archive } was already extracted into { $into }",
+        archive = Name::of(archive),
+        into = Folder(into),
+        note = "Said after extracting, when everything the archive holds was in the folder it is extracted into already."
+    )
 }
 
 impl op::Kind for Extract {
@@ -184,17 +212,43 @@ impl op::Effect for Extract {
         let (name, folder) = self.named(archive::listed(&self.entry.path).as_deref());
         let words = if self.merge.is_some() {
             // Into the folder there, as merged.
-            let into = name.to_string_lossy();
+            let into = name.to_string_lossy().into_owned();
             Tenses {
-                will: format!("extract “{archive}” into {into}").into(),
-                did: format!("extracted “{archive}” into {into}").into(),
-                already: Some(format!("“{archive}” was already extracted into {into}").into()),
+                will: words!(
+                    archives_extract_into = "extract { $archive } into { $into }",
+                    archive = Name(archive.clone()),
+                    into = Folder(into.clone()),
+                    note = "A step of a plan, in its review: the archive, and the folder already there it is extracted into. Begins in lower case."
+                ),
+                did: words!(
+                    archives_extracted_into = "extracted { $archive } into { $into }",
+                    archive = Name(archive),
+                    into = Folder(into.clone()),
+                    note = "What a step did, said once its plan ran. Begins in lower case."
+                ),
+                already: Some(already_extracted_into(&self.entry.path, into)),
             }
         } else {
             Tenses {
-                will: format!("extract “{archive}” to {into}").into(),
-                did: format!("extracted “{archive}” to {into}").into(),
-                already: Some(format!("“{archive}” was already extracted to {into}").into()),
+                will: words!(
+                    archives_extract_to = "extract { $archive } to { $into }",
+                    archive = Name(archive.clone()),
+                    into = Folder(into.clone()),
+                    note = "A step of a plan, in its review: the archive, and the folder it is extracted to. Begins in lower case."
+                ),
+                did: words!(
+                    archives_extracted_to = "extracted { $archive } to { $into }",
+                    archive = Name(archive.clone()),
+                    into = Folder(into.clone()),
+                    note = "What a step did, said once its plan ran. Begins in lower case."
+                ),
+                already: Some(words!(
+                    archives_already_extracted_to =
+                        "{ $archive } was already extracted to { $into }",
+                    archive = Name(archive),
+                    into = Folder(into),
+                    note = "Said after extracting, when what the archive holds was where it is extracted to already."
+                )),
             }
         };
         Change::Create {
@@ -206,14 +260,11 @@ impl op::Effect for Extract {
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
-            ));
+            return conflict(crate::not_a_folder(&self.dest_dir));
         }
         let src = match self.entry.resolve() {
             Ok(src) => src,
-            Err(e) => return conflict(e.to_string()),
+            Err(e) => return conflict(Words::as_written(e.to_string())),
         };
         // Read where the archive says its name, or something is there.
         let listed = std::cell::OnceCell::new();
@@ -227,7 +278,7 @@ impl op::Effect for Extract {
             None => self.named(listing()).0,
         };
         if let Err(invalid) = op::valid_file_name(&name) {
-            return conflict(invalid.to_string());
+            return conflict(Words::of_error(invalid));
         }
         let target = self.dest_dir.join(name);
         if let Some(placing) = &self.merge {
@@ -255,13 +306,15 @@ impl op::Effect for Extract {
             StepStatus::AlreadyDone
         } else if src.starts_with(&target) {
             // Never replaced: it would take the archive with it.
-            conflict(format!(
-                "“{}” holds “{}”, which it would be extracted from",
-                display_name(&target),
-                display_name(&src)
+            conflict(words!(
+                archives_holds_archive =
+                    "{ $there } holds { $archive }, which it would be extracted from",
+                there = Name::of(&target),
+                archive = Name::of(&src),
+                note = "Why an archive is not extracted: the folder of its name holds the archive itself."
             ))
         } else {
-            conflict(format!("“{}” is already there", display_name(&target)))
+            conflict(crate::already_there(&target))
         }
     }
 
@@ -346,7 +399,7 @@ impl op::Effect for Extract {
                 whole_listing(&src, ctx)
                     .as_deref()
                     .and_then(tree_of)
-                    .with_context(|| format!("“{}” cannot be listed whole", display_name(&src)))?,
+                    .with_context(|| cannot_list_whole(&src))?,
             )),
             None => None,
         };
@@ -378,19 +431,37 @@ impl op::Effect for Extract {
                     |attempt| {
                         // Each member's attempts count from 1: a second
                         // says the first was wrong for it.
+                        // Said here: the question takes text.
                         let mut title = if attempt == 1 {
-                            format!("Password for “{archive_name}”")
+                            words!(
+                                archives_password_for = "Password for { $name }",
+                                name = Name(archive_name.clone()),
+                                note = "The title of the question asking an encrypted archive's password."
+                            )
                         } else {
-                            format!("Wrong password for “{archive_name}”: try again")
-                        };
+                            words!(
+                                archives_wrong_password = "Wrong password for { $name }: try again",
+                                name = Name(archive_name.clone()),
+                                note = "The title of the question asking an archive's password again, the one given being wrong."
+                            )
+                        }
+                        .say();
+                        let accept = words!(
+                            archives_extract_button = "Extract",
+                            note = "The button that gives an archive's password and extracts it."
+                        )
+                        .say();
                         // Nothing typed is asked again, as making one
                         // asks; Cancel gives up.
                         loop {
-                            match ctx.ask_secret(&title, "Extract") {
+                            match ctx.ask_secret(&title, &accept) {
                                 Ok(given) if given.is_empty() => {
-                                    title = format!(
-                                        "Password for “{archive_name}”: it cannot be empty"
-                                    );
+                                    title = words!(
+                                        archives_password_empty = "Password for { $name }: it cannot be empty",
+                                        name = Name(archive_name.clone()),
+                                        note = "The title of the question asking an archive's password again, nothing having been typed."
+                                    )
+                                    .say();
                                 }
                                 Ok(given) => return Some(given),
                                 Err(why) => {
@@ -412,16 +483,9 @@ impl op::Effect for Extract {
                     Some((placing, tree)) => {
                         place_merged(&staging, &root, &target, placing, tree, ctx, &mut placed)
                     }
-                    None => staging.place_within(&root, &target).with_context(|| {
-                        skwir_core::op::Couldnt::new(
-                            &target,
-                            format!(
-                                "“{}” could not be placed in “{}”",
-                                display_name(&target),
-                                display_name(&self.dest_dir)
-                            ),
-                        )
-                    }),
+                    None => staging
+                        .place_within(&root, &target)
+                        .with_context(|| crate::not_placed(&target, &self.dest_dir)),
                 }
             });
         // Whatever happened, the staging folder goes now, with what it
@@ -449,8 +513,7 @@ impl op::Effect for Extract {
         if self.merge.is_some() {
             return self.merged_undo(&target, &placed);
         }
-        let made = EntryRef::from_path(&target)
-            .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
+        let made = EntryRef::from_path(&target).with_context(|| crate::went_missing(&target))?;
         // Where its volume keeps no trash, Undo removes it while it is as
         // made, and Redo extracts it again under the same name.
         if op::keeps_no_trash(&target) {
@@ -483,12 +546,11 @@ impl Extract {
             .filter_map(|placing| EntryRef::from_path(target.join(&placing.to)))
             .collect();
         if made.is_empty() {
-            // Placed already, as its check found: nothing done.
-            return Err(op::Unneeded(format!(
-                "“{}” was already extracted into {}",
-                display_name(&self.entry.path),
-                display_name(target)
-            ))
+            // Placed already, as its check found: nothing done. Said here:
+            // its why is text.
+            return Err(op::Unneeded(
+                already_extracted_into(&self.entry.path, display_name(target)).say(),
+            )
             .into());
         }
         if op::keeps_no_trash(target) {
@@ -533,20 +595,21 @@ fn whole_listing(src: &Path, ctx: &StepContext) -> Option<std::sync::Arc<archive
 /// already. All of them there, it is done.
 fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContext) -> StepStatus {
     if !ctx.is_folder(target) || is_link(target) {
-        return conflict(format!(
-            "“{}” is not a folder to extract into",
-            display_name(target)
+        return conflict(words!(
+            archives_not_a_folder_to_extract_into = "{ $name } is not a folder to extract into",
+            name = Name::of(target)
         ));
     }
     // A plan from elsewhere says its own: never a name out of the folder.
     if !placing.iter().all(Placing::stays_below) {
-        return conflict(format!(
-            "what is extracted into “{}” would leave it",
-            display_name(target)
+        return conflict(words!(
+            archives_would_leave = "what is extracted into { $name } would leave it",
+            name = Name::of(target),
+            note = "Why an archive is not extracted: a member's path leads out of the folder it is extracted into."
         ));
     }
     let Some(tree) = whole_listing(src, ctx).as_deref().and_then(tree_of) else {
-        return conflict(format!("“{}” cannot be listed whole", display_name(src)));
+        return conflict(cannot_list_whole(src));
     };
     let mut done = true;
     // Never two items to one name: the second would find it taken.
@@ -554,16 +617,18 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
     let mut within = Within::new(target);
     for placing in placing {
         if !going.insert(placing.to.as_path()) {
-            return conflict(format!(
-                "two items would be extracted as “{}”",
-                placing.to.display()
+            return conflict(words!(
+                archives_two_as_one = "two items would be extracted as { $name }",
+                name = Name(placing.to.display().to_string()),
+                note = "The name is a path within the folder extracted into."
             ));
         }
         let Some(item) = tree.below(&placing.from) else {
-            return conflict(format!(
-                "“{}” is not in “{}” any more",
-                placing.from.display(),
-                display_name(src)
+            return conflict(words!(
+                archives_not_in_archive = "{ $member } is not in { $archive } any more",
+                member = Name(placing.from.display().to_string()),
+                archive = Name::of(src),
+                note = "The member is named by its path within the archive."
             ));
         };
         let to = target.join(&placing.to);
@@ -575,12 +640,13 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
             if item.held_at(&to, ctx.cancel_token()) {
                 continue;
             }
-            return conflict(format!("“{}” is already there", display_name(&to)));
+            return conflict(crate::already_there(&to));
         }
         if !within.writable(folder, ctx) {
-            return conflict(format!(
-                "“{}” cannot be written in: nothing is extracted into it",
-                display_name(folder)
+            return conflict(words!(
+                archives_not_writable =
+                    "{ $name } cannot be written in: nothing is extracted into it",
+                name = Name::of(folder)
             ));
         }
         done = false;
@@ -619,8 +685,14 @@ impl<'a> Within<'a> {
 
     /// The folder `to` goes in, each part of the way from the folder
     /// merged into a folder, none a link; else why not.
-    fn reach<'p>(&mut self, to: &'p Path) -> Result<&'p Path, String> {
-        let not_there = || format!("the folder “{}” goes in is not there", display_name(to));
+    fn reach<'p>(&mut self, to: &'p Path) -> Result<&'p Path, Words> {
+        let not_there = || {
+            words!(
+                archives_folder_not_there = "the folder { $name } goes in is not there",
+                name = Name::of(to),
+                note = "Why a member of an archive is not extracted into a folder already there: the folder it goes in went."
+            )
+        };
         let folder = to.parent().ok_or_else(not_there)?;
         let below = folder.strip_prefix(self.target).map_err(|_| not_there())?;
         let mut at = self.target.to_path_buf();
@@ -634,9 +706,10 @@ impl<'a> Within<'a> {
                     self.folders.insert(at.clone());
                 }
                 Ok(meta) if meta.file_type().is_symlink() => {
-                    return Err(format!(
-                        "“{}” is a link: nothing is extracted through it",
-                        display_name(&at)
+                    return Err(words!(
+                        archives_through_link =
+                            "{ $name } is a link: nothing is extracted through it",
+                        name = Name::of(&at)
                     ));
                 }
                 _ => return Err(not_there()),
@@ -676,7 +749,7 @@ fn place_merged(
     for item in placing {
         let to = target.join(&item.to);
         let failed = if let Err(why) = within.reach(&to) {
-            Some(anyhow::anyhow!(why))
+            Some(anyhow::Error::from(why))
         } else if std::fs::symlink_metadata(&to).is_ok() {
             let same = tree
                 .below(&item.from)
@@ -684,21 +757,12 @@ fn place_merged(
             if same {
                 continue;
             }
-            Some(anyhow::anyhow!("“{}” is already there", display_name(&to)))
+            Some(anyhow::Error::from(crate::already_there(&to)))
         } else {
             staging
                 .place_within(&root.join(&item.from), &to)
                 .err()
-                .map(|error| {
-                    anyhow::Error::from(error).context(skwir_core::op::Couldnt::new(
-                        &to,
-                        format!(
-                            "“{}” could not be placed in “{}”",
-                            display_name(&to),
-                            display_name(target)
-                        ),
-                    ))
-                })
+                .map(|error| anyhow::Error::from(error).context(crate::not_placed(&to, target)))
         };
         if let Some(error) = failed {
             // What cannot be taken back stays placed, and in `placed`:
@@ -874,14 +938,25 @@ fn is_archive(type_name: &OsStr) -> bool {
         .any(|m| mime::is_kind(&m, mime::Kind::Archive) || crate::DISC_IMAGES.contains(m.as_str()))
 }
 
+/// The menu item extracting an archive: beside it, or where it is dropped.
+fn extract_here() -> Words {
+    words!(
+        archives_extract_here = "Extract Here",
+        note = "A menu item, in an archive's menu and in what a drop of one offers."
+    )
+}
+
 pub fn register(app: &App, owner: &str) {
     app.ops.register::<Extract>(owner);
     app.commands
         .register::<ExtractArgs, _>(
             owner, Topic::Files,
             "archive.extract",
-            "Extract here",
-            "Extract each archive of the selection, or the entries given, beside it or in `dest`: an archive of one folder or file gives that folder or file, one of several a folder named after it (plan)",
+            words!(archives_extract = "Extract here"),
+            words!(
+                archives_extract_description = "Extract each archive of the selection, or the entries given, beside it or in `dest`: an archive of one folder or file gives that folder or file, one of several a folder named after it (plan)",
+                note = "Read by agents and in F1's list of actions; `dest` is the command's argument, as written."
+            ),
             |a, app| {
                 let dest = a
                     .dest
@@ -897,23 +972,37 @@ pub fn register(app: &App, owner: &str) {
                     // No name to type it by: a folder, a device.
                     anyhow::ensure!(
                         type_name.as_deref().is_some_and(is_archive),
-                        "“{}” is not an archive",
-                        display_name(&entry.path)
+                        words!(
+                            archives_not_an_archive = "{ $name } is not an archive",
+                            name = Name::of(&entry.path)
+                        )
                     );
                     let dest_dir = match &dest {
                         Some(dest) => dest.clone(),
                         None => entry
                             .path
                             .parent()
-                            .context("an archive is in a folder")?
+                            .with_context(|| {
+                                words!(
+                                    archives_in_a_folder = "an archive is in a folder",
+                                    note = "An error an agent or a script reads: the archive named has no folder (a root)."
+                                )
+                            })?
                             .to_path_buf(),
                     };
                     extracts.push(Extract::new(entry, dest_dir));
                 }
-                let title = match extracts.as_slice() {
-                    [one] => format!("extract “{}”", display_name(&one.entry.path)),
-                    many => format!("extract {} archives", many.len()),
-                };
+                let title = words!(
+                    archives_extract_plan = "{ $count ->
+                        [1] extract { $name }
+                       *[other] extract { $count } archives
+                    }",
+                    count = extracts.len(),
+                    name = extracts
+                        .first()
+                        .map_or_else(|| Name(String::new()), |one| Name::of(&one.entry.path)),
+                    note = "A plan's title, in its review, Activity and the History: the archive extracted, or how many. Begins in lower case: said inside other words too (undo extract 3 archives)."
+                );
                 let steps = extracts
                     .into_iter()
                     .map(|extract| Box::new(extract) as Box<dyn Operation>)
@@ -928,7 +1017,7 @@ pub fn register(app: &App, owner: &str) {
         owner,
         MenuItem::new(
             "context",
-            "Extract Here",
+            extract_here(),
             "folder",
             310,
             Invocation::new("archive.extract"),
@@ -939,7 +1028,7 @@ pub fn register(app: &App, owner: &str) {
         owner,
         MenuItem::new(
             "drop",
-            "Extract Here",
+            extract_here(),
             "folder",
             100,
             Invocation::new("archive.extract"),

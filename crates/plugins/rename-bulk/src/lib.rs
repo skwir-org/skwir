@@ -32,6 +32,8 @@ use skwir_core::op::{
 use skwir_core::plugin::Plugin;
 use skwir_core::reference::{Group, Item as Said, Reference};
 use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::{Pane, PaneId};
 
 const ID: &str = "rename-bulk";
@@ -126,49 +128,117 @@ pub struct Marks {
     pub put: Vec<Range<usize>>,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+/// Why a bulk rename cannot be planned: data, said in the reader's
+/// language as its words (`BulkRenameError::words`), English for `Display`
+/// outside a chain said.
+#[derive(Debug, PartialEq, Eq)]
 pub enum BulkRenameError {
-    #[error("invalid regex: {0}")]
+    /// What the `regex` crate said of the pattern.
     Regex(String),
-    #[error("invalid template: {0}")]
-    Template(String),
-    #[error("`{item}` would become an invalid name `{name}`: {reason}")]
+    /// What is wrong with the template.
+    Template(Words),
+    /// `reason` is what `order_renames` said.
     InvalidName {
         item: String,
         name: String,
         reason: String,
     },
-    #[error("`{item}` is not a name made of text; rename it on its own")]
-    NotText { item: String },
-    #[error("several items would become `{name}`: {}", a_few(items))]
-    Duplicate { name: String, items: Vec<String> },
-    #[error("`{item}` would become `{name}`, which already exists")]
-    Conflict { item: String, name: String },
-    #[error("`{item}` has no modification time yet (needed for {{date}})")]
-    MissingDate { item: String },
-    #[error("nothing to rename")]
+    NotText {
+        item: String,
+    },
+    Duplicate {
+        name: String,
+        items: Vec<String>,
+    },
+    Conflict {
+        item: String,
+        name: String,
+    },
+    MissingDate {
+        item: String,
+    },
     Empty,
     /// The job working it out was cancelled (`scheduler::job_cancelled`):
     /// a preview the user typed past.
-    #[error("cancelled")]
     Cancelled,
 }
 
-/// The first few items, and how many more: an error said under a field
-/// or in a toast names a few, never all of a large selection.
-fn a_few(items: &[String]) -> String {
-    const NAMED: usize = 3;
-    let said = items
-        .iter()
-        .take(NAMED)
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .join(", ");
-    match items.len().checked_sub(NAMED) {
-        Some(more) if more > 0 => format!("{said} and {more} more"),
-        _ => said,
+impl BulkRenameError {
+    /// What it says: under a field of the dialog, or in a toast. A clash
+    /// of many names says a few and how many more, never all of a large
+    /// selection.
+    pub fn words(&self) -> Words {
+        match self {
+            BulkRenameError::Regex(why) => words!(
+                rename_bulk_invalid_regex = "invalid regex: { $why }",
+                why = why.clone(),
+                note = "Said under the regex's field; what follows is the regex library's own explanation, as written."
+            ),
+            BulkRenameError::Template(why) => words!(
+                rename_bulk_invalid_template = "invalid template: { $why }",
+                why = why.clone(),
+                note = "Said under the template's field; what follows says what is wrong."
+            ),
+            BulkRenameError::InvalidName { item, name, reason } => words!(
+                rename_bulk_invalid_name =
+                    "{ $item } would become an invalid name { $name }: { $reason }",
+                item = Name(item.clone()),
+                name = Name(name.clone()),
+                reason = reason.clone(),
+                note = "A file's name, the name it would get, and why that name is not allowed."
+            ),
+            BulkRenameError::NotText { item } => words!(
+                rename_bulk_not_text = "{ $item } is not a name made of text; rename it on its own",
+                item = Name(item.clone()),
+                note = "A name whose bytes are not text: the rules work on text, so it can only be renamed alone."
+            ),
+            BulkRenameError::Duplicate { name, items } => {
+                let named = |at: usize| Name(items.get(at).cloned().unwrap_or_default());
+                words!(
+                    rename_bulk_duplicate = "{ $count ->
+                        [2] several items would become { $name }: { $first }, { $second }
+                        [3] several items would become { $name }: { $first }, { $second }, { $third }
+                       *[other] several items would become { $name }: { $first }, { $second }, { $third } and { $more } more
+                    }",
+                    count = items.len(),
+                    name = Name(name.clone()),
+                    first = named(0),
+                    second = named(1),
+                    third = named(2),
+                    more = items.len().saturating_sub(3),
+                    note = "The new name several files would take, then the first three of them, and how many more."
+                )
+            }
+            BulkRenameError::Conflict { item, name } => words!(
+                rename_bulk_conflict = "{ $item } would become { $name }, which already exists",
+                item = Name(item.clone()),
+                name = Name(name.clone())
+            ),
+            BulkRenameError::MissingDate { item } => words!(
+                rename_bulk_missing_date =
+                    "{ $item } has no modification time yet (needed for { $placeholder })",
+                item = Name(item.clone()),
+                placeholder = "{date}",
+                note = "The placeholder is the template's, as written: its modification date."
+            ),
+            BulkRenameError::Empty => words!(rename_bulk_nothing = "nothing to rename"),
+            BulkRenameError::Cancelled => words!(
+                rename_bulk_cancelled = "cancelled",
+                note = "Working out a bulk rename's names was stopped: what was typed since asks again."
+            ),
+        }
     }
 }
+
+impl std::fmt::Display for BulkRenameError {
+    /// Its words: English, but where a chain of errors is said, in the
+    /// language it is said in.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.words(), f)
+    }
+}
+
+impl std::error::Error for BulkRenameError {}
 
 /// How many items are worked out between two looks at whether the job
 /// was cancelled.
@@ -289,8 +359,11 @@ fn render(
                         Some('}') => break,
                         Some(ch) => token.push(ch),
                         None => {
-                            return Err(BulkRenameError::Template(format!(
-                                "unclosed `{{` in `{template}`"
+                            return Err(BulkRenameError::Template(words!(
+                                rename_bulk_unclosed = "unclosed `{ $brace }` in `{ $template }`",
+                                brace = "{",
+                                template = template.to_owned(),
+                                note = "The template as it was typed: a brace opens a placeholder that never closes."
                             )));
                         }
                     }
@@ -299,8 +372,10 @@ fn render(
                     .split_once(':')
                     .map_or((token.as_str(), None), |(k, a)| (k, Some(a)));
                 if !PLACEHOLDERS.contains(&key) {
-                    return Err(BulkRenameError::Template(format!(
-                        "unknown placeholder `{{{key}}}`"
+                    return Err(BulkRenameError::Template(words!(
+                        rename_bulk_unknown_placeholder = "unknown placeholder `{ $placeholder }`",
+                        placeholder = format!("{{{key}}}"),
+                        note = "The placeholder as it was typed in the template."
                     )));
                 }
                 match key {
@@ -327,13 +402,22 @@ fn render(
                                     }
                                 })
                                 .map_err(|()| {
-                                    BulkRenameError::Template(format!("bad counter width `{a}`"))
+                                    BulkRenameError::Template(words!(
+                                        rename_bulk_bad_width = "bad counter width `{ $width }`",
+                                        width = a.to_owned(),
+                                        note = "What was typed after {n: in the template, which is no number of digits."
+                                    ))
                                 })?,
                         };
                         if width > WIDEST_COUNTER {
-                            return Err(BulkRenameError::Template(format!(
-                                "a counter {width} digits wide is wider than a name can be \
-                                 ({WIDEST_COUNTER} at most)"
+                            return Err(BulkRenameError::Template(words!(
+                                rename_bulk_counter_too_wide = "{ $width ->
+                                    [one] a counter { $width } digit wide is wider than a name can be ({ $most } at most)
+                                   *[other] a counter { $width } digits wide is wider than a name can be ({ $most } at most)
+                                }",
+                                width = width,
+                                most = WIDEST_COUNTER,
+                                note = "The counter's width typed in the template, and the most a name holds, in bytes."
                             )));
                         }
                         let _ = write!(out, "{n:0width$}");
@@ -343,20 +427,28 @@ fn render(
                             item: item.to_owned(),
                         })?;
                         let fmt = arg.unwrap_or("%Y-%m-%d");
-                        let ts = jiff::Timestamp::try_from(t)
-                            .map_err(|e| BulkRenameError::Template(e.to_string()))?;
+                        let ts = jiff::Timestamp::try_from(t).map_err(|e| {
+                            BulkRenameError::Template(Words::as_written(e.to_string()))
+                        })?;
                         let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
                         // `strftime(..).to_string()` would panic on a
                         // format it cannot write; this says why instead.
                         let s = jiff::fmt::strtime::format(fmt, &zoned).map_err(|e| {
-                            BulkRenameError::Template(format!("bad date format `{fmt}`: {e}"))
+                            BulkRenameError::Template(words!(
+                                rename_bulk_bad_date_format = "bad date format `{ $format }`: { $why }",
+                                format = fmt.to_owned(),
+                                why = e.to_string(),
+                                note = "The date's format as typed after {date: in the template, then the date library's explanation, as written."
+                            ))
                         })?;
                         out.push_str(&s);
                     }
                     // Listed, never read: the test of `PLACEHOLDERS` fails.
                     other => {
-                        return Err(BulkRenameError::Template(format!(
-                            "placeholder `{{{other}}}` not read yet"
+                        return Err(BulkRenameError::Template(words!(
+                            rename_bulk_not_read_yet =
+                                "placeholder `{ $placeholder }` not read yet",
+                            placeholder = format!("{{{other}}}")
                         )));
                     }
                 }
@@ -419,7 +511,12 @@ fn counter(i: usize, spec: &RenameSpec) -> Result<u64, BulkRenameError> {
     (i as u64)
         .checked_mul(spec.step)
         .and_then(|k| k.checked_add(spec.start))
-        .ok_or_else(|| BulkRenameError::Template("the counter overflows".into()))
+        .ok_or_else(|| {
+            BulkRenameError::Template(words!(
+                rename_bulk_counter_overflows = "the counter overflows",
+                note = "The counter's start and step make a number too large for the items."
+            ))
+        })
 }
 
 /// Every item's new name and its marks.
@@ -532,7 +629,14 @@ pub fn plan_bulk_rename_in(
     Ok(BulkRename {
         first: items.first().map(|item| item.name.clone()),
         plan: Plan::with_steps(
-            format!("rename {} items", preview.len()),
+            words!(
+                rename_bulk_plan = "{ $count ->
+                    [one] rename { $count } item
+                   *[other] rename { $count } items
+                }",
+                count = preview.len(),
+                note = "A bulk rename's title, in the review, Activity and the History. Begins in lower case: said inside other words too (undo rename 3 items)."
+            ),
             steps
                 .into_iter()
                 .map(|r| Box::new(r) as Box<dyn Operation>)
@@ -681,10 +785,19 @@ fn plan_selection(
     let withheld = app.withheld(pane);
     let (dir, items) = {
         let ws = app.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        anyhow::ensure!(p.open.is_some(), "pane has no open location");
+        let p = ws.pane(pane).ok_or_else(|| {
+            anyhow::Error::from(words!(
+                rename_bulk_no_such_pane = "no such pane",
+                note = "An error an agent or a script reads: the pane it named is not there."
+            ))
+        })?;
+        anyhow::ensure!(
+            p.open.is_some(),
+            words!(
+                rename_bulk_no_location = "pane has no open location",
+                note = "An error an agent or a script reads: the pane shows no folder yet."
+            )
+        );
         let dir = p.location().and_then(skwir_core::Location::path);
         (dir, selected_items(p, &withheld, usize::MAX))
     };
@@ -740,33 +853,89 @@ pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Refer
         Field::Template => template_reference(first, spec)
             .starts(&["{"])
             .escapes(&["{{", "}}"]),
-        Field::Regex => Reference::new("Regex")
-            .group(recipes(first))
-            .group(
-                skwir_core::reference::regex_pattern()
-                    .note(
-                        "^ and $ are the start and the end of the name. It runs on the whole \
-                         name, extension included, every match replaced; the template comes \
-                         after it.",
-                    )
-                    .note(
-                        "What a group held is $1, $2… in the replacement; what a group named \
-                         year held, ${year}.",
+        Field::Regex => Reference::new(
+            words!(
+                rename_bulk_regex = "Regex",
+                note = "The title of what the regex field takes: a regular expression."
+            ),
+        )
+        .group(recipes(first))
+        .group(
+            skwir_core::reference::regex_pattern()
+                .note(
+                    words!(
+                        rename_bulk_regex_note = "^ and $ are the start and the end of the name. It runs on the whole name, extension included, every match replaced; the template comes after it.",
+                        note = "^ and $ are signs of the pattern, as written."
                     ),
-            )
+                )
+                .note(
+                    words!(
+                        rename_bulk_regex_groups_note = "What a group held is $1, $2… in the replacement; what a group named year held, { $named }.",
+                        named = "${year}",
+                        note = "$1, $2 and the argument are signs of the replacement, as written; year is the group's name in it."
+                    ),
+                ),
+        )
             .starts(&["\\", "(?"])
             .escapes(&["\\\\"]),
-        Field::Replacement => Reference::new("Replacement")
-            .group(
-                Group::new("What a match becomes")
-                    .item(Said::new("$1", "What the first group held ($2, $3…)"))
-                    .item(Said::new("${1}", "The same, before a letter, a digit or _"))
-                    .item(Said::new("${year}", "What the group named year held"))
-                    .item(Said::new("$0", "The whole match"))
-                    .item(Said::new("$$", "A dollar sign"))
-                    .note("$1_x reads as a group named 1_x, which holds nothing: write ${1}_x.")
-                    .note("Left empty, what the pattern matched is taken away."),
+        Field::Replacement => Reference::new(
+            words!(
+                rename_bulk_replacement = "Replacement",
+                note = "The title of what the replacement field takes: what each match of the regex becomes."
+            ),
+        )
+        .group(
+            Group::new(
+                words!(
+                    rename_bulk_what_a_match_becomes = "What a match becomes",
+                    note = "A heading of the replacement's reference."
+                ),
             )
+            .item(Said::new(
+                "$1",
+                words!(
+                    rename_bulk_first_group = "What the first group held ($2, $3…)",
+                    note = "Said beside $1 in the replacement's reference; $2 and $3 are signs, as written."
+                ),
+            ))
+            .item(Said::new(
+                "${1}",
+                words!(
+                    rename_bulk_group_before_letter = "The same, before a letter, a digit or _",
+                    note = "Said beside ${1}: the first group's, written so a letter, a digit or an underscore may follow."
+                ),
+            ))
+            .item(Said::new(
+                "${year}",
+                words!(
+                    rename_bulk_named_group = "What the group named year held",
+                    note = "Said beside ${year}: year is the group's name, as written in the pattern."
+                ),
+            ))
+            .item(Said::new(
+                "$0",
+                words!(rename_bulk_whole_match = "The whole match"),
+            ))
+            .item(Said::new(
+                "$$",
+                words!(rename_bulk_dollar = "A dollar sign"),
+            ))
+            .note(
+                words!(
+                    rename_bulk_group_name_note = "{ $written } reads as a group named { $read }, which holds nothing: write { $meant }.",
+                    written = "$1_x",
+                    read = "1_x",
+                    meant = "${1}_x",
+                    note = "The arguments are what is written in the replacement, as written."
+                ),
+            )
+            .note(
+                words!(
+                    rename_bulk_empty_replacement_note = "Left empty, what the pattern matched is taken away.",
+                    note = "Of the replacement field."
+                ),
+            ),
+        )
             .group(recipes(first))
             .starts(&["$"])
             .escapes(&["$$"]),
@@ -792,7 +961,7 @@ fn template_reference(first: Option<&Item>, spec: &RenameSpec) -> Reference {
         ))
     });
     let start = spec.start;
-    let item = |written: &str, says: &str| {
+    let item = |written: &str, says: Words| {
         let said = Said::new(written, says);
         match read
             .as_ref()
@@ -803,48 +972,129 @@ fn template_reference(first: Option<&Item>, spec: &RenameSpec) -> Reference {
             None => said,
         }
     };
-    Reference::new("Template")
-        .group(
-            Group::new("Parts of the name")
-                .item(item("{name}", "The name without its extension"))
-                .item(item("{ext}", "The extension, without its dot"))
-                .item(item("{.ext}", "The extension with its dot; nothing when there is none"))
-                .item(item("{full}", "The whole name"))
-                .item(item("{parent}", "The folder it is in"))
-                .note("The regex runs first: these are the name it leaves. The case comes last, and leaves the extension as it is. A folder has no extension."),
+    // The placeholders are the template's, as written.
+    Reference::new(
+        words!(
+            rename_bulk_template = "Template",
+            note = "The title of what the template field takes: the new name, with placeholders."
+        ),
+    )
+    .group(
+        Group::new(
+            words!(
+                rename_bulk_parts_of_the_name = "Parts of the name",
+                note = "A heading of the template's reference."
+            ),
         )
-        .group(
-            Group::new("Counter")
-                .item(item("{n}", "Counts from Start, one more for each, in the order shown"))
-                .item(item("{n:02}", "The same, two digits at least"))
-                .item(item("{n:03}", "The same, three digits at least")),
+        .item(item(
+            "{name}",
+            words!(rename_bulk_name_without_extension = "The name without its extension"),
+        ))
+        .item(item(
+            "{ext}",
+            words!(rename_bulk_extension = "The extension, without its dot"),
+        ))
+        .item(item(
+            "{.ext}",
+            words!(
+                rename_bulk_extension_with_dot = "The extension with its dot; nothing when there is none"
+            ),
+        ))
+        .item(item(
+            "{full}",
+            words!(rename_bulk_whole_name = "The whole name"),
+        ))
+        .item(item(
+            "{parent}",
+            words!(rename_bulk_parent = "The folder it is in"),
+        ))
+        .note(
+            words!(
+                rename_bulk_parts_note = "The regex runs first: these are the name it leaves. The case comes last, and leaves the extension as it is. A folder has no extension."
+            ),
+        ),
+    )
+    .group(
+        Group::new(
+            words!(
+                rename_bulk_counter = "Counter",
+                note = "A heading of the template's reference: the number counted for each item."
+            ),
         )
-        .group(
-            Group::new("When it was modified")
-                .item(item("{date}", "Its day"))
-                .item(item("{date:%Y%m%d}", "Its day, without dashes"))
-                .item(item("{date:%Y-%m-%d_%H%M}", "Its day and time"))
-                .item(item("{date:%d.%m.%Y}", "Its day, the day first"))
-                .item(item("{date:%B %Y}", "Its month and year"))
-                .note("Inside {date:…}: %Y the year, %m the month, %d the day, %H the hour, %M the minute, %S the second, %B the month's name (%b short), %A the day's, %j the day of the year. In this system's time zone."),
+        .item(item(
+            "{n}",
+            words!(
+                rename_bulk_counts = "Counts from Start, one more for each, in the order shown",
+                note = "Start is the name of the dialog's field the counter starts at."
+            ),
+        ))
+        .item(item(
+            "{n:02}",
+            words!(rename_bulk_two_digits = "The same, two digits at least"),
+        ))
+        .item(item(
+            "{n:03}",
+            words!(rename_bulk_three_digits = "The same, three digits at least"),
+        )),
+    )
+    .group(
+        Group::new(
+            words!(
+                rename_bulk_when_modified = "When it was modified",
+                note = "A heading of the template's reference: the placeholders of the item's modification date."
+            ),
         )
-        .group(
-            Group::new("Signs")
-                .item(Said::new("{{", "A brace itself ({{ and }})")),
+        .item(item("{date}", words!(rename_bulk_day = "Its day")))
+        .item(item(
+            "{date:%Y%m%d}",
+            words!(rename_bulk_day_without_dashes = "Its day, without dashes"),
+        ))
+        .item(item(
+            "{date:%Y-%m-%d_%H%M}",
+            words!(rename_bulk_day_and_time = "Its day and time"),
+        ))
+        .item(item(
+            "{date:%d.%m.%Y}",
+            words!(rename_bulk_day_first = "Its day, the day first"),
+        ))
+        .item(item(
+            "{date:%B %Y}",
+            words!(rename_bulk_month_and_year = "Its month and year"),
+        ))
+        .note(
+            words!(
+                rename_bulk_date_note = "Inside { $placeholder }: %Y the year, %m the month, %d the day, %H the hour, %M the minute, %S the second, %B the month's name (%b short), %A the day's, %j the day of the year. In this system's time zone.",
+                placeholder = "{date:…}",
+                note = "The placeholder and the signs after % are the template's, as written."
+            ),
+        ),
+    )
+    .group(
+        Group::new(
+            words!(
+                rename_bulk_signs = "Signs",
+                note = "A heading of the template's reference: what is written for a sign itself."
+            ),
         )
+        .item(Said::new(
+            "{{",
+            words!(
+                rename_bulk_brace = "A brace itself ({ $open } and { $close })",
+                open = "{{",
+                close = "}}",
+                note = "The arguments are what is written in the template for each brace, as written."
+            ),
+        )),
+    )
 }
 
 /// Patterns and their replacements for what names often need, each
 /// giving what it makes of `first` when it changes it.
 fn recipes(first: Option<&Item>) -> Group {
     let name = first.and_then(|first| first.name.to_str());
-    // Written as its pattern; what it is for, then what replaces the
-    // pattern (`shown`, words where the replacement is a space), said.
-    let recipe = |task: &str, pattern: &str, replacement: &str, shown: Option<&str>| {
-        let says = match shown {
-            Some(shown) => format!("{task} → {shown}"),
-            None => task.to_owned(),
-        };
+    // Written as its pattern; what it is for, and what replaces the
+    // pattern where it says, said.
+    let recipe = |says: Words, pattern: &str, replacement: &str| {
         let said = Said::new(pattern, says)
             .fills("regex", pattern)
             .fills("replacement", replacement);
@@ -858,44 +1108,71 @@ fn recipes(first: Option<&Item>) -> Group {
             None => said,
         }
     };
-    Group::new("Recipes")
-        .item(recipe("Spaces to underscores", r"\s+", "_", Some("_")))
-        .item(recipe("Underscores to spaces", "_", " ", Some("a space")))
-        .item(recipe(
-            "Several spaces to one",
-            r"\s{2,}",
-            " ",
-            Some("a space"),
-        ))
-        .item(recipe("Take away a start (IMG_)", "^IMG_", "", None))
-        // A pair of one kind, holding no other: never a bracket left
-        // alone (`Song).mp3`), nor `(a]` taken.
-        .item(recipe(
-            "Take away what is in brackets",
-            r"\s*(?:\([^()]*\)|\[[^\[\]]*\])",
-            "",
-            None,
-        ))
-        // A dot only with a separator after it: `001.jpg` keeps its
-        // extension.
-        .item(recipe(
-            "Take away the numbers at the start",
-            r"^\d+(?:[\s_-]+|\.[\s_-]+)",
-            "",
-            None,
-        ))
-        .item(recipe(
-            "Swap two parts around “ - ”",
-            r"^(.+) - (.+?)(\.[^.]+)?$",
-            "$2 - $1$3",
-            Some("$2 - $1$3"),
-        ))
-        .item(recipe(
-            "One extension for JPEG pictures",
-            r"(?i)\.jpe?g$",
-            ".jpg",
-            Some(".jpg"),
-        ))
+    // What follows an arrow is what replaces the pattern, as written where
+    // it is a sign.
+    Group::new(
+        words!(
+            rename_bulk_recipes = "Recipes",
+            note = "A heading of the regex's and the replacement's reference: patterns that do what names often need."
+        ),
+    )
+    .item(recipe(
+        words!(
+            rename_bulk_recipe_spaces = "Spaces to underscores → { $shown }",
+            shown = "_"
+        ),
+        r"\s+",
+        "_",
+    ))
+    .item(recipe(
+        words!(rename_bulk_recipe_underscores = "Underscores to spaces → a space"),
+        "_",
+        " ",
+    ))
+    .item(recipe(
+        words!(rename_bulk_recipe_one_space = "Several spaces to one → a space"),
+        r"\s{2,}",
+        " ",
+    ))
+    .item(recipe(
+        words!(
+            rename_bulk_recipe_start = "Take away a start (IMG_)",
+            note = "IMG_ is the start of a name a camera gives, as written."
+        ),
+        "^IMG_",
+        "",
+    ))
+    // A pair of one kind, holding no other: never a bracket left
+    // alone (`Song).mp3`), nor `(a]` taken.
+    .item(recipe(
+        words!(rename_bulk_recipe_brackets = "Take away what is in brackets"),
+        r"\s*(?:\([^()]*\)|\[[^\[\]]*\])",
+        "",
+    ))
+    // A dot only with a separator after it: `001.jpg` keeps its
+    // extension.
+    .item(recipe(
+        words!(rename_bulk_recipe_numbers = "Take away the numbers at the start"),
+        r"^\d+(?:[\s_-]+|\.[\s_-]+)",
+        "",
+    ))
+    .item(recipe(
+        words!(
+            rename_bulk_recipe_swap = "Swap two parts around “ - ” → { $shown }",
+            shown = "$2 - $1$3",
+            note = "Two parts of a name on either side of a dash between spaces; what follows the arrow is the replacement, as written."
+        ),
+        r"^(.+) - (.+?)(\.[^.]+)?$",
+        "$2 - $1$3",
+    ))
+    .item(recipe(
+        words!(
+            rename_bulk_recipe_jpeg = "One extension for JPEG pictures → { $shown }",
+            shown = ".jpg"
+        ),
+        r"(?i)\.jpe?g$",
+        ".jpg",
+    ))
 }
 
 /// The first of the items `a` names, or of the pane's selection.
@@ -943,12 +1220,15 @@ impl Plugin for RenameBulkPlugin {
         app.commands.register::<Args, _>(
             ID, Topic::Files,
             "rename_bulk",
-            "Rename several from a template",
-            "Rename the selection, or the entries given, from a template, regex, and case rule (plan)",
+            words!(rename_bulk_command = "Rename several from a template"),
+            words!(
+                rename_bulk_command_description = "Rename the selection, or the entries given, from a template, regex, and case rule (plan)",
+                note = "Read by agents and in F1's list of actions."
+            ),
             |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
         )
         .plans();
-        app.commands.register::<PreviewArgs, _>(ID, Topic::Files, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given; each with where the regex `matched` in the old name and what it `put` in the new one, byte ranges), how many there are (`count`), and the first item's name (`first`), which the regex's and the replacement's references work on alone", |a, app| {
+        app.commands.register::<PreviewArgs, _>(ID, Topic::Files, "rename_bulk.preview", words!(rename_bulk_preview = "Preview bulk rename"), words!(rename_bulk_preview_description = "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given; each with where the regex `matched` in the old name and what it `put` in the new one, byte ranges), how many there are (`count`), and the first item's name (`first`), which the regex's and the replacement's references work on alone", note = "Read by agents: the words in backticks are the answer's fields and the command's arguments, as written."), |a, app| {
             let r = plan_bulk(app, a.args)?;
             // Display names for the dialog; the plan itself is lossless.
             let renames: Vec<(&Path, &Path)> = r
@@ -981,7 +1261,7 @@ impl Plugin for RenameBulkPlugin {
             Ok(Outcome::Value(serde_json::json!({ "renames": shown, "count": renames.len(), "first": first })))
         })
         .data();
-        app.commands.register::<ReferenceArgs, _>(ID, Topic::Files, "rename_bulk.reference", "Say what a bulk rename's field takes", "Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives the first of the entries given or selected under the rename as given, and recipes filling the regex and its replacement", |a, app| {
+        app.commands.register::<ReferenceArgs, _>(ID, Topic::Files, "rename_bulk.reference", words!(rename_bulk_reference = "Say what a bulk rename's field takes"), words!(rename_bulk_reference_description = "Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives the first of the entries given or selected under the rename as given, and recipes filling the regex and its replacement", note = "Read by agents: `field` is the argument, and template, regex and replacement its values, as written."), |a, app| {
             let spec = a.args.spec.clone();
             let first = first_item(app, a.args)?;
             Ok(Outcome::Value(serde_json::to_value(reference(a.field, first.as_ref(), &spec))?))
@@ -1010,7 +1290,10 @@ impl Plugin for RenameBulkPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Rename Several…",
+                words!(
+                    rename_bulk_menu = "Rename Several…",
+                    note = "A context menu item: renames the files selected together, from a template."
+                ),
                 "rename",
                 201,
                 Invocation::new("ui.rename_bulk_prompt"),
@@ -1305,7 +1588,7 @@ mod tests {
             let item = group
                 .items
                 .iter()
-                .find(|item| item.says.starts_with(says))
+                .find(|item| item.says.english().starts_with(says))
                 .unwrap_or_else(|| panic!("no recipe {says}"));
             let spec = RenameSpec {
                 regex: item.fills.get("regex").cloned(),
@@ -1372,7 +1655,7 @@ mod tests {
             group
                 .items
                 .iter()
-                .find(|item| item.says.starts_with(says))
+                .find(|item| item.says.english().starts_with(says))
                 .and_then(|item| item.gives.clone())
         };
         assert_eq!(

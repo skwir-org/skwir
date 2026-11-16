@@ -29,6 +29,8 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem, MenuSource};
 use skwir_core::scheduler::{Lane, Priority, on_window_thread};
+use skwir_core::words;
+use skwir_core::words::{Kind, Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
 use skwir_platform::mime::{self, Mime};
@@ -121,10 +123,8 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     // files named by path are read without it.
     let (targets, places, lifetime): (Vec<Target>, Vec<Location>, _) = if args.entries.is_empty() {
         let ws = app.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        anyhow::ensure!(p.open.is_some(), "pane has no location");
+        let p = ws.pane(pane).ok_or_else(no_such_pane)?;
+        anyhow::ensure!(p.open.is_some(), no_location());
         let ids: Vec<EntryId> = if args.ids.is_empty() {
             p.selection.iter().collect()
         } else {
@@ -163,7 +163,29 @@ fn pane_lifetime(app: &App, pane: PaneId) -> anyhow::Result<CancelToken> {
         .read()
         .pane(pane)
         .map(skwir_core::workspace::Pane::location_lifetime)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))
+        .ok_or_else(no_such_pane)
+}
+
+/// The error of a pane asked that is not there (closed meanwhile).
+fn no_such_pane() -> anyhow::Error {
+    words!(
+        open_with_no_such_pane = "no such pane",
+        note = "An error an agent or a script reads: the pane it named is not there."
+    )
+    .into()
+}
+
+/// The error of a pane that shows nothing yet.
+fn no_location() -> Words {
+    words!(
+        open_with_no_location = "pane has no location",
+        note = "An error an agent or a script reads: the pane shows no folder yet."
+    )
+}
+
+/// The error of nothing to open: nothing selected, or what was named is gone.
+fn nothing_to_open() -> Words {
+    words!(open_with_nothing_to_open = "nothing to open")
 }
 
 fn open_targets(
@@ -179,7 +201,7 @@ fn open_targets(
     }
     if targets.is_empty() {
         let [place] = places else {
-            anyhow::bail!("nothing to open");
+            anyhow::bail!(nothing_to_open());
         };
         app.navigate(pane, place)?;
         return Ok(Outcome::Done);
@@ -223,7 +245,7 @@ fn open_targets(
                         }
                         match app.navigate(pane, &Location::from_path(&path)) {
                             Ok(()) => app.wake(),
-                            Err(e) => app.notify(NotifyLevel::Error, format!("{e:#}")),
+                            Err(e) => app.notify(NotifyLevel::Error, Words::of_error(e)),
                         }
                     } else {
                         launch_defaults(&app, &cache, targets, &cancel);
@@ -266,14 +288,13 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>, cancel: &Can
             .as_ref()
             .is_some_and(|e| e.opens().is_special())
         {
-            let name = target
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
             app.notify(
                 NotifyLevel::Info,
-                format!("“{name}” is not a file: skwir does not open it"),
+                words!(
+                    open_with_not_a_file = "{ $name } is not a file: skwir does not open it",
+                    name = Name::of(&target.path),
+                    note = "Said when a pipe, a socket or a device is opened: what would wait or act is never opened."
+                ),
             );
             continue;
         }
@@ -297,7 +318,7 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>, cancel: &Can
                 .map(|path| skwir_platform::open::open_path(path)),
         );
     for e in started.filter_map(Result::err) {
-        app.notify(NotifyLevel::Error, format!("{e:#}"));
+        app.notify(NotifyLevel::Error, Words::of_error(e));
     }
 }
 
@@ -305,9 +326,7 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>, cancel: &Can
 /// there is exactly one, otherwise the pane's current directory.
 fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
     let ws = app.workspace.read();
-    let p = ws
-        .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+    let p = ws.pane(pane).ok_or_else(no_such_pane)?;
     if p.selection.len() == 1
         && let Some(id) = p.selection.iter().next()
         && let Some(e) = p.entry(id)
@@ -335,7 +354,7 @@ fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
             app.lifetime().child(),
             move |app| {
                 if let Err(e) = skwir_platform::open::open_terminal(&dir) {
-                    app.notify(NotifyLevel::Error, format!("{e:#}"));
+                    app.notify(NotifyLevel::Error, Words::of_error(e));
                 }
             },
         );
@@ -490,17 +509,24 @@ fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
         .iter()
         .find(|(_, _, is_default)| *is_default)
         .map(|(application, _, _)| *application);
+    // A menu's answer reaches the window as text (JSON): its words are
+    // said here, in the window's language.
+    let said = |words: Words| Words::as_written(words.say());
     let mut items = match default {
         Some(default) => vec![MenuItem::new(
             owner,
-            format!("Open With {}", default.name),
+            said(words!(
+                open_with_open_with_app = "Open With { $app }",
+                app = default.name.clone(),
+                note = "A menu item opening the selection with its default application, named as its desktop entry names it."
+            )),
             "open",
             0,
             open_with(default),
         )],
         None if owner == "context" => vec![MenuItem::new(
             owner,
-            "Open",
+            said(open_title()),
             "open",
             0,
             Invocation::new("open"),
@@ -519,7 +545,7 @@ fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
             .map(|(application, _, _)| {
                 MenuItem::new(
                     owner,
-                    application.name.clone(),
+                    Words::as_written(application.name.clone()),
                     "",
                     5,
                     open_with(application),
@@ -531,11 +557,28 @@ fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     // selection; the preview's names its files.
     if owner == "preview" {
         items.push(
-            MenuItem::new(owner, "Other Application…", "open", 8, choose(&target))
+            MenuItem::new(owner, said(other_application()), "open", 8, choose(&target))
                 .submenu(OPEN_WITH),
         );
     }
     Ok(Outcome::Value(serde_json::json!({ "items": items })))
+}
+
+/// The menu item that opens the selection: enters a folder, or opens the
+/// files with their default applications.
+fn open_title() -> Words {
+    words!(
+        open_with_open = "Open",
+        note = "A menu item and the action's name: enters the folder, or opens the files with their default applications."
+    )
+}
+
+/// The last item of the Open With submenu, which opens the chooser.
+fn other_application() -> Words {
+    words!(
+        open_with_other_application = "Other Application…",
+        note = "The last item of the Open With submenu: chooses among every application."
+    )
 }
 
 /// The context menu's submenu of what opens the selection (ADR-099), which
@@ -635,10 +678,8 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
         return Ok((pane, Vec::new(), named_targets(args.entries)?));
     }
     let ws = app.workspace.read();
-    let p = ws
-        .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    anyhow::ensure!(p.open.is_some(), "pane has no location");
+    let p = ws.pane(pane).ok_or_else(no_such_pane)?;
+    anyhow::ensure!(p.open.is_some(), no_location());
     let ids: Vec<EntryId> = if args.ids.is_empty() {
         p.selection.iter().collect()
     } else {
@@ -659,7 +700,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
         });
     }
     drop(ws);
-    anyhow::ensure!(!targets.is_empty(), "nothing to open");
+    anyhow::ensure!(!targets.is_empty(), nothing_to_open());
     Ok((pane, named, targets))
 }
 
@@ -673,8 +714,13 @@ fn named_targets(entries: Vec<skwir_core::op::EntryArg>) -> anyhow::Result<Vec<T
     skwir_core::op::EntryArg::refs(entries)?
         .into_iter()
         .map(|r| {
-            let entry = skwir_core::fs::stat_path(&r.path)
-                .ok_or_else(|| anyhow::anyhow!("{} does not exist", r.path.display()))?;
+            let entry = skwir_core::fs::stat_path(&r.path).ok_or_else(|| {
+                anyhow::Error::from(words!(
+                    open_with_does_not_exist = "{ $path } does not exist",
+                    path = r.path.display().to_string(),
+                    note = "An error: the path named is not there."
+                ))
+            })?;
             Ok(Target {
                 path: r.path,
                 kind: entry.kind,
@@ -763,7 +809,10 @@ fn prepare_targets<T: Send + 'static>(
             let resolved: anyhow::Result<Vec<_>> = entries
                 .into_iter()
                 .map(|entry| {
-                    anyhow::ensure!(!cancel.is_cancelled(), "opening cancelled");
+                    anyhow::ensure!(
+                        !cancel.is_cancelled(),
+                        words!(open_with_cancelled = "opening cancelled")
+                    );
                     prepare(entry)
                 })
                 .collect();
@@ -797,7 +846,7 @@ fn prepare_targets<T: Send + 'static>(
                     done(app, targets.into_iter().map(|(_, target)| target).collect())
                 };
                 if let Err(error) = result {
-                    app.notify(NotifyLevel::Error, format!("{error:#}"));
+                    app.notify(NotifyLevel::Error, Words::of_error(error));
                 }
                 app.wake();
             }
@@ -855,7 +904,7 @@ struct Choice {
     detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
-    section: &'static str,
+    section: String,
     command: Invocation,
 }
 
@@ -952,25 +1001,40 @@ fn properties(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Out
         {
             let m = one.mime();
             let catalog = catalog(cache);
-            let value = catalog
-                .default_for_lineage(&mime::lineage(&m))
-                .map_or_else(|| "No application".to_owned(), |a| a.name.clone());
+            let value = catalog.default_for_lineage(&mime::lineage(&m)).map_or_else(
+                || {
+                    words!(
+                        open_with_no_application = "No application",
+                        note = "Properties' Opens with, for a file no application opens."
+                    )
+                    .say()
+                },
+                |a| a.name.clone(),
+            );
+            // Said here: the window reads Properties' rows and the
+            // chooser's arguments as text.
             let change = Invocation::with_args(
                 "ui.choose",
                 &serde_json::json!({
-                    "title": format!("Open {} with", files_of(m.as_str())),
-                    "placeholder": "Search applications",
+                    "title": open_files_with(m.as_str()).say(),
+                    "placeholder": search_applications().say(),
                     "source": {
                         "name": "open_with.choices",
                         "args": { "entries": named, "defaults": true },
                     },
                 }),
             );
+            let change_words = words!(
+                open_with_change = "Change…",
+                note = "A link after Properties' Opens with: chooses another application for the file's type."
+            )
+            .say();
             vec![serde_json::json!({
+                // The window's own group, met by its name.
                 "group": "General",
-                "label": "Opens with",
+                "label": opens_with().say(),
                 "value": value,
-                "actions": [{ "words": "Change…", "command": change }],
+                "actions": [{ "words": change_words, "command": change }],
             })]
         }
         _ => Vec::new(),
@@ -997,20 +1061,21 @@ fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outco
     let catalog = catalog(cache);
     if defaults {
         let [only] = types.as_slice() else {
-            anyhow::bail!("A default application is chosen for one type of file at a time");
+            anyhow::bail!(one_type_at_a_time());
         };
         return Ok(Outcome::Value(default_choices(&catalog, only)));
     }
-    let title = match targets.as_slice() {
-        [one] => {
-            let name = one
-                .path
-                .file_name()
-                .map_or_else(|| one.path.to_string_lossy(), |n| n.to_string_lossy());
-            format!("Open “{name}” with")
-        }
-        many => format!("Open {} items with", many.len()),
-    };
+    let title = words!(
+        open_with_chooser_title = "{ $count ->
+            [1] Open { $name } with
+           *[other] Open { $count } items with
+        }",
+        count = targets.len(),
+        name = targets
+            .first()
+            .map_or_else(|| Name(String::new()), |one| Name::of(&one.path)),
+        note = "The title of the chooser of applications: the file it opens, or how many."
+    );
     let choices: Vec<Choice> = rank(&catalog, &types)
         .into_iter()
         .map(|(application, fit, is_default)| {
@@ -1023,32 +1088,52 @@ fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outco
                 args["ids"] = serde_json::to_value(&ids).unwrap_or_default();
             }
             let detail = match (is_default, &application.generic_name) {
-                (true, Some(generic)) => Some(format!("Default · {generic}")),
-                (true, None) => Some("Default".to_owned()),
+                (true, Some(generic)) => Some(
+                    words!(
+                        open_with_default_generic = "Default · { $generic }",
+                        generic = generic.clone(),
+                        note = "Under an application's name in the chooser: it is the default, and what it is, as its desktop entry says (Image Viewer)."
+                    )
+                    .say(),
+                ),
+                (true, None) => Some(
+                    words!(
+                        open_with_default = "Default",
+                        note = "Under an application's name in the chooser: it is the default."
+                    )
+                    .say(),
+                ),
                 (false, generic) => generic.clone(),
             };
             Choice {
                 title: application.name.clone(),
                 detail,
                 icon: application.icon.clone(),
-                section: match fit {
-                    Some(Fit::Exact) => "Recommended",
-                    Some(Fit::Related) => "Related",
-                    None => "Other applications",
-                },
+                section: section(fit).say(),
                 command: Invocation::with_args("open_with", &args),
             }
         })
         .collect();
+    // Said here: the chooser reads its answer as text.
     let mut answer = serde_json::json!({
-        "title": title,
-        "empty": "No applications found",
+        "title": title.say(),
+        "empty": no_applications().say(),
         "choices": choices,
     });
     // One type: the chosen application can become its default.
     if let [only] = types.as_slice() {
+        let (kind, of) = files_of(only.as_str());
         answer["option"] = serde_json::json!({
-            "title": format!("Always use for {}", files_of(only.as_str())),
+            "title": words!(
+                open_with_always_use = "Always use for { $kind ->
+                    [folder] folders
+                   *[file] { $description } files
+                }",
+                kind = kind,
+                description = of,
+                note = "A check in the chooser: makes the application chosen the default for the type. The type is as the system describes it (PNG image, plain text document)."
+            )
+            .say(),
             "field": "set_default",
         });
     }
@@ -1063,14 +1148,16 @@ fn default_choices(catalog: &Catalog, only: &Mime) -> serde_json::Value {
         .map(|(application, fit, is_default)| Choice {
             title: application.name.clone(),
             detail: is_default
-                .then(|| "Now".to_owned())
+                .then(|| {
+                    words!(
+                        open_with_now = "Now",
+                        note = "Under an application's name in the chooser of a default: the one that opens the type now."
+                    )
+                    .say()
+                })
                 .or_else(|| application.generic_name.clone()),
             icon: application.icon.clone(),
-            section: match fit {
-                Some(Fit::Exact) => "Recommended",
-                Some(Fit::Related) => "Related",
-                None => "Other applications",
-            },
+            section: section(fit).say(),
             command: Invocation::with_args(
                 "open_with.set_default",
                 &serde_json::json!({ "mime": only.as_str(), "app": application.id }),
@@ -1078,10 +1165,71 @@ fn default_choices(catalog: &Catalog, only: &Mime) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({
-        "title": format!("Open {} with", files_of(only.as_str())),
-        "empty": "No applications found",
+        "title": open_files_with(only.as_str()).say(),
+        "empty": no_applications().say(),
         "choices": choices,
     })
+}
+
+/// The section of the chooser an application of this fit is listed in.
+fn section(fit: Option<Fit>) -> Words {
+    match fit {
+        Some(Fit::Exact) => words!(
+            open_with_recommended = "Recommended",
+            note = "A heading in the chooser of applications: those that open the type itself."
+        ),
+        Some(Fit::Related) => words!(
+            open_with_related = "Related",
+            note = "A heading in the chooser of applications: those that open a type it is a kind of (plain text, for a C source)."
+        ),
+        None => words!(
+            open_with_other_applications = "Other applications",
+            note = "A heading in the chooser of applications: every other application."
+        ),
+    }
+}
+
+/// What the chooser says when no application matches what is typed.
+fn no_applications() -> Words {
+    words!(open_with_no_applications = "No applications found")
+}
+
+/// The chooser's field, before anything is typed.
+fn search_applications() -> Words {
+    words!(
+        open_with_search_applications = "Search applications",
+        note = "The chooser's field, before anything is typed in it."
+    )
+}
+
+/// Properties' row naming the application a file's type opens with.
+fn opens_with() -> Words {
+    words!(
+        open_with_opens_with = "Opens with",
+        note = "A row of Properties: the application the file's type opens with."
+    )
+}
+
+/// The chooser's title for the files of `mime`.
+fn open_files_with(mime: &str) -> Words {
+    let (kind, of) = files_of(mime);
+    words!(
+        open_with_open_files_with = "Open { $kind ->
+            [folder] folders
+           *[file] { $description } files
+        } with",
+        kind = kind,
+        description = of,
+        note = "The title of the chooser of a default application for a type, as the system describes it (PNG image, plain text document)."
+    )
+}
+
+/// The error of a default asked for files of several types.
+fn one_type_at_a_time() -> Words {
+    words!(
+        open_with_one_type_at_a_time =
+            "A default application is chosen for one type of file at a time"
+    )
 }
 
 fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
@@ -1105,10 +1253,7 @@ fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Ou
             let mut types = targets.iter().map(Target::mime);
             let first = types.next().expect("targets are never empty");
             if types.any(|m| m != first) {
-                app.notify(
-                    NotifyLevel::Error,
-                    "A default application is chosen for one type of file at a time",
-                );
+                app.notify(NotifyLevel::Error, one_type_at_a_time());
             } else {
                 make_default(app, &cache, first.as_str(), &id);
             }
@@ -1120,10 +1265,10 @@ fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Ou
         }
         let result = match catalog.get(&id) {
             Some(application) => application.launch(&paths),
-            None => Err(anyhow::anyhow!("no application “{id}” is installed")),
+            None => Err(not_installed(&id).into()),
         };
         if let Err(e) = result {
-            app.notify(NotifyLevel::Error, format!("{e:#}"));
+            app.notify(NotifyLevel::Error, Words::of_error(e));
         }
         Ok(())
     };
@@ -1168,16 +1313,18 @@ fn spawn_in(
         });
 }
 
-/// How a sentence names the files of `mime`: `folders`, `PNG image files`,
-/// `plain text document files`.
-fn files_of(mime: &str) -> String {
+/// How a sentence names the files of `mime`, for its selector: folders
+/// (`Kind::Folder`), or files of a type (`Kind::File`) and the type as the
+/// system describes it (`PNG image`, `plain text document`), else its name.
+fn files_of(mime: &str) -> (Kind, String) {
     if mime == "inode/directory" {
-        return "folders".to_owned();
+        return (Kind::Folder, String::new());
     }
     let Some(description) = Mime(mime.to_owned()).description() else {
-        return format!("{mime} files");
+        return (Kind::File, mime.to_owned());
     };
-    // Lower the first letter of a word, not of an acronym ("PNG").
+    // Lower the first letter of a word, not of an acronym ("PNG"): the
+    // system's description, said inside a sentence.
     let mut chars = description.chars();
     let lowered = match (chars.next(), chars.next()) {
         (Some(first), Some(second)) if !second.is_uppercase() => first
@@ -1186,32 +1333,43 @@ fn files_of(mime: &str) -> String {
             .collect(),
         _ => description,
     };
-    format!("{lowered} files")
+    (Kind::File, lowered)
+}
+
+/// The error of an application asked by an ID no desktop entry has.
+fn not_installed(id: &str) -> Words {
+    words!(
+        open_with_not_installed = "no application “{ $id }” is installed",
+        id = id.to_owned(),
+        note = "An error: the application's desktop file ID (org.gnome.Loupe.desktop) is as it was given."
+    )
+}
+
+/// Why a default application was not changed: `error`, said after.
+fn not_changed(error: anyhow::Error) -> Words {
+    words!(
+        open_with_not_changed = "The default application was not changed: { $error }",
+        error = error
+    )
 }
 
 /// Make `id` the default for `mime` in the user's lists, and say so with
 /// Undo. On a worker.
 fn make_default(app: &App, cache: &Cached, mime: &str, id: &str) {
     if catalog(cache).get(id).is_none() {
-        app.notify(
-            NotifyLevel::Error,
-            format!("no application “{id}” is installed"),
-        );
+        app.notify(NotifyLevel::Error, not_installed(id));
         return;
     }
     match AssociationEdit::make_default_in(&cache.user_lists(), mime, id) {
         Ok(edit) => apply_edit(app, cache, &edit, false),
-        Err(e) => app.notify(
-            NotifyLevel::Error,
-            format!("The default application was not changed: {e:#}"),
-        ),
+        Err(e) => app.notify(NotifyLevel::Error, not_changed(e)),
     }
 }
 
 /// Write `edit` and say what opens its type now, with the way back: Undo,
 /// or Redo when this was an undo. On a worker.
 fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
-    let files = files_of(&edit.mime);
+    let (kind, of) = files_of(&edit.mime);
     match skwir_platform::apps::edit_associations(edit) {
         Ok(changed) => {
             let catalog = catalog(cache);
@@ -1222,19 +1380,42 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
             // the desktop's own choice.
             let now = catalog.default_for_lineage(&mime::lineage(&Mime(edit.mime.clone())));
             let text = match (now, &changed) {
-                (Some(application), Some(_)) => format!("{} now opens {files}", application.name),
-                (Some(application), None) => format!("{} already opens {files}", application.name),
-                (None, _) => format!("No application opens {files}"),
+                (Some(application), Some(_)) => words!(
+                    open_with_now_opens = "{ $app } now opens { $kind ->
+                        [folder] folders
+                       *[file] { $description } files
+                    }",
+                    app = application.name.clone(),
+                    kind = kind,
+                    description = of,
+                    note = "Said once a default application is chosen, with Undo. The application is named as its desktop entry names it; the type as the system describes it (PNG image)."
+                ),
+                (Some(application), None) => words!(
+                    open_with_already_opens = "{ $app } already opens { $kind ->
+                        [folder] folders
+                       *[file] { $description } files
+                    }",
+                    app = application.name.clone(),
+                    kind = kind,
+                    description = of,
+                    note = "Said when the application chosen as the default was it already."
+                ),
+                (None, _) => words!(
+                    open_with_none_opens = "No application opens { $kind ->
+                        [folder] folders
+                       *[file] { $description } files
+                    }",
+                    kind = kind,
+                    description = of,
+                    note = "Said once a default is taken back and nothing opens the type."
+                ),
             };
             match changed {
                 Some(inverse) => app.notify_undoable(text, undo, edit_invocation(&inverse, !undo)),
                 None => app.notify(NotifyLevel::Info, text),
             }
         }
-        Err(e) => app.notify(
-            NotifyLevel::Error,
-            format!("The default application was not changed: {e:#}"),
-        ),
+        Err(e) => app.notify(NotifyLevel::Error, not_changed(e)),
     }
 }
 
@@ -1258,8 +1439,12 @@ fn choose(args: &serde_json::Value) -> Invocation {
     Invocation::with_args(
         "ui.choose",
         &serde_json::json!({
-            "title": "Open with",
-            "placeholder": "Search applications",
+            "title": words!(
+                open_with_chooser = "Open with",
+                note = "The title of the chooser of applications for the selection."
+            )
+            .say(),
+            "placeholder": search_applications().say(),
             "source": { "name": "open_with.choices", "args": args },
         }),
     )
@@ -1293,26 +1478,35 @@ impl Plugin for OpenWithPlugin {
         app.commands.register::<OpenArgs, _>(
             ID, Topic::Go,
             "open",
-            "Open",
-            "Enter the selected directory, or open the selected files with the default application of their type, as the desktop's lists choose it (the one the context menu names)",
+            open_title(),
+            words!(
+                open_with_open_description = "Enter the selected directory, or open the selected files with the default application of their type, as the desktop's lists choose it (the one the context menu names)",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |a, app| open(a, &cache, app),
         );
         app.commands.register::<PaneArg, _>(
             ID, Topic::Terminal,
             "open_terminal",
-            "Open terminal here",
-            "Open a terminal in the selected folder, else the folder shown, else (in a search) the folder holding the selection",
+            words!(open_with_open_terminal = "Open terminal here"),
+            words!(
+                open_with_open_terminal_description = "Open a terminal in the selected folder, else the folder shown, else (in a search) the folder holding the selection"
+            ),
             |a, app| open_terminal(a.pane, app),
         );
         app.registry.menus.add(
             ID,
-            MenuItem::new("context", "Open", "open", 0, Invocation::new("open")).when("selection"),
+            MenuItem::new("context", open_title(), "open", 0, Invocation::new("open"))
+                .when("selection"),
         );
         app.registry.menus.add(
             ID,
             MenuItem::new(
                 "context",
-                "Open Terminal Here",
+                words!(
+                    open_with_open_terminal_menu = "Open Terminal Here",
+                    note = "A context menu item: opens a terminal in the folder."
+                ),
                 "command",
                 10,
                 Invocation::new("open_terminal"),
@@ -1323,8 +1517,11 @@ impl Plugin for OpenWithPlugin {
         app.commands.register::<ChoicesArgs, _>(
             ID, Topic::Files,
             "open_with.choices",
-            "List applications for the selection",
-            "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them; with `defaults`, each with the `open_with.set_default` that makes it the default for their type",
+            words!(open_with_choices = "List applications for the selection"),
+            words!(
+                open_with_choices_description = "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them; with `defaults`, each with the `open_with.set_default` that makes it the default for their type",
+                note = "Read by agents: the words in backticks are the command's arguments and commands, as written."
+            ),
             move |a, app| choices(a, &cache, app),
         )
         .data();
@@ -1332,8 +1529,10 @@ impl Plugin for OpenWithPlugin {
         app.commands.register::<TargetArgs, _>(
             ID, Topic::Files,
             "open_with.properties",
-            "Name the default application in Properties",
-            "Properties' Opens with row for one file: the application its type opens with, and the way to change it",
+            words!(open_with_properties = "Name the default application in Properties"),
+            words!(
+                open_with_properties_description = "Properties' Opens with row for one file: the application its type opens with, and the way to change it"
+            ),
             move |a, app| properties(a, &cache, app),
         )
         .data();
@@ -1347,8 +1546,9 @@ impl Plugin for OpenWithPlugin {
                 typed: true,
                 // Every file has one, "No application" where none opens it.
                 places: vec![skwir_core::registry::PropertyPlace {
+                    // The window's own group, met by its name.
                     group: "General".into(),
-                    label: "Opens with".into(),
+                    label: opens_with().say(),
                     folded: false,
                     of: skwir_core::registry::PlaceOf::Files,
                 }],
@@ -1358,16 +1558,20 @@ impl Plugin for OpenWithPlugin {
         app.commands.register::<OpenWithArgs, _>(
             ID, Topic::Files,
             "open_with",
-            "Open with an application by desktop ID",
-            "Open the selected entries (or the pane's folder with `here`) with the application whose desktop file ID is `app`",
+            words!(open_with_open_with = "Open with an application by desktop ID"),
+            words!(
+                open_with_open_with_description = "Open the selected entries (or the pane's folder with `here`) with the application whose desktop file ID is `app`"
+            ),
             move |a, app| open_with(a, &cache, app),
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<SetDefaultArgs, _>(
             ID, Topic::Files,
             "open_with.set_default",
-            "Set the default application for a type",
-            "Make the application whose desktop file ID is `app` the default for the MIME type `mime`, in the user's mimeapps.list; the notification offers Undo",
+            words!(open_with_set_default = "Set the default application for a type"),
+            words!(
+                open_with_set_default_description = "Make the application whose desktop file ID is `app` the default for the MIME type `mime`, in the user's mimeapps.list; the notification offers Undo"
+            ),
             move |a, app| {
                 let cache = Arc::clone(&cache);
                 spawn(app, "open-with.default", move |app| {
@@ -1380,14 +1584,19 @@ impl Plugin for OpenWithPlugin {
         app.commands.register::<EditArgs, _>(
             ID, Topic::Files,
             "open_with.edit_associations",
-            "Rewrite a type's default application lines",
-            "Set the lines a MIME type has in one mimeapps.list (default, added and removed associations); what Undo and Redo of a default run",
+            words!(open_with_edit_associations = "Rewrite a type's default application lines"),
+            words!(
+                open_with_edit_associations_description = "Set the lines a MIME type has in one mimeapps.list (default, added and removed associations); what Undo and Redo of a default run"
+            ),
             move |a, app| {
                 // Only the user's own lists: the arguments name a file.
                 anyhow::ensure!(
                     cache.user_lists().contains(&a.file.0),
-                    "{} is not one of your lists of default applications",
-                    a.file.display()
+                    words!(
+                        open_with_not_your_list = "{ $path } is not one of your lists of default applications",
+                        path = a.file.display().to_string(),
+                        note = "An error: the file named is not one of the user's mimeapps.list files."
+                    )
                 );
                 let edit = AssociationEdit {
                     file: a.file.into_inner(),
@@ -1410,7 +1619,7 @@ impl Plugin for OpenWithPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Other Application…",
+                other_application(),
                 "open",
                 8,
                 choose(&serde_json::json!({})),
@@ -1422,7 +1631,7 @@ impl Plugin for OpenWithPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Other Application…",
+                other_application(),
                 "open",
                 8,
                 choose(&serde_json::json!({ "here": true })),
@@ -1435,8 +1644,10 @@ impl Plugin for OpenWithPlugin {
         app.commands.register::<MenuArgs, _>(
             ID, Topic::Files,
             "open_with.menu",
-            "Name the default application in a menu",
-            "A menu's Open for the selection, or for the files named (the preview's: `entries`, as the pane lists them), naming the default application they share, and the other applications for their types in its Open With submenu; no items when their types or the applications are not known yet. Answers from memory",
+            words!(open_with_menu = "Name the default application in a menu"),
+            words!(
+                open_with_menu_description = "A menu's Open for the selection, or for the files named (the preview's: `entries`, as the pane lists them), naming the default application they share, and the other applications for their types in its Open With submenu; no items when their types or the applications are not known yet. Answers from memory"
+            ),
             move |a, app| menu(&a, &cache, app),
         )
         .data();
@@ -1612,7 +1823,7 @@ mod tests {
         assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
         let messages = app.take_notifications();
         assert_eq!(messages.len(), 1);
-        assert!(messages[0].text.contains("does not exist"));
+        assert!(messages[0].text.english().contains("does not exist"));
     }
 
     #[test]
@@ -2198,7 +2409,7 @@ mod tests {
         assert_eq!(recorded(&out), [target.display().to_string()]);
         assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
         assert_eq!(
-            next_notification(&app).text,
+            next_notification(&app).text.english(),
             "Viewer now opens PNG image files"
         );
     }
@@ -2238,7 +2449,7 @@ mod tests {
             .collect();
         assert_eq!(recorded(&out), want, "one run with every file, as %F says");
         assert_eq!(
-            next_notification(&app).text,
+            next_notification(&app).text.english(),
             "Viewer now opens PNG image files",
             "and it is their default from now on"
         );
@@ -2280,9 +2491,9 @@ mod tests {
         ))
         .unwrap();
         let said = next_notification(&app);
-        assert_eq!(said.text, "Editor now opens PNG image files");
+        assert_eq!(said.text.english(), "Editor now opens PNG image files");
         let undo = said.action.expect("Undo");
-        assert_eq!(undo.label, "Undo");
+        assert_eq!(undo.label.english(), "Undo");
         let written = std::fs::read_to_string(&list).unwrap();
         assert!(written.starts_with(
             "# kept\n[Default Applications]\nimage/png=editor.desktop;\ntext/plain=editor.desktop\n"
@@ -2291,9 +2502,9 @@ mod tests {
 
         app.dispatch(&undo.command).unwrap();
         let said = next_notification(&app);
-        assert_eq!(said.text, "Viewer now opens PNG image files");
+        assert_eq!(said.text.english(), "Viewer now opens PNG image files");
         let redo = said.action.expect("Redo");
-        assert_eq!(redo.label, "Redo");
+        assert_eq!(redo.label.english(), "Redo");
         assert_eq!(
             std::fs::read_to_string(&list).unwrap(),
             before.clone() + "\n[Added Associations]\n",
@@ -2302,8 +2513,8 @@ mod tests {
 
         app.dispatch(&redo.command).unwrap();
         let said = next_notification(&app);
-        assert_eq!(said.text, "Editor now opens PNG image files");
-        assert_eq!(said.action.expect("Undo again").label, "Undo");
+        assert_eq!(said.text.english(), "Editor now opens PNG image files");
+        assert_eq!(said.action.expect("Undo again").label.english(), "Undo");
     }
 
     /// Properties' Opens with: the application a file's type opens with,
@@ -2413,7 +2624,7 @@ mod tests {
         app.dispatch(&serde_json::from_value(editor["command"].clone()).unwrap())
             .unwrap();
         assert_eq!(
-            next_notification(&app).text,
+            next_notification(&app).text.english(),
             "Editor now opens PNG image files"
         );
         assert!(
@@ -2457,12 +2668,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_type_is_named_as_a_sentence_names_it() {
-        assert_eq!(files_of("inode/directory"), "folders");
-        assert_eq!(files_of("image/png"), "PNG image files");
-        assert_eq!(files_of("text/plain"), "plain text document files");
+        let said = |mime: &str| open_files_with(mime).english();
+        assert_eq!(said("inode/directory"), "Open folders with");
+        assert_eq!(said("image/png"), "Open PNG image files with");
+        assert_eq!(said("text/plain"), "Open plain text document files with");
         assert_eq!(
-            files_of("application/x-no-such-type"),
-            "application/x-no-such-type files"
+            said("application/x-no-such-type"),
+            "Open application/x-no-such-type files with"
         );
     }
 }

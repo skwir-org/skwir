@@ -31,6 +31,8 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{PlaceOf, PropertyPlace, PropertySource};
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::Name;
 
 const ID: &str = "checksums";
 /// Checksums kept, the oldest let go past it.
@@ -224,7 +226,13 @@ struct Named {
 impl Named {
     /// The one file `entries` name.
     fn of(mut entries: Vec<EntryArg>) -> anyhow::Result<Named> {
-        anyhow::ensure!(entries.len() == 1, "name one file");
+        anyhow::ensure!(
+            entries.len() == 1,
+            words!(
+                checksums_name_one_file = "name one file",
+                note = "An error an agent reads: the command was given several files, or none."
+            )
+        );
         let (id, path) = match entries.remove(0) {
             EntryArg::Path(path) => (None, path.into_inner()),
             EntryArg::Named { id, path } => (id, path.into_inner()),
@@ -360,25 +368,56 @@ impl ChecksumsPlugin {
                 let gist = done.map(|digest| format!("{} {}", algorithm.label(), short(digest)));
                 let (value, actions) = if let Some(digest) = done {
                     let said = serde_json::json!({ "text": digest, "what": algorithm.label() });
+                    let copy = words!(
+                        checksums_copy = "Copy",
+                        note = "A link after a checksum in Properties: puts it on the clipboard."
+                    )
+                    .say();
+                    let compare = words!(
+                        checksums_compare = "Compare with copied",
+                        note = "A link after a checksum in Properties: says whether the checksum on the clipboard is the same."
+                    )
+                    .say();
                     (
                         digest.clone(),
                         serde_json::json!([
-                            { "words": "Copy", "command": { "name": "ui.copy_text", "args": said } },
-                            { "words": "Compare with copied", "command": { "name": "ui.compare_copied", "args": said } },
+                            { "words": copy, "command": { "name": "ui.copy_text", "args": said } },
+                            { "words": compare, "command": { "name": "ui.compare_copied", "args": said } },
                         ]),
                     )
                 } else if let Some(reading) = computing {
+                    let doing = if reading {
+                        words!(
+                            checksums_computing = "Computing…",
+                            note = "A checksum's value in Properties while the file is read."
+                        )
+                    } else {
+                        words!(
+                            checksums_waiting = "Waiting…",
+                            note = "A checksum's value in Properties while it waits for another file's to be computed."
+                        )
+                    };
+                    let stop = words!(
+                        checksums_stop_link = "Stop",
+                        note = "A link after a checksum being computed, in Properties."
+                    )
+                    .say();
                     (
-                        if reading { "Computing…" } else { "Waiting…" }.to_owned(),
+                        doing.say(),
                         serde_json::json!([
-                            { "words": "Stop", "command": { "name": "checksums.stop", "args": asked } },
+                            { "words": stop, "command": { "name": "checksums.stop", "args": asked } },
                         ]),
                     )
                 } else {
+                    let compute = words!(
+                        checksums_compute_link = "Compute",
+                        note = "A link in Properties: computes the checksum named on its row."
+                    )
+                    .say();
                     (
                         String::new(),
                         serde_json::json!([
-                            { "words": "Compute", "command": { "name": "checksums.compute", "args": asked } },
+                            { "words": compute, "command": { "name": "checksums.compute", "args": asked } },
                         ]),
                     )
                 };
@@ -405,18 +444,27 @@ impl ChecksumsPlugin {
         if !skwir_core::scheduler::on_window_thread() {
             // A script's or an agent's thread: it waits here.
             let file = Named::of(args.entries)?;
-            let version = Version::of(&file.path)
-                .ok_or_else(|| anyhow::anyhow!("{} is not a file", file.path.display()))?;
+            let version = Version::of(&file.path).ok_or_else(|| {
+                anyhow::Error::from(words!(
+                    checksums_not_a_file = "{ $path } is not a file",
+                    path = file.path.display().to_string(),
+                    note = "An error an agent reads; the path is the file's, as it was given."
+                ))
+            })?;
             if let Some(digest) = self.state.lock().done.get(&(version, algorithm)) {
                 return Ok(answer(algorithm, digest));
             }
             let digest = match read(&file.path, version, &[algorithm], app.lifetime())? {
                 Hashed::Done(_, mut digests) => digests.remove(0),
-                Hashed::Stopped => anyhow::bail!("stopped"),
-                Hashed::Changed => anyhow::bail!(
-                    "{} changed while it was read: ask again",
-                    file.path.display()
-                ),
+                Hashed::Stopped => anyhow::bail!(words!(
+                    checksums_stopped = "stopped",
+                    note = "An error an agent reads: the checksum was stopped before it was done."
+                )),
+                Hashed::Changed => anyhow::bail!(words!(
+                    checksums_changed_ask_again = "{ $path } changed while it was read: ask again",
+                    path = file.path.display().to_string(),
+                    note = "An error an agent reads; the path is the file's, as it was given."
+                )),
             };
             Self::keep(&mut self.state.lock(), version, algorithm, digest.clone());
             self.changed(app);
@@ -565,12 +613,12 @@ impl ChecksumsPlugin {
                     read(&file.path, version, &wanted, &cancel).map(|read| (wanted, read))
                 }
             }
-            None => Err(anyhow::anyhow!("it is not a file")),
+            None => Err(words!(
+                checksums_it_is_not_a_file = "it is not a file",
+                note = "Why a checksum could not be computed: what was named is a folder, a pipe or a device, or is gone."
+            )
+            .into()),
         };
-        let name = file.path.file_name().map_or_else(
-            || file.path.display().to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        );
         {
             let mut state = self.state.lock();
             // What is still wanted once read: Stop takes one out. Turned
@@ -595,11 +643,21 @@ impl ChecksumsPlugin {
                 }
                 Ok((_, Hashed::Changed)) => app.notify(
                     skwir_core::app::NotifyLevel::Warning,
-                    format!("“{name}” changed while its checksum was computed: compute it again"),
+                    words!(
+                        checksums_changed_while_computed =
+                            "{ $name } changed while its checksum was computed: compute it again",
+                        name = Name::of(&file.path)
+                    ),
                 ),
                 Err(e) if !cancel.is_cancelled() => app.notify(
                     skwir_core::app::NotifyLevel::Error,
-                    format!("The checksum of “{name}” could not be computed: {e:#}"),
+                    words!(
+                        checksums_could_not_compute =
+                            "The checksum of { $name } could not be computed: { $error }",
+                        name = Name::of(&file.path),
+                        error = e,
+                        note = "The error says why, as the system or Skwir said it."
+                    ),
                 ),
                 // Stopped, or failing because it was.
                 Ok((_, Hashed::Stopped)) | Err(_) => {}
@@ -683,8 +741,11 @@ impl Plugin for ChecksumsPlugin {
             .register::<EntryArgs, _>(
                 ID, Topic::Files,
                 "checksums.properties",
-                "Checksums in Properties",
-                "Properties' rows for one file: each checksum computed, being computed, or the way to compute it",
+                words!(checksums_properties = "Checksums in Properties"),
+                words!(
+                    checksums_properties_description = "Properties' rows for one file: each checksum computed, being computed, or the way to compute it",
+                    note = "Read by agents and in F1's list of actions."
+                ),
                 move |a, _| t.properties(a),
             )
             .data();
@@ -693,8 +754,11 @@ impl Plugin for ChecksumsPlugin {
             .register::<ComputeArgs, _>(
                 ID, Topic::Files,
                 "checksums.compute",
-                "Compute a checksum",
-                "The `sha256`, `md5` or `blake3` checksum of a file, read whole: answered where it is called, or from the window shown in Properties when done",
+                words!(checksums_compute = "Compute a checksum"),
+                words!(
+                    checksums_compute_description = "The `sha256`, `md5` or `blake3` checksum of a file, read whole: answered where it is called, or from the window shown in Properties when done",
+                    note = "Read by agents and in F1's list of actions; `sha256`, `md5` and `blake3` are the values the command takes, as written."
+                ),
                 move |a, app| t.start(a, app),
             )
             .data();
@@ -704,8 +768,8 @@ impl Plugin for ChecksumsPlugin {
                 ID,
                 Topic::Files,
                 "checksums.stop",
-                "Stop computing a checksum",
-                "Stop computing a file's checksum",
+                words!(checksums_stop = "Stop computing a checksum"),
+                words!(checksums_stop_description = "Stop computing a file's checksum"),
                 move |a, app| t.stop(a, app),
             )
             .data();
@@ -1026,7 +1090,7 @@ mod tests {
         assert!(
             app.take_notifications()
                 .iter()
-                .any(|n| n.text.contains("not there")),
+                .any(|n| n.text.english().contains("not there")),
             "the missing file is said"
         );
     }

@@ -35,6 +35,8 @@ use skwir_core::plugin::{AppRef, Plugin};
 use skwir_core::registry::MenuItem;
 use skwir_core::scheduler::Priority;
 use skwir_core::shrink::{Job, Kind, Quality};
+use skwir_core::words;
+use skwir_core::words::{Name, Size, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::process::Metered;
 
@@ -133,7 +135,11 @@ impl Plugin for ShrinkPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
             skwir_platform::print_job::WORKER
-                .requirement("Making smaller copies")
+                .requirement(words!(
+                    shrink_requirement = "Making smaller copies",
+                    note =
+                        "What stops working without the print helper program, on the Plugins page."
+                ))
                 .required(),
         ]
     }
@@ -156,8 +162,11 @@ impl Plugin for ShrinkPlugin {
                 ID,
                 Topic::Files,
                 "shrink.reduce",
-                "Make Smaller Copies",
-                "Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300 dpi), screen (1920, 150 dpi) or small (1280, 96 dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)",
+                words!(shrink_reduce = "Make Smaller Copies"),
+                words!(
+                    shrink_reduce_description = "Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300 dpi), screen (1920, 150 dpi) or small (1280, 96 dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)",
+                    note = "Read by agents and in F1's list of actions: the words in backticks are the command's arguments, and lossless, print, screen and small the values `quality` takes, as written."
+                ),
                 move |a, app| Ok(Outcome::Plan(plan_of(app, &a, &made)?)),
             )
             .plans();
@@ -167,12 +176,14 @@ impl Plugin for ShrinkPlugin {
                 ID,
                 Topic::Files,
                 "shrink.reduce_ask",
-                "Reduce Size…",
-                "Ask how small, then make a smaller copy of each picture and PDF beside it, as `shrink.reduce` does",
+                reduce_size(),
+                words!(
+                    shrink_reduce_ask_description = "Ask how small, then make a smaller copy of each picture and PDF beside it, as `shrink.reduce` does"
+                ),
                 move |a, app| {
                     match resolved(app, a) {
                         Ok(args) => ask_first(app, args, held.clone()),
-                        Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                        Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
                     }
                     Ok(Outcome::Done)
                 },
@@ -190,12 +201,20 @@ impl Plugin for ShrinkPlugin {
     }
 }
 
+/// Reduce Size…: the dialog's command, and its menu items.
+fn reduce_size() -> Words {
+    words!(
+        shrink_reduce_size = "Reduce Size…",
+        note = "A menu item, in the Compress submenu and the preview's menu: asks how small, then makes smaller copies of pictures and PDFs."
+    )
+}
+
 fn menus(app: &App) {
     app.registry.menus.add(
         ID,
         MenuItem::new(
             "context",
-            "Reduce Size…",
+            reduce_size(),
             "archive",
             325,
             Invocation::new("shrink.reduce_ask"),
@@ -207,7 +226,7 @@ fn menus(app: &App) {
         ID,
         MenuItem::new(
             PREVIEW,
-            "Reduce Size…",
+            reduce_size(),
             "archive",
             345,
             Invocation::new("ui.preview_invoke").with("command", "shrink.reduce_ask"),
@@ -245,7 +264,7 @@ fn ask_first(app: &App, args: ReduceArgs, held: Held) {
             let Some(app) = weak.upgrade() else { return };
             let cancel = app.lifetime().child();
             if let Err(error) = asked_then(&app, args, &held, &cancel) {
-                app.notify(NotifyLevel::Error, format!("{error:#}"));
+                app.notify(NotifyLevel::Error, Words::of_error(error));
             }
             app.wake();
         },
@@ -260,10 +279,10 @@ fn asked_then(
 ) -> anyhow::Result<()> {
     let files = typed(app, &args)?;
     let offers = dialog::Offers {
-        what: match files.as_slice() {
-            [(entry, _)] => format!("“{}”", display_name(&entry.path)),
-            many => format!("{} files", many.len()),
-        },
+        count: files.len(),
+        first: files
+            .first()
+            .map_or_else(String::new, |(entry, _)| display_name(&entry.path)),
         pictures: files.iter().any(|(_, kind)| *kind == Kind::Picture),
         pdfs: files.iter().any(|(_, kind)| *kind == Kind::Pdf),
         only_jpegs: files.iter().all(|(entry, _)| is_jpeg(&entry.path)),
@@ -287,7 +306,10 @@ fn asked_then(
 /// neither is refused, named.
 fn typed(app: &App, args: &ReduceArgs) -> anyhow::Result<Vec<(EntryRef, Kind)>> {
     let typed = app.targets_typed(args.pane, args.entries.clone())?;
-    anyhow::ensure!(!typed.is_empty(), "Nothing to make smaller");
+    anyhow::ensure!(
+        !typed.is_empty(),
+        words!(shrink_nothing = "Nothing to make smaller")
+    );
     typed
         .into_iter()
         .map(|(entry, name)| {
@@ -295,10 +317,11 @@ fn typed(app: &App, args: &ReduceArgs) -> anyhow::Result<Vec<(EntryRef, Kind)>> 
             let kind = match mime.as_ref().map(skwir_platform::mime::Mime::as_str) {
                 Some("application/pdf") => Kind::Pdf,
                 Some("image/jpeg" | "image/png") => Kind::Picture,
-                _ => anyhow::bail!(
-                    "“{}” is neither a JPEG or PNG picture nor a PDF",
-                    display_name(&entry.path)
-                ),
+                _ => anyhow::bail!(words!(
+                    shrink_not_a_picture = "{ $name } is neither a JPEG or PNG picture nor a PDF",
+                    name = Name::of(&entry.path),
+                    note = "JPEG, PNG and PDF are the formats' names, as written."
+                )),
             };
             Ok((entry, kind))
         })
@@ -321,23 +344,38 @@ fn plan_of(app: &App, args: &ReduceArgs, reach: &AppRef) -> anyhow::Result<Plan>
         .as_deref()
         .map(str::trim)
         .filter(|text| !text.is_empty())
-        .map(|text| dialog::size(text).map_err(anyhow::Error::msg))
+        .map(|text| dialog::size(text).map_err(anyhow::Error::from))
         .transpose()?;
     anyhow::ensure!(
         at_most.is_none() || args.quality != Quality::Lossless,
-        "Lossless re-encodes nothing, so it cannot bring a copy under a size: ask `at_most` with print, screen or small"
+        words!(
+            shrink_lossless_at_most = "Lossless re-encodes nothing, so it cannot bring a copy under a size: ask `at_most` with print, screen or small",
+            note = "An error an agent or a script reads: `at_most` is the command's argument, and print, screen and small the values its `quality` takes, as written."
+        )
     );
-    let mut plan = Plan::new(match files.as_slice() {
-        [(entry, _)] => format!("make a smaller copy of “{}”", display_name(&entry.path)),
-        many => format!("make smaller copies of {} files", many.len()),
-    });
+    let mut plan = Plan::new(words!(
+        shrink_plan = "{ $count ->
+            [1] make a smaller copy of { $name }
+           *[other] make smaller copies of { $count } files
+        }",
+        count = files.len(),
+        name = files
+            .first()
+            .map_or_else(|| Name(String::new()), |(entry, _)| Name::of(&entry.path)),
+        note = "A plan's title, in its review, Activity and the History: the file, or how many. Begins in lower case: said inside other words too."
+    ));
     for (entry, kind) in files {
         let dest_dir = match &args.dest {
             Some(PathArg(dest)) => dest.clone(),
             None => entry
                 .path
                 .parent()
-                .context("The file is in no folder")?
+                .with_context(|| {
+                    words!(
+                        shrink_no_folder = "The file is in no folder",
+                        note = "An error an agent or a script reads: the file named is a root."
+                    )
+                })?
                 .to_owned(),
         };
         let name = copy_name(&entry.path, kind);
@@ -461,45 +499,65 @@ impl op::Effect for ShrinkCopy {
     }
 
     fn describe(&self) -> Change {
-        let what = display_name(&self.entry.path);
-        let copy = display_name(&self.target());
+        let what = || Name::of(&self.entry.path);
+        let copy = || Name::of(&self.target());
         Change::Create {
             path: self.target(),
             directory: false,
             words: Some(Tenses {
-                will: format!("make “{copy}”, a smaller copy of “{what}”").into(),
-                did: format!("made “{copy}”, a smaller copy of “{what}”").into(),
-                already: Some(format!("“{copy}” was already a smaller copy of “{what}”").into()),
+                will: words!(
+                    shrink_make = "make { $copy }, a smaller copy of { $file }",
+                    copy = copy(),
+                    file = what(),
+                    note = "A step of a plan, in its review: the copy's name, then its file's. Begins in lower case."
+                ),
+                did: words!(
+                    shrink_made = "made { $copy }, a smaller copy of { $file }",
+                    copy = copy(),
+                    file = what(),
+                    note = "What a step did, said once its plan ran. Begins in lower case."
+                ),
+                already: Some(words!(
+                    shrink_already = "{ $copy } was already a smaller copy of { $file }",
+                    copy = copy(),
+                    file = what()
+                )),
             }),
         }
     }
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        let conflict = |reason: String| StepStatus::Conflict { reason };
+        // Said here: a conflict's reason is text (`StepStatus`).
+        let conflict = |reason: Words| StepStatus::Conflict {
+            reason: reason.say(),
+        };
         if let Err(invalid) = op::valid_file_name(&self.name) {
-            return conflict(invalid.to_string());
+            return conflict(Words::of_error(invalid));
         }
         if let Err(error) = self.entry.resolve() {
-            return conflict(error.to_string());
+            return conflict(Words::as_written(error.to_string()));
         }
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
+            return conflict(words!(
+                shrink_not_a_folder = "{ $name } is not a folder",
+                name = Name::of(&self.dest_dir),
+                note = "Why a smaller copy is not made: where it goes is no folder."
             ));
         }
         // A copy is made aside and moved into place, which a folder that
         // takes only copies written in place (a camera) does not do.
         if !StepContext::stages_in(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” takes only copies written in place: no smaller copy is made there",
-                display_name(&self.dest_dir)
+            return conflict(words!(
+                shrink_in_place_only =
+                    "{ $name } takes only copies written in place: no smaller copy is made there",
+                name = Name::of(&self.dest_dir),
+                note = "Why a smaller copy is not made: the folder (a camera's) cannot take a file made aside and moved in."
             ));
         }
         if ctx.exists(&self.target()) {
-            return conflict(format!(
-                "“{}” is already there",
-                display_name(&self.target())
+            return conflict(words!(
+                shrink_already_there = "{ $name } is already there",
+                name = Name::of(&self.target())
             ));
         }
         StepStatus::Pending { reversible: true }
@@ -525,10 +583,12 @@ impl op::Effect for ShrinkCopy {
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let target = self.target();
-        let app = self
-            .app
-            .get()
-            .context("Smaller copies need the plugin on")?;
+        let app = self.app.get().with_context(|| {
+            words!(
+                shrink_plugin_off = "Smaller copies need the plugin on",
+                note = "Why a step of a plan made before was refused: the Smaller copies plugin was turned off since."
+            )
+        })?;
         let cancel = ctx.cancel_token();
         let source = self.entry.resolve()?;
         // Made in a folder of this machine's, in the lane of what it reads:
@@ -536,7 +596,12 @@ impl op::Effect for ShrinkCopy {
         // Skwir's cache, on a disk, holds it while it is made and checked
         // (a copy of a PDF may be gigabytes, which a temporary folder in
         // memory would hold in memory); the folder goes when it is done.
-        let work = work_folder(&app).context("A folder to make the copy in")?;
+        let work = work_folder(&app).with_context(|| {
+            words!(
+                shrink_work_folder = "A folder to make the copy in",
+                note = "What could not be made, before why: a folder in Skwir's cache."
+            )
+        })?;
         let job = Job {
             kind: self.kind.into(),
             input: source.clone(),
@@ -562,7 +627,12 @@ impl op::Effect for ShrinkCopy {
             ctx.gauge(),
         );
         let made = in_lane(&app, &source, "shrink", cancel, move || {
-            let app = weak.upgrade().context("Skwir is closing")?;
+            let app = weak.upgrade().with_context(|| {
+                words!(
+                    shrink_closing = "Skwir is closing",
+                    note = "Why a smaller copy was not made. Skwir is the program's name."
+                )
+            })?;
             // Its size announced, read here in its lane, so the window
             // shows the copy being made, with Cancel, however long it takes:
             // one file is one step, which shows nothing otherwise. The
@@ -591,27 +661,43 @@ impl op::Effect for ShrinkCopy {
             return Err(op::Cancelled.into());
         }
         let (copy, made) = made?;
-        let what = display_name(&self.entry.path);
+        // Said here: what a step says beside what it did is text. The
+        // helper's notes are as it wrote them.
+        let what = || Name::of(&self.entry.path);
         let Some(copy) = copy else {
             let why = match made.notes.first() {
-                Some(note) => format!("No smaller copy of “{what}” was made: {note}"),
+                Some(note) => words!(
+                    shrink_none_made_note = "No smaller copy of { $name } was made: { $said }",
+                    name = what(),
+                    said = note.clone(),
+                    note = "What follows the file's name is the helper's reason, as it wrote it."
+                ),
                 // Location and camera details go with a copy: none made,
                 // they stay, which is said, never left to be assumed.
-                None if self.strip && self.kind == KindArg::Picture => format!(
-                    "No smaller copy of “{what}” was made, so its location and camera details were not removed either"
+                None if self.strip && self.kind == KindArg::Picture => words!(
+                    shrink_none_made_strip = "No smaller copy of { $name } was made, so its location and camera details were not removed either",
+                    name = what()
                 ),
-                None => format!("“{what}” is as small as it gets already: no copy was made"),
+                None => words!(
+                    shrink_as_small = "{ $name } is as small as it gets already: no copy was made",
+                    name = what()
+                ),
             };
-            return Err(op::Unneeded(why).into());
+            return Err(op::Unneeded(why.say()).into());
         };
         if made.met == Some(false) {
-            ctx.say(format!(
-                "“{what}” could not be brought under the size asked: its smallest copy is {}",
-                sized(made.after)
-            ));
+            ctx.say(not_under(&self.entry.path, made.after).say());
         }
         for note in made.notes {
-            ctx.say(format!("“{what}”: {note}"));
+            ctx.say(
+                words!(
+                    shrink_note = "{ $name }: { $said }",
+                    name = what(),
+                    said = note,
+                    note = "What the helper said of a file as it made its smaller copy, as it wrote it."
+                )
+                .say(),
+            );
         }
         ctx.check_cancelled()?;
         let staging = ctx.stage(&self.dest_dir)?;
@@ -624,11 +710,13 @@ impl op::Effect for ShrinkCopy {
             staging.place(&staged, &target).with_context(|| {
                 skwir_core::op::Couldnt::new(
                     &target,
-                    format!(
-                        "“{}” could not be placed in “{}”",
-                        display_name(&target),
-                        display_name(&self.dest_dir)
-                    ),
+                    words!(
+                        shrink_not_placed = "{ $name } could not be placed in { $folder }",
+                        name = Name::of(&target),
+                        folder = Name::of(&self.dest_dir),
+                        note = "A smaller copy could not be put in place; why follows."
+                    )
+                    .say(),
                 )
             })
         });
@@ -639,8 +727,12 @@ impl op::Effect for ShrinkCopy {
             return Err(op::Cancelled.into());
         }
         result?;
-        let made = EntryRef::from_path(&target)
-            .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
+        let made = EntryRef::from_path(&target).with_context(|| {
+            words!(
+                shrink_went_missing = "{ $name } went missing as it was made",
+                name = Name::of(&target)
+            )
+        })?;
         // Undone to the trash, as a copy is: it may have been changed since.
         Ok(Some(Box::new(op::Trash { entry: made })))
     }
@@ -661,9 +753,16 @@ fn copied(mut from: std::fs::File, to: &Path) -> std::io::Result<()> {
     out.sync_all()
 }
 
-/// `bytes` said as a size, as every size is (`fs::size_said`): 1.2 MB.
-fn sized(bytes: u64) -> String {
-    skwir_core::fs::size_said(bytes)
+/// What a step says of `file` whose smallest copy, `bytes`, is over the
+/// size asked: kept all the same.
+fn not_under(file: &Path, bytes: u64) -> Words {
+    words!(
+        shrink_not_under =
+            "{ $name } could not be brought under the size asked: its smallest copy is { $size }",
+        name = Name::of(file),
+        size = Size(bytes),
+        note = "Said once a plan made smaller copies: the copy of this file is kept, larger than asked."
+    )
 }
 
 /// `work` run in the lane of `path` (its remote's, the shared one
@@ -691,7 +790,7 @@ fn in_lane<T: Send + 'static>(
         match heard.recv_timeout(Duration::from_millis(100)) {
             Ok(result) => return result,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !cancel.is_cancelled() => {}
-            Err(_) => anyhow::bail!("Making the copy was cancelled"),
+            Err(_) => anyhow::bail!(words!(shrink_cancelled = "Making the copy was cancelled")),
         }
     }
 }
@@ -721,8 +820,9 @@ mod tests {
 
     #[test]
     fn sizes_are_said_as_people_read_them() {
-        assert_eq!(sized(1_234_567), "1.2 MB");
-        assert_eq!(sized(640_400), "640.4 kB");
-        assert_eq!(sized(512), "512 B");
+        let said = |bytes| not_under(Path::new("/example/a.pdf"), bytes).english();
+        assert!(said(1_234_567).ends_with(" 1.2 MB"), "{}", said(1_234_567));
+        assert!(said(640_400).ends_with(" 640.4 kB"), "{}", said(640_400));
+        assert!(said(512).ends_with(" 512 B"), "{}", said(512));
     }
 }

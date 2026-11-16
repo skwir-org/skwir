@@ -26,6 +26,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{Entry, EntryId, Value, keys};
 use skwir_core::location::Location;
 use skwir_core::print::Part;
+use skwir_core::words;
 use skwir_core::workspace::PaneId;
 
 /// A pane's listing, made: what it is a listing of, and its table.
@@ -44,8 +45,11 @@ type Shown = Vec<(Entry, usize, Option<PathBuf>)>;
 pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::Result<Listed> {
     let (location, filter, mut shown): (Location, Option<String>, Shown) = {
         let ws = app.workspace.read();
-        let pane = ws.pane(pane).context("No such pane")?;
-        let location = pane.location().cloned().context("The pane shows nothing")?;
+        let pane = ws.pane(pane).with_context(crate::no_such_pane)?;
+        let location = pane
+            .location()
+            .cloned()
+            .with_context(crate::shows_nothing)?;
         let shown = pane
             .order()
             .iter()
@@ -63,13 +67,13 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
         for (lane, items) in skwir_core::fs::reach::by_lane(unread, |(_, path)| path.as_path()) {
             let (weak, token) = (app.weak(), cancel.clone());
             let found = crate::in_lane(app, lane, "print-listing", cancel, move || {
-                let app = weak.upgrade().context("Skwir is closing")?;
+                let app = weak.upgrade().with_context(crate::closing)?;
                 let mut found = Vec::new();
                 let finished =
                     skwir_core::fs::read_paths(&items, &app.metadata, &token, |entries, _| {
                         found.extend(entries);
                     });
-                anyhow::ensure!(finished, "Printing was cancelled");
+                anyhow::ensure!(finished, crate::cancelled());
                 Ok(found)
             })?;
             read.extend(found.into_iter().map(|entry| (entry.id, entry)));
@@ -116,10 +120,17 @@ fn title(app: &App, location: &Location, filter: Option<&str>) -> String {
     filtered(named, filter)
 }
 
-/// `named` with what filters it, as typed over it (`Pane::filter`).
+/// `named` with what filters it, as typed over it (`Pane::filter`), said
+/// in the user's language: the listing's title, and its PDF's name.
 pub(crate) fn filtered(named: String, filter: Option<&str>) -> String {
-    match filter.map(str::trim).filter(|words| !words.is_empty()) {
-        Some(words) => format!("{named}, filtered by {words}"),
+    match filter.map(str::trim).filter(|typed| !typed.is_empty()) {
+        Some(typed) => words!(
+            print_filtered = "{ $named }, filtered by { $filter }",
+            named = named,
+            filter = typed.to_owned(),
+            note = "The title of a listing printed: the folder's path or the place's name, then what filters it, as typed."
+        )
+        .say(),
         None => named,
     }
 }
@@ -136,16 +147,39 @@ struct Columns {
 impl Columns {
     /// Their names, in the list's order: the folder first after the name,
     /// then when it was deleted.
+    /// Said here: the table is text.
     fn names(self) -> Vec<String> {
-        let mut names = vec!["Name"];
+        let mut names = vec![words!(
+            print_column_name = "Name",
+            note = "A column's header in a printed listing."
+        )];
         if self.folder {
-            names.push("Folder");
+            names.push(words!(
+                print_column_folder = "Folder",
+                note = "A column's header in a printed listing: the folder each file is in."
+            ));
         }
         if self.deleted {
-            names.push("Deleted");
+            names.push(words!(
+                print_column_deleted = "Deleted",
+                note = "A column's header in a printed listing of the trash: when each file was put there."
+            ));
         }
-        names.extend(["Kind", "Size", "Modified"]);
-        names.into_iter().map(str::to_owned).collect()
+        names.extend([
+            words!(
+                print_column_kind = "Kind",
+                note = "A column's header in a printed listing: what each file is (PDF document, Folder…)."
+            ),
+            words!(
+                print_column_size = "Size",
+                note = "A column's header in a printed listing."
+            ),
+            words!(
+                print_column_modified = "Modified",
+                note = "A column's header in a printed listing: when each file was last changed."
+            ),
+        ]);
+        names.iter().map(skwir_core::words::Words::say).collect()
     }
 }
 
@@ -187,10 +221,22 @@ fn row(
             .metadata
             .value(keys::PLACE_KIND)
             .and_then(Value::as_str)
-            .unwrap_or("Place")
-            .to_owned()
+            .map_or_else(
+                || {
+                    words!(
+                        print_kind_place = "Place",
+                        note = "In a printed listing's Kind column: a place listed (a tag) that says no kind of its own."
+                    )
+                    .say()
+                },
+                str::to_owned,
+            )
     } else if entry.is_dir() {
-        "Folder".to_owned()
+        words!(
+            print_kind_folder = "Folder",
+            note = "In a printed listing's Kind column: what a folder is."
+        )
+        .say()
     } else {
         skwir_platform::mime::of_entry(entry)
             .and_then(|mime| mime.description())
@@ -227,11 +273,15 @@ fn when(value: Option<&Value>, zone: &jiff::tz::TimeZone) -> String {
 
 /// How many files a place holds, said.
 fn files(count: u64) -> String {
-    if count == 1 {
-        "1 file".to_owned()
-    } else {
-        format!("{count} files")
-    }
+    words!(
+        print_place_files = "{ $count ->
+            [one] { $count } file
+           *[other] { $count } files
+        }",
+        count = count,
+        note = "In a printed listing's Size column: how many files a place listed (a tag) holds."
+    )
+    .say()
 }
 
 #[cfg(test)]

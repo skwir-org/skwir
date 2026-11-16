@@ -25,15 +25,17 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::form::path::{save_folder, save_split};
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Mark, Picture, Values};
 use skwir_core::print::booklet::{self, PerSide};
+use skwir_core::words;
+use skwir_core::words::Words;
 
-use crate::Arrange;
+use crate::{Arrange, Printed};
 
 /// What the dialog may offer, known before it asks.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Offers {
     /// What is printed, as its title says it: “report.md”, 3 files, the
     /// listing of “letters”.
-    pub what: String,
+    pub what: Printed,
     /// The page the preview shows (from 1): Current page is offered.
     pub page: Option<u32>,
     /// Something is selected in the preview: Selection is offered.
@@ -56,10 +58,10 @@ pub(crate) struct Saved {
     pub folder: Option<PathBuf>,
     /// What that folder is, said under it in the list: "Beside it", "The
     /// folder listed".
-    pub said: String,
+    pub said: Words,
     /// Where a name typed with no folder goes, said under the field:
     /// "Beside it", "Beside each file…", "In “Documents”".
-    pub beside: String,
+    pub beside: Words,
     /// The folder another pane shows.
     pub other: Option<PathBuf>,
     /// The user's Documents.
@@ -91,7 +93,12 @@ pub(crate) struct Names {
 
 /// What Save as says while it holds a folder alone: several files saved a
 /// PDF each.
-const ALONE: &str = "Each PDF named after its file, in this folder";
+fn alone() -> Words {
+    words!(
+        print_alone = "Each PDF named after its file, in this folder",
+        note = "Under Save as, while it holds a folder alone: several files saved a PDF each."
+    )
+}
 
 /// What a name typed without it is given.
 const ENDING: &str = ".pdf";
@@ -362,7 +369,7 @@ fn into_folder(
     text: &str,
     saved: &Saved,
     is_folder: &dyn Fn(&Path) -> Option<bool>,
-) -> Result<Chosen, String> {
+) -> Result<Chosen, Words> {
     let typed = save_split(text.trim()).1;
     let folder = chosen.dest.clone().or_else(|| saved.folder.clone());
     if !typed.is_empty()
@@ -377,9 +384,10 @@ fn into_folder(
     if let Some(dest) = &chosen.dest
         && is_folder(dest) == Some(false)
     {
-        return Err(format!(
-            "Save as: there is no folder “{}”",
-            skwir_core::os_path::from_home(dest)
+        return Err(words!(
+            print_no_such_folder = "Save as: there is no folder “{ $path }”",
+            path = skwir_core::os_path::from_home(dest),
+            note = "Said in the dialog: the folder typed in the Save as field is none. The path is as typed, from ~ where it is the home's."
         ));
     }
     Ok(chosen)
@@ -387,7 +395,13 @@ fn into_folder(
 
 /// The dialog for `offers`, on the `last` choices where they are offered.
 fn form(offers: &Offers, last: &Remembered) -> Form {
-    let mut form = Form::new(format!("Print {}", offers.what), "Print…");
+    let print = || {
+        words!(
+            print_dialog_accept = "Print…",
+            note = "The dialog's button, a printer chosen: the system's dialog asks next."
+        )
+    };
+    let mut form = Form::new(crate::print_title(&offers.what), print());
     if let Some(count) = offers.count {
         form = form.intro(pages(count));
     }
@@ -398,30 +412,76 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
     form = form.field(
         Field::new(
             TO,
-            "To",
+            words!(
+                print_to = "To",
+                note =
+                    "A field of the Print dialog: where what is printed goes, a printer or a PDF."
+            ),
             Kind::Row {
                 choices: vec![
-                    Choice::new("printer", "Printer").accept("Print…"),
-                    Choice::new("pdf", "PDF").accept("Save"),
+                    Choice::new(
+                        "printer",
+                        words!(
+                            print_to_printer = "Printer",
+                            note = "A choice of the To field."
+                        ),
+                    )
+                    .accept(print()),
+                    Choice::new(
+                        "pdf",
+                        words!(
+                            print_to_pdf = "PDF",
+                            note = "A choice of the To field: saved as a PDF file."
+                        ),
+                    )
+                    .accept(words!(
+                        print_save = "Save",
+                        note = "The dialog's button, a PDF chosen: saves it."
+                    )),
                 ],
             },
         )
         .value(to),
     );
     form = form.field(save_as(offers));
-    let mut pages_offered = vec![Choice::new("all", "All")];
+    let mut pages_offered = vec![Choice::new(
+        "all",
+        words!(
+            print_pages_all = "All",
+            note = "A choice of the Pages field: every page."
+        ),
+    )];
     if let Some(page) = offers.page {
-        pages_offered.push(Choice::new("current", format!("Page {page}")));
+        pages_offered.push(Choice::new(
+            "current",
+            words!(
+                print_pages_current = "Page { $page }",
+                page = page,
+                note = "A choice of the Pages field: the page the preview shows, by its number."
+            ),
+        ));
     }
     if offers.selection {
-        pages_offered.push(Choice::new("selection", "Selection"));
+        pages_offered.push(Choice::new(
+            "selection",
+            words!(
+                print_pages_selection = "Selection",
+                note = "A choice of the Pages field: what is selected in the preview."
+            ),
+        ));
     }
-    pages_offered.push(Choice::new("ranges", "Pages…"));
+    pages_offered.push(Choice::new(
+        "ranges",
+        words!(
+            print_pages_ranges = "Pages…",
+            note = "A choice of the Pages field: the pages typed in the field it shows."
+        ),
+    ));
     form = form
         .field(
             Field::new(
                 PAGES,
-                "Pages",
+                pages_title(),
                 Kind::Row {
                     choices: pages_offered,
                 },
@@ -429,8 +489,12 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
             .value("all"),
         )
         .field(
-            Field::text(RANGES, "Pages to print")
-                .placeholder("From 1: 1-3, 7, 10- (to the end)")
+            Field::text(RANGES, pages_to_print())
+                .placeholder(words!(
+                    print_ranges_placeholder = "From 1: 1-3, 7, 10- (to the end)",
+                    note =
+                        "In the empty field of the pages to print: what may be typed, as written."
+                ))
                 .required()
                 .when(PAGES, &["ranges"]),
         );
@@ -442,18 +506,36 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
         return form.field(papers(&paper)).field(smaller(last.smaller));
     }
     let mut layouts = vec![
-        Choice::new("as_shown", "As shown")
-            .detail("Each page on a sheet")
-            .picture(as_shown()),
-        Choice::new("booklet", "Booklet")
-            .detail("Pages on both sides, folded")
-            .picture(folded()),
+        Choice::new(
+            "as_shown",
+            words!(
+                print_as_shown = "As shown",
+                note = "A card of the Layout field: each page as the preview shows it."
+            ),
+        )
+        .detail(words!(print_as_shown_detail = "Each page on a sheet"))
+        .picture(as_shown()),
+        Choice::new(
+            "booklet",
+            words!(
+                print_booklet = "Booklet",
+                note = "A card of the Layout field: pages laid out to be folded."
+            ),
+        )
+        .detail(words!(print_booklet_detail = "Pages on both sides, folded"))
+        .picture(folded()),
     ];
     if offers.sheet() {
         layouts.push(
-            Choice::new("contact_sheet", "Contact sheet")
-                .detail("The pictures, several to a page")
-                .picture(contact_sheet()),
+            Choice::new(
+                "contact_sheet",
+                words!(
+                    print_contact_sheet = "Contact sheet",
+                    note = "A card of the Layout field: the pictures among the files, small, several to a page."
+                ),
+            )
+            .detail(words!(print_contact_sheet_detail = "The pictures, several to a page"))
+            .picture(contact_sheet()),
         );
     }
     let layout = match last.layout {
@@ -469,23 +551,44 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
     let count = offers.count;
     let per_side = last.per_side.count().to_string();
     form = form
-        .field(Field::new(LAYOUT, "Layout", Kind::Row { choices: layouts }).value(layout))
+        .field(
+            Field::new(
+                LAYOUT,
+                words!(
+                    print_layout = "Layout",
+                    note = "A field of the Print dialog: how the pages are laid out."
+                ),
+                Kind::Row { choices: layouts },
+            )
+            .value(layout),
+        )
         .field(
             Field::new(
                 PER_SIDE,
-                "Pages a side",
+                words!(
+                    print_per_side_field = "Pages a side",
+                    note = "A field of the Print dialog: how many pages a booklet puts on each side of a sheet."
+                ),
                 Kind::Row {
                     choices: PerSide::ALL
                         .into_iter()
                         .map(|side| {
                             Choice::new(
                                 side.count().to_string(),
-                                format!("{} a side", side.count()),
+                                words!(
+                                    print_per_side_choice = "{ $count } a side",
+                                    count = side.count(),
+                                    note = "A card of the Pages a side field: this many pages on each side of a sheet."
+                                ),
                             )
                             .detail(match side {
-                                PerSide::Two => "Folded once",
-                                PerSide::Four => "Folded twice, its top cut",
-                                PerSide::Eight => "Folded three times, cut",
+                                PerSide::Two => words!(print_folded_once = "Folded once"),
+                                PerSide::Four => {
+                                    words!(print_folded_twice = "Folded twice, its top cut")
+                                }
+                                PerSide::Eight => {
+                                    words!(print_folded_three_times = "Folded three times, cut")
+                                }
                             })
                             .picture(per_side_picture(side))
                         })
@@ -498,21 +601,36 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
         .field(
             Field::new(
                 FOLD,
-                "Folded as",
+                words!(
+                    print_folded_as = "Folded as",
+                    note = "A field of the Print dialog: a booklet's sheets folded all together, or in sets."
+                ),
                 Kind::Row {
                     choices: vec![
-                        Choice::new("whole", "One booklet")
-                            .detail(count.map_or_else(
-                                || "Every sheet in one fold".to_owned(),
-                                |count| sheets_said(count.div_ceil(4)),
-                            ))
-                            .picture(fold_picture(count, None)),
-                        Choice::new("16", "Sets of 16 pages")
-                            .detail("4 sheets to a fold")
-                            .picture(fold_picture(count, Some(16))),
-                        Choice::new("32", "Sets of 32 pages")
-                            .detail("8 sheets to a fold")
-                            .picture(fold_picture(count, Some(32))),
+                        Choice::new(
+                            "whole",
+                            words!(
+                                print_one_booklet = "One booklet",
+                                note = "A card of the Folded as field: every sheet folded together."
+                            ),
+                        )
+                        .detail(count.map_or_else(
+                            || words!(print_every_sheet = "Every sheet in one fold"),
+                            |count| sheets_said(count.div_ceil(4)),
+                        ))
+                        .picture(fold_picture(count, None)),
+                        Choice::new(
+                            "16",
+                            words!(print_sets_of_16 = "Sets of 16 pages"),
+                        )
+                        .detail(words!(print_four_sheets = "4 sheets to a fold"))
+                        .picture(fold_picture(count, Some(16))),
+                        Choice::new(
+                            "32",
+                            words!(print_sets_of_32 = "Sets of 32 pages"),
+                        )
+                        .detail(words!(print_eight_sheets = "8 sheets to a fold"))
+                        .picture(fold_picture(count, Some(32))),
                     ],
                 },
             )
@@ -521,20 +639,33 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
             .when(PER_SIDE, &["2"]),
         )
         .field(
-            Field::new(TRIM, "Trim white margins", Kind::Toggle)
-                .help("Pages fit by their ink, all alike")
-                .value(last.trim.to_string())
-                .when(LAYOUT, &["booklet"]),
+            Field::new(
+                TRIM,
+                words!(
+                    print_trim = "Trim white margins",
+                    note = "A switch of the Print dialog, for a booklet."
+                ),
+                Kind::Toggle,
+            )
+            .help(words!(
+                print_trim_help = "Pages fit by their ink, all alike",
+                note = "Under the switch trimming a booklet's white margins: every page scaled alike, to fit what is printed on it."
+            ))
+            .value(last.trim.to_string())
+            .when(LAYOUT, &["booklet"]),
         );
     if offers.several() {
         form = form.field(
             Field::new(
                 TOGETHER,
-                "PDFs",
+                words!(
+                    print_pdfs = "PDFs",
+                    note = "A field of the Print dialog, several files saved as PDF: one each, or one of them all."
+                ),
                 Kind::Row {
                     choices: vec![
-                        Choice::new("each", "A PDF each"),
-                        Choice::new("one", "One PDF of them all"),
+                        Choice::new("each", words!(print_pdf_each = "A PDF each")),
+                        Choice::new("one", words!(print_pdf_one = "One PDF of them all")),
                     ],
                 },
             )
@@ -559,39 +690,64 @@ fn save_as(offers: &Offers) -> Field {
     let saved = &offers.saved;
     let mut folders = Vec::new();
     let mut offered: Vec<PathBuf> = Vec::new();
-    let mut offer = |folder: &Path, title: String, said: String, section: &str| {
+    let mut offer = |folder: &Path, title: String, said: Words, section: Words| {
         if offered.iter().any(|kept| kept == folder) {
             return;
         }
         offered.push(folder.to_owned());
         folders.push(
-            Choice::new(skwir_core::os_path::from_home(folder), title)
-                .detail(said)
-                .section(section),
+            Choice::new(
+                skwir_core::os_path::from_home(folder),
+                Words::as_written(title),
+            )
+            .detail(said)
+            .section(section),
         );
     };
-    let path = |folder: &Path| skwir_core::os_path::from_home(folder);
+    // A folder's path is said as written; its title is its name, or a
+    // place's as the sidebar says it.
+    let path = |folder: &Path| Words::as_written(skwir_core::os_path::from_home(folder));
+    let chosen_before = || {
+        words!(
+            print_chosen_before = "Chosen before",
+            note = "A heading of the folders Save as offers: those chosen for earlier PDFs."
+        )
+    };
+    let places = || {
+        words!(
+            print_places = "Places",
+            note = "A heading of the folders Save as offers: the sidebar's places and bookmarks."
+        )
+    };
     if let Some(folder) = &saved.folder {
-        offer(folder, folder_title(folder), saved.said.clone(), "");
+        offer(
+            folder,
+            folder_title(folder),
+            saved.said.clone(),
+            Words::default(),
+        );
     }
     if let Some(folder) = &saved.other {
         offer(
             folder,
             folder_title(folder),
-            "The other pane".to_owned(),
-            "",
+            words!(
+                print_other_pane = "The other pane",
+                note = "Under a folder Save as offers: the one the split's other pane shows."
+            ),
+            Words::default(),
         );
     }
     for folder in &saved.recent {
-        offer(folder, folder_title(folder), path(folder), "Chosen before");
+        offer(folder, folder_title(folder), path(folder), chosen_before());
     }
     for (title, folder) in &saved.places {
-        offer(folder, title.clone(), path(folder), "Places");
+        offer(folder, title.clone(), path(folder), places());
     }
     if saved.places.is_empty()
         && let Some(folder) = &saved.documents
     {
-        offer(folder, folder_title(folder), path(folder), "Places");
+        offer(folder, folder_title(folder), path(folder), places());
     }
     // The folder alone: the window adds the name the fields give.
     let value = saved
@@ -607,18 +763,45 @@ fn save_as(offers: &Offers) -> Field {
         });
     Field::new(
         SAVE_AS,
-        "Save as",
+        save_as_title(),
         Kind::Save {
             folders,
             names: names(offers),
             ending: ENDING.to_owned(),
-            alone: ALONE.to_owned(),
+            alone: alone(),
             beside: saved.beside.clone(),
         },
     )
-    .help("A folder from ~ or the top, then the name: Tab completes a folder")
+    .help(words!(
+        print_save_as_help = "A folder from ~ or the top, then the name: Tab completes a folder",
+        note = "Under the Save as field: a folder typed from the home folder (~) or from the top, then the PDF's name. Tab is the key."
+    ))
     .value(value)
     .when(TO, &["pdf"])
+}
+
+/// The Save as field, and what its refusals begin with.
+fn save_as_title() -> Words {
+    words!(
+        print_save_as = "Save as",
+        note = "A field of the Print dialog, a PDF chosen: its folder and name, in one line."
+    )
+}
+
+/// The Pages field.
+fn pages_title() -> Words {
+    words!(
+        print_pages = "Pages",
+        note = "A field of the Print dialog: which pages are printed."
+    )
+}
+
+/// The field of the pages typed, and what its refusals begin with.
+fn pages_to_print() -> Words {
+    words!(
+        print_pages_to_print = "Pages to print",
+        note = "A field of the Print dialog: the pages typed, from 1."
+    )
 }
 
 /// What the PDF is named by itself, by the layout chosen: of one PDF (a
@@ -668,7 +851,7 @@ fn target(
     text: &str,
     saved: &Saved,
     own: &str,
-) -> Result<(Option<PathBuf>, Option<OsString>), String> {
+) -> Result<(Option<PathBuf>, Option<OsString>), Words> {
     let text = text.trim();
     let (dir, name) = if own.is_empty() {
         (text, "")
@@ -683,9 +866,13 @@ fn target(
     let name = match name {
         "" => None,
         typed if typed == own => None,
-        typed => Some(
-            crate::pdf_named(OsStr::new(typed)).map_err(|refused| format!("Save as: {refused}"))?,
-        ),
+        typed => Some(crate::pdf_named(OsStr::new(typed)).map_err(|refused| {
+            words!(
+                print_save_as_refused = "Save as: { $why }",
+                why = refused,
+                note = "Said in the dialog: why the name typed in the Save as field is no file's."
+            )
+        })?),
     };
     let dest = folder.filter(|folder| saved.folder.as_deref() != Some(folder.as_path()));
     Ok((dest, name))
@@ -702,13 +889,20 @@ fn folder_title(folder: &Path) -> String {
 
 /// The folder `typed` names, as the window that completes it reads it
 /// (`form::path`): a whole path, or from `~`.
-fn folder_typed(typed: &str) -> Result<PathBuf, String> {
+fn folder_typed(typed: &str) -> Result<PathBuf, Words> {
     let home = skwir_core::os_path::home();
     if home.is_none() && typed.starts_with('~') {
-        return Err("Save as: there is no home folder for “~”".to_owned());
+        return Err(words!(
+            print_no_home = "Save as: there is no home folder for “~”",
+            note = "Said in the dialog: a folder typed from ~ where the user has no home folder."
+        ));
     }
     save_folder(typed, home.as_deref()).ok_or_else(|| {
-        format!("Save as: “{typed}” is no whole path: type it from the top, or from ~")
+        words!(
+            print_no_whole_path = "Save as: “{ $typed }” is no whole path: type it from the top, or from ~",
+            typed = typed.to_owned(),
+            note = "Said in the dialog: the folder typed, as typed, is neither from the top nor from the home folder (~)."
+        )
     })
 }
 
@@ -717,11 +911,14 @@ fn folder_typed(typed: &str) -> Result<PathBuf, String> {
 fn papers(chosen: &str) -> Field {
     Field::new(
         PAPER,
-        "Paper",
+        words!(
+            print_paper = "Paper",
+            note = "A field of the Print dialog, a PDF chosen: the paper it is laid out on (A4, Letter…)."
+        ),
         Kind::Row {
             choices: skwir_core::print::Paper::NAMED
                 .iter()
-                .map(|(name, title)| Choice::new(*name, *title))
+                .map(|(name, title)| Choice::new(*name, Words::as_written(*title)))
                 .collect(),
         },
     )
@@ -731,15 +928,25 @@ fn papers(chosen: &str) -> Field {
 
 /// The PDF saved made smaller, offered when it is saved.
 fn smaller(last: bool) -> Field {
-    Field::new(SMALLER, "Smaller file", Kind::Toggle)
-        .help("Pictures in it at most 150 dpi, as Reduce Size's Screen")
+    Field::new(
+        SMALLER,
+        words!(
+            print_smaller = "Smaller file",
+            note = "A switch of the Print dialog, a PDF chosen: its pictures made smaller."
+        ),
+        Kind::Toggle,
+    )
+    .help(words!(
+        print_smaller_help = "Pictures in it at most 150 dpi, as Reduce Size's Screen",
+        note = "Under the Smaller file switch. Reduce Size is a command's name and Screen its card's, as their own words say them."
+    ))
         .value(last.to_string())
         .when(TO, &["pdf"])
 }
 
 /// What the dialog's `values` chose of `offers`, or why they are no
 /// answer (pages typed that are none).
-fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
+fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, Words> {
     let to = if values.get(TO) == "pdf" {
         To::Pdf
     } else {
@@ -750,8 +957,13 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
         "selection" if offers.selection => "selection".to_owned(),
         "ranges" => {
             let typed = values.get(RANGES).trim();
-            skwir_core::print::parse(typed)
-                .map_err(|refused| format!("Pages to print: {refused}"))?;
+            skwir_core::print::parse(typed).map_err(|refused| {
+                words!(
+                    print_pages_refused = "Pages to print: { $why }",
+                    why = refused,
+                    note = "Said in the dialog: why the pages typed are none, as the reader of pages explains."
+                )
+            })?;
             typed.to_owned()
         }
         _ => "all".to_owned(),
@@ -809,21 +1021,27 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
 }
 
 /// `count` pages, said.
-fn pages(count: u32) -> String {
-    if count == 1 {
-        "1 page".to_owned()
-    } else {
-        format!("{count} pages")
-    }
+fn pages(count: u32) -> Words {
+    words!(
+        print_page_count = "{ $count ->
+            [one] { $count } page
+           *[other] { $count } pages
+        }",
+        count = count,
+        note = "Under the Print dialog's title: how many pages the document has."
+    )
 }
 
 /// `count` sheets in one fold, said.
-fn sheets_said(count: u32) -> String {
-    if count == 1 {
-        "1 sheet, one fold".to_owned()
-    } else {
-        format!("{count} sheets in one fold")
-    }
+fn sheets_said(count: u32) -> Words {
+    words!(
+        print_sheets_in_fold = "{ $count ->
+            [one] { $count } sheet, one fold
+           *[other] { $count } sheets in one fold
+        }",
+        count = count,
+        note = "Under the One booklet card: how many sheets its one fold holds."
+    )
 }
 
 fn boxed(x: u16, y: u16, width: u16, height: u16, shaded: bool) -> Mark {
@@ -1029,15 +1247,15 @@ mod tests {
 
     fn offers() -> Offers {
         Offers {
-            what: "“notes.md”".to_owned(),
+            what: Printed::File("notes.md".to_owned()),
             page: Some(4),
             selection: true,
             count: Some(12),
             subject: Subject::One,
             saved: Saved {
                 folder: Some(PathBuf::from("/example/notes")),
-                said: "Beside it".to_owned(),
-                beside: "Beside it".to_owned(),
+                said: Words::as_written("Beside it"),
+                beside: Words::as_written("Beside it"),
                 other: Some(PathBuf::from("/example/other")),
                 documents: Some(PathBuf::from("/example/Documents")),
                 opens: None,
@@ -1065,8 +1283,8 @@ mod tests {
                 TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, PAPER, SMALLER
             ]
         );
-        assert_eq!(form.title, "Print “notes.md”");
-        assert_eq!(form.intro, "12 pages");
+        assert_eq!(form.title.english(), "Print “notes.md”");
+        assert_eq!(form.intro.english(), "12 pages");
         let titles = |key: &str| -> Vec<String> {
             form.fields
                 .iter()
@@ -1074,7 +1292,7 @@ mod tests {
                 .unwrap()
                 .choices()
                 .iter()
-                .map(|c| c.title.clone())
+                .map(|c| c.title.english())
                 .collect()
         };
         assert_eq!(titles(PAGES), ["All", "Page 4", "Selection", "Pages…"]);
@@ -1127,7 +1345,7 @@ mod tests {
             (FOLD, "16"),
             (TRIM, "true"),
         ]);
-        assert_eq!(form.accept_with(&printed), "Print…");
+        assert_eq!(form.accept_with(&printed).english(), "Print…");
         let chosen = chosen(&printed, &offers).unwrap();
         assert_eq!(
             chosen,
@@ -1149,6 +1367,7 @@ mod tests {
         assert!(
             super::chosen(&wrong, &offers)
                 .unwrap_err()
+                .english()
                 .starts_with("Pages to print")
         );
         let saved = values(&[
@@ -1158,7 +1377,7 @@ mod tests {
             (FOLD, "32"),
             (TRIM, "true"),
         ]);
-        assert_eq!(form.accept_with(&saved), "Save");
+        assert_eq!(form.accept_with(&saved).english(), "Save");
         let chosen = super::chosen(&saved, &offers).unwrap();
         assert_eq!(chosen.pages, "current");
         assert_eq!(
@@ -1296,9 +1515,13 @@ mod tests {
             panic!("a file to write");
         };
         assert_eq!(ending, ".pdf");
-        let titled: Vec<(&str, &str, &str)> = folders
+        let owned: Vec<(String, String, String)> = folders
             .iter()
-            .map(|c| (c.title.as_str(), c.detail.as_str(), c.section.as_str()))
+            .map(|c| (c.title.english(), c.detail.english(), c.section.english()))
+            .collect();
+        let titled: Vec<(&str, &str, &str)> = owned
+            .iter()
+            .map(|(title, detail, section)| (title.as_str(), detail.as_str(), section.as_str()))
             .collect();
         assert_eq!(
             titled,
@@ -1353,7 +1576,12 @@ mod tests {
                 Some(OsString::from("x.pdf"))
             ))
         );
-        assert!(shown("letters/x").unwrap_err().starts_with("Save as"));
+        assert!(
+            shown("letters/x")
+                .unwrap_err()
+                .english()
+                .starts_with("Save as")
+        );
         assert_eq!(
             read("booklet", "/example/notes/notes (booklet).pdf", &offers),
             Ok((None, None))
@@ -1439,6 +1667,7 @@ mod tests {
         assert!(
             into("/example/gone/x")
                 .unwrap_err()
+                .english()
                 .starts_with("Save as: there is no folder")
         );
         assert_eq!(
@@ -1511,9 +1740,13 @@ mod tests {
         let Kind::Save { folders, .. } = &field.kind else {
             panic!("a file to write");
         };
-        let said: Vec<(&str, &str, &str)> = folders
+        let owned: Vec<(String, String, String)> = folders
             .iter()
-            .map(|c| (c.title.as_str(), c.detail.as_str(), c.section.as_str()))
+            .map(|c| (c.title.english(), c.detail.english(), c.section.english()))
+            .collect();
+        let said: Vec<(&str, &str, &str)> = owned
+            .iter()
+            .map(|(title, detail, section)| (title.as_str(), detail.as_str(), section.as_str()))
             .collect();
         assert_eq!(
             said,

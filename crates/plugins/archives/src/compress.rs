@@ -20,6 +20,8 @@ use skwir_core::op::{
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::archive::{self, Format, Item, Part};
 
@@ -57,61 +59,93 @@ impl Compress {
         self.dest_dir.join(&self.name)
     }
 
-    /// What it compresses, in words: “photos”, or 3 items.
-    fn what(&self) -> String {
-        match self.entries.as_slice() {
-            [one] => format!("“{}”", display_name(&one.path)),
-            many => format!("{} items", many.len()),
-        }
-    }
-
     /// The password it is encrypted by, asked of the user, twice to be
-    /// sure of it.
+    /// sure of it. Its questions are said here: they take text.
     fn password(&self, ctx: &StepContext) -> anyhow::Result<String> {
-        let archive = display_name(&self.target());
+        let archive = || Name::of(&self.target());
         let ask = |title: &str, accept: &str| {
             ctx.ask_secret(title, accept).map_err(|why| match why {
                 Unanswered::Declined => anyhow::Error::from(Cancelled),
-                Unanswered::NoOne => anyhow::anyhow!(
-                    "“{archive}” would be encrypted: its password is asked in Skwir's window"
-                ),
+                Unanswered::NoOne => anyhow::Error::from(words!(
+                    archives_password_unasked = "{ $name } would be encrypted: its password is asked in Skwir's window",
+                    name = archive(),
+                    note = "Why an archive was not made where no window can ask its password (a script's, an agent's). Skwir is the program's name."
+                )),
             })
         };
-        let mut title = format!("A password for “{archive}”");
+        let next = words!(
+            archives_password_next = "Next",
+            note = "The button that gives an archive's new password, before it is asked again."
+        )
+        .say();
+        let mut title = words!(
+            archives_password_new = "A password for { $name }",
+            name = archive(),
+            note = "The title of the question asking the password an archive being made is encrypted by."
+        )
+        .say();
         loop {
-            let first = ask(&title, "Next")?;
+            let first = ask(&title, &next)?;
             if first.is_empty() {
-                title = format!("A password for “{archive}”: it cannot be empty");
+                title = words!(
+                    archives_password_new_empty = "A password for { $name }: it cannot be empty",
+                    name = archive(),
+                    note = "The question asked again, nothing having been typed."
+                )
+                .say();
                 continue;
             }
-            if ask("The same password again, to be sure of it", "Compress")? == first {
+            let again = words!(
+                archives_password_again = "The same password again, to be sure of it",
+                note = "The title of the question asking an archive's new password a second time."
+            )
+            .say();
+            if ask(&again, &compress_button().say())? == first {
                 return Ok(first);
             }
-            title = format!("The two passwords differed: a password for “{archive}”");
+            title = words!(
+                archives_password_differed = "The two passwords differed: a password for { $name }",
+                name = archive(),
+                note = "The question asked again, the password typed the second time not being the first."
+            )
+            .say();
         }
     }
 }
 
-fn display_name(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or(path.as_os_str())
-        .to_string_lossy()
-        .into_owned()
+/// How many entries go in, and the first's name: what the words of a
+/// compression name it by (“photos”, or 3 items).
+fn named(entries: &[EntryRef]) -> (usize, Name) {
+    (
+        entries.len(),
+        entries
+            .first()
+            .map_or_else(|| Name(String::new()), |one| Name::of(&one.path)),
+    )
 }
 
-fn conflict(reason: impl Into<String>) -> StepStatus {
+/// The button that makes the archive.
+fn compress_button() -> Words {
+    words!(
+        archives_compress_button = "Compress",
+        note = "A button: makes the archive (once its name, or its password, is given)."
+    )
+}
+
+/// A step's conflict, said here: its reason is text (`StepStatus`).
+fn conflict(reason: impl Into<Words>) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.into(),
+        reason: reason.into().say(),
     }
 }
 
-/// The endings of the formats, in words: ".zip, .7z, … or .tar".
-fn endings() -> String {
-    let all: Vec<&str> = Format::ALL.iter().map(|f| f.extension()).collect();
-    match all.split_last() {
-        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
-        None => String::new(),
-    }
+/// The endings of the formats, in words: ".zip, .7z, … or .tar", each of
+/// `Format::ALL` (a test holds the two together).
+fn endings() -> Words {
+    words!(
+        archives_endings = ".zip, .7z, .tar.gz, .tar.xz, .tar.zst, .tar.bz2 or .tar",
+        note = "The endings of the archives' names Skwir makes, each saying its format, as written: a list said inside other words."
+    )
 }
 
 /// The format the archive's name says.
@@ -119,11 +153,13 @@ fn format_of(name: &OsStr) -> anyhow::Result<Format> {
     Format::of_name(name)
         .map(|(format, _)| format)
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "“{}” says no format: end it with {}",
-                name.to_string_lossy(),
-                endings()
+            words!(
+                archives_no_format = "{ $name } says no format: end it with { $endings }",
+                name = Name(name.to_string_lossy().into_owned()),
+                endings = endings(),
+                note = "Why an archive is not made: its name ends with none of the endings Skwir makes."
             )
+            .into()
         })
 }
 
@@ -155,37 +191,65 @@ impl op::Effect for Compress {
     }
 
     fn describe(&self) -> Change {
-        let (what, archive) = (self.what(), display_name(&self.target()));
+        let (count, name) = named(&self.entries);
+        let archive = || Name::of(&self.target());
         Change::Create {
             path: self.target(),
             directory: false,
             words: Some(Tenses {
-                will: format!("compress {what} as “{archive}”").into(),
-                did: format!("compressed {what} as “{archive}”").into(),
-                already: Some(format!("“{archive}” already held {what}").into()),
+                will: words!(
+                    archives_compress_as = "{ $count ->
+                        [1] compress { $name } as { $archive }
+                       *[other] compress { $count } items as { $archive }
+                    }",
+                    count = count,
+                    name = Name(name.0.clone()),
+                    archive = archive(),
+                    note = "A step of a plan, in its review: what goes in the archive (one by its name, or how many), and the archive's name. Begins in lower case."
+                ),
+                did: words!(
+                    archives_compressed_as = "{ $count ->
+                        [1] compressed { $name } as { $archive }
+                       *[other] compressed { $count } items as { $archive }
+                    }",
+                    count = count,
+                    name = Name(name.0.clone()),
+                    archive = archive(),
+                    note = "What a step did, said once its plan ran. Begins in lower case."
+                ),
+                already: Some(words!(
+                    archives_already_held = "{ $count ->
+                        [1] { $archive } already held { $name }
+                       *[other] { $archive } already held { $count } items
+                    }",
+                    count = count,
+                    name = name,
+                    archive = archive(),
+                    note = "Said after compressing, when the archive of that name held what goes in it already."
+                )),
             }),
         }
     }
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if let Err(invalid) = op::valid_file_name(&self.name) {
-            return conflict(invalid.to_string());
+            return conflict(Words::of_error(invalid));
         }
         let format = match format_of(&self.name) {
             Ok(format) => format,
-            Err(e) => return conflict(e.to_string()),
+            Err(e) => return conflict(Words::of_error(e)),
         };
         if self.password && !format.encrypts() {
-            return conflict("Only a ZIP archive can have a password");
+            return conflict(words!(
+                archives_only_zip_password = "Only a ZIP archive can have a password",
+                note = "ZIP is the format's name, as written."
+            ));
         }
         if self.entries.is_empty() {
-            return conflict("Nothing to compress");
+            return conflict(words!(archives_nothing_to_compress = "Nothing to compress"));
         }
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
-            ));
+            return conflict(crate::not_a_folder(&self.dest_dir));
         }
         if let Some(Err(e)) = self
             .entries
@@ -193,7 +257,7 @@ impl op::Effect for Compress {
             .map(EntryRef::resolve)
             .find(Result::is_err)
         {
-            return conflict(e.to_string());
+            return conflict(Words::as_written(e.to_string()));
         }
         let target = self.target();
         // As the plan's earlier steps leave it: one may put what is there
@@ -207,16 +271,21 @@ impl op::Effect for Compress {
         } else if let Some(input) = self.entries.iter().find(|e| e.path.starts_with(&target)) {
             // Never replaced: it would take what goes in with it.
             conflict(if input.path == target {
-                format!("“{}” is among what it compresses", display_name(&target))
+                words!(
+                    archives_among_inputs = "{ $name } is among what it compresses",
+                    name = Name::of(&target),
+                    note = "Why an archive is not made: its name is taken by something that goes in it."
+                )
             } else {
-                format!(
-                    "“{}” holds “{}”, which it compresses",
-                    display_name(&target),
-                    display_name(&input.path)
+                words!(
+                    archives_holds_input = "{ $there } holds { $input }, which it compresses",
+                    there = Name::of(&target),
+                    input = Name::of(&input.path),
+                    note = "Why an archive is not made: the folder of its name holds something that goes in it."
                 )
             })
         } else {
-            conflict(format!("“{}” is already there", display_name(&target)))
+            conflict(crate::already_there(&target))
         }
     }
 
@@ -314,16 +383,9 @@ impl op::Effect for Compress {
         // Paused once it is all there, it waits before it is placed.
         .and_then(|()| Ok(ctx.check_cancelled()?))
         .and_then(|()| {
-            staging.place(&made, &target).with_context(|| {
-                skwir_core::op::Couldnt::new(
-                    &target,
-                    format!(
-                        "“{}” could not be placed in “{}”",
-                        display_name(&target),
-                        display_name(&self.dest_dir)
-                    ),
-                )
-            })
+            staging
+                .place(&made, &target)
+                .with_context(|| crate::not_placed(&target, &self.dest_dir))
         });
         // Whatever happened, the staging folder goes now, with what it
         // holds. Should it stay, a later run sweeps it.
@@ -335,8 +397,7 @@ impl op::Effect for Compress {
         }
         result?;
         ctx.advance(total.saturating_sub(done));
-        let made = EntryRef::from_path(&target)
-            .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
+        let made = EntryRef::from_path(&target).with_context(|| crate::went_missing(&target))?;
         // Where its volume keeps no trash, Undo removes it while it is as
         // made, and Redo makes it again.
         if op::keeps_no_trash(&target) {
@@ -455,10 +516,14 @@ fn walk(entries: &[EntryRef], format: Format, ctx: &StepContext) -> anyhow::Resu
         let (Some(parent), Some(file)) = (path.parent(), path.file_name()) else {
             continue;
         };
-        let dir = Dir::open(parent)
-            .with_context(|| format!("“{}” could not be read", display_name(parent)))?;
-        let own = stat::own(&dir, file)
-            .with_context(|| format!("“{}” is no longer there", display_name(&path)))?;
+        let dir = Dir::open(parent).with_context(|| unreadable(parent))?;
+        let own = stat::own(&dir, file).with_context(|| {
+            words!(
+                archives_no_longer_there = "{ $name } is no longer there",
+                name = Name::of(&path),
+                note = "Why an archive was not made: something to go in it went."
+            )
+        })?;
         let name = if taken.contains(&name) {
             let folder = own.kind == EntryKind::Directory;
             clash::kept_name(&name, "", folder, |n| taken.contains(n))
@@ -475,6 +540,15 @@ fn walk(entries: &[EntryRef], format: Format, ctx: &StepContext) -> anyhow::Resu
         )?;
     }
     Ok(parts)
+}
+
+/// A folder going in that could not be read.
+fn unreadable(path: &Path) -> Words {
+    words!(
+        archives_unreadable = "{ $name } could not be read",
+        name = Name::of(path),
+        note = "Why an archive was not made: a folder going in could not be read; why follows."
+    )
 }
 
 /// A name's bytes in an archive: `/` between its folders, whatever the
@@ -553,11 +627,10 @@ fn add(
         if !folder {
             continue;
         }
-        let dir = Dir::open(&path)
-            .with_context(|| format!("“{}” could not be read", display_name(&path)))?;
+        let dir = Dir::open(&path).with_context(|| unreadable(&path))?;
         let mut names: Vec<OsString> = dir
             .read()
-            .with_context(|| format!("“{}” could not be read", display_name(&path)))?
+            .with_context(|| unreadable(&path))?
             .filter_map(|listed| listed.ok().map(|l| l.name))
             .collect();
         names.sort();
@@ -580,9 +653,10 @@ fn add(
 /// a copy keeps (`xattr::kept`), none on a volume that keeps none.
 fn attributes_of(path: &Path) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let unread = || {
-        format!(
-            "the tags and attributes of “{}” could not be read",
-            display_name(path)
+        words!(
+            archives_attributes_unread = "the tags and attributes of { $name } could not be read",
+            name = Name::of(path),
+            note = "Why an archive was not made: what is kept beside a file going in could not be read; why follows."
         )
     };
     let names = match xattr::list(path) {
@@ -699,20 +773,27 @@ fn plan(a: CompressArgs, app: &App) -> anyhow::Result<Plan> {
         .format
         .as_deref()
         .map(|f| {
-            Format::named(f)
-                .ok_or_else(|| anyhow::anyhow!("“{f}” is no format here: say one of {}", endings()))
+            Format::named(f).ok_or_else(|| {
+                anyhow::Error::from(words!(
+                    archives_unknown_format = "“{ $format }” is no format here: say one of { $endings }",
+                    format = f.to_owned(),
+                    endings = endings(),
+                    note = "An error an agent or a script reads: the format it gave, as written, is none Skwir makes."
+                ))
+            })
         })
         .transpose()?;
     let name = match a.name {
         Some(name) => {
             let name = name.into_inner().into_os_string();
             match (Format::of_name(&name), asked) {
-                (Some((said, _)), Some(asked)) if said != asked => anyhow::bail!(
-                    "“{}” says {}, and the format {}",
-                    name.to_string_lossy(),
-                    said.name(),
-                    asked.name()
-                ),
+                (Some((said, _)), Some(asked)) if said != asked => anyhow::bail!(words!(
+                    archives_format_differs = "{ $name } says { $said }, and the format { $asked }",
+                    name = Name(name.to_string_lossy().into_owned()),
+                    said = said.name(),
+                    asked = asked.name(),
+                    note = "An error an agent or a script reads: the archive's name ends with one format, and it asked another. The formats are named as written (ZIP, 7z)."
+                )),
                 (None, Some(asked)) => {
                     let mut name = name;
                     name.push(asked.extension());
@@ -727,15 +808,28 @@ fn plan(a: CompressArgs, app: &App) -> anyhow::Result<Plan> {
     let format = format_of(&name)?;
     anyhow::ensure!(
         !a.password || format.encrypts(),
-        "Only a ZIP archive can have a password: end its name with .zip"
+        words!(
+            archives_only_zip_password_end =
+                "Only a ZIP archive can have a password: end its name with .zip",
+            note = "ZIP is the format's name, and .zip its ending, as written."
+        )
     );
+    let (count, first) = named(&entries);
     let step = Compress {
         entries,
         dest_dir: dest,
         name,
         password: a.password,
     };
-    let title = format!("compress {}", step.what());
+    let title = words!(
+        archives_compress_plan = "{ $count ->
+            [1] compress { $name }
+           *[other] compress { $count } items
+        }",
+        count = count,
+        name = first,
+        note = "A plan's title, in its review, Activity and the History: what goes in the archive, one by its name, or how many. Begins in lower case: said inside other words too (undo compress 3 items)."
+    );
     Ok(Plan::with_steps(title, vec![Box::new(step)]).on_conflict(a.on_conflict))
 }
 
@@ -745,16 +839,27 @@ pub fn register(app: &App, owner: &str) {
         .register::<CompressArgs, _>(
             owner, Topic::Files,
             "archive.compress",
-            "Compress",
-            "Make an archive of the selection, or the entries given, beside them or in `dest`: its format is what `name` ends with (.zip, .7z, .tar.gz, .tar.xz, .tar.zst, .tar.bz2, .tar), else `format`, else ZIP (plan)",
+            words!(
+                archives_compress = "Compress",
+                note = "The action's name, in F1's list of actions."
+            ),
+            words!(
+                archives_compress_description = "Make an archive of the selection, or the entries given, beside them or in `dest`: its format is what `name` ends with (.zip, .7z, .tar.gz, .tar.xz, .tar.zst, .tar.bz2, .tar), else `format`, else ZIP (plan)",
+                note = "Read by agents and in F1's list of actions: the words in backticks are the command's arguments, and the endings as written."
+            ),
             |a, app| Ok(Outcome::Plan(plan(a, app)?)),
         )
         .plans();
     app.commands.register::<AskArgs, _>(
         owner, Topic::Files,
         "archive.compress_ask",
-        "Compress…",
-        "Ask the name of an archive of the selection, its ending saying its format, and make it",
+        words!(
+            archives_compress_ask = "Compress…",
+            note = "The action's name, in F1's list of actions: asks the archive's name first."
+        ),
+        words!(
+            archives_compress_ask_description = "Ask the name of an archive of the selection, its ending saying its format, and make it"
+        ),
         |a, app| {
             let entries = app.targets(a.pane, a.entries)?;
             let dest = match a.dest {
@@ -764,19 +869,44 @@ pub fn register(app: &App, owner: &str) {
             let name = default_name(&entries, Format::Zip);
             let text = name.to_string_lossy().into_owned();
             let stem = text.len() - Format::Zip.extension().len();
-            let what = match entries.as_slice() {
-                [one] => format!("“{}”", display_name(&one.path)),
-                many => format!("{} items", many.len()),
-            };
+            // Said here: the question takes text.
+            let (count, first) = named(&entries);
             let (title, note) = if a.password {
                 (
-                    format!("Compress {what} with a password, as"),
-                    "A ZIP archive, encrypted: its password is asked next".to_owned(),
+                    words!(
+                        archives_ask_with_password = "{ $count ->
+                            [1] Compress { $name } with a password, as
+                           *[other] Compress { $count } items with a password, as
+                        }",
+                        count = count,
+                        name = first,
+                        note = "The title of the question asking an encrypted archive's name, which follows it in a field."
+                    )
+                    .say(),
+                    words!(
+                        archives_ask_with_password_note = "A ZIP archive, encrypted: its password is asked next",
+                        note = "Under the field of an encrypted archive's name. ZIP is the format's name, as written."
+                    )
+                    .say(),
                 )
             } else {
                 (
-                    format!("Compress {what} as"),
-                    format!("Its ending says the format: {}", endings()),
+                    words!(
+                        archives_ask_as = "{ $count ->
+                            [1] Compress { $name } as
+                           *[other] Compress { $count } items as
+                        }",
+                        count = count,
+                        name = first,
+                        note = "The title of the question asking an archive's name, which follows it in a field."
+                    )
+                    .say(),
+                    words!(
+                        archives_ask_as_note = "Its ending says the format: { $endings }",
+                        endings = endings(),
+                        note = "Under the field of an archive's name."
+                    )
+                    .say(),
                 )
             };
             // Named by identity as well as path: accepted, the dialog's
@@ -793,7 +923,7 @@ pub fn register(app: &App, owner: &str) {
                     .with("title", title)
                     .with("text", text)
                     .with("select", [0, stem])
-                    .with("accept", "Compress")
+                    .with("accept", compress_button().say())
                     .with("note", note)
                     .with("command", "archive.compress")
                     .with("args", args)
@@ -812,7 +942,10 @@ pub fn register(app: &App, owner: &str) {
         owner,
         MenuItem::new(
             "context",
-            "To ZIP",
+            words!(
+                archives_to_zip = "To ZIP",
+                note = "An item of the Compress submenu: makes a ZIP archive at once. ZIP is the format's name, as written."
+            ),
             "archive",
             320,
             Invocation::new("archive.compress").with(
@@ -830,7 +963,10 @@ pub fn register(app: &App, owner: &str) {
         owner,
         MenuItem::new(
             "context",
-            "Choose Format…",
+            words!(
+                archives_choose_format = "Choose Format…",
+                note = "An item of the Compress submenu: asks the archive's name, whose ending says its format."
+            ),
             "archive",
             321,
             Invocation::new("archive.compress_ask"),
@@ -842,7 +978,10 @@ pub fn register(app: &App, owner: &str) {
         owner,
         MenuItem::new(
             "context",
-            "With a Password…",
+            words!(
+                archives_with_password = "With a Password…",
+                note = "An item of the Compress submenu: an encrypted ZIP archive, its name and password asked."
+            ),
             "lock",
             322,
             Invocation::new("archive.compress_ask").with("password", true),
@@ -893,9 +1032,12 @@ mod tests {
 
     #[test]
     fn the_formats_are_said_in_words() {
+        // Every format's ending, in its order.
+        let all: Vec<&str> = Format::ALL.iter().map(|f| f.extension()).collect();
+        let (last, rest) = all.split_last().unwrap();
         assert_eq!(
-            endings(),
-            ".zip, .7z, .tar.gz, .tar.xz, .tar.zst, .tar.bz2 or .tar"
+            endings().english(),
+            format!("{} or {last}", rest.join(", "))
         );
         let error = format_of(OsStr::new("photos.rar")).unwrap_err();
         assert!(error.to_string().contains("photos.rar"), "{error}");

@@ -13,6 +13,8 @@ use skwir_core::inspection::{InspectRequest, InspectionKind, Picture};
 use skwir_core::op::EntryRef;
 use skwir_core::preview::{HeldSlot, PreviewRequest};
 use skwir_core::print::{self as paper, Face, Job, PageSet, Pages, Paper, Part};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_platform::print_job::{self, Roles};
 use skwir_platform::process::Follow;
 
@@ -107,9 +109,9 @@ pub(crate) struct Ready {
     /// Its pages, when counted: a PDF sent as it is is not.
     pub pages: Option<u32>,
     /// What was left out (a text cut at its bound), to say.
-    pub notice: Option<String>,
+    pub notice: Option<Words>,
     /// How to fold its sheets, for a booklet folded more than once.
-    pub folding: Option<&'static str>,
+    pub folding: Option<Words>,
 }
 
 /// The PDF of `paths` as `layout` asks, made in `work` (a folder of its
@@ -202,8 +204,34 @@ fn named(pages: &Pages, current: Option<u32>) -> Option<Vec<u32>> {
 }
 
 /// "It has n pages", said of pages asked past them.
-fn past(count: u32) -> String {
-    format!("It has {count} pages; those past them were left out")
+fn past(count: u32) -> Words {
+    words!(
+        print_past = "{ $count ->
+            [one] It has { $count } page; those past it were left out
+           *[other] It has { $count } pages; those past them were left out
+        }",
+        count = count,
+        note = "Said once printed or saved: pages were asked past the document's last."
+    )
+}
+
+/// Why nothing is made: none of the pages asked is the document's.
+fn no_page_asked() -> Words {
+    words!(
+        print_no_page_asked = "No page of it is among those asked",
+        note =
+            "Why a print or a PDF was not made: the pages asked are all past the document's last."
+    )
+}
+
+/// What `path` is, when it shows nothing that can be printed.
+fn nothing_printable(path: &Path) -> Words {
+    words!(
+        print_nothing_printable = "{ $name } shows nothing that can be printed",
+        name = Name::of(path),
+        note =
+            "Why a file was not printed: its preview shows nothing to print (a song, a program)."
+    )
 }
 
 /// A document Skwir makes of `parts` (a contact sheet, a folder's
@@ -241,7 +269,7 @@ fn laid_out(
     paper: &Paper,
     parts: Vec<Part>,
     named: Option<Vec<u32>>,
-    notice: Option<String>,
+    notice: Option<Words>,
     work: &Path,
     cancel: &CancelToken,
     follow: &Follow<'_>,
@@ -274,15 +302,17 @@ fn page_paper(layout: &Layout) -> Paper {
 
 /// How to fold a booklet of `per_side` pages a side, said once it is
 /// made: none for one fold, which a booklet's sheets show.
-pub(crate) fn folding(per_side: paper::booklet::PerSide) -> Option<&'static str> {
+pub(crate) fn folding(per_side: paper::booklet::PerSide) -> Option<Words> {
     match per_side {
         paper::booklet::PerSide::Two => None,
-        paper::booklet::PerSide::Four => Some(
-            "Fold each sheet in half twice, page 1 outside and upright, cut its top fold open, and put the sheets one after another",
-        ),
-        paper::booklet::PerSide::Eight => Some(
-            "Fold each sheet in half three times, page 1 outside and upright, cut its closed folds open, and put the sheets one after another",
-        ),
+        paper::booklet::PerSide::Four => Some(words!(
+            print_fold_twice = "Fold each sheet in half twice, page 1 outside and upright, cut its top fold open, and put the sheets one after another",
+            note = "Said once a booklet of four pages a side is printed or saved: how to fold it."
+        )),
+        paper::booklet::PerSide::Eight => Some(words!(
+            print_fold_three_times = "Fold each sheet in half three times, page 1 outside and upright, cut its closed folds open, and put the sheets one after another",
+            note = "Said once a booklet of eight pages a side is printed or saved: how to fold it."
+        )),
     }
 }
 
@@ -330,10 +360,7 @@ fn picked(
     } else {
         layout.pages.pick(count, current)
     };
-    anyhow::ensure!(
-        !picked.pages.is_empty(),
-        "No page of it is among those asked"
-    );
+    anyhow::ensure!(!picked.pages.is_empty(), no_page_asked());
     let notice = notice.or_else(|| picked.clipped.then(|| past(count)));
     // A booklet: the pages picked folded in their order, then the sides
     // and the order chosen applied to its sheets' sides.
@@ -358,7 +385,14 @@ fn picked(
                 &folded,
                 cancel,
             )?
-            .context("Folding a booklet needs PDFium, which is not there")?;
+            .with_context(|| {
+                words!(
+                    print_booklet_needs_pdfium =
+                        "Folding a booklet needs PDFium, which is not there",
+                    note =
+                        "PDFium is the name of the library that reads and writes PDFs, as written."
+                )
+            })?;
             (folded, sides, (0..sides).collect())
         }
         None => (pdf, count, picked.pages),
@@ -378,7 +412,10 @@ fn picked(
                 .collect();
             anyhow::ensure!(
                 !kept.is_empty(),
-                "No page of it is among those the print dialog asked"
+                words!(
+                    print_no_page_dialog = "No page of it is among those the print dialog asked",
+                    note = "Why nothing was printed: the pages chosen in the system's print dialog are all past the document's last."
+                )
             );
             kept
         }
@@ -414,7 +451,12 @@ fn picked(
         &out,
         cancel,
     )?
-    .context("Printing its pages needs PDFium, which is not there")?;
+    .with_context(|| {
+        words!(
+            print_pages_need_pdfium = "Printing its pages needs PDFium, which is not there",
+            note = "PDFium is the name of the library that reads and writes PDFs, as written."
+        )
+    })?;
     Ok(Ready {
         pdf: out,
         pages: Some(pages),
@@ -430,7 +472,7 @@ fn picked(
 struct Whole {
     pdf: PathBuf,
     pages: Option<u32>,
-    notice: Option<String>,
+    notice: Option<Words>,
     made: bool,
     picked: bool,
 }
@@ -503,10 +545,10 @@ fn joined(
     let mut wholes: Vec<Whole> = Vec::with_capacity(paths.len());
     let mut said = Vec::new();
     for (n, path) in paths.iter().enumerate() {
-        anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
+        anyhow::ensure!(!cancel.is_cancelled(), crate::cancelled());
         let own = work.join(n.to_string());
         std::fs::create_dir(&own)?;
-        let name = display_name(path);
+        let name = || Name::of(path);
         #[allow(clippy::cast_precision_loss)]
         let share = |at: usize| at as f64 / paths.len() as f64;
         let part = follow.part(share(n), share(n + 1));
@@ -522,27 +564,47 @@ fn joined(
         ) {
             Ok(mut part) => {
                 if let Some(notice) = part.notice.take() {
-                    said.push(format!("“{name}”: {notice}"));
+                    said.push(words!(
+                        print_notice_of_file = "{ $name }: { $notice }",
+                        name = name(),
+                        notice = notice,
+                        note = "Said once several files were printed as one: what was left out of this one."
+                    ));
                 }
                 // The helper is told the documents' paths as text.
                 if part.pdf.to_str().is_none() {
                     let named = own.join("named.pdf");
                     std::fs::hard_link(&part.pdf, &named)
                         .or_else(|_| std::fs::copy(&part.pdf, &named).map(drop))
-                        .with_context(|| format!("Keeping “{name}” to print it"))?;
+                        .with_context(|| {
+                            words!(
+                                print_keeping = "Keeping { $name } to print it",
+                                name = name(),
+                                note = "What could not be done, before why: a copy of a file's PDF made to print it."
+                            )
+                        })?;
                     part.pdf = named;
                 }
                 wholes.push(part);
             }
             Err(error) if !cancel.is_cancelled() => {
-                said.push(format!("“{name}” was left out: {error:#}"));
+                said.push(words!(
+                    print_left_out = "{ $name } was left out: { $error }",
+                    name = name(),
+                    error = error,
+                    note = "Said once several files were printed as one: this one could not be, and why."
+                ));
             }
             Err(error) => return Err(error),
         }
     }
-    let notice = (!said.is_empty()).then(|| said.join(". "));
+    let notice = crate::sentences(said);
     let Some(first) = wholes.first() else {
-        anyhow::bail!("None of them can be printed. {}", said.join(". "));
+        let none = words!(print_none_printable = "None of them can be printed");
+        anyhow::bail!(match notice {
+            Some(why) => crate::then(none, why),
+            None => none,
+        });
     };
     if wholes.len() == 1 {
         let only = wholes.remove(0);
@@ -556,7 +618,13 @@ fn joined(
         &out,
         cancel,
     )?
-    .context("Printing several files as one needs PDFium, which is not there")?;
+    .with_context(|| {
+        words!(
+            print_joined_needs_pdfium =
+                "Printing several files as one needs PDFium, which is not there",
+            note = "PDFium is the name of the library that reads and writes PDFs, as written."
+        )
+    })?;
     Ok(Whole {
         pdf: out,
         pages: Some(pages),
@@ -574,14 +642,14 @@ enum Source {
     /// whether they hold only the pages picked (a reader's drawn).
     Parts {
         parts: Vec<Part>,
-        notice: Option<String>,
+        notice: Option<Words>,
         picked: bool,
     },
 }
 
 impl Source {
     /// Parts laid out whole.
-    fn parts(parts: Vec<Part>, notice: Option<String>) -> Source {
+    fn parts(parts: Vec<Part>, notice: Option<Words>) -> Source {
         Source::Parts {
             parts,
             notice,
@@ -604,8 +672,8 @@ fn source(
 ) -> anyhow::Result<Source> {
     // What is read is what the entry opens (a link's target), typed by its
     // own name: the link's names where it goes and what it is called.
-    let path: &Path = &skwir_core::fs::content_path(path)
-        .with_context(|| format!("“{}” shows nothing that can be printed", display_name(path)))?;
+    let path: &Path =
+        &skwir_core::fs::content_path(path).with_context(|| nothing_printable(path))?;
     let mut request = request(
         path,
         skwir_platform::mime::of_request(path, None).map(|mime| mime.as_str().to_owned()),
@@ -659,14 +727,22 @@ fn source(
         };
         let parts = print_job::parts(&inspection, &palette, &mut pictures, cancel)?;
         if !parts.parts.is_empty() {
-            return Ok(Source::parts(parts.parts, parts.notice));
+            return Ok(Source::parts(
+                parts.parts,
+                parts.notice.map(Words::as_written),
+            ));
         }
     }
     if let Some(session) = app.previews.open_document(&request, cancel)? {
         if let Some(pdf) = session.pdf() {
             // Kept while the session lives: copied for printing.
             let copy = work.join("document.pdf");
-            std::fs::copy(pdf, &copy).context("Keeping the document's PDF to print it")?;
+            std::fs::copy(pdf, &copy).with_context(|| {
+                words!(
+                    print_keeping_document = "Keeping the document's PDF to print it",
+                    note = "What could not be done, before why: a copy of the PDF a document's reader made, to print it."
+                )
+            })?;
             return Ok(Source::Pdf(copy, Some(session.info().pages)));
         }
         return drawn(&*session, picking, work, cancel, follow);
@@ -707,16 +783,23 @@ fn builtin(
             &skwir_platform::highlight::CodeTheme::own(false),
         );
         let parts = print_job::parts(&inspection, &palette, &mut |_| None, cancel)?;
-        return Ok(Source::parts(parts.parts, parts.notice));
+        return Ok(Source::parts(
+            parts.parts,
+            parts.notice.map(Words::as_written),
+        ));
     }
-    anyhow::bail!("“{name}” shows nothing that can be printed")
+    anyhow::bail!(nothing_printable(path))
 }
 
 /// A request about `path`, holding it whole as a Full preview does.
 fn request(path: &Path, mime: Option<String>) -> anyhow::Result<PreviewRequest> {
     Ok(PreviewRequest {
-        entry: EntryRef::from_path(path)
-            .with_context(|| format!("“{}” is not there", display_name(path)))?,
+        entry: EntryRef::from_path(path).with_context(|| {
+            words!(
+                print_not_there = "{ $name } is not there",
+                name = Name::of(path)
+            )
+        })?,
         mime,
         page: 1,
         seconds: None,
@@ -739,7 +822,12 @@ pub(crate) fn open_made(ready: &Ready, work: &Path) -> anyhow::Result<Option<std
         return Ok(None);
     }
     let file = skwir_core::fs::file::open_regular_unfollowed(&ready.pdf)
-        .context("The PDF made is not a file of its own")?;
+        .with_context(|| {
+            words!(
+                print_not_own_file = "The PDF made is not a file of its own",
+                note = "Why a PDF made by a helper program was refused: it is a link or a pipe, not a file."
+            )
+        })?;
     Ok(Some(file))
 }
 
@@ -756,7 +844,12 @@ pub(crate) fn page_count(app: &App, path: &Path, cancel: &CancelToken) -> anyhow
             &[skwir_platform::document::Engine::Pdfium],
             &lifetime,
         )?
-        .context("Counting a PDF's pages needs a document reader, which is not there")?,
+        .with_context(|| {
+            words!(
+                print_count_needs_reader =
+                    "Counting a PDF's pages needs a document reader, which is not there"
+            )
+        })?,
     };
     Ok(session.info().pages)
 }
@@ -805,7 +898,11 @@ fn specimen(path: &Path) -> Part {
             index: 0,
         },
         name: display_name(path),
-        sample: "The quick brown fox jumps over the lazy dog 0123456789".to_owned(),
+        sample: words!(
+            print_font_sample = "The quick brown fox jumps over the lazy dog 0123456789",
+            note = "The words a font is printed in, at several sizes: a sentence using every letter of the language, then the digits."
+        )
+        .say(),
         sizes: vec![10.0, 14.0, 20.0, 32.0, 48.0],
     }
 }
@@ -857,11 +954,11 @@ pub(crate) fn sheet(
     paths: &[PathBuf],
     work: &Path,
     cancel: &CancelToken,
-) -> anyhow::Result<(Part, Option<String>)> {
+) -> anyhow::Result<(Part, Option<Words>)> {
     let mut pictures = Vec::with_capacity(paths.len());
     let mut left_out = Vec::new();
     for (n, path) in paths.iter().enumerate() {
-        anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
+        anyhow::ensure!(!cancel.is_cancelled(), crate::cancelled());
         let name = display_name(path);
         // What a link opens, typed by its own name.
         let content = skwir_core::fs::content_path(path);
@@ -884,15 +981,24 @@ pub(crate) fn sheet(
             }
         }
     }
-    anyhow::ensure!(!pictures.is_empty(), "None of them is a picture");
-    let notice = match left_out.as_slice() {
-        [] => None,
-        [one] => Some(format!("“{one}” is not a picture and was left out")),
-        many => Some(format!(
-            "{} files are not pictures and were left out",
-            many.len()
-        )),
-    };
+    anyhow::ensure!(
+        !pictures.is_empty(),
+        words!(
+            print_no_picture = "None of them is a picture",
+            note = "Why a contact sheet was not made: none of the files chosen is a picture."
+        )
+    );
+    let notice = (!left_out.is_empty()).then(|| {
+        words!(
+            print_not_pictures = "{ $count ->
+                [1] { $name } is not a picture and was left out
+               *[other] { $count } files are not pictures and were left out
+            }",
+            count = left_out.len(),
+            name = Name(left_out[0].clone()),
+            note = "Said once a contact sheet was printed or saved: the file left out of it, or how many."
+        )
+    });
     Ok((
         Part::Pictures {
             pictures,
@@ -947,15 +1053,12 @@ fn drawn(
             clipped: false,
         },
     };
-    anyhow::ensure!(
-        !chosen.pages.is_empty(),
-        "No page of it is among those asked"
-    );
+    anyhow::ensure!(!chosen.pages.is_empty(), no_page_asked());
     let mut pages = Vec::with_capacity(chosen.pages.len());
     #[allow(clippy::cast_precision_loss)]
     let many = chosen.pages.len() as f64;
     for (at, page) in chosen.pages.iter().map(|page| page + 1).enumerate() {
-        anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
+        anyhow::ensure!(!cancel.is_cancelled(), crate::cancelled());
         #[allow(clippy::cast_precision_loss)]
         follow.went(at as f64 / many);
         let drawn = session.render(page, PAGE_SIDE, cancel)?;
@@ -971,7 +1074,12 @@ fn drawn(
             path: png,
             width,
             height,
-            alt: format!("Page {page}"),
+            alt: words!(
+                print_page_alt = "Page { $page }",
+                page = page,
+                note = "What a page drawn as a picture is in a PDF made, for a screen reader: its number."
+            )
+            .say(),
             caption: None,
             orientation: 0,
         });
@@ -985,7 +1093,7 @@ fn drawn(
 
 fn write_png(image: &skwir_core::thumbs::Image, path: &Path) -> anyhow::Result<()> {
     let buffer = image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())
-        .context("a picture of the wrong size")?;
+        .with_context(|| words!(print_wrong_size = "a picture of the wrong size"))?;
     buffer.save_with_format(path, image::ImageFormat::Png)?;
     Ok(())
 }
@@ -1217,7 +1325,7 @@ mod tests {
             Some("png"),
             "see-through, kept so"
         );
-        assert!(notice.unwrap().contains("notes.txt"));
+        assert!(notice.unwrap().english().contains("notes.txt"));
         assert!(sheet(&[text], &work, &cancel).is_err(), "no picture");
     }
 }

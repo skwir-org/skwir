@@ -6,6 +6,7 @@ use skwir_core::{
     inspection::{InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
+    words,
 };
 use skwir_platform::{
     archive,
@@ -39,7 +40,10 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
             archive::WORKER
-                .requirement("Listing, reading, extracting and making archives")
+                .requirement(words!(
+                    archives_requirement = "Listing, reading, extracting and making archives",
+                    note = "What stops working without the archive helper program, on the Plugins page."
+                ))
                 .required(),
         ]
     }
@@ -60,6 +64,52 @@ impl Plugin for PreviewPlugin {
         unmake::register(app, self.id());
     }
 }
+/// A folder an archive goes in is not one.
+pub(crate) fn not_a_folder(path: &std::path::Path) -> words::Words {
+    words!(
+        archives_not_a_folder = "{ $name } is not a folder",
+        name = words::Name::of(path),
+        note = "Why an archive is not extracted or made: where it goes is no folder."
+    )
+}
+
+/// Something is under the name an item goes to.
+pub(crate) fn already_there(path: &std::path::Path) -> words::Words {
+    words!(
+        archives_already_there = "{ $name } is already there",
+        name = words::Name::of(path),
+        note =
+            "Why an archive is not extracted or made: something else has the name it would take."
+    )
+}
+
+/// What `name`'s step could not place in `folder`, which its error says
+/// after (`op::Couldnt`).
+pub(crate) fn not_placed(
+    name: &std::path::Path,
+    folder: &std::path::Path,
+) -> skwir_core::op::Couldnt {
+    skwir_core::op::Couldnt::new(
+        name,
+        words!(
+            archives_not_placed = "{ $name } could not be placed in { $folder }",
+            name = words::Name::of(name),
+            folder = words::Name::of(folder),
+            note = "What an archive extracted or made could not be put in place; why follows."
+        )
+        .say(),
+    )
+}
+
+/// What a step made was gone as soon as it was.
+pub(crate) fn went_missing(path: &std::path::Path) -> words::Words {
+    words!(
+        archives_went_missing = "{ $name } went missing as it was made",
+        name = words::Name::of(path),
+        note = "Why extracting or making an archive failed: what it put in place was gone at once."
+    )
+}
+
 /// Disc images, which the database does not call archives.
 static DISC_IMAGES: mime::Types = mime::Types::new(&["application/x-cd-image"]);
 
@@ -138,7 +188,11 @@ impl PreviewProvider for Provider {
         let member = archive::member(&path, target.parse::<u64>()?, cancel)?;
         anyhow::ensure!(
             member.regular && !member.encrypted,
-            "This member cannot be previewed (directory, link or encrypted file)"
+            words!(
+                archives_member_not_previewed =
+                    "This member cannot be previewed (directory, link or encrypted file)",
+                note = "Said in the preview of a member of an archive chosen in its listing."
+            )
         );
         let session = self.session(&path, req.shown())?;
         Ok(Some(skwir_core::preview::Member {
@@ -163,22 +217,52 @@ impl PreviewProvider for Provider {
         let members = &listing.members;
         let rows = member_rows(members, cancel)?;
         let details = facts(members, &rows);
-        // What was left out is the one thing the strip has to say.
+        // What was left out is the one thing the strip has to say. Said
+        // here: the preview keeps an inspection as text.
         let notice = if listing.complete {
             String::new()
         } else {
-            format!(
-                "First {} members · open it in an archive application for the rest",
-                members.len()
+            words!(
+                archives_first_members = "{ $count ->
+                    [one] First { $count } member · open it in an archive application for the rest
+                   *[other] First { $count } members · open it in an archive application for the rest
+                }",
+                count = members.len(),
+                note = "Above an archive's listing cut short: how many of its members are listed."
             )
+            .say()
         };
         Ok(Some(Inspection {
             details,
             kind: skwir_core::inspection::InspectionKind::Archive,
-            title: format!("Archive · {} members", members.len()),
+            title: words!(
+                archives_title = "{ $count ->
+                    [one] Archive · { $count } member
+                   *[other] Archive · { $count } members
+                }",
+                count = members.len(),
+                note = "The title of an archive's preview: how many members it lists."
+            )
+            .say(),
             notice,
             rows,
-            columns: vec!["Name".into(), "Size".into(), "Status".into()],
+            columns: vec![
+                words!(
+                    archives_column_name = "Name",
+                    note = "A column's header in an archive's listing."
+                )
+                .say(),
+                words!(
+                    archives_column_size = "Size",
+                    note = "A column's header in an archive's listing."
+                )
+                .say(),
+                words!(
+                    archives_column_status = "Status",
+                    note = "A column's header in an archive's listing: whether a member is encrypted, a link or special."
+                )
+                .say(),
+            ],
             whole_available: !listing.complete && bounds.cut(),
             ..Inspection::default()
         }))
@@ -196,16 +280,53 @@ fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<skwir_core::inspectio
         .filter_map(|member| u64::try_from(member.size).ok())
         .fold(0u64, u64::saturating_add);
     let encrypted = members.iter().filter(|member| member.encrypted).count();
+    // Said here: the preview keeps an inspection as text.
     inspection::details([
-        ("Files", inspection::count(rows.len() - folders)),
-        ("Folders", inspection::count(folders)),
         (
-            "Unpacked",
+            words!(
+                archives_detail_files = "Files",
+                note = "A label of an archive's Properties in its preview: how many files it holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(rows.len() - folders),
+        ),
+        (
+            words!(
+                archives_detail_folders = "Folders",
+                note = "A label of an archive's Properties in its preview: how many folders it holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(folders),
+        ),
+        (
+            words!(
+                archives_detail_unpacked = "Unpacked",
+                note = "A label of an archive's Properties in its preview: the size of what it holds, unpacked."
+            )
+            .say()
+            .as_str(),
             (unpacked > 0).then(|| inspection::size(unpacked)),
         ),
         (
-            "Encrypted",
-            inspection::count(encrypted).map(|count| format!("{count} members")),
+            words!(
+                archives_detail_encrypted = "Encrypted",
+                note = "A label of an archive's Properties in its preview: how many of its members are encrypted."
+            )
+            .say()
+            .as_str(),
+            (encrypted > 0).then(|| {
+                words!(
+                    archives_encrypted_members = "{ $count ->
+                        [one] { $count } member
+                       *[other] { $count } members
+                    }",
+                    count = encrypted,
+                    note = "How many members of an archive are encrypted, in its Properties."
+                )
+                .say()
+            }),
         ),
     ])
 }
@@ -217,8 +338,14 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
         let parts: Vec<_> = member.name.split('/').filter(|p| !p.is_empty()).collect();
         anyhow::ensure!(
             parts.len() <= limits::NESTING,
-            "Archive path exceeds {} components",
-            limits::NESTING
+            words!(
+                archives_too_deep = "{ $count ->
+                    [one] Archive path exceeds { $count } component
+                   *[other] Archive path exceeds { $count } components
+                }",
+                count = limits::NESTING,
+                note = "Why an archive is not listed: a member's path is nested deeper than this many folders."
+            )
         );
         for end in 1..=parts.len() {
             let name: Vec<String> = parts[..end].iter().map(|s| (*s).to_owned()).collect();
@@ -233,9 +360,17 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
                     if directory || (member.regular && !member.encrypted) {
                         String::new()
                     } else if member.encrypted {
-                        "Encrypted".into()
+                        words!(
+                            archives_status_encrypted = "Encrypted",
+                            note = "A member's status in an archive's listing."
+                        )
+                        .say()
                     } else {
-                        "Link / special".into()
+                        words!(
+                            archives_status_link = "Link / special",
+                            note = "A member's status in an archive's listing: a link, a device or a pipe, which is not previewed."
+                        )
+                        .say()
                     },
                 ],
                 bytes,
