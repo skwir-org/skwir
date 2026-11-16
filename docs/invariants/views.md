@@ -747,8 +747,18 @@ around the views is in [shell.md](shell.md).
   frame drew: the grid in its element's prepaint (`UniformGrid::keeps`),
   a `uniform_list` (the list, the tree, the columns' own column, a
   board's column) through a canvas drawn before it (`kept::rows`), a
-  board's columns through `kept::across`. A scroll asked in the same frame
-  wins. A zoom changes no size: it keeps what it says above.
+  board's columns through `kept::across`. Whether it was wholly in view is
+  judged where the last frame drew it (its row or tile then, the rows'
+  height then: a sort or files come in the same frame, the text's size
+  changing the rows with the view), and it is put where it is now; a
+  grid's tile is its row's band with its gutter, as a key reads it
+  (`Slots::shows_whole`). A board's row keeps every column holding the
+  cursor, then those showing a card selected, put where this frame lays
+  them out, side by side, each as wide as a column (`COLUMN_W` at the
+  files' scale); columns changed in that frame, nothing is kept there. A
+  scroll asked in the same frame wins: a key's, and a place the view sets
+  itself as it renders (a tab come back, the top row a zoom keeps,
+  `kept::Memory::placed_by_view`). A zoom keeps what it says above.
 - **What a rename moved** (`PaneView::reveal_among`) is placed as the
   view draws, its entries found in the order as it is then
   (`Among::placed`: entries, never indices taken before), and decided in

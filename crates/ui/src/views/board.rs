@@ -124,6 +124,13 @@ pub struct BoardView {
     /// Each column's rows as last drawn, by its location: its cards, and
     /// what arrives among them (ADR-135), which is no card.
     arriving: HashMap<Location, (crate::views::groups::RowMap, Vec<usize>)>,
+    /// The rows and cards each column draws, by its location, in this
+    /// frame and as the last frame drew them (`cards_was`): where what
+    /// keeps its place as a column changes height was in view.
+    cards: HashMap<Location, Cards>,
+    cards_was: HashMap<Location, Cards>,
+    /// The columns the last frame drew (`drawn` as it was).
+    drawn_was: Rc<[Drawn]>,
     /// What `arriving` was placed for: the pane's rows (`RowMap::key`,
     /// which a new placement of what arrives makes anew) with the columns
     /// drawn (`drawn`); placed again only when one of them changes.
@@ -140,31 +147,82 @@ type Against = (u64, u64);
 /// A column drawn: its entry, where it leads, its cards.
 type Drawn = (Option<EntryId>, Location, Arc<[EntryId]>);
 
-/// The columns' index (`index_of_columns`), made once asked.
-type DrawnIndex = std::cell::OnceCell<HashMap<EntryId, (usize, Option<usize>)>>;
+/// A column's rows (its cards and what arrives among them) and its cards.
+type Cards = (crate::views::groups::RowMap, Arc<[EntryId]>);
 
-/// Where each entry of `drawn` is: its column and its card there, or `None`
-/// for a column's own entry; the first column holding it, and in a column
-/// its first card before its own entry, as walking them in order finds it.
-fn index_of_columns(drawn: &[Drawn]) -> HashMap<EntryId, (usize, Option<usize>)> {
-    let mut index = HashMap::with_capacity(drawn.iter().map(|(_, _, ids)| ids.len() + 1).sum());
+/// The columns' index (`index_of_columns`), made once asked.
+type DrawnIndex = std::cell::OnceCell<Placed>;
+
+/// Where each entry of the columns drawn is: its column and its card
+/// there, or `None` for a column's own entry. `first` holds the first
+/// place walking them in order finds (in a column, its card before its
+/// own entry); `also` the others of an entry in several columns (a file
+/// with two tags).
+#[derive(Default)]
+struct Placed {
+    first: HashMap<EntryId, (usize, Option<usize>)>,
+    also: HashMap<EntryId, Vec<(usize, Option<usize>)>>,
+}
+
+impl Placed {
+    fn put(&mut self, id: EntryId, at: (usize, Option<usize>)) {
+        match self.first.entry(id) {
+            std::collections::hash_map::Entry::Vacant(first) => {
+                first.insert(at);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                self.also.entry(id).or_default().push(at);
+            }
+        }
+    }
+
+    /// Every place of `id`, the first first.
+    fn all(&self, id: EntryId) -> impl Iterator<Item = (usize, Option<usize>)> + '_ {
+        let also = self.also.get(&id).map_or(&[][..], Vec::as_slice);
+        self.first
+            .get(&id)
+            .copied()
+            .into_iter()
+            .chain(also.iter().copied())
+    }
+
+    /// The card `id` is in column `k`.
+    fn card_in(&self, id: EntryId, k: usize) -> Option<usize> {
+        self.all(id).find(|(at, _)| *at == k)?.1
+    }
+}
+
+fn index_of_columns(drawn: &[Drawn]) -> Placed {
+    let mut index = Placed {
+        first: HashMap::with_capacity(drawn.iter().map(|(_, _, ids)| ids.len() + 1).sum()),
+        also: HashMap::new(),
+    };
     for (k, (at, _, ids)) in drawn.iter().enumerate() {
         for (card, id) in ids.iter().enumerate() {
-            index.entry(*id).or_insert((k, Some(card)));
+            index.put(*id, (k, Some(card)));
         }
         if let Some(at) = at {
-            index.entry(*at).or_insert((k, None));
+            index.put(*at, (k, None));
         }
     }
     index
 }
 
 impl BoardView {
+    /// `c`'s rows: its cards, and what arrives among them.
+    fn rows_of(&self, c: &Column) -> crate::views::groups::RowMap {
+        self.arriving.get(&c.location).map_or_else(
+            || crate::views::groups::RowMap::flat(c.ids.len()),
+            |(rows, _)| rows.clone(),
+        )
+    }
+
     /// The column drawn holding `id`, and its card there; `None` for the
     /// card when `id` is the column's own entry.
     fn find(&self, id: EntryId) -> Option<(usize, Option<usize>)> {
         self.drawn_index
             .get_or_init(|| index_of_columns(&self.drawn))
+            .first
             .get(&id)
             .copied()
     }
@@ -427,15 +485,25 @@ fn column(
         .unwrap_or_else(|| (crate::views::groups::RowMap::flat(ids.len()), Vec::new()));
     let count = rows.len();
     // What keeps its place as the column changes height: the cursor's card,
-    // then those selected among the cards it drew, asked only then.
+    // then those selected among the cards it drew the last frame, each
+    // found in its rows now, asked only then.
     let kept = {
-        let (drawn, order, was) = (rows.clone(), Arc::clone(&c.ids), scroll.clone());
         let height = card_height(scale) + 4.;
-        let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+        let drawn = view.cards_was.get(&c.location).cloned();
+        let (now, index, columns) = (
+            rows.clone(),
+            Rc::clone(&view.drawn_index),
+            Rc::clone(&view.drawn),
+        );
+        let was = scroll.clone();
+        let keep = cx.processor(move |this: &mut Shell, drawn_height: f32, _, _| {
+            let Some((rows, ids)) = &drawn else {
+                return Vec::new();
+            };
             this.with_pane(pane, |this| {
-                // The column's cards are in the order the last frame drew.
-                crate::views::kept_rows(this, (&drawn, &order), &was, height, &drawn, |at, _| {
-                    Some(at)
+                let index = index.get_or_init(|| index_of_columns(&columns));
+                crate::views::kept_rows(this, (rows, ids), &was, drawn_height, &now, |_, id| {
+                    index.card_in(id, k)
                 })
             })
             .unwrap_or_default()
@@ -444,7 +512,7 @@ fn column(
             scroll.clone(),
             view.kept.get(&c.location).cloned().unwrap_or_default(),
             (count, height, 0.),
-            move |window, cx| keep((), window, cx),
+            move |drawn_height, window, cx| keep(drawn_height, window, cx),
         )
     };
     let list = uniform_list(
@@ -909,6 +977,7 @@ impl PaneView for BoardView {
             .iter()
             .map(|c| (c.at, c.location.clone(), Arc::clone(&c.ids)))
             .collect();
+        self.drawn_was = Rc::clone(&self.drawn);
         // The same columns frame after frame (`columns_of`) keep their index.
         let same = drawn.len() == self.drawn.len()
             && drawn
@@ -938,23 +1007,76 @@ impl PaneView for BoardView {
         if let Some((ix, strategy)) = self.wanted.take() {
             self.scroll_card(ix, strategy);
         }
-        // What keeps its place as the board changes width: the cursor's
-        // column, found only then.
+        // The rows and cards each column draws; the last frame's kept.
+        let cards = columns
+            .iter()
+            .map(|c| (c.location.clone(), (self.rows_of(c), Arc::clone(&c.ids))))
+            .collect();
+        self.cards_was = std::mem::replace(&mut self.cards, cards);
+        // What keeps its place as the board changes width: the columns
+        // holding the cursor, then those showing a card selected, as the
+        // last frame drew them, found only then; put where this frame lays
+        // them out, side by side, each as wide as a column.
         let pane = shell.pane;
         let across = {
-            let drawn = Rc::clone(&self.drawn);
+            let (drawn, was) = (Rc::clone(&self.drawn), Rc::clone(&self.drawn_was));
+            let (count, width) = (self.drawn.len(), f32::from(self.scale.px(COLUMN_W)));
             let index = Rc::clone(&self.drawn_index);
-            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
-                this.with_pane(pane, |this| {
-                    let cursor = this.cursor_id()?;
-                    let index = index.get_or_init(|| index_of_columns(&drawn));
-                    index.get(&cursor).map(|(k, _)| *k)
+            let shown: Vec<Option<(Cards, UniformListScrollHandle, f32)>> = was
+                .iter()
+                .map(|(_, location, _)| {
+                    Some((
+                        self.cards_was.get(location)?.clone(),
+                        self.scrolls.get(location)?.clone(),
+                        self.kept.get(location)?.drawn_height()?,
+                    ))
                 })
-                .flatten()
+                .collect();
+            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+                // The columns changed in that frame too: none is found
+                // where it was.
+                if !Rc::ptr_eq(&drawn, &was) {
+                    return Vec::new();
+                }
+                this.with_pane(pane, |this| {
+                    let index = index.get_or_init(|| index_of_columns(&drawn));
+                    let mut taken = vec![false; drawn.len()];
+                    let mut kept = Vec::new();
+                    if let Some(cursor) = this.cursor_id() {
+                        for (k, _) in index.all(cursor) {
+                            if !std::mem::replace(&mut taken[k], true) {
+                                kept.push(k);
+                            }
+                        }
+                    }
+                    for (k, column) in shown.iter().enumerate() {
+                        let Some(((rows, ids), scroll, height)) = column else {
+                            continue;
+                        };
+                        let holds_kept = |this: &Shell| {
+                            !crate::views::kept_rows(
+                                this,
+                                (rows, ids),
+                                scroll,
+                                *height,
+                                rows,
+                                |at, _| Some(at),
+                            )
+                            .is_empty()
+                        };
+                        if !taken[k] && holds_kept(this) {
+                            taken[k] = true;
+                            kept.push(k);
+                        }
+                    }
+                    kept
+                })
+                .unwrap_or_default()
             });
             crate::elements::kept::across(
                 self.row.clone(),
                 self.kept_across.clone(),
+                move |k| (k < count).then_some((k as f32 * width, width)),
                 move |window, cx| keep((), window, cx),
             )
         };
@@ -1067,7 +1189,10 @@ impl PaneView for BoardView {
         self.asked = None;
         self.wanted = None;
         self.drawn = Rc::from([]);
+        self.drawn_was = Rc::from([]);
         self.drawn_index = Rc::default();
+        self.cards.clear();
+        self.cards_was.clear();
         self.seen.clear();
         self.arriving_for = None;
     }
@@ -1107,16 +1232,36 @@ mod tests {
         };
         let index = index_of_columns(&drawn);
         for ino in 0..8 {
-            assert_eq!(index.get(&id(ino)).copied(), walked(id(ino)), "entry {ino}");
+            assert_eq!(
+                index.first.get(&id(ino)).copied(),
+                walked(id(ino)),
+                "entry {ino}"
+            );
         }
         assert_eq!(
-            index[&id(2)],
+            index.first[&id(2)],
             (0, Some(1)),
             "a card before a column's own entry"
         );
-        assert_eq!(index[&id(3)], (1, Some(0)), "its first card");
-        assert_eq!(index[&id(5)], (2, None), "an empty column's own entry");
-        assert_eq!(index[&id(6)], (3, Some(1)), "a card in its own column");
+        assert_eq!(index.first[&id(3)], (1, Some(0)), "its first card");
+        assert_eq!(
+            index.first[&id(5)],
+            (2, None),
+            "an empty column's own entry"
+        );
+        assert_eq!(
+            index.first[&id(6)],
+            (3, Some(1)),
+            "a card in its own column"
+        );
+        // Every column holding an entry, the first first (a file of two
+        // tags): its card in each.
+        let all = |ino| index.all(id(ino)).collect::<Vec<_>>();
+        assert_eq!(all(4), [(1, Some(1)), (3, Some(0))]);
+        assert_eq!(all(2), [(0, Some(1)), (1, None)]);
+        assert_eq!(index.card_in(id(4), 3), Some(0));
+        assert_eq!(index.card_in(id(4), 0), None, "not in that column");
+        assert_eq!(index.card_in(id(2), 1), None, "the column's own entry");
     }
 
     /// Grouped, a column a group, `MAX_COLUMNS` at most: past them, the

@@ -13,11 +13,17 @@
 //!
 //! The arithmetic is along one axis, the same for every view: an item's
 //! extent in the content, where the view starts in it, how long the view
-//! is, and what a heading pinned at its start covers. The grid decides in
-//! its element's prepaint (`uniform_grid`), where it lays its rows out
-//! anew; a `uniform_list` is told by `rows`, drawn before it, and a row
-//! scrolled sideways by `across`. A scroll asked in the same frame (a key's)
-//! runs after it, and wins.
+//! is, and what a heading pinned at its start covers. What was in view is
+//! judged where the last frame drew it, and placed where it is now: each
+//! item is a pair, its place in what the last frame drew and its place
+//! now, which differ when the order changed in that frame (a sort, files
+//! come), and its extent the last frame's (the rows' height may change
+//! with the view's, the text's size). The grid decides in its element's
+//! prepaint (`uniform_grid`), where it lays its rows out anew; a
+//! `uniform_list` is told by `rows`, drawn before it, and a row scrolled
+//! sideways by `across`. A scroll asked in the same frame runs after it
+//! and wins: a key's, carried out in the list's own prepaint, and a place
+//! the view sets itself while it renders (`Memory::placed_by_view`).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -54,8 +60,9 @@ pub fn start(at: f32, len: f32, share: f32, view: f32, pinned: f32) -> f32 {
 }
 
 /// Where a view put what it kept the last time it changed size: the item,
-/// how far into the view it was meant to be (`seen`), and where the view
-/// started once put.
+/// at its place then (the place the frames after drew it at), how far into
+/// the view it was meant to be (`seen`), and where the view started once
+/// put.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Placed {
     item: usize,
@@ -63,67 +70,101 @@ struct Placed {
     from: f32,
 }
 
-/// What a view placed last, held from frame to frame where its scroll is.
+/// What a view placed last, and how it drew its rows, held from frame to
+/// frame where its scroll is.
 #[derive(Clone, Debug, Default)]
-pub struct Memory(Rc<Cell<Option<Placed>>>);
+pub struct Memory(Rc<Kept>);
+
+#[derive(Debug, Default)]
+struct Kept {
+    placed: Cell<Option<Placed>>,
+    /// The rows' height and what a heading pinned at the top covered, as
+    /// the last frame drew them (`rows`).
+    drawn: Cell<Option<(f32, f32)>>,
+    /// The view set its scroll itself in this frame's render.
+    asked: Cell<bool>,
+}
 
 impl Memory {
-    /// The first of `items` wholly in view (`seen`), each laid out where
-    /// `extent` says, with how far into the view it keeps: as far as this
-    /// last meant it to be while the view starts where that left it, else
-    /// as far as it is.
+    /// The first of `items` (each its place in what the last frame drew,
+    /// and its place now) wholly in view as the last frame drew it, at the
+    /// extent `extent` gives its place then, with its place now and how
+    /// far into the view it keeps: as far as this last meant it to be
+    /// while the view starts where that left it, else as far as it is.
     pub fn keep(
         &self,
-        items: &[usize],
+        items: &[(usize, usize)],
         extent: impl Fn(usize) -> Option<(f32, f32)>,
         from: f32,
         view: f32,
         pinned: f32,
     ) -> Option<(usize, f32)> {
-        let (item, share) = items.iter().find_map(|&item| {
-            let (at, len) = extent(item)?;
-            seen(at, len, from, view, pinned).map(|share| (item, share))
+        let (drawn, now, share) = items.iter().find_map(|&(drawn, now)| {
+            let (at, len) = extent(drawn)?;
+            seen(at, len, from, view, pinned).map(|share| (drawn, now, share))
         })?;
-        Some(match self.0.get() {
-            Some(placed) if placed.item == item && (placed.from - from).abs() <= SAME => {
-                (item, placed.share)
+        Some(match self.0.placed.get() {
+            Some(placed) if placed.item == drawn && (placed.from - from).abs() <= SAME => {
+                (now, placed.share)
             }
-            _ => (item, share),
+            _ => (now, share),
         })
     }
 
-    /// `item` put `share` into a view that now starts at `from`.
+    /// `item`, at its place now, put `share` into a view that now starts
+    /// at `from`.
     pub fn put(&self, item: usize, share: f32, from: f32) {
-        self.0.set(Some(Placed { item, share, from }));
+        self.0.placed.set(Some(Placed { item, share, from }));
+    }
+
+    /// The view set its scroll itself while it rendered this frame (a tab
+    /// come back to its place, the top row a zoom keeps): that place
+    /// stands, though the view changed size in the same frame, and what was
+    /// put before is forgotten.
+    pub fn placed_by_view(&self) {
+        self.0.asked.set(true);
+    }
+
+    /// The rows' height as the last frame drew them (`rows`), if it drew.
+    pub fn drawn_height(&self) -> Option<f32> {
+        self.0.drawn.get().map(|(height, _)| height)
     }
 }
 
 /// Drawn before a `uniform_list` of `count` rows `height` tall, over the
 /// list's bounds: as the list's height changes, the first of `rows` (the
-/// cursor's, then those selected, in the list's rows) wholly in view stays
-/// as far down it as it was, a scroll the list carries out in this same
-/// frame. The list's handle holds what it was the last frame: its bounds
-/// and offset. `rows` is asked only then, from what the list drew the last
-/// frame; `memory` is the list's, kept by its view.
+/// cursor's, then those selected, each its row as the last frame drew it
+/// and its row now) wholly in view stays as far down it as it was, a
+/// scroll the list carries out in this same frame. The list's handle holds
+/// what it was the last frame: its bounds and offset; `memory` its rows'
+/// height then. `rows` is asked only then, from what the list drew the
+/// last frame, given the rows' height it drew them at; `memory` is the
+/// list's, kept by its view.
 pub fn rows(
     scroll: UniformListScrollHandle,
     memory: Memory,
     (count, height, pinned): (usize, f32, f32),
-    rows: impl FnOnce(&mut Window, &mut App) -> Vec<usize> + 'static,
+    rows: impl FnOnce(f32, &mut Window, &mut App) -> Vec<(usize, usize)> + 'static,
 ) -> AnyElement {
     gpui::canvas(
         move |bounds, window, cx| {
+            let was = memory.0.drawn.replace(Some((height, pinned)));
+            if memory.0.asked.take() {
+                memory.0.placed.set(None);
+                return;
+            }
             let base = scroll.0.borrow().base_handle.clone();
             let before = f32::from(base.bounds().size.height);
             let now = f32::from(bounds.size.height);
-            if height <= 0. || !resized(before, now) {
+            let (drawn, drawn_pinned) = was.unwrap_or((height, pinned));
+            if height <= 0. || drawn <= 0. || !resized(before, now) {
                 return;
             }
-            let rows = rows(window, cx);
+            let rows = rows(drawn, window, cx);
             let offset = base.offset();
             let from = -f32::from(offset.y);
-            let extent = |row: usize| Some((row as f32 * height, height));
-            let Some((row, share)) = memory.keep(&rows, extent, from, before, pinned) else {
+            let extent = |row: usize| Some((row as f32 * drawn, drawn));
+            let Some((row, share)) = memory.keep(&rows, extent, from, before, drawn_pinned) else {
                 return;
             };
             let most = (count as f32 * height - now).max(0.);
@@ -142,24 +183,27 @@ pub fn rows(
 
 /// Drawn before a row of children side by side that scrolls sideways
 /// (`row`: a board's columns), over its bounds: as the row changes width,
-/// child `child` (the cursor's column), wholly in view, stays as far
-/// along it as it was. Its children keep their widths: where the last frame
-/// laid them out is where they are. `child` is asked only then.
+/// the first of `children` (the cursor's columns, then those showing a card
+/// selected) wholly in view where the last frame laid it out stays as far
+/// along the row as it was, where `now` lays it out in this frame (its
+/// children may change width with the row: the text's size). `now` gives
+/// child `k`'s start and width, `None` past the last. `children` is asked
+/// only then.
 pub fn across(
     row: ScrollHandle,
     memory: Memory,
-    child: impl FnOnce(&mut Window, &mut App) -> Option<usize> + 'static,
+    now: impl Fn(usize) -> Option<(f32, f32)> + 'static,
+    children: impl FnOnce(&mut Window, &mut App) -> Vec<usize> + 'static,
 ) -> AnyElement {
     gpui::canvas(
         move |bounds, window, cx| {
             let before = row.bounds();
-            let now = f32::from(bounds.size.width);
-            if !resized(f32::from(before.size.width), now) {
+            let wide = f32::from(bounds.size.width);
+            if !resized(f32::from(before.size.width), wide) {
                 return;
             }
-            let Some(child) = child(window, cx) else {
-                return;
-            };
+            let children: Vec<(usize, usize)> =
+                children(window, cx).into_iter().map(|k| (k, k)).collect();
             let laid = |k: usize| {
                 let laid = row.bounds_for_item(k)?;
                 Some((
@@ -170,18 +214,18 @@ pub fn across(
             let offset = row.offset();
             let from = -f32::from(offset.x);
             let view = f32::from(before.size.width);
-            let Some((child, share)) = memory.keep(&[child], laid, from, view, 0.) else {
+            let Some((child, share)) = memory.keep(&children, laid, from, view, 0.) else {
                 return;
             };
-            let Some((at, len)) = laid(child) else {
+            let Some((at, len)) = now(child) else {
                 return;
             };
             // As wide as its children: a dozen columns at most.
-            let wide = (0..)
-                .map_while(laid)
+            let content = (0..)
+                .map_while(&now)
                 .last()
                 .map_or(0., |(at, len)| at + len);
-            let start = start(at, len, share, now, 0.).clamp(0., (wide - now).max(0.));
+            let start = start(at, len, share, wide, 0.).clamp(0., (content - wide).max(0.));
             row.set_offset(point(px(-start), offset.y));
             memory.put(child, share, start);
         },
@@ -245,20 +289,49 @@ mod tests {
         // to be wholly in view, its middle no longer where it was.
         let memory = Memory::default();
         let extent = |_| Some((780., 20.));
-        let (_, share) = memory.keep(&[0], extent, 0., 800., 0.).unwrap();
+        let (_, share) = memory.keep(&[(0, 0)], extent, 0., 800., 0.).unwrap();
         let from = start(780., 20., share, 400., 0.);
         assert!((780. + 20. - from - 400.).abs() < 1e-3, "{from}");
         // As far as it is now, back to 800 it would not be where it was.
         let (_, there) = Memory::default()
-            .keep(&[0], extent, from, 400., 0.)
+            .keep(&[(0, 0)], extent, from, 400., 0.)
             .unwrap();
         assert!(start(780., 20., there, 800., 0.) > 1.);
         // Remembered, while the view stayed: where it was.
         memory.put(0, share, from);
-        let (_, again) = memory.keep(&[0], extent, from, 400., 0.).unwrap();
+        let (_, again) = memory.keep(&[(0, 0)], extent, from, 400., 0.).unwrap();
         assert!(start(780., 20., again, 800., 0.).abs() < 1e-3);
         // Scrolled meanwhile, it is as far as it is.
-        let (_, moved) = memory.keep(&[0], extent, from + 10., 400., 0.).unwrap();
+        let (_, moved) = memory
+            .keep(&[(0, 0)], extent, from + 10., 400., 0.)
+            .unwrap();
         assert!((moved - again).abs() > 0.01);
+    }
+
+    #[test]
+    fn what_was_in_view_is_judged_where_it_was_drawn_and_kept_where_it_is() {
+        // The cursor on row 39, the lowest whole one of a view 800 tall of
+        // rows 20 tall; three rows came above it in the frame the view
+        // halves: row 42 now. Judged at 42 it was not in view.
+        let extent = |row: usize| Some((row as f32 * 20., 20.));
+        assert!(
+            Memory::default()
+                .keep(&[(42, 42)], extent, 0., 800., 0.)
+                .is_none()
+        );
+        let (row, share) = Memory::default()
+            .keep(&[(39, 42)], extent, 0., 800., 0.)
+            .unwrap();
+        assert_eq!(row, 42, "kept where it is now");
+        let from = start(row as f32 * 20., 20., share, 400., 0.);
+        assert!(
+            row as f32 * 20. + 20. - from <= 400. + 1e-3,
+            "wholly in view"
+        );
+        // Remembered by its place now: drawn there the next frame.
+        let memory = Memory::default();
+        memory.put(42, share, from);
+        let (_, again) = memory.keep(&[(42, 42)], extent, from, 400., 0.).unwrap();
+        assert!((again - share).abs() < 1e-6);
     }
 }

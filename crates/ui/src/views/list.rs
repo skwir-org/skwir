@@ -562,6 +562,8 @@ impl ListView {
         let state = self.scroll.0.borrow();
         let offset = state.base_handle.offset();
         state.base_handle.set_offset(gpui::point(offset.x, px(y)));
+        // It stands though the list changes size in this frame (`kept`).
+        self.kept.placed_by_view();
     }
 
     /// Carry out the scroll asked by position, in the rows of `rows`. A
@@ -1597,14 +1599,14 @@ impl PaneView for ListView {
             let order = std::sync::Arc::clone(&self.drawn_order);
             let now = rows.clone();
             let scroll = self.scroll.clone();
-            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+            let keep = cx.processor(move |this: &mut Shell, drawn_height: f32, _, _| {
                 this.with_pane(pane, |this| {
                     let list = &this.ui().list;
                     crate::views::kept_rows(
                         this,
                         (&drawn, &order),
                         &scroll,
-                        height,
+                        drawn_height,
                         &now,
                         |_, id| list.index_of(id),
                     )
@@ -1616,7 +1618,7 @@ impl PaneView for ListView {
                 self.scroll.clone(),
                 self.kept.clone(),
                 (count, height, pinned),
-                move |window, cx| keep((), window, cx),
+                move |drawn_height, window, cx| keep(drawn_height, window, cx),
             )
         };
         self.drawn = rows.clone();

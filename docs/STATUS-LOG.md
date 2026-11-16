@@ -18360,8 +18360,9 @@ routine CI's first full run since then found a test that took GitHub's
 runners for a system without user namespaces (d4ffdc07), the release's
 preparation the startup-order tool holding gigabytes (80c11990), and its
 runs one race in a test (5de67171). What the keys are on kept in place
-as a view changes size (df0b456a, 4a435b3b) came after the last review
-and ships unreviewed.
+as a view changes size (df0b456a) was reviewed in a session of its own
+the same evening: one finding, fixed in 4a435b3b (the columns view read
+the rows it drew in the order as it is now).
 
 - **CI** (d4ffdc07): `fs::reach::tests::the_table_is_followed` runs
   again as root of a user namespace, and skipped only where unshare said
@@ -18507,3 +18508,49 @@ the next day, for the next review to know where to start.
   wait), dac2aa76 (what a plan brings, read as its run begins,
   `op/arriving.rs`: the only one that changes what the program does),
   and the records (31a17bd5, this entry).
+
+## 2026-11-16: A second review of what keeps its place as a view changes size
+
+The user asked for a review of df0b456a and 4a435b3b, though one had
+been made (the session that wrote 4a435b3b, 2026-11-15); a reviewer given
+the code and the rules alone, not either conclusion, found four, each
+confirmed by reading the code before it was fixed:
+
+- **Judged in this frame's rows**: the candidates were found among what
+  the last frame drew, then judged by their row or tile now against the
+  last frame's offset, at the rows' height now. A sort or files arriving
+  in the frame the view changed size kept another row or none; a text
+  size changing the rows with the view (the list's header grows with it)
+  judged at the wrong height; the Board's columns took this frame's cards
+  for the last frame's. Each candidate is now a pair, its place drawn and
+  its place now (`kept::Memory::keep`, `kept_rows`, `UniformGrid::keeps`),
+  judged where it was drawn, at the height it was drawn at
+  (`Memory::drawn_height`), and put where it is; the Board keeps each
+  column's cards of the last frame (`cards_was`).
+- **A grid's tile without its gutter**: its extent was its row's top and
+  its tiles' height, the tile being drawn half a gutter lower, where a
+  key reads the row's band (`Slots::shows_whole`): kept at the foot it was
+  left 4 px cut, and the next arrow scrolled it. The extent is the band;
+  a test fails at the extent before (`-232`) and passes.
+- **A list's own placements lost**: what the list sets as it renders (a
+  tab's place given back, the top row kept as its rows change height,
+  a fold's anchor) was overwritten by the keeper on a frame whose size
+  changed. `place_offset` tells the keeper (`placed_by_view`), which
+  stands aside that frame.
+- **The Board's row**: the column kept was put at the last frame's
+  layout, off by as much as the columns widened with the text's size;
+  only the first column holding the cursor was tried, never one showing a
+  card selected. It is now put where this frame lays it out (columns side
+  by side, `COLUMN_W` at the files' scale, border-box in taffy 0.15, no
+  gap), every column holding the cursor is tried (`Placed::all`), then
+  those showing a card kept; where the columns changed in that frame,
+  nothing is kept.
+
+`docs/invariants/views.md` says it, and no longer that a zoom changes no
+size. Checked: `skwir-ui`'s 728 tests, clippy and rustfmt; on Xvfb, the
+debug build on 400 files and a board of seven folders: the columns view
+and the list stacked, the grid side by side (seven columns to three), the
+Board side by side (folder-4 kept whole): the cursor kept wholly in view,
+and each view given back exactly as the split closed (0 pixels apart; the
+list's only difference the pointer's hover). Not seen in a window: a text
+size changed with a view (Settings), a resize during a sort, a tag board.

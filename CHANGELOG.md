@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **What you are on keeps its place more surely as a view changes size**:
+  a grid's tile kept at the foot of the view was left cut by its gutter,
+  so the next arrow scrolled it again; a list's place given back (a tab
+  come back, the top row it keeps as its text grows) was moved again when
+  the view changed size in that frame; a sort or files coming in that
+  frame could keep another row, or none; on the Board, the column kept
+  was put off by as much as the columns widened with the text, only the
+  first column holding a file of two tags was tried, and a column showing
+  a selected card never.
 - **What a copy brings shows with its notes**: a file a copy or a move
   will bring, shown where it lands while the copy waits or runs, could
   stay for good without its tags, rating and dates, read as the copy was

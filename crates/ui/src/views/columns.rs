@@ -879,14 +879,14 @@ impl PaneView for ColumnsView {
             let now = rows.clone();
             let scroll = self.scroll.clone();
             let height = row_height(shell.row_zoom, files_scale(&theme));
-            let keep = cx.processor(move |this: &mut Shell, (): (), _, _| {
+            let keep = cx.processor(move |this: &mut Shell, drawn_height: f32, _, _| {
                 this.with_pane(pane, |this| {
                     let list = &this.ui().list;
                     crate::views::kept_rows(
                         this,
                         (&drawn, &order),
                         &scroll,
-                        height,
+                        drawn_height,
                         &now,
                         |_, id| list.index_of(id),
                     )
@@ -897,7 +897,7 @@ impl PaneView for ColumnsView {
                 self.scroll.clone(),
                 self.kept.clone(),
                 (rows.len(), height, 0.),
-                move |window, cx| keep((), window, cx),
+                move |drawn_height, window, cx| keep(drawn_height, window, cx),
             )
         };
         self.drawn_order = Arc::clone(&shell.ui().list.sorted);

@@ -80,9 +80,10 @@ pub fn kept(shell: &crate::shell::Shell, shown: &[skwir_core::EntryId]) -> Vec<u
 
 /// The rows of a `uniform_list` that keep their place as it changes size
 /// (`elements::kept::rows`): what `kept` says of the rows it drew the last
-/// frame (`drawn` over `order`, `height` tall, where its handle `scroll`
-/// left them), found again in its rows `now` by their place in its order
-/// now (`position`, given their place in `order` and their entry).
+/// frame (`drawn` over `order`, `height` tall then, where its handle
+/// `scroll` left them), each with its row then and its row now in `now`,
+/// found by its place in its order now (`position`, given its place in
+/// `order` and its entry).
 pub fn kept_rows(
     shell: &crate::shell::Shell,
     (drawn, order): (&groups::RowMap, &[skwir_core::EntryId]),
@@ -90,7 +91,7 @@ pub fn kept_rows(
     height: f32,
     now: &groups::RowMap,
     position: impl Fn(usize, skwir_core::EntryId) -> Option<usize>,
-) -> Vec<usize> {
+) -> Vec<(usize, usize)> {
     if height <= 0. {
         return Vec::new();
     }
@@ -106,7 +107,9 @@ pub fn kept_rows(
     };
     kept(shell, ids)
         .into_iter()
-        .filter_map(|at| position(shown.start + at, ids[at]))
-        .map(|at| now.row_of(at))
+        .filter_map(|at| {
+            let was = drawn.row_of(shown.start + at);
+            Some((was, now.row_of(position(shown.start + at, ids[at])?)))
+        })
         .collect()
 }

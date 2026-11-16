@@ -308,23 +308,26 @@ pub mod math {
             self.heading
         }
 
-        /// Where item `ix`'s row starts, and how tall it is.
+        /// Where item `ix`'s row starts, and how tall it is with its gutter:
+        /// the band `shows_whole` reads, so a tile kept wholly in view is one
+        /// a key finds in view (a tile is drawn half a gutter into it).
         fn extent(&self, ix: usize) -> Option<(f32, f32)> {
             let row = self.line_of(ix).min(self.rows().checked_sub(1)?);
-            Some((self.tops[row], self.row_height(row)))
+            Some((self.tops[row], self.tops[row + 1] - self.tops[row]))
         }
 
-        /// The offset that keeps the first of `items` wholly in view in
-        /// `before` (the lines of the last frame, the view `before_h` tall at
-        /// offset `y`) as far down the view as it was, in these lines and a
-        /// view `now_h` tall (`elements::kept`, `memory` the grid's): what a
-        /// grid changing size keeps, the cursor's tile first. With the tile
+        /// The offset that keeps the first of `items` (each its tile in
+        /// `before` and its tile in these lines) wholly in view in `before`
+        /// (the lines of the last frame, the view `before_h` tall at offset
+        /// `y`) as far down the view as it was, in these lines and a view
+        /// `now_h` tall (`elements::kept`, `memory` the grid's): what a grid
+        /// changing size keeps, the cursor's tile first. With the tile now
         /// and how far down it is meant to be; `None` when none of them was
         /// wholly in view. Not clamped to the content.
         pub fn offset_keeping(
             &self,
             (before, before_h): (&Slots, f32),
-            items: &[usize],
+            items: &[(usize, usize)],
             y: f32,
             now_h: f32,
             memory: &crate::elements::kept::Memory,
@@ -689,7 +692,7 @@ pub struct UniformGrid {
 }
 
 /// The tiles that keep their place as a grid changes size, asked only then.
-type Keeps = Box<dyn FnOnce(&mut Window, &mut App) -> Vec<usize>>;
+type Keeps = Box<dyn FnOnce(&mut Window, &mut App) -> Vec<(usize, usize)>>;
 
 pub struct UniformGridFrameState {
     items: SmallVec<[AnyElement; 32]>,
@@ -893,13 +896,14 @@ impl UniformGrid {
     }
 
     /// What keeps its place as the grid changes size (a split, a panel,
-    /// the window resized): the first of `tiles` wholly in view stays as
-    /// far down it as it was (`elements::kept`), the cursor's first, then
-    /// what is selected. None of them in view, the row at the top stays.
-    /// Asked only once the size changed, from what the last frame drew.
+    /// the window resized): the first of `tiles` (each its tile as the last
+    /// frame drew it and its tile now) wholly in view stays as far down it
+    /// as it was (`elements::kept`), the cursor's first, then what is
+    /// selected. None of them in view, the row at the top stays. Asked only
+    /// once the size changed, from what the last frame drew.
     pub fn keeps(
         mut self,
-        tiles: impl FnOnce(&mut Window, &mut App) -> Vec<usize> + 'static,
+        tiles: impl FnOnce(&mut Window, &mut App) -> Vec<(usize, usize)> + 'static,
     ) -> Self {
         self.keeps = Some(Box::new(tiles));
         self
@@ -1358,31 +1362,53 @@ mod tests {
         let narrow = Slots::new(Columns::fit(340., 100., 12., 40.), 0., 60, |_| 100.);
         assert_eq!((wide.columns.cols, narrow.columns.cols), (5, 3));
         let memory = crate::elements::kept::Memory::default();
-        let y = |now: &Slots, before, items: &[usize], y, h| {
+        let y = |now: &Slots, before, items: &[(usize, usize)], y, h| {
             now.offset_keeping(before, items, y, h, &memory)
                 .map(|(ix, _, y)| (ix, y))
         };
         // In the eighth row now (21..24), halfway down still.
         assert_eq!(
-            y(&narrow, (&wide, 500.), &[21], -200., 500.),
+            y(&narrow, (&wide, 500.), &[(21, 21)], -200., 500.),
             Some((21, -500.))
         );
         // Back as wide, back where it was.
         assert_eq!(
-            y(&wide, (&narrow, 500.), &[21], -500., 500.),
+            y(&wide, (&narrow, 500.), &[(21, 21)], -500., 500.),
             Some((21, -200.))
         );
         // Out of view, a tile is passed over; none in view, none kept.
         assert_eq!(
-            y(&narrow, (&wide, 500.), &[50, 21], -200., 500.),
+            y(&narrow, (&wide, 500.), &[(50, 50), (21, 21)], -200., 500.),
             Some((21, -500.))
         );
-        assert_eq!(y(&narrow, (&wide, 500.), &[50], -200., 500.), None);
+        assert_eq!(y(&narrow, (&wide, 500.), &[(50, 50)], -200., 500.), None);
         // Half as tall, it is halfway down that.
         assert_eq!(
-            y(&wide, (&wide, 500.), &[21], -200., 250.),
+            y(&wide, (&wide, 500.), &[(21, 21)], -200., 250.),
             Some((21, -325.))
         );
+        // Drawn as tile 21, tile 40 now (files came before it in that
+        // frame): judged where it was drawn, wholly in view there, and kept
+        // where it is, halfway down; tile 40 was never in that view.
+        assert_eq!(y(&narrow, (&wide, 500.), &[(40, 40)], -200., 500.), None);
+        assert_eq!(
+            y(&narrow, (&wide, 500.), &[(21, 40)], -200., 500.),
+            Some((40, -1100.))
+        );
+    }
+
+    #[test]
+    fn a_kept_tile_stays_wholly_in_view_with_its_gutter() {
+        // Gutters 8 tall, so rows 108 apart: the fifth row (tiles 20..25)
+        // is the band 432..540, its tiles drawn 4 into it, wholly in a view
+        // 540 tall from 0. Halved, it stays whole as a key reads it.
+        let slots = Slots::new(Columns::fit(600., 100., 12., 40.), 8., 60, |_| 100.);
+        let memory = crate::elements::kept::Memory::default();
+        let (ix, _, y) = slots
+            .offset_keeping((&slots, 540.), &[(20, 20)], 0., 300., &memory)
+            .unwrap();
+        assert_eq!(ix, 20);
+        assert!(slots.shows_whole(20, 300., y), "{y}");
     }
 
     #[test]

@@ -1192,18 +1192,18 @@ impl PaneView for GridView {
             let scroll = self.scroll.clone();
             cx.processor(move |this: &mut Shell, (): (), _, _| {
                 this.with_pane(pane, |this| {
-                    let shown: Vec<EntryId> = scroll
+                    // Each entry the last frame drew, with its tile then.
+                    let (tiles, shown): (Vec<usize>, Vec<EntryId>) = scroll
                         .shown()
                         .filter_map(|tile| match drawn.at_tile(tile)? {
-                            Tile::Entry(at) => order.get(at).copied(),
+                            Tile::Entry(at) => Some((tile, *order.get(at)?)),
                             Tile::Arriving(_) => None,
                         })
-                        .collect();
+                        .unzip();
                     let list = &this.ui().list;
                     crate::views::kept(this, &shown)
                         .into_iter()
-                        .filter_map(|at| list.index_of(shown[at]))
-                        .map(|ix| rows.tile_of(ix))
+                        .filter_map(|at| Some((tiles[at], rows.tile_of(list.index_of(shown[at])?))))
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default()
