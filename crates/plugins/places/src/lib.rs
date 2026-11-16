@@ -299,7 +299,12 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
         unavailable: Some(unavailable.into()),
         key: volume_key(&identity, Path::new("/")),
         hidden: identity.ignored.unwrap_or(volume.system),
-        ..Place::new("devices", title, icon, device_location(&volume.device))
+        ..Place::new(
+            skwir_core::registry::groups::DEVICES.id,
+            title,
+            icon,
+            device_location(&volume.device),
+        )
     }
 }
 
@@ -373,10 +378,20 @@ pub fn scan() -> Vec<Place> {
     };
     let mut out = Vec::new();
     if let Some(home) = skwir_platform::places::home() {
-        out.push(folder("Home".into(), home, "user-home", "places"));
+        out.push(folder(
+            "Home".into(),
+            home,
+            "user-home",
+            skwir_core::registry::groups::PLACES.id,
+        ));
     }
     for d in skwir_platform::places::user_dirs() {
-        out.push(folder(d.name, d.path, icon_for_user_dir(&d.kind), "places"));
+        out.push(folder(
+            d.name,
+            d.path,
+            icon_for_user_dir(&d.kind),
+            skwir_core::registry::groups::PLACES.id,
+        ));
     }
     // In the file's order, a remote folder's beside a folder's.
     for b in skwir_platform::places::every_bookmark() {
@@ -397,7 +412,12 @@ pub fn scan() -> Vec<Place> {
                         &serde_json::json!({ "path": path }),
                     )),
                     reorder: Some(bookmark_reorder(&Marked::Folder(b.path.clone()))),
-                    ..folder(b.title, b.path, "folder", "bookmarks")
+                    ..folder(
+                        b.title,
+                        b.path,
+                        "folder",
+                        skwir_core::registry::groups::BOOKMARKS.id,
+                    )
                 });
             }
             // A remote folder another file manager bookmarked opens by its
@@ -409,7 +429,7 @@ pub fn scan() -> Vec<Place> {
                     forget: Some(Invocation::with_args("places.unbookmark_address", &which)),
                     reorder: Some(bookmark_reorder(&Marked::Address(b.address.clone()))),
                     ..Place::new(
-                        "bookmarks",
+                        skwir_core::registry::groups::BOOKMARKS.id,
                         b.title,
                         "folder-remote",
                         Location::parse(&b.address),
@@ -433,7 +453,7 @@ pub fn scan() -> Vec<Place> {
                 )),
                 unavailable: Some("Locked. Click to unlock and open it.".into()),
                 ..Place::new(
-                    "devices",
+                    skwir_core::registry::groups::DEVICES.id,
                     m.label,
                     "drive-harddisk-encrypted",
                     device_location(&m.source),
@@ -459,7 +479,12 @@ pub fn scan() -> Vec<Place> {
                     &serde_json::json!({ "path": PathArg::from(m.path.as_path()) }),
                 )
             }),
-            ..folder(m.label, m.path, icon, "devices")
+            ..folder(
+                m.label,
+                m.path,
+                icon,
+                skwir_core::registry::groups::DEVICES.id,
+            )
         });
     }
     out
@@ -594,7 +619,7 @@ impl Places {
                 let mut measured: Vec<Place> = places
                     .into_iter()
                     .map(|mut place| {
-                        if place.group == "devices" {
+                        if place.group == skwir_core::registry::groups::DEVICES.id {
                             place.space = place
                                 .location
                                 .path()
@@ -603,7 +628,7 @@ impl Places {
                         // A bookmark outlives its folder: it may have moved,
                         // or live on a volume that is not mounted. A remote's
                         // is not asked: its server may not answer (ADR-077).
-                        if place.group == "bookmarks"
+                        if place.group == skwir_core::registry::groups::BOOKMARKS.id
                             && place.location.path().is_some_and(|path| {
                                 skwir_core::fs::reach::of(&path).is_none() && !path.is_dir()
                             })
@@ -663,7 +688,9 @@ impl Places {
             let volumes: Vec<(Location, PathBuf)> = publisher
                 .shown
                 .iter()
-                .filter(|place| place.group == "devices" && place.busy.is_none())
+                .filter(|place| {
+                    place.group == skwir_core::registry::groups::DEVICES.id && place.busy.is_none()
+                })
                 .filter_map(|place| Some((place.location.clone(), place.location.path()?)))
                 .collect();
             if volumes.is_empty() {

@@ -19,7 +19,7 @@ use gpui::{
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::plugin::{PluginInfo, RequirementStatus};
-use skwir_core::settings::{SaveState, SettingKind, SettingSpec, page};
+use skwir_core::settings::{SaveState, Section, SettingKind, SettingSpec, page, section};
 use std::sync::Mutex;
 
 use crate::elements::popover::PopoverAnchor;
@@ -307,14 +307,14 @@ pub fn font_spec(
             "Reading font",
             "The font books, Markdown and HTML files, documents and mail are read in. Automatic is your desktop's document font, as Fonts from reads it, else the interface's.",
         )
-        .section("Text")
+        .section(section::TEXT)
         .essential(),
         CODE_FONT_KEY => spec(
             "Code font",
             "The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width. Automatic is your desktop's monospace font, as Fonts from reads it, else skwir's own.",
         )
         .page(page::READING)
-        .section("Code"),
+        .section(section::CODE),
         _ => spec(
             "Font",
             "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's, as Fonts from reads it, else skwir's own, Inter.",
@@ -380,13 +380,13 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             &format!("The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at{now}. The preview's own size buttons still change only the file shown."),
         )
         .page(page::READING)
-        .section("Text"),
+        .section(section::TEXT),
         Part::Code => spec(
             "Code text size",
             &format!("The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one{now}. The preview's own size buttons still change only the file shown."),
         )
         .page(page::READING)
-        .section("Code"),
+        .section(section::CODE),
     }
 }
 
@@ -574,7 +574,7 @@ fn code_appearance_spec() -> SettingSpec {
         "auto",
         &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
     )
-    .section("Code")
+    .section(section::CODE)
     .essential()
     .now(look_now(|shown| shown.dark))
 }
@@ -1024,7 +1024,7 @@ pub fn code_theme_spec(
         &pairs,
     )
     .more_choices("the themes you added to bat")
-    .section("Code")
+    .section(section::CODE)
 }
 
 /// The languages a grammar was found or added for, listed on the Reading
@@ -1070,7 +1070,7 @@ pub(crate) fn grammar_folders_spec(nearly: usize) -> SettingSpec {
         ],
     )
     .records_kept_by(GRAMMAR_FOLDERS.clone())
-    .section("Grammars")
+    .section(section::GRAMMARS)
 }
 
 /// Where grammars were looked for, as the Reading page lists it
@@ -1565,7 +1565,7 @@ pub fn declare(app: &App) {
             &[("window", "A new window"), (LAUNCH_IN_TAB, "A tab")],
         )
         .page(page::GENERAL)
-        .section("Startup"),
+        .section(section::STARTUP),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1575,7 +1575,7 @@ pub fn declare(app: &App) {
             false,
         )
         .page(page::GENERAL)
-        .section("Tabs"),
+        .section(section::TABS),
     );
     app.settings.declare(
         SettingSpec::choice(
@@ -1586,7 +1586,7 @@ pub fn declare(app: &App) {
             &[("strip", "Above the files"), (TABS_IN_SIDEBAR, "In the sidebar")],
         )
         .page(page::GENERAL)
-        .section("Tabs"),
+        .section(section::TABS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1596,7 +1596,7 @@ pub fn declare(app: &App) {
             false,
         )
         .page(page::GENERAL)
-        .section("Address"),
+        .section(section::ADDRESS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1606,7 +1606,7 @@ pub fn declare(app: &App) {
             false,
         )
         .page(page::GENERAL)
-        .section("Address"),
+        .section(section::ADDRESS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1616,7 +1616,7 @@ pub fn declare(app: &App) {
             true,
         )
         .page(page::GENERAL)
-        .section("Address"),
+        .section(section::ADDRESS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1626,7 +1626,7 @@ pub fn declare(app: &App) {
             true,
         )
         .page(page::GENERAL)
-        .section("Actions"),
+        .section(section::ACTIONS),
     );
     app.settings.declare(
         SettingSpec::integer(
@@ -1641,7 +1641,7 @@ pub fn declare(app: &App) {
         .slider()
         .under(ACTIVITY_OPENS_KEY)
         .page(page::GENERAL)
-        .section("Actions"),
+        .section(section::ACTIONS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1651,7 +1651,7 @@ pub fn declare(app: &App) {
             true,
         )
         .page(page::GENERAL)
-        .section("Actions"),
+        .section(section::ACTIONS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1661,7 +1661,7 @@ pub fn declare(app: &App) {
             true,
         )
         .page(page::GENERAL)
-        .section("Actions"),
+        .section(section::ACTIONS),
     );
     // Narrow folders, as 0.2 named it, is Quick filters (ADR-107), which
     // the window keeps for each pane since (`session::former_quick_filters`).
@@ -1675,7 +1675,7 @@ pub fn declare(app: &App) {
             false,
         )
         .page(page::VIEWS)
-        .section("Grid")
+        .section(section::GRID)
         .essential(),
     );
     // What the grid's tiles say under their names (`CAPTIONS`), in the
@@ -1684,7 +1684,7 @@ pub fn declare(app: &App) {
         app.settings.declare(
             SettingSpec::toggle(caption.setting, caption.title, caption.description, false)
                 .page(page::VIEWS)
-                .section("Grid"),
+                .section(section::GRID),
         );
     }
     app.settings.declare(
@@ -1694,7 +1694,7 @@ pub fn declare(app: &App) {
             "Read a document, a book laid out in pages or a comic as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
             true,
         )
-        .section("Pages")
+        .section(section::PAGES)
         .essential(),
     );
     app.settings.declare(
@@ -1704,7 +1704,7 @@ pub fn declare(app: &App) {
             "Read a book, a document, a page in reading mode or a message as one scrolling column. Off shows a screen at a time, ending at a whole line: the wheel, the arrows and Page Down turn it, and past a chapter's last page comes the next chapter. The button beside the text's size changes it too.",
             true,
         )
-        .section("Pages"),
+        .section(section::PAGES),
     );
     app.settings.declare(font_spec(
         READING_FONT_KEY,
@@ -1726,7 +1726,7 @@ pub fn declare(app: &App) {
                 ("full", "Full width"),
             ],
         )
-        .section("Text")
+        .section(section::TEXT)
         .essential(),
     );
     app.settings.declare(
@@ -1736,7 +1736,7 @@ pub fn declare(app: &App) {
             "Count where you are by the page numbers a book's printed edition lists, or a PDF's pages are printed with. That is page 47 of 312 rather than chapter 3 of 12; a book without them counts chapters.",
             false,
         )
-        .section("Pages"),
+        .section(section::PAGES),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1745,7 +1745,7 @@ pub fn declare(app: &App) {
             "Keep a document's or a book's contents open beside it while you read, the text or the pages narrowed to make room. Off, they open over what you read and close once you choose a part. The pin at the top of the contents changes it too.",
             false,
         )
-        .section("Pages"),
+        .section(section::PAGES),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1754,7 +1754,7 @@ pub fn declare(app: &App) {
             "Wrap a text file's long lines to the panel, a line's number on its first row. Off, they go on sideways and the panel scrolls with them.",
             true,
         )
-        .section("Text"),
+        .section(section::TEXT),
     );
     app.settings.declare(code_appearance_spec());
     for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
@@ -1780,7 +1780,7 @@ pub fn declare(app: &App) {
             skwir_platform::highlight::First::CHOICES[0].0,
             &skwir_platform::highlight::First::CHOICES,
         )
-        .section("Grammars"),
+        .section(section::GRAMMARS),
     );
     // Skwir's grammars folder, named where it is: the greyed grammars'
     // reasons send there.
@@ -1801,7 +1801,7 @@ pub fn declare(app: &App) {
             ],
         )
         .records_kept_by(LANGUAGES.clone())
-        .section("Grammars"),
+        .section(section::GRAMMARS),
     );
     app.settings.declare(grammar_folders_spec(
         skwir_platform::grammars::report().map_or(0, |report| report.nearly.len()),
@@ -1824,7 +1824,7 @@ pub fn declare(app: &App) {
             &SLIDESHOW_PACES,
         )
         .page(page::MEDIA)
-        .section("Pictures"),
+        .section(section::PICTURES),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1834,7 +1834,7 @@ pub fn declare(app: &App) {
             true,
         )
         .page(page::VIEWS)
-        .section("Previews"),
+        .section(section::PREVIEWS),
     );
     app.settings.declare(
         SettingSpec::records(
@@ -1857,7 +1857,7 @@ pub fn declare(app: &App) {
         }))
         .validate_with(|value, _| crate::preview::StandIns::check(value))
         .page(page::VIEWS)
-        .section("Previews")
+        .section(section::PREVIEWS)
         .under(FOLDER_PREVIEW_FILE_KEY),
     );
     app.settings.declare(
@@ -1868,7 +1868,7 @@ pub fn declare(app: &App) {
             true,
         )
         .page(page::MEDIA)
-        .section("Pictures"),
+        .section(section::PICTURES),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1878,7 +1878,7 @@ pub fn declare(app: &App) {
             false,
         )
         .page(page::MEDIA)
-        .section("3D models"),
+        .section(section::MODELS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1888,7 +1888,7 @@ pub fn declare(app: &App) {
             false,
         )
         .page(page::MEDIA)
-        .section("3D models"),
+        .section(section::MODELS),
     );
     app.settings.declare(SettingSpec::state(
         UNFOLDED_KEY,
@@ -1915,7 +1915,7 @@ pub fn declare(app: &App) {
                 column.shown,
             )
             .page(page::VIEWS)
-            .section("List columns"),
+            .section(section::LIST_COLUMNS),
         );
     }
     app.settings.declare(
@@ -1932,7 +1932,7 @@ pub fn declare(app: &App) {
             ],
         )
         .page(page::GENERAL)
-        .section("Drag and drop"),
+        .section(section::DRAG_AND_DROP),
     );
 }
 
@@ -2037,7 +2037,7 @@ pub fn page_order(specs: &mut [SettingSpec]) {
         };
         let section = listed
             .iter()
-            .position(|section| *section == spec.section)
+            .position(|section| section.id == spec.section)
             .map_or_else(
                 || (1, sections[&(page.clone(), spec.section.clone())]),
                 |at| (0, at as u64),
@@ -2090,6 +2090,11 @@ pub fn blocks(specs: &[&SettingSpec]) -> Vec<Block> {
             _ => runs.push((spec.section.clone(), vec![at])),
         }
     }
+    // Each run by its section's words, as its caption says them.
+    let runs: Vec<(String, Vec<usize>)> = runs
+        .into_iter()
+        .map(|(_, rows)| (specs[rows[0]].section_title.clone(), rows))
+        .collect();
     // What a line is made of; nothing for what a table cannot hold: a
     // section without a title, a list of records (its records are rows of
     // their own), a setting under a switch.
@@ -2159,7 +2164,7 @@ pub(crate) struct Builtin {
     /// Listed only while a setting is on it.
     when_used: bool,
     /// Its sections in the order they stand, before any it does not list.
-    sections: &'static [&'static str],
+    sections: &'static [Section],
 }
 
 /// The dialog's own pages, by subject, in the sidebar's order; plugins'
@@ -2174,12 +2179,12 @@ static BUILTIN: [Builtin; 13] = [
         intro: "What skwir does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
         when_used: false,
         sections: &[
-            "Startup",
-            "Tabs",
-            "Split",
-            "Address",
-            "Drag and drop",
-            "Actions",
+            section::STARTUP,
+            section::TABS,
+            section::SPLIT,
+            section::ADDRESS,
+            section::DRAG_AND_DROP,
+            section::ACTIONS,
         ],
     },
     Builtin {
@@ -2201,12 +2206,12 @@ static BUILTIN: [Builtin; 13] = [
         intro: "How a folder shows its files: their order, the grid, the list's columns, the thumbnails drawn for them, what its preview shows, and what Git says of them.",
         when_used: true,
         sections: &[
-            "Sorting",
-            "Grid",
-            "List columns",
-            "Thumbnails",
-            "Previews",
-            "Git",
+            section::SORTING,
+            section::GRID,
+            section::LIST_COLUMNS,
+            section::THUMBNAILS,
+            section::PREVIEWS,
+            section::GIT,
         ],
     },
     Builtin {
@@ -2217,7 +2222,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "tag",
         intro: "Tags, ratings and comments: how tags are offered, and the places they are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.",
         when_used: true,
-        sections: &["Tags"],
+        sections: &[section::TAGS],
     },
     Builtin {
         page: Page::Reading,
@@ -2228,12 +2233,12 @@ static BUILTIN: [Builtin; 13] = [
         intro: "How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each kind.",
         when_used: true,
         sections: &[
-            "Pages",
-            "Documents",
-            "Books",
-            "Text",
-            "Code",
-            "Spreadsheets",
+            section::PAGES,
+            section::DOCUMENTS,
+            section::BOOKS,
+            section::TEXT,
+            section::CODE,
+            section::SPREADSHEETS,
         ],
     },
     Builtin {
@@ -2245,12 +2250,12 @@ static BUILTIN: [Builtin; 13] = [
         intro: "How pictures follow one another, how audio and video play, how 3D models are drawn and what maps are drawn on.",
         when_used: true,
         sections: &[
-            "Pictures",
-            "Playback",
-            "Audio",
-            "Video",
-            "3D models",
-            "Maps",
+            section::PICTURES,
+            section::PLAYBACK,
+            section::AUDIO,
+            section::VIDEO,
+            section::MODELS,
+            section::MAPS,
         ],
     },
     Builtin {
@@ -2261,7 +2266,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "terminal",
         intro: "The terminal panel, and the shell that runs a command on the selection.",
         when_used: true,
-        sections: &["Terminal", "Commands"],
+        sections: &[section::TERMINAL, section::COMMANDS],
     },
     Builtin {
         page: Page::Network,
@@ -2271,7 +2276,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "network",
         intro: "The servers of the sidebar's Network section, added, edited and removed here as from their menus, and where those added by their address are kept; then the tools that open an address.",
         when_used: true,
-        sections: &["Servers", "Opening addresses"],
+        sections: &[section::SERVERS, section::OPENING_ADDRESSES],
     },
     Builtin {
         page: Page::Privacy,
@@ -4454,12 +4459,13 @@ mod tests {
                 .map(|spec| (spec.section.clone(), spec.key.clone()))
                 .collect()
         };
-        // Each section once, in the page's order.
+        // Each section once, in the page's order, by the words its
+        // caption says.
         let sections = |specs: &[SettingSpec], at: &Page| -> Vec<String> {
             let mut seen: Vec<String> = Vec::new();
-            for (section, _) in page(specs, at) {
-                if seen.last() != Some(&section) {
-                    seen.push(section);
+            for spec in specs.iter().filter(|spec| Page::of_spec(spec) == *at) {
+                if seen.last() != Some(&spec.section_title) {
+                    seen.push(spec.section_title.clone());
                 }
             }
             seen
@@ -4490,12 +4496,18 @@ mod tests {
         assert!(
             page(&specs, &Page::General)
                 .iter()
-                .any(|(section, key)| section == "Tabs" && key == SINGLE_TAB_KEY)
+                .any(
+                    |(section, key)| section == skwir_core::settings::section::TABS.id
+                        && key == SINGLE_TAB_KEY
+                )
         );
         assert!(
             page(&specs, &Page::General)
                 .iter()
-                .any(|(section, key)| section == "Tabs" && key == TABS_AT_KEY)
+                .any(
+                    |(section, key)| section == skwir_core::settings::section::TABS.id
+                        && key == TABS_AT_KEY
+                )
         );
         // Thumbnails' are the plugin's, not declared here.
         assert_eq!(
@@ -4506,13 +4518,13 @@ mod tests {
         assert_eq!(
             page(&specs, &Page::Views)[0],
             (
-                "Sorting".to_owned(),
+                skwir_core::settings::section::SORTING.id.to_owned(),
                 skwir_core::location::FOLDERS_FIRST.to_owned()
             )
         );
         let columns: Vec<String> = page(&specs, &Page::Views)
             .into_iter()
-            .filter(|(section, _)| section == "List columns")
+            .filter(|(section, _)| section == skwir_core::settings::section::LIST_COLUMNS.id)
             .map(|(_, key)| key)
             .collect();
         let standing: Vec<&str> = crate::views::list::COLUMNS
@@ -4527,7 +4539,7 @@ mod tests {
         assert_eq!(
             page(&specs, &Page::Reading)
                 .into_iter()
-                .filter(|(section, _)| section == "Code")
+                .filter(|(section, _)| section == skwir_core::settings::section::CODE.id)
                 .map(|(_, key)| key)
                 .collect::<Vec<_>>(),
             [
@@ -4543,7 +4555,7 @@ mod tests {
         assert_eq!(
             page(&specs, &Page::Reading)
                 .into_iter()
-                .filter(|(section, _)| section == "Grammars")
+                .filter(|(section, _)| section == skwir_core::settings::section::GRAMMARS.id)
                 .map(|(_, key)| key)
                 .collect::<Vec<_>>(),
             [CODE_ENGINE_KEY, LANGUAGES_KEY, super::GRAMMAR_FOLDERS_KEY]
@@ -4558,7 +4570,7 @@ mod tests {
         assert_eq!(
             page(&specs, &Page::Reading)
                 .into_iter()
-                .find(|(section, _)| section == "Text")
+                .find(|(section, _)| section == skwir_core::settings::section::TEXT.id)
                 .map(|(_, key)| key)
                 .as_deref(),
             Some(READING_FONT_KEY)
@@ -4658,7 +4670,7 @@ mod tests {
         use super::{Block, blocks};
         use skwir_core::settings::SettingKind;
         let spec = |key: &str, title: &str, section: &str| {
-            SettingSpec::toggle(key, title, "Does.", true).section(section)
+            SettingSpec::toggle(key, title, "Does.", true).section_of(section, section)
         };
         let specs = [
             spec("a.x", "Alone", ""),

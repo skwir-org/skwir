@@ -733,7 +733,7 @@ impl Plugin for ShelfPlugin {
         app.registry.places.add(
             ID,
             Place::new(
-                "places",
+                skwir_core::registry::groups::PLACES.id,
                 TITLE,
                 "folder-drag-accept",
                 Location::parse("shelf:"),

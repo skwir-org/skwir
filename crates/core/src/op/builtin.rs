@@ -16,7 +16,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::context::Kernel;
 use super::pace::Pace;
 use super::{
-    Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
+    Change, Couldnt, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
     valid_file_name,
 };
 use crate::fs::stat::{id_of, named};
@@ -233,7 +233,7 @@ fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
     sys::rename_noreplace(from, to).with_context(|| {
         let name = display_name(from);
         let folder = to.parent().map(display_name).unwrap_or_default();
-        if from.parent() == to.parent() {
+        let words = if from.parent() == to.parent() {
             format!("“{name}” could not be renamed “{}”", display_name(to))
         } else if from.file_name() == to.file_name() {
             format!("“{name}” could not be moved to “{folder}”")
@@ -242,7 +242,8 @@ fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
                 "“{name}” could not be moved to “{folder}” as “{}”",
                 display_name(to)
             )
-        }
+        };
+        Couldnt::new(from, words)
     })
 }
 
@@ -442,10 +443,13 @@ impl super::Effect for Rename {
             RenameTarget::Respelled => {
                 let parked = parking_name(target.parent().unwrap_or(Path::new("/")), "rename");
                 let respelled = || {
-                    format!(
-                        "“{}” could not be renamed “{}”",
-                        display_name(&src),
-                        display_name(&target)
+                    Couldnt::new(
+                        &src,
+                        format!(
+                            "“{}” could not be renamed “{}”",
+                            display_name(&src),
+                            display_name(&target)
+                        ),
                     )
                 };
                 sys::rename_noreplace(&src, &parked).with_context(respelled)?;
@@ -1203,8 +1207,12 @@ pub fn remove_made(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     let companions = beside_now(path, was_at, beside, ctx.companions());
-    remove_recursive(path)
-        .with_context(|| format!("“{}” could not all be removed", display_name(path)))?;
+    remove_recursive(path).with_context(|| {
+        Couldnt::new(
+            path,
+            format!("“{}” could not all be removed", display_name(path)),
+        )
+    })?;
     for (companion, _) in companions {
         if exists(&companion) {
             let _ = remove_recursive(&companion);
@@ -1921,10 +1929,13 @@ fn copy_staged(
             });
         }
         sys::rename_noreplace(&staged, target).with_context(|| {
-            format!(
-                "“{}” could not be placed in “{}”",
-                display_name(target),
-                display_name(dest_dir)
+            Couldnt::new(
+                target,
+                format!(
+                    "“{}” could not be placed in “{}”",
+                    display_name(target),
+                    display_name(dest_dir)
+                ),
             )
         })?;
         ctx.placed(&staged, target, mark);
@@ -1979,10 +1990,13 @@ fn copy_in_place(
     ctx: &StepContext,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let placed_in = || {
-        format!(
-            "“{}” could not be placed in “{}”",
-            display_name(target),
-            display_name(dest_dir)
+        Couldnt::new(
+            target,
+            format!(
+                "“{}” could not be placed in “{}”",
+                display_name(target),
+                display_name(dest_dir)
+            ),
         )
     };
     if std::fs::symlink_metadata(target).is_ok() {
@@ -2132,8 +2146,9 @@ fn copy_file(
         if copied.is_err() {
             ctx.check_cancelled()?;
         }
-        let made =
-            copied.with_context(|| format!("“{}” could not be copied", display_name(src)))?;
+        let made = copied.with_context(|| {
+            Couldnt::new(src, format!("“{}” could not be copied", display_name(src)))
+        })?;
         // Counted whole, whatever the system said as it went: Wine's copy
         // says nothing, and its bytes were never counted, nor the plan
         // paused between its files. A clone's moved none (ADR-113).
@@ -2218,20 +2233,22 @@ fn copy_file(
         // Should it fail partway, what it wrote may be gone on from.
         ctx.copying(dst, &m);
         let began = std::time::Instant::now();
-        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
-            .with_context(|| format!("“{}” could not be copied", display_name(src)))?;
+        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx).with_context(|| {
+            Couldnt::new(src, format!("“{}” could not be copied", display_name(src)))
+        })?;
         // From a server, how fast it reads (its thumbnails' Automatic).
         crate::fs::reach::note_read(src, dst, end.saturating_sub(from), began.elapsed());
         // A mount may answer the end of a file its server stopped serving,
         // and then say the file is that short: short of the source as it
         // was, the copy was cut (or the source changed), not done. Retry
         // goes on, or starts again on a source changed.
-        anyhow::ensure!(
-            end >= m.len(),
-            "“{}” could not be copied: {end} of its {} bytes could be read",
-            display_name(src),
-            m.len()
-        );
+        if end < m.len() {
+            return Err(
+                anyhow::anyhow!("{end} of its {} bytes could be read", m.len()).context(
+                    Couldnt::new(src, format!("“{}” could not be copied", display_name(src))),
+                ),
+            );
+        }
     }
     // Whole once closing it says so: a FUSE remote sends there what it
     // held, and says there what its server refused. Its mode and time are
@@ -2258,15 +2275,16 @@ fn copy_file(
 /// refusal "no such file", which is no source gone.
 pub(super) fn finish(df: std::fs::File, src: &Path) -> anyhow::Result<()> {
     sys::close(df).map_err(|error| {
-        let refused = format!(
-            "“{}” could not be copied: its drive or server refused it as it was closed",
-            display_name(src)
-        );
-        if error.kind() == std::io::ErrorKind::NotFound {
+        let refused = "its drive or server refused it as it was closed";
+        let refused = if error.kind() == std::io::ErrorKind::NotFound {
             anyhow::anyhow!(refused)
         } else {
             anyhow::Error::new(error).context(refused)
-        }
+        };
+        refused.context(Couldnt::new(
+            src,
+            format!("“{}” could not be copied", display_name(src)),
+        ))
     })
 }
 
@@ -2939,8 +2957,12 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        let put = trash_item(ctx, &src)
-            .with_context(|| format!("“{}” could not be moved to the trash", display_name(&src)))?;
+        let put = trash_item(ctx, &src).with_context(|| {
+            Couldnt::new(
+                &src,
+                format!("“{}” could not be moved to the trash", display_name(&src)),
+            )
+        })?;
         // Each an item of the trash of its own, restored with the file:
         // found by when it was trashed where the trash keeps records, by
         // where it went on macOS.
@@ -3593,8 +3615,12 @@ impl super::Effect for Restore {
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let Some(item) = self.landed_item() {
-            rename_noreplace(item, &self.path)
-                .with_context(|| format!("“{}” could not be restored", display_name(&self.path)))?;
+            rename_noreplace(item, &self.path).with_context(|| {
+                Couldnt::new(
+                    &self.path,
+                    format!("“{}” could not be restored", display_name(&self.path)),
+                )
+            })?;
             for companion in &self.landed {
                 if !exists(&companion.from) {
                     let _ = rename_noreplace(&companion.at, &companion.from);
@@ -3637,8 +3663,12 @@ impl super::Effect for Restore {
             .context("the trash could not be read")?
             .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.path)))?;
         let when = item.time_deleted;
-        restore_listed(ctx, item)
-            .with_context(|| format!("“{}” could not be restored", display_name(&self.path)))?;
+        restore_listed(ctx, item).with_context(|| {
+            Couldnt::new(
+                &self.path,
+                format!("“{}” could not be restored", display_name(&self.path)),
+            )
+        })?;
         restore_trashed_with(ctx, &self.path, when);
         let r = EntryRef::from_path(&self.path).ok_or_else(|| {
             anyhow::anyhow!(
@@ -3806,7 +3836,10 @@ fn merge_restore(
         for inner in merged.moved.iter().rev() {
             let _ = move_entry(ctx, &path.join(inner), &item.join(inner), &[]);
         }
-        return Err(e.context(format!("“{}” could not be restored", display_name(path))));
+        return Err(e.context(Couldnt::new(
+            path,
+            format!("“{}” could not be restored", display_name(path)),
+        )));
     }
     let info_text = read_record(info).unwrap_or_default();
     let mut folders = Vec::new();
@@ -4104,9 +4137,9 @@ impl super::Effect for RestorePart {
             Ok(moved) => moved,
             Err(e) => {
                 undo_folders(&folders);
-                return Err(e.context(format!(
-                    "“{}” could not be restored",
-                    display_name(&self.path)
+                return Err(e.context(Couldnt::new(
+                    &self.path,
+                    format!("“{}” could not be restored", display_name(&self.path)),
                 )));
             }
         };
@@ -4315,8 +4348,12 @@ impl super::Effect for Delete {
             return Ok(None);
         }
         let companions = ctx.companions().existing(&src);
-        remove_recursive(&src)
-            .with_context(|| format!("“{}” could not all be deleted", display_name(&src)))?;
+        remove_recursive(&src).with_context(|| {
+            Couldnt::new(
+                &src,
+                format!("“{}” could not all be deleted", display_name(&src)),
+            )
+        })?;
         forget_trashed(&src);
         for companion in companions {
             if remove_recursive(&companion.path).is_ok() {
@@ -4693,7 +4730,12 @@ impl super::Effect for NewFile {
             .write(true)
             .create_new(true)
             .open(&self.path)
-            .with_context(|| format!("“{}” could not be made", display_name(&self.path)))?;
+            .with_context(|| {
+                Couldnt::new(
+                    &self.path,
+                    format!("“{}” could not be made", display_name(&self.path)),
+                )
+            })?;
         Ok(Some(Box::new(RemoveEmptyFile {
             path: self.path.clone(),
         })))
@@ -4734,8 +4776,12 @@ impl super::Effect for RemoveEmptyFile {
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        std::fs::remove_file(&self.path)
-            .with_context(|| format!("“{}” could not be removed", display_name(&self.path)))?;
+        std::fs::remove_file(&self.path).with_context(|| {
+            Couldnt::new(
+                &self.path,
+                format!("“{}” could not be removed", display_name(&self.path)),
+            )
+        })?;
         Ok(Some(Box::new(NewFile {
             path: self.path.clone(),
         })))
@@ -4831,10 +4877,13 @@ impl super::Effect for Link {
         let src = self.entry.resolve()?;
         let link = self.target(&src);
         sys::symlink_to(&src, &link, src.is_dir()).with_context(|| {
-            format!(
-                "“{}” could not be linked in “{}”",
-                display_name(&src),
-                display_name(&self.dest_dir)
+            Couldnt::new(
+                &src,
+                format!(
+                    "“{}” could not be linked in “{}”",
+                    display_name(&src),
+                    display_name(&self.dest_dir)
+                ),
             )
         })?;
         Ok(Some(Box::new(Unlink {
@@ -4884,8 +4933,12 @@ impl super::Effect for Unlink {
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        sys::remove_link(&self.path)
-            .with_context(|| format!("“{}” could not be removed", display_name(&self.path)))?;
+        sys::remove_link(&self.path).with_context(|| {
+            Couldnt::new(
+                &self.path,
+                format!("“{}” could not be removed", display_name(&self.path)),
+            )
+        })?;
         let name = file_name(&self.path);
         Ok(Some(Box::new(Link {
             entry: self.entry.clone(),

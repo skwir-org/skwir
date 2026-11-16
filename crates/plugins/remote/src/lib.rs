@@ -80,11 +80,11 @@ use crate::connector::{Ask, Connector, Offered, Password, Recognised, Server};
 pub const ID: &str = "remote";
 
 /// The sidebar's section of remotes.
-pub const GROUP: &str = "network";
+pub const GROUP: &str = skwir_core::registry::groups::NETWORK.id;
 
 /// The sidebar's section of this machine's devices, where a phone or a
 /// camera GVfs reads is.
-const DEVICES: &str = "devices";
+const DEVICES: &str = skwir_core::registry::groups::DEVICES.id;
 
 const CONNECTORS: &str = "remote.connectors";
 const THUMBNAILS: &str = "remote.thumbnails";
@@ -1725,7 +1725,10 @@ fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem>
             skwir_core::registry::ChoiceLook::Icons,
             value == rule,
         );
-        item.submenu = Some("Thumbnails".to_owned());
+        item.submenu = Some(skwir_core::registry::Submenu::new(
+            "remote.thumbnails",
+            "Thumbnails",
+        ));
         item
     })
     .collect()
@@ -2013,7 +2016,7 @@ impl Plugin for RemotePlugin {
                 default_order(),
             )
             .page(skwir_core::settings::page::NETWORK)
-            .section("Opening addresses"),
+            .section(skwir_core::settings::section::OPENING_ADDRESSES),
         );
         app.settings.declare(
             SettingSpec::choice(
@@ -2029,7 +2032,7 @@ impl Plugin for RemotePlugin {
                 ],
             )
             .page(skwir_core::settings::page::VIEWS)
-            .section("Thumbnails"),
+            .section(skwir_core::settings::section::THUMBNAILS),
         );
         app.settings.declare(SettingSpec::data(
             CHOSEN,

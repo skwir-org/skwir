@@ -1031,7 +1031,8 @@ mod tests {
         ));
         assert!(matches!(
             say("ctrl-alt-w", &anywhere).notes.as_slice(),
-            [Note::Waits { title, goes: true }] if title == "Gone open"
+            // Not declared: its name as written (ADR-139, 8).
+            [Note::Waits { title, goes: true }] if title == "gone.open"
         ));
         assert_eq!(
             say("j", &crate::keymap::context_of(Some("pane"))).notes,

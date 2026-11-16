@@ -169,17 +169,20 @@ impl How {
                         .send(ListingEvent::Redirect(Location::from_path(path))),
                     Err(error) => {
                         let label = this.remotes.label_of(&this.address);
-                        this.tx
-                            .send(ListingEvent::Error(match this.address.scheme.device() {
+                        this.tx.send(ListingEvent::Error(skwir_core::ListingError {
+                            message: match this.address.scheme.device() {
                                 Some(_) => format!("Could not open {label}: {error:#}"),
                                 None => format!("Could not connect to {label}: {error:#}"),
-                            }))
+                            },
+                            ..skwir_core::ListingError::of(&error)
+                        }))
                     }
                 };
             });
         if let Err(error) = spawned {
             *self.running.lock() = false;
-            self.tx.send(ListingEvent::Error(error.to_string()));
+            self.tx
+                .send(ListingEvent::Error(skwir_core::ListingError::of_io(&error)));
         }
     }
 

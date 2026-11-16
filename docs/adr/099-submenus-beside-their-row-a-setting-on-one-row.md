@@ -13,7 +13,11 @@ and Group by the same. Amended again on 2026-11-12, the user's pick of
 three layouts (the name read on the direction's row, not on the
 criterion it named): Sort by and Group by are one row each that says
 how they are ("Name, A to Z"), their submenu the direction on its first
-row, one stop of the keyboard, then the criteria.
+row, one stop of the keyboard, then the criteria. Amended by ADR-139
+(2026-11-16, decision 8): a submenu is told by its id
+(`registry::Submenu`), never by its title. Those several plugins fill
+(Compress, Open With, Open Folder With, Tags) are core's
+(`registry::submenus`), and a single owner's carries that owner's id.
 
 ## Context
 

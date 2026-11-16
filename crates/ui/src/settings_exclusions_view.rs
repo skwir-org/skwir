@@ -210,6 +210,10 @@ enum Item {
 /// agents with it unfolded.
 const SECRETS: &str = "skwir.secrets";
 
+/// An entry's menu's submenu of the categories it may move to.
+const MOVE_TO: skwir_core::registry::Submenu =
+    skwir_core::registry::Submenu::new("exclusions.move_to", "Move to");
+
 /// What the page asks in a modal of the dialog.
 enum Dialog {
     Entry(Box<EntryDialog>),
@@ -1427,7 +1431,7 @@ impl SettingsView {
                         210 + i32::try_from(n).unwrap_or(0),
                         serde_json::json!({ "do": "move", "entry": id, "to": category.id }),
                     );
-                    to.submenu = Some("Move to".to_owned());
+                    to.submenu = Some(MOVE_TO);
                     items.push(to);
                 }
                 if entry.builtin {

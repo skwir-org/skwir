@@ -152,7 +152,7 @@ const PLACE_COMMAND: &str = "ui.sidebar_place";
 /// The group the sidebar lists the tabs in, first, while `ui.tabs_at` asks
 /// (`Shell::sidebar_lists_tabs`): folded as the others, not moved or put
 /// away (the setting takes it away).
-pub const TABS: &str = "tabs";
+pub const TABS: &str = skwir_core::registry::groups::TABS.id;
 
 /// What the sidebar's keyboard cursor is on: a group's header, a place
 /// (by its group and `Place::key`), or, in `TABS`, a tab or the row that
@@ -510,16 +510,9 @@ impl Sections {
     }
 }
 
+/// The words a section's heading says: core's, by its id (ADR-139, 8).
 fn group_title(group: &str) -> String {
-    // Saved searches and the places kept with their filters (ADR-109),
-    // in the group that holds the user's arrangement of them.
-    if group == "searches" {
-        return "Saved".to_owned();
-    }
-    let mut chars = group.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
+    skwir_core::registry::groups::title_of(group).to_owned()
 }
 
 /// A place being dragged: to another position in its group, if it moves

@@ -375,7 +375,7 @@ impl PathLocation {
                 if !ctx.cancel.is_cancelled()
                     && let Err(error) = result
                 {
-                    tx.send(ListingEvent::Error(error.to_string()));
+                    tx.send(ListingEvent::Error(crate::ListingError::of(&error)));
                 }
             },
         );
@@ -478,7 +478,8 @@ impl Shared {
         let mut dir = match self.folder.read() {
             Ok(d) => d,
             Err(e) => {
-                self.tx.send(ListingEvent::Error(e.to_string()));
+                self.tx
+                    .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
                 return;
             }
         };
@@ -499,7 +500,8 @@ impl Shared {
             let ent = match ent {
                 Ok(e) => e,
                 Err(e) => {
-                    self.tx.send(ListingEvent::Error(e.to_string()));
+                    self.tx
+                        .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
                     return;
                 }
             };
@@ -698,9 +700,9 @@ impl Shared {
         if !ids.is_empty() {
             self.send_as_now(ListingEvent::Removed(ids));
         }
-        self.tx.send(ListingEvent::Error(
-            "This folder was deleted or is no longer available.".into(),
-        ));
+        self.tx.send(ListingEvent::Error(crate::ListingError::new(
+            "This folder was deleted or is no longer available.",
+        )));
     }
 
     /// Changes the watcher told, on its thread: handed to a worker.

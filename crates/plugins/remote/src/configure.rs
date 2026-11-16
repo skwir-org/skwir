@@ -359,7 +359,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         )
         .records_kept_by(remotes.records.clone())
         .page(skwir_core::settings::page::NETWORK)
-        .section("Servers"),
+        .section(skwir_core::settings::section::SERVERS),
     );
     crate::servers::declare(app);
     // The Network section's own menu.

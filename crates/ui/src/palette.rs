@@ -435,7 +435,7 @@ pub fn offered(
         }
         let mut path = vec![crate::settings::page_title_of(&spec, &plugins)];
         if !spec.section.is_empty() {
-            path.push(spec.section.clone());
+            path.push(spec.section_title.clone());
         }
         path.push(spec.title.clone());
         offers.push(Offer::of(
@@ -469,7 +469,7 @@ pub fn offered(
             continue;
         }
         let title = match &item.submenu {
-            Some(submenu) => format!("{submenu} › {}", item.title),
+            Some(submenu) => format!("{} › {}", submenu.title, item.title),
             None => item.title,
         };
         offers.push(Offer::of(&command.name, command.args.clone(), title));

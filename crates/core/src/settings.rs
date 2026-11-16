@@ -63,6 +63,66 @@ pub mod page {
     pub const KEYBOARD: &str = "keyboard";
 }
 
+/// A group heading within a page ([`SettingSpec::section`]): told by its
+/// id, which the settings of several owners meet by and a page orders its
+/// sections by, and said by its words (ADR-139, 8). By subject, as pages
+/// are, so they are core's ([`section`]); a section made for what a plugin
+/// registers is named where it is made (`SettingSpec::section_of`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Section {
+    pub id: &'static str,
+    pub title: &'static str,
+}
+
+impl Section {
+    pub const fn new(id: &'static str, title: &'static str) -> Self {
+        Section { id, title }
+    }
+}
+
+/// The dialog's sections, by page.
+pub mod section {
+    use super::Section;
+
+    // General.
+    pub const STARTUP: Section = Section::new("startup", "Startup");
+    pub const TABS: Section = Section::new("tabs", "Tabs");
+    pub const SPLIT: Section = Section::new("split", "Split");
+    pub const ADDRESS: Section = Section::new("address", "Address");
+    pub const DRAG_AND_DROP: Section = Section::new("drag_and_drop", "Drag and drop");
+    pub const ACTIONS: Section = Section::new("actions", "Actions");
+    // Folders and views.
+    pub const SORTING: Section = Section::new("sorting", "Sorting");
+    pub const GRID: Section = Section::new("grid", "Grid");
+    pub const LIST_COLUMNS: Section = Section::new("list_columns", "List columns");
+    pub const THUMBNAILS: Section = Section::new("thumbnails", "Thumbnails");
+    pub const PREVIEWS: Section = Section::new("previews", "Previews");
+    pub const GIT: Section = Section::new("git", "Git");
+    // Tags and notes.
+    pub const TAGS: Section = Section::new("tags", "Tags");
+    // Reading.
+    pub const PAGES: Section = Section::new("pages", "Pages");
+    pub const DOCUMENTS: Section = Section::new("documents", "Documents");
+    pub const BOOKS: Section = Section::new("books", "Books");
+    pub const TEXT: Section = Section::new("text", "Text");
+    pub const CODE: Section = Section::new("code", "Code");
+    pub const GRAMMARS: Section = Section::new("grammars", "Grammars");
+    pub const SPREADSHEETS: Section = Section::new("spreadsheets", "Spreadsheets");
+    // Pictures and media.
+    pub const PICTURES: Section = Section::new("pictures", "Pictures");
+    pub const PLAYBACK: Section = Section::new("playback", "Playback");
+    pub const AUDIO: Section = Section::new("audio", "Audio");
+    pub const VIDEO: Section = Section::new("video", "Video");
+    pub const MODELS: Section = Section::new("models_3d", "3D models");
+    pub const MAPS: Section = Section::new("maps", "Maps");
+    // Terminal.
+    pub const TERMINAL: Section = Section::new("terminal", "Terminal");
+    pub const COMMANDS: Section = Section::new("commands", "Commands");
+    // Network.
+    pub const SERVERS: Section = Section::new("servers", "Servers");
+    pub const OPENING_ADDRESSES: Section = Section::new("opening_addresses", "Opening addresses");
+}
+
 /// The namespace of a dotted setting key: the owning plugin's id (or
 /// `core`/`ui`). The one place that says which keys a plugin owns.
 pub fn owner_of(key: &str) -> &str {
@@ -262,10 +322,13 @@ pub struct SettingSpec {
     /// The dialog's page it is shown on (`page::*`), by its subject,
     /// whoever owns the key (ADR-072); empty for its owner's own page.
     pub page: String,
-    /// Optional group heading within its page. Sections stand in the
+    /// Optional group heading within its page, by its id ([`Section`]):
+    /// the settings of several owners meet by it. Sections stand in the
     /// order the page lists them, then in the order their first setting
     /// was declared, after what has none.
     pub section: String,
+    /// The words its section's heading says.
+    pub section_title: String,
     /// Shown while its page is folded: among the few settings most people
     /// come to the page for (ADR-072). The others wait under the page's
     /// More settings.
@@ -437,6 +500,7 @@ impl SettingSpec {
             description: description.into(),
             page: String::new(),
             section: String::new(),
+            section_title: String::new(),
             essential: false,
             under: String::new(),
             unit: String::new(),
@@ -532,7 +596,9 @@ impl SettingSpec {
     /// apart from the settings (ADR-057), so it is kept when the settings
     /// are read-only. Not shown in the dialog.
     pub fn data(key: &str, description: &str, default: toml::Value) -> Self {
-        let mut spec = Self::new(key, key, description, default);
+        // Never a row: no title (ADR-139, 8), its description for whoever
+        // reads the file.
+        let mut spec = Self::new(key, "", description, default);
         spec.kind = SettingKind::Data;
         spec.store = Store::Data;
         spec
@@ -778,9 +844,19 @@ impl SettingSpec {
         self
     }
 
+    /// Under `section`'s heading on its page.
     #[must_use]
-    pub fn section(mut self, section: &str) -> Self {
-        section.clone_into(&mut self.section);
+    pub fn section(self, section: Section) -> Self {
+        self.section_of(section.id, section.title)
+    }
+
+    /// Under the heading of a section made for what a plugin registers
+    /// (a notes store's): its id, which no other owner's settings share,
+    /// and its words.
+    #[must_use]
+    pub fn section_of(mut self, id: impl Into<String>, title: impl Into<String>) -> Self {
+        self.section = id.into();
+        self.section_title = title.into();
         self
     }
 
@@ -1211,7 +1287,7 @@ pub(crate) fn register(app: &crate::App) {
                 ("last", "The windows and tabs left open"),
             ],
         )
-        .section("Startup")
+        .section(section::STARTUP)
         .essential(),
     );
     app.settings.declare(
@@ -1221,7 +1297,7 @@ pub(crate) fn register(app: &crate::App) {
             "Used when a chosen folder opens at startup. Leave empty for your home folder.",
             "",
         )
-        .section("Startup")
+        .section(section::STARTUP)
         .essential(),
     );
     app.settings.declare(
@@ -1232,7 +1308,7 @@ pub(crate) fn register(app: &crate::App) {
             true,
         )
         .page(page::NOTES)
-        .section("Tags"),
+        .section(section::TAGS),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -1241,7 +1317,7 @@ pub(crate) fn register(app: &crate::App) {
             "Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
             true,
         )
-        .section("Drag and drop")
+        .section(section::DRAG_AND_DROP)
         .essential(),
     );
     app.settings.declare(
@@ -1252,7 +1328,7 @@ pub(crate) fn register(app: &crate::App) {
             false,
         )
         .page(page::NOTES)
-        .section("Tags"),
+        .section(section::TAGS),
     );
     app.companions
         .set_shown(app.settings.get(crate::companions::SHOW).unwrap_or(false));
@@ -1264,7 +1340,7 @@ pub(crate) fn register(app: &crate::App) {
             true,
         )
         .page(page::VIEWS)
-        .section("Sorting")
+        .section(section::SORTING)
         .essential(),
     );
     apply_folders_first(app);
@@ -1276,7 +1352,7 @@ pub(crate) fn register(app: &crate::App) {
             "other",
             &[("other", "Other"), ("active", "Active"), ("right", "Right")],
         )
-        .section("Split"),
+        .section(section::SPLIT),
     );
     app.settings.declare(SettingSpec::state(
         LAST_LOCATION,

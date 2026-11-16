@@ -309,34 +309,38 @@ fn read(exif: &Exif) -> Vec<Detail> {
             text(exif, Tag::DateTimeOriginal)
                 .or_else(|| text(exif, Tag::DateTime))
                 .map(|taken| date(&taken)),
+            false,
         ),
-        ("Camera", camera),
-        ("Lens", text(exif, Tag::LensModel)),
-        ("Exposure", exposure),
+        ("Camera", camera, false),
+        ("Lens", text(exif, Tag::LensModel), false),
+        ("Exposure", exposure, false),
         (
             "Aperture",
             rational(exif, Tag::FNumber).map(|f| format!("f/{f}")),
+            false,
         ),
-        ("ISO", text(exif, Tag::PhotographicSensitivity)),
+        ("ISO", text(exif, Tag::PhotographicSensitivity), false),
         (
             "Focal length",
             rational(exif, Tag::FocalLength).map(|mm| format!("{mm} mm")),
+            false,
         ),
-        ("Flash", text(exif, Tag::Flash)),
-        ("Orientation", text(exif, Tag::Orientation)),
-        ("Position", position),
-        ("Software", text(exif, Tag::Software)),
-        ("Artist", text(exif, Tag::Artist)),
-        ("Copyright", text(exif, Tag::Copyright)),
+        ("Flash", text(exif, Tag::Flash), false),
+        ("Orientation", text(exif, Tag::Orientation), false),
+        ("Position", position, true),
+        ("Software", text(exif, Tag::Software), false),
+        ("Artist", text(exif, Tag::Artist), false),
+        ("Copyright", text(exif, Tag::Copyright), false),
     ]
     .into_iter()
-    .filter_map(|(label, value)| detail(label, value?))
-    .map(|row| {
-        if row.label == "Position" {
+    // The position told by the table, never by its label (ADR-139, 8).
+    .filter_map(|(label, value, mapped)| {
+        let row = detail(label, value?)?;
+        Some(if mapped {
             crate::inspection::on_map(row)
         } else {
             row
-        }
+        })
     })
     .collect()
 }

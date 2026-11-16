@@ -672,8 +672,9 @@ fn ask_comment(text: Option<&str>) -> Invocation {
 
 /// An item of the files' menu: a file's notes; a place (a tag's) has its
 /// own menu.
-/// The context menu's submenu of a selection's tags (ADR-099).
-pub(crate) const TAGS_SUBMENU: &str = "Tags";
+/// The context menu's submenu of a selection's tags (ADR-099), which the
+/// tags written into names join.
+pub(crate) const TAGS_SUBMENU: skwir_core::registry::Submenu = skwir_core::registry::submenus::TAGS;
 
 fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("selection !place")
@@ -834,7 +835,7 @@ impl Plugin for TagsPlugin {
             )
             .unit("MB")
             .page(skwir_core::settings::page::NOTES)
-            .section("Tags"),
+            .section(skwir_core::settings::section::TAGS),
         );
         let index = index::TagIndex::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
         // The tags whose names go with words typed in the address field,
@@ -1076,7 +1077,7 @@ impl Plugin for TagsPlugin {
             )
             .slider()
             .page(skwir_core::settings::page::NOTES)
-            .section("Tags"),
+            .section(skwir_core::settings::section::TAGS),
         );
         app.settings.declare(SettingSpec::data(
             sidebar::PINNED,
@@ -1667,7 +1668,7 @@ impl Plugin for TagsPlugin {
         app.registry.menus.add(
             ID,
             MenuItem {
-                submenu: Some(TAGS_SUBMENU.into()),
+                submenu: Some(TAGS_SUBMENU),
                 ..menu_item("Edit Tags…", Invocation::new("ui.tags_prompt"), 500, "tag")
             },
         );
@@ -1905,7 +1906,10 @@ mod tests {
         items.sort_by_key(|item| item.order);
         let mut out: Vec<(String, Vec<String>)> = Vec::new();
         for item in items {
-            let submenu = item.submenu.unwrap_or_default();
+            let submenu = item
+                .submenu
+                .map(|submenu| submenu.title.into_owned())
+                .unwrap_or_default();
             match out.iter_mut().find(|(name, _)| *name == submenu) {
                 Some((_, titles)) => titles.push(item.title),
                 None => out.push((submenu, vec![item.title])),
@@ -2014,7 +2018,7 @@ mod tests {
              then by name; then a pinned one none has"
         );
         assert!(items.iter().all(|item| {
-            item.submenu.as_deref() == Some(TAGS_SUBMENU)
+            item.submenu_id() == Some(&*TAGS_SUBMENU.id)
                 && &*item.command.name == "tags.toggle"
                 && item.order / 100 == 5
         }));
@@ -2028,7 +2032,7 @@ mod tests {
             .into_iter()
             .find(|item| item.title == "Edit Tags…")
             .unwrap();
-        assert_eq!(editor.submenu.as_deref(), Some(TAGS_SUBMENU));
+        assert_eq!(editor.submenu, Some(TAGS_SUBMENU));
         assert!(items.iter().all(|item| editor.order < item.order));
         // A chip's menu (its tag, with the files) edits them too.
         let Outcome::Value(chip) = app

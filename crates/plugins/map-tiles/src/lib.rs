@@ -83,7 +83,7 @@ fn declare_source(app: &App) {
     )
     .more_choices("the tile servers you add")
     .page(skwir_core::settings::page::MEDIA)
-    .section("Maps"));
+    .section(skwir_core::settings::section::MAPS));
 }
 
 /// The chosen background was a server just removed: the outline again,
@@ -159,7 +159,7 @@ impl Plugin for MapTilesPlugin {
             )
             .record_action("Test", "map-tiles.test_server")
             .page(skwir_core::settings::page::MEDIA)
-            .section("Maps")
+            .section(skwir_core::settings::section::MAPS)
             .validate_with(|value, _| server::check_servers(value)),
         );
         declare_source(app);

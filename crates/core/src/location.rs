@@ -232,7 +232,7 @@ pub enum ListingEvent {
     /// The initial listing is complete; further events come from watching.
     Complete,
     /// The listing failed or was interrupted.
-    Error(String),
+    Error(ListingError),
     /// The location itself changed, not what it lists: the folder's
     /// permissions, times or attributes (its tags). Whoever describes the
     /// location reads it again (`Listing::itself_version`).
@@ -2537,6 +2537,74 @@ impl FillJob {
     }
 }
 
+/// Why a listing failed (`ListingEvent::Error`): its kind, which what shows
+/// it reads, and its message, the system's or its provider's, shown as it
+/// is (ADR-139, 8: nothing reads the kind back from the words).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListingError {
+    pub kind: Failure,
+    pub message: String,
+}
+
+/// What kind of failure a listing's was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The system refused it: no permission.
+    Denied,
+    /// What it lists is not there, or not a folder.
+    Missing,
+    /// Anything else, a retry worth trying.
+    Other,
+}
+
+impl ListingError {
+    /// A failure its provider says in its own words.
+    pub fn new(message: impl Into<String>) -> Self {
+        ListingError {
+            kind: Failure::Other,
+            message: message.into(),
+        }
+    }
+
+    /// The system's `error`, of the kind its code says.
+    pub fn of_io(error: &std::io::Error) -> Self {
+        ListingError {
+            kind: Failure::of(error.kind()),
+            message: error.to_string(),
+        }
+    }
+
+    /// `error`, of the kind the first system error in its chain says.
+    pub fn of(error: &anyhow::Error) -> Self {
+        let kind = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+            .map_or(Failure::Other, |io| Failure::of(io.kind()));
+        ListingError {
+            kind,
+            message: error.to_string(),
+        }
+    }
+}
+
+impl Failure {
+    /// The kind of failure a system error of `kind` is.
+    pub fn of(kind: std::io::ErrorKind) -> Self {
+        use std::io::ErrorKind as K;
+        match kind {
+            K::PermissionDenied => Failure::Denied,
+            K::NotFound | K::NotADirectory => Failure::Missing,
+            _ => Failure::Other,
+        }
+    }
+}
+
+impl std::fmt::Display for ListingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// An in-memory view of a listing, kept up to date by applying events.
 /// Insertion order is preserved so streaming order is stable; `sorted`
 /// gives a cached order for a [`SortSpec`].
@@ -2552,7 +2620,7 @@ pub struct Listing {
     /// nothing.
     entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
     complete: bool,
-    error: Option<String>,
+    error: Option<ListingError>,
     /// What the answer rests on, when not the files as they are
     /// (`ListingEvent::AsOf`).
     as_of: Option<AsOf>,
@@ -3398,7 +3466,7 @@ impl Listing {
                 self.error = None;
             }
             ListingEvent::Error(e) => {
-                delta.any = self.error.as_deref() != Some(e.as_str());
+                delta.any = self.error.as_ref() != Some(&e);
                 self.error = Some(e);
             }
             ListingEvent::Changed => {
@@ -4200,8 +4268,15 @@ impl Listing {
         self.complete
     }
 
+    /// What its failure says, the system's message or its provider's.
     pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
+        self.error.as_ref().map(|error| error.message.as_str())
+    }
+
+    /// What kind of failure it was, which what shows it reads (a
+    /// placeholder's words and its way out), never its message.
+    pub fn failure(&self) -> Option<Failure> {
+        self.error.as_ref().map(|error| error.kind)
     }
 
     /// What the answer rests on when it is an index's as of its last
@@ -4481,7 +4556,8 @@ mod tests {
 
         let mut failed = Listing::default().filled_elsewhere();
         tx.send(ListingEvent::Added(vec![file(1, "a")])).unwrap();
-        tx.send(ListingEvent::Error("gone".into())).unwrap();
+        tx.send(ListingEvent::Error(ListingError::new("gone")))
+            .unwrap();
         failed.fill_job(&rx, spec).unwrap().run();
         failed.drain(&rx, long);
         assert!(!failed.is_held() && failed.error() == Some("gone"));

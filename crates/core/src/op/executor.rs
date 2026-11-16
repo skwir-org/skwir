@@ -54,6 +54,11 @@ pub struct Progress {
     pub named: Option<String>,
     pub status: StepStatus,
     pub error: Option<String>,
+    /// What stopped the step, said alone, where its error begins with the
+    /// step's own words naming its file (`op::reason_after`): what words
+    /// of their own for the failure say after them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// What `change` acts on, by the name the user knows it by where its path
@@ -204,6 +209,10 @@ pub enum ExecEvent {
         /// What the user asked for, where the steps are not its items
         /// (`Plan::items`).
         items: Option<super::Items>,
+        /// For an undo, the title of the action it takes back
+        /// (`Plan::undoes`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        undoes: Option<String>,
         /// Whether it counts as an action of its own while things run one
         /// after another ([`counts_as_action`]): as it counted waiting
         /// ([`Waiting::counts`]); one refused before it began does not.
@@ -3906,6 +3915,7 @@ impl Executor {
                 total: plan.steps.len(),
                 run,
                 items: None,
+                undoes: plan.undoes.clone(),
                 counts: false,
             });
         }
@@ -4234,6 +4244,9 @@ impl Executor {
             // Its run goes by the id its asker was handed.
             let mut plan = Plan::new(named);
             plan.id = id;
+            if direction == Direction::Undo {
+                plan.undoes.clone_from(&title);
+            }
             let mut r = self.refuse(&plan, run, reason, None);
             r.entry_title = title;
             r
@@ -4293,6 +4306,7 @@ impl Executor {
                     total: 0,
                     run: direction.into(),
                     items: None,
+                    undoes: (direction == Direction::Undo).then(|| entry.title.clone()),
                     counts: false,
                 });
                 self.emit(ExecEvent::Finished {
@@ -4328,6 +4342,7 @@ impl Executor {
             Direction::Undo => format!("undo {entry_title}"),
             Direction::Redo => entry_title.clone(),
         };
+        run.undoes = (direction == Direction::Undo).then(|| entry_title.clone());
         // Its run goes by the id its asker was handed: what follows it (the
         // entry's `asked`, a toast's Redo) names that one.
         run.id = id;
@@ -4450,6 +4465,7 @@ impl Executor {
             total: plan.steps.len(),
             run,
             items: plan.items.as_deref().cloned(),
+            undoes: plan.undoes.clone(),
             // Cancelled before it began, it ends at once: no card.
             counts: !cancel.is_cancelled() && counts_as_action(plan.steps.len(), heavy),
         });
@@ -4565,6 +4581,7 @@ impl Executor {
                     reason: super::said(&e),
                 });
             let mut err = None;
+            let mut reason = None;
             let mut holds = false;
             let mut step_came = Came::Other;
             if matches!(status, StepStatus::Pending { .. }) && first_applied.is_none() {
@@ -4621,10 +4638,12 @@ impl Executor {
                             step_came = Came::Applied;
                             journal_inverse(&mut inverses, inverse);
                             err = Some(super::said(&error));
+                            reason = super::reason_after(&error, &change);
                         }
                         Err(e) => {
                             tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
                             err = Some(super::said(&e));
+                            reason = super::reason_after(&e, &change);
                         }
                     },
                 },
@@ -4654,6 +4673,7 @@ impl Executor {
                 named,
                 status,
                 error: err.clone(),
+                reason,
             }));
             if let Some(e) = err {
                 error = Some(e);

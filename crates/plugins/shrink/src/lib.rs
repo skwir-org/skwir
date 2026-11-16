@@ -50,7 +50,7 @@ const KIND: &str = "shrink_copy";
 const TYPES: &str = "kind:application/pdf,image/jpeg,image/png";
 
 /// The file menu's submenu it joins, the archives' Compress.
-const COMPRESS: &str = "Compress";
+const COMPRESS: skwir_core::registry::Submenu = skwir_core::registry::submenus::COMPRESS;
 
 /// The menu of the preview's More button and of its own context menu,
 /// whose items the window runs with what the preview shows
@@ -620,10 +620,13 @@ impl op::Effect for ShrinkCopy {
         let result = kept.map_err(anyhow::Error::from).and_then(|()| {
             ctx.check_cancelled()?;
             staging.place(&staged, &target).with_context(|| {
-                format!(
-                    "“{}” could not be placed in “{}”",
-                    display_name(&target),
-                    display_name(&self.dest_dir)
+                skwir_core::op::Couldnt::new(
+                    &target,
+                    format!(
+                        "“{}” could not be placed in “{}”",
+                        display_name(&target),
+                        display_name(&self.dest_dir)
+                    ),
                 )
             })
         });

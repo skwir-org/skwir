@@ -480,7 +480,12 @@ fn place(full: bool) -> Place {
     };
     Place {
         menu,
-        ..Place::new("places", "Trash", icon, Location::new(SCHEME, ""))
+        ..Place::new(
+            skwir_core::registry::groups::PLACES.id,
+            "Trash",
+            icon,
+            Location::new(SCHEME, ""),
+        )
     }
 }
 

@@ -1371,7 +1371,7 @@ pub(crate) fn register(app: &App) {
             "A tab you are not looking at lets go of its list of files and lists it again when shown. Turn this off to keep every tab listed and up to date, which uses more memory and background work.",
             true,
         )
-        .section("Tabs"),
+        .section(crate::settings::section::TABS),
     );
 
     c.register::<NewTabArgs, _>(

@@ -499,12 +499,21 @@ fn drawn_of(items: &[MenuItem], rows: &[Row]) -> Vec<(Row, bool)> {
         .collect()
 }
 
+/// What the row of the submenu `id` says: the words its items give it.
+pub fn submenu_title(items: &[MenuItem], id: &str) -> String {
+    items
+        .iter()
+        .find_map(|item| item.submenu.as_ref().filter(|submenu| submenu.id == id))
+        .map(|submenu| submenu.title.to_string())
+        .unwrap_or_default()
+}
+
 /// The first item of the submenu `name`, by order.
 fn first_of(items: &[MenuItem], name: &str) -> Option<usize> {
     items
         .iter()
         .enumerate()
-        .filter(|(_, item)| item.submenu.as_deref() == Some(name))
+        .filter(|(_, item)| item.submenu_id() == Some(name))
         .min_by_key(|(_, item)| item.order)
         .map(|(index, _)| index)
 }
@@ -530,7 +539,7 @@ pub fn rows_of(items: &[MenuItem]) -> Vec<Row> {
     let mut run: Vec<usize> = Vec::new();
     let mut parents: Vec<&str> = Vec::new();
     for index in by_order {
-        match items[index].submenu.as_deref() {
+        match items[index].submenu_id() {
             None => run.push(index),
             Some(name) if !parents.contains(&name) => {
                 rows.extend(level_rows(items, run.drain(..)));
@@ -551,7 +560,7 @@ fn sub_rows_of(items: &[MenuItem], name: &str) -> Vec<Row> {
         items
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.submenu.as_deref() == Some(name))
+            .filter(|(_, item)| item.submenu_id() == Some(name))
             .map(|(index, _)| index),
     )
 }
@@ -587,7 +596,7 @@ fn values_of(items: &[MenuItem], value: usize) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, other)| {
-            other.submenu == item.submenu
+            other.submenu_id() == item.submenu_id()
                 && other.choice.as_ref().is_some_and(|c| c.name == choice.name)
         })
         .map(|(index, _)| index)
@@ -655,7 +664,7 @@ fn bundled(icon: &str) -> bool {
 fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
     let mut values = items
         .iter()
-        .filter(|item| item.submenu.as_deref() == Some(submenu));
+        .filter(|item| item.submenu_id() == Some(submenu));
     let first = values.next()?;
     let name = &first.choice.as_ref()?.name;
     let mut chosen = first.is_on().then_some(first);
@@ -1830,13 +1839,13 @@ fn row_element(
             let mut own: Vec<&MenuItem> = menu
                 .items
                 .iter()
-                .filter(|item| item.submenu.as_deref() == Some(name))
+                .filter(|item| item.submenu_id() == Some(name))
                 .collect();
             own.sort_by_key(|item| item.order);
             let icon = own
                 .iter()
                 .find_map(|item| item.icon.clone().filter(|icon| bundled(icon)));
-            (name.clone(), icon, None)
+            (submenu_title(&menu.items, name), icon, None)
         }
         Row::Choice(first) => return choice_element(shell, menu, *first, at, theme, cx),
     };
@@ -2333,7 +2342,10 @@ mod tests {
             when: None,
             order: 0,
             icon: None,
-            submenu: submenu.map(str::to_owned),
+            submenu: submenu.map(|name| skwir_core::registry::Submenu {
+                id: name.to_owned().into(),
+                title: name.to_owned().into(),
+            }),
             checked: None,
             choice: None,
             color: None,

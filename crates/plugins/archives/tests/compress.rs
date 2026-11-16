@@ -800,7 +800,7 @@ fn compress_is_offered_for_files_and_folders_in_their_menu() {
         assert_eq!(item.menu, "context");
         assert_eq!(item.when.as_deref(), Some("selection !place !restores"));
         // One submenu, among what is made from the files (ADR-099).
-        assert_eq!(item.submenu.as_deref(), Some("Compress"));
+        assert_eq!(item.submenu_id(), Some("compress"));
         assert_eq!(item.order / 100, 3);
     }
     // Withdrawn with its plugin.

@@ -18632,3 +18632,64 @@ crates.io sources (`fluent-zero-build` 0.2.0, `fluent-static-codegen`
   37).
 
 Neither ran here.
+
+## 2026-11-16: Words two owners share, and nothing read back (ADR-139, step A)
+
+The first step of the words in every language. The English is the same
+as before, except for two labels that were made from ids (below).
+
+**Shared words, by core's ids:**
+- **Submenus** are a `registry::Submenu`, an id and its words. Those that
+  several plugins fill are core's (`registry::submenus`):
+  - Compress: archives and shrink;
+  - Open With and Open Folder With: open-with and the shell's Run
+    Command;
+  - Tags: tags and name-tags.
+
+  A single owner's carries that owner's id (`query.find_similar`,
+  `remote.thumbnails`, `exclusions.move_to`). The window folds items by
+  id and draws the words of the submenu's first item.
+- **Settings sections** are a `settings::Section`, an id and its words.
+  Every section is core's (`settings::section`, 30 of them), by subject,
+  as pages are. A page lists its sections by them, groups by id, and
+  captions with the words. A notes store's section is made where the
+  store is registered (`SettingSpec::section_of`, `notes.<id>`).
+- **Sidebar groups** take their headings from core
+  (`registry::groups`): places come only from plugins built in.
+
+**Nothing read back:**
+- **An undo** carries the title of what it takes back
+  (`Plan::undoes`, `ExecEvent::Started::undoes`). The toast no longer
+  takes `"undo "` off the run's title.
+- **A step's own words naming its file** are a typed context
+  (`op::Couldnt`, at 19 sites in core and 5 in the archives, shrink and
+  print plugins). The executor gives the reason after them apart
+  (`Progress::reason`, `op::reason_after`), comparing the file by name as
+  the toast did. A downcast still finds what is inside them
+  (`Cancelled`, an `io::Error`).
+- **A listing's error** has a kind (`ListingError`: denied, missing,
+  other), set where it is made: from the system's error, or the
+  provider's own words. The placeholder reads the kind, and no longer
+  the system's message or Skwir's words. Its "no provider" branch was
+  never reached (an unknown scheme fails the open itself) and went.
+- **EXIF's position row** is marked in its table, not found by its
+  label.
+
+**Labels no longer made from ids.** These change what is shown:
+- **A command nobody declared** (a plugin turned off, a name mistyped in
+  the keymap) shows its name as written: `gone.open`, not "Gone open".
+- **A field only a plugin, an agent or the user attached**, under
+  Properties' More, shows its key: `vision.subject`, not "Subject".
+  Nothing gives those keys words.
+- **A data setting**, never a row, has no title.
+
+**Checked:**
+- `just lint`: rustfmt and clippy `-D warnings`, default members.
+- `cargo nextest run` of the default members: 3675 passed, 32 skipped.
+  The first run stopped on the two tests above, which pinned those
+  labels, and they were updated.
+- Tests added: the reason after a step's own words (another file's words,
+  words inside another's, a copy's target by name, a cancel found
+  inside).
+
+**Not run:** `just check-cross`, the workers, a window.

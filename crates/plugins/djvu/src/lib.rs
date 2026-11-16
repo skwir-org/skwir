@@ -69,7 +69,7 @@ impl Plugin for PreviewPlugin {
             )
             .tries(&tries)
             .page(skwir_core::settings::page::READING)
-            .section("Documents"),
+            .section(skwir_core::settings::section::DOCUMENTS),
         );
         register_reader(app);
         // A fallback stage: the desktop's cache and thumbnailers come first.

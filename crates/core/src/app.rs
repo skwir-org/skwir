@@ -759,7 +759,7 @@ impl App {
                 ),
                 store.default_read(),
             )
-            .section(title)
+            .section_of(format!("notes.{id}"), title)
             .essential(),
         );
         self.notes.declared(owner, read);
@@ -787,7 +787,7 @@ impl App {
         let write = crate::notes::write_key(id);
         self.settings.declare(
             crate::settings::SettingSpec::choice(&write, "Write", said, default, &choices)
-                .section(title)
+                .section_of(format!("notes.{id}"), title)
                 .essential(),
         );
         self.notes.declared(owner, write);

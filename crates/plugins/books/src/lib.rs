@@ -75,7 +75,7 @@ impl Plugin for PreviewPlugin {
         )
         .now("builtin")
         .page(skwir_core::settings::page::READING)
-        .section("Books"));
+        .section(skwir_core::settings::section::BOOKS));
         register_books(app);
         app.thumbnails.register(self.id(), Arc::new(Cover));
     }

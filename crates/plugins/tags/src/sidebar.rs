@@ -22,7 +22,7 @@ use skwir_core::registry::{Click, Place, Reorder};
 use crate::index::TagIndex;
 use crate::vocabulary::Vocabulary;
 
-pub const GROUP: &str = "tags";
+pub const GROUP: &str = skwir_core::registry::groups::TAGS.id;
 /// How many tags the sidebar suggests while none is pinned.
 pub const SETTING: &str = "tags.sidebar";
 pub const DEFAULT: i64 = 12;

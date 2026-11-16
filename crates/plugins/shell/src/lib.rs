@@ -524,7 +524,7 @@ impl Plugin for ShellPlugin {
             "",
         )
         .page(skwir_core::settings::page::TERMINAL)
-        .section("Commands"));
+        .section(skwir_core::settings::section::COMMANDS));
         app.commands
             .register::<TargetsArgs, _>(
                 ID,
@@ -598,7 +598,7 @@ impl Plugin for ShellPlugin {
         let asks = [
             (
                 "selection !place",
-                "Open With",
+                skwir_core::registry::submenus::OPEN_WITH,
                 "Run command on selection",
                 "Command; the selected paths are its arguments",
                 "shell.run",
@@ -606,7 +606,7 @@ impl Plugin for ShellPlugin {
             ),
             (
                 "empty folder",
-                "Open Folder With",
+                skwir_core::registry::submenus::OPEN_FOLDER_WITH,
                 "Run command in this folder",
                 "Command; it runs in this folder",
                 "shell.run_here",
@@ -637,7 +637,7 @@ impl Plugin for ShellPlugin {
                     when: Some(when.into()),
                     order: 9,
                     icon: Some("command".into()),
-                    submenu: Some(submenu.into()),
+                    submenu: Some(submenu),
                     checked: None,
                     choice: None,
                     color: None,

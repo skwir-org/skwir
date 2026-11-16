@@ -369,13 +369,10 @@ fn source_of(provenance: &Provenance) -> Option<SharedString> {
     }
 }
 
-/// `tags` reads better than `tags.color`: the last part, with a capital.
+/// What a field a plugin, an agent or the user attached is called: its key
+/// as written, since nothing gives it words (ADR-139, 8).
 fn label_of(key: &str) -> String {
-    let word = key.rsplit('.').next().unwrap_or(key).replace('_', " ");
-    let mut chars = word.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().collect::<String>() + chars.as_str()
-    })
+    key.to_owned()
 }
 
 /// The fields Properties names itself; any other is shown under More.
@@ -2473,7 +2470,7 @@ mod tests {
                 .all(|g| g.title != "Notes" && g.title != "Source")
         );
         assert_eq!(
-            find("More", "Subject")
+            find("More", "vision.subject")
                 .unwrap()
                 .source
                 .as_ref()

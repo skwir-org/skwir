@@ -538,11 +538,13 @@ fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     Ok(Outcome::Value(serde_json::json!({ "items": items })))
 }
 
-/// The context menu's submenu of what opens the selection (ADR-099).
-const OPEN_WITH: &str = "Open With";
+/// The context menu's submenu of what opens the selection (ADR-099), which
+/// the shell's Run Command joins.
+const OPEN_WITH: skwir_core::registry::Submenu = skwir_core::registry::submenus::OPEN_WITH;
 
 /// The same, on the folder's background, for the folder.
-const OPEN_FOLDER_WITH: &str = "Open Folder With";
+const OPEN_FOLDER_WITH: skwir_core::registry::Submenu =
+    skwir_core::registry::submenus::OPEN_FOLDER_WITH;
 
 /// The most applications the Open With submenu names; the chooser has
 /// them all.
@@ -2008,7 +2010,7 @@ mod tests {
             "the default first, the others in Open With"
         );
         for other in &photos[1..] {
-            assert_eq!(other["submenu"], OPEN_WITH);
+            assert_eq!(other["submenu"]["id"], &*OPEN_WITH.id);
             assert_eq!(other["command"]["name"], "open_with");
         }
         let args = &photos[0]["command"]["args"];
@@ -2026,7 +2028,9 @@ mod tests {
             "no default shared: Open stays, said again"
         );
         assert!(
-            mixed[1..].iter().all(|item| item["submenu"] == OPEN_WITH),
+            mixed[1..]
+                .iter()
+                .all(|item| item["submenu"]["id"] == *OPEN_WITH.id),
             "what opens both, in Open With"
         );
         assert!(items(&[photo, "no-type-9q"]).is_empty(), "a type not known");
@@ -2070,7 +2074,7 @@ mod tests {
         assert_eq!(answer[0]["command"]["args"]["entries"], photo_shown);
         assert_eq!(answer[1]["command"]["args"]["entries"], photo_shown);
         let chooser = &answer[3];
-        assert_eq!(chooser["submenu"], OPEN_WITH);
+        assert_eq!(chooser["submenu"]["id"], &*OPEN_WITH.id);
         assert_eq!(
             chooser["command"]["args"]["source"]["args"]["entries"],
             photo_shown

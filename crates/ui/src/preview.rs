@@ -2328,7 +2328,7 @@ impl Shell {
             .preview
             .menu_entry
             .iter()
-            .filter(|item| item.submenu.as_deref() == Some(name))
+            .filter(|item| item.submenu_id() == Some(name))
             .collect();
         items.sort_by_key(|item| item.order);
         items

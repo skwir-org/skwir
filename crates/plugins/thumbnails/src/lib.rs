@@ -362,7 +362,7 @@ impl Plugin for ThumbnailsPlugin {
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)
-            .section("Thumbnails"),
+            .section(skwir_core::settings::section::THUMBNAILS),
         );
         app.settings.declare(
             SettingSpec::integer(
@@ -375,7 +375,7 @@ impl Plugin for ThumbnailsPlugin {
             .unit("MB")
             .step(16)
             .page(skwir_core::settings::page::VIEWS)
-            .section("Thumbnails"),
+            .section(skwir_core::settings::section::THUMBNAILS),
         );
         app.settings.declare(
             SettingSpec::toggle(
@@ -385,7 +385,7 @@ impl Plugin for ThumbnailsPlugin {
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)
-            .section("Thumbnails"),
+            .section(skwir_core::settings::section::THUMBNAILS),
         );
         budget(app);
         self.providers(app);

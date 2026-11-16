@@ -659,7 +659,7 @@ fn entry_rows(popup: &toolbar::Popup, shell: &Shell, cx: &mut Context<Shell>) ->
     let mut parents: Vec<&str> = Vec::new();
     let mut rows = Vec::new();
     for item in items {
-        match item.submenu.as_deref() {
+        match item.submenu_id() {
             None => rows.push(menu_row(item_button(item), shell, cx)),
             Some(name) if !parents.contains(&name) => {
                 parents.push(name);
@@ -696,12 +696,13 @@ fn submenu_row(
         .into_iter()
         .find_map(|item| item.icon.clone().filter(|icon| !icon.is_empty()))
         .unwrap_or_default();
+    let title = crate::menu::submenu_title(&shell.preview.menu_entry, name);
     toolbar::submenu_row(
         popup,
         format!("preview-submenu-{name}"),
         name,
         icon,
-        name.to_owned().into(),
+        title.into(),
         None,
         shell,
         cx,

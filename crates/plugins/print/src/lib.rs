@@ -1629,10 +1629,13 @@ impl op::Effect for MakePdf {
         let result = kept.and_then(|()| {
             ctx.check_cancelled()?;
             staging.place(&made, &target).with_context(|| {
-                format!(
-                    "“{}” could not be placed in “{}”",
-                    display_name(&target),
-                    display_name(&self.dest_dir)
+                skwir_core::op::Couldnt::new(
+                    &target,
+                    format!(
+                        "“{}” could not be placed in “{}”",
+                        display_name(&target),
+                        display_name(&self.dest_dir)
+                    ),
                 )
             })
         });

@@ -515,14 +515,16 @@ impl Work {
                 total,
                 run,
                 items,
+                undoes,
                 counts,
             } => {
                 let going_on = self.going_on.remove(&plan);
                 if counts {
                     self.counting.insert(plan);
                 }
-                self.running
-                    .push(Running::started(plan, title, run, total, items, going_on));
+                let mut running = Running::started(plan, title, run, total, items, going_on);
+                running.undoes = undoes;
+                self.running.push(running);
                 if run == RunKind::Apply {
                     Taken::Nothing
                 } else {
@@ -946,6 +948,7 @@ mod tests {
             total,
             run: RunKind::Apply,
             items: None,
+            undoes: None,
             counts,
         }
     }
@@ -962,6 +965,7 @@ mod tests {
             named: None,
             status: StepStatus::Pending { reversible: true },
             error: error.map(str::to_owned),
+            reason: None,
         })
     }
 

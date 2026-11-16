@@ -3613,8 +3613,9 @@ their budgets in every language.
 **Steps.** Each is useful alone, and each ends with its measurements in
 `docs/STATUS-LOG.md`:
 
-- **A. Words two owners share, and nothing read back.** English
-  unchanged.
+- **A. Words two owners share, and nothing read back.** Built
+  2026-11-16 (`docs/STATUS-LOG.md`). English unchanged but for two labels
+  that were made from ids.
   - Core ids, each with its words, for the submenus plugins share
     (Compress, Open With, Open Folder With, Tags) and for settings
     sections.

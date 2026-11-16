@@ -1792,15 +1792,9 @@ pub fn title(app: &App, command: &str, args: &serde_json::Value) -> String {
     if let Some(title) = app.commands.title(command, args) {
         return title;
     }
-    let name = command
-        .strip_prefix("ui.")
-        .unwrap_or(command)
-        .replace(['_', '.'], " ");
-    let mut chars = name.chars();
-    let title: String = chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    });
-    skwir_core::command::with_args(&title, args)
+    // Not declared (a plugin turned off, a name mistyped in the keymap):
+    // by its name as written, which has no words of its own (ADR-139, 8).
+    skwir_core::command::with_args(command, args)
 }
 
 /// A title naming what an argument names elsewhere: the folder a binding

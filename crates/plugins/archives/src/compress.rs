@@ -30,8 +30,9 @@ const KIND: &str = "compress";
 /// is in the trash.
 const COMPRESSES: &str = "selection !place !restores";
 
-/// The context menu's submenu of the ways to compress.
-const COMPRESS: &str = "Compress";
+/// The context menu's submenu of the ways to compress, which the smaller
+/// copies join.
+const COMPRESS: skwir_core::registry::Submenu = skwir_core::registry::submenus::COMPRESS;
 
 /// Make an archive named `name` in `dest_dir` of `entries`, each at its
 /// top under its own name, with what is beside it (its companions,
@@ -314,10 +315,13 @@ impl op::Effect for Compress {
         .and_then(|()| Ok(ctx.check_cancelled()?))
         .and_then(|()| {
             staging.place(&made, &target).with_context(|| {
-                format!(
-                    "“{}” could not be placed in “{}”",
-                    display_name(&target),
-                    display_name(&self.dest_dir)
+                skwir_core::op::Couldnt::new(
+                    &target,
+                    format!(
+                        "“{}” could not be placed in “{}”",
+                        display_name(&target),
+                        display_name(&self.dest_dir)
+                    ),
                 )
             })
         });

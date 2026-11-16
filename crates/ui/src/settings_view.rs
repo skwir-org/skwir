@@ -349,7 +349,7 @@ fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -
         &spec.title,
         &spec.description,
         &spec.key,
-        &spec.section,
+        &spec.section_title,
         titles[0],
         titles[1],
     ];
@@ -1770,7 +1770,8 @@ impl SettingsView {
                 _ => groups.push((at, vec![row])),
             }
         }
-        for ((page, section), rows) in groups {
+        for ((page, _), rows) in groups {
+            let section = rows[0].spec.section_title.clone();
             let mut caption = self.page_title(&page);
             if !section.is_empty() {
                 caption = format!("{caption} › {section}");

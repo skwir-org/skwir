@@ -120,14 +120,65 @@ pub(crate) fn guarded<T>(step: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Re
 /// reason in words (`io::ErrorKind`), or its message without the error's
 /// number. The whole chain goes to the log.
 pub fn said(error: &anyhow::Error) -> String {
-    error
-        .chain()
+    said_of(error.chain())
+}
+
+/// The links of an error's chain, said as [`said`] says them.
+fn said_of<'a>(links: impl Iterator<Item = &'a (dyn std::error::Error + 'static)>) -> String {
+    links
         .map(|cause| match cause.downcast_ref::<std::io::Error>() {
             Some(io) => io_words(io),
             None => cause.to_string(),
         })
         .collect::<Vec<_>>()
         .join(": ")
+}
+
+/// What a step could not do to the file it acts on, in its own words
+/// ("“a.txt” could not be copied"): the context a step gives its error
+/// where its words name that file (`.with_context(|| Couldnt::new(…))`),
+/// what stopped it the error inside, whose kind a downcast still finds
+/// (`Cancelled`, an `io::Error`). What tells of the failure in words of its
+/// own (the toast's "Couldn't copy “a.txt” to Docs") says the reason after
+/// them alone ([`reason_after`]), told by the context's make and the file
+/// it names, never by its words (ADR-139, 8).
+#[derive(Debug)]
+pub struct Couldnt {
+    /// The file its words name.
+    pub subject: PathBuf,
+    words: String,
+}
+
+impl Couldnt {
+    /// `subject`'s step could not do what `words` say.
+    pub fn new(subject: &Path, words: String) -> Self {
+        Couldnt {
+            subject: subject.to_owned(),
+            words,
+        }
+    }
+}
+
+impl fmt::Display for Couldnt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.words)
+    }
+}
+
+/// What stopped `change`'s step, said alone, where its error begins with
+/// the step's own words naming the file it acts on ([`Couldnt`]): what
+/// follows them in its chain. `None` where the error begins otherwise.
+pub fn reason_after(error: &anyhow::Error, change: &Change) -> Option<String> {
+    // A downcast finds the outermost of its kind wherever it stands in the
+    // chain; it is the first link where the error's own text is its text,
+    // the same value said twice (which link, not what it says).
+    let own = error
+        .downcast_ref::<Couldnt>()
+        .filter(|own| own.words == error.to_string())?;
+    // By name: a copy's words name it where it lands, an item of a trash
+    // by the trash's name, the same as the step's.
+    let named = change.subject().and_then(Path::file_name);
+    (named.is_some() && own.subject.file_name() == named).then(|| said_of(error.chain().skip(1)))
 }
 
 /// A system's error in words: by its kind where the kind says it (the
@@ -1036,6 +1087,10 @@ pub struct Plan {
     /// one (names taken settled, ADR-054: a merge, a replace): what the
     /// toast says it did.
     pub items: Option<Box<Items>>,
+    /// For an undo's run, the title of the action it takes back, as its
+    /// history keeps it: what tells of the run says it apart from the
+    /// run's own `title`, never by taking that apart (ADR-139, 8).
+    pub undoes: Option<String>,
 }
 
 /// A folder as a title names it (ADR-135): by its name, "/" by itself.
@@ -1181,6 +1236,7 @@ impl Plan {
             by: None,
             on_conflict: None,
             items: None,
+            undoes: None,
         }
     }
 
@@ -1379,6 +1435,63 @@ impl Plan {
 mod tests {
     use super::{Change, Follow, Followed, Through, Words, io_words, said};
     use std::path::{Path, PathBuf};
+
+    /// A step's own words naming its file are told apart by their make, not
+    /// their words: what follows them is the reason said alone, and the kind
+    /// of what stopped the step is still found inside them (ADR-139, 8).
+    #[test]
+    fn a_step_s_reason_is_told_apart_from_its_own_words() {
+        use super::{Cancelled, Couldnt, reason_after};
+        let step = Change::Rename {
+            from: PathBuf::from("/a/it's a.txt"),
+            to: PathBuf::from("/a/b.txt"),
+        };
+        let own = |path: &str, words: &str, error: anyhow::Error| {
+            error.context(Couldnt::new(Path::new(path), words.to_owned()))
+        };
+        let denied =
+            || anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let failed = own(
+            "/a/it's a.txt",
+            "“it's a.txt” could not be renamed “b.txt”",
+            denied(),
+        );
+        assert_eq!(
+            said(&failed),
+            "“it's a.txt” could not be renamed “b.txt”: permission denied"
+        );
+        assert_eq!(
+            reason_after(&failed, &step).as_deref(),
+            Some("permission denied")
+        );
+        // Words of another file's: said whole.
+        let other = own("/a/other.txt", "“other.txt” could not be read", denied());
+        assert_eq!(reason_after(&other, &step), None);
+        // The step's words inside another's: they are not its first.
+        let wrapped = failed.context("the folder could not be read");
+        assert_eq!(reason_after(&wrapped, &step), None);
+        // Where it lands, by its name: a copy's words name its target.
+        let copy = Change::Copy {
+            from: PathBuf::from("/a/it's a.txt"),
+            to: PathBuf::from("/b/it's a.txt"),
+        };
+        let placed = own(
+            "/b/it's a.txt",
+            "“it's a.txt” could not be placed in “b”",
+            denied(),
+        );
+        assert_eq!(
+            reason_after(&placed, &copy).as_deref(),
+            Some("permission denied")
+        );
+        // A cancelled step is still told cancelled through its words.
+        let cancelled = own(
+            "/a/it's a.txt",
+            "“it's a.txt” could not be copied",
+            anyhow::Error::new(Cancelled),
+        );
+        assert!(cancelled.is::<Cancelled>());
+    }
 
     /// A transfer's title names what it takes and the folder by its name,
     /// never its whole path (ADR-135).

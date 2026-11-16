@@ -59,7 +59,7 @@ impl Plugin for GitPlugin {
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)
-            .section("Git"),
+            .section(skwir_core::settings::section::GIT),
         );
         app.previews.register(self.id(), Arc::new(Provider));
         let states = Arc::new(state::States::new(app));

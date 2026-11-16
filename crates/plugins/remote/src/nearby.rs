@@ -339,10 +339,10 @@ fn listing(
             complete = true;
             let said: Vec<String> = failed.iter().filter_map(|f| f.try_recv().ok()).collect();
             if said.len() == browsers && instances.is_empty() {
-                sink.send(ListingEvent::Error(format!(
+                sink.send(ListingEvent::Error(skwir_core::ListingError::new(format!(
                     "Servers nearby are found by Avahi or wsdd, and neither answers here ({})",
                     said.join("; ")
-                )));
+                ))));
             }
             sink.send(ListingEvent::Complete);
         }

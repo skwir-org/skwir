@@ -910,10 +910,13 @@ impl Shared {
             Err(error) => {
                 let _walk = this.walk.lock();
                 if !cancel.is_cancelled() {
-                    this.tx.send(ListingEvent::Error(format!(
-                        "query root {} is not a folder: {error}",
-                        query.root.display()
-                    )));
+                    this.tx.send(ListingEvent::Error(skwir_core::ListingError {
+                        message: format!(
+                            "query root {} is not a folder: {error}",
+                            query.root.display()
+                        ),
+                        ..skwir_core::ListingError::of_io(&error)
+                    }));
                 }
                 return;
             }
@@ -947,7 +950,10 @@ impl Shared {
         let query = match lang::parse(&location.rest) {
             Ok(query) => query,
             Err(e) => {
-                this.tx.send(ListingEvent::Error(format!("query: {e}")));
+                this.tx
+                    .send(ListingEvent::Error(skwir_core::ListingError::new(format!(
+                        "query: {e}"
+                    ))));
                 return;
             }
         };

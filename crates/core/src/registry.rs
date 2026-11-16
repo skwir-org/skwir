@@ -5,6 +5,7 @@
 //! Every contribution can be withdrawn by owner when a plugin is disabled.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -538,7 +539,8 @@ pub struct MenuItem {
     pub when: Option<String>,
     pub order: i32,
     pub icon: Option<String>,
-    pub submenu: Option<String>,
+    /// The submenu it is folded into, which opens beside its row.
+    pub submenu: Option<Submenu>,
     /// Whether it is on: a check, or the value chosen among its
     /// `choice`'s. `None` for an item that is no state. Said by the menu,
     /// never written into the title.
@@ -555,6 +557,96 @@ pub struct MenuItem {
     /// as colors (`ChoiceLook::Colors`) is a swatch of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+}
+
+/// A submenu: what the items folded into it meet by, its id, and the
+/// words its row says. Items of several owners meet by the id, never by
+/// the words (ADR-139, 8): a submenu several plugins fill is core's
+/// ([`submenus`]); one a single owner fills is that owner's, its id
+/// prefixed by the owner's (`query.find_similar`).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Submenu {
+    pub id: Cow<'static, str>,
+    pub title: Cow<'static, str>,
+}
+
+impl Submenu {
+    /// The submenu `id`, its row saying `title`.
+    pub const fn new(id: &'static str, title: &'static str) -> Self {
+        Submenu {
+            id: Cow::Borrowed(id),
+            title: Cow::Borrowed(title),
+        }
+    }
+}
+
+/// A section of the sidebar ([`Place::group`]): what the places of several
+/// owners meet by, its id, and the words its heading says (ADR-139, 8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Group {
+    pub id: &'static str,
+    pub title: &'static str,
+}
+
+/// The sidebar's sections: places come only from plugins built in, so
+/// these are all there are.
+pub mod groups {
+    use super::Group;
+
+    pub const PLACES: Group = Group {
+        id: "places",
+        title: "Places",
+    };
+    pub const BOOKMARKS: Group = Group {
+        id: "bookmarks",
+        title: "Bookmarks",
+    };
+    /// Saved searches and the places kept with their filters (ADR-109).
+    pub const SEARCHES: Group = Group {
+        id: "searches",
+        title: "Saved",
+    };
+    pub const TAGS: Group = Group {
+        id: "tags",
+        title: "Tags",
+    };
+    pub const DEVICES: Group = Group {
+        id: "devices",
+        title: "Devices",
+    };
+    pub const NETWORK: Group = Group {
+        id: "network",
+        title: "Network",
+    };
+    /// The window's open tabs, the shell's own.
+    pub const TABS: Group = Group {
+        id: "tabs",
+        title: "Tabs",
+    };
+    pub const ALL: [Group; 7] = [PLACES, BOOKMARKS, SEARCHES, TAGS, DEVICES, NETWORK, TABS];
+
+    /// The words the heading of the section `id` says.
+    pub fn title_of(id: &str) -> &'static str {
+        ALL.iter()
+            .find(|group| group.id == id)
+            .map_or("", |group| group.title)
+    }
+}
+
+/// The submenus several plugins fill (ADR-099's groups, ADR-139, 8).
+pub mod submenus {
+    use super::Submenu;
+
+    /// The ways to compress the selection: the archives' formats, a
+    /// smaller copy.
+    pub const COMPRESS: Submenu = Submenu::new("compress", "Compress");
+    /// What opens the selection: its applications, a command run on it.
+    pub const OPEN_WITH: Submenu = Submenu::new("open_with", "Open With");
+    /// The same, on a folder's background, for the folder.
+    pub const OPEN_FOLDER_WITH: Submenu = Submenu::new("open_folder_with", "Open Folder With");
+    /// The selection's tags: the editor, each tag as a check, the tags
+    /// written into names.
+    pub const TAGS: Submenu = Submenu::new("tags", "Tags");
 }
 
 /// Whether a [`MenuItem`] is on.
@@ -628,11 +720,16 @@ impl MenuItem {
         self
     }
 
-    /// Folded into the group `submenu`, which opens beside its row.
+    /// Folded into `submenu`, which opens beside its row.
     #[must_use]
-    pub fn submenu(mut self, submenu: &str) -> Self {
-        self.submenu = Some(submenu.to_owned());
+    pub fn submenu(mut self, submenu: Submenu) -> Self {
+        self.submenu = Some(submenu);
         self
+    }
+
+    /// The id of the submenu it is folded into.
+    pub fn submenu_id(&self) -> Option<&str> {
+        self.submenu.as_ref().map(|submenu| &*submenu.id)
     }
 
     /// On or off: a check (`MenuItem::checked`).

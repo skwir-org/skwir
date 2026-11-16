@@ -42,9 +42,15 @@ pub use saved::SavedQuery;
 use saved::{Edit, Key, KeyArg};
 
 const ID: &str = "query";
+
+/// The context menu's submenu of the searches for files like the one
+/// selected: the query plugin's alone.
+const FIND_SIMILAR: skwir_core::registry::Submenu =
+    skwir_core::registry::Submenu::new("query.find_similar", "Find Similar");
+
 const SAVED_KEY: &str = "query.saved";
 /// The sidebar section of saved searches and saved places, "Saved".
-const GROUP: &str = "searches";
+const GROUP: &str = skwir_core::registry::groups::SEARCHES.id;
 
 /// The query plugin.
 #[derive(Debug, Default)]
@@ -869,7 +875,7 @@ impl Plugin for QueryPlugin {
                 true,
             )
             .page(skwir_core::settings::page::GENERAL)
-            .section("Address"),
+            .section(skwir_core::settings::section::ADDRESS),
         );
         // What the address field offers as it is typed in, and how words
         // typed over a folder filter it (ADR-098). The tags it offers are
@@ -1133,7 +1139,7 @@ impl Plugin for QueryPlugin {
                     Invocation::with_args("query.similar", &serde_json::json!({ "by": by })),
                 )
                 .when(when)
-                .submenu("Find Similar"),
+                .submenu(FIND_SIMILAR),
             );
         }
         app.commands.register::<RefineArgs, _>(
@@ -3080,7 +3086,7 @@ mod tests {
             .expect("opening does no I/O");
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         match open.events().recv_deadline(deadline).unwrap() {
-            ListingEvent::Error(e) => assert!(e.contains("not a folder"), "{e}"),
+            ListingEvent::Error(e) => assert!(e.message.contains("not a folder"), "{e}"),
             other => panic!("{other:?}"),
         }
     }

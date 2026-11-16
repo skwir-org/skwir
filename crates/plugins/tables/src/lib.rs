@@ -51,7 +51,7 @@ impl Plugin for PreviewPlugin {
             &[("table", "Table"), ("pages", "Pages")],
         )
         .page(skwir_core::settings::page::READING)
-        .section("Spreadsheets"));
+        .section(skwir_core::settings::section::SPREADSHEETS));
         Self::provider(app);
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {

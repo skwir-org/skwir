@@ -579,7 +579,7 @@ impl Plugin for JumpPlugin {
         app.registry.places.add(
             ID,
             Place::new(
-                "places",
+                skwir_core::registry::groups::PLACES.id,
                 RECENT,
                 "document-open-recent",
                 Location::parse("recent:"),

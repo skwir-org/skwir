@@ -6,7 +6,7 @@
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, div, prelude::*, px};
-use skwir_core::location::{EmptyState, Unshown};
+use skwir_core::location::{EmptyState, Failure, Unshown};
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
@@ -23,33 +23,20 @@ pub struct Placeholder {
     pub problem: bool,
 }
 
-/// A failure in the user's words. The system's message stays as the detail:
-/// it is what someone will search for.
-pub fn failure(error: &str) -> Placeholder {
-    use std::io::ErrorKind;
-    let lower = error.to_lowercase();
-    // The system's code says what failed, read by the system's own table
-    // (errno here, Windows' codes there); a message without one by its
-    // words.
-    let kind = os_error_kind(error);
-    let (title, action) = if kind.map_or(lower.contains("permission denied"), |kind| {
-        kind == ErrorKind::PermissionDenied
-    }) {
-        ("You don't have permission to open this folder", None)
-    } else if kind.map_or(lower.contains("no such file"), |kind| {
-        matches!(kind, ErrorKind::NotFound | ErrorKind::NotADirectory)
-    }) {
-        (
+/// A failure in the user's words, by its kind (`Listing::failure`). The
+/// system's message stays as the detail: it is what someone will search
+/// for.
+pub fn failure(kind: Failure, error: &str) -> Placeholder {
+    let (title, action) = match kind {
+        Failure::Denied => ("You don't have permission to open this folder", None),
+        Failure::Missing => (
             "This folder no longer exists",
             Some(("Go to the parent folder", "up")),
-        )
-    } else if lower.contains("no provider") {
-        ("skwir cannot open this kind of location", None)
-    } else {
-        (
+        ),
+        Failure::Other => (
             "This location could not be opened",
             Some(("Try again", "refresh")),
-        )
+        ),
     };
     Placeholder {
         icon: "warning",
@@ -131,8 +118,8 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     if !list.sorted.is_empty() || !list.arriving.is_empty() || list.rows.grouped() {
         return None;
     }
-    if let Some(error) = state.listing.error() {
-        return Some(failure(error));
+    if let (Some(kind), Some(error)) = (state.listing.failure(), state.listing.error()) {
+        return Some(failure(kind, error));
     }
     if !state.listing.is_complete() {
         return None;
@@ -288,57 +275,49 @@ pub fn render(
         .into_any_element()
 }
 
-/// The kind of the error a message ends by naming (`… (os error 2)`, as
-/// `std::io::Error` writes one).
-fn os_error_kind(error: &str) -> Option<std::io::ErrorKind> {
-    let (_, after) = error.rsplit_once("(os error ")?;
-    let code = after.split_once(')')?.0.parse().ok()?;
-    Some(std::io::Error::from_raw_os_error(code).kind())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{EmptyState, empty_folder, empty_place, failure};
 
     #[test]
     fn failures_read_as_sentences_and_keep_the_system_message() {
-        let said = std::io::Error::from(std::io::ErrorKind::PermissionDenied).to_string();
-        let denied = failure(&said);
+        // As a listing says one: its kind from the system's code, its words
+        // the system's.
+        let of = |error: std::io::Error| {
+            let error = skwir_core::ListingError::of_io(&error);
+            (failure(error.kind, &error.message), error.message)
+        };
+        let (denied, said) = of(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert_eq!(
             denied.title,
             "You don't have permission to open this folder"
         );
         assert_eq!(denied.detail, said);
         assert_eq!(denied.action, None);
+        // A folder gone, as this system says it.
+        let (gone, said) = of(std::fs::metadata("/nowhere/it’s gone").unwrap_err());
         assert_eq!(
-            failure("No such file or directory (os error 2)").action,
-            Some(("Go to the parent folder", "up"))
-        );
-        // Errors as this system writes them, read by their code: a folder
-        // gone, and never a number inside a larger one.
-        let gone = std::fs::metadata("/nowhere/it’s gone")
-            .unwrap_err()
-            .to_string();
-        assert_eq!(
-            failure(&gone).action,
+            gone.action,
             Some(("Go to the parent folder", "up")),
-            "{gone}"
+            "{said}"
         );
         #[cfg(unix)]
         for code in [24, 28] {
             // Too many open files; no space left on the device.
-            let said = std::io::Error::from_raw_os_error(code).to_string();
-            assert_eq!(
-                failure(&said).action,
-                Some(("Try again", "refresh")),
-                "{said}"
-            );
+            let (other, said) = of(std::io::Error::from_raw_os_error(code));
+            assert_eq!(other.action, Some(("Try again", "refresh")), "{said}");
         }
         // Windows' access denied is its code 5, not errno 13.
         #[cfg(windows)]
         assert_eq!(
-            failure(&std::io::Error::from_raw_os_error(5).to_string()).title,
+            of(std::io::Error::from_raw_os_error(5)).0.title,
             "You don't have permission to open this folder"
+        );
+        // A provider's own words are no system's: said as they are.
+        let words = skwir_core::ListingError::new("Could not connect to the server");
+        assert_eq!(
+            failure(words.kind, &words.message).action,
+            Some(("Try again", "refresh"))
         );
     }
 

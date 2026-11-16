@@ -120,7 +120,7 @@ impl Plugin for TerminalPlugin {
                 "",
             )
             .page(skwir_core::settings::page::TERMINAL)
-            .section("Terminal"),
+            .section(skwir_core::settings::section::TERMINAL),
         );
         app.settings.declare(
             SettingSpec::integer(
@@ -133,7 +133,7 @@ impl Plugin for TerminalPlugin {
             .unit("lines")
             .step(1000)
             .page(skwir_core::settings::page::TERMINAL)
-            .section("Terminal"),
+            .section(skwir_core::settings::section::TERMINAL),
         );
         app.settings.declare(SettingSpec::toggle(
             FOLLOW_KEY,
@@ -142,7 +142,7 @@ impl Plugin for TerminalPlugin {
             true,
         )
         .page(skwir_core::settings::page::TERMINAL)
-        .section("Terminal")
+        .section(skwir_core::settings::section::TERMINAL)
         .essential());
         app.registry.keymap.add(
             ID,

@@ -153,7 +153,7 @@ impl Plugin for PreviewPlugin {
             // Used only when chosen, it needs its helper all the same.
             .needs(&[("mupdf", worker(Engine::Mupdf).executable)])
             .page(skwir_core::settings::page::READING)
-            .section("Documents"),
+            .section(skwir_core::settings::section::DOCUMENTS),
         );
         app.settings.declare(
             SettingSpec::path(
@@ -163,7 +163,7 @@ impl Plugin for PreviewPlugin {
                 "",
             )
             .page(skwir_core::settings::page::READING)
-            .section("Documents"),
+            .section(skwir_core::settings::section::DOCUMENTS),
         );
         app.settings.declare(SettingSpec::choice(
             TEXT_DOCUMENTS,
@@ -177,7 +177,7 @@ impl Plugin for PreviewPlugin {
             ],
         )
         .page(skwir_core::settings::page::READING)
-        .section("Documents"));
+        .section(skwir_core::settings::section::DOCUMENTS));
         register_reading(app);
         register_reader(app);
         *self.pdfium_library.write() = pdfium_library(app);

@@ -53,6 +53,9 @@ pub struct Running {
     pub plan: PlanId,
     pub title: String,
     pub run: RunKind,
+    /// For an undo, the title of the action it takes back, which the toast
+    /// says (`ExecEvent::Started::undoes`).
+    pub(crate) undoes: Option<String>,
     pub total: usize,
     /// First change that was applied, to name a single item in the result,
     /// and the name the user knows its file by where its path says another
@@ -63,6 +66,9 @@ pub struct Running {
     /// its file's name as the user knows it.
     failed: Option<Change>,
     failed_named: Option<String>,
+    /// What stopped it, said alone, where its error began with the step's
+    /// own words (`Progress::reason`).
+    failed_reason: Option<String>,
     /// What the user asked for, where the steps are not its items (a
     /// merge, a replace), as `Started` said it, before the plan was
     /// checked: what the result says when `Finished` says nothing better.
@@ -92,11 +98,13 @@ impl Running {
             plan,
             title,
             run,
+            undoes: None,
             total,
             first: None,
             first_named: None,
             failed: None,
             failed_named: None,
+            failed_reason: None,
             items: items.map(Arc::new),
             paused: false,
             cancelling: false,
@@ -111,6 +119,7 @@ impl Running {
         if progress.error.is_some() {
             self.failed = Some(progress.change.clone());
             self.failed_named.clone_from(&progress.named);
+            self.failed_reason.clone_from(&progress.reason);
         } else if self.first.is_none() {
             self.first = Some(progress.change.clone());
             self.first_named.clone_from(&progress.named);
@@ -222,9 +231,19 @@ fn quoting<'a>(
     }
 }
 
+/// What the toast names a run by: an undo by the action it takes back
+/// (`Running::undoes`), any other by its title.
+fn said_title(running: &Running) -> String {
+    match (&running.undoes, running.run) {
+        (Some(undoes), RunKind::Undo) => undoes.clone(),
+        _ => running.title.clone(),
+    }
+}
+
 /// What an applied plan did, in a sentence: the item by name when there is
 /// one (by `named`, where the step said the name the user knows it by), a
-/// count otherwise. Falls back to the plan's title.
+/// count otherwise. Falls back to the plan's title (`title`: an undo's,
+/// the action it takes back, `said_title`).
 pub fn describe(
     title: &str,
     run: RunKind,
@@ -237,9 +256,7 @@ pub fn describe(
     let one = applied == 1;
     let quoted = quoting(first, named);
     match first {
-        _ if run == RunKind::Undo => {
-            format!("Undid: {}", title.strip_prefix("undo ").unwrap_or(title))
-        }
+        _ if run == RunKind::Undo => format!("Undid: {title}"),
         Some(Change::Trash { path }) if one => format!("Moved {} to Trash", quoted(path)),
         Some(Change::Trash { .. }) => format!("Moved {many} to Trash"),
         Some(Change::Restore { path }) if one => format!("Restored {}", quoted(path)),
@@ -294,10 +311,17 @@ pub fn describe(
 }
 
 /// What a plan that did nothing could not do, in a sentence: the step that
-/// failed, by name (`named`, as `describe`), then why. An error that begins
-/// by naming that step ("“a.txt” could not be renamed …", "… could not all
-/// be deleted") gives its reason alone after it.
-pub fn failure(title: &str, failed: Option<&Change>, named: Option<&str>, error: &str) -> String {
+/// failed, by name (`named`, as `describe`), then why. An error that began
+/// with the step's own words naming its file ("“a.txt” could not be renamed
+/// …", "… could not all be deleted") gives its reason alone after it
+/// (`reason`, `Progress::reason`).
+pub fn failure(
+    title: &str,
+    failed: Option<&Change>,
+    named: Option<&str>,
+    error: &str,
+    reason: Option<&str>,
+) -> String {
     let quoted = quoting(failed, named);
     let tried = match failed {
         Some(Change::Copy { from, to }) => {
@@ -331,15 +355,7 @@ pub fn failure(title: &str, failed: Option<&Change>, named: Option<&str>, error:
         Some(Change::Create { path, .. }) => format!("Couldn't create {}", quoted(path)),
         _ => return format!("{}: {error}", capitalized(title)),
     };
-    // The error names the step's file by its path, as the step reads it.
-    let own = failed
-        .and_then(Change::subject)
-        .map(|path| format!("“{}”", name_of(path)));
-    let reason = own
-        .and_then(|name| error.strip_prefix(&format!("{name} could not ")))
-        .and_then(|rest| rest.split_once(": "))
-        .map_or(error, |(_, reason)| reason);
-    format!("{tried}: {reason}")
+    format!("{tried}: {}", reason.unwrap_or(error))
 }
 
 /// What a running plan's bar says: how far it is, from 0 to 1 (`share`),
@@ -610,7 +626,7 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
     let said = said.join(". ");
     let already = tally.filter(|t| t.already.count > 0 && error.is_none() && !cancelled);
     let nothing_else = applied == 0 && error.is_none() && !cancelled && already.is_none();
-    let (title, run) = (running.title.clone(), running.run);
+    let (title, run) = (said_title(&running), running.run);
     let (mut text, tone) = match already {
         Some(tally) if tally.done.count == 0 => {
             (found_done(&title, run, &tally.already), Tone::Info)
@@ -655,12 +671,7 @@ pub fn found_done(title: &str, run: RunKind, found: &Counted) -> String {
     let one = count == 1;
     let many = format::count(count, "item");
     match first {
-        _ if run == RunKind::Undo => {
-            format!(
-                "Already undone: {}",
-                title.strip_prefix("undo ").unwrap_or(title)
-            )
-        }
+        _ if run == RunKind::Undo => format!("Already undone: {title}"),
         // In the folder, under the name it would have had there.
         Some(Change::Copy { to, .. } | Change::Move { to, .. }) if one => {
             format!("{} was already in {}", quoted(to), folder_of(to))
@@ -790,6 +801,7 @@ fn ended_as(
     items: Option<skwir_core::op::Items>,
     kept_in: Option<&str>,
 ) -> (String, Tone) {
+    let said = said_title(&running);
     let (title, run) = (running.title, running.run);
     let (first, named, count) = match items.map(Arc::new).or(running.items) {
         Some(items) if error.is_none() && !cancelled => {
@@ -805,16 +817,9 @@ fn ended_as(
             first,
             named,
         };
-        return (found_done(&title, run, &found), Tone::Info);
+        return (found_done(&said, run, &found), Tone::Info);
     }
-    let done = describe(
-        &title,
-        run,
-        first.as_ref(),
-        named.as_deref(),
-        count,
-        kept_in,
-    );
+    let done = describe(&said, run, first.as_ref(), named.as_deref(), count, kept_in);
     match (error, cancelled) {
         (Some(error), _) if applied > 0 => (format!("{done}, then stopped: {error}"), Tone::Error),
         (Some(error), _) => (
@@ -823,6 +828,7 @@ fn ended_as(
                 running.failed.as_ref(),
                 running.failed_named.as_deref(),
                 &error,
+                running.failed_reason.as_deref(),
             ),
             Tone::Error,
         ),
@@ -1151,6 +1157,7 @@ mod tests {
             plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
             title: "copy to /example/it's here".into(),
             run: RunKind::Apply,
+            undoes: None,
             total: 1,
             first: Some(Change::Trash {
                 path: PathBuf::from("/example/it's here/a.txt"),
@@ -1158,6 +1165,7 @@ mod tests {
             first_named: None,
             failed: None,
             failed_named: None,
+            failed_reason: None,
             items: items.map(std::sync::Arc::new),
             paused: false,
             cancelling: false,
@@ -1276,8 +1284,16 @@ mod tests {
                 ..End::default()
             }
         }
-        let running =
-            |title: &str, run: RunKind| Running::for_test(Plan::new(title).id, title, run, 1);
+        // An undo's run as the executor tells it: its own title, and the
+        // action it takes back (`title` here).
+        let running = |title: &str, run: RunKind| {
+            let mut running = Running::for_test(Plan::new(title).id, title, run, 1);
+            if run == RunKind::Undo {
+                running.title = format!("undo {title}");
+                running.undoes = Some(title.to_owned());
+            }
+            running
+        };
         let counted = |first: Change, count: usize| Counted {
             count,
             first: Some(first),
@@ -1349,7 +1365,7 @@ mod tests {
                 "“a.txt” was already named “b.txt”",
             ),
             (
-                "undo rename “a.txt” to “b.txt”",
+                "rename “a.txt” to “b.txt”",
                 RunKind::Undo,
                 all(counted(
                     Change::Rename {
@@ -1439,6 +1455,7 @@ mod tests {
             plan: skwir_core::op::Plan::new("save “it's.md” as booklet").id,
             title: "save “it's.md” as booklet".into(),
             run: RunKind::Apply,
+            undoes: None,
             total: 1,
             first: Some(Change::Create {
                 path: PathBuf::from("/example/it's (booklet).pdf"),
@@ -1452,6 +1469,7 @@ mod tests {
             first_named: None,
             failed: None,
             failed_named: None,
+            failed_reason: None,
             items: None,
             paused: false,
             cancelling: false,
@@ -1709,6 +1727,7 @@ mod tests {
             plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
             title: "copy to /example/it's here".into(),
             run: RunKind::Apply,
+            undoes: None,
             total: 1,
             first: Some(Change::Copy {
                 from: PathBuf::from("/example/it's big.iso"),
@@ -1717,6 +1736,7 @@ mod tests {
             first_named: None,
             failed: None,
             failed_named: None,
+            failed_reason: None,
             items: None,
             paused: false,
             cancelling: false,
@@ -1751,7 +1771,13 @@ mod tests {
             to: PathBuf::from("/a/locked/it's a draft.txt"),
         };
         assert_eq!(
-            failure("copy to /a/locked", Some(&copy), None, "permission denied"),
+            failure(
+                "copy to /a/locked",
+                Some(&copy),
+                None,
+                "permission denied",
+                None
+            ),
             "Couldn't copy “it's a draft.txt” to locked: permission denied"
         );
         let rename = Change::Rename {
@@ -1763,7 +1789,8 @@ mod tests {
                 "rename",
                 Some(&rename),
                 None,
-                "“a.txt” could not be renamed “b.txt”: the name is too long, or not allowed there"
+                "“a.txt” could not be renamed “b.txt”: the name is too long, or not allowed there",
+                Some("the name is too long, or not allowed there"),
             ),
             "Couldn't rename “a.txt” to “b.txt”: the name is too long, or not allowed there",
             "the reason alone, not the step twice"
@@ -1777,12 +1804,13 @@ mod tests {
                 "link in /a/locked",
                 Some(&link),
                 None,
-                "“it's a draft.txt” could not be linked in “locked”: permission denied"
+                "“it's a draft.txt” could not be linked in “locked”: permission denied",
+                Some("permission denied"),
             ),
             "Couldn't make a link to “it's a draft.txt” in locked: permission denied"
         );
         assert_eq!(
-            failure("tag 2 files", None, None, "the drive is full"),
+            failure("tag 2 files", None, None, "the drive is full", None),
             "Tag 2 files: the drive is full"
         );
         // An item of a trash, by the name it had: the error names the
@@ -1795,7 +1823,8 @@ mod tests {
                 "delete permanently",
                 Some(&trashed),
                 Some("it's a draft.txt"),
-                "“it's a draft.txt.2” could not all be deleted: permission denied"
+                "“it's a draft.txt.2” could not all be deleted: permission denied",
+                Some("permission denied"),
             ),
             "Couldn't delete “it's a draft.txt”: permission denied"
         );
@@ -1835,14 +1864,7 @@ mod tests {
             "Made 3 links in Archive 2026"
         );
         assert_eq!(
-            describe(
-                "undo move to trash",
-                RunKind::Undo,
-                Some(&trash),
-                None,
-                1,
-                None
-            ),
+            describe("move to trash", RunKind::Undo, Some(&trash), None, 1, None),
             "Undid: move to trash"
         );
         assert_eq!(
@@ -1992,6 +2014,7 @@ mod tests {
             named: None,
             status: skwir_core::op::StepStatus::Pending { reversible: true },
             error: None,
+            reason: None,
         };
         let mut running = Running::for_test(PlanId(7), "save as PDF", RunKind::Apply, 1);
         running.stepped(&progress(create.clone(), 1));

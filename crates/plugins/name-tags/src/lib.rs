@@ -460,7 +460,7 @@ fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
         icon: Some(icon.into()),
         // With the tags they write, in the context menu's Tags submenu
         // (ADR-099).
-        submenu: Some("Tags".into()),
+        submenu: Some(skwir_core::registry::submenus::TAGS),
         checked: None,
         choice: None,
         color: None,

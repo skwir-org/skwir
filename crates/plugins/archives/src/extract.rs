@@ -413,10 +413,13 @@ impl op::Effect for Extract {
                         place_merged(&staging, &root, &target, placing, tree, ctx, &mut placed)
                     }
                     None => staging.place_within(&root, &target).with_context(|| {
-                        format!(
-                            "“{}” could not be placed in “{}”",
-                            display_name(&target),
-                            display_name(&self.dest_dir)
+                        skwir_core::op::Couldnt::new(
+                            &target,
+                            format!(
+                                "“{}” could not be placed in “{}”",
+                                display_name(&target),
+                                display_name(&self.dest_dir)
+                            ),
                         )
                     }),
                 }
@@ -687,10 +690,13 @@ fn place_merged(
                 .place_within(&root.join(&item.from), &to)
                 .err()
                 .map(|error| {
-                    anyhow::Error::from(error).context(format!(
-                        "“{}” could not be placed in “{}”",
-                        display_name(&to),
-                        display_name(target)
+                    anyhow::Error::from(error).context(skwir_core::op::Couldnt::new(
+                        &to,
+                        format!(
+                            "“{}” could not be placed in “{}”",
+                            display_name(&to),
+                            display_name(target)
+                        ),
                     ))
                 })
         };

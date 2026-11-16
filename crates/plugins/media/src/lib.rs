@@ -61,7 +61,7 @@ fn declare(app: &App) {
             true,
         )
         .page(skwir_core::settings::page::MEDIA)
-        .section("Playback")
+        .section(skwir_core::settings::section::PLAYBACK)
         .essential(),
     );
     app.settings.declare(
@@ -72,7 +72,7 @@ fn declare(app: &App) {
             false,
         )
         .page(skwir_core::settings::page::MEDIA)
-        .section("Playback")
+        .section(skwir_core::settings::section::PLAYBACK)
         .essential(),
     );
     app.settings.declare(
@@ -84,7 +84,7 @@ fn declare(app: &App) {
             &[("off", "Stop"), ("next", "Play next"), ("shuffle", "Shuffle")],
         )
         .page(skwir_core::settings::page::MEDIA)
-        .section("Playback")
+        .section(skwir_core::settings::section::PLAYBACK)
         .essential(),
     );
     app.settings.declare(
@@ -96,7 +96,7 @@ fn declare(app: &App) {
             &[("off", "Off"), ("track", "Per track"), ("album", "Per album")],
         )
         .page(skwir_core::settings::page::MEDIA)
-        .section("Audio"),
+        .section(skwir_core::settings::section::AUDIO),
     );
     app.settings.declare(
         SettingSpec::choice(
@@ -116,7 +116,7 @@ fn declare(app: &App) {
             ("stills", "ffmpeg"),
         ])
         .page(skwir_core::settings::page::MEDIA)
-        .section("Video"),
+        .section(skwir_core::settings::section::VIDEO),
     );
 }
 

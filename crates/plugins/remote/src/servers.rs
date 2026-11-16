@@ -76,7 +76,7 @@ pub fn declare(app: &App) {
             "skwir"
         })
         .page(skwir_core::settings::page::NETWORK)
-        .section("Servers"),
+        .section(skwir_core::settings::section::SERVERS),
     );
     app.settings.declare(SettingSpec::data(
         LIST,

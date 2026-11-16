@@ -398,7 +398,7 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096))
         .unit("MB")
         .step(16)
-        .section("Memory");
+        .section_of("memory", "Memory");
     assert_eq!(budget.kind, skwir_core::settings::SettingKind::Integer);
     assert_eq!(budget.owner(), "sample");
     assert_eq!((budget.unit.as_str(), budget.constraints.step), ("MB", 16));
