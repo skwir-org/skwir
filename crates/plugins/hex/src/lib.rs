@@ -4,6 +4,8 @@ use skwir_core::{
     inspection::{InspectRequest, Inspection},
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
+    words,
+    words::Size,
 };
 use skwir_platform::inspection::{self, HEX_ROW, check, limits, read};
 use std::{io::Read, sync::Arc};
@@ -64,15 +66,29 @@ impl PreviewProvider for Provider {
             let needle = needle(query)?;
             if let Some(found) = find(&held, &needle, view.offset, cancel)? {
                 position = found;
-                notice = format!("Match at 0x{found:X}");
+                notice = words!(
+                    hex_match_at = "Match at { $offset }",
+                    offset = format!("0x{found:X}"),
+                    note = "A note under a file's bytes: where the search found what it looked for, as a hexadecimal offset (0x64)."
+                )
+                .say();
             } else {
-                notice = "No further match".into();
+                notice = words!(
+                    hex_no_further_match = "No further match",
+                    note = "A note under a file's bytes: the search found nothing past where it started."
+                )
+                .say();
             }
         }
         let offset = position / row * row;
         let bytes = read(&held, offset, limits::HEX_PAGE as usize, cancel)?;
         let mut page = inspection::hex_page(
-            format!("Hex · {}", inspection::size(len)),
+            words!(
+                hex_title = "Hex · { $size }",
+                size = Size(len),
+                note = "The title of a file's preview as hexadecimal bytes, with the file's size."
+            )
+            .say(),
             &bytes,
             len,
             offset,
@@ -88,7 +104,10 @@ fn needle(query: &str) -> anyhow::Result<Vec<u8>> {
         let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
         anyhow::ensure!(
             hex.is_ascii() && hex.len().is_multiple_of(2),
-            "Use pairs of hexadecimal digits"
+            words!(
+                hex_pairs = "Use pairs of hexadecimal digits",
+                note = "An error of a search among a file's bytes written as hex: (hex: 6e 65) needs two digits a byte."
+            )
         );
         (0..hex.len())
             .step_by(2)
@@ -99,8 +118,13 @@ fn needle(query: &str) -> anyhow::Result<Vec<u8>> {
     };
     anyhow::ensure!(
         !needle.is_empty() && needle.len() <= limits::HEX_NEEDLE,
-        "Search must contain 1–{} bytes",
-        limits::HEX_NEEDLE
+        words!(
+            hex_needle_length = "{ $max ->
+               *[other] Search must contain 1–{ $max } bytes
+            }",
+            max = limits::HEX_NEEDLE,
+            note = "An error of a search among a file's bytes: what it looks for is empty, or longer than it may be."
+        )
     );
     Ok(needle)
 }

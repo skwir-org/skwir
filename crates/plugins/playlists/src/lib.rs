@@ -13,6 +13,7 @@ use skwir_core::{
     inspection::{InspectRequest, Inspection, InspectionKind, Row},
     plugin::Plugin,
     preview::{Held, Member, PreviewProvider, PreviewRequest},
+    words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::preview::{self, PlaylistFormat};
@@ -169,11 +170,27 @@ impl PreviewProvider for Provider {
         let track = list
             .tracks
             .get(target.parse::<usize>()?)
-            .ok_or_else(|| anyhow::anyhow!("No such track"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    playlists_no_such_track = "No such track",
+                    note = "An error: the track a row of a playlist's preview named is not in the playlist."
+                ))
+            })?;
         let Place::Local(file) = place(base, &track.location, list.uri) else {
-            anyhow::bail!("This track is not on this machine; previews fetch nothing")
+            anyhow::bail!(words!(
+                playlists_track_remote =
+                    "This track is not on this machine; previews fetch nothing",
+                note = "An error: a track of a playlist is somewhere else (a server, a stream), which the preview does not fetch."
+            ))
         };
-        anyhow::ensure!(file.is_file(), "{} is missing", file.display());
+        anyhow::ensure!(
+            file.is_file(),
+            words!(
+                playlists_track_missing = "{ $path } is missing",
+                path = file.display().to_string(),
+                note = "An error: the file a playlist names is not there. The path is the file's whole path."
+            )
+        );
         Ok(Some(Member {
             name: file.file_name().map_or_else(
                 || track.location.clone(),
@@ -210,13 +227,21 @@ impl PreviewProvider for Provider {
             let note = match (&place, here) {
                 (Place::Remote, _) => {
                     remote += 1;
-                    "remote"
+                    words!(
+                        playlists_row_remote = "remote",
+                        note = "The last cell of a playlist's track that is somewhere else (a server, a stream), never fetched. In lower case."
+                    )
+                    .say()
                 }
                 (Place::Local(_), false) => {
                     missing += 1;
-                    "missing"
+                    words!(
+                        playlists_row_missing = "missing",
+                        note = "The last cell of a playlist's track whose file is not there. In lower case."
+                    )
+                    .say()
                 }
-                (Place::Local(_), true) => "",
+                (Place::Local(_), true) => String::new(),
             };
             let title = if track.title.is_empty() {
                 Path::new(&track.location.replace('\\', "/"))
@@ -235,7 +260,7 @@ impl PreviewProvider for Provider {
                     title.chars().take(limits::TABLE_CELL).collect(),
                     track.artist.chars().take(limits::TABLE_CELL).collect(),
                     track.seconds.map(length).unwrap_or_default(),
-                    note.into(),
+                    note,
                 ],
                 // Only what can be shown is a way in.
                 target: here.then(|| index.to_string()),
@@ -244,22 +269,72 @@ impl PreviewProvider for Provider {
         }
         let details = inspection::details([
             (
-                "Tracks",
+                words!(
+                    playlists_detail_tracks = "Tracks",
+                    note = "A label in the preview's Properties: how many tracks the playlist has."
+                )
+                .say()
+                .as_str(),
                 Some(if list.more {
-                    format!("more than {}", rows.len())
+                    words!(
+                        playlists_tracks_more = "{ $count ->
+                           *[other] more than { $count }
+                        }",
+                        count = rows.len(),
+                        note = "The value beside Tracks in the preview's Properties, for a playlist read only as far as its first tracks: more than that many."
+                    )
+                    .say()
                 } else {
                     rows.len().to_string()
                 }),
             ),
-            ("Total length", (total > 0.).then(|| length(total))),
-            ("Missing", inspection::count(missing)),
-            ("Remote", inspection::count(remote)),
+            (
+                words!(
+                    playlists_detail_length = "Total length",
+                    note = "A label in the preview's Properties: how long the playlist's tracks play, together."
+                )
+                .say()
+                .as_str(),
+                (total > 0.).then(|| length(total)),
+            ),
+            (
+                words!(
+                    playlists_detail_missing = "Missing",
+                    note = "A label in the preview's Properties: how many of the playlist's tracks are files that are not there."
+                )
+                .say()
+                .as_str(),
+                inspection::count(missing),
+            ),
+            (
+                words!(
+                    playlists_detail_remote = "Remote",
+                    note = "A label in the preview's Properties: how many of the playlist's tracks are somewhere else (a server, a stream)."
+                )
+                .say()
+                .as_str(),
+                inspection::count(remote),
+            ),
         ]);
         let notice = [
             list.encoding.notice(),
-            list.more
-                .then(|| format!("First {} tracks · Source shows the rest", bounds.blocks())),
-            (remote > 0).then(|| "Remote entries are named, never fetched".to_owned()),
+            list.more.then(|| {
+                words!(
+                    playlists_first_tracks = "{ $count ->
+                       *[other] First { $count } tracks · Source shows the rest
+                    }",
+                    count = bounds.blocks(),
+                    note = "A note under a playlist's preview that shows only its first tracks. Source is the preview's button that shows the file as text."
+                )
+                .say()
+            }),
+            (remote > 0).then(|| {
+                words!(
+                    playlists_remote_named = "Remote entries are named, never fetched",
+                    note = "A note under a playlist's preview: its tracks that are somewhere else (a server, a stream) are listed, not fetched."
+                )
+                .say()
+            }),
         ]
         .into_iter()
         .flatten()
@@ -267,10 +342,38 @@ impl PreviewProvider for Provider {
         .join(" · ");
         Ok(Some(Inspection {
             kind: InspectionKind::Table,
-            title: format!("Playlist · {} tracks", rows.len()),
-            columns: ["#", "Title", "Artist", "Length", ""]
-                .map(String::from)
-                .into(),
+            title: words!(
+                playlists_title = "{ $count ->
+                    [one] Playlist · { $count } track
+                   *[other] Playlist · { $count } tracks
+                }",
+                count = rows.len(),
+                note = "The title of a playlist's preview, with how many tracks it lists."
+            )
+            .say(),
+            columns: vec![
+                words!(
+                    playlists_column_number = "#",
+                    note = "A column's header in a playlist's preview: the track's number in the playlist."
+                )
+                .say(),
+                words!(
+                    playlists_column_title = "Title",
+                    note = "A column's header in a playlist's preview: the track's title."
+                )
+                .say(),
+                words!(
+                    playlists_column_artist = "Artist",
+                    note = "A column's header in a playlist's preview: who performs the track."
+                )
+                .say(),
+                words!(
+                    playlists_column_length = "Length",
+                    note = "A column's header in a playlist's preview: how long the track plays."
+                )
+                .say(),
+                String::new(),
+            ],
             rows,
             details,
             source_available: true,
@@ -358,11 +461,11 @@ mod tests {
         let data = read("long.m3u", "a.mp3\n".repeat(limits::BLOCKS + 5).as_bytes());
         assert_eq!(data.rows.len(), limits::BLOCKS);
         assert!(
-            data.notice.starts_with("First 2000 tracks"),
+            data.notice.starts_with("First 2,000 tracks"),
             "{}",
             data.notice
         );
-        assert_eq!(data.details[0].value, "more than 2000");
+        assert_eq!(data.details[0].value, "more than 2,000");
         assert!(data.whole_available, "Full preview shows the rest");
         let whole = InspectRequest {
             whole: true,

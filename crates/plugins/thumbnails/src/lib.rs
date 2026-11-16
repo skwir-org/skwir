@@ -19,6 +19,7 @@ use skwir_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest}
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
+use skwir_core::words;
 use skwir_platform::magick::Magick;
 use skwir_platform::thumb_providers::{self, FreedesktopCache, ImageDecoder, Thumbnailers};
 use skwir_platform::thumbnails::{ThumbCache, ThumbSize};
@@ -232,7 +233,10 @@ impl Pictures {
             (Some(Some(image)), _) => image,
             (Some(None), _) => anyhow::bail!("cancelled"),
             (None, Some(error)) => return Err(error),
-            (None, None) => anyhow::bail!("No thumbnailer draws this picture"),
+            (None, None) => anyhow::bail!(words!(
+                thumbnails_none_draws = "No thumbnailer draws this picture",
+                note = "An error in place of a picture's preview: no installed program (a thumbnailer, ImageMagick) draws its type."
+            )),
         };
         if let Some(cache) = self.cache.as_ref().filter(|_| self.write_back)
             && let Some(modified) = modified
@@ -331,11 +335,20 @@ impl Plugin for ThumbnailsPlugin {
     fn requirements(&self) -> Vec<Requirement> {
         vec![Requirement::program(
             "magick",
-            "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
+            words!(
+                thumbnails_requirement_magick = "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
+                note = "What stops working without ImageMagick, in the settings' list of what a plugin needs. HEIC, AVIF and JPEG XL are formats' names."
+            ),
         )]
         .into_iter()
         .chain(skwir_platform::sandbox::PROGRAM.map(|program| {
-            Requirement::program(program, "Thumbnailers and ImageMagick run isolated")
+            Requirement::program(
+                program,
+                words!(
+                    thumbnails_requirement_sandbox = "Thumbnailers and ImageMagick run isolated",
+                    note = "What stops working without the sandbox program (bubblewrap), in the settings' list of what a plugin needs: thumbnailers and ImageMagick are not run without it."
+                ),
+            )
         }))
         .collect()
     }
@@ -359,8 +372,13 @@ impl Plugin for ThumbnailsPlugin {
         app.settings.declare(
             SettingSpec::toggle(
                 WRITE_CACHE,
-                "Share generated thumbnails",
-                "Store new thumbnails in the desktop's thumbnail cache so other applications reuse them.",
+                words!(
+                    thumbnails_write_cache = "Share generated thumbnails",
+                    note = "A setting's title: whether thumbnails Skwir makes are kept where other applications find them."
+                ),
+                words!(
+                    thumbnails_write_cache_description = "Store new thumbnails in the desktop's thumbnail cache so other applications reuse them."
+                ),
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)
@@ -369,8 +387,13 @@ impl Plugin for ThumbnailsPlugin {
         app.settings.declare(
             SettingSpec::integer(
                 BUDGET_MB,
-                "Memory budget",
-                "Decoded thumbnails kept in memory. Higher values scroll large image folders more smoothly.",
+                words!(
+                    thumbnails_budget = "Memory budget",
+                    note = "A setting's title: how much memory thumbnails may take, in megabytes."
+                ),
+                words!(
+                    thumbnails_budget_description = "Decoded thumbnails kept in memory. Higher values scroll large image folders more smoothly."
+                ),
                 64,
                 (4, 4096),
             )
@@ -382,8 +405,14 @@ impl Plugin for ThumbnailsPlugin {
         app.settings.declare(
             SettingSpec::toggle(
                 IMAGEMAGICK,
-                "Use ImageMagick",
-                "Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws. It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.",
+                words!(
+                    thumbnails_imagemagick = "Use ImageMagick",
+                    note = "A setting's title. ImageMagick is a program's name."
+                ),
+                words!(
+                    thumbnails_imagemagick_description = "Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws. It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.",
+                    note = "ImageMagick, Photoshop and GIMP are programs' names; HEIC, AVIF and JPEG XL are formats' names."
+                ),
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)

@@ -9424,7 +9424,6 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -27,6 +27,8 @@ use skwir_core::command::{Effect, Invocation, NoArgs, Outcome, Topic};
 use skwir_core::op::Verdict;
 use skwir_core::permissions::{self, AgentGate};
 use skwir_core::plugin::{Category, Plugin};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::{App, Plan};
 
 pub const ID: &str = "control";
@@ -96,7 +98,7 @@ struct Running {
 struct Status {
     listening: bool,
     /// Why it does not listen: another skwir does, or the system refused.
-    not: Option<String>,
+    not: Option<Words>,
 }
 
 type Shared = Arc<Mutex<Status>>;
@@ -126,8 +128,14 @@ impl Plugin for Control {
         app.commands.register::<NoArgs, _>(
             ID, Topic::Skwir,
             "control.status",
-            "Agents and scripts",
-            "Whether this window listens for agents and scripts, where, and how an agent reaches it",
+            words!(
+                control_status = "Agents and scripts",
+                note = "A command's title: whether this window listens for AI agents and scripts."
+            ),
+            words!(
+                control_status_description = "Whether this window listens for agents and scripts, where, and how an agent reaches it",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |_, _| {
                 let (address, shared) = &status;
                 let status = shared.lock();
@@ -135,8 +143,15 @@ impl Plugin for Control {
                     "listening": status.listening,
                     "not_listening": status.not,
                     "address": address.as_ref().map(|a| a.0.display().to_string()),
-                    "agent": "an MCP server started as: skwir mcp",
-                    "script": "skwir cmd [--apply] <command> [<arguments, a JSON object>]",
+                    // Read by agents and scripts: in English (ADR-139, 7).
+                    "agent": words!(
+                        control_status_agent = "an MCP server started as: skwir mcp",
+                        note = "Read by agents: how an AI agent reaches the window. skwir mcp is a command line, as typed."
+                    ),
+                    "script": words!(
+                        control_status_script = "skwir cmd [--apply] <command> [<arguments, a JSON object>]",
+                        note = "Read by agents: how a script runs a command, as typed; only what is between < and > is words."
+                    ),
                 })))
             },
         )
@@ -248,20 +263,27 @@ async fn listen(
         Ok(Some(listeners)) => listeners,
         Ok(None) => {
             tracing::info!("another skwir listens for agents and scripts");
-            shared.lock().not = Some("another skwir window listens".into());
+            shared.lock().not = Some(words!(
+                control_another_listens = "another skwir window listens",
+                note = "Read by agents: why this window does not listen for agents and scripts. In lower case."
+            ));
             return;
         }
         Err(error) => {
             // Turned on and refused: the user is told, not only the log.
-            let error = format!("{error:#}");
-            tracing::warn!("agents and scripts cannot listen: {error}");
+            tracing::warn!("agents and scripts cannot listen: {error:#}");
+            let error = Arc::new(error);
             if let Some(app) = app.upgrade() {
                 app.notify(
                     NotifyLevel::Warning,
-                    format!("Agents and scripts cannot listen: {error}"),
+                    words!(
+                        control_cannot_listen = "Agents and scripts cannot listen: { $error }",
+                        error = &error,
+                        note = "A notification once Agents and scripts (a plugin) is turned on: the window cannot listen for them, and why."
+                    ),
                 );
             }
-            shared.lock().not = Some(error);
+            shared.lock().not = Some(Words::of_error_from(&error, 0));
             return;
         }
     };
@@ -321,10 +343,12 @@ impl Tools {
                 // Agents read English (ADR-139, 7): MCP clients keep tool
                 // lists, which must not move with the window's language.
                 let description = if gate == AgentGate::Asks {
-                    format!(
-                        "{} (asks the user in skwir's window first)",
-                        spec.description.english()
+                    words!(
+                        control_tool_asks = "{ $description } (asks the user in skwir's window first)",
+                        description = spec.description.clone(),
+                        note = "Read by agents: a command's description, for a command an agent runs only once the user allows it."
                     )
+                    .english()
                 } else {
                     spec.description.english()
                 };
@@ -346,9 +370,13 @@ impl ServerHandler for Tools {
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new("skwir", env!("CARGO_PKG_VERSION"));
+        // Read by agents: in English (ADR-139, 7).
         info.instructions = Some(
-            "skwir, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in skwir's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you."
-                .into(),
+            words!(
+                control_instructions = "skwir, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in skwir's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you.",
+                note = "Read by agents: what an AI agent is told of skwir as it connects. entries and location are arguments' names, as typed."
+            )
+            .english(),
         );
         info
     }
@@ -367,7 +395,14 @@ impl ServerHandler for Tools {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let Some(app) = self.app.upgrade() else {
-            return Ok(failed("skwir is closing").into());
+            return Ok(failed(
+                &words!(
+                    control_closing = "skwir is closing",
+                    note = "Read by agents: why a command was not run."
+                )
+                .english(),
+            )
+            .into());
         };
         let meta = request
             .meta
@@ -391,7 +426,7 @@ impl ServerHandler for Tools {
         .await;
         Ok(match answer {
             Ok(Ok(answer)) => answered(&answer),
-            Ok(Err(error)) => failed(&format!("{error:#}")),
+            Ok(Err(error)) => failed(&Words::of_error(error).english()),
             Err(error) => failed(&error.to_string()),
         }
         .into())
@@ -467,10 +502,12 @@ pub fn run(
             value: check.redact(answer.value),
             failed: answer.failed,
         }),
-        // An error can name what the command touched.
-        Err(error) => match check.redact(Value::String(format!("{error:#}"))) {
+        // An error can name what the command touched: said for the agent,
+        // in English, then redacted.
+        Err(error) => match check.redact(Value::String(Words::of_error(error).english())) {
             Value::String(said) => Err(anyhow::anyhow!(said)),
-            _ => Err(error),
+            // A text is redacted as a text.
+            other => Err(anyhow::anyhow!(other.to_string())),
         },
     }
 }
@@ -485,25 +522,35 @@ fn admit(
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<()> {
     if let Some(path) = check.elsewhere_in(&invocation.args) {
-        anyhow::bail!(
-            "looking up {} would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
-            path.display()
-        );
+        anyhow::bail!(words!(
+            control_elsewhere = "looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
+            path = path.display().to_string(),
+            note = "Read by agents: why their command is refused. The path is one the agent named."
+        ));
     }
     anyhow::ensure!(
         check.named_in(&invocation.args).is_none(),
-        "this names a private folder, which skwir keeps from agents (Settings, Privacy)"
+        words!(
+            control_private =
+                "this names a private folder, which skwir keeps from agents (Settings, Privacy)",
+            note = "Read by agents: why their command is refused. Settings, Privacy is where the user keeps folders from agents."
+        )
     );
-    let spec = app
-        .commands
-        .get(&invocation.name)
-        .ok_or_else(|| anyhow::anyhow!("unknown command `{}`", invocation.name))?;
+    let spec = app.commands.get(&invocation.name).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            control_unknown_command = "unknown command `{ $command }`",
+            command = invocation.name.to_string(),
+            note = "Read by agents and scripts: no command has the id they named, as typed."
+        ))
+    })?;
     match permissions::for_agent(&spec) {
         AgentGate::Runs => Ok(()),
-        AgentGate::Refused => anyhow::bail!(
-            "`{}` answers the user in skwir's window: only the user runs it",
-            spec.name
-        ),
+        AgentGate::Refused => anyhow::bail!(words!(
+            control_user_only =
+                "`{ $command }` answers the user in skwir's window: only the user runs it",
+            command = spec.name.to_string(),
+            note = "Read by agents: why their command is refused. The command's id, as typed."
+        )),
         AgentGate::Asks => allowed(app, &spec, invocation, cancelled),
     }
 }
@@ -521,25 +568,54 @@ fn allowed(
         args => serde_json::to_string_pretty(args).unwrap_or_default(),
     };
     // Asked in the window: its words as the window says them.
+    let detail = if arguments.is_empty() {
+        words!(
+            control_ask_detail = "{ $command }: { $description }",
+            command = spec.name.to_string(),
+            description = spec.description.clone(),
+            note = "Under the question whether an agent may run a command: the command's id, then what it does."
+        )
+    } else {
+        words!(
+            control_ask_detail_arguments = "{ $command }: { $description }
+                { $arguments }",
+            command = spec.name.to_string(),
+            description = spec.description.clone(),
+            arguments = arguments,
+            note = "Under the question whether an agent may run a command: the command's id, what it does, then on the next line the arguments the agent gave it (JSON)."
+        )
+    };
     let (id, answer) = app.ask(
-        format!("An agent asks to run “{}”", spec.title.say()),
-        format!("{}: {}\n{arguments}", spec.name, spec.description.say())
-            .trim_end()
-            .to_owned(),
+        words!(
+            control_ask = "An agent asks to run “{ $command }”",
+            command = spec.title.clone(),
+            note = "A question in the window: may an AI agent run this command (its title)? The user allows or refuses."
+        )
+        .say(),
+        detail.say(),
     );
     let deadline = std::time::Instant::now() + PATIENCE;
     loop {
         match answer.recv_timeout(Duration::from_millis(200)) {
             Ok(true) => return Ok(()),
-            Ok(false) => anyhow::bail!("the user did not allow it"),
+            Ok(false) => anyhow::bail!(words!(
+                control_not_allowed = "the user did not allow it",
+                note = "Read by agents: the user refused to let their command run."
+            )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                anyhow::bail!("skwir closed before the user answered")
+                anyhow::bail!(words!(
+                    control_closed_unasked = "skwir closed before the user answered",
+                    note = "Read by agents: the window closed while the user was asked whether their command may run."
+                ))
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout)
                 if cancelled() || std::time::Instant::now() > deadline =>
             {
                 app.withdraw(id);
-                anyhow::bail!("the user did not answer: ask again when they are there")
+                anyhow::bail!(words!(
+                    control_unanswered = "the user did not answer: ask again when they are there",
+                    note = "Read by agents: the user did not answer whether their command may run."
+                ))
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
@@ -568,13 +644,18 @@ fn dispatched(
     let outcome = match outcome {
         // The selection is the window's: a script or an agent names files.
         Err(error) if skwir_core::command::is_nothing_selected(&error) => {
-            anyhow::bail!("nothing is selected: name the files in `entries`, by absolute path")
+            anyhow::bail!(words!(
+                control_nothing_selected =
+                    "nothing is selected: name the files in `entries`, by absolute path",
+                note = "Read by agents and scripts: a command needs files, named in its entries argument (as typed)."
+            ))
         }
         // The system's clipboard is the user's: never read for an agent.
         Err(error) if skwir_core::command::wants_clipboard(&error) => {
-            anyhow::bail!(
-                "nothing to paste: name the files in `clipboard.entries`, by absolute path, and whether they were cut"
-            )
+            anyhow::bail!(words!(
+                control_nothing_to_paste = "nothing to paste: name the files in `clipboard.entries`, by absolute path, and whether they were cut",
+                note = "Read by agents and scripts: Paste needs files, named in its clipboard.entries argument (as typed)."
+            ))
         }
         outcome => outcome?,
     };
@@ -611,7 +692,16 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
             app.apply_whole(plan);
             verdict
         }
-        PlanMode::Propose => app.propose_awaiting(plan.proposed_by("An agent")),
+        // Shown in the window's review, in its language.
+        PlanMode::Propose => app.propose_awaiting(
+            plan.proposed_by(
+                words!(
+                    control_proposer = "An agent",
+                    note = "Who proposes a plan, in its review: an AI agent."
+                )
+                .say(),
+            ),
+        ),
     };
     let deadline = std::time::Instant::now() + PATIENCE;
     loop {
@@ -624,7 +714,14 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 return Answer {
-                    value: json!({ "verdict": "unanswered", "plan": title, "error": "skwir closed before the plan was answered" }),
+                    value: json!({
+                        "verdict": "unanswered",
+                        "plan": title,
+                        "error": words!(
+                            control_closed_unreviewed = "skwir closed before the plan was answered",
+                            note = "Read by agents: the window closed while the plan they proposed waited for the user's review."
+                        ),
+                    }),
                     failed: true,
                 };
             }
@@ -632,7 +729,14 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
                 if cancelled() || std::time::Instant::now() > deadline =>
             {
                 return Answer {
-                    value: json!({ "verdict": "waiting", "plan": title, "note": "the plan waits for the user's review in skwir" }),
+                    value: json!({
+                        "verdict": "waiting",
+                        "plan": title,
+                        "note": words!(
+                            control_plan_waits = "the plan waits for the user's review in skwir",
+                            note = "Read by agents: the user has not reviewed the plan they proposed yet."
+                        ),
+                    }),
                     failed: false,
                 };
             }

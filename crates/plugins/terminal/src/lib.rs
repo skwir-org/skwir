@@ -25,6 +25,7 @@ use skwir_core::plugin::{Category, Plugin};
 use skwir_core::registry::KeyBinding;
 use skwir_core::settings::SettingSpec;
 use skwir_core::terminal::{Spawn, TerminalProvider, TerminalSession};
+use skwir_core::words;
 
 const ID: &str = "terminal";
 const PROGRAM_KEY: &str = "terminal.program";
@@ -117,8 +118,14 @@ impl Plugin for TerminalPlugin {
         app.settings.declare(
             SettingSpec::command(
                 PROGRAM_KEY,
-                "Shell",
-                "The program the terminal runs. Leave empty for your login shell.",
+                words!(
+                    terminal_program = "Shell",
+                    note = "A setting's title: the program the terminal runs (bash, fish)."
+                ),
+                words!(
+                    terminal_program_description =
+                        "The program the terminal runs. Leave empty for your login shell."
+                ),
                 "",
             )
             .page(skwir_core::settings::page::TERMINAL)
@@ -127,8 +134,16 @@ impl Plugin for TerminalPlugin {
         app.settings.declare(
             SettingSpec::integer(
                 SCROLLBACK_KEY,
-                "History",
-                "How many lines you can scroll back to, for terminals opened from now on, at most 30,000. Once full, every 10,000 lines of a wide terminal take about 30 MB.",
+                words!(
+                    terminal_scrollback = "History",
+                    note = "A setting's title: how many lines of what the terminal showed can be scrolled back to."
+                ),
+                words!(
+                    terminal_scrollback_description = "How many lines you can scroll back to, for terminals opened from now on, at most { $most }. Once full, every { $lines } lines of a wide terminal take about 30 MB.",
+                    most = SCROLLBACK_MOST,
+                    lines = SCROLLBACK,
+                    note = "A setting's description: the most lines it allows (30,000), and how much memory 10,000 lines take."
+                ),
                 SCROLLBACK,
                 (0, SCROLLBACK_MOST),
             )
@@ -139,8 +154,14 @@ impl Plugin for TerminalPlugin {
         );
         app.settings.declare(SettingSpec::toggle(
             FOLLOW_KEY,
-            "Follow the folder shown",
-            "The terminal changes to the folder the pane shows, and the pane goes where you cd. Nothing is typed while a program runs in the terminal.",
+            words!(
+                terminal_follow = "Follow the folder shown",
+                note = "A setting's title: whether the terminal and the pane go to the same folder."
+            ),
+            words!(
+                terminal_follow_description = "The terminal changes to the folder the pane shows, and the pane goes where you cd. Nothing is typed while a program runs in the terminal.",
+                note = "cd is the shell's command that changes folder."
+            ),
             true,
         )
         .page(skwir_core::settings::page::TERMINAL)

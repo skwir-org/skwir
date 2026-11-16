@@ -16,6 +16,8 @@ use skwir_core::command::{Effect, Invocation, Outcome, Topic, is_nothing_selecte
 use skwir_core::op::{self, EntryArg, EntryRef, Operation, Plan};
 use skwir_core::permissions::Capability;
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 use skwir_core::{App, CancelToken};
 use skwir_plugin_api::manifest::Effect as Declared;
@@ -100,7 +102,12 @@ fn run(
 ) -> anyhow::Result<Outcome> {
     let object = args
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("the arguments are an object"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                extend_arguments_object = "the arguments are an object",
+                note = "An error for agents and scripts: a command of a plugin from outside Skwir takes its arguments as a JSON object. In lower case."
+            ))
+        })?;
     let entries: Vec<EntryArg> = object
         .remove("entries")
         .map(serde_json::from_value)
@@ -140,36 +147,61 @@ fn run(
         cancel.clone(),
         move || {
             let Some(app) = weak.upgrade() else { return };
+            // Its command's title and what it answers are its own words.
             match ask(&app, &runner, &name, args, &refs, cancel) {
                 Ok(Outcome::Plan(plan)) => app.propose(plan),
                 Ok(Outcome::Value(value)) => {
-                    app.notify(NotifyLevel::Info, format!("{title}: {}", said(&value)));
+                    app.notify(
+                        NotifyLevel::Info,
+                        words!(
+                            extend_answered = "{ $command }: { $value }",
+                            command = title,
+                            value = said(&value),
+                            note = "A notification: what a command of a plugin from outside Skwir answered. Its title, then its answer, as the plugin wrote them."
+                        ),
+                    );
                 }
                 Ok(Outcome::Clipboard { text, said }) => app.notify_with_action(
                     NotifyLevel::Info,
                     said,
-                    "Copy",
+                    words!(
+                        extend_copy_answer = "Copy",
+                        note = "A notification's button: copies the text a plugin from outside Skwir answered."
+                    ),
                     Invocation::with_args("ui.copy_text", &json!({ "text": text })),
                 ),
                 // A plugin from outside answers no files (`CommandAnswer`).
                 Ok(Outcome::Done | Outcome::Files { .. }) => {}
-                Err(error) => app.notify(NotifyLevel::Error, format!("{title}: {error:#}")),
+                Err(error) => app.notify(
+                    NotifyLevel::Error,
+                    words!(
+                        extend_command_failed = "{ $command }: { $error }",
+                        command = title,
+                        error = error,
+                        note = "A notification: a command of a plugin from outside Skwir failed. Its title, as the plugin wrote it, then why."
+                    ),
+                ),
             }
         },
     );
     Ok(Outcome::Done)
 }
 
-/// A value in a line, for a notification.
-fn said(value: &Value) -> String {
+/// A value in a line, for a notification: as the plugin wrote it, its
+/// start when long.
+fn said(value: &Value) -> Words {
     let text = match value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
     };
     if text.chars().count() > 200 {
-        format!("{}…", text.chars().take(200).collect::<String>())
+        words!(
+            extend_answer_cut = "{ $start }…",
+            start = text.chars().take(200).collect::<String>(),
+            note = "What a plugin from outside Skwir answered, too long for a notification: its start, then a mark that more was cut."
+        )
     } else {
-        text
+        Words::as_written(text)
     }
 }
 
@@ -187,7 +219,11 @@ fn ask(
     let mut check = privacy.checker();
     anyhow::ensure!(
         !refs.iter().any(|r| check.holds(&r.path)) && check.named_in(&args).is_none(),
-        "a private file: a plugin from outside skwir does not see it (Settings, Privacy)"
+        words!(
+            extend_private_file =
+                "a private file: a plugin from outside skwir does not see it (Settings, Privacy)",
+            note = "An error: a command of a plugin from outside Skwir was given a file the user keeps private. Settings, Privacy is where. In lower case."
+        )
     );
     let paths: Vec<PathBuf> = refs.iter().map(|r| r.path.clone()).collect();
     let call = Call::new(paths, runner.granted, cancel);
@@ -211,10 +247,15 @@ fn ask(
         CommandAnswer::Plan { title, note, steps } => {
             anyhow::ensure!(
                 runner.granted.has(Capability::Write),
-                "this plugin may not change files"
+                words!(
+                    extend_may_not_write = "this plugin may not change files",
+                    note = "An error: a plugin from outside Skwir answered a plan, but did not declare it changes files. In lower case."
+                )
             );
-            let mut plan = Plan::with_steps(title, plan_steps(app, &steps, refs)?)
-                .proposed_by(runner.title.clone());
+            // Its own words, as it wrote them.
+            let mut plan =
+                Plan::with_steps(Words::as_written(title), plan_steps(app, &steps, refs)?)
+                    .proposed_by(runner.title.clone());
             if let Some(note) = note {
                 plan = plan.with_note(note);
             }
@@ -238,14 +279,23 @@ fn plan_steps(
             .and_then(|n| n.checked_sub(1))
             .and_then(|n| refs.get(n))
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("no file {handle} in this call"))
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    extend_no_such_file = "no file { $handle } in this call",
+                    handle = handle.to_string(),
+                    note = "An error: a plan answered by a plugin from outside Skwir names a file by a number (its handle) the call gave it none. In lower case."
+                ))
+            })
     };
     let mut folder = |to: &str| -> anyhow::Result<PathBuf> {
         let path = PathBuf::from(to);
         skwir_core::os_path::absolute(&path)?;
         anyhow::ensure!(
             !check.holds(&path),
-            "a private folder: a plugin does not reach it"
+            words!(
+                extend_private_folder = "a private folder: a plugin does not reach it",
+                note = "An error: a plan answered by a plugin from outside Skwir names a folder the user keeps private. In lower case."
+            )
         );
         Ok(path)
     };

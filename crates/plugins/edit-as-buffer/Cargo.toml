@@ -11,7 +11,6 @@ rust-version.workspace = true
 skwir-core.workspace = true
 skwir-platform.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 

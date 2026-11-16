@@ -12,6 +12,8 @@ use skwir_core::fields::FieldProvider;
 use skwir_core::inspection::{self, InspectRequest};
 use skwir_core::preview::{Converted, Preview, PreviewProvider, PreviewRequest};
 use skwir_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::{App, CancelToken, Value};
 use skwir_platform::mime::{self, Types};
 use skwir_plugin_api::protocol::{
@@ -94,8 +96,22 @@ fn private(app: &Weak<App>, path: &Path) -> bool {
 }
 
 /// The words a preview says for a private file.
-const PRIVATE: &str =
-    "This file is private: a plugin from outside skwir does not read it (Settings, Privacy)";
+fn private_file() -> Words {
+    words!(
+        extend_private_preview = "This file is private: a plugin from outside skwir does not read it (Settings, Privacy)",
+        note = "In place of a file's preview a plugin from outside Skwir would make: the user keeps the file private. Settings, Privacy is where."
+    )
+}
+
+/// What a plugin's preview says when it shows nothing of the file: its
+/// title is its own words.
+pub(crate) fn shows_nothing(plugin: &str) -> Words {
+    words!(
+        extend_shows_nothing = "“{ $plugin }” shows nothing of this file",
+        plugin = plugin.to_owned(),
+        note = "In place of a file's preview: the plugin from outside Skwir (its title, as its author wrote it) made nothing of it."
+    )
+}
 
 struct Fields {
     runner: Arc<Runner>,
@@ -205,7 +221,12 @@ impl ThumbnailProvider for Thumbnails {
             return Ok(None);
         };
         let png = skwir_plugin_api::base64::decode(&png)
-            .ok_or_else(|| anyhow::anyhow!("a thumbnail that is no base64"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    extend_thumbnail_not_base64 = "a thumbnail that is no base64",
+                    note = "An error: a plugin from outside Skwir answered a thumbnail it did not write as base64, as the protocol asks. In lower case."
+                ))
+            })?;
         let decoded = skwir_platform::inspection::picture(&png, side)?;
         Ok(Some(Image {
             width: decoded.width,
@@ -256,7 +277,7 @@ impl PreviewProvider for Previews {
     /// Reached when the plugin answered nothing (no page, no file): the
     /// file is its own, which it shows nothing of.
     fn render(&self, _request: &PreviewRequest, _cancel: &CancelToken) -> anyhow::Result<Preview> {
-        anyhow::bail!("“{}” shows nothing of this file", self.runner.title)
+        anyhow::bail!(shows_nothing(&self.runner.title))
     }
     /// The file a page at a time, when the plugin shows it so (ADR-047):
     /// read by skwir's reader, which turns, selects and searches it.
@@ -269,7 +290,7 @@ impl PreviewProvider for Previews {
             return Ok(None);
         };
         let held = request.held()?;
-        anyhow::ensure!(!private(&self.app, held.path()), PRIVATE);
+        anyhow::ensure!(!private(&self.app, held.path()), private_file());
         let pages = Pages::open(
             Arc::clone(&self.runner),
             kept.clone(),
@@ -291,7 +312,7 @@ impl PreviewProvider for Previews {
             return Ok(None);
         }
         let held = request.held()?;
-        anyhow::ensure!(!private(&self.app, held.path()), PRIVATE);
+        anyhow::ensure!(!private(&self.app, held.path()), private_file());
         let call = Call::holding(held, self.runner.granted, cancel.clone());
         let params = InspectParams {
             file: call.describe(0, request.mime.clone()),
@@ -321,7 +342,7 @@ impl PreviewProvider for Previews {
         // Kept by the version read (ADR-101): what it makes of the bytes
         // held is never kept as another version's.
         let held = request.held()?;
-        anyhow::ensure!(!private(&self.app, held.path()), PRIVATE);
+        anyhow::ensure!(!private(&self.app, held.path()), private_file());
         let key = skwir_platform::preview::made_key(
             request.entry.id,
             &held,
@@ -351,7 +372,12 @@ impl PreviewProvider for Previews {
             return Ok(None);
         };
         let bytes = skwir_plugin_api::base64::decode(&answer.data)
-            .ok_or_else(|| anyhow::anyhow!("the plugin's file is no base64"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    extend_file_not_base64 = "the plugin's file is no base64",
+                    note = "An error: a plugin from outside Skwir answered the file it made of another, not written as base64 as the protocol asks. In lower case."
+                ))
+            })?;
         // Its name is a name: what it says of folders is dropped.
         let name = Path::new(&answer.name)
             .file_name()
@@ -375,10 +401,12 @@ impl Previews {
             .granted
             .has(skwir_core::permissions::Capability::Network))
         .then(|| {
-            format!(
-                "Links are not followed in a preview “{}” made: it may not use the network",
-                self.runner.title
+            words!(
+                extend_preview_links_closed = "Links are not followed in a preview “{ $plugin }” made: it may not use the network",
+                plugin = self.runner.title.clone(),
+                note = "Under a preview a plugin from outside Skwir (its title, as its author wrote it) made, which may not use the network: its links are not followed."
             )
+            .say()
         });
         Converted {
             path: made,
@@ -416,7 +444,12 @@ fn keep(
         Err(error) => return Err(error.into()),
     }
     trim(folder, kept);
-    only_file(kept).ok_or_else(|| anyhow::anyhow!("the converted file is gone"))
+    only_file(kept).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            extend_converted_gone = "the converted file is gone",
+            note = "An error: the file a plugin from outside Skwir made of another, kept in Skwir's cache, was removed before it was shown. In lower case."
+        ))
+    })
 }
 
 /// The oldest folders of `folder` removed until what it holds fits

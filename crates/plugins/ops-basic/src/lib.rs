@@ -39,6 +39,8 @@ use skwir_core::command::{ClipboardArg, Invocation, Outcome, Topic, WantsClipboa
 use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, PlanId};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::words;
+use skwir_core::words::{Folder, Name, Words};
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "ops-basic";
@@ -101,7 +103,10 @@ fn taken(clipboard: &Mutex<Clipboard>, given: Option<ClipboardArg>) -> anyhow::R
     if let Some(given) = given {
         let entries = skwir_core::op::EntryArg::refs(given.entries)?;
         if entries.is_empty() {
-            anyhow::bail!("nothing to paste");
+            anyhow::bail!(words!(
+                ops_basic_nothing_to_paste = "nothing to paste",
+                note = "An error of Paste: the clipboard named no file. In lower case."
+            ));
         }
         return Ok((entries, given.cut, Vec::new(), None));
     }
@@ -174,21 +179,27 @@ fn copy_paths(app: &App, a: TargetsArgs) -> anyhow::Result<Outcome> {
         .iter()
         .map(|path| {
             path.to_str().ok_or_else(|| {
-                let name = std::path::Path::new(path.file_name().unwrap_or(path.as_os_str()));
-                anyhow::anyhow!(
-                    "The path of {} is not text the clipboard can hold",
-                    name.display()
-                )
+                anyhow::anyhow!(words!(
+                    ops_basic_path_not_text =
+                        "The path of { $name } is not text the clipboard can hold",
+                    name = Name::of(path),
+                    note =
+                        "An error of Copy Path: a file's name is bytes no text spells (not UTF-8)."
+                ))
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let said = match lines.len() {
-        1 => "Copied the path".to_owned(),
-        n => format!("Copied {n} paths"),
-    };
+    let said = words!(
+        ops_basic_copied_paths = "{ $count ->
+            [1] Copied the path
+           *[other] Copied { $count } paths
+        }",
+        count = lines.len(),
+        note = "What Copy Path says once the paths are on the clipboard, as text."
+    );
     Ok(Outcome::Clipboard {
         text: lines.join("\n"),
-        said: said.into(),
+        said,
     })
 }
 
@@ -292,10 +303,46 @@ fn paste(clipboard: &Mutex<Clipboard>, a: PasteArgs, app: &App) -> anyhow::Resul
         .iter()
         .filter_map(|step| step.describe().subject().map(std::path::Path::to_path_buf))
         .collect();
-    let taken: Vec<&std::path::Path> = sources.iter().map(std::path::PathBuf::as_path).collect();
-    let verb = if cut { "move" } else { "copy" };
-    let title = skwir_core::op::transfer_title(verb, &taken, "to", &dest);
-    Ok(Outcome::Plan(Plan::with_steps(title, steps)))
+    Ok(Outcome::Plan(Plan::with_steps(
+        paste_title(cut, &sources, &dest),
+        steps,
+    )))
+}
+
+/// A paste's title, as core's transfers are titled (ADR-135): what it takes
+/// (one by its name, several by their count) and the folder it goes to, by
+/// its name (`op::folder_said`).
+fn paste_title(cut: bool, sources: &[std::path::PathBuf], dest: &std::path::Path) -> Words {
+    let count = sources.len();
+    let name = || {
+        sources
+            .first()
+            .map_or_else(|| Name(String::new()), |one| Name::of(one))
+    };
+    let folder = || Folder(skwir_core::op::folder_said(dest));
+    if cut {
+        words!(
+            ops_basic_paste_move = "{ $count ->
+                [1] move { $name } to { $folder }
+               *[other] move { $count } items to { $folder }
+            }",
+            count = count,
+            name = name(),
+            folder = folder(),
+            note = "A plan's title: files cut, pasted in a folder (by its name). One by its name, or how many. Begins in lower case."
+        )
+    } else {
+        words!(
+            ops_basic_paste_copy = "{ $count ->
+                [1] copy { $name } to { $folder }
+               *[other] copy { $count } items to { $folder }
+            }",
+            count = count,
+            name = name(),
+            folder = folder(),
+            note = "A plan's title: files copied, pasted in a folder (by its name). One by its name, or how many. Begins in lower case."
+        )
+    }
 }
 
 /// A paste into a location that is no folder but takes files (a tag's):
@@ -310,18 +357,30 @@ fn paste_on_place(
     given: Option<ClipboardArg>,
     app: &App,
 ) -> anyhow::Result<Outcome> {
-    let shown = app
-        .pane_location(pane)
-        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+    let shown = app.pane_location(pane).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            ops_basic_pane_shows_nothing = "the pane shows nothing",
+            note =
+                "An error of Paste: the pane pasted into shows no folder or place. In lower case."
+        ))
+    })?;
     let verbs = app.verbs(&shown);
     let Some(drop) = verbs.drop else {
-        anyhow::bail!("nothing can be pasted here");
+        anyhow::bail!(words!(
+            ops_basic_nothing_pasted_here = "nothing can be pasted here",
+            note =
+                "An error of Paste: what the pane shows (a search) takes no files. In lower case."
+        ));
     };
     let own = given.is_none();
     let (entries, cut, places, from) = taken(clipboard, given)?;
     anyhow::ensure!(
         cut || verbs.restore.is_none(),
-        "Copied files cannot be put in the trash: cut them instead"
+        words!(
+            ops_basic_copied_into_trash =
+                "Copied files cannot be put in the trash: cut them instead",
+            note = "An error of Paste in the trash: only files cut (moved) go there, never copies."
+        )
     );
     let mut invocation = drop;
     if !invocation.args.is_object() {
@@ -449,6 +508,15 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
     ("alt-home", "navigate", r#"{"location":"~"}"#),
 ];
 
+/// Copy Path, in the context menu: one file's, or the folder's on its
+/// background.
+fn copy_path() -> Words {
+    words!(
+        ops_basic_menu_copy_path = "Copy Path",
+        note = "A context menu's item: copies the file's path (or the folder's) as text."
+    )
+}
+
 // Context menu items: (title, command, when, order). Order follows the
 // convention documented on `skwir_core::registry::MenuItem`: hundreds are
 // groups (0 open it, 100 copy and keep it, 200 change it, 300 make or find
@@ -456,94 +524,162 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 // separator between groups. "Open" and "Open
 // Terminal Here" are contributed by the open-with plugin, which owns those
 // commands.
-const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
-    ("Open in New Tab", "tab.open", Some("dir"), 2, "tab-new"),
-    (
-        "Open in New Window",
-        "window.open",
-        Some("dir"),
-        2,
-        "window-new",
-    ),
-    (
-        "Show in Folder",
-        "show_in_folder",
-        Some("single !folder !place !restores"),
-        3,
-        "folder",
-    ),
-    // Not a file of the trash, which goes elsewhere only restored.
-    (
-        "Rename",
-        "ui.rename_prompt",
-        Some("single !restores"),
-        200,
-        "rename",
-    ),
-    // A place too: a tag copied into a folder is a folder of its files,
-    // cut and pasted in a tag it goes inside. A file of the trash pasted
-    // elsewhere leaves the trash.
-    ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
-    ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
-    // Their paths as text; a place (a tag's) has none. On the background,
-    // the folder's own.
-    (
-        "Copy Path",
-        "copy_paths",
-        Some("single !place"),
-        125,
-        "link",
-    ),
-    (
-        "Copy Paths",
-        "copy_paths",
-        Some("selection !single !place"),
-        125,
-        "link",
-    ),
-    ("Copy Path", "copy_paths", Some("empty folder"), 125, "link"),
-    // The folder's own menu, on its background: Paste puts what was cut or
-    // copied in the folder shown, never in a file right-clicked.
-    (
-        "Paste",
-        "clipboard_paste",
-        Some("empty folder|drops"),
-        130,
-        "paste",
-    ),
-    // The folder's own menu, on its background.
-    (
-        "New Folder",
-        "ui.mkdir_prompt",
-        Some("empty folder"),
-        300,
-        "folder-plus",
-    ),
-    (
-        "New File",
-        "ui.new_file_prompt",
-        Some("empty folder"),
-        301,
-        "file-plus",
-    ),
-    // Files, never places (a tag's has no file to trash), nor what is in
-    // the trash already: the end of what changes them, beside Rename.
-    (
-        "Move to Trash",
-        "trash",
-        Some("selection !place !restores"),
-        290,
-        "trash",
-    ),
-    (
-        "Delete Permanently",
-        "delete",
-        Some("selection !place"),
-        295,
-        "close",
-    ),
-    ("Refresh", "refresh", Some("empty"), 490, "refresh"),
-];
+/// A context menu item: its title, command, `when`, order and icon.
+type MenuRow = (Words, &'static str, Option<&'static str>, i32, &'static str);
+
+fn menu() -> Vec<MenuRow> {
+    vec![
+        (
+            words!(
+                ops_basic_menu_open_tab = "Open in New Tab",
+                note = "A context menu's item: opens the folder in a new tab."
+            ),
+            "tab.open",
+            Some("dir"),
+            2,
+            "tab-new",
+        ),
+        (
+            words!(
+                ops_basic_menu_open_window = "Open in New Window",
+                note = "A context menu's item: opens the folder in a new window."
+            ),
+            "window.open",
+            Some("dir"),
+            2,
+            "window-new",
+        ),
+        (
+            words!(
+                ops_basic_menu_show_in_folder = "Show in Folder",
+                note = "A context menu's item, where files of many folders are listed (a search): shows the file in the folder it is in."
+            ),
+            "show_in_folder",
+            Some("single !folder !place !restores"),
+            3,
+            "folder",
+        ),
+        // Not a file of the trash, which goes elsewhere only restored.
+        (
+            words!(
+                ops_basic_menu_rename = "Rename",
+                note = "A context menu's item: renames the file."
+            ),
+            "ui.rename_prompt",
+            Some("single !restores"),
+            200,
+            "rename",
+        ),
+        // A place too: a tag copied into a folder is a folder of its files,
+        // cut and pasted in a tag it goes inside. A file of the trash pasted
+        // elsewhere leaves the trash.
+        (
+            words!(
+                ops_basic_menu_cut = "Cut",
+                note = "A context menu's item: the files are moved where they are pasted."
+            ),
+            "clipboard_cut",
+            Some("selection"),
+            110,
+            "cut",
+        ),
+        (
+            words!(
+                ops_basic_menu_copy = "Copy",
+                note = "A context menu's item: the files are copied where they are pasted."
+            ),
+            "clipboard_copy",
+            Some("selection"),
+            120,
+            "copy",
+        ),
+        // Their paths as text; a place (a tag's) has none. On the background,
+        // the folder's own.
+        (
+            copy_path(),
+            "copy_paths",
+            Some("single !place"),
+            125,
+            "link",
+        ),
+        (
+            words!(
+                ops_basic_menu_copy_paths = "Copy Paths",
+                note = "A context menu's item, for several files: copies their paths as text, one a line."
+            ),
+            "copy_paths",
+            Some("selection !single !place"),
+            125,
+            "link",
+        ),
+        (copy_path(), "copy_paths", Some("empty folder"), 125, "link"),
+        // The folder's own menu, on its background: Paste puts what was cut or
+        // copied in the folder shown, never in a file right-clicked.
+        (
+            words!(
+                ops_basic_menu_paste = "Paste",
+                note = "A context menu's item, on a folder's background: puts what was cut or copied in the folder."
+            ),
+            "clipboard_paste",
+            Some("empty folder|drops"),
+            130,
+            "paste",
+        ),
+        // The folder's own menu, on its background.
+        (
+            words!(
+                ops_basic_menu_new_folder = "New Folder",
+                note = "A context menu's item, on a folder's background: makes a folder in it, asking its name."
+            ),
+            "ui.mkdir_prompt",
+            Some("empty folder"),
+            300,
+            "folder-plus",
+        ),
+        (
+            words!(
+                ops_basic_menu_new_file = "New File",
+                note = "A context menu's item, on a folder's background: makes an empty file in it, asking its name."
+            ),
+            "ui.new_file_prompt",
+            Some("empty folder"),
+            301,
+            "file-plus",
+        ),
+        // Files, never places (a tag's has no file to trash), nor what is in
+        // the trash already: the end of what changes them, beside Rename.
+        (
+            words!(
+                ops_basic_menu_trash = "Move to Trash",
+                note = "A context menu's item: moves the files to the trash, from where they can be restored."
+            ),
+            "trash",
+            Some("selection !place !restores"),
+            290,
+            "trash",
+        ),
+        (
+            words!(
+                ops_basic_menu_delete = "Delete Permanently",
+                note = "A context menu's item: deletes the files for good, after asking."
+            ),
+            "delete",
+            Some("selection !place"),
+            295,
+            "close",
+        ),
+        (
+            words!(
+                ops_basic_menu_refresh = "Refresh",
+                note = "A context menu's item, on a folder's background: reads the folder again."
+            ),
+            "refresh",
+            Some("empty"),
+            490,
+            "refresh",
+        ),
+    ]
+}
 
 impl Plugin for OpsBasicPlugin {
     fn id(&self) -> &'static str {
@@ -574,8 +710,14 @@ impl Plugin for OpsBasicPlugin {
             ID,
             Topic::Files,
             "clipboard_copy",
-            "Copy",
-            "Remember the selection, or the entries given, for a later paste (copy)",
+            words!(
+                ops_basic_copy = "Copy",
+                note = "A command's title, in the list of actions: the files are copied where they are pasted."
+            ),
+            words!(
+                ops_basic_copy_description = "Remember the selection, or the entries given, for a later paste (copy)",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |a, app| {
                 let from = taken_from(app, &a);
                 let (entries, places) = take_selection(app, a.pane, a.entries)?;
@@ -596,8 +738,14 @@ impl Plugin for OpsBasicPlugin {
             ID,
             Topic::Files,
             "clipboard_cut",
-            "Cut",
-            "Remember the selection, or the entries given, for a later paste (move)",
+            words!(
+                ops_basic_cut = "Cut",
+                note = "A command's title, in the list of actions: the files are moved where they are pasted."
+            ),
+            words!(
+                ops_basic_cut_description = "Remember the selection, or the entries given, for a later paste (move)",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |a, app| {
                 let from = taken_from(app, &a);
                 let (entries, places) = take_selection(app, a.pane, a.entries)?;
@@ -617,8 +765,14 @@ impl Plugin for OpsBasicPlugin {
             .register::<TargetsArgs, _>(
                 ID, Topic::Files,
                 "copy_paths",
-                "Copy paths",
-                "The selected paths, or the entries', or with nothing selected the folder shown, as text for the clipboard, one per line",
+                words!(
+                    ops_basic_copy_paths = "Copy paths",
+                    note = "A command's title, in the list of actions: the files' paths are copied as text."
+                ),
+                words!(
+                    ops_basic_copy_paths_description = "The selected paths, or the entries', or with nothing selected the folder shown, as text for the clipboard, one per line",
+                    note = "Read by agents and in F1's list of actions."
+                ),
                 |a, app| copy_paths(app, a),
             )
             .reads();
@@ -627,8 +781,14 @@ impl Plugin for OpsBasicPlugin {
             ID,
             Topic::Files,
             "clipboard_clear",
-            "Forget cut or copied files",
-            "Empty the clipboard; files that were cut stay where they are",
+            words!(
+                ops_basic_clipboard_clear = "Forget cut or copied files",
+                note = "A command's title, in the list of actions: nothing waits to be pasted any more."
+            ),
+            words!(
+                ops_basic_clipboard_clear_description = "Empty the clipboard; files that were cut stay where they are",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |_, app| {
                 *cb.lock() = Clipboard::default();
                 app.pending.clear();
@@ -641,8 +801,14 @@ impl Plugin for OpsBasicPlugin {
             .register::<PasteArgs, _>(
                 ID, Topic::Files,
                 "clipboard_paste",
-                "Paste",
-                "Copy or move the clipboard into the current directory (plan): Skwir's, or the files given as `clipboard`",
+                words!(
+                    ops_basic_paste = "Paste",
+                    note = "A command's title, in the list of actions: what was cut or copied is put in the folder shown."
+                ),
+                words!(
+                    ops_basic_paste_description = "Copy or move the clipboard into the current directory (plan): Skwir's, or the files given as `clipboard`",
+                    note = "Read by agents and in F1's list of actions. clipboard is an argument's name, as typed."
+                ),
                 move |a, app| paste(&cb, a, app),
             )
             .plans();
@@ -678,16 +844,16 @@ impl Plugin for OpsBasicPlugin {
                 },
             );
         }
-        for (title, command, when, order, icon) in MENU {
+        for (title, command, when, order, icon) in menu() {
             app.registry.menus.add(
                 ID,
                 MenuItem {
                     menu: "context".into(),
-                    title: (*title).into(),
-                    command: Invocation::new(*command),
+                    title,
+                    command: Invocation::new(command),
                     when: when.map(str::to_owned),
-                    order: *order,
-                    icon: Some((*icon).into()),
+                    order,
+                    icon: Some(icon.into()),
                     submenu: None,
                     checked: None,
                     choice: None,

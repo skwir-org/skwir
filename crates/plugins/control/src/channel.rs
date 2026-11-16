@@ -46,9 +46,15 @@ pub fn address() -> Option<Address> {
 pub struct NotListening;
 
 impl std::fmt::Display for NotListening {
+    /// Its words: English, but in the reader's language while an error's
+    /// chain is said (`Words::of_error`).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(
-            "skwir is not open, or Agents and scripts is off: open skwir and turn it on in Settings, Plugins",
+        std::fmt::Display::fmt(
+            &skwir_core::words!(
+                control_not_listening = "skwir is not open, or Agents and scripts is off: open skwir and turn it on in Settings, Plugins",
+                note = "Read by scripts and agents: no window answers. Agents and scripts is a plugin's name; Settings, Plugins is where it is turned on."
+            ),
+            f,
         )
     }
 }
@@ -58,6 +64,8 @@ impl std::error::Error for NotListening {}
 #[cfg(unix)]
 mod imp {
     use std::os::unix::fs::PermissionsExt as _;
+
+    use anyhow::Context as _;
 
     use tokio::net::{UnixListener, UnixStream};
 
@@ -90,12 +98,11 @@ mod imp {
         let path = &address.0;
         let folder = path
             .parent()
-            .ok_or_else(|| anyhow::anyhow!("the channel's folder"))?;
+            .ok_or_else(|| anyhow::anyhow!(channel_folder()))?;
         // Another part of skwir may have made it first (the marker of the
         // one taking launches, a socket of the remote plugin's): made the
         // user's alone, whoever did.
-        skwir_core::folders::private(folder)
-            .map_err(|error| anyhow::anyhow!("the channel's folder: {error}"))?;
+        skwir_core::folders::private(folder).context(channel_folder())?;
         if path.exists() {
             match std::os::unix::net::UnixStream::connect(path) {
                 Ok(_) => return Ok(None),
@@ -108,6 +115,14 @@ mod imp {
             listener,
             path: path.clone(),
         }))
+    }
+
+    /// What failed: the folder the channel is in, made or found.
+    fn channel_folder() -> skwir_core::words::Words {
+        skwir_core::words!(
+            control_channel_folder = "the channel's folder",
+            note = "An error's first part, why follows: the folder where the window listens for agents and scripts could not be made."
+        )
     }
 
     pub async fn connect(address: &Address) -> Result<Stream, NotListening> {

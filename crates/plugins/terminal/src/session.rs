@@ -31,6 +31,8 @@ use skwir_core::location::Waker;
 use skwir_core::terminal::{
     At, Input, Key, KeyCode, Mods, Palette, Screen, Size, Spawn, TerminalSession, Unit,
 };
+use skwir_core::words;
+use skwir_core::words::Name;
 
 use crate::follow::{self, Follow};
 use crate::{keys, links, screen};
@@ -152,8 +154,9 @@ impl EventListener for Listener {
 /// The UI's handle. Dropping it ends the session.
 pub struct Session {
     shared: Arc<Shared>,
-    /// The shell's program, by its name, and how it quotes a word.
-    shell: String,
+    /// The shell's program, by its name (none where none is named), and
+    /// how it quotes a word.
+    shell: Option<String>,
     family: Option<follow::Family>,
 }
 
@@ -172,10 +175,19 @@ impl TerminalSession for Session {
 
     fn quote(&self, paths: &[PathBuf]) -> anyhow::Result<String> {
         let Some(family) = self.family else {
-            anyhow::bail!(
-                "Skwir does not know how {} quotes a path: it types none there",
-                self.shell
-            );
+            match &self.shell {
+                Some(shell) => anyhow::bail!(words!(
+                    terminal_unknown_quoting =
+                        "Skwir does not know how { $shell } quotes a path: it types none there",
+                    shell = shell.clone(),
+                    note = "An error when files are dropped on the terminal: the shell's program (its name, bash, fish) is not one Skwir knows how to quote a path for."
+                )),
+                None => anyhow::bail!(words!(
+                    terminal_unknown_quoting_unnamed =
+                        "Skwir does not know how this shell quotes a path: it types none there",
+                    note = "An error when files are dropped on the terminal: its shell is none Skwir knows how to quote a path for."
+                )),
+            }
         };
         let words = paths
             .iter()
@@ -185,7 +197,11 @@ impl TerminalSession for Session {
                         .file_name()
                         .unwrap_or(path.as_os_str())
                         .to_string_lossy();
-                    anyhow::anyhow!("“{}” cannot be typed at a prompt", name.escape_debug())
+                    anyhow::anyhow!(words!(
+                        terminal_untypable = "{ $name } cannot be typed at a prompt",
+                        name = Name(name.escape_debug().to_string()),
+                        note = "An error when a file is dropped on the terminal: its name holds what a shell's prompt cannot take."
+                    ))
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -279,10 +295,7 @@ pub(crate) fn open(
     let shell = program
         .as_deref()
         .and_then(|program| Path::new(program).file_name())
-        .map_or_else(
-            || "this shell".to_owned(),
-            |name| name.to_string_lossy().into_owned(),
-        );
+        .map(|name| name.to_string_lossy().into_owned());
     let event_loop = EventLoop::new(
         Arc::clone(&term),
         Listener(Arc::clone(&shared)),

@@ -10,7 +10,8 @@
 //! player, and nothing reads them.
 
 use skwir_core::{
-    App, command::Invocation, plugin::Plugin, registry::MenuItem, settings::SettingSpec,
+    App, command::Invocation, plugin::Plugin, registry::MenuItem, settings::SettingSpec, words,
+    words::Words,
 };
 use skwir_platform::{
     media::ReplayGain,
@@ -56,8 +57,13 @@ fn declare(app: &App) {
     app.settings.declare(
         SettingSpec::toggle(
             KEEP_PLAYING,
-            "Keep playing while you browse",
-            "What you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves.",
+            words!(
+                media_keep_playing = "Keep playing while you browse",
+                note = "A setting's title: whether what plays goes on when another file is selected."
+            ),
+            words!(
+                media_keep_playing_description = "What you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves."
+            ),
             true,
         )
         .page(skwir_core::settings::page::MEDIA)
@@ -67,8 +73,14 @@ fn declare(app: &App) {
     app.settings.declare(
         SettingSpec::toggle(
             AUTOPLAY,
-            "Play on selection",
-            "Start audio and video files as soon as they are selected, instead of waiting for Play.",
+            words!(
+                media_autoplay = "Play on selection",
+                note = "A setting's title: whether audio and video start as soon as they are selected."
+            ),
+            words!(
+                media_autoplay_description = "Start audio and video files as soon as they are selected, instead of waiting for Play.",
+                note = "Play is the player's button."
+            ),
             false,
         )
         .page(skwir_core::settings::page::MEDIA)
@@ -76,38 +88,112 @@ fn declare(app: &App) {
         .essential(),
     );
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             CONTINUE,
-            "When a track ends",
-            "Stop, go on with the next file of the same kind in the folder (or the playlist), or with one of them at random.",
+            words!(
+                media_continue = "When a track ends",
+                note = "A setting's title: what the player does once what it plays ends."
+            ),
+            words!(
+                media_continue_description = "Stop, go on with the next file of the same kind in the folder (or the playlist), or with one of them at random.",
+                note = "The setting's three choices: Stop, Play next, Shuffle."
+            ),
             "off",
-            &[("off", "Stop"), ("next", "Play next"), ("shuffle", "Shuffle")],
+            vec![
+                (
+                    "off",
+                    words!(
+                        media_continue_stop = "Stop",
+                        note = "A choice of the When a track ends setting: the player stops."
+                    ),
+                ),
+                (
+                    "next",
+                    words!(
+                        media_continue_next = "Play next",
+                        note = "A choice of the When a track ends setting: the next file of the same kind plays."
+                    ),
+                ),
+                (
+                    "shuffle",
+                    words!(
+                        media_continue_shuffle = "Shuffle",
+                        note = "A choice of the When a track ends setting: a file of the same kind, chosen at random, plays."
+                    ),
+                ),
+            ],
         )
         .page(skwir_core::settings::page::MEDIA)
         .section(skwir_core::settings::section::PLAYBACK)
         .essential(),
     );
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             REPLAY_GAIN,
-            "Even out loudness",
-            "Use the ReplayGain values in a track's tags so that songs mastered at different levels sound equally loud. Per album keeps an album's own quiet and loud songs as they are. Tracks without the tags play unchanged; it applies from the next track.",
+            words!(
+                media_replay_gain = "Even out loudness",
+                note = "A setting's title: whether tracks are played louder or quieter so that they sound equally loud (ReplayGain)."
+            ),
+            words!(
+                media_replay_gain_description = "Use the ReplayGain values in a track's tags so that songs mastered at different levels sound equally loud. Per album keeps an album's own quiet and loud songs as they are. Tracks without the tags play unchanged; it applies from the next track.",
+                note = "ReplayGain is a standard's name; Per album is one of the setting's choices."
+            ),
             "off",
-            &[("off", "Off"), ("track", "Per track"), ("album", "Per album")],
+            vec![
+                (
+                    "off",
+                    words!(
+                        media_replay_gain_off = "Off",
+                        note = "A choice of the Even out loudness setting: tracks play as they are."
+                    ),
+                ),
+                (
+                    "track",
+                    words!(
+                        media_replay_gain_track = "Per track",
+                        note = "A choice of the Even out loudness setting: each track evened out on its own."
+                    ),
+                ),
+                (
+                    "album",
+                    words!(
+                        media_replay_gain_album = "Per album",
+                        note = "A choice of the Even out loudness setting: each album evened out as a whole."
+                    ),
+                ),
+            ],
         )
         .page(skwir_core::settings::page::MEDIA)
         .section(skwir_core::settings::section::AUDIO),
     );
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             BACKEND,
-            "Video engine",
-            "Automatic plays with GStreamer and falls back to a still frame from FFmpeg. Playback needs the media worker and GStreamer plugins.",
+            words!(
+                media_video_engine = "Video engine",
+                note = "A setting's title: what plays videos, or shows a still frame of them."
+            ),
+            words!(
+                media_video_engine_description = "Automatic plays with GStreamer and falls back to a still frame from FFmpeg. Playback needs the media worker and GStreamer plugins.",
+                note = "Automatic is the setting's first choice; GStreamer and FFmpeg are programs' names; the media worker is Skwir's helper program that plays."
+            ),
             "auto",
-            &[
-                ("auto", "Automatic"),
-                ("gstreamer", "GStreamer"),
-                ("stills", "Still frames"),
+            vec![
+                (
+                    "auto",
+                    words!(
+                        media_video_engine_auto = "Automatic",
+                        note = "A choice of the Video engine setting: GStreamer where it works, else still frames."
+                    ),
+                ),
+                ("gstreamer", Words::as_written("GStreamer")),
+                (
+                    "stills",
+                    words!(
+                        media_video_engine_stills = "Still frames",
+                        note = "A choice of the Video engine setting: a still frame of the video, made by FFmpeg, instead of playing it."
+                    ),
+                ),
             ],
         )
         // What Automatic gives, once the settings probed what it needs.
@@ -148,8 +234,17 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         use skwir_core::plugin::Requirement;
         vec![
-            skwir_platform::media::WORKER.requirement("Audio and video playback"),
-            Requirement::program("ffmpeg", "Still frames when playback is unavailable"),
+            skwir_platform::media::WORKER.requirement(words!(
+                media_requirement_worker = "Audio and video playback",
+                note = "What stops working without the media helper (GStreamer), in the settings' list of what a plugin needs."
+            )),
+            Requirement::program(
+                "ffmpeg",
+                words!(
+                    media_requirement_ffmpeg = "Still frames when playback is unavailable",
+                    note = "What stops working without FFmpeg, in the settings' list of what a plugin needs."
+                ),
+            ),
         ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
@@ -182,7 +277,10 @@ impl Plugin for PreviewPlugin {
                 ID,
                 MenuItem {
                     menu: "context".into(),
-                    title: "Play".into(),
+                    title: words!(
+                        media_play = "Play",
+                        note = "A context menu's item: plays the music selected, or the video, in the preview."
+                    ),
                     command: Invocation::new("ui.media_play"),
                     when: Some(when.into()),
                     order: 9,

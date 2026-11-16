@@ -69,7 +69,10 @@ pub fn call(
                 // execute in a separate app with a different undo history.
                 anyhow::ensure!(
                     mode == PlanMode::Propose || channel::connect(address).await.is_err(),
-                    "the window has no script endpoint: restart skwir before running this command"
+                    skwir_core::words!(
+                        control_no_script_endpoint = "the window has no script endpoint: restart skwir before running this command",
+                        note = "Read by scripts: the window running is an older skwir's, which takes no script's command."
+                    )
                 );
                 return Err(error.into());
             }

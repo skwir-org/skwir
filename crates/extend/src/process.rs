@@ -18,6 +18,8 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use skwir_core::permissions::{Capabilities, Capability};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_plugin_api::manifest::Capability as Granted;
 use skwir_plugin_api::protocol::{
     InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, OLDEST, ReadAnswer,
@@ -45,12 +47,22 @@ const OUTGOING: usize = 16;
 /// answer in time, stopped, or broke the protocol. It is ended, and the
 /// plugin turned off when it does so again and again (`Runner::call`).
 #[derive(Debug)]
-pub(crate) struct Broken(pub String);
+pub(crate) struct Broken(pub Words);
 
 impl std::fmt::Display for Broken {
+    /// Its words: English, but in the reader's language while an error's
+    /// chain is said (`Words::of_error`).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        std::fmt::Display::fmt(&self.0, f)
     }
+}
+
+/// Why a call ends: its plugin was turned off meanwhile.
+fn turned_off() -> Words {
+    words!(
+        extend_turned_off_meanwhile = "the plugin was turned off",
+        note = "An error: a plugin from outside Skwir was turned off while it was asked something. In lower case."
+    )
 }
 
 impl std::error::Error for Broken {}
@@ -277,17 +289,23 @@ impl Program {
             Ok(answer) => answer,
             Err(error) => {
                 running.end();
-                return Err(error.context("the plugin did not start"));
+                return Err(error.context(words!(
+                    extend_did_not_start = "the plugin did not start",
+                    note = "An error's first part, why follows: the program of a plugin from outside Skwir did not say it was ready. In lower case."
+                )));
             }
         };
         // One written for an older version runs as it was: it is never
         // asked what that version did not have.
         if !(OLDEST..=VERSION).contains(&answer.api) {
             running.end();
-            anyhow::bail!(
-                "the plugin speaks version {} of the protocol; skwir speaks {OLDEST} to {VERSION}",
-                answer.api
-            );
+            anyhow::bail!(words!(
+                extend_protocol_version = "the plugin speaks version { $version } of the protocol; skwir speaks { $oldest } to { $newest }",
+                version = answer.api.to_string(),
+                oldest = OLDEST.to_string(),
+                newest = VERSION.to_string(),
+                note = "An error: a plugin from outside Skwir was written for a version of the protocol (how Skwir and plugins talk) Skwir does not speak. The versions are numbers. In lower case."
+            ));
         }
         Ok(running)
     }
@@ -329,10 +347,18 @@ impl Running {
         let stdin = self
             .stdin
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the plugin is ending"))?;
-        stdin
-            .send_timeout(message.line(), ANSWER)
-            .map_err(|_| Broken("the plugin does not read what it is asked".into()))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    extend_ending = "the plugin is ending",
+                    note = "An error: the program of a plugin from outside Skwir was asked something as it ended. In lower case."
+                ))
+            })?;
+        stdin.send_timeout(message.line(), ANSWER).map_err(|_| {
+            Broken(words!(
+                extend_not_reading = "the plugin does not read what it is asked",
+                note = "An error: the program of a plugin from outside Skwir stopped reading. In lower case."
+            ))
+        })?;
         Ok(())
     }
 
@@ -353,14 +379,18 @@ impl Running {
             // Every turn, not only a quiet one: a program that keeps
             // writing (its log, its reads) is held to the deadline too.
             if self.stopped.load(Ordering::Relaxed) {
-                anyhow::bail!("the plugin was turned off");
+                anyhow::bail!(turned_off());
             }
             if call.cancelled() {
                 let _ = self.send(&Message::notification(method::CANCEL, json!({ "id": id })));
                 anyhow::bail!("cancelled");
             }
             if Instant::now() > deadline {
-                return Err(Broken("the plugin did not answer in time".into()).into());
+                return Err(Broken(words!(
+                    extend_no_answer = "the plugin did not answer in time",
+                    note = "An error: the program of a plugin from outside Skwir did not answer within its time. In lower case."
+                ))
+                .into());
             }
             match self.messages.recv_timeout(Duration::from_millis(100)) {
                 Ok(message) if message.is_response() => {
@@ -376,7 +406,11 @@ impl Running {
                     // does now is ended, and the next call starts it.
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    return Err(Broken("the plugin stopped".into()).into());
+                    return Err(Broken(words!(
+                        extend_stopped = "the plugin stopped",
+                        note = "An error: the program of a plugin from outside Skwir ended while it was asked something. In lower case."
+                    ))
+                    .into());
                 }
             }
         }
@@ -449,20 +483,23 @@ impl Transport for Program {
                 anyhow::bail!("cancelled");
             }
             if self.stopped.load(Ordering::Relaxed) {
-                anyhow::bail!("the plugin was turned off");
+                anyhow::bail!(turned_off());
             }
         };
         // Turned off while this call waited for the program: not started
         // again behind the user's back.
         if self.stopped.load(Ordering::Relaxed) {
-            anyhow::bail!("the plugin was turned off");
+            anyhow::bail!(turned_off());
         }
         if call.cancelled() {
             anyhow::bail!("cancelled");
         }
         if held.is_none() {
             if self.failed.lock().is_some_and(|at| at.elapsed() < AGAIN) {
-                anyhow::bail!("the plugin could not start a moment ago");
+                anyhow::bail!(words!(
+                    extend_failed_before = "the plugin could not start a moment ago",
+                    note = "An error: the program of a plugin from outside Skwir failed to start a few seconds ago, and is not tried again yet. In lower case."
+                ));
             }
             match self.start() {
                 Ok(started) => *held = Some(started),

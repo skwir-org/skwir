@@ -32,20 +32,30 @@ use skwir_core::op::{
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "edit-as-buffer";
 
-const HEADER: &str = "\
-# skwir: edit this listing, save, and quit.
-#   change a name            -> rename
-#   delete a line            -> move to trash
-#   name with a slash        -> move into that folder (created if needed)
-#   new line ending with /   -> new folder
-# Keep the number at the start of each line. Order does not matter.
-# In names, \\\\ is a backslash and \\xHH a raw byte (\\x0a a newline,
-# \\x20 a space at either end).
-";
+/// What the buffer says first, each line a comment: how to edit it.
+fn header() -> String {
+    let mut header = words!(
+        edit_as_buffer_header = "# skwir: edit this listing, save, and quit.
+            #   change a name            -> rename
+            #   delete a line            -> move to trash
+            #   name with a slash        -> move into that folder (created if needed)
+            #   new line ending with /   -> new folder
+            # Keep the number at the start of each line. Order does not matter.
+            # In names, \\\\ is a backslash and \\xHH a raw byte (\\x0a a newline,
+            # \\x20 a space at either end).",
+        note = "The first lines of a folder's listing opened as text in the user's editor: each line begins with # (a comment, which is not read back). The arrows say what each edit becomes; the words in the left column may be aligned anew. \\\\, \\xHH, \\x0a and \\x20 are written as they are."
+    )
+    .say();
+    // The listing's lines start on the line after it.
+    header.push('\n');
+    header
+}
 
 /// `name` as one line of text that [`unescape`] turns back into it.
 pub fn escape(name: &OsStr) -> String {
@@ -106,7 +116,7 @@ pub fn unescape(text: &str) -> Vec<u8> {
 
 /// The buffer text for `entries` (id, name, `is_dir`), one line each.
 pub fn to_buffer(entries: &[(FileId, OsString, bool)]) -> String {
-    let mut out = String::from(HEADER);
+    let mut out = header();
     for (i, (_, name, is_dir)) in entries.iter().enumerate() {
         let slash = if *is_dir { "/" } else { "" };
         let _ = writeln!(out, "{:>4}  {}{slash}", i + 1, escape(name));
@@ -114,27 +124,91 @@ pub fn to_buffer(entries: &[(FileId, OsString, bool)]) -> String {
     out
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+/// Why an edited buffer is refused: data, said by [`BufferError::words`].
+/// A name is as the buffer writes it (escaped), or a path.
+#[derive(Debug, PartialEq, Eq)]
 pub enum BufferError {
-    #[error("line {line}: unknown handle {handle}")]
-    UnknownHandle { line: usize, handle: usize },
-    #[error("line {line}: handle {handle} appears twice")]
-    DuplicateHandle { line: usize, handle: usize },
-    #[error("line {line}: invalid name `{name}`: {reason}")]
+    UnknownHandle {
+        line: usize,
+        handle: usize,
+    },
+    DuplicateHandle {
+        line: usize,
+        handle: usize,
+    },
     InvalidName {
         line: usize,
         name: String,
-        reason: String,
+        reason: Words,
     },
-    #[error("`{name}` is the target of several lines")]
-    DuplicateTarget { name: String },
-    #[error("line {line}: `{name}` already exists")]
-    Taken { line: usize, name: String },
-    #[error(
-        "line {line}: new files are not supported (`{name}`); end the line with / for a folder"
-    )]
-    NewFile { line: usize, name: String },
+    DuplicateTarget {
+        name: String,
+    },
+    Taken {
+        line: usize,
+        name: String,
+    },
+    NewFile {
+        line: usize,
+        name: String,
+    },
 }
+
+impl BufferError {
+    /// What it says, in the reader's language.
+    pub fn words(&self) -> Words {
+        match self {
+            BufferError::UnknownHandle { line, handle } => words!(
+                edit_as_buffer_unknown_handle = "line { $line }: unknown handle { $handle }",
+                line = *line,
+                handle = handle.to_string(),
+                note = "An error of a listing edited as text: the number at the start of a line (its handle) names no file of the listing. The line's number, then the handle as written."
+            ),
+            BufferError::DuplicateHandle { line, handle } => words!(
+                edit_as_buffer_duplicate_handle =
+                    "line { $line }: handle { $handle } appears twice",
+                line = *line,
+                handle = handle.to_string(),
+                note = "An error of a listing edited as text: two lines start with the same number (handle), which names one file. The line's number, then the handle as written."
+            ),
+            BufferError::InvalidName { line, name, reason } => words!(
+                edit_as_buffer_invalid_name =
+                    "line { $line }: invalid name `{ $name }`: { $reason }",
+                line = *line,
+                name = name.clone(),
+                reason = reason.clone(),
+                note = "An error of a listing edited as text: a name written there is not one a file can have. The line's number, the name as written, then why."
+            ),
+            BufferError::DuplicateTarget { name } => words!(
+                edit_as_buffer_duplicate_target = "`{ $name }` is the target of several lines",
+                name = name.clone(),
+                note = "An error of a listing edited as text: several lines give their files the same name or path, as written."
+            ),
+            BufferError::Taken { line, name } => words!(
+                edit_as_buffer_taken = "line { $line }: `{ $name }` already exists",
+                line = *line,
+                name = name.clone(),
+                note = "An error of a listing edited as text: the name a line gives its file is taken by another file. The line's number, then the path taken."
+            ),
+            BufferError::NewFile { line, name } => words!(
+                edit_as_buffer_new_file = "line { $line }: new files are not supported (`{ $name }`); end the line with / for a folder",
+                line = *line,
+                name = name.clone(),
+                note = "An error of a listing edited as text: a line without a number makes a folder only when it ends with /. The line's number, then the name as written."
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for BufferError {
+    /// Its words: English, but in the reader's language while an error's
+    /// chain is said (`Words::of_error`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.words(), f)
+    }
+}
+
+impl std::error::Error for BufferError {}
 
 enum Line {
     Handled {
@@ -166,7 +240,7 @@ impl Target {
 }
 
 fn parse_target(text: &str, line: usize) -> Result<Target, BufferError> {
-    let invalid = |reason: String| BufferError::InvalidName {
+    let invalid = |reason: Words| BufferError::InvalidName {
         line,
         name: text.to_owned(),
         reason,
@@ -174,7 +248,10 @@ fn parse_target(text: &str, line: usize) -> Result<Target, BufferError> {
     // Escapes decode to bytes, so a `\x2f` is a slash in a name, which
     // `valid_file_name` refuses, not a separator.
     if text.starts_with('/') {
-        return Err(invalid("a path must stay inside this folder".into()));
+        return Err(invalid(words!(
+            edit_as_buffer_outside = "a path must stay inside this folder",
+            note = "Why a name written in a listing edited as text is refused: it starts with /, out of the folder listed."
+        )));
     }
     let folder = text.ends_with('/');
     let mut parts: Vec<OsString> = text
@@ -183,10 +260,13 @@ fn parse_target(text: &str, line: usize) -> Result<Target, BufferError> {
         .map(|p| skwir_core::os_path::from_bytes(unescape(p)))
         .collect();
     let Some(name) = parts.pop() else {
-        return Err(invalid("a name cannot be empty".into()));
+        return Err(invalid(words!(
+            edit_as_buffer_empty_name = "a name cannot be empty",
+            note = "Why a name written in a listing edited as text is refused: there is none."
+        )));
     };
     for part in parts.iter().chain([&name]) {
-        valid_file_name(part).map_err(|e| invalid(e.to_string()))?;
+        valid_file_name(part).map_err(|e| invalid(Words::of_error(e)))?;
     }
     Ok(Target {
         sub: parts,
@@ -444,7 +524,7 @@ pub fn diff_buffer(
         RenameOrderError::InvalidName { item, reason } => BufferError::InvalidName {
             line: request_line[item],
             name: requests[item].new_name.to_string_lossy().into_owned(),
-            reason,
+            reason: Words::from(reason),
         },
         RenameOrderError::Duplicate { target, .. } => BufferError::DuplicateTarget {
             name: target.to_string_lossy().into_owned(),
@@ -469,7 +549,14 @@ pub fn diff_buffer(
         };
         move_into(&mut steps, &mut current, i, original[i].0.id, dir, target);
     }
-    Ok(Plan::with_steps(format!("edit {}", dir.display()), steps))
+    Ok(Plan::with_steps(
+        words!(
+            edit_as_buffer_plan = "edit { $folder }",
+            folder = dir.display().to_string(),
+            note = "A plan's title: the changes made to a folder's listing edited as text, with the folder's whole path. Begins in lower case."
+        ),
+        steps,
+    ))
 }
 
 /// Move entry `i` into its target folder, then give it its final name
@@ -555,13 +642,18 @@ fn start_session(
     let dir = app.pane_dir(pane)?;
     let original: Original = {
         let ws = app.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        let open = p
-            .open
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("pane has no open location"))?;
+        let p = ws.pane(pane).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                edit_as_buffer_no_pane = "no such pane",
+                note = "An error: the pane a listing was to be edited from is gone."
+            ))
+        })?;
+        let open = p.open.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                edit_as_buffer_nothing_open = "pane has no open location",
+                note = "An error: the pane a listing was to be edited from shows nothing."
+            ))
+        })?;
         // What the pane shows of its folder, in its order (views.md):
         // never a name the filter, hidden files or a hidden companion
         // keep out of sight, whose line deleted would trash it unseen.
@@ -602,15 +694,26 @@ fn start_session(
                 "edit-as-buffer.diff",
                 lifetime.clone(),
                 move || {
-                    let result = match status {
+                    let result: anyhow::Result<Plan> = match status {
                         Ok(status) if status.success() => match std::fs::read_to_string(&file) {
                             Ok(text) => {
-                                diff_buffer(&original, &text, &dir).map_err(|e| e.to_string())
+                                diff_buffer(&original, &text, &dir).map_err(anyhow::Error::from)
                             }
-                            Err(e) => Err(format!("cannot read the edited buffer: {e}")),
+                            Err(e) => Err(anyhow::Error::from(e).context(words!(
+                                edit_as_buffer_unreadable = "cannot read the edited buffer",
+                                note = "An error once the editor closed: the listing edited as text could not be read back. Why follows."
+                            ))),
                         },
-                        Ok(status) => Err(format!("editor exited with {status}")),
-                        Err(e) => Err(format!("editor failed: {e}")),
+                        Ok(status) => Err(words!(
+                            edit_as_buffer_editor_exited = "editor exited with { $status }",
+                            status = status.to_string(),
+                            note = "An error once the editor closed with a failure: what the system says of how it ended (exit status: 1)."
+                        )
+                        .into()),
+                        Err(e) => Err(anyhow::Error::from(e).context(words!(
+                            edit_as_buffer_editor_failed = "editor failed",
+                            note = "An error: the editor could not be run, or waited for. Why follows."
+                        ))),
                     };
                     drop(file);
                     let Some(app) = weak.upgrade() else { return };
@@ -619,10 +722,16 @@ fn start_session(
                     }
                     match result {
                         Ok(plan) if plan.is_empty() => {
-                            app.notify(NotifyLevel::Info, "edit as text: no changes");
+                            app.notify(
+                                NotifyLevel::Info,
+                                words!(
+                                    edit_as_buffer_no_changes = "edit as text: no changes",
+                                    note = "A notification once the editor closed: the listing edited as text was not changed. In lower case."
+                                ),
+                            );
                         }
                         Ok(plan) => app.propose(plan),
-                        Err(e) => app.notify(NotifyLevel::Error, format!("edit as text: {e}")),
+                        Err(error) => app.notify(NotifyLevel::Error, failed(error)),
                     }
                 },
             );
@@ -642,7 +751,7 @@ fn start_session(
                 if let Err(e) = start()
                     && let Some(app) = weak.upgrade()
                 {
-                    app.notify(NotifyLevel::Error, format!("edit as text: {e:#}"));
+                    app.notify(NotifyLevel::Error, failed(e));
                 }
             },
         );
@@ -650,6 +759,15 @@ fn start_session(
         start()?;
     }
     Ok(Outcome::Done)
+}
+
+/// What a notification says of an edit as text that failed: why.
+fn failed(error: anyhow::Error) -> Words {
+    words!(
+        edit_as_buffer_failed = "edit as text: { $error }",
+        error = error,
+        note = "A notification: editing a listing as text failed, and why. In lower case."
+    )
 }
 
 impl Plugin for EditAsBufferPlugin {
@@ -687,8 +805,14 @@ impl Plugin for EditAsBufferPlugin {
             ID,
             Topic::Files,
             "edit_as_buffer",
-            "Edit as text…",
-            "Open the listing in $EDITOR; saving proposes a plan for review",
+            words!(
+                edit_as_buffer_command = "Edit as text…",
+                note = "A command's title, in the list of actions: opens the folder's listing in the user's text editor."
+            ),
+            words!(
+                edit_as_buffer_command_description = "Open the listing in $EDITOR; saving proposes a plan for review",
+                note = "Read by agents and in F1's list of actions. $EDITOR is the variable naming the user's editor."
+            ),
             move |a, app| start_session(a.pane, app, lifetime.clone()),
         );
         app.registry.keymap.add(
@@ -703,7 +827,10 @@ impl Plugin for EditAsBufferPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Edit as Text…",
+                words!(
+                    edit_as_buffer_menu = "Edit as Text…",
+                    note = "A context menu's item, on a folder's background: opens its listing in the user's text editor."
+                ),
                 "rename",
                 205,
                 Invocation::new("edit_as_buffer"),

@@ -8,6 +8,8 @@ use serde_json::Value;
 use skwir_core::App;
 use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_plugin_api::Manifest;
 use skwir_plugin_api::manifest::{self, Category as Declared};
 
@@ -147,7 +149,10 @@ impl Plugin for External {
         match self.runner.kind {
             Kind::Module(_) => vec![
                 crate::MODULE_WORKER
-                    .requirement("Running this plugin's WebAssembly module")
+                    .requirement(words!(
+                        extend_requirement_module = "Running this plugin's WebAssembly module",
+                        note = "What a plugin from outside Skwir, a WebAssembly module, needs Skwir's helper for, in the settings' list of what a plugin needs."
+                    ))
                     .required(),
             ],
             Kind::Program { .. } => Vec::new(),
@@ -245,7 +250,10 @@ impl Runner {
         let transport = {
             let mut live = self.live.lock();
             if self.watch.lock().off {
-                anyhow::bail!("the plugin is off");
+                anyhow::bail!(words!(
+                    extend_plugin_off = "the plugin is off",
+                    note = "An error: a plugin from outside Skwir was asked something once turned off. In lower case."
+                ));
             }
             if let Some(transport) = &*live {
                 Arc::clone(transport)
@@ -299,13 +307,21 @@ impl Runner {
         )) {
             tracing::warn!("{error:#}");
         }
+        // Its title is its own words, as its manifest writes them.
         app.notify_with_action(
             skwir_core::app::NotifyLevel::Warning,
-            format!(
-                "{} was turned off: it stopped answering {BROKEN_AT_MOST} times in a row",
-                self.title
+            words!(
+                extend_turned_off = "{ $count ->
+                   *[other] { $plugin } was turned off: it stopped answering { $count } times in a row
+                }",
+                plugin = Words::as_written(self.title.clone()),
+                count = BROKEN_AT_MOST,
+                note = "A notification: a plugin from outside Skwir (its title, as its author wrote it) failed again and again, and Skwir turned it off."
             ),
-            "Plugins",
+            words!(
+                extend_turned_off_action = "Plugins",
+                note = "A notification's button: opens the Plugins page of the settings, where a plugin is turned on again."
+            ),
             skwir_core::command::Invocation::with_args(
                 "ui.settings",
                 &serde_json::json!({ "page": "plugins" }),

@@ -85,10 +85,12 @@ impl Pages {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Pages>> {
         let closed_links = (!runner.granted.has(Capability::Network)).then(|| {
-            format!(
-                "Links are not followed in pages “{}” drew: it may not use the network",
-                runner.title
+            skwir_core::words!(
+                extend_pages_links_closed = "Links are not followed in pages “{ $plugin }” drew: it may not use the network",
+                plugin = runner.title.clone(),
+                note = "Under pages a plugin from outside Skwir (its title, as its author wrote it) drew, which may not use the network: their links are not followed."
             )
+            .say()
         });
         let mut pages = Pages {
             runner,
@@ -234,6 +236,16 @@ fn outline(entries: Vec<OutlineEntry>, pages: u32) -> Vec<Outline> {
         .collect()
 }
 
+/// The error for a page `page` of a file of `pages` pages.
+fn no_page(page: u32, pages: u32) -> skwir_core::words::Words {
+    skwir_core::words!(
+        extend_no_page = "There is no page { $page }: it has { $pages }",
+        page = page,
+        pages = pages,
+        note = "An error in place of a page drawn by a plugin from outside Skwir: the page's number, then how many pages the file has."
+    )
+}
+
 /// A fraction of the page, kept on it.
 fn unit(v: f32) -> f32 {
     if v.is_finite() { v.clamp(0., 1.) } else { 0. }
@@ -247,8 +259,7 @@ impl DocumentSession for Pages {
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         anyhow::ensure!(
             (1..=self.info.pages).contains(&page),
-            "There is no page {page}: it has {}",
-            self.info.pages
+            no_page(page, self.info.pages)
         );
         let side = side.clamp(64, 8192);
         let picture_key = self.key(&json!(["picture", page, side]))?;
@@ -264,13 +275,17 @@ impl DocumentSession for Pages {
             let answer = self
                 .ask(page, side, words.is_none(), cancel)?
                 .ok_or_else(|| {
-                    anyhow::anyhow!("“{}” shows nothing of this file", self.runner.title)
+                    anyhow::anyhow!(crate::providers::shows_nothing(&self.runner.title))
                 })?;
-            let png = answer.png.ok_or_else(|| {
-                anyhow::anyhow!("There is no page {page}: it has {}", answer.pages)
+            let png = answer
+                .png
+                .ok_or_else(|| anyhow::anyhow!(no_page(page, answer.pages)))?;
+            let png = skwir_plugin_api::base64::decode(&png).ok_or_else(|| {
+                anyhow::anyhow!(skwir_core::words!(
+                    extend_page_not_base64 = "the plugin's page is no base64",
+                    note = "An error: a plugin from outside Skwir answered a page's picture not written as base64, as the protocol asks. In lower case."
+                ))
             })?;
-            let png = skwir_plugin_api::base64::decode(&png)
-                .ok_or_else(|| anyhow::anyhow!("the plugin's page is no base64"))?;
             let own = answer.width.zip(answer.height);
             if words.is_none() {
                 let said = Words {
