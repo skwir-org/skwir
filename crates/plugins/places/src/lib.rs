@@ -14,6 +14,7 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{Keeper, MenuItem, Place, Reorder};
 use skwir_core::scheduler::Priority;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 use skwir_platform::places::{BookmarkEdit, Bookmarked, Marked, address_name};
 
@@ -308,7 +309,13 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
         hidden: identity.ignored.unwrap_or(volume.system),
         ..Place::new(
             skwir_core::registry::groups::DEVICES.id,
-            title,
+            // Its label is as the system or the user wrote it; Skwir names
+            // a volume without one.
+            if volume.label.is_empty() {
+                Words::from(title)
+            } else {
+                Words::as_written(title)
+            },
             icon,
             device_location(&volume.device),
         )
@@ -379,7 +386,7 @@ fn bookmark_reorder(mark: &Marked) -> Reorder {
 
 /// Scan the environment and return every place, in sidebar order.
 pub fn scan() -> Vec<Place> {
-    let folder = |title: String, path: PathBuf, icon: &str, group: &str| Place {
+    let folder = |title: Words, path: PathBuf, icon: &str, group: &str| Place {
         menu: folder_menu(&path),
         ..Place::new(group, title, icon, Location::from_path(path))
     };
@@ -393,8 +400,9 @@ pub fn scan() -> Vec<Place> {
         ));
     }
     for d in skwir_platform::places::user_dirs() {
+        // The system's name of the folder, as it says it.
         out.push(folder(
-            d.name,
+            Words::as_written(d.name),
             d.path,
             icon_for_user_dir(&d.kind),
             skwir_core::registry::groups::PLACES.id,
@@ -420,7 +428,7 @@ pub fn scan() -> Vec<Place> {
                     )),
                     reorder: Some(bookmark_reorder(&Marked::Folder(b.path.clone()))),
                     ..folder(
-                        b.title,
+                        Words::as_written(b.title),
                         b.path,
                         "folder",
                         skwir_core::registry::groups::BOOKMARKS.id,
@@ -437,7 +445,7 @@ pub fn scan() -> Vec<Place> {
                     reorder: Some(bookmark_reorder(&Marked::Address(b.address.clone()))),
                     ..Place::new(
                         skwir_core::registry::groups::BOOKMARKS.id,
-                        b.title,
+                        Words::as_written(b.title),
                         "folder-remote",
                         Location::parse(&b.address),
                     )
@@ -461,7 +469,7 @@ pub fn scan() -> Vec<Place> {
                 unavailable: Some("Locked. Click to unlock and open it.".into()),
                 ..Place::new(
                     skwir_core::registry::groups::DEVICES.id,
-                    m.label,
+                    Words::as_written(m.label),
                     "drive-harddisk-encrypted",
                     device_location(&m.source),
                 )
@@ -487,7 +495,7 @@ pub fn scan() -> Vec<Place> {
                 )
             }),
             ..folder(
-                m.label,
+                Words::as_written(m.label),
                 m.path,
                 icon,
                 skwir_core::registry::groups::DEVICES.id,
@@ -2025,7 +2033,7 @@ mod tests {
         assert!(
             places
                 .iter()
-                .any(|p| p.title == "Home" && p.group == "places")
+                .any(|p| p.title.english() == "Home" && p.group == "places")
         );
         assert!(app.commands.get("places.refresh").is_some());
         app.plugins.set_enabled(ID, false, &app);
@@ -2049,12 +2057,12 @@ mod tests {
             .places
             .all()
             .into_iter()
-            .map(|p| p.title)
+            .map(|p| p.title.english())
             .collect();
         assert_eq!(titles, ["new"]);
         places.0.lock().lifetime.take().unwrap().cancel();
         places.publish(&app, 2, vec![place("late")], Some(Vec::new()));
-        assert_eq!(app.registry.places.all()[0].title, "new");
+        assert_eq!(app.registry.places.all()[0].title.english(), "new");
     }
 
     #[test]
@@ -2578,7 +2586,10 @@ mod tests {
     }
 
     fn titles(app: &App) -> Vec<String> {
-        bookmarks(app).into_iter().map(|p| p.title).collect()
+        bookmarks(app)
+            .into_iter()
+            .map(|p| p.title.english())
+            .collect()
     }
 
     /// The bookmark commands, through dispatch as the sidebar, the toasts

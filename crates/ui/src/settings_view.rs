@@ -301,7 +301,7 @@ impl Snapshot {
     fn of(row: &Row, view: &SettingsView) -> Self {
         let spec = view.spec_shown(&row.spec);
         Snapshot {
-            label: row.spec.title.clone().into(),
+            label: row.spec.title.say().into(),
             spec,
             value: row.value.clone(),
             input: row.input.clone(),
@@ -345,11 +345,17 @@ fn plugin_found(plugin: &PluginInfo, words: &collate::Words) -> bool {
 /// A setting found by its words, its page's title or its plugin's, its
 /// key or section, or one of its choices' labels.
 fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -> bool {
+    // Found by its words as the dialog says them.
+    let (title, description, section) = (
+        spec.title.say(),
+        spec.description.say(),
+        spec.section_title.say(),
+    );
     let mut texts: Vec<&str> = vec![
-        &spec.title,
-        &spec.description,
+        &title,
+        &description,
         &spec.key,
-        &spec.section_title,
+        &section,
         titles[0],
         titles[1],
     ];
@@ -683,10 +689,11 @@ impl SettingsView {
         let el = el
             .aria_label(row.label.clone())
             .aria_disabled(!row.available);
-        if row.spec.description.is_empty() {
+        let description = row.spec.description.say();
+        if description.is_empty() {
             el
         } else {
-            el.aria_description(row.spec.description.clone())
+            el.aria_description(description)
         }
     }
 
@@ -878,7 +885,7 @@ impl SettingsView {
                             theme,
                         )
                         // Which setting it browses for, as the row says.
-                        .when(self.a11y, |d| d.aria_description(row.spec.title.clone()))
+                        .when(self.a11y, |d| d.aria_description(row.spec.title.say()))
                         .on_click(cx.listener(move |this, _, _, cx| this.browse(&key, cx))),
                     );
                 }
@@ -1403,7 +1410,12 @@ impl SettingsView {
         self.row_items.insert(key.clone(), item);
         let error = self.errors.get(&key).cloned();
         let mut texts = self
-            .described(row.spec.title.clone(), &row.spec.description, &key, theme)
+            .described(
+                row.spec.title.say(),
+                &row.spec.description.say(),
+                &key,
+                theme,
+            )
             // Beneath the switch it is under.
             .when(!row.spec.under.is_empty(), |d| d.pl(sized(24.)));
         if row.spec.restart_required {
@@ -1581,7 +1593,7 @@ impl SettingsView {
         }
         let mut texts = self.described(
             title.to_owned(),
-            &first.spec.description,
+            &first.spec.description.say(),
             &first.spec.key,
             theme,
         );
@@ -1740,7 +1752,7 @@ impl SettingsView {
                             .iter()
                             .map(|row| {
                                 let mut cell = rows[*row].clone();
-                                cell.label = format!("{title}: {}", cell.spec.title).into();
+                                cell.label = format!("{title}: {}", cell.spec.title.say()).into();
                                 cell
                             })
                             .collect();
@@ -1771,7 +1783,7 @@ impl SettingsView {
             }
         }
         for ((page, _), rows) in groups {
-            let section = rows[0].spec.section_title.clone();
+            let section = rows[0].spec.section_title.say();
             let mut caption = self.page_title(&page);
             if !section.is_empty() {
                 caption = format!("{caption} › {section}");

@@ -1033,8 +1033,8 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     let item = |title: &str| {
         app.registry
             .places
-            .find(|p| p.title.starts_with("at-login"))
-            .and_then(|p| p.menu.into_iter().find(|i| i.title == title))
+            .find(|p| p.title.english().starts_with("at-login"))
+            .and_then(|p| p.menu.into_iter().find(|i| i.title.english() == title))
     };
     until(&app, 30, "its menu offers to connect at login", || {
         item("Connect at Login").is_some()

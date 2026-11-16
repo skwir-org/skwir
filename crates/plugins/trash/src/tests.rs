@@ -91,7 +91,7 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     eventually("the place says the trash holds something", || {
         app.registry
             .places
-            .find(|p| p.title == "Trash")
+            .find(|p| p.title.english() == "Trash")
             .and_then(|p| p.icon)
             .as_deref()
             == Some("user-trash-full")
@@ -215,12 +215,16 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
     eventually("the trash is read again", || {
         app.registry
             .places
-            .find(|p| p.title == "Trash")
+            .find(|p| p.title.english() == "Trash")
             .and_then(|p| p.icon)
             .as_deref()
             == Some("user-trash")
     });
-    let shown = app.registry.places.find(|p| p.title == "Trash").unwrap();
+    let shown = app
+        .registry
+        .places
+        .find(|p| p.title.english() == "Trash")
+        .unwrap();
     assert!(shown.menu.is_empty(), "nothing to empty");
     assert!(app.dispatch(&Invocation::new("trash.empty")).is_err());
     // Dropped on its place, files go in the trash: what its location
@@ -324,7 +328,7 @@ fn the_items_are_read_whole_only_while_a_listing_shows_them() {
             && app
                 .registry
                 .places
-                .find(|p| p.title == "Trash")
+                .find(|p| p.title.english() == "Trash")
                 .and_then(|p| p.icon)
                 == Some("user-trash-full".into())
     });

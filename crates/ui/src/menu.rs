@@ -658,9 +658,9 @@ fn bundled(icon: &str) -> bool {
     crate::toolbar::asset(&format!("toolbar/{icon}.svg")).is_some()
 }
 
-/// What a submenu's row says after its name: the value chosen, when the
-/// submenu holds nothing but the values of one choice drawn as rows (a
-/// server's Thumbnails: Automatic).
+/// What a submenu's row says after its name, as it is drawn: the value
+/// chosen, when the submenu holds nothing but the values of one choice
+/// drawn as rows (a server's Thumbnails: Automatic).
 fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
     let mut values = items
         .iter()
@@ -676,7 +676,7 @@ fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
             chosen = Some(item);
         }
     }
-    chosen.map(|item| item.title.clone())
+    chosen.map(|item| item.title.say())
 }
 
 /// The order from which an item ends the menu, after every group, a
@@ -1117,7 +1117,7 @@ impl Shell {
             .enumerate()
             .map(|(i, column)| MenuItem {
                 menu: "columns".into(),
-                title: column.label.to_owned(),
+                title: column.label.into(),
                 command: skwir_core::command::Invocation::with_args(
                     "ui.columns",
                     &serde_json::json!({ "key": column.setting }),
@@ -1263,7 +1263,13 @@ impl Shell {
             let command = &plugin.command;
             let args = serde_json::json!({ "command": command.name, "args": command.args });
             let icon = plugin.icon.as_deref().unwrap_or_default();
-            items.push(item(300, &plugin.title, icon, "ui.preview_invoke", args));
+            items.push(MenuItem::new(
+                "preview",
+                plugin.title.clone(),
+                icon,
+                300,
+                skwir_core::command::Invocation::with_args("ui.preview_invoke", &args),
+            ));
         }
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
@@ -1823,7 +1829,7 @@ fn row_element(
             let title = if &*item.command.name == PROPERTIES {
                 properties_title(shell).to_owned()
             } else {
-                item.title.clone()
+                item.title.say()
             };
             // A check or a value: its state in the icon's place.
             let icon = match item.checked {
@@ -1994,7 +2000,7 @@ fn choice_value(
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let item = &menu.items[v];
-    let title: gpui::SharedString = item.title.clone().into();
+    let title: gpui::SharedString = item.title.say().into();
     let tip = title.clone();
     div()
         .id((id, v))
@@ -2265,8 +2271,9 @@ mod tests {
             command: Invocation::new("source"),
             replaces: vec![Invocation::new("open"), Invocation::new("choose")],
         };
-        let titles =
-            |items: Vec<MenuItem>| -> Vec<String> { items.into_iter().map(|m| m.title).collect() };
+        let titles = |items: Vec<MenuItem>| -> Vec<String> {
+            items.into_iter().map(|m| m.title.english()).collect()
+        };
         let answer = vec![
             at("Open With Viewer", "open_with", 0),
             at("Other…", "choose", 1),

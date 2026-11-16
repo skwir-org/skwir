@@ -719,13 +719,9 @@ mod tests {
                 .iter()
                 .any(|b| b.keys == "secondary-z" && &*b.command.name == "undo")
         );
-        assert!(
-            app.registry
-                .menus
-                .all()
-                .iter()
-                .any(|m| m.title == "Rename" && m.when.as_deref() == Some("single !restores"))
-        );
+        assert!(app.registry.menus.all().iter().any(
+            |m| m.title.english() == "Rename" && m.when.as_deref() == Some("single !restores")
+        ));
         assert!(app.commands.get("clipboard_paste").is_some());
         app.plugins.set_enabled(ID, false, &app);
         assert!(app.registry.keymap.all().is_empty());

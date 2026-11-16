@@ -353,9 +353,13 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         app.pump();
-        let place = app.registry.places.find(|p| p.title.starts_with("nas-1"));
+        let place = app
+            .registry
+            .places
+            .find(|p| p.title.english().starts_with("nas-1"));
         if let Some(place) = place {
-            let titles: Vec<&str> = place.menu.iter().map(|i| i.title.as_str()).collect();
+            let titles: Vec<String> = place.menu.iter().map(|i| i.title.english()).collect();
+            let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
             assert!(titles.contains(&"Edit Server…"), "{titles:?}");
             assert!(titles.contains(&"Remove Server…"), "{titles:?}");
             assert!(
@@ -549,7 +553,7 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     while app
         .registry
         .places
-        .find(|p| p.title.starts_with("plain"))
+        .find(|p| p.title.english().starts_with("plain"))
         .is_none()
     {
         app.pump();
@@ -913,7 +917,7 @@ fn a_remote_left_half_made_is_said_so_and_removed() {
         shown
             .menu
             .iter()
-            .any(|item| item.title == "Finish Setting Up…")
+            .any(|item| item.title.english() == "Finish Setting Up…")
     );
     // Removed, its note goes too.
     let window = Window::new(&second);
@@ -1601,7 +1605,7 @@ fn network_titles(app: &App) -> Vec<String> {
         .all()
         .into_iter()
         .filter(|p| p.group == "network")
-        .map(|p| p.title)
+        .map(|p| p.title.english())
         .collect()
 }
 
@@ -1719,7 +1723,8 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         .into_iter()
         .find(|p| p.group == "network" && p.location.path().as_deref() == Some(point.as_path()))
         .expect("its mount in the Network section");
-    let titles: Vec<&str> = mount.menu.iter().map(|i| i.title.as_str()).collect();
+    let titles: Vec<String> = mount.menu.iter().map(|i| i.title.english()).collect();
+    let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
     assert!(titles.contains(&"Edit Server…"), "{titles:?}");
     assert!(titles.contains(&"Remove Server…"), "{titles:?}");
     let bookmarks = base.join("config/gtk-3.0/bookmarks");

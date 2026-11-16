@@ -18992,3 +18992,51 @@ command's words was looked for by hand.
 
 **Checked:** `just lint`; `cargo nextest run` of skwir-core, skwir-ui,
 skwir-plugin-control, skwir-extend and the binary's tests: 1848 passed.
+
+## 2026-11-16: Menus, settings and places say their words where shown (ADR-139, step D)
+
+Done by a subagent that owned the change, then reviewed.
+- **Now `Words`:**
+  - `MenuItem::title`;
+  - `SettingSpec`'s `title`, `description` and `section_title`;
+  - `Place::title`;
+  - `Registry::place_title`'s answer.
+
+  Their constructors take what they took before, so every declaration
+  compiles as it was. Choice labels stay `String` until step E.
+- **What the user or the system named** is text as written: a bookmark's
+  title, a volume's or a server's label, a tag's name, a saved search's
+  name, the name the user gave a place, the system's user folders.
+- **The window says them** where it shows them, sorts by them or matches
+  what is typed against them (37 sites): the menus, the palette, the
+  settings dialog (its captions, rows, tables, search and accessible
+  descriptions), the sidebar (rows, pills, Eject, the rename prompt and
+  its text), the suggestions, the print dialog's folders.
+  - The trail's roots, kept across frames, are keyed on
+    `words::revision()`.
+  - A row's identity and an element's id read English.
+- **Silent traps found and fixed:** a `format!` or a `json!` of these
+  fields would show English in a translated window, and so did the
+  agent's permission question, which read a command's words through
+  `Display` (missed in the commands' step).
+  - **The proof:** `impl Display for Words` was removed for a while and
+    the default members checked. None of these fields' words reaches the
+    window through it any more.
+
+**Left for step E:**
+- `App::location_title` gives agents (tabs, crumbs) the user's language.
+  It should give `Words`, about 40 callers.
+- A plugin's menus sent as JSON (`MenuSource`: tags, Open With, remote,
+  shelf) come back as text as written, so once their titles are messages
+  they will show English. They need a typed answer.
+- The comparisons that remain use said words, as the window shows them:
+  - settings tables made of sections whose titles match;
+  - the sidebar's rename back to a place's own title;
+  - `settings::first_sentence`.
+
+**Checked:**
+- `just lint`.
+- `cargo nextest run` of the 16 crates touched (skwir-core, skwir-ui,
+  the binary, skwir-kmtp-worker, and the plugins archives, control,
+  jump, ops-basic, places, print, query, remote, shelf, shell, tags,
+  trash): 2322 passed.

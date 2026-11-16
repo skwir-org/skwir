@@ -1511,7 +1511,12 @@ mod tests {
 
     #[test]
     fn an_rclone_remote_s_menu_signs_in_again_where_it_signs_in() {
-        let titles = |items: Vec<MenuItem>| items.into_iter().map(|i| i.title).collect::<Vec<_>>();
+        let titles = |items: Vec<MenuItem>| {
+            items
+                .into_iter()
+                .map(|i| i.title.english())
+                .collect::<Vec<_>>()
+        };
         assert!(titles(menu_items("photos", true, false)).contains(&"Sign In Again…".to_owned()));
         assert!(!titles(menu_items("nas", false, false)).contains(&"Sign In Again…".to_owned()));
         assert!(titles(menu_items("nas", false, true)).contains(&FINISH.to_owned()));

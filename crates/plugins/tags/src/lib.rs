@@ -1911,8 +1911,8 @@ mod tests {
                 .map(|submenu| submenu.title.into_owned())
                 .unwrap_or_default();
             match out.iter_mut().find(|(name, _)| *name == submenu) {
-                Some((_, titles)) => titles.push(item.title),
-                None => out.push((submenu, vec![item.title])),
+                Some((_, titles)) => titles.push(item.title.english()),
+                None => out.push((submenu, vec![item.title.english()])),
             }
         }
         out
@@ -2001,9 +2001,11 @@ mod tests {
             serde_json::from_value(v["items"].clone()).unwrap()
         };
         let items = files_menu();
+        let titles: Vec<String> = items.iter().map(|item| item.title.english()).collect();
         let said: Vec<(&str, Option<Check>)> = items
             .iter()
-            .map(|item| (item.title.as_str(), item.checked))
+            .zip(&titles)
+            .map(|(item, title)| (title.as_str(), item.checked))
             .collect();
         assert_eq!(
             said,
@@ -2030,7 +2032,7 @@ mod tests {
             .menus
             .all()
             .into_iter()
-            .find(|item| item.title == "Edit Tags…")
+            .find(|item| item.title.english() == "Edit Tags…")
             .unwrap();
         assert_eq!(editor.submenu, Some(TAGS_SUBMENU));
         assert!(items.iter().all(|item| editor.order < item.order));
@@ -2046,7 +2048,11 @@ mod tests {
         };
         let order = |title: &str| {
             let items: Vec<MenuItem> = serde_json::from_value(chip["items"].clone()).unwrap();
-            items.iter().find(|item| item.title == title).unwrap().order
+            items
+                .iter()
+                .find(|item| item.title.english() == title)
+                .unwrap()
+                .order
         };
         assert_eq!(
             order("Edit Tags…") / 100,
@@ -2100,7 +2106,7 @@ mod tests {
         let items: Vec<MenuItem> = serde_json::from_value(held["items"].clone()).unwrap();
         let held = items
             .iter()
-            .find(|item| item.title == "One “Places” Tag at a Time")
+            .find(|item| item.title.english() == "One “Places” Tag at a Time")
             .unwrap();
         assert!(held.is_on(), "checked while it holds one");
         assert_eq!(
@@ -2118,7 +2124,10 @@ mod tests {
             &serde_json::json!({ "names": ["b.txt", "c.txt"] }),
         ))
         .unwrap();
-        let titles: Vec<String> = files_menu().into_iter().map(|item| item.title).collect();
+        let titles: Vec<String> = files_menu()
+            .into_iter()
+            .map(|item| item.title.english())
+            .collect();
         assert_eq!(titles, ["pinned", "beta", "Other/Paris", "Places/Paris"]);
         // One file: its tags checked, the pinned ones it lacks not.
         app.dispatch(&Invocation::with_args(
@@ -2127,9 +2136,11 @@ mod tests {
         ))
         .unwrap();
         let items = files_menu();
+        let titles: Vec<String> = items.iter().map(|item| item.title.english()).collect();
         let said: Vec<(&str, Option<Check>)> = items
             .iter()
-            .map(|item| (item.title.as_str(), item.checked))
+            .zip(&titles)
+            .map(|(item, title)| (title.as_str(), item.checked))
             .collect();
         assert_eq!(
             said,
@@ -3003,7 +3014,13 @@ mod tests {
         app.plugins.set_enabled("tags", false, &app);
         assert!(!app.metadata.ids().contains(&"tags"));
         assert!(app.commands.get("tags.set").is_none());
-        assert!(app.registry.menus.all().iter().all(|m| m.title != "Tags…"));
+        assert!(
+            app.registry
+                .menus
+                .all()
+                .iter()
+                .all(|m| m.title.english() != "Tags…")
+        );
     }
 
     /// The tag editor's edit: two files with different tags keep what the
@@ -3167,7 +3184,10 @@ mod tests {
             panic!()
         };
         let items: Vec<MenuItem> = serde_json::from_value(menu["items"].clone()).unwrap();
-        let comment = items.iter().find(|item| item.title == "Comment…").unwrap();
+        let comment = items
+            .iter()
+            .find(|item| item.title.english() == "Comment…")
+            .unwrap();
         assert_eq!(comment.command.args["text"], "from the “trip”, day 2");
         assert!(
             items

@@ -311,7 +311,7 @@ pub fn suggested_name(app: Option<&App>, expr: &str) -> String {
 /// user renamed), else Home for the home folder, else the folder's name.
 pub fn place_name(app: Option<&App>, root: &std::path::Path) -> String {
     if let Some(title) = app.and_then(|app| app.registry.place_title(&Location::from_path(root))) {
-        return title;
+        return title.say();
     }
     let home = skwir_core::os_path::home();
     if home.as_deref() == Some(root) {
@@ -731,7 +731,13 @@ fn place(search: SavedQuery) -> Place {
             .at
             .is_some()
             .then(|| format!("{}\u{1f}{}", location, key.expr)),
-        ..Place::new(GROUP, search.name, "folder-saved-search", location)
+        // The name the user gave it, as written.
+        ..Place::new(
+            GROUP,
+            skwir_core::words::Words::as_written(search.name),
+            "folder-saved-search",
+            location,
+        )
     }
 }
 

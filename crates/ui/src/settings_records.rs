@@ -510,7 +510,8 @@ impl SettingsView {
             draft.busy = true;
         }
         let (slot, weak, owner) = (Arc::clone(&self.keyring), self.app.weak(), key.to_owned());
-        let label = format!("skwir: {name} ({})", spec.title);
+        // What the keyring's own window shows the user: said as Skwir's.
+        let label = format!("skwir: {name} ({})", spec.title.say());
         self.app.scheduler.spawn(
             skwir_core::scheduler::Priority::Visible,
             "settings-keyring",

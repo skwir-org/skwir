@@ -200,10 +200,11 @@ impl SuggestSource for Places {
             .into_iter()
             .filter(|place| !place.hidden)
             .filter_map(|place| {
+                // Found by its name as the sidebar says it.
                 let title = app
                     .registry
                     .user_title(&place)
-                    .unwrap_or(place.title.clone());
+                    .unwrap_or_else(|| place.title.say());
                 let rank = rank_of(&title, words)?;
                 // A saved search or place opens as it was kept, a place
                 // saying its filter (ADR-109).

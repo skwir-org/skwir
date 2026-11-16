@@ -148,19 +148,21 @@ fn every_setting_has_a_title_and_a_description_in_sentences() {
         .filter(SettingSpec::editable)
     {
         let key = &spec.key;
-        if !spec.title.starts_with(char::is_uppercase) {
+        let (title, description) = (spec.title.english(), spec.description.english());
+        if !title.starts_with(char::is_uppercase) {
             problems.push(format!("{key}: its title starts in lowercase"));
         }
-        if plugins.iter().any(|plugin| {
-            plugin.id == spec.owner() && plugin.title.eq_ignore_ascii_case(&spec.title)
-        }) {
+        if plugins
+            .iter()
+            .any(|plugin| plugin.id == spec.owner() && plugin.title.eq_ignore_ascii_case(&title))
+        {
             problems.push(format!("{key}: its title is its plugin's name"));
         }
-        if !spec.description.ends_with('.') {
+        if !description.ends_with('.') {
             problems.push(format!("{key}: its description does not end a sentence"));
         }
         // A row says its first sentence (ADR-072): it stands alone.
-        let (first, _) = skwir_ui::settings::first_sentence(&spec.description);
+        let (first, _) = skwir_ui::settings::first_sentence(&description);
         let words = first.split_whitespace().count();
         if words > 30 {
             problems.push(format!(

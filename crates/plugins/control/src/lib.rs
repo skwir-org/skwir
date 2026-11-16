@@ -518,9 +518,10 @@ fn allowed(
         Value::Object(object) if object.is_empty() => String::new(),
         args => serde_json::to_string_pretty(args).unwrap_or_default(),
     };
+    // Asked in the window: its words as the window says them.
     let (id, answer) = app.ask(
-        format!("An agent asks to run “{}”", spec.title),
-        format!("{}: {}\n{arguments}", spec.name, spec.description)
+        format!("An agent asks to run “{}”", spec.title.say()),
+        format!("{}: {}\n{arguments}", spec.name, spec.description.say())
             .trim_end()
             .to_owned(),
     );

@@ -75,7 +75,7 @@ fn phone(app: &App) -> Option<Place> {
         .places
         .all()
         .into_iter()
-        .find(|p| p.group == "devices" && p.title == "Example Phone")
+        .find(|p| p.group == "devices" && p.title.english() == "Example Phone")
 }
 
 fn wait(app: &App, what: &str, mut done: impl FnMut() -> bool) {

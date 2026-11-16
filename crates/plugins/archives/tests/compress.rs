@@ -794,7 +794,7 @@ fn compress_is_offered_for_files_and_folders_in_their_menu() {
         .into_iter()
         .filter(|item| item.command.name.starts_with("archive.compress"))
         .collect();
-    let titles: Vec<&str> = items.iter().map(|item| item.title.as_str()).collect();
+    let titles: Vec<String> = items.iter().map(|item| item.title.english()).collect();
     assert_eq!(titles, ["To ZIP", "Choose Format…", "With a Password…"]);
     for item in &items {
         assert_eq!(item.menu, "context");

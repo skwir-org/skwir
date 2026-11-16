@@ -1091,7 +1091,7 @@ mod tests {
                 .places
                 .all()
                 .iter()
-                .any(|pl| pl.title == "Recent")
+                .any(|pl| pl.title.english() == "Recent")
         );
     }
 }

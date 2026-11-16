@@ -959,7 +959,7 @@ mod tests {
             .menus
             .all()
             .into_iter()
-            .filter(|m| m.title == "Run Command…")
+            .filter(|m| m.title.english() == "Run Command…")
             .map(|m| m.command.args["command"].as_str().unwrap().to_owned())
             .collect();
         assert_eq!(asked, ["shell.run", "shell.run_here"]);

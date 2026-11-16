@@ -16,6 +16,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::command::Topic;
 use crate::os_path::PathArg;
+use crate::words::Words;
 use serde::de::DeserializeOwned;
 use std::io::Write;
 
@@ -318,9 +319,10 @@ impl std::fmt::Debug for Validator {
 pub struct SettingSpec {
     /// Dotted key, e.g. `view.list.row_height` or `plugin_id.option`.
     pub key: String,
-    /// Short human label ("Memory budget").
-    pub title: String,
-    pub description: String,
+    /// Short human label ("Memory budget"), said where it is drawn; in
+    /// English to agents and scripts (ADR-139, 7).
+    pub title: Words,
+    pub description: Words,
     /// The dialog's page it is shown on (`page::*`), by its subject,
     /// whoever owns the key (ADR-072); empty for its owner's own page.
     pub page: String,
@@ -330,7 +332,7 @@ pub struct SettingSpec {
     /// was declared, after what has none.
     pub section: String,
     /// The words its section's heading says.
-    pub section_title: String,
+    pub section_title: Words,
     /// Shown while its page is folded: among the few settings most people
     /// come to the page for (ADR-072). The others wait under the page's
     /// More settings.
@@ -502,7 +504,7 @@ impl SettingSpec {
             description: description.into(),
             page: String::new(),
             section: String::new(),
-            section_title: String::new(),
+            section_title: Words::as_written(""),
             essential: false,
             under: String::new(),
             unit: String::new(),
@@ -856,7 +858,7 @@ impl SettingSpec {
     /// (a notes store's): its id, which no other owner's settings share,
     /// and its words.
     #[must_use]
-    pub fn section_of(mut self, id: impl Into<String>, title: impl Into<String>) -> Self {
+    pub fn section_of(mut self, id: impl Into<String>, title: impl Into<Words>) -> Self {
         self.section = id.into();
         self.section_title = title.into();
         self

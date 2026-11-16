@@ -743,9 +743,9 @@ fn documents() -> Option<PathBuf> {
 
 /// The sidebar's folders, offered where a PDF goes: its places and its
 /// bookmarks that are folders here and open now (no volume, no place of
-/// a plugin's, none marked unavailable), each by its title, in its order.
-/// Read from the places core holds (`registry.places`), whoever made
-/// them.
+/// a plugin's, none marked unavailable), each by its title as the dialog
+/// says it, in its order. Read from the places core holds
+/// (`registry.places`), whoever made them.
 fn sidebar_folders(app: &App) -> Vec<(String, PathBuf)> {
     app.registry
         .places
@@ -753,7 +753,7 @@ fn sidebar_folders(app: &App) -> Vec<(String, PathBuf)> {
         .into_iter()
         .filter(|place| matches!(place.group.as_str(), "places" | "bookmarks"))
         .filter(|place| place.unavailable.is_none() && place.activate.is_none())
-        .filter_map(|place| Some((place.title, place.location.path()?)))
+        .filter_map(|place| Some((place.title.say(), place.location.path()?)))
         .collect()
 }
 
@@ -1763,7 +1763,7 @@ mod tests {
                 .all()
                 .into_iter()
                 .find(|item| item.when.as_deref() == Some(when))
-                .map(|item| item.title)
+                .map(|item| item.title.english())
         };
         assert_eq!(title(LISTS).as_deref(), Some("Print Listing…"));
         assert_eq!(title(FILES).as_deref(), Some("Print…"));

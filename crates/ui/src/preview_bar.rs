@@ -674,9 +674,10 @@ fn entry_rows(popup: &toolbar::Popup, shell: &Shell, cx: &mut Context<Shell>) ->
 /// A menu's item as a popup's button: what it runs, checked while on.
 fn item_button(item: &MenuItem) -> Button {
     Button::new(
-        format!("preview-entry-{}", item.title),
+        // Its element's id, the same in every language.
+        format!("preview-entry-{}", item.title.english()),
         item.icon.clone().unwrap_or_default(),
-        item.title.clone(),
+        item.title.say(),
         item.command.name.to_string(),
     )
     .args(item.command.args.clone())

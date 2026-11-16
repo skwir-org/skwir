@@ -30,6 +30,7 @@ use skwir_core::Location;
 use skwir_core::command::Invocation;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::{Opens, Place, Reorder};
+use skwir_core::words::Words;
 use skwir_core::workspace::TabId;
 
 use crate::controls;
@@ -308,8 +309,9 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
                     .unwrap_or(!place.hidden);
             let mut moves = place.reorder.clone();
             if role == Role::Offered {
+                // The name the user gave it is as they wrote it.
                 if let Some(title) = arrangement.and_then(|a| a.titles.get(&key)) {
-                    place.title.clone_from(title);
+                    place.title = Words::as_written(title.clone());
                 }
                 moves = Some(Reorder {
                     command: Invocation::with_args(
@@ -384,7 +386,7 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
         .filter_map(|a| {
             Some(Root {
                 path: a.place.location.path()?,
-                name: a.place.title,
+                name: a.place.title.say(),
             })
         })
         .collect();
@@ -397,13 +399,13 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
     roots
 }
 
-/// `roots`, read again only when the places, their arrangement or
-/// `ui.full_path` change, and how many times they were. With the full
-/// path there are none: every folder's trail starts at the root, each
-/// folder under its own name.
+/// `roots`, read again only when the places, their arrangement, what
+/// their words say (`words::revision`) or `ui.full_path` change, and how
+/// many times they were. With the full path there are none: every
+/// folder's trail starts at the root, each folder under its own name.
 #[derive(Default)]
 pub struct Roots {
-    key: Option<(u64, Sections, bool)>,
+    key: Option<(u64, u64, Sections, bool)>,
     pub roots: Vec<Root>,
     pub generation: u64,
 }
@@ -413,13 +415,11 @@ impl Shell {
     /// changed since.
     pub fn sync_roots(&mut self) {
         let revision = self.app.registry.places.revision();
+        let said = skwir_core::words::revision();
         let full = self.prefs.full_path;
-        if self
-            .roots
-            .key
-            .as_ref()
-            .is_some_and(|(r, s, f)| *r == revision && *s == self.sidebar_sections && *f == full)
-        {
+        if self.roots.key.as_ref().is_some_and(|(r, w, s, f)| {
+            *r == revision && *w == said && *s == self.sidebar_sections && *f == full
+        }) {
             return;
         }
         // The names the user gave places, for everything that names a
@@ -447,7 +447,7 @@ impl Shell {
                     home.as_deref(),
                 )
             },
-            key: Some((revision, self.sidebar_sections.clone(), full)),
+            key: Some((revision, said, self.sidebar_sections.clone(), full)),
             generation: self.roots.generation + 1,
         };
     }
@@ -828,6 +828,8 @@ pub fn render(
         if folded || !shown {
             continue;
         }
+        // What it is called, as the sidebar says it.
+        let said = place.title.say();
         let item = Item::of(place);
         let at_cursor = cursor.as_ref() == Some(&item);
         let menu_here = marked.as_ref() == Some(&item);
@@ -867,7 +869,7 @@ pub fn render(
             let mut pill = pill(i, place, color, is_current, at_cursor, cx)
                 .role(gpui::Role::TreeItem)
                 .when(a11y, |d| {
-                    d.aria_label(place.title.clone())
+                    d.aria_label(said.clone())
                         .aria_level(2)
                         .aria_selected(is_current)
                 })
@@ -879,7 +881,7 @@ pub fn render(
             pill = rings_its_files(pill, &place.location, cx);
             pill = takes_drops(pill, &place.location, gives.is_some(), cx);
             if drag.reorder.is_some() || drag.gives.is_some() {
-                pill = movable_pill(pill, place.title.clone(), drag, order, cx);
+                pill = movable_pill(pill, said.clone(), drag, order, cx);
             }
             // In the line of pills that is the column's next child.
             drawn.push((item, children));
@@ -926,7 +928,7 @@ pub fn render(
         };
         // A title cut by the sidebar's width is said whole by the row's
         // tooltip, before what the row has to say of its own.
-        let (title, clip) = crate::elements::clip::text(place.title.clone());
+        let (title, clip) = crate::elements::clip::text(said.clone());
         let mut texts = div()
             .flex_1()
             .min_w_0()
@@ -1037,7 +1039,7 @@ pub fn render(
         row = row
             .role(gpui::Role::TreeItem)
             .when(a11y, |d| {
-                d.aria_label(place.title.clone())
+                d.aria_label(said.clone())
                     .aria_level(2)
                     .aria_selected(is_current)
                     .when_some(tip.clone(), StatefulInteractiveElement::aria_description)
@@ -1053,7 +1055,7 @@ pub fn render(
                 div()
                     .id(crate::elements::known_by("eject", i))
                     .role(gpui::Role::Button)
-                    .when(a11y, |d| d.aria_label(format!("Eject {}", place.title)))
+                    .when(a11y, |d| d.aria_label(format!("Eject {said}")))
                     .flex_none()
                     .size(px(20.))
                     .flex()
@@ -1069,7 +1071,7 @@ pub fn render(
             );
         }
         if drag.reorder.is_some() {
-            row = movable_row(row, place.title.clone(), drag, order, cx);
+            row = movable_row(row, said, drag, order, cx);
         }
         row = takes_drops(row, &place.location, gives.is_some(), cx);
         column = column.child(row);
@@ -1314,7 +1316,9 @@ fn wrap_pills(
 /// to stand where another was (a server's, once the mount above it is let
 /// go of) is not given that one's hover or tooltip.
 fn row_key(place: &Place) -> u64 {
-    crate::elements::key_of((&place.group, &place.location, &place.key, &place.title))
+    // By its English, which no language chosen changes.
+    let title = place.title.english();
+    crate::elements::key_of((&place.group, &place.location, &place.key, &title))
 }
 
 /// A tag's place as its chip (`tags::place_chip`), as the views draw tags:
@@ -1336,14 +1340,10 @@ fn pill(
     let open = open_invocation(place);
     let tab = open_in_tab(place);
     // A tag in a category says its own name; the tooltip says where it is.
-    let title: SharedString = skwir_core::metadata::tag_leaf(&place.title)
-        .to_owned()
-        .into();
-    let tip: SharedString = format!(
-        "{} · Shift+click: only what has it too · Alt+click: in this folder",
-        place.title
-    )
-    .into();
+    let said = place.title.say();
+    let title: SharedString = skwir_core::metadata::tag_leaf(&said).to_owned().into();
+    let tip: SharedString =
+        format!("{said} · Shift+click: only what has it too · Alt+click: in this folder").into();
     crate::tags::place_chip(color, !place.suggested, &theme)
         .id(crate::elements::known_by("place", i))
         .max_w_full()
@@ -1628,19 +1628,21 @@ impl Shell {
             Role::Kept | Role::Suggested => arranged.place.rename.clone(),
             Role::Offered => {
                 let place = &arranged.place;
+                // Its names as the sidebar says them: the field shows one.
+                let said = place.title.say();
                 let own = self
                     .app
                     .registry
                     .places
                     .find(|p| p.group == place.group && p.key() == place.key())
-                    .map_or_else(|| place.title.clone(), |p| p.title);
+                    .map_or_else(|| said.clone(), |p| p.title.say());
                 Some(Invocation::with_args(
                     "ui.ask",
                     &serde_json::json!({
-                        "title": format!("Rename “{}” in the sidebar", place.title),
+                        "title": format!("Rename “{said}” in the sidebar"),
                         "accept": "Rename",
                         "placeholder": format!("Name (empty: “{own}”)"),
-                        "text": place.title,
+                        "text": said,
                         "command": PLACE_COMMAND,
                         "args": { "group": place.group, "key": place.key() },
                         "field": "title",
@@ -1714,7 +1716,7 @@ impl Shell {
         // how (Rename…, Remove from Bookmarks).
         let kept = format!(
             "“{}” is kept in the sidebar by its owner: its menu arranges it",
-            arranged.place.title
+            arranged.place.title.say()
         );
         if let Some(hidden) = args.get("hidden").and_then(serde_json::Value::as_bool) {
             if !arranged.role.hides() {
@@ -1730,7 +1732,7 @@ impl Shell {
             if hidden && arranged.shown {
                 self.toast(
                     crate::toast::Toast {
-                        text: format!("Hid “{}” from the sidebar", arranged.place.title),
+                        text: format!("Hid “{}” from the sidebar", arranged.place.title.say()),
                         tone: crate::toast::Tone::Info,
                         actions: vec![crate::toast::Action {
                             label: "Undo".into(),
@@ -1762,12 +1764,14 @@ impl Shell {
                 return;
             }
             let title = title.as_str().map(str::trim).unwrap_or_default();
+            // Its own name as the sidebar says it: given back, it is the
+            // user's name no more.
             let own = self
                 .app
                 .registry
                 .places
                 .find(|p| p.group == group && p.key() == key)
-                .map(|p| p.title)
+                .map(|p| p.title.say())
                 .unwrap_or_default();
             let titles = &mut self
                 .sidebar_sections
@@ -2075,7 +2079,7 @@ impl Shell {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let item = |title: String, args: serde_json::Value, order: i32, icon: Option<&str>| {
+        let item = |title: Words, args: serde_json::Value, order: i32, icon: Option<&str>| {
             skwir_core::registry::MenuItem {
                 menu: "sidebar".into(),
                 title,
@@ -2130,7 +2134,7 @@ impl Shell {
             }
             // Its places the user can hide, checked while shown: those
             // hidden come back from here.
-            let place_item = |title: String, args: serde_json::Value, order, icon: Option<&str>| {
+            let place_item = |title: Words, args: serde_json::Value, order, icon: Option<&str>| {
                 skwir_core::registry::MenuItem {
                     command: Invocation::with_args(PLACE_COMMAND, &args),
                     ..item(title, serde_json::Value::Null, order, icon)
@@ -2164,7 +2168,7 @@ impl Shell {
             }
             if sections.places.get(group).is_some_and(|a| !a.is_empty()) {
                 items.push(place_item(
-                    format!("Reset {}", group_title(group)),
+                    format!("Reset {}", group_title(group)).into(),
                     serde_json::json!({ "group": group, "reset": true }),
                     290,
                     Some("revert"),
@@ -2194,7 +2198,7 @@ impl Shell {
             // of the menu's own (6xx).
             items.push(
                 item(
-                    group_title(g),
+                    group_title(g).into(),
                     serde_json::json!({ "group": g, "hidden": !hidden }),
                     600 + i32::try_from(i).unwrap_or_default(),
                     None,
@@ -2308,7 +2312,7 @@ mod tests {
         arranged
             .iter()
             .filter(|a| a.shown)
-            .map(|a| a.place.title.clone())
+            .map(|a| a.place.title.english())
             .collect()
     }
 
@@ -2415,7 +2419,7 @@ mod tests {
         let moves = |title: &str| {
             arranged
                 .iter()
-                .find(|a| a.place.title == title)
+                .find(|a| a.place.title.english() == title)
                 .and_then(|a| a.moves.as_ref())
                 .map(|m| m.command.name.to_string())
         };

@@ -348,7 +348,13 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
                     ),
                 })
                 .collect(),
-            ..Place::new(GROUP, r.tag.clone(), "", Location::parse(&r.location))
+            // A tag's name is as the user wrote it.
+            ..Place::new(
+                GROUP,
+                skwir_core::words::Words::as_written(r.tag.clone()),
+                "",
+                Location::parse(&r.location),
+            )
         }
     });
     // Last, every tag: the home folder's tags, browsed as folders; with

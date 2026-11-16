@@ -1065,7 +1065,13 @@ mod tests {
         app.plugins.set_enabled("shelf", false, &app);
         assert!(app.commands.get("shelf.add").is_none());
         assert!(app.provider("shelf").is_none());
-        assert!(app.registry.places.all().iter().all(|p| p.title != "Shelf"));
+        assert!(
+            app.registry
+                .places
+                .all()
+                .iter()
+                .all(|p| p.title.english() != "Shelf")
+        );
         assert!(
             app.registry
                 .keymap

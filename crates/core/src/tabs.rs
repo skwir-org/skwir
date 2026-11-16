@@ -245,7 +245,7 @@ impl App {
     /// the scheme.
     pub fn location_title(&self, location: &Location) -> String {
         if let Some(title) = self.registry.place_title(location) {
-            return title;
+            return title.say();
         }
         if let Some(path) = location.path() {
             return path.file_name().map_or_else(

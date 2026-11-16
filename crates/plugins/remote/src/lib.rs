@@ -73,6 +73,7 @@ use skwir_core::plugin::Plugin;
 use skwir_core::registry::Place;
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connector, Offered, Password, Recognised, Server};
@@ -1507,15 +1508,17 @@ impl Remotes {
                 }),
             });
             let mut place = match m.recognised.device {
+                // A server's or a device's label is as the system or the
+                // user wrote it.
                 Some(device) => Place::new(
                     DEVICES,
-                    &m.recognised.label,
+                    Words::as_written(m.recognised.label.clone()),
                     device.icon(),
                     Location::from_path(point),
                 ),
                 None => Place::new(
                     GROUP,
-                    &m.recognised.label,
+                    Words::as_written(m.recognised.label.clone()),
                     "folder-remote",
                     Location::from_path(point),
                 ),
@@ -1605,7 +1608,7 @@ impl Remotes {
             }
             let mut place = Place::new(
                 DEVICES,
-                &offered.name,
+                Words::as_written(offered.name.clone()),
                 offered.device.icon(),
                 offered.address.location(),
             );
@@ -1624,7 +1627,12 @@ impl Remotes {
                 continue;
             }
             let location = server.address.location();
-            let mut place = Place::new(GROUP, &server.label, "network-server", location);
+            let mut place = Place::new(
+                GROUP,
+                Words::as_written(server.label.clone()),
+                "network-server",
+                location,
+            );
             place.key = Some(format!("remote:{}", server.address));
             place.busy = state.busy.get(&server.address.to_string()).cloned();
             place.menu.extend(forget_item(&server.address, &remembered));

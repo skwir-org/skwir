@@ -162,7 +162,7 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
         .find(|p| p.group == "network" && p.location == Location::from_path(&remote.point))
         .expect("a Network place");
     assert_eq!(
-        place.title,
+        place.title.english(),
         format!("127.0.0.1:{}", served.port),
         "named by its server, its port not the usual one"
     );
@@ -3170,11 +3170,11 @@ fn gvfs_offers_a_phone_opens_it_and_lets_go_of_it() {
     let address = Address::of_location(&offered.location).unwrap();
     assert!(offered.unavailable.is_some() && offered.eject.is_none());
     assert_ne!(
-        offered.title,
+        offered.title.english(),
         address.label(),
         "named by its volume, not its serial"
     );
-    assert_eq!(remotes.label_of(&address), offered.title);
+    assert_eq!(remotes.label_of(&address), offered.title.english());
 
     // Opened: its mount, the same place, with Eject.
     let point = remotes
@@ -3190,8 +3190,8 @@ fn gvfs_offers_a_phone_opens_it_and_lets_go_of_it() {
     });
     let mounted = phone().unwrap();
     assert_eq!(
-        (mounted.title.as_str(), mounted.key.as_deref()),
-        (offered.title.as_str(), offered.key.as_deref()),
+        (mounted.title.english(), mounted.key.as_deref()),
+        (offered.title.english(), offered.key.as_deref()),
         "the same place mounted or not"
     );
     assert!(mounted.eject.is_some() && mounted.unavailable.is_none());
@@ -3279,7 +3279,7 @@ fn kmtpd_opens_a_phone_kde_holds_through_skwir_s_helper() {
     let offered = phone().unwrap();
     let address = Address::of_location(&offered.location).unwrap();
     assert_ne!(
-        offered.title,
+        offered.title.english(),
         address.label(),
         "named by kmtpd, not its serial"
     );
@@ -4465,7 +4465,10 @@ fn rclone_asks_a_server_s_password_once_and_keeps_it_when_told() {
         app.registry
             .places
             .find(|p| {
-                p.group == "network" && p.menu.iter().any(|item| item.title == "Forget Password")
+                p.group == "network"
+                    && p.menu
+                        .iter()
+                        .any(|item| item.title.english() == "Forget Password")
             })
             .is_some()
     });

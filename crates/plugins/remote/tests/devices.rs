@@ -330,7 +330,7 @@ fn until(app: &App, what: &str, done: impl Fn(&[Place]) -> bool) -> Vec<Place> {
 }
 
 fn found(listed: &[Place], name: &str) -> bool {
-    listed.iter().any(|p| p.title == name)
+    listed.iter().any(|p| p.title.english() == name)
 }
 
 #[test]
@@ -380,7 +380,10 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
     // Plugged in before: listed by its volume's name, at its address, not
     // mounted until opened.
     let listed = until(&app, "the phone plugged in", |d| found(d, "Example Phone"));
-    let place = listed.iter().find(|p| p.title == "Example Phone").unwrap();
+    let place = listed
+        .iter()
+        .find(|p| p.title.english() == "Example Phone")
+        .unwrap();
     assert_eq!(
         place.location,
         Address::parse(phone.uri).unwrap().location()
@@ -409,7 +412,10 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
     let (whole_after, mounts_after) = remotes.refreshes();
     assert_eq!(whole_after, whole, "no whole refresh for a device");
     assert!(mounts_after > mounts, "the mounts read again");
-    let place = listed.iter().find(|p| p.title == "Example Camera").unwrap();
+    let place = listed
+        .iter()
+        .find(|p| p.title.english() == "Example Camera")
+        .unwrap();
     assert_eq!(place.icon.as_deref(), Some("camera-photo"));
     assert_eq!(
         place.location.to_string(),

@@ -69,7 +69,7 @@ fn sidebar(app: &App) -> Vec<String> {
         .all()
         .into_iter()
         .filter(|p| p.group == "tags" && p.color.is_some())
-        .map(|p| p.title)
+        .map(|p| p.title.english())
         .collect()
 }
 
@@ -136,7 +136,7 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     let job = app
         .registry
         .places
-        .find(|p| p.group == "tags" && p.title == "Job")
+        .find(|p| p.group == "tags" && p.title.english() == "Job")
         .unwrap();
     // It opens the tag's folder of the home folder (ADR-032).
     assert_eq!(job.location.to_string(), "tags:/Job");
@@ -210,7 +210,7 @@ fn pins(app: &App) -> Vec<(String, bool)> {
         .filter(|p| p.group == "tags" && p.color.is_some())
         .map(|p| {
             (
-                p.title,
+                p.title.english(),
                 !p.suggested && p.forget.is_some() && p.reorder.is_some(),
             )
         })
@@ -274,7 +274,11 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     .unwrap();
     until_sidebar(&[("Été", true), ("x", true)]);
     // Moved as the sidebar moves it: its reorder command, before another.
-    let x = app.registry.places.find(|p| p.title == "x").unwrap();
+    let x = app
+        .registry
+        .places
+        .find(|p| p.title.english() == "x")
+        .unwrap();
     let mut moved = x.reorder.unwrap().command;
     moved.args["before"] = serde_json::json!("Été");
     app.dispatch(&moved).unwrap();
@@ -294,7 +298,7 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     let forget = app
         .registry
         .places
-        .find(|p| p.title == "Été")
+        .find(|p| p.title.english() == "Été")
         .unwrap()
         .forget
         .unwrap();

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::Invocation;
 use crate::location::Location;
+use crate::words::Words;
 
 /// Owners whose contributions are refused: disabled plugins. Shared by
 /// every list of a [`Registry`], so a plugin's worker that publishes after
@@ -249,7 +250,10 @@ pub struct PanelSpec {
 /// A sidebar entry.
 #[derive(Clone, Debug, Serialize)]
 pub struct Place {
-    pub title: String,
+    /// What the sidebar calls it, said where it is drawn; in English to
+    /// agents and scripts (ADR-139, 7). What the user or the system named
+    /// (a bookmark, a volume, a tag) is as written.
+    pub title: Words,
     pub location: Location,
     pub icon: Option<String>,
     /// Sidebar section, e.g. `places`, `bookmarks`, `searches`, `tags`, `devices`.
@@ -334,7 +338,7 @@ impl Place {
     /// that says more sets it beside (`Place { eject, ..Place::new(…) }`).
     pub fn new(
         group: impl Into<String>,
-        title: impl Into<String>,
+        title: impl Into<Words>,
         icon: &str,
         location: Location,
     ) -> Self {
@@ -534,7 +538,9 @@ pub struct MenuItem {
     /// `network`; first, ordered -999 to -1, a group of their own before
     /// Fold), or a plugin-defined menu id.
     pub menu: String,
-    pub title: String,
+    /// What its row says, said where it is drawn; in English to agents
+    /// and scripts (ADR-139, 7).
+    pub title: Words,
     pub command: Invocation,
     pub when: Option<String>,
     pub order: i32,
@@ -694,7 +700,7 @@ impl MenuItem {
     /// none), at `order`, running `command`: shown wherever its menu is.
     pub fn new(
         menu: &str,
-        title: impl Into<String>,
+        title: impl Into<Words>,
         icon: &str,
         order: i32,
         command: Invocation,
@@ -1009,13 +1015,16 @@ impl Registry {
     }
 
     /// What `location` is called as a sidebar place: the name the user
-    /// gave it, else its owner's (`Place::title`); `None` for a location
-    /// the sidebar does not show.
-    pub fn place_title(&self, location: &Location) -> Option<String> {
+    /// gave it (as written), else its owner's (`Place::title`); `None` for
+    /// a location the sidebar does not show.
+    pub fn place_title(&self, location: &Location) -> Option<Words> {
         let place = self
             .places
             .find(|p| p.is_its_location() && p.location.same_place(location))?;
-        Some(self.user_title(&place).unwrap_or(place.title))
+        Some(
+            self.user_title(&place)
+                .map_or(place.title, Words::as_written),
+        )
     }
 
     /// The name the user gave `place` in the sidebar, if they renamed it.

@@ -2093,7 +2093,7 @@ pub fn blocks(specs: &[&SettingSpec]) -> Vec<Block> {
     // Each run by its section's words, as its caption says them.
     let runs: Vec<(String, Vec<usize>)> = runs
         .into_iter()
-        .map(|(_, rows)| (specs[rows[0]].section_title.clone(), rows))
+        .map(|(_, rows)| (specs[rows[0]].section_title.say(), rows))
         .collect();
     // What a line is made of; nothing for what a table cannot hold: a
     // section without a title, a list of records (its records are rows of
@@ -2106,7 +2106,7 @@ pub fn blocks(specs: &[&SettingSpec]) -> Vec<Block> {
             .map(|&at| {
                 let spec = specs[at];
                 (spec.kind != SettingKind::Records && spec.under.is_empty())
-                    .then(|| (spec.title.clone(), spec.kind))
+                    .then(|| (spec.title.say(), spec.kind))
             })
             .collect()
     };
@@ -3043,6 +3043,11 @@ impl SettingsView {
             let live = self.live(&spec);
             let row = match previous.remove(&spec.key) {
                 Some(mut row) if row.spec.kind == spec.kind => {
+                    // Its field named as its title is said now (a language
+                    // chosen since).
+                    if let Some(input) = &row.input {
+                        input.update(cx, |input, _| input.set_label(spec.title.say()));
+                    }
                     if !self.pending(&spec.key) {
                         row.value.clone_from(&live);
                         if let Some(input) = &row.input
@@ -3091,7 +3096,7 @@ impl SettingsView {
             let input = cx.new(|cx| TextInput::new(placeholder, cx));
             input.update(cx, |input, cx| {
                 input.set_text(value.clone(), cx);
-                input.set_label(spec.title.clone());
+                input.set_label(spec.title.say());
             });
             let key = spec.key.clone();
             subscriptions.push(cx.subscribe_in(
@@ -4466,8 +4471,9 @@ mod tests {
         let sections = |specs: &[SettingSpec], at: &Page| -> Vec<String> {
             let mut seen: Vec<String> = Vec::new();
             for spec in specs.iter().filter(|spec| Page::of_spec(spec) == *at) {
-                if seen.last() != Some(&spec.section_title) {
-                    seen.push(spec.section_title.clone());
+                let title = spec.section_title.english();
+                if seen.last() != Some(&title) {
+                    seen.push(title);
                 }
             }
             seen
@@ -4795,9 +4801,10 @@ mod tests {
     fn a_text_size_says_what_100_percent_is_in_the_sentence_its_row_shows() {
         for part in crate::sizes::Part::ALL {
             let spec = super::text_size_spec(part);
-            let (shown, more) = super::first_sentence(&spec.description);
+            let description = spec.description.english();
+            let (shown, more) = super::first_sentence(&description);
             assert!(shown.contains("; 100 % is "), "{shown}");
-            assert!(more, "the rest in its tooltip: {}", spec.description);
+            assert!(more, "the rest in its tooltip: {description}");
         }
     }
 
