@@ -11,6 +11,8 @@ use std::sync::Weak;
 use skwir_core::app::App;
 use skwir_core::metadata::{TAG_COLOR_SETTING, same_tag, tag_under};
 use skwir_core::op::{Change, Operation, StepContext, StepStatus, Tenses};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::Sidebar;
 use crate::sidebar::{self, PINNED};
@@ -167,27 +169,40 @@ fn write(app: &App, ctx: &Ctx, to: &Settings) -> anyhow::Result<Settings> {
             toml::Value::Array(fields.iter().cloned().map(toml::Value::String).collect()),
         );
     }
-    app.settings
-        .save()
-        .map_err(|e| anyhow::anyhow!("the pinned tags were not saved: {e:#}"))?;
+    app.settings.save().map_err(|e| {
+        e.context(words!(
+            tags_pins_not_saved = "the pinned tags were not saved"
+        ))
+    })?;
     drop(saving);
     ctx.sidebar.publish(app);
     Ok(before)
 }
 
-fn change(root: &std::path::Path, will: String, did: String, already: String) -> Change {
+fn change(root: &std::path::Path, will: Words, did: Words, already: Words) -> Change {
     Change::Metadata {
         path: root.to_path_buf(),
         field: PINNED.into(),
         words: Some(Tenses {
-            will: will.into(),
-            did: did.into(),
-            already: Some(already.into()),
+            will,
+            did,
+            already: Some(already),
         }),
     }
 }
 
+/// What a step says when the plugin that made it is off.
+fn plugin_off() -> Words {
+    words!(
+        tags_plugin_off = "the Tags plugin is off",
+        note = "Why a step of a plan about tags' pins and colors cannot run."
+    )
+}
+
 /// “a”, “b”.
+///
+/// Transitional: a list is joined here until words take a list of names
+/// that each language joins its own way (PLAN.md, ADR-139 step F).
 fn quoted(tags: &[String]) -> String {
     tags.iter()
         .map(|t| format!("“{t}”"))
@@ -270,30 +285,89 @@ impl Operation for Follow {
             .moves
             .or_else(|| self.what_moves())
             .unwrap_or((true, true));
+        let named = |tag: &String| Name(tag.clone());
         match &self.to {
-            Some(to) if pins && !colors => change(
+            Some(new) if pins && !colors => change(
                 &self.root,
-                format!("pin “{to}” where {from} was"),
-                format!("pinned “{to}” where {from} was"),
-                format!("“{to}” was already pinned where {from} was"),
+                words!(
+                    tags_follow_pin_will = "pin { $to } where { $from } was",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas."
+                ),
+                words!(
+                    tags_follow_pin_did = "pinned { $to } where { $from } was",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "As tags_follow_pin_will, done."
+                ),
+                words!(
+                    tags_follow_pin_already = "{ $to } was already pinned where { $from } was",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "As tags_follow_pin_will, found done already."
+                ),
             ),
-            Some(to) if colors && !pins => change(
+            Some(new) if colors && !pins => change(
                 &self.root,
-                format!("give “{to}” the color {from} had"),
-                format!("gave “{to}” the color {from} had"),
-                format!("“{to}” already had the color {from} had"),
+                words!(
+                    tags_follow_color_will = "give { $to } the color { $from } had",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas."
+                ),
+                words!(
+                    tags_follow_color_did = "gave { $to } the color { $from } had",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "As tags_follow_color_will, done."
+                ),
+                words!(
+                    tags_follow_color_already = "{ $to } already had the color { $from } had",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "As tags_follow_color_will, found done already."
+                ),
             ),
-            Some(to) => change(
+            Some(new) => change(
                 &self.root,
-                format!("keep “{to}” pinned and colored as {from} were"),
-                format!("kept “{to}” pinned and colored as {from} were"),
-                format!("“{to}” was already pinned and colored as {from} were"),
+                words!(
+                    tags_follow_both_will = "keep { $to } pinned and colored as { $from } were",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas."
+                ),
+                words!(
+                    tags_follow_both_did = "kept { $to } pinned and colored as { $from } were",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "As tags_follow_both_will, done."
+                ),
+                words!(
+                    tags_follow_both_already =
+                        "{ $to } was already pinned and colored as { $from } were",
+                    to = named(new),
+                    from = from.as_str(),
+                    note = "As tags_follow_both_will, found done already."
+                ),
             ),
             None => change(
                 &self.root,
-                format!("unpin {from}"),
-                format!("unpinned {from}"),
-                format!("{from} was already unpinned"),
+                words!(
+                    tags_follow_unpin_will = "unpin { $from }",
+                    from = from.as_str(),
+                    note = "A step of removing tags from every file. from: the tags, each quoted, joined by commas."
+                ),
+                words!(
+                    tags_follow_unpin_did = "unpinned { $from }",
+                    from = from.as_str(),
+                    note = "As tags_follow_unpin_will, done."
+                ),
+                words!(
+                    tags_follow_unpin_already = "{ $from } was already unpinned",
+                    from = from.as_str(),
+                    note = "As tags_follow_unpin_will, found done already."
+                ),
             ),
         }
     }
@@ -301,7 +375,7 @@ impl Operation for Follow {
         let app = self.ctx.as_ref().and_then(|c| c.app.upgrade());
         match app {
             None => StepStatus::Conflict {
-                reason: "the Tags plugin is off".into(),
+                reason: plugin_off().say(),
             },
             Some(app) if self.target(&app).is_none() => StepStatus::AlreadyDone,
             Some(_) => StepStatus::Pending { reversible: true },
@@ -311,11 +385,11 @@ impl Operation for Follow {
         let ctx = self
             .ctx
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the Tags plugin is off"))?;
+            .ok_or_else(|| anyhow::Error::from(plugin_off()))?;
         let app = ctx
             .app
             .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("the Tags plugin is off"))?;
+            .ok_or_else(|| anyhow::Error::from(plugin_off()))?;
         let Some(target) = self.target(&app) else {
             return Ok(None);
         };
@@ -359,9 +433,18 @@ impl Operation for Restore {
     fn describe(&self) -> Change {
         change(
             &self.root,
-            "put the pinned tags and their colors back".into(),
-            "put the pinned tags and their colors back".into(),
-            "the pinned tags and their colors were already back".into(),
+            words!(
+                tags_restore_will = "put the pinned tags and their colors back",
+                note = "A step that undoes what renaming tags did to their pins and colors."
+            ),
+            words!(
+                tags_restore_did = "put the pinned tags and their colors back",
+                note = "As tags_restore_will, done."
+            ),
+            words!(
+                tags_restore_already = "the pinned tags and their colors were already back",
+                note = "As tags_restore_will, found done already."
+            ),
         )
     }
     fn check(&self, _: &StepContext) -> StepStatus {
@@ -369,7 +452,7 @@ impl Operation for Restore {
             StepStatus::Pending { reversible: true }
         } else {
             StepStatus::Conflict {
-                reason: "the Tags plugin is off".into(),
+                reason: plugin_off().say(),
             }
         }
     }
@@ -377,11 +460,11 @@ impl Operation for Restore {
         let ctx = self
             .ctx
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the Tags plugin is off"))?;
+            .ok_or_else(|| anyhow::Error::from(plugin_off()))?;
         let app = ctx
             .app
             .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("the Tags plugin is off"))?;
+            .ok_or_else(|| anyhow::Error::from(plugin_off()))?;
         let before = write(&app, ctx, &self.settings)?;
         Ok(Some(Box::new(Restore {
             settings: before,

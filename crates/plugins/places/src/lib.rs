@@ -14,7 +14,8 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{Keeper, MenuItem, Place, Reorder};
 use skwir_core::scheduler::Priority;
-use skwir_core::words::Words;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::places::{BookmarkEdit, Bookmarked, Marked, address_name};
 
@@ -127,7 +128,7 @@ struct Busy {
     /// mount is gone: the kernel takes a mount out of the list when the
     /// unmount begins, before it has written what it still had to.
     device: Option<Location>,
-    what: &'static str,
+    what: Words,
 }
 
 /// Whether the place at `place` is the one at `location`, or the volume
@@ -150,7 +151,7 @@ fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
                 is_place(&place.location, &b.location, cleartext)
                     || b.device.as_ref() == Some(&place.location)
             })
-            .map(|b| b.what.to_owned());
+            .map(|b| b.what.say());
     }
 }
 
@@ -171,7 +172,10 @@ fn offer_forget(places: &mut [Place], remembered: &[String]) {
         if remembered.iter().any(|r| r == uuid) {
             place.menu.push(MenuItem::new(
                 "place",
-                "Forget Passphrase",
+                words!(
+                    places_forget_passphrase_menu = "Forget Passphrase",
+                    note = "A menu item of an encrypted volume's place in the sidebar."
+                ),
                 "",
                 530,
                 Invocation::new(FORGET).with("volume", uuid),
@@ -257,6 +261,14 @@ fn volume_key(identity: &skwir_platform::places::Identity, root: &Path) -> Optio
     })
 }
 
+/// What the place of a locked volume says when pointed at.
+fn locked() -> Words {
+    words!(
+        places_locked = "Locked. Click to unlock and open it.",
+        note = "The tooltip of a locked volume's place in the sidebar."
+    )
+}
+
 /// A present but unmounted volume as a sidebar entry: activating it mounts
 /// it, unlocking it first when it is locked (`places.open_locked`). One
 /// udisks says not to show (an EFI partition) is offered hidden, as is a
@@ -270,17 +282,27 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
         },
         None => skwir_platform::places::identity(&volume.device),
     };
+    // Its label is as the system or the user wrote it; Skwir names a
+    // volume without one.
     let title = match (volume.label.is_empty(), volume.locked) {
-        (false, _) => volume.label.clone(),
-        (true, true) => format!("{} encrypted", size_label(volume.size)),
-        (true, false) => format!("{} volume", size_label(volume.size)),
+        (false, _) => Words::as_written(volume.label.clone()),
+        (true, true) => words!(
+            places_volume_encrypted = "{ $size } encrypted",
+            size = size_label(volume.size),
+            note = "A locked volume without a label, in the sidebar: its size (\"4 TB\")."
+        ),
+        (true, false) => words!(
+            places_volume_unlabelled = "{ $size } volume",
+            size = size_label(volume.size),
+            note = "A volume without a label, in the sidebar: its size (\"4 TB\")."
+        ),
     };
     let activate = if volume.locked {
         Invocation::with_args(
             "places.open_locked",
             &serde_json::json!({
                 "device": volume.device,
-                "title": title,
+                "title": title.say(),
                 "uuid": identity.uuid,
             }),
         )
@@ -291,9 +313,12 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
         )
     };
     let unavailable = if volume.locked {
-        "Locked. Click to unlock and open it."
+        locked()
     } else {
-        "Not mounted. Click to mount and open it."
+        words!(
+            places_not_mounted = "Not mounted. Click to mount and open it.",
+            note = "The tooltip of a volume's place in the sidebar that is not mounted."
+        )
     };
     let icon = if volume.locked {
         "drive-harddisk-encrypted"
@@ -304,18 +329,12 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
     };
     Place {
         activate: Some(activate),
-        unavailable: Some(unavailable.into()),
+        unavailable: Some(unavailable.say()),
         key: volume_key(&identity, Path::new("/")),
         hidden: identity.ignored.unwrap_or(volume.system),
         ..Place::new(
             skwir_core::registry::groups::DEVICES.id,
-            // Its label is as the system or the user wrote it; Skwir names
-            // a volume without one.
-            if volume.label.is_empty() {
-                Words::from(title)
-            } else {
-                Words::as_written(title)
-            },
+            title,
             icon,
             device_location(&volume.device),
         )
@@ -337,14 +356,14 @@ fn icon_for_user_dir(kind: &str) -> &'static str {
 }
 
 /// An item of a place's own menu.
-fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
+fn menu_item(title: Words, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("place", title, icon, order, command)
 }
 
 /// The menu of a folder that is not a bookmark: it can become one.
 fn folder_menu(path: &Path) -> Vec<MenuItem> {
     vec![menu_item(
-        "Add to Bookmarks",
+        words!(places_add_to_bookmarks = "Add to Bookmarks"),
         Invocation::with_args(
             "places.bookmark",
             &serde_json::json!({ "path": PathArg::from(path) }),
@@ -355,14 +374,23 @@ fn folder_menu(path: &Path) -> Vec<MenuItem> {
 }
 
 /// Asking for a bookmark's new name: its menu's Rename…, and F2. `which`
-/// names it as the command takes it (`path` or `address`).
-fn bookmark_rename(title: &str, which: &serde_json::Value, own: &str) -> Invocation {
+/// names it as the command takes it (`path` or `address`); `own` is what
+/// an empty name gives it.
+fn bookmark_rename(title: &str, which: &serde_json::Value, own: &Words) -> Invocation {
+    let asked = words!(
+        places_rename_bookmark_ask = "Rename bookmark",
+        note = "The title of the question asking a bookmark's new name."
+    );
+    let accept = words!(
+        places_rename_bookmark_accept = "Rename",
+        note = "The button that renames a bookmark."
+    );
     Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": "Rename bookmark",
-            "accept": "Rename",
-            "placeholder": format!("Name (empty: {own})"),
+            "title": asked.say(),
+            "accept": accept.say(),
+            "placeholder": own.say(),
             "text": title,
             "command": "places.rename_bookmark",
             "args": which,
@@ -393,7 +421,10 @@ pub fn scan() -> Vec<Place> {
     let mut out = Vec::new();
     if let Some(home) = skwir_platform::places::home() {
         out.push(folder(
-            "Home".into(),
+            words!(
+                places_home = "Home",
+                note = "The home folder's place in the sidebar."
+            ),
             home,
             "user-home",
             skwir_core::registry::groups::PLACES.id,
@@ -420,7 +451,10 @@ pub fn scan() -> Vec<Place> {
                     rename: Some(bookmark_rename(
                         &b.title,
                         &serde_json::json!({ "path": path }),
-                        "the folder's own",
+                        &words!(
+                            places_rename_empty_folder = "Name (empty: the folder's own)",
+                            note = "The empty field asking a folder's bookmark's new name: left empty, the bookmark shows the folder's own name."
+                        ),
                     )),
                     forget: Some(Invocation::with_args(
                         "places.unbookmark",
@@ -440,7 +474,14 @@ pub fn scan() -> Vec<Place> {
             Bookmarked::Address(b) => {
                 let which = serde_json::json!({ "address": b.address });
                 out.push(Place {
-                    rename: Some(bookmark_rename(&b.title, &which, "its address's last part")),
+                    rename: Some(bookmark_rename(
+                        &b.title,
+                        &which,
+                        &words!(
+                            places_rename_empty_address = "Name (empty: its address's last part)",
+                            note = "The empty field asking a remote folder's bookmark's new name: left empty, the bookmark shows its address's last part."
+                        ),
+                    )),
                     forget: Some(Invocation::with_args("places.unbookmark_address", &which)),
                     reorder: Some(bookmark_reorder(&Marked::Address(b.address.clone()))),
                     ..Place::new(
@@ -466,7 +507,7 @@ pub fn scan() -> Vec<Place> {
                     "places.open_locked",
                     &serde_json::json!({ "device": m.source, "title": m.label }),
                 )),
-                unavailable: Some("Locked. Click to unlock and open it.".into()),
+                unavailable: Some(locked().say()),
                 ..Place::new(
                     skwir_core::registry::groups::DEVICES.id,
                     Words::as_written(m.label),
@@ -551,19 +592,13 @@ impl Places {
     /// Say on the place at `location` what is being done to it, at once:
     /// the work runs on a worker and can take a while (udisks asks the
     /// kernel to open a container, a drive to spin up).
-    fn start_busy(&self, app: &App, location: Location, what: &'static str) {
+    fn start_busy(&self, app: &App, location: Location, what: Words) {
         self.start_busy_as(app, location, None, what);
     }
 
     /// [`Self::start_busy`], said also on the place of the volume's
     /// `device` while it is listed as one.
-    fn start_busy_as(
-        &self,
-        app: &App,
-        location: Location,
-        device: Option<Location>,
-        what: &'static str,
-    ) {
+    fn start_busy_as(&self, app: &App, location: Location, device: Option<Location>, what: Words) {
         let mut publisher = self.0.lock();
         if publisher
             .lifetime
@@ -649,8 +684,11 @@ impl Places {
                             })
                         {
                             place.unavailable = Some(
-                                "Not found. It may have moved, or be on a volume that is not mounted."
-                                    .into(),
+                                words!(
+                                    places_bookmark_missing = "Not found. It may have moved, or be on a volume that is not mounted.",
+                                    note = "The tooltip of a bookmark whose folder is not there."
+                                )
+                                .say(),
                             );
                         }
                         place
@@ -892,7 +930,8 @@ enum Unlock {
     /// The one the keyring keeps, else the user's answer, or the system's
     /// own dialog where it asks itself (`places.open_locked`, ADR-088).
     Asking {
-        title: String,
+        /// What the question calls it; `None` for "this volume".
+        title: Option<String>,
         uuid: Option<String>,
         keyring: Arc<dyn Keyring>,
     },
@@ -920,7 +959,7 @@ fn unlocked_and_mounted(
         } => {
             let volume = passphrases::Locked {
                 device,
-                title: &title,
+                title: title.as_deref(),
                 uuid: uuid.as_deref(),
             };
             match passphrases::unlock_kept_or_asked(app, &keyring, &volume, cancel, places::unlock)?
@@ -953,9 +992,15 @@ fn attach(
         app,
         location.clone(),
         if matches!(unlock, Unlock::Not) {
-            "Mounting…"
+            words!(
+                places_mounting = "Mounting…",
+                note = "A volume's place in the sidebar while it is being mounted."
+            )
         } else {
-            "Unlocking…"
+            words!(
+                places_unlocking = "Unlocking…",
+                note = "An encrypted volume's place in the sidebar while it is being unlocked."
+            )
         },
     );
     let Some(cancel) = places.lifetime() else {
@@ -971,10 +1016,7 @@ fn attach(
         match mounted {
             Ok(None) => {}
             Ok(Some(path)) => {
-                let name = path.file_name().map_or_else(
-                    || path.display().to_string(),
-                    |name| name.to_string_lossy().into_owned(),
-                );
+                let name = Name::of(&path);
                 let location = Location::from_path(&path);
                 let opened = if tab {
                     app.new_tab(Some(pane), Some(location), false).map(|_| ())
@@ -984,15 +1026,30 @@ fn attach(
                 match opened {
                     Ok(()) if tab => app.notify(
                         NotifyLevel::Info,
-                        format!("Mounted “{name}”, opened in a new tab"),
+                        words!(
+                            places_mounted_in_tab = "Mounted { $name }, opened in a new tab",
+                            name = name,
+                            note = "The volume's name: where it is mounted."
+                        ),
                     ),
-                    Ok(()) => app.notify(NotifyLevel::Info, format!("Mounted “{name}”")),
-                    Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                    Ok(()) => app.notify(
+                        NotifyLevel::Info,
+                        words!(
+                            places_mounted = "Mounted { $name }",
+                            name = name,
+                            note = "The volume's name: where it is mounted."
+                        ),
+                    ),
+                    Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
                 }
             }
             Err(error) => app.notify(
                 NotifyLevel::Error,
-                format!("The volume was not mounted: {error:#}"),
+                words!(
+                    places_not_mounted_error = "The volume was not mounted: { $error }",
+                    error = error,
+                    note = "The error: why, as the system said it."
+                ),
             ),
         }
     });
@@ -1173,7 +1230,10 @@ fn named(path: Option<PathArg>, address: Option<String>) -> anyhow::Result<Marke
     match (path, address) {
         (Some(path), _) => Ok(Marked::Folder(path.into_inner())),
         (None, Some(address)) => Ok(Marked::Address(address)),
-        (None, None) => anyhow::bail!("which bookmark? pass its path or its address"),
+        (None, None) => anyhow::bail!(words!(
+            places_which_bookmark = "which bookmark? pass its path or its address",
+            note = "An error a script or an agent reads when it names no bookmark."
+        )),
     }
 }
 
@@ -1227,10 +1287,17 @@ fn target(app: &App, args: TargetArgs) -> anyhow::Result<PathBuf> {
             [] => {}
             [one] => {
                 let path = one.resolve()?;
-                anyhow::ensure!(path.is_dir(), "only folders can be bookmarked");
+                anyhow::ensure!(
+                    path.is_dir(),
+                    words!(places_only_folders = "only folders can be bookmarked")
+                );
                 return Ok(path);
             }
-            _ => anyhow::bail!("select one folder"),
+            _ => anyhow::bail!(words!(
+                places_select_one_folder = "select one folder",
+                note =
+                    "An error when several files are selected and one folder is to be bookmarked."
+            )),
         }
     }
     app.pane_dir(pane)
@@ -1301,36 +1368,48 @@ fn one_line(title: Option<&str>) -> Option<String> {
 
 /// What an edit did, in a sentence, or what it found when it did nothing.
 /// `shown` is the bookmark's label before the edit, when it had one.
-fn describe(edit: &BookmarkEdit, shown: Option<&str>, done: bool) -> Option<String> {
+fn describe(edit: &BookmarkEdit, shown: Option<&str>, done: bool) -> Option<Words> {
     let own = || {
         edit.path().map_or_else(
             || edit.address().map(address_name).unwrap_or_default(),
             name_of,
         )
     };
-    let before = || shown.map_or_else(own, str::to_owned);
+    let before = || Name(shown.map_or_else(own, str::to_owned));
     Some(match (edit, done) {
         (BookmarkEdit::Add { title, .. } | BookmarkEdit::AddAddress { title, .. }, true) => {
-            format!(
-                "Bookmarked “{}”",
-                one_line(title.as_deref()).unwrap_or_else(own)
+            words!(
+                places_bookmarked = "Bookmarked { $name }",
+                name = Name(one_line(title.as_deref()).unwrap_or_else(own)),
+                note = "The bookmark's name, as the sidebar shows it."
             )
         }
-        (BookmarkEdit::Add { .. } | BookmarkEdit::AddAddress { .. }, false) => {
-            format!("“{}” is already bookmarked", before())
-        }
-        (BookmarkEdit::Remove { .. } | BookmarkEdit::RemoveAddress { .. }, true) => {
-            format!("Removed “{}” from bookmarks", before())
-        }
-        (BookmarkEdit::Remove { .. } | BookmarkEdit::RemoveAddress { .. }, false) => {
-            format!("“{}” is not bookmarked", own())
-        }
-        (BookmarkEdit::Rename { title, .. }, true) => format!(
-            "Renamed bookmark “{}” to “{}”",
-            before(),
-            one_line(title.as_deref()).unwrap_or_else(own)
+        (BookmarkEdit::Add { .. } | BookmarkEdit::AddAddress { .. }, false) => words!(
+            places_already_bookmarked = "{ $name } is already bookmarked",
+            name = before(),
+            note = "The bookmark's name, as the sidebar shows it."
         ),
-        (BookmarkEdit::Move { .. }, true) => format!("Moved bookmark “{}”", before()),
+        (BookmarkEdit::Remove { .. } | BookmarkEdit::RemoveAddress { .. }, true) => words!(
+            places_unbookmarked = "Removed { $name } from bookmarks",
+            name = before(),
+            note = "The bookmark's name, as the sidebar showed it."
+        ),
+        (BookmarkEdit::Remove { .. } | BookmarkEdit::RemoveAddress { .. }, false) => words!(
+            places_not_bookmarked = "{ $name } is not bookmarked",
+            name = Name(own()),
+            note = "The folder's name, or the last part of a remote folder's address."
+        ),
+        (BookmarkEdit::Rename { title, .. }, true) => words!(
+            places_bookmark_renamed = "Renamed bookmark { $name } to { $to }",
+            name = before(),
+            to = Name(one_line(title.as_deref()).unwrap_or_else(own)),
+            note = "The bookmark's name before, and the one it shows now."
+        ),
+        (BookmarkEdit::Move { .. }, true) => words!(
+            places_bookmark_moved = "Moved bookmark { $name }",
+            name = before(),
+            note = "The bookmark's name, moved among the sidebar's bookmarks."
+        ),
         // Renamed to its own name, dropped where it was: nothing to say.
         (BookmarkEdit::Rename { .. } | BookmarkEdit::Move { .. }, false) => return None,
     })
@@ -1372,7 +1451,11 @@ impl Places {
             if let Err(error) = this.apply(app, &edit, undo, &watcher, unkept.as_deref()) {
                 app.notify(
                     NotifyLevel::Error,
-                    format!("The bookmarks were not changed: {error:#}"),
+                    words!(
+                        places_bookmarks_not_changed = "The bookmarks were not changed: { $error }",
+                        error = error,
+                        note = "The error: why the bookmarks file was not written."
+                    ),
                 );
             }
         });
@@ -1393,10 +1476,10 @@ impl Places {
             && !undo
             && !path.is_dir()
         {
-            anyhow::bail!(
-                "“{}” is not a folder: only folders can be bookmarked",
-                name_of(path)
-            );
+            anyhow::bail!(words!(
+                places_not_a_folder = "{ $name } is not a folder: only folders can be bookmarked",
+                name = Name::of(path)
+            ));
         }
         let shown = match edit.address() {
             Some(address) => skwir_platform::places::remote_bookmarks()
@@ -1409,9 +1492,14 @@ impl Places {
                 .map(|b| b.title),
         };
         // The bookmark is the folder alone: its filter is said to be left.
-        let said = |text: String| match unkept {
-            Some(filter) => format!("{text}; its filter “{filter}” is not kept with it"),
-            None => text,
+        let said = |done: Words| match unkept {
+            Some(filter) => words!(
+                places_filter_not_kept = "{ $done }; its filter “{ $filter }” is not kept with it",
+                done = done,
+                filter = filter,
+                note = "What was done to a bookmark (a sentence of its own: \"Bookmarked “Docs”\"), then that the filter the folder was shown with, as typed, is not kept with the bookmark."
+            ),
+            None => done,
         };
         if let Some(inverse) = skwir_platform::places::edit_bookmarks(edit)? {
             watcher.watch_bookmarks();
@@ -1448,7 +1536,10 @@ impl Plugin for PlacesPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![skwir_core::plugin::Requirement::program(
             "udisksctl",
-            "Unmounting removable volumes from the sidebar",
+            words!(
+                places_needs_udisksctl = "Unmounting removable volumes from the sidebar",
+                note = "What stops working without the program udisksctl."
+            ),
         )]
     }
 
@@ -1493,10 +1584,13 @@ impl Plugin for PlacesPlugin {
         }
         app.settings
             .declare(skwir_core::settings::SettingSpec::data(
-                passphrases::REMEMBERED,
-                "The encrypted volumes whose passphrase is kept in the keyring, by their UUID",
-                toml::Value::Array(Vec::new()),
-            ));
+            passphrases::REMEMBERED,
+            words!(
+                places_remembered_setting =
+                    "The encrypted volumes whose passphrase is kept in the keyring, by their UUID"
+            ),
+            toml::Value::Array(Vec::new()),
+        ));
         self.places.populate(app);
         // A plan that ended may have filled a volume or freed room on it:
         // asked at once, not at the next rescan.
@@ -1517,8 +1611,8 @@ impl Plugin for PlacesPlugin {
                 ID,
                 Topic::Places,
                 "places.refresh",
-                "Refresh places",
-                "Re-scan user folders, bookmarks, and mounts",
+                words!(places_refresh = "Refresh places"),
+                words!(places_refresh_description = "Re-scan user folders, bookmarks, and mounts"),
                 move |_, app| {
                     places.populate(app);
                     Ok(Outcome::Done)
@@ -1530,8 +1624,11 @@ impl Plugin for PlacesPlugin {
             ID,
             Topic::Places,
             "places.bookmark",
-            "Add to bookmarks",
-            "Add a folder to the desktop's shared bookmarks (the GTK bookmarks file)",
+            words!(places_bookmark = "Add to bookmarks"),
+            words!(
+                places_bookmark_description =
+                    "Add a folder to the desktop's shared bookmarks (the GTK bookmarks file)"
+            ),
             move |args, app| {
                 let undo = args.target.undo;
                 let unkept = args.unkept;
@@ -1550,10 +1647,16 @@ impl Plugin for PlacesPlugin {
                 // Restored or deleted, a folder of the trash leaves the
                 // bookmark leading nowhere.
                 if skwir_core::op::in_trash(&path).is_some() {
-                    anyhow::bail!(
-                        "“{}” is in the trash: restore it first",
-                        path.file_name().unwrap_or(path.as_os_str()).display()
-                    );
+                    anyhow::bail!(words!(
+                        places_in_trash = "{ $name } is in the trash: restore it first",
+                        name = Name(
+                            path.file_name()
+                                .unwrap_or(path.as_os_str())
+                                .display()
+                                .to_string()
+                        ),
+                        note = "The folder asked to be bookmarked."
+                    ));
                 }
                 let edit = BookmarkEdit::Add {
                     path,
@@ -1569,8 +1672,10 @@ impl Plugin for PlacesPlugin {
             ID,
             Topic::Places,
             "places.unbookmark",
-            "Remove from bookmarks",
-            "Remove a folder from the desktop's shared bookmarks; the folder stays where it is",
+            words!(places_unbookmark = "Remove from bookmarks"),
+            words!(
+                places_unbookmark_description = "Remove a folder from the desktop's shared bookmarks; the folder stays where it is"
+            ),
             move |args, app| {
                 let undo = args.undo;
                 let path = target(app, args)?;
@@ -1583,8 +1688,10 @@ impl Plugin for PlacesPlugin {
             ID,
             Topic::Places,
             "places.bookmark_address",
-            "Bookmark an address",
-            "Add a remote folder's address (sftp://, smb://…) to the desktop's shared bookmarks",
+            words!(places_bookmark_address = "Bookmark an address"),
+            words!(
+                places_bookmark_address_description = "Add a remote folder's address (sftp://, smb://…) to the desktop's shared bookmarks"
+            ),
             move |args, app| {
                 let edit = BookmarkEdit::AddAddress {
                     address: args.address,
@@ -1600,8 +1707,11 @@ impl Plugin for PlacesPlugin {
             ID,
             Topic::Places,
             "places.unbookmark_address",
-            "Remove an address from bookmarks",
-            "Remove a remote folder's address from the desktop's shared bookmarks",
+            words!(places_unbookmark_address = "Remove an address from bookmarks"),
+            words!(
+                places_unbookmark_address_description =
+                    "Remove a remote folder's address from the desktop's shared bookmarks"
+            ),
             move |args, app| {
                 let edit = BookmarkEdit::RemoveAddress {
                     address: args.address,
@@ -1614,8 +1724,10 @@ impl Plugin for PlacesPlugin {
         app.commands.register::<RenameArgs, _>(
             ID, Topic::Places,
             "places.rename_bookmark",
-            "Rename bookmark",
-            "Change the name a bookmark shows in the sidebar (a folder's, or a remote folder's by its address); the folder keeps its own",
+            words!(places_rename_bookmark = "Rename bookmark"),
+            words!(
+                places_rename_bookmark_description = "Change the name a bookmark shows in the sidebar (a folder's, or a remote folder's by its address); the folder keeps its own"
+            ),
             move |args, app| {
                 let edit = BookmarkEdit::Rename {
                     mark: named(args.path, args.address)?,
@@ -1629,8 +1741,10 @@ impl Plugin for PlacesPlugin {
         app.commands.register::<MoveArgs, _>(
             ID, Topic::Places,
             "places.move_bookmark",
-            "Move bookmark",
-            "Put a bookmark (a folder's, or a remote folder's by its address) before another in the sidebar, or last",
+            words!(places_move_bookmark = "Move bookmark"),
+            words!(
+                places_move_bookmark_description = "Put a bookmark (a folder's, or a remote folder's by its address) before another in the sidebar, or last"
+            ),
             move |args, app| {
                 let edit = BookmarkEdit::Move {
                     mark: named(args.path, args.address)?,
@@ -1644,23 +1758,37 @@ impl Plugin for PlacesPlugin {
         app.commands.register::<PathArgs, _>(
             ID, Topic::Places,
             "places.unmount",
-            "Unmount volume",
-            "Detach a removable volume through udisks so it can be unplugged",
+            words!(places_unmount = "Unmount volume"),
+            words!(
+                places_unmount_description = "Detach a removable volume through udisks so it can be unplugged"
+            ),
             move |args, app| {
                 let path = args
                     .path
-                    .ok_or_else(|| anyhow::anyhow!("which volume? pass its mount point"))?;
+                    .ok_or_else(|| {
+                        anyhow::Error::from(words!(
+                            places_which_volume = "which volume? pass its mount point",
+                            note = "An error a script or an agent reads when it names no volume."
+                        ))
+                    })?;
                 let mount = skwir_platform::places::mounts()
                     .into_iter()
                     .find(|mount| mount.path == *path && mount.udisks)
-                    .ok_or_else(|| anyhow::anyhow!("not a removable volume"))?;
+                    .ok_or_else(|| {
+                        anyhow::Error::from(words!(
+                            places_not_removable = "not a removable volume"
+                        ))
+                    })?;
                 let this = places.clone();
                 let location = Location::from_path(&mount.path);
                 places.start_busy_as(
                     app,
                     location.clone(),
                     Some(device_location(&mount.source)),
-                    "Unmounting…",
+                    words!(
+                        places_unmounting = "Unmounting…",
+                        note = "A volume's place in the sidebar while it is being unmounted."
+                    ),
                 );
                 // Nothing of skwir's may hold the volume: a pane showing it
                 // goes home, the folders kept there close.
@@ -1677,9 +1805,11 @@ impl Plugin for PlacesPlugin {
                         this.populate(app);
                         app.notify(
                             NotifyLevel::Error,
-                            format!(
-                                "“{}” was not unmounted: not everything could be written to it ({error:#})",
-                                mount.label
+                            words!(
+                                places_unmount_unwritten = "{ $name } was not unmounted: not everything could be written to it ({ $error })",
+                                name = Name(mount.label.clone()),
+                                error = error,
+                                note = "The volume's label; the error: why the system could not write it."
                             ),
                         );
                         return;
@@ -1702,19 +1832,29 @@ impl Plugin for PlacesPlugin {
                     match unmounted {
                         Ok(()) => app.notify(
                             NotifyLevel::Info,
-                            format!("“{}” can be removed", mount.label),
+                            words!(
+                                places_unmounted = "{ $name } can be removed",
+                                name = Name(mount.label.clone()),
+                                note = "The volume's label: it was unmounted and can be unplugged."
+                            ),
                         ),
                         // skwir let go of it: another program has it.
                         Err(error) if skwir_platform::places::is_busy(&error) => app.notify(
                             NotifyLevel::Error,
-                            format!(
-                                "“{}” was not unmounted: another program is using it",
-                                mount.label
+                            words!(
+                                places_unmount_busy = "{ $name } was not unmounted: another program is using it",
+                                name = Name(mount.label.clone()),
+                                note = "The volume's label."
                             ),
                         ),
                         Err(error) => app.notify(
                             NotifyLevel::Error,
-                            format!("“{}” was not unmounted: {error:#}", mount.label),
+                            words!(
+                                places_unmount_failed = "{ $name } was not unmounted: { $error }",
+                                name = Name(mount.label.clone()),
+                                error = error,
+                                note = "The volume's label; the error: why, as the system said it."
+                            ),
                         ),
                     }
                 });
@@ -1726,8 +1866,8 @@ impl Plugin for PlacesPlugin {
             ID,
             Topic::Places,
             "places.mount",
-            "Mount volume",
-            "Mount a present volume through udisks and open it",
+            words!(places_mount = "Mount volume"),
+            words!(places_mount_description = "Mount a present volume through udisks and open it"),
             move |args, app| {
                 attach(&places, app, args.device, Unlock::Not, args.pane, args.tab);
                 Ok(Outcome::Done)
@@ -1737,8 +1877,10 @@ impl Plugin for PlacesPlugin {
         app.commands.register::<UnlockArgs, _>(
             ID, Topic::Places,
             "places.unlock",
-            "Unlock volume",
-            "Unlock an encrypted volume with the passphrase given, mount it and open it. The passphrase is a secret: it is handed to the system on standard input, never logged, and never kept",
+            words!(places_unlock = "Unlock volume"),
+            words!(
+                places_unlock_description = "Unlock an encrypted volume with the passphrase given, mount it and open it. The passphrase is a secret: it is handed to the system on standard input, never logged, and never kept"
+            ),
             move |args, app| {
                 attach(
                     &places,
@@ -1758,12 +1900,13 @@ impl Plugin for PlacesPlugin {
             .register::<OpenLockedArgs, _>(
                 ID, Topic::Places,
                 "places.open_locked",
-                "Unlock and open volume",
-                "Unlock an encrypted volume with the passphrase the keyring keeps for it, else the one the user types (offering to remember it), or through the system's own dialog where it asks itself; then mount it and open it",
+                words!(places_open_locked = "Unlock and open volume"),
+                words!(
+                    places_open_locked_description = "Unlock an encrypted volume with the passphrase the keyring keeps for it, else the one the user types (offering to remember it), or through the system's own dialog where it asks itself; then mount it and open it"
+                ),
                 move |args, app| {
-                    let title = args.title.unwrap_or_else(|| "this volume".to_owned());
                     let unlock = Unlock::Asking {
-                        title,
+                        title: args.title,
                         uuid: args.uuid,
                         keyring: Arc::clone(&keyring),
                     };
@@ -1776,12 +1919,14 @@ impl Plugin for PlacesPlugin {
         app.commands.register::<ForgetArgs, _>(
             ID, Topic::Places,
             "places.forget_passphrase",
-            "Forget passphrase",
-            "Remove from the keyring the passphrase Skwir keeps for an encrypted volume (never one another program kept)",
+            words!(places_forget_passphrase = "Forget passphrase"),
+            words!(
+                places_forget_passphrase_description = "Remove from the keyring the passphrase Skwir keeps for an encrypted volume (never one another program kept)"
+            ),
             move |args, app| {
                 anyhow::ensure!(
                     passphrases::remembered(app).contains(&args.volume),
-                    "Skwir keeps no passphrase for this volume"
+                    words!(places_no_passphrase_kept = "Skwir keeps no passphrase for this volume")
                 );
                 // The keyring may wait on its own window: asked from the
                 // window's thread, on a worker, which says the outcome;
@@ -1794,7 +1939,9 @@ impl Plugin for PlacesPlugin {
                     }
                     places.populate(app);
                     forgotten.map_err(|error| {
-                        anyhow::anyhow!("The passphrase was not forgotten: {error:#}")
+                        error.context(words!(
+                            places_passphrase_not_forgotten = "The passphrase was not forgotten"
+                        ))
                     })?;
                     return Ok(Outcome::Done);
                 }
@@ -1804,11 +1951,18 @@ impl Plugin for PlacesPlugin {
                     match keyring.forget(&args.volume) {
                         Ok(()) => {
                             passphrases::note(app, &args.volume, false);
-                            app.notify(NotifyLevel::Info, "The passphrase is forgotten");
+                            app.notify(
+                                NotifyLevel::Info,
+                                words!(places_passphrase_forgotten = "The passphrase is forgotten"),
+                            );
                         }
                         Err(error) => app.notify(
                             NotifyLevel::Error,
-                            format!("The passphrase was not forgotten: {error:#}"),
+                            words!(
+                                places_passphrase_not_forgotten_error = "The passphrase was not forgotten: { $error }",
+                                error = error,
+                                note = "The error: why the keyring did not forget it."
+                            ),
                         ),
                     }
                     this.populate(app);
@@ -1822,12 +1976,19 @@ impl Plugin for PlacesPlugin {
         for (title, command, when) in [
             // Not a folder of the trash, which `places.bookmark` refuses.
             (
-                "Add to Bookmarks",
+                words!(places_add_to_bookmarks = "Add to Bookmarks"),
                 Invocation::new("places.bookmark"),
                 "single dir !place !restores",
             ),
             // The folder's own menu, on its background.
-            ("Bookmark This Folder", shown(), "empty folder"),
+            (
+                words!(
+                    places_bookmark_this_folder_menu = "Bookmark This Folder",
+                    note = "A menu item on a folder's background: bookmarks the folder shown."
+                ),
+                shown(),
+                "empty folder",
+            ),
         ] {
             app.registry.menus.add(
                 ID,
@@ -1843,8 +2004,16 @@ impl Plugin for PlacesPlugin {
                 scheme: skwir_core::location::PATH_SCHEME.into(),
                 filtered: false,
                 save: shown(),
-                save_title: "Bookmark this folder".into(),
-                forget_title: "Remove from bookmarks".into(),
+                save_title: words!(
+                    places_bookmark_this_folder = "Bookmark this folder",
+                    note = "The pane's button (and Ctrl+D) that bookmarks the folder shown."
+                )
+                .say(),
+                forget_title: words!(
+                    places_unbookmark_this_folder = "Remove from bookmarks",
+                    note = "The pane's button that removes the folder shown from the bookmarks."
+                )
+                .say(),
                 keeps: None,
             },
         );
@@ -2003,7 +2172,7 @@ mod tests {
         let busy = [Busy {
             location: Location::from_path(Path::new("/run/media/example/STICK")),
             device: Some(device_location("/dev/sdz1")),
-            what: "Unmounting…",
+            what: Words::as_written("Unmounting…"),
         }];
         let volume = skwir_platform::places::Volume {
             device: "/dev/sdz1".into(),
@@ -2231,7 +2400,10 @@ mod tests {
         std::fs::write(&gate, b"").unwrap();
         let notice = next_notice(&app);
         assert!(
-            notice.text.contains("passphrase was not accepted"),
+            notice
+                .text
+                .english()
+                .contains("passphrase was not accepted"),
             "{}",
             notice.text
         );
@@ -2254,7 +2426,11 @@ mod tests {
         // has run again.
         std::fs::write(&mount_gate, b"").unwrap();
         let notice = next_notice(&app);
-        assert!(notice.text.starts_with("Mounted"), "{}", notice.text);
+        assert!(
+            notice.text.english().starts_with("Mounted"),
+            "{}",
+            notice.text
+        );
         {
             let ws = app.workspace.read();
             assert_eq!(ws.active_id(), pane, "the tab shown stays shown");
@@ -2434,14 +2610,14 @@ mod tests {
             "offered, with what it means"
         );
         answer(question.id, "example words", true);
-        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert!(next_notice(&app).text.english().starts_with("Mounted"));
         assert_eq!(keyring.own(uuid).as_deref(), Some("example words"));
         assert_eq!(remembered(), [uuid], "its UUID noted, never the passphrase");
 
         // Kept: opened without a question.
         lock();
         open();
-        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert!(next_notice(&app).text.english().starts_with("Mounted"));
         assert!(app.take_secret_questions().is_empty(), "nothing asked");
 
         // Changed since: refused, asked saying so; the one typed without
@@ -2456,7 +2632,7 @@ mod tests {
             question.title
         );
         answer(question.id, "other words", false);
-        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert!(next_notice(&app).text.english().starts_with("Mounted"));
         assert_eq!(keyring.own(uuid), None, "the refused one forgotten");
         assert!(remembered().is_empty());
 
@@ -2467,7 +2643,7 @@ mod tests {
             .lock()
             .insert(uuid.into(), "other words".into());
         open();
-        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert!(next_notice(&app).text.english().starts_with("Mounted"));
         assert!(app.take_secret_questions().is_empty(), "nothing asked");
         assert_eq!(keyring.own(uuid), None);
         assert_eq!(
@@ -2494,7 +2670,10 @@ mod tests {
         }
         let notice = next_notice(&app);
         assert!(
-            notice.text.contains("passphrase was not accepted"),
+            notice
+                .text
+                .english()
+                .contains("passphrase was not accepted"),
             "{}",
             notice.text
         );
@@ -2616,7 +2795,7 @@ mod tests {
         };
         let undo = |notice: &skwir_core::app::Notification, label: &str| {
             let action = notice.action.as_ref().expect("a way back");
-            assert_eq!(action.label, label);
+            assert_eq!(action.label.english(), label);
             app.dispatch(&action.command).unwrap();
             next_notice(&app)
         };
@@ -2626,9 +2805,12 @@ mod tests {
         let pane = app.workspace.read().active_id();
         app.navigate(pane, &Location::from_path(&a)).unwrap();
         let added = run("keep", serde_json::json!({}));
-        assert_eq!(added.text, "Bookmarked “it's 100% a folder”");
+        assert_eq!(added.text.english(), "Bookmarked “it's 100% a folder”");
         let again = run("places.bookmark", serde_json::json!({ "path": path(&a) }));
-        assert_eq!(again.text, "“it's 100% a folder” is already bookmarked");
+        assert_eq!(
+            again.text.english(),
+            "“it's 100% a folder” is already bookmarked"
+        );
         assert!(again.action.is_none());
         // A folder of the trash is not bookmarked: restored or deleted,
         // the bookmark would lead nowhere.
@@ -2659,7 +2841,7 @@ mod tests {
         let mut drag = second.reorder.unwrap().command;
         drag.args["before"] = first.reorder.unwrap().before;
         let moved = run(&drag.name, drag.args);
-        assert_eq!(moved.text, "Moved bookmark “Bee”");
+        assert_eq!(moved.text.english(), "Moved bookmark “Bee”");
         assert_eq!(titles(&app), ["Bee", "it's 100% a folder"]);
 
         let renamed = run(
@@ -2667,7 +2849,7 @@ mod tests {
             serde_json::json!({ "path": path(&a), "title": "Reports" }),
         );
         assert_eq!(
-            renamed.text,
+            renamed.text.english(),
             "Renamed bookmark “it's 100% a folder” to “Reports”"
         );
         assert_eq!(titles(&app), ["Bee", "Reports"]);
@@ -2680,7 +2862,7 @@ mod tests {
         let forget = bookmarks(&app)[0].forget.clone().unwrap();
         assert_eq!(forget.args["path"], path(&b));
         let removed = run(&forget.name, forget.args);
-        assert_eq!(removed.text, "Removed “Bee” from bookmarks");
+        assert_eq!(removed.text.english(), "Removed “Bee” from bookmarks");
         assert_eq!(titles(&app), ["Reports"]);
         undo(&removed, "Undo");
         assert_eq!(titles(&app), ["Bee", "Reports"], "back in its place, named");
@@ -2759,7 +2941,10 @@ mod tests {
         let mut args = ask.args["args"].clone();
         args["title"] = serde_json::json!("Work\nfiles");
         let renamed = run("places.rename_bookmark", args);
-        assert_eq!(renamed.text, "Renamed bookmark “Two Words” to “Work files”");
+        assert_eq!(
+            renamed.text.english(),
+            "Renamed bookmark “Two Words” to “Work files”"
+        );
         assert_eq!(titles(&app), ["a", "Work files"]);
         undo(&renamed);
         assert_eq!(titles(&app), ["a", "Two Words"]);
@@ -2775,7 +2960,7 @@ mod tests {
         assert_eq!(drag.name, folder.reorder.clone().unwrap().command.name);
         drag.args["before"] = folder.reorder.unwrap().before;
         let moved = run(&drag.name, drag.args);
-        assert_eq!(moved.text, "Moved bookmark “Two Words”");
+        assert_eq!(moved.text.english(), "Moved bookmark “Two Words”");
         assert_eq!(titles(&app), ["Two Words", "a"]);
         undo(&moved);
         assert_eq!(titles(&app), ["a", "Two Words"]);
@@ -2847,7 +3032,7 @@ mod tests {
             "written once it returned: {}",
             kept()
         );
-        assert_eq!(next_notice(&app).text, "Bookmarked “Shared”");
+        assert_eq!(next_notice(&app).text.english(), "Bookmarked “Shared”");
         let refused = app
             .dispatch(&Invocation::with_args(
                 "places.bookmark",
@@ -2868,7 +3053,11 @@ mod tests {
         .unwrap();
         let said = next_notice(&app);
         assert_eq!(said.level, NotifyLevel::Error);
-        assert!(said.text.contains("is not a folder"), "{}", said.text);
+        assert!(
+            said.text.english().contains("is not a folder"),
+            "{}",
+            said.text
+        );
     }
 
     /// Every rescan reads the bookmarks file. notify reports a file opened

@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use skwir_core::app::{App, NotifyLevel, SecretAnswer};
 use skwir_core::cancel::CancelToken;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 /// Where Skwir's own passphrases are in the keyring
 /// (`skwir_platform::secrets`): one record per volume, by its UUID.
@@ -29,7 +31,13 @@ pub const REMEMBERED: &str = "places.remembered";
 const TYPED: usize = 3;
 
 /// Under Remember, while it is on: what remembering the passphrase means.
-const KEEPING: &str = "Once remembered, anyone who can open your keyring can unlock this volume.";
+fn what_keeping_means() -> Words {
+    words!(
+        places_keeping =
+            "Once remembered, anyone who can open your keyring can unlock this volume.",
+        note = "Under Remember, while it is on, in the question asking a volume's passphrase."
+    )
+}
 
 /// The keyring as unlocking reads and writes it; a test's stands in.
 pub trait Keyring: Send + Sync {
@@ -120,11 +128,12 @@ pub fn note(app: &App, uuid: &str, kept: bool) {
     }
 }
 
-/// The locked volume to open: its device, what the question calls it,
-/// and its UUID where known (what its passphrase is kept by).
+/// The locked volume to open: its device, what the question calls it
+/// (`None`: "this volume"), and its UUID where known (what its passphrase
+/// is kept by).
 pub struct Locked<'a> {
     pub device: &'a str,
-    pub title: &'a str,
+    pub title: Option<&'a str>,
     pub uuid: Option<&'a str>,
 }
 
@@ -214,7 +223,20 @@ fn settle(
     let (keyring, owned) = (Arc::clone(keyring), uuid.to_owned());
     match given {
         Given::Typed(answer) if answer.remember => {
-            let label = format!("Skwir: {} (encrypted volume)", volume.title);
+            // What the keyring's own window shows: kept there, in the
+            // language it was said in.
+            let label = match volume.title {
+                Some(title) => words!(
+                    places_keyring_label = "Skwir: { $volume } (encrypted volume)",
+                    volume = title,
+                    note = "What the desktop's keyring shows for a volume's passphrase Skwir keeps. The volume's label, as written."
+                ),
+                None => words!(
+                    places_keyring_label_this = "Skwir: this volume (encrypted volume)",
+                    note = "What the desktop's keyring shows for a volume's passphrase Skwir keeps, the volume unnamed."
+                ),
+            }
+            .say();
             let kept = skwir_platform::secrets::heard(cancel, move || {
                 keyring.keep(&owned, &label, &answer.text)
             });
@@ -222,7 +244,12 @@ fn settle(
                 Some(Ok(())) => note(app, uuid, true),
                 Some(Err(error)) => app.notify(
                     NotifyLevel::Warning,
-                    format!("The passphrase was not remembered: {error:#}"),
+                    words!(
+                        places_passphrase_not_remembered =
+                            "The passphrase was not remembered: { $error }",
+                        error = error,
+                        note = "The error: why the keyring did not keep it."
+                    ),
                 ),
                 None => {}
             }
@@ -252,16 +279,36 @@ fn asked(
     if !app.window_shown() {
         return None;
     }
-    let title = if refused {
-        format!(
-            "Unlock “{}”: that passphrase was not accepted",
-            volume.title
-        )
-    } else {
-        format!("Unlock “{}”", volume.title)
+    let title = match (volume.title, refused) {
+        (Some(title), true) => words!(
+            places_unlock_refused = "Unlock { $volume }: that passphrase was not accepted",
+            volume = Name(title.to_owned()),
+            note = "The question asking a volume's passphrase again. The volume's label."
+        ),
+        (Some(title), false) => words!(
+            places_unlock_ask = "Unlock { $volume }",
+            volume = Name(title.to_owned()),
+            note = "The question asking a volume's passphrase. The volume's label."
+        ),
+        (None, true) => words!(
+            places_unlock_this_refused = "Unlock “this volume”: that passphrase was not accepted",
+            note = "The question asking an unnamed volume's passphrase again."
+        ),
+        (None, false) => words!(
+            places_unlock_this = "Unlock “this volume”",
+            note = "The question asking an unnamed volume's passphrase."
+        ),
     };
-    let keeping = volume.uuid.map(|_| KEEPING.to_owned());
-    let (id, answer) = app.ask_passphrase(title, "Unlock", keeping);
+    let keeping = volume.uuid.map(|_| what_keeping_means().say());
+    let (id, answer) = app.ask_passphrase(
+        title.say(),
+        words!(
+            places_unlock_accept = "Unlock",
+            note = "The button of the question asking a volume's passphrase."
+        )
+        .say(),
+        keeping,
+    );
     let cancelled = cancel.subscribe();
     crossbeam_channel::select! {
         recv(answer) -> answer => answer.ok().flatten(),

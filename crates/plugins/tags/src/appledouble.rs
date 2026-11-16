@@ -31,6 +31,8 @@ use std::sync::Arc;
 
 use skwir_core::notes::raw::RawKey;
 use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote, parse_tags};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::xdg;
 
@@ -327,29 +329,41 @@ enum Beside {
     /// (`AppleSingle`, version 1, other entries, a stray file of that name),
     /// unreadable, or larger than an undo keeps of it
     /// (`fs::file::SIDE_FILE_LIMIT`, `notes::raw::snapshot`).
-    Left(String),
+    Left(Words),
 }
 
 fn beside(path: &Path) -> Beside {
     let Some(aside) = sidecar(path) else {
-        return Beside::Left("it has no name a file beside it is named after".to_owned());
+        return Beside::Left(words!(
+            tags_aside_no_name = "it has no name a file beside it is named after",
+            note = "Why a Mac's ._ file is not written for a file, said after the file's path."
+        ));
     };
-    let name = aside.file_name().unwrap_or_default().display();
-    let unreadable =
-        |error: io::Error| Beside::Left(format!("“{name}” beside it cannot be read: {error}"));
+    let name = || Name::of(&aside);
+    let unreadable = |error: io::Error| {
+        Beside::Left(words!(
+            tags_aside_unreadable = "{ $name } beside it cannot be read: { $error }",
+            name = name(),
+            error = anyhow::Error::from(error),
+            note = "Said after a file's path. name: the Mac's ._ file beside it; error: why it could not be read."
+        ))
+    };
     match std::fs::symlink_metadata(&aside) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Beside::None,
         Err(error) => unreadable(error),
-        Ok(meta) if meta.len() > skwir_core::fs::file::SIDE_FILE_LIMIT => {
-            Beside::Left(format!("“{name}” beside it is larger than skwir rewrites"))
-        }
+        Ok(meta) if meta.len() > skwir_core::fs::file::SIDE_FILE_LIMIT => Beside::Left(words!(
+            tags_aside_too_large = "{ $name } beside it is larger than skwir rewrites",
+            name = name(),
+            note = "Said after a file's path. name: the Mac's ._ file beside it."
+        )),
         Ok(_) => match skwir_platform::file::read_regular(&aside, READ_AT_MOST) {
             Err(error) => unreadable(error),
             Ok(bytes) => match AppleDouble::parse(&bytes) {
                 Some(ad) if ad.writable => Beside::Rewritten(ad),
-                _ => Beside::Left(format!(
-                    "“{name}” beside it is laid out otherwise than a Mac writes one, and skwir \
-                     rewrites no other"
+                _ => Beside::Left(words!(
+                    tags_aside_other_layout = "{ $name } beside it is laid out otherwise than a Mac writes one, and skwir rewrites no other",
+                    name = name(),
+                    note = "Said after a file's path. name: the Mac's ._ file beside it."
                 )),
             },
         },
@@ -366,7 +380,10 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
     let bytes = ad.encode().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
-            "its Mac attributes are kept in a form skwir does not write",
+            words!(
+                tags_aside_unwritable =
+                    "its Mac attributes are kept in a form skwir does not write"
+            ),
         )
     })?;
     let aside = sidecar(path).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -596,7 +613,8 @@ impl NotesStore for AppleDoubleStore {
             Beside::Rewritten(ad) => ad,
             Beside::None if create && has_notes => AppleDouble::empty(),
             Beside::None => return Ok(Wrote::NotHere),
-            Beside::Left(why) => return Ok(Wrote::Refused(why)),
+            // Said now: a store's refusal is text until it is words.
+            Beside::Left(why) => return Ok(Wrote::Refused(why.say())),
         };
         let before = ad.clone();
         let theirs = ad

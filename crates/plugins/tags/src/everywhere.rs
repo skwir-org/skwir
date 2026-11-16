@@ -16,8 +16,12 @@ use skwir_core::metadata::{same_tag, tag_leaf, tag_parent, tag_within};
 use skwir_core::op::{EntryRef, Plan};
 use skwir_core::os_path::PathArg;
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use skwir_core::notes::parse_tags;
+
+use crate::quoted_tags as listed;
 
 /// Tags renamed (`from`, several merging) to `to`, or taken away.
 #[derive(Clone, Debug)]
@@ -56,17 +60,25 @@ fn tagged(
     if let Some(root) = root {
         args["root"] = serde_json::json!(PathArg::from(root.as_path()));
     }
+    let no_location = || {
+        words!(
+            tags_search_no_location = "the search gave no location",
+            note = "An error: the search that finds a tag's files did not answer as it should."
+        )
+    };
     let Outcome::Value(v) = app.dispatch(&Invocation::with_args("query.location", &args))? else {
-        anyhow::bail!("the search gave no location");
+        anyhow::bail!(no_location());
     };
     let location = v["location"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("the search gave no location"))?;
+        .ok_or_else(|| anyhow::Error::from(no_location()))?;
     let open = app.open_location(&Location::parse(location))?;
     let mut found = Vec::new();
     let outcome = loop {
         if cancel.is_cancelled() {
-            break Err(anyhow::anyhow!("cancelled"));
+            break Err(anyhow::Error::from(words!(
+                tags_search_cancelled = "cancelled"
+            )));
         }
         match open.events().recv_timeout(Duration::from_millis(100)) {
             Ok(ListingEvent::Added(entries)) => {
@@ -86,7 +98,9 @@ fn tagged(
             Ok(ListingEvent::Error(e)) => break Err(anyhow::anyhow!("{e}")),
             Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                break Err(anyhow::anyhow!("the search stopped"));
+                break Err(anyhow::Error::from(words!(
+                    tags_search_stopped = "the search stopped"
+                )));
             }
         }
     };
@@ -106,38 +120,51 @@ pub fn named(tag: String, tags: Vec<String>) -> Vec<String> {
     out
 }
 
-/// “a”, “b” and “c”.
-fn listed(tags: &[String]) -> String {
-    let quoted: Vec<String> = tags.iter().map(|t| format!("“{t}”")).collect();
-    match quoted.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
-        _ => quoted.concat(),
-    }
-}
-
 /// What `renames` does, for the review's title.
-fn title_of(renames: &[Rename]) -> String {
+fn title_of(renames: &[Rename]) -> Words {
+    let name = |tag: &str| Name(tag.to_owned());
     match renames {
         [Rename { from, to: Some(to) }] if from.len() == 1 => {
             let tag = &from[0];
             if tag_leaf(tag) == tag_leaf(to) && tag_parent(tag) != tag_parent(to) {
                 match tag_parent(to) {
-                    Some(into) => format!("move the tag “{tag}” into “{into}”"),
-                    None => format!("move the tag “{tag}” out of its category"),
+                    Some(into) => words!(
+                        tags_move_into_plan = "move the tag { $tag } into { $into }",
+                        tag = name(tag),
+                        into = name(into),
+                        note = "A plan's title. into: a category of tags (Places/France)."
+                    ),
+                    None => words!(
+                        tags_move_out_plan = "move the tag { $tag } out of its category",
+                        tag = name(tag),
+                        note = "A plan's title."
+                    ),
                 }
             } else {
-                format!("rename the tag “{tag}” to “{to}”")
+                words!(
+                    tags_rename_plan = "rename the tag { $tag } to { $to }",
+                    tag = name(tag),
+                    to = name(to),
+                    note = "A plan's title."
+                )
             }
         }
-        [Rename { from, to: Some(to) }] => {
-            format!("merge the tags {} into “{to}”", listed(from))
-        }
-        [Rename { from, to: None }] if from.len() == 1 => {
-            format!("remove the tag “{}” from every file", from[0])
-        }
-        [Rename { from, to: None }] => {
-            format!("remove the tags {} from every file", listed(from))
-        }
+        [Rename { from, to: Some(to) }] => words!(
+            tags_merge_plan = "merge the tags { $tags } into { $to }",
+            tags = listed(from),
+            to = name(to),
+            note = "A plan's title. tags: the tags' names, each quoted, the last after “and”."
+        ),
+        [Rename { from, to: None }] if from.len() == 1 => words!(
+            tags_remove_everywhere_plan = "remove the tag { $tag } from every file",
+            tag = name(&from[0]),
+            note = "A plan's title."
+        ),
+        [Rename { from, to: None }] => words!(
+            tags_remove_several_everywhere_plan = "remove the tags { $tags } from every file",
+            tags = listed(from),
+            note = "A plan's title. tags: the tags' names, each quoted, the last after “and”."
+        ),
         _ => {
             let tags: Vec<String> = renames.iter().flat_map(|r| r.from.clone()).collect();
             match renames[0].to.as_deref().and_then(tag_parent) {
@@ -146,30 +173,55 @@ fn title_of(renames: &[Rename]) -> String {
                         .iter()
                         .all(|r| r.to.as_deref().and_then(tag_parent) == Some(into)) =>
                 {
-                    format!("move the tags {} into “{into}”", listed(&tags))
+                    words!(
+                        tags_move_several_into_plan = "move the tags { $tags } into { $into }",
+                        tags = listed(&tags),
+                        into = name(into),
+                        note = "A plan's title. tags: the tags' names, each quoted, the last after “and”; into: a category of tags (Places/France)."
+                    )
                 }
-                _ => format!("move the tags {}", listed(&tags)),
+                _ => words!(
+                    tags_move_several_plan = "move the tags { $tags }",
+                    tags = listed(&tags),
+                    note =
+                        "A plan's title. tags: the tags' names, each quoted, the last after “and”."
+                ),
             }
         }
     }
 }
 
+/// Why a tag cannot be put inside `tag`: it is within it.
+fn inside_itself(tag: &str) -> Words {
+    words!(
+        tags_inside_itself = "{ $tag } cannot go inside itself",
+        tag = Name(tag.to_owned()),
+        note = "An error: a tag moved or renamed into a category within it."
+    )
+}
+
 /// The new name `to` as typed, made one and checked against `from`.
 fn new_name(from: &[String], to: &str) -> anyhow::Result<String> {
     let mut names = parse_tags(to);
-    anyhow::ensure!(names.len() <= 1, "a tag's name has no comma");
+    anyhow::ensure!(
+        names.len() <= 1,
+        words!(tags_no_comma = "a tag's name has no comma")
+    );
     let to = names
         .pop()
-        .ok_or_else(|| anyhow::anyhow!("what new name?"))?;
+        .ok_or_else(|| anyhow::Error::from(words!(tags_what_new_name = "what new name?")))?;
     anyhow::ensure!(
         from.len() > 1 || to != from[0],
-        "the tag is already called “{to}”"
+        words!(
+            tags_already_called = "the tag is already called { $to }",
+            to = Name(to.clone())
+        )
     );
     if let Some(f) = from
         .iter()
         .find(|f| !same_tag(f, &to) && tag_within(&to, f))
     {
-        anyhow::bail!("“{f}” cannot go inside itself");
+        anyhow::bail!(inside_itself(f));
     }
     Ok(to)
 }
@@ -185,7 +237,7 @@ pub fn start(
     to: Option<&str>,
     root: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(!tags.is_empty(), "which tag?");
+    anyhow::ensure!(!tags.is_empty(), crate::which_tag());
     let to = to.map(|to| new_name(&tags, to)).transpose()?;
     start_all(
         app,
@@ -206,13 +258,13 @@ pub fn move_into(
     into: Option<&str>,
     root: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(!tags.is_empty(), "which tag?");
+    anyhow::ensure!(!tags.is_empty(), crate::which_tag());
     let into = into
         .map(skwir_core::metadata::clean_tag)
         .filter(|c| !c.is_empty());
     anyhow::ensure!(
         into.as_deref().is_none_or(|c| !c.contains(',')),
-        "a category's name has no comma"
+        words!(tags_category_no_comma = "a category's name has no comma")
     );
     let mut renames = Vec::new();
     for tag in tags {
@@ -224,7 +276,7 @@ pub fn move_into(
             continue;
         }
         if into.as_deref().is_some_and(|into| tag_within(into, &tag)) {
-            anyhow::bail!("“{tag}” cannot go inside itself");
+            anyhow::bail!(inside_itself(&tag));
         }
         renames.push(Rename {
             from: vec![tag],
@@ -233,10 +285,13 @@ pub fn move_into(
     }
     anyhow::ensure!(
         !renames.is_empty(),
-        "{}",
         into.map_or_else(
-            || "these tags are in no category".to_owned(),
-            |c| format!("these tags are in “{c}” already")
+            || words!(tags_in_no_category = "these tags are in no category"),
+            |c| words!(
+                tags_in_category_already = "these tags are in { $category } already",
+                category = Name(c),
+                note = "An error: the tags moved into a category are there already."
+            )
         )
     );
     start_all(app, lifetime, follows, renames, root)
@@ -252,17 +307,27 @@ fn start_all(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         app.commands.get("query.location").is_some(),
-        "finding the tagged files needs the Search plugin"
+        words!(tags_needs_search = "finding the tagged files needs the Search plugin")
     );
-    let place = root.as_ref().map_or_else(
-        || "the home folder".to_owned(),
-        |r| format!("“{}”", r.display()),
-    );
+    // Where the files are looked for: the home folder, else a path as it is.
+    let place = root.as_ref().map(|r| r.display().to_string());
     let tags: Vec<String> = renames.iter().flat_map(|r| r.from.clone()).collect();
     let names = listed(&tags);
     app.notify(
         NotifyLevel::Info,
-        format!("Looking for the files tagged {names} in {place}…"),
+        match &place {
+            None => words!(
+                tags_looking_home = "Looking for the files tagged { $tags } in the home folder…",
+                tags = names.as_str(),
+                note = "tags: the tags' names, each quoted, the last after “and”."
+            ),
+            Some(root) => words!(
+                tags_looking_in = "Looking for the files tagged { $tags } in “{ $root }”…",
+                tags = names.as_str(),
+                root = root.as_str(),
+                note = "tags: the tags' names, each quoted, the last after “and”; root: a folder's path."
+            ),
+        },
     );
     let weak = app.weak();
     let cancel = lifetime.child();
@@ -293,7 +358,11 @@ fn start_all(
                     Err(error) => {
                         app.notify(
                             NotifyLevel::Error,
-                            format!("The files tagged “{tag}” were not found: {error:#}"),
+                            words!(
+                                tags_files_not_found = "The files tagged { $tag } were not found: { $error }",
+                                tag = Name(tag.clone()),
+                                error = error
+                            ),
                         );
                         return;
                     }
@@ -347,25 +416,78 @@ fn start_all(
             if n == 0 {
                 app.notify(
                     NotifyLevel::Info,
-                    format!("No file in {place} is tagged {names}"),
+                    match &place {
+                        None => words!(
+                            tags_none_tagged_home = "No file in the home folder is tagged { $tags }",
+                            tags = names.as_str(),
+                            note = "tags: the tags' names, each quoted, the last after “and”."
+                        ),
+                        Some(root) => words!(
+                            tags_none_tagged_in = "No file in “{ $root }” is tagged { $tags }",
+                            root = root.as_str(),
+                            tags = names.as_str(),
+                            note = "tags: the tags' names, each quoted, the last after “and”; root: a folder's path."
+                        ),
+                    },
                 );
                 return;
             }
-            let files = if n == 1 {
-                "1 file".to_owned()
-            } else {
-                format!("{n} files")
-            };
+            // How many files kept one tag where they had two, said after
+            // what the plan holds.
             let merged = match renames.as_slice() {
-                _ if merged == 0 => String::new(),
-                [Rename { to: Some(to), .. }] => {
-                    format!(" {merged} already had “{to}” or several of them: they keep it once.")
-                }
-                _ => format!(" {merged} had two of these names: they keep it once."),
+                _ if merged == 0 => None,
+                [Rename { to: Some(to), .. }] => Some(words!(
+                    tags_merged_into = "{ $merged } already had { $to } or several of them: they keep it once.",
+                    merged = merged,
+                    to = Name(to.clone()),
+                    note = "Said of a plan renaming tags. merged: how many files; to: the tags' new name."
+                )),
+                _ => Some(words!(
+                    tags_merged_names = "{ $merged } had two of these names: they keep it once.",
+                    merged = merged,
+                    note = "Said of a plan renaming tags. merged: how many files."
+                )),
             };
-            let note =
-                format!("{files} in {place}; what your exclusions leave out is left out.{merged}");
-            app.propose(plan.with_note(note));
+            let note = match (&place, merged) {
+                (None, None) => words!(
+                    tags_plan_note_home = "{ $count ->
+                            [one] { $count } file
+                           *[other] { $count } files
+                        } in the home folder; what your exclusions leave out is left out.",
+                    count = n,
+                    note = "Said of a plan renaming or removing tags on every file: how many files it changes."
+                ),
+                (None, Some(merged)) => words!(
+                    tags_plan_note_home_merged = "{ $count ->
+                            [one] { $count } file
+                           *[other] { $count } files
+                        } in the home folder; what your exclusions leave out is left out. { $merged }",
+                    count = n,
+                    merged = merged,
+                    note = "As tags_plan_note_home, then merged: how many files kept one tag of two (tags_merged_into, tags_merged_names)."
+                ),
+                (Some(root), None) => words!(
+                    tags_plan_note_in = "{ $count ->
+                            [one] { $count } file
+                           *[other] { $count } files
+                        } in “{ $root }”; what your exclusions leave out is left out.",
+                    count = n,
+                    root = root.as_str(),
+                    note = "Said of a plan renaming or removing tags on every file under a folder: how many files it changes. root: the folder's path."
+                ),
+                (Some(root), Some(merged)) => words!(
+                    tags_plan_note_in_merged = "{ $count ->
+                            [one] { $count } file
+                           *[other] { $count } files
+                        } in “{ $root }”; what your exclusions leave out is left out. { $merged }",
+                    count = n,
+                    root = root.as_str(),
+                    merged = merged,
+                    note = "As tags_plan_note_in, then merged: how many files kept one tag of two (tags_merged_into, tags_merged_names)."
+                ),
+            };
+            // Said now: a plan's note is text until it is words.
+            app.propose(plan.with_note(note.say()));
         },
     );
     Ok(())
@@ -411,19 +533,19 @@ mod tests {
             to: to.map(str::to_owned),
         };
         assert_eq!(
-            title_of(&[r(&["Paris"], Some("Places/Paris"))]),
+            title_of(&[r(&["Paris"], Some("Places/Paris"))]).english(),
             "move the tag “Paris” into “Places”"
         );
         assert_eq!(
-            title_of(&[r(&["Places/Paris"], Some("Paris"))]),
+            title_of(&[r(&["Places/Paris"], Some("Paris"))]).english(),
             "move the tag “Places/Paris” out of its category"
         );
         assert_eq!(
-            title_of(&[r(&["a"], Some("x/a")), r(&["b"], Some("x/b"))]),
+            title_of(&[r(&["a"], Some("x/a")), r(&["b"], Some("x/b"))]).english(),
             "move the tags “a” and “b” into “x”"
         );
         assert_eq!(
-            title_of(&[r(&["a"], Some("b"))]),
+            title_of(&[r(&["a"], Some("b"))]).english(),
             "rename the tag “a” to “b”"
         );
         assert!(

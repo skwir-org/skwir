@@ -37,12 +37,21 @@ use skwir_core::metadata::{
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::scheduler::Priority;
-use skwir_core::words::Words;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_platform::mime::Kind;
 
 use crate::index::{TagIndex, stable_hash};
 
 pub const SCHEME: &str = "tags";
+
+/// What the place of every tag is called: its tab, its crumb.
+fn tags_title() -> Words {
+    words!(
+        tags_title = "Tags",
+        note = "The place of every tag of a folder's files: its tab, its step of the trail."
+    )
+}
 
 /// A tag location, as its text says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -142,7 +151,7 @@ impl Address {
     /// then whether it holds the files of the tags within, a pill leading
     /// where it does not.
     pub fn trail(&self) -> Trail {
-        let mut crumbs = vec![Crumb::new("Tags", self.at(None).location())];
+        let mut crumbs = vec![Crumb::new(tags_title(), self.at(None).location())];
         if let Some(tag) = &self.tag {
             let mut prefix = String::new();
             for part in tag.split('/') {
@@ -164,14 +173,26 @@ impl Address {
             ..self.clone()
         };
         if self.deep {
-            filters.push(Crumb::new("With sub-tags", switched.location()));
+            filters.push(Crumb::new(
+                words!(
+                    tags_with_sub_tags = "With sub-tags",
+                    note = "A pill of a tag's trail while it lists the files of the tags within it too."
+                ),
+                switched.location(),
+            ));
         }
         Trail {
             base: self.root(),
             crumbs,
             filters,
             toggles: vec![Toggle {
-                label: "Include Sub-Tags".into(),
+                // Said now: a toggle's label is text until it is words.
+                label: words!(
+                    tags_include_sub_tags = "Include Sub-Tags",
+                    note =
+                        "A switch of a tag's place: it lists the files of the tags within it too."
+                )
+                .say(),
                 on: self.deep,
                 location: switched.location(),
             }],
@@ -187,13 +208,15 @@ impl Address {
     pub fn empty_state(&self) -> EmptyState {
         if self.tag.is_none() {
             EmptyState::new(
-                "No file here has a tag",
-                "Give files tags with Tags… in their menu, or drop them on a tag in the sidebar.",
+                words!(tags_empty_top = "No file here has a tag"),
+                words!(
+                    tags_empty_top_detail = "Give files tags with Tags… in their menu, or drop them on a tag in the sidebar."
+                ),
             )
         } else {
             EmptyState::new(
-                "No file here has this tag",
-                "Drop files here to give them the tag.",
+                words!(tags_empty_tag = "No file here has this tag"),
+                words!(tags_empty_tag_detail = "Drop files here to give them the tag."),
             )
         }
     }
@@ -202,9 +225,10 @@ impl Address {
     pub fn verbs(&self) -> Verbs {
         let location = self.location().to_string();
         let here = self.tag.as_deref();
-        let ask = |title: String,
-                   accept: &str,
-                   placeholder: &str,
+        // Said now: a question's words are text in its arguments.
+        let ask = |title: Words,
+                   accept: Words,
+                   placeholder: Words,
                    text: &str,
                    command: &str,
                    args,
@@ -212,9 +236,9 @@ impl Address {
             Invocation::with_args(
                 "ui.ask",
                 &serde_json::json!({
-                    "title": title,
-                    "accept": accept,
-                    "placeholder": placeholder,
+                    "title": title.say(),
+                    "accept": accept.say(),
+                    "placeholder": placeholder.say(),
                     "text": text,
                     "command": command,
                     "args": args,
@@ -228,22 +252,48 @@ impl Address {
                 "tags.drop",
                 &serde_json::json!({ "location": location }),
             )),
+            // Said now: a verb's title is text until it is words.
             remove: Some(Verb::new(
                 match here {
-                    Some(tag) => format!("Remove from “{}”", tag_leaf(tag)),
-                    None => "Remove All Tags".into(),
-                },
+                    Some(tag) => words!(
+                        tags_remove_from_verb = "Remove from { $tag }",
+                        tag = Name(tag_leaf(tag).to_owned()),
+                        note = "An item of the files' menu in a tag's place: takes the tag off them. tag: its name."
+                    ),
+                    None => words!(
+                        tags_remove_all_verb = "Remove All Tags",
+                        note = "An item of the files' menu in the place of every tag."
+                    ),
+                }
+                .say(),
                 Invocation::with_args("tags.untag", &serde_json::json!({ "location": location })),
             )),
             create: Some(Verb::new(
-                "New Tag…",
+                words!(
+                    tags_new_verb = "New Tag…",
+                    note = "An item of a tag's place's menu, where a folder's says New Folder…."
+                )
+                .say(),
                 ask(
                     match here {
-                        Some(tag) => format!("New tag in “{}”", tag_leaf(tag)),
-                        None => "New tag".into(),
+                        Some(tag) => words!(
+                            tags_new_in_ask = "New tag in { $tag }",
+                            tag = Name(tag_leaf(tag).to_owned()),
+                            note = "The title of the question for a new tag's name. tag: the tag it goes in."
+                        ),
+                        None => words!(
+                            tags_new_ask = "New tag",
+                            note = "The title of the question for a new tag's name."
+                        ),
                     },
-                    "Create",
-                    "Name",
+                    words!(
+                        tags_new_accept = "Create",
+                        note = "The button that makes the tag named."
+                    ),
+                    words!(
+                        tags_new_placeholder = "Name",
+                        note = "What the empty field asks for: a new tag's name."
+                    ),
                     "",
                     "tags.new",
                     serde_json::json!({ "location": location }),
@@ -252,11 +302,24 @@ impl Address {
             )),
             rename: here.map(|tag| {
                 Verb::new(
-                    "Rename Tag…",
+                    words!(
+                        tags_rename_verb = "Rename Tag…",
+                        note = "An item of a tag's menu in its place: it asks for its new name on every file."
+                    )
+                    .say(),
                     ask(
-                        format!("Rename the tag “{tag}” on every file"),
-                        "Rename",
-                        "New name (an existing tag's merges them)",
+                        words!(
+                            tags_rename_ask = "Rename the tag { $tag } on every file",
+                            tag = Name(tag.to_owned()),
+                            note = "The title of the question that asks for a tag's new name."
+                        ),
+                        words!(
+                            tags_rename_accept = "Rename",
+                            note = "The button that renames a tag on every file."
+                        ),
+                        words!(
+                            tags_rename_placeholder = "New name (an existing tag's merges them)"
+                        ),
                         tag,
                         "tags.rename",
                         serde_json::json!({
@@ -720,7 +783,10 @@ impl Places {
                 {
                     app.notify_about_setting(
                         skwir_core::app::NotifyLevel::Warning,
-                        "Some tagged files are left out of the tags: the room skwir gives them is full",
+                        words!(
+                            tags_index_full = "Some tagged files are left out of the tags: the room skwir gives them is full",
+                            note = "A notice with a button to the setting Room for tagged files."
+                        ),
                         crate::index::LIMIT_SETTING,
                     );
                 }
@@ -965,14 +1031,21 @@ impl Open {
                 Value::Text(tag.as_str().into()),
                 provenance.clone(),
             );
+            // A value of the row, said as it is listed.
             let kind = if fields.iter().any(|f| same_tag(f, tag)) {
-                "Field"
+                words!(
+                    tags_kind_field = "Field",
+                    note = "What a category of tags holding one tag at a time is, in the Type column of a tag's place."
+                )
             } else {
-                "Tag"
+                words!(
+                    tags_kind_tag = "Tag",
+                    note = "What a tag is, in the Type column of a tag's place."
+                )
             };
             entry.metadata.set(
                 keys::PLACE_KIND,
-                Value::Text(kind.into()),
+                Value::Text(kind.say().into()),
                 provenance.clone(),
             );
             // Pictures unchanged: the tile sent with them.
@@ -1171,9 +1244,11 @@ impl LocationProvider for Provider {
 
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let address = Address::parse(&location.rest);
-        let root = address
-            .root()
-            .ok_or_else(|| anyhow::anyhow!("no home folder to find tags in"))?;
+        let root = address.root().ok_or_else(|| {
+            anyhow::Error::from(words!(
+                tags_no_home_to_find = "no home folder to find tags in"
+            ))
+        })?;
         let (sink, rx) = ctx.channel();
         let open = Arc::new_cyclic(|me| Open {
             location: location.clone(),
@@ -1198,7 +1273,7 @@ impl LocationProvider for Provider {
         Some(match &address.tag {
             // A tag's name is as the user wrote it.
             Some(tag) => Words::as_written(tag_leaf(tag).to_owned()),
-            None => "Tags".into(),
+            None => tags_title(),
         })
     }
 
@@ -1245,9 +1320,27 @@ impl LocationProvider for Provider {
     fn depths(&self, location: &Location) -> Option<skwir_core::location::Depths> {
         let address = Address::parse(&location.rest);
         let (here_label, below_label) = if address.tag.is_some() {
-            ("This tag", "With sub-tags")
+            (
+                words!(
+                    tags_depth_here = "This tag",
+                    note = "Of the address field's two depths in a tag's place: the files tagged with it exactly."
+                ),
+                words!(
+                    tags_depth_below = "With sub-tags",
+                    note = "Of the address field's two depths in a tag's place: every file within it, the tags within it included."
+                ),
+            )
         } else {
-            ("These tags", "Every tagged file")
+            (
+                words!(
+                    tags_depth_top_here = "These tags",
+                    note = "Of the address field's two depths in the place of every tag: the tags."
+                ),
+                words!(
+                    tags_depth_top_below = "Every tagged file",
+                    note = "Of the address field's two depths in the place of every tag: every file that has one."
+                ),
+            )
         };
         let other = Address {
             deep: !address.deep,
@@ -1262,8 +1355,9 @@ impl LocationProvider for Provider {
         Some(skwir_core::location::Depths {
             here,
             below,
-            here_label: here_label.to_owned(),
-            below_label: below_label.to_owned(),
+            // Said now: a depth's label is text until it is words.
+            here_label: here_label.say(),
+            below_label: below_label.say(),
         })
     }
 
@@ -1277,7 +1371,7 @@ impl LocationProvider for Provider {
             .map(|along| Address::parse(&along.rest))
             .filter(|shown| shown.tag.is_none() && shown.scope == plain.scope)
             .unwrap_or(plain);
-        vec![Crumb::new("Tags", tags.location())]
+        vec![Crumb::new(tags_title(), tags.location())]
     }
 
     /// A tag's tags, for the name typed after it (`tags:/Places/Fr`): what

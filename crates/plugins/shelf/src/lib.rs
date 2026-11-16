@@ -22,13 +22,20 @@ use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, Trash};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem, Place};
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::{Folder, Words};
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "shelf";
 /// The location scheme of the virtual shelf listing.
 pub const SCHEME: &str = "shelf";
 /// What the shelf is called, in the sidebar and wherever it is shown.
-const TITLE: &str = "Shelf";
+fn shelf_title() -> Words {
+    words!(
+        shelf_title = "Shelf",
+        note = "The shelf as a place: in the sidebar, its tab, its count in the footer."
+    )
+}
 /// The count the shelf publishes in `App::tallies`.
 pub const TALLY: &str = "shelf.items";
 
@@ -75,7 +82,7 @@ impl State {
                 ID,
                 TALLY,
                 skwir_core::tally::Tally {
-                    label: TITLE.into(),
+                    label: shelf_title().say(),
                     count: self.items.len() as u64,
                     open: Some(Invocation::new("shelf.open")),
                 },
@@ -278,8 +285,11 @@ fn selection_items(
     let ws = app.workspace.read();
     let p = ws
         .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    anyhow::ensure!(p.open.is_some(), "pane has no open location");
+        .ok_or_else(|| anyhow::Error::from(words!(shelf_no_such_pane = "no such pane")))?;
+    anyhow::ensure!(
+        p.open.is_some(),
+        words!(shelf_pane_not_open = "pane has no open location")
+    );
     let chosen: Vec<EntryId> = if ids.is_empty() {
         skwir_core::app::chosen(p).iter().collect()
     } else {
@@ -347,17 +357,33 @@ fn plan_into(items: &[ShelfItem], dest: &Path, copy: bool, app: &App) -> anyhow:
         })
         .collect();
     if steps.is_empty() {
-        anyhow::bail!("nothing on the shelf to bring here");
+        anyhow::bail!(words!(
+            shelf_nothing_to_bring = "nothing on the shelf to bring here"
+        ));
     }
-    let verb = if copy { "copy" } else { "move" };
-    Ok(Outcome::Plan(Plan::with_steps(
-        format!(
-            "{verb} {} shelved items to {}",
-            steps.len(),
-            skwir_core::op::folder_said(dest)
-        ),
-        steps,
-    )))
+    let (count, folder) = (steps.len(), Folder(skwir_core::op::folder_said(dest)));
+    let title = if copy {
+        words!(
+            shelf_copy_here_plan = "copy { $count ->
+                [one] { $count } shelved item
+               *[other] { $count } shelved items
+            } to { $folder }",
+            count = count,
+            folder = folder,
+            note = "A plan's title: the folder they are copied into, by its name."
+        )
+    } else {
+        words!(
+            shelf_move_here_plan = "move { $count ->
+                [one] { $count } shelved item
+               *[other] { $count } shelved items
+            } to { $folder }",
+            count = count,
+            folder = folder,
+            note = "A plan's title: the folder they are moved into, by its name."
+        )
+    };
+    Ok(Outcome::Plan(Plan::with_steps(title, steps)))
 }
 
 // ------------------------------------------------------------------ location
@@ -476,7 +502,7 @@ impl LocationProvider for ShelfProvider {
     }
 
     fn title(&self, _location: &Location) -> Option<skwir_core::words::Words> {
-        Some(TITLE.into())
+        Some(shelf_title())
     }
 
     fn icon(&self, _location: &Location) -> Option<&'static str> {
@@ -485,8 +511,11 @@ impl LocationProvider for ShelfProvider {
 
     fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
         Some(EmptyState::new(
-            "The shelf is empty",
-            "Collect files from different folders with Add to Shelf, then move or copy them together.",
+            words!(shelf_empty = "The shelf is empty"),
+            words!(
+                shelf_empty_detail = "Collect files from different folders with Add to Shelf, then move or copy them together.",
+                note = "Under \"The shelf is empty\", in the empty shelf. Add to Shelf is a menu item's words."
+            ),
         ))
     }
 
@@ -497,19 +526,23 @@ impl LocationProvider for ShelfProvider {
         Verbs {
             drop: Some(Invocation::new("shelf.add")),
             remove: Some(Verb::new(
-                "Remove from Shelf",
+                words!(
+                    shelf_remove_verb = "Remove from Shelf",
+                    note = "What Delete does on the shelf, as its menu item says it."
+                )
+                .say(),
                 Invocation::new("shelf.remove"),
             )),
             tools: vec![
                 Tool::new(
                     "move",
-                    "Move shelf files to the other pane",
+                    words!(shelf_move_tool = "Move shelf files to the other pane"),
                     Invocation::new("shelf.move_here"),
                     ToolPane::OtherFolder,
                 ),
                 Tool::new(
                     "copy",
-                    "Copy shelf files to the other pane",
+                    words!(shelf_copy_tool = "Copy shelf files to the other pane"),
                     Invocation::new("shelf.copy_here"),
                     ToolPane::OtherFolder,
                 ),
@@ -537,14 +570,6 @@ impl LocationProvider for ShelfProvider {
 
 const BINDINGS: &[(&str, &str, Option<&str>)] =
     &[("ctrl-shift-b", "shelf.add", Some("pane selection"))];
-
-const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[(
-    "Add to Shelf",
-    "shelf.add",
-    Some("selection !place"),
-    140,
-    "shelf",
-)];
 
 impl Plugin for ShelfPlugin {
     fn id(&self) -> &'static str {
@@ -598,8 +623,8 @@ impl Plugin for ShelfPlugin {
             ID,
             Topic::Files,
             "shelf.add",
-            "Add to shelf",
-            "Put the selection (or the given entries) on the shelf",
+            words!(shelf_add = "Add to shelf"),
+            words!(shelf_add_description = "Put the selection (or the given entries) on the shelf"),
             move |a, app| {
                 let items = if a.entries.is_empty() {
                     selection_items(app, app.pane_or_active(a.pane), &a.ids)?
@@ -618,8 +643,8 @@ impl Plugin for ShelfPlugin {
             ID,
             Topic::Files,
             "shelf.remove",
-            "Remove from shelf",
-            "Take entries off the shelf",
+            words!(shelf_remove = "Remove from shelf"),
+            words!(shelf_remove_description = "Take entries off the shelf"),
             move |a, app| {
                 let ids = if a.ids.is_empty() {
                     let ws = app.workspace.read();
@@ -628,7 +653,9 @@ impl Plugin for ShelfPlugin {
                             a.pane
                                 .unwrap_or_else(|| skwir_core::app::asked_or_active(&ws)),
                         )
-                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                        .ok_or_else(|| {
+                            anyhow::Error::from(words!(shelf_no_such_pane = "no such pane"))
+                        })?;
                     skwir_core::app::chosen(pane).iter().collect()
                 } else {
                     a.ids
@@ -642,8 +669,8 @@ impl Plugin for ShelfPlugin {
             ID,
             Topic::Files,
             "shelf.clear",
-            "Clear shelf",
-            "Empty the shelf",
+            words!(shelf_clear = "Clear shelf"),
+            words!(shelf_clear_description = "Empty the shelf"),
             move |_, _| {
                 ShelfPlugin::clear(&st);
                 Ok(Outcome::Done)
@@ -654,8 +681,8 @@ impl Plugin for ShelfPlugin {
                 ID,
                 Topic::Files,
                 "shelf.open",
-                "Open shelf",
-                "Show the shelf in the pane",
+                words!(shelf_open = "Open shelf"),
+                words!(shelf_open_description = "Show the shelf in the pane"),
                 |a, app| {
                     app.navigate(app.pane_or_active(a.pane), &Location::parse("shelf:"))?;
                     Ok(Outcome::Done)
@@ -668,8 +695,8 @@ impl Plugin for ShelfPlugin {
                 ID,
                 Topic::Files,
                 "shelf.list",
-                "List shelf",
-                "Return the shelved entries",
+                words!(shelf_list = "List shelf"),
+                words!(shelf_list_description = "Return the shelved entries"),
                 move |_, _| {
                     let items = st.lock().items.clone();
                     Ok(Outcome::Value(serde_json::to_value(items)?))
@@ -682,8 +709,11 @@ impl Plugin for ShelfPlugin {
                 ID,
                 Topic::Files,
                 "shelf.move_here",
-                "Move shelf here",
-                "Move every shelved entry into the current directory (plan)",
+                words!(shelf_move_here = "Move shelf here"),
+                words!(
+                    shelf_move_here_description =
+                        "Move every shelved entry into the current directory (plan)"
+                ),
                 move |a, app| {
                     let dest = app.pane_dir(app.pane_or_active(a.pane))?;
                     plan_into(&st.lock().items, &dest, false, app)
@@ -696,8 +726,11 @@ impl Plugin for ShelfPlugin {
                 ID,
                 Topic::Files,
                 "shelf.copy_here",
-                "Copy shelf here",
-                "Copy every shelved entry into the current directory (plan)",
+                words!(shelf_copy_here = "Copy shelf here"),
+                words!(
+                    shelf_copy_here_description =
+                        "Copy every shelved entry into the current directory (plan)"
+                ),
                 move |a, app| {
                     let dest = app.pane_dir(app.pane_or_active(a.pane))?;
                     plan_into(&st.lock().items, &dest, true, app)
@@ -710,12 +743,15 @@ impl Plugin for ShelfPlugin {
                 ID,
                 Topic::Files,
                 "shelf.trash",
-                "Trash shelf",
-                "Move every shelved entry to the trash (plan)",
+                words!(shelf_trash = "Trash shelf"),
+                words!(shelf_trash_description = "Move every shelved entry to the trash (plan)"),
                 move |_, _| {
                     let items = st.lock().items.clone();
                     if items.is_empty() {
-                        anyhow::bail!("the shelf is empty");
+                        anyhow::bail!(words!(
+                            shelf_nothing_to_trash = "the shelf is empty",
+                            note = "An error: the shelf's files were to be moved to the trash."
+                        ));
                     }
                     let steps: Vec<Box<dyn Operation>> = items
                         .iter()
@@ -726,7 +762,14 @@ impl Plugin for ShelfPlugin {
                         })
                         .collect();
                     Ok(Outcome::Plan(Plan::with_steps(
-                        format!("trash {} shelved items", steps.len()),
+                        words!(
+                            shelf_trash_plan = "trash { $count ->
+                                [one] { $count } shelved item
+                               *[other] { $count } shelved items
+                            }",
+                            count = steps.len(),
+                            note = "A plan's title: the shelf's files moved to the trash."
+                        ),
                         steps,
                     )))
                 },
@@ -737,7 +780,7 @@ impl Plugin for ShelfPlugin {
             ID,
             Place::new(
                 skwir_core::registry::groups::PLACES.id,
-                TITLE,
+                shelf_title(),
                 "folder-drag-accept",
                 Location::parse("shelf:"),
             ),
@@ -752,23 +795,17 @@ impl Plugin for ShelfPlugin {
                 },
             );
         }
-        for (title, command, when, order, icon) in MENU {
-            app.registry.menus.add(
-                ID,
-                MenuItem {
-                    menu: "context".into(),
-                    title: (*title).into(),
-                    command: Invocation::new(*command),
-                    when: when.map(str::to_owned),
-                    order: *order,
-                    icon: Some((*icon).into()),
-                    submenu: None,
-                    checked: None,
-                    choice: None,
-                    color: None,
-                },
-            );
-        }
+        app.registry.menus.add(
+            ID,
+            MenuItem::new(
+                "context",
+                words!(shelf_add_menu = "Add to Shelf"),
+                "shelf",
+                140,
+                Invocation::new("shelf.add"),
+            )
+            .when("selection !place"),
+        );
     }
 
     fn on_disable(&self, _app: &App) {
@@ -1008,7 +1045,13 @@ mod tests {
         let shelf = Location::parse("shelf:");
         // It reads as one place in the address, under its own glyph.
         let crumbs = app.trail(&shelf).unwrap().crumbs;
-        assert_eq!(crumbs, [skwir_core::Crumb::new("Shelf", shelf.clone())]);
+        assert_eq!(
+            crumbs
+                .iter()
+                .map(|crumb| (crumb.label.english(), &crumb.location))
+                .collect::<Vec<_>>(),
+            [("Shelf".to_owned(), &shelf)]
+        );
         assert_eq!(app.location_icon(&shelf), Some("shelf"));
         // Its buttons put its files in the other pane's folder.
         let tools: Vec<_> = app

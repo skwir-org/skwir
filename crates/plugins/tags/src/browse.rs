@@ -21,6 +21,8 @@ use skwir_core::metadata::{
 use skwir_core::op::EntryRef;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::{ChoiceLook, MenuItem};
+use skwir_core::words;
+use skwir_core::words::{Folder, Name, Words};
 use skwir_core::workspace::PaneId;
 
 use crate::location::{Address, SCHEME};
@@ -153,11 +155,13 @@ fn address_of(location: &Location) -> Option<Address> {
 fn shown(app: &App, pane: PaneId, named: Option<&str>) -> anyhow::Result<Address> {
     let location = match named {
         Some(text) => Location::parse(text),
-        None => app
-            .pane_location(pane)
-            .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?,
+        None => app.pane_location(pane).ok_or_else(|| {
+            anyhow::Error::from(words!(tags_pane_shows_nothing = "the pane shows nothing"))
+        })?,
     };
-    address_of(&location).ok_or_else(|| anyhow::anyhow!("the pane shows no tags"))
+    address_of(&location).ok_or_else(|| {
+        anyhow::Error::from(words!(tags_pane_shows_no_tags = "the pane shows no tags"))
+    })
 }
 
 /// The tags of the places selected in `pane` (a tag location's tags).
@@ -223,7 +227,10 @@ pub fn drop(
             .collect();
         anyhow::ensure!(
             !places.is_empty(),
-            "files are given one tag: drop them on it"
+            words!(
+                tags_drop_on_one = "files are given one tag: drop them on it",
+                note = "An error: files were dropped on every tag at once, which gives them none."
+            )
         );
         crate::everywhere::move_into(app, lifetime, follows, places, None, target.root())?;
         return Ok(Outcome::Done);
@@ -266,8 +273,17 @@ pub fn drop(
         .filter(|s| s.tag.as_deref().is_some_and(|t| !same_tag(t, &tag)));
     let exclusive = crate::fields::exclusive(app);
     let title = match source.as_ref().and_then(|s| s.tag.as_deref()) {
-        Some(from) => format!("move from tag {from} to tag {tag}"),
-        None => format!("add tag {tag}"),
+        Some(from) => words!(
+            tags_move_tag_plan = "move from tag { $from } to tag { $tag }",
+            from = from,
+            tag = tag.as_str(),
+            note = "A plan's title: files dragged from one tag's place to another's. from, tag: the tags' names."
+        ),
+        None => words!(
+            tags_add_tag_plan = "add tag { $tag }",
+            tag = tag.as_str(),
+            note = "A plan's title: files dropped on a tag's place. tag: its name."
+        ),
     };
     // What each file holds is read when the plan is applied: the tag of
     // the source taken (and what is under it, where it shows that), this
@@ -278,34 +294,62 @@ pub fn drop(
         ..source.as_ref().and_then(taken).unwrap_or_default()
     };
     crate::per_entry(files, title, |r| {
-        let name = name_of(&r.path);
+        let name = || Name::of(&r.path);
+        let to = || Name(tag.clone());
         let (will, did, already) = match source.as_ref().and_then(|s| s.tag.as_deref()) {
-            Some(from) => (
-                format!("move “{name}” from “{from}” to “{tag}”"),
-                format!("moved “{name}” from “{from}” to “{tag}”"),
-                format!("“{name}” was already in “{tag}”"),
-            ),
+            Some(from) => {
+                let from = || Name(from.to_owned());
+                (
+                    words!(
+                        tags_move_file_will = "move { $name } from { $from } to { $tag }",
+                        name = name(),
+                        from = from(),
+                        tag = to(),
+                        note = "A step: a file dragged from one tag's place to another's. name: the file's; from, tag: the tags'."
+                    ),
+                    words!(
+                        tags_move_file_did = "moved { $name } from { $from } to { $tag }",
+                        name = name(),
+                        from = from(),
+                        tag = to(),
+                        note = "As tags_move_file_will, done."
+                    ),
+                    words!(
+                        tags_move_file_already = "{ $name } was already in { $tag }",
+                        name = name(),
+                        tag = to(),
+                        note = "As tags_move_file_will, found done already."
+                    ),
+                )
+            }
             None => (
-                format!("give “{name}” the tag “{tag}”"),
-                format!("gave “{name}” the tag “{tag}”"),
-                format!("“{name}” already had the tag “{tag}”"),
+                words!(
+                    tags_give_file_will = "give { $name } the tag { $tag }",
+                    name = name(),
+                    tag = to(),
+                    note = "A step: a file dropped on a tag's place. name: the file's; tag: the tag's."
+                ),
+                words!(
+                    tags_give_file_did = "gave { $name } the tag { $tag }",
+                    name = name(),
+                    tag = to(),
+                    note = "As tags_give_file_will, done."
+                ),
+                words!(
+                    tags_give_file_already = "{ $name } already had the tag { $tag }",
+                    name = name(),
+                    tag = to(),
+                    note = "As tags_give_file_will, found done already."
+                ),
             ),
         };
-        Some(
-            app.notes
-                .edit(r)
-                .change_tags(change.clone())
-                .saying(will, did, already),
-        )
+        // Said now: an edit's words are text until it takes words.
+        Some(app.notes.edit(r).change_tags(change.clone()).saying(
+            will.say(),
+            did.say(),
+            already.say(),
+        ))
     })
-}
-
-/// A file's name, as a sentence says it.
-fn name_of(path: &std::path::Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    )
 }
 
 /// `tags.untag`.
@@ -330,30 +374,68 @@ pub fn untag(
         return Ok(Outcome::Done);
     }
     let title = match &address.tag {
-        Some(tag) => format!("remove tag {tag}"),
-        None => "remove all tags".to_owned(),
+        Some(tag) => words!(
+            tags_untag_plan = "remove tag { $tag }",
+            tag = tag.as_str(),
+            note = "A plan's title: files taken out of a tag's place. tag: its name."
+        ),
+        None => words!(
+            tags_untag_all_plan = "remove all tags",
+            note = "A plan's title: files taken out of the place of every tag."
+        ),
     };
     // Read when the plan is applied, as `drop`'s.
     let change = taken(&address);
     crate::per_entry(files, title, |r| {
-        let name = name_of(&r.path);
+        let name = || Name::of(&r.path);
         let (will, did, already) = match &address.tag {
-            Some(tag) => (
-                format!("remove the tag “{tag}” from “{name}”"),
-                format!("removed the tag “{tag}” from “{name}”"),
-                format!("the tag “{tag}” was already off “{name}”"),
-            ),
+            Some(tag) => {
+                let named = || Name(tag.clone());
+                (
+                    words!(
+                        tags_untag_file_will = "remove the tag { $tag } from { $name }",
+                        tag = named(),
+                        name = name(),
+                        note = "A step. tag: the tag's name; name: the file's."
+                    ),
+                    words!(
+                        tags_untag_file_did = "removed the tag { $tag } from { $name }",
+                        tag = named(),
+                        name = name(),
+                        note = "As tags_untag_file_will, done."
+                    ),
+                    words!(
+                        tags_untag_file_already = "the tag { $tag } was already off { $name }",
+                        tag = named(),
+                        name = name(),
+                        note = "As tags_untag_file_will, found done already."
+                    ),
+                )
+            }
             None => (
-                format!("remove the tags of “{name}”"),
-                format!("removed the tags of “{name}”"),
-                format!("“{name}” already had no tags"),
+                words!(
+                    tags_untag_all_file_will = "remove the tags of { $name }",
+                    name = name(),
+                    note = "A step. name: the file's."
+                ),
+                words!(
+                    tags_untag_all_file_did = "removed the tags of { $name }",
+                    name = name(),
+                    note = "As tags_untag_all_file_will, done."
+                ),
+                words!(
+                    tags_untag_all_file_already = "{ $name } already had no tags",
+                    name = name(),
+                    note = "As tags_untag_all_file_will, found done already."
+                ),
             ),
         };
         let edit = match &change {
             Some(change) => app.notes.edit(r).change_tags(change.clone()),
             None => app.notes.edit(r).tags(Vec::new()),
         };
-        Some(edit.saying(will, did, already))
+        // Said now: an edit's words are text until it takes words.
+        Some(edit.saying(will.say(), did.say(), already.say()))
     })
 }
 
@@ -365,15 +447,21 @@ pub fn new(
 ) -> anyhow::Result<Outcome> {
     let address = Address::parse(&Location::parse(&a.location).rest.clone());
     let name = clean_tag(&a.name);
-    anyhow::ensure!(!name.is_empty(), "a tag needs a name");
-    anyhow::ensure!(!name.contains(','), "a tag's name has no comma");
+    anyhow::ensure!(
+        !name.is_empty(),
+        words!(tags_needs_name = "a tag needs a name")
+    );
+    anyhow::ensure!(
+        !name.contains(','),
+        words!(tags_no_comma = "a tag's name has no comma")
+    );
     let tag = match &address.tag {
         Some(parent) => format!("{parent}/{name}"),
         None => name,
     };
     let root = address
         .root()
-        .ok_or_else(|| anyhow::anyhow!("no home folder"))?;
+        .ok_or_else(|| anyhow::Error::from(crate::no_home()))?;
     places.draft(&root, &tag);
     // Selected once listed, to drop files on.
     let pane = app.pane_or_active(a.pane);
@@ -396,10 +484,15 @@ pub fn export(
     let tag = address
         .tag
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("a tag is copied, not all of them"))?;
+        .ok_or_else(|| {
+            anyhow::Error::from(words!(
+                tags_export_one = "a tag is copied, not all of them",
+                note = "An error: the place of every tag was dropped in a folder, where one tag's place makes a folder of its files."
+            ))
+        })?;
     let root = address
         .root()
-        .ok_or_else(|| anyhow::anyhow!("no home folder"))?;
+        .ok_or_else(|| anyhow::Error::from(crate::no_home()))?;
     let dest = a.dest.into_inner();
     let (places, weak) = (std::sync::Arc::clone(places), app.weak());
     app.scheduler.spawn(
@@ -430,12 +523,13 @@ pub fn export(
                 }
                 steps.push(Box::new(copy));
             }
-            let place = dest.file_name().map_or_else(
-                || dest.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
             app.propose(skwir_core::op::Plan::with_steps(
-                format!("copy the files tagged {tag} to {place}"),
+                words!(
+                    tags_export_plan = "copy the files tagged { $tag } to { $folder }",
+                    tag = tag.as_str(),
+                    folder = Folder(Name::of(&dest).0),
+                    note = "A plan's title. tag: the tag's name; folder: where the copies go."
+                ),
                 steps,
             ));
             app.wake();
@@ -455,9 +549,11 @@ pub fn narrowed(
 ) -> anyhow::Result<Address> {
     match facet {
         "deep" => address.deep = on.unwrap_or(!address.deep),
-        other => anyhow::bail!(
-            "a tag's place is narrowed by `deep`; `{other}` is the pane's lens (query.narrow)"
-        ),
+        other => anyhow::bail!(words!(
+            tags_narrow_deep_only = "a tag's place is narrowed by `deep`; `{ $facet }` is the pane's lens (query.narrow)",
+            facet = other,
+            note = "An error for a script or an agent. facet: what it asked to narrow by, as it wrote it."
+        )),
     }
     Ok(address)
 }
@@ -476,7 +572,7 @@ pub fn narrow(app: &App, a: &NarrowArgs) -> anyhow::Result<Outcome> {
 pub fn open(app: &App, a: &OpenArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let tag = clean_tag(&a.tag);
-    anyhow::ensure!(!tag.is_empty(), "which tag?");
+    anyhow::ensure!(!tag.is_empty(), crate::which_tag());
     let address = Address {
         tag: Some(tag),
         ..Address::default()
@@ -490,7 +586,7 @@ pub fn open(app: &App, a: &OpenArgs) -> anyhow::Result<Outcome> {
 pub fn pill(app: &App, a: &PillArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let tag = clean_tag(&a.tag);
-    anyhow::ensure!(!tag.is_empty(), "which tag?");
+    anyhow::ensure!(!tag.is_empty(), crate::which_tag());
     let shown = app.pane_location(pane);
     if let Some(location) = shown.as_ref().filter(|l| &*l.scheme == "query") {
         // A search narrows itself, as the query plugin says.
@@ -587,7 +683,11 @@ pub fn keep(app: &App, a: &KeepArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let address = shown(app, pane, None)?;
     let Some(tag) = pinned_tag(&address).map(str::to_owned) else {
-        anyhow::bail!("a tag of the home folder, not narrowed, is kept in the sidebar: pinned");
+        anyhow::bail!(words!(
+            tags_keep_one =
+                "a tag of the home folder, not narrowed, is kept in the sidebar: pinned",
+            note = "An error: what Ctrl+D keeps of a tag's place."
+        ));
     };
     app.dispatch(&Invocation::with_args(
         "tags.pin",
@@ -595,36 +695,88 @@ pub fn keep(app: &App, a: &KeepArgs) -> anyhow::Result<Outcome> {
     ))
 }
 
-fn item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
+fn item(title: Words, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("place")
 }
 
 /// A tag's colors: one choice, drawn as swatches (each value's
 /// `MenuItem::color`), from its name first, `color` the one it was given.
 fn color_items(tag: &str, color: Option<&str>) -> Vec<MenuItem> {
-    std::iter::once(("From Its Name".to_owned(), None))
-        .chain(TAG_COLORS.iter().map(|name| {
-            let mut title = (*name).to_owned();
-            title[..1].make_ascii_uppercase();
-            (title, Some(*name))
-        }))
-        .map(|(title, value)| {
-            let item = item(
-                &title,
-                Invocation::with_args(
-                    "tags.color",
-                    &serde_json::json!({ "tag": tag, "color": value }),
-                ),
-                0,
-                "",
-            )
-            .value_of("Color", ChoiceLook::Colors, color == value);
-            match value {
-                Some(value) => item.colored(value),
-                None => item,
-            }
-        })
-        .collect()
+    // Said now: a choice's values meet by its name.
+    let choice = words!(
+        tags_color_choice = "Color",
+        note = "The name of a tag's menu's row of colors."
+    )
+    .say();
+    std::iter::once((
+        words!(
+            tags_color_from_name = "From Its Name",
+            note = "A tag's color: the one its name gives it, none chosen."
+        ),
+        None,
+    ))
+    .chain(
+        TAG_COLORS
+            .iter()
+            .map(|name| (color_name(name), Some(*name))),
+    )
+    .map(|(title, value)| {
+        let item = item(
+            title,
+            Invocation::with_args(
+                "tags.color",
+                &serde_json::json!({ "tag": tag, "color": value }),
+            ),
+            0,
+            "",
+        )
+        .value_of(&choice, ChoiceLook::Colors, color == value);
+        match value {
+            Some(value) => item.colored(value),
+            None => item,
+        }
+    })
+    .collect()
+}
+
+/// What a color of the tags' palette (`TAG_COLORS`) is called.
+fn color_name(color: &str) -> Words {
+    match color {
+        "red" => words!(
+            tags_color_red = "Red",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "orange" => words!(
+            tags_color_orange = "Orange",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "yellow" => words!(
+            tags_color_yellow = "Yellow",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "green" => words!(
+            tags_color_green = "Green",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "teal" => words!(
+            tags_color_teal = "Teal",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "blue" => words!(
+            tags_color_blue = "Blue",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "purple" => words!(
+            tags_color_purple = "Purple",
+            note = "A color a tag can wear, in its menu."
+        ),
+        "pink" => words!(
+            tags_color_pink = "Pink",
+            note = "A color a tag can wear, in its menu."
+        ),
+        // A color the palette gained that no message names yet: its id.
+        other => Words::as_written(other.to_owned()),
+    }
 }
 
 /// `tags.place_menu`: the items of the tags selected in a tag location
@@ -691,7 +843,10 @@ pub fn tag_menu(app: &App, known: &[String], a: TagMenuArgs) -> Outcome {
             // (Tags…).
             if selected(app, a.pane) > 0 {
                 items.push(item(
-                    "Edit Tags…",
+                    words!(
+                        tags_edit_item = "Edit Tags…",
+                        note = "The first item of the files' menu's Tags submenu: it opens the tag editor."
+                    ),
                     Invocation::new("ui.tags_prompt"),
                     210,
                     "tag",
@@ -789,9 +944,10 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
                 leaf
             };
             let on = *count == files;
+            // A tag's name, as the user wrote it.
             let item = MenuItem::new(
                 "context",
-                name,
+                Words::as_written(name.to_owned()),
                 "",
                 order,
                 Invocation::with_args(
@@ -819,7 +975,10 @@ pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
     let selected = selected(app, pane);
     let mut items = vec![
         item(
-            "Show Its Files Here",
+            words!(
+                tags_show_files_here = "Show Its Files Here",
+                note = "An item of a tag's menu: its files in the folder shown."
+            ),
             Invocation::with_args(
                 "tags.pill",
                 &serde_json::json!({ "tag": tag, "how": "here" }),
@@ -828,7 +987,10 @@ pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
             "filter",
         ),
         item(
-            "Open Tag",
+            words!(
+                tags_open_tag = "Open Tag",
+                note = "An item of a tag's menu: its place, every file that has it."
+            ),
             Invocation::with_args("tags.open", &serde_json::json!({ "tag": tag })),
             11,
             "tag",
@@ -836,11 +998,14 @@ pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
     ];
     if selected > 0 {
         items.push(item(
-            if selected == 1 {
-                "Remove From This File"
-            } else {
-                "Remove From Selected Files"
-            },
+            words!(
+                tags_remove_from_files = "{ $count ->
+                        [1] Remove From This File
+                       *[other] Remove From Selected Files
+                    }",
+                count = selected,
+                note = "An item of a tag's menu where a file shows it: takes it from the files selected. count: how many."
+            ),
             Invocation::with_args("tags.remove", &serde_json::json!({ "tags": [tag] })),
             290,
             "minus",
@@ -893,7 +1058,11 @@ pub fn one_at_a_time(app: &App, tags: &[String], chip: bool, known: &[String]) -
         .zip(260..)
         .map(|((category, on), order)| {
             item(
-                &format!("One “{}” Tag at a Time", tag_leaf(category)),
+                words!(
+                    tags_one_at_a_time = "One { $category } Tag at a Time",
+                    category = Name(tag_leaf(category).to_owned()),
+                    note = "An item of a tag's menu, checked while on: the tags within a category become the values of one field, a file having one of them at a time. category: its name."
+                ),
                 Invocation::with_args(
                     "tags.exclusive",
                     &serde_json::json!({ "tag": category, "on": !on }),
@@ -927,27 +1096,38 @@ pub fn tag_items(
     let them = serde_json::json!({ "tags": tags });
     if all_pinned && !on_pin {
         items.push(item(
-            "Unpin From Sidebar",
+            words!(tags_unpin_item = "Unpin From Sidebar"),
             Invocation::with_args("tags.unpin", &them),
             410,
             "pin",
         ));
     } else if !all_pinned {
         items.push(item(
-            "Pin to Sidebar",
+            words!(tags_pin_item = "Pin to Sidebar"),
             Invocation::with_args("tags.pin", &them),
             410,
             "pin",
         ));
     }
     items.push(item(
-        "Move to Category…",
+        words!(
+            tags_move_item = "Move to Category…",
+            note = "An item of a tag's menu: it asks for the category the tags go into."
+        ),
         Invocation::with_args(
             "ui.ask",
             &serde_json::json!({
-                "title": "Move into a category, keeping the names",
-                "accept": "Move",
-                "placeholder": "Category (Places/France)",
+                "title": words!(
+                    tags_move_ask = "Move into a category, keeping the names",
+                    note = "The title of the question Move to Category… asks."
+                )
+                .say(),
+                "accept": words!(
+                    tags_move_accept = "Move",
+                    note = "The button that moves tags into the category typed."
+                )
+                .say(),
+                "placeholder": words!(tags_move_placeholder = "Category (Places/France)").say(),
                 "command": "tags.move",
                 "args": { "tags": tags, "root": root },
                 "field": "into",
@@ -958,14 +1138,15 @@ pub fn tag_items(
     ));
     if tags.iter().all(|t| tag_parent(t).is_some()) {
         let title = match tags {
-            [one] => format!(
-                "Move Out of “{}”",
-                tag_parent(one).map(tag_leaf).unwrap_or_default()
+            [one] => words!(
+                tags_move_out_item = "Move Out of { $category }",
+                category = Name(tag_parent(one).map(tag_leaf).unwrap_or_default().to_owned()),
+                note = "An item of a tag's menu. category: the category it is in."
             ),
-            _ => "Move Out of Their Categories".to_owned(),
+            _ => words!(tags_move_out_all_item = "Move Out of Their Categories"),
         };
         items.push(item(
-            &title,
+            title,
             Invocation::with_args(
                 "tags.move",
                 &serde_json::json!({ "tags": tags, "root": root }),
@@ -989,13 +1170,20 @@ pub fn tag_items(
     }
     if tags.len() > 1 {
         items.push(item(
-            "Merge Into One…",
+            words!(
+                tags_merge_item = "Merge Into One…",
+                note = "An item of the menu of several tags: it asks for the tag they become."
+            ),
             Invocation::with_args(
                 "ui.ask",
                 &serde_json::json!({
-                    "title": "Merge these tags into one, on every file",
-                    "accept": "Merge",
-                    "placeholder": "The tag they become",
+                    "title": words!(tags_merge_ask = "Merge these tags into one, on every file").say(),
+                    "accept": words!(
+                        tags_merge_accept = "Merge",
+                        note = "The button that merges the tags into the one typed."
+                    )
+                    .say(),
+                    "placeholder": words!(tags_merge_placeholder = "The tag they become").say(),
                     "command": "tags.rename",
                     "args": { "tags": tags, "root": root },
                     "field": "to",
@@ -1006,7 +1194,7 @@ pub fn tag_items(
         ));
     }
     items.push(item(
-        "Remove Tag From Every File…",
+        words!(tags_remove_everywhere_item = "Remove Tag From Every File…"),
         Invocation::with_args(
             "tags.delete",
             &serde_json::json!({ "tags": tags, "root": root }),

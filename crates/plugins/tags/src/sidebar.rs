@@ -18,6 +18,8 @@ use skwir_core::metadata::{
     TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage, tag_parent,
 };
 use skwir_core::registry::{Click, Place, Reorder};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::index::TagIndex;
 use crate::vocabulary::Vocabulary;
@@ -55,9 +57,21 @@ fn rename(tag: &str) -> Invocation {
     Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": format!("Rename the tag “{tag}” on every file"),
-            "accept": "Rename",
-            "placeholder": "New name (an existing tag's merges them)",
+            "title": words!(
+                tags_rename_ask = "Rename the tag { $tag } on every file",
+                tag = Name(tag.to_owned()),
+                note = "The title of the question that asks for a tag's new name."
+            )
+            .say(),
+            "accept": words!(
+                tags_rename_accept = "Rename",
+                note = "The button that renames a tag on every file."
+            )
+            .say(),
+            "placeholder": words!(
+                tags_rename_placeholder = "New name (an existing tag's merges them)"
+            )
+            .say(),
             "text": tag,
             "command": "tags.rename",
             "args": { "tag": tag },
@@ -170,19 +184,40 @@ impl Pin {
     }
 
     /// What it did, in a sentence: `was` the pins before.
-    fn words(&self, was: &[String]) -> String {
+    fn words(&self, was: &[String]) -> Words {
         let pinned = |t: &str| was.iter().any(|x| same_tag(x, t));
+        // The tag named when there is one, else the first counted.
+        let first = |tags: &[String]| Name(tags.first().cloned().unwrap_or_default());
         match self {
             Pin::Put { tags, .. } => match tags.as_slice() {
-                [tag] if pinned(tag) => format!("Moved the tag “{tag}”"),
-                [tag] => format!("Pinned the tag “{tag}” to the sidebar"),
-                _ => format!("Pinned {} tags to the sidebar", tags.len()),
+                [tag] if pinned(tag) => words!(
+                    tags_pin_moved = "Moved the tag { $tag }",
+                    tag = Name(tag.clone()),
+                    note = "A pinned tag was moved among the sidebar's tags."
+                ),
+                _ => words!(
+                    tags_pinned = "{ $count ->
+                            [1] Pinned the tag { $tag } to the sidebar
+                           *[other] Pinned { $count } tags to the sidebar
+                        }",
+                    count = tags.len(),
+                    tag = first(tags),
+                    note = "tag: the tag's name, when one was pinned; count: how many."
+                ),
             },
-            Pin::Unpin { tags } => match tags.as_slice() {
-                [tag] => format!("Unpinned the tag “{tag}”"),
-                _ => format!("Unpinned {} tags", tags.len()),
-            },
-            Pin::Set(_) => "Put the pinned tags back as they were".to_owned(),
+            Pin::Unpin { tags } => words!(
+                tags_unpinned = "{ $count ->
+                            [1] Unpinned the tag { $tag }
+                           *[other] Unpinned { $count } tags
+                        }",
+                count = tags.len(),
+                tag = first(tags),
+                note = "tag: the tag's name, when one was unpinned; count: how many."
+            ),
+            Pin::Set(_) => words!(
+                tags_pins_back = "Put the pinned tags back as they were",
+                note = "Said once the sidebar's pinned tags were put back, by an undo or a redo."
+            ),
         }
     }
 }
@@ -224,15 +259,21 @@ pub fn edit(
         if let Err(error) = app.settings.save() {
             app.notify(
                 NotifyLevel::Error,
-                format!("The pinned tags were not saved: {error:#}"),
+                words!(
+                    tags_pins_not_saved_said = "The pinned tags were not saved: { $error }",
+                    error = error
+                ),
             );
         } else {
             // A tag's place pinned plain: its filter is said to be left
             // (the core `keep` with nothing that keeps a filter, ADR-109).
             let words = match &unkept {
-                Some(filter) => format!(
-                    "{}; its filter “{filter}” is not kept with it",
-                    edit.words(&was)
+                Some(filter) => words!(
+                    tags_filter_not_kept =
+                        "{ $done }; its filter “{ $filter }” is not kept with it",
+                    done = edit.words(&was),
+                    filter = filter.as_str(),
+                    note = "done: what was done to the sidebar's pinned tags (tags_pinned…); filter: the filter the tag's place was shown with, as typed."
                 ),
                 None => edit.words(&was),
             };
@@ -264,7 +305,12 @@ pub fn toggle_forms(pinned: &[&str]) -> Vec<skwir_core::command::Form> {
         .map(|tag| {
             skwir_core::command::Form::new(
                 serde_json::json!({ "tag": tag }),
-                format!("Toggle tag “{tag}”"),
+                words!(
+                    tags_toggle_form = "Toggle tag { $tag }",
+                    tag = Name((*tag).to_owned()),
+                    note =
+                        "A way to run Toggle a tag, one per pinned tag, in F1's list of actions."
+                ),
             )
         })
         .collect()
@@ -367,7 +413,10 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
         }],
         ..Place::new(
             GROUP,
-            "All Tags",
+            words!(
+                tags_all_tags = "All Tags",
+                note = "The last place of the sidebar's Tags: every tag of the home folder."
+            ),
             "tag",
             crate::location::Address::default().location(),
         )

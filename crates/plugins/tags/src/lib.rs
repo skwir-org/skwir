@@ -44,6 +44,8 @@ use skwir_core::plugin::Plugin;
 use skwir_core::registry::{ChoiceLook, KeyBinding, MenuItem, MenuSource};
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 pub use attrs::tags_of;
@@ -55,6 +57,14 @@ use vocabulary::Vocabulary;
 pub(crate) const ID: &str = "tags";
 /// The metadata field key.
 pub const FIELD: &str = keys::TAGS;
+
+/// What a command that acts on a tag says when given none.
+pub(crate) fn which_tag() -> Words {
+    words!(
+        tags_which_tag = "which tag?",
+        note = "An error: a command about a tag was given no tag."
+    )
+}
 
 /// The plugin's stores (ADR-027), the desktop's first: it is this
 /// platform's own.
@@ -269,7 +279,7 @@ struct ColorArgs {
 /// the entries it would not change.
 fn per_entry<T: skwir_core::op::Operation + 'static>(
     refs: Vec<EntryRef>,
-    title: String,
+    title: Words,
     step: impl Fn(EntryRef) -> Option<T>,
 ) -> anyhow::Result<Outcome> {
     if refs.is_empty() {
@@ -309,17 +319,61 @@ fn has_tag(e: &skwir_core::Entry, tag: &str) -> bool {
     }
 }
 
+/// Tags named in a sentence, as written: `a, b`.
+///
+/// Transitional: a list is joined here until words take a list of names
+/// that each language joins its own way (PLAN.md, ADR-139 step F).
+pub(crate) fn tag_list(tags: &[String]) -> String {
+    tags.join(", ")
+}
+
+/// Tags named in a sentence, each quoted: `“a”, “b” and “c”`.
+///
+/// Transitional, as [`tag_list`].
+pub(crate) fn quoted_tags(tags: &[String]) -> String {
+    let quoted: Vec<String> = tags.iter().map(|t| format!("“{t}”")).collect();
+    match quoted.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => quoted.concat(),
+    }
+}
+
 /// "add tag work", "remove tags a, b", "add tag x and remove tag y".
-fn edit_title(add: &[String], remove: &[String]) -> String {
-    let part = |verb: &str, tags: &[String]| {
-        let noun = if tags.len() == 1 { "tag" } else { "tags" };
-        format!("{verb} {noun} {}", tags.join(", "))
-    };
+fn edit_title(add: &[String], remove: &[String]) -> Words {
     match (add.is_empty(), remove.is_empty()) {
-        (false, true) => part("add", add),
-        (true, false) => part("remove", remove),
-        (false, false) => format!("{} and {}", part("add", add), part("remove", remove)),
-        (true, true) => "change tags".into(),
+        (false, true) => words!(
+            tags_add_plan = "add { $count ->
+                    [1] tag
+                   *[other] tags
+                } { $tags }",
+            count = add.len(),
+            tags = tag_list(add),
+            note = "A plan's title. tags: the tags' names, as written, joined by commas; count: how many."
+        ),
+        (true, false) => words!(
+            tags_remove_plan = "remove { $count ->
+                    [1] tag
+                   *[other] tags
+                } { $tags }",
+            count = remove.len(),
+            tags = tag_list(remove),
+            note = "A plan's title. tags: the tags' names, as written, joined by commas; count: how many."
+        ),
+        (false, false) => words!(
+            tags_add_remove_plan = "add { $added ->
+                    [1] tag
+                   *[other] tags
+                } { $add } and remove { $removed ->
+                    [1] tag
+                   *[other] tags
+                } { $remove }",
+            added = add.len(),
+            add = tag_list(add),
+            removed = remove.len(),
+            remove = tag_list(remove),
+            note = "A plan's title. add, remove: the tags' names, as written, joined by commas; added, removed: how many."
+        ),
+        (true, true) => words!(tags_change_plan = "change tags", note = "A plan's title."),
     }
 }
 
@@ -437,7 +491,14 @@ impl skwir_core::suggest::SuggestSource for TagSuggestions {
             .map(|(i, (rank, tag))| {
                 let location = skwir_core::location::Location::parse(&sidebar_location(&tag));
                 let mut row = Suggestion::new(Section::Go, skwir_core::metadata::tag_leaf(&tag))
-                    .detail(format!("Tag · {tag}"))
+                    .detail(
+                        words!(
+                            tags_suggestion_detail = "Tag · { $tag }",
+                            tag = tag.as_str(),
+                            note = "Beside a tag the address field offers: tag is its whole name, its categories included (Places/France/Paris)."
+                        )
+                        .say(),
+                    )
                     .rank(rank * 10 + i32::try_from(i).unwrap_or(0) + 5)
                     .runs(Invocation::with_args(
                         "navigate",
@@ -641,26 +702,71 @@ fn rating_items(chosen: Option<u8>) -> Vec<MenuItem> {
         .rev()
         .map(|stars| {
             let title = match stars {
-                0 => "No rating".to_owned(),
-                1 => "1 star".to_owned(),
-                n => format!("{n} stars"),
+                0 => words!(
+                    tags_no_rating = "No rating",
+                    note = "The rating's value of none, in the files' menu."
+                ),
+                n => words!(
+                    tags_stars = "{ $stars ->
+                            [one] { $stars } star
+                           *[other] { $stars } stars
+                        }",
+                    stars = n,
+                    note = "A rating's value in the files' menu: stars, 1 to 5."
+                ),
             };
             menu_item(
-                &title,
+                title,
                 Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
                 520 + i32::from(5 - stars),
                 if stars == 0 { "minus" } else { "star" },
             )
-            .value_of("Rating", ChoiceLook::Stars, chosen == Some(stars))
+            // Said now: a choice's values meet by its name.
+            .value_of(
+                &words!(
+                    tags_rating_choice = "Rating",
+                    note = "The name of the files' menu's row of stars."
+                )
+                .say(),
+                ChoiceLook::Stars,
+                chosen == Some(stars),
+            )
         })
         .collect()
 }
 
+/// The files' menu's item that edits their comment.
+fn comment_item() -> Words {
+    words!(
+        tags_comment_item = "Comment…",
+        note = "An item of the files' menu: it asks for the selection's comment."
+    )
+}
+
+/// What a command that falls back on the home folder says without one.
+pub(crate) fn no_home() -> Words {
+    words!(
+        tags_no_home = "no home folder",
+        note = "An error: the system names no home folder."
+    )
+}
+
 fn ask_comment(text: Option<&str>) -> Invocation {
     let mut args = serde_json::json!({
-        "title": "Comment",
-        "accept": "Save",
-        "placeholder": "A comment on the selection (empty removes it)",
+        "title": words!(
+            tags_comment_title = "Comment",
+            note = "The title of the question that edits the selection's comment."
+        )
+        .say(),
+        "accept": words!(
+            tags_comment_accept = "Save",
+            note = "The button that keeps a comment typed."
+        )
+        .say(),
+        "placeholder": words!(
+            tags_comment_placeholder = "A comment on the selection (empty removes it)"
+        )
+        .say(),
         "command": "notes.comment",
         "field": "text",
     });
@@ -676,7 +782,7 @@ fn ask_comment(text: Option<&str>) -> Invocation {
 /// tags written into names join.
 pub(crate) const TAGS_SUBMENU: skwir_core::registry::Submenu = skwir_core::registry::submenus::TAGS;
 
-fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
+fn menu_item(title: Words, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("selection !place")
 }
 
@@ -708,7 +814,10 @@ fn set_color(app: &App, lifetime: &CancelToken, sidebar: &Sidebar, tag: &str, co
         if let Err(error) = app.settings.save() {
             app.notify(
                 skwir_core::app::NotifyLevel::Error,
-                format!("The tag's color was not saved: {error:#}"),
+                words!(
+                    tags_color_not_saved = "The tag's color was not saved: { $error }",
+                    error = error
+                ),
             );
         }
         // The sidebar's pill wears it at once.
@@ -830,8 +939,10 @@ impl Plugin for TagsPlugin {
         app.settings.declare(
             SettingSpec::integer(
                 index::LIMIT_SETTING,
-                "Room for tagged files",
-                "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so.",
+                words!(tags_limit_title = "Room for tagged files"),
+                words!(
+                    tags_limit_description = "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so."
+                ),
                 index::LIMIT_DEFAULT,
                 (8, 4096),
             )
@@ -880,8 +991,16 @@ impl Plugin for TagsPlugin {
                     "tags.browse",
                     &serde_json::json!({ "toggle": true }),
                 ),
-                open_title: "Tags of this folder".into(),
-                close_title: "Back to the folder".into(),
+                open_title: words!(
+                    tags_aspect_open = "Tags of this folder",
+                    note = "The tooltip of the button at the end of a folder's address that shows its tags."
+                )
+                .say(),
+                close_title: words!(
+                    tags_aspect_close = "Back to the folder",
+                    note = "The same button's tooltip while the folder's tags are shown."
+                )
+                .say(),
             },
         );
         app.registry.keepers.add(
@@ -890,8 +1009,8 @@ impl Plugin for TagsPlugin {
                 scheme: location::SCHEME.into(),
                 filtered: false,
                 save: Invocation::new("tags.keep"),
-                save_title: "Pin this tag to the sidebar".into(),
-                forget_title: "Unpin this tag from the sidebar".into(),
+                save_title: words!(tags_keep_save = "Pin this tag to the sidebar").say(),
+                forget_title: words!(tags_keep_forget = "Unpin this tag from the sidebar").say(),
                 keeps: Some(browse::keepable),
             },
         );
@@ -1072,8 +1191,10 @@ impl Plugin for TagsPlugin {
         app.settings.declare(
             SettingSpec::integer(
                 sidebar::SETTING,
-                "Tags suggested in the sidebar",
-                "Until a tag is pinned, how many the sidebar suggests, those on the most files first; 0 suggests none.",
+                words!(tags_suggested_title = "Tags suggested in the sidebar"),
+                words!(
+                    tags_suggested_description = "Until a tag is pinned, how many the sidebar suggests, those on the most files first; 0 suggests none."
+                ),
                 sidebar::DEFAULT,
                 (0, 50),
             )
@@ -1083,12 +1204,14 @@ impl Plugin for TagsPlugin {
         );
         app.settings.declare(SettingSpec::data(
             sidebar::PINNED,
-            "The tags pinned to the sidebar, in their order",
+            words!(tags_pinned_data = "The tags pinned to the sidebar, in their order"),
             toml::Value::Array(Vec::new()),
         ));
         app.settings.declare(SettingSpec::data(
             skwir_core::metadata::TAG_EXCLUSIVE_SETTING,
-            "The categories a file has one tag of at a time: fields, whose values are the tags within them",
+            words!(
+                tags_exclusive_data = "The categories a file has one tag of at a time: fields, whose values are the tags within them"
+            ),
             toml::Value::Array(Vec::new()),
         ));
         {
@@ -1096,11 +1219,13 @@ impl Plugin for TagsPlugin {
             app.commands.register::<ExclusiveArgs, _>(
                 ID, Topic::Notes,
                 "tags.exclusive",
-                "One tag of a category at a time",
-                "Make a category (`tag`) hold one tag per file at a time, a field whose values are its tags (`on`), or several again",
+                words!(tags_exclusive = "One tag of a category at a time"),
+                words!(
+                    tags_exclusive_description = "Make a category (`tag`) hold one tag per file at a time, a field whose values are its tags (`on`), or several again"
+                ),
                 move |a, app| {
                     let tag = skwir_core::metadata::clean_tag(&a.tag);
-                    anyhow::ensure!(!tag.is_empty(), "which category?");
+                    anyhow::ensure!(!tag.is_empty(), words!(tags_which_category = "which category?"));
                     fields::set(app, &fields.saving, &tag, a.on, a.undo);
                     Ok(Outcome::Done)
                 },
@@ -1109,18 +1234,26 @@ impl Plugin for TagsPlugin {
         for (name, title, description) in [
             (
                 "tags.pin",
-                "Pin tags",
-                "Keep tags (`tag`, `tags`) in the sidebar, before the pinned tag `before` or last; moves those pinned",
+                words!(tags_pin = "Pin tags"),
+                words!(
+                    tags_pin_description = "Keep tags (`tag`, `tags`) in the sidebar, before the pinned tag `before` or last; moves those pinned"
+                ),
             ),
             (
                 "tags.unpin",
-                "Unpin tags",
-                "Take tags (`tag`, `tags`) out of the sidebar; their files keep them",
+                words!(tags_unpin = "Unpin tags"),
+                words!(
+                    tags_unpin_description =
+                        "Take tags (`tag`, `tags`) out of the sidebar; their files keep them"
+                ),
             ),
             (
                 "tags.pins",
-                "Set pinned tags",
-                "Pin exactly `tags`, in their order: what an Undo of a pin runs",
+                words!(tags_pins = "Set pinned tags"),
+                words!(
+                    tags_pins_description =
+                        "Pin exactly `tags`, in their order: what an Undo of a pin runs"
+                ),
             ),
         ] {
             let (pins, lifetime) = (sidebar.clone(), lifetime.clone());
@@ -1134,7 +1267,7 @@ impl Plugin for TagsPlugin {
                     let tags = everywhere::named(a.tag, a.tags);
                     let edit = match name {
                         "tags.pins" => sidebar::Pin::Set(tags),
-                        _ if tags.is_empty() => anyhow::bail!("which tag?"),
+                        _ if tags.is_empty() => anyhow::bail!(which_tag()),
                         "tags.unpin" => sidebar::Pin::Unpin { tags },
                         _ => sidebar::Pin::Put {
                             tags,
@@ -1165,7 +1298,9 @@ impl Plugin for TagsPlugin {
             .register(ID, Arc::new(hints::Learned(Arc::clone(&index))));
         app.settings.declare(SettingSpec::data(
             TAG_COLOR_SETTING,
-            "Colors the user chose for tags, by tag in lowercase: { tag = color }",
+            words!(
+                tags_colors_data = r#"Colors the user chose for tags, by tag in lowercase: {"{"} tag = color {"}"}"#
+            ),
             toml::Value::Table(toml::Table::new()),
         ));
 
@@ -1175,15 +1310,21 @@ impl Plugin for TagsPlugin {
                 ID,
                 Topic::Notes,
                 "tags.set",
-                "Set tags",
-                "Replace the tags of the entries given, or the selection's (plan)",
+                words!(tags_set = "Set tags"),
+                words!(
+                    tags_set_description = "Replace the tags of the entries given, or the selection's (plan)"
+                ),
                 move |a, app| {
                     let tags = parse_tags(&a.tags.join(","));
                     v.used(&tags);
                     let title = if tags.is_empty() {
-                        "remove tags".to_owned()
+                        words!(tags_remove_all_plan = "remove tags", note = "A plan's title.")
                     } else {
-                        format!("set tags {}", tags.join(", "))
+                        words!(
+                            tags_set_plan = "set tags { $tags }",
+                            tags = tag_list(&tags),
+                            note = "A plan's title. tags: the tags' names, as written, joined by commas."
+                        )
                     };
                     // A file that has them already is skipped when applied.
                     per_entry(app.targets(a.pane, a.entries)?, title, |r| {
@@ -1198,8 +1339,10 @@ impl Plugin for TagsPlugin {
                 ID,
                 Topic::Notes,
                 "tags.add",
-                "Add tags",
-                "Add tags to the entries given, or the selection (plan)",
+                words!(tags_add = "Add tags"),
+                words!(
+                    tags_add_description = "Add tags to the entries given, or the selection (plan)"
+                ),
                 move |a, app| {
                     edit_plan(
                         app,
@@ -1220,8 +1363,11 @@ impl Plugin for TagsPlugin {
                 ID,
                 Topic::Notes,
                 "tags.remove",
-                "Remove tags",
-                "Remove tags from the entries given, or the selection (plan)",
+                words!(tags_remove = "Remove tags"),
+                words!(
+                    tags_remove_description =
+                        "Remove tags from the entries given, or the selection (plan)"
+                ),
                 move |a, app| {
                     edit_plan(
                         app,
@@ -1240,8 +1386,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<EditArgs, _>(
             ID, Topic::Notes,
             "tags.edit",
-            "Edit tags",
-            "Add some tags to the entries given, or the selection, and remove others, as one plan: each entry keeps its other tags",
+            words!(tags_edit = "Edit tags"),
+            words!(
+                tags_edit_description = "Add some tags to the entries given, or the selection, and remove others, as one plan: each entry keeps its other tags"
+            ),
             move |a, app| edit_plan(app, &v, a),
         )
         .plans();
@@ -1249,11 +1397,13 @@ impl Plugin for TagsPlugin {
         app.commands.register::<ToggleArgs, _>(
             ID, Topic::Notes,
             "tags.toggle",
-            "Toggle a tag",
-            "Give the entries given, or the selection, a tag, or take it from every entry when all of them have it: a command to bind to a key; with `on`, give it (true) or take it (false) whatever they have (plan)",
+            words!(tags_toggle = "Toggle a tag"),
+            words!(
+                tags_toggle_description = "Give the entries given, or the selection, a tag, or take it from every entry when all of them have it: a command to bind to a key; with `on`, give it (true) or take it (false) whatever they have (plan)"
+            ),
             move |a, app| {
                 let Some(tag) = parse_tags(&a.tag).pop() else {
-                    anyhow::bail!("which tag?");
+                    anyhow::bail!(which_tag());
                 };
                 if let Some(on) = a.on {
                     let (add, remove) = if on {
@@ -1327,7 +1477,10 @@ impl Plugin for TagsPlugin {
                         match toggle(&app) {
                             Ok(Outcome::Plan(plan)) => app.apply_whole(plan),
                             Ok(_) => {}
-                            Err(error) => app.notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}")),
+                            Err(error) => app.notify(
+                                skwir_core::app::NotifyLevel::Error,
+                                Words::of_error(error),
+                            ),
                         }
                     },
                 );
@@ -1348,8 +1501,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<PaneArgs, _>(
             ID, Topic::Notes,
             "tags.selected",
-            "Tags of the selection",
-            "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used",
+            words!(tags_selected = "Tags of the selection"),
+            words!(
+                tags_selected_description = r#"`{"{"} items, tags: [{"{"} name, count, color? {"}"}], known {"}"}`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used"#
+            ),
             move |a, app| Ok(Outcome::Value(selected(app, &v, a)?)),
         )
         .data();
@@ -1360,8 +1515,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<RenameArgs, _>(
             ID, Topic::Notes,
             "tags.rename",
-            "Rename tag everywhere",
-            "Rename a tag (or merge `tags`) on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review",
+            words!(tags_rename = "Rename tag everywhere"),
+            words!(
+                tags_rename_description = "Rename a tag (or merge `tags`) on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review"
+            ),
             move |a, app| {
                 let from = everywhere::named(a.tag, a.tags);
                 everywhere::start(app, &everywhere, &f, from, Some(&a.to), root_of(a.root))?;
@@ -1374,8 +1531,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<MoveArgs, _>(
             ID, Topic::Notes,
             "tags.move",
-            "Move tag into category",
-            "Put a tag (or `tags`) into the category `into`, keeping its own name (`Paris` into `Places/France` is `Places/France/Paris`), or out of its category without `into`, on every file under the home folder (or `root`): the files are searched on a worker and the plan proposed for review",
+            words!(tags_move = "Move tag into category"),
+            words!(
+                tags_move_description = "Put a tag (or `tags`) into the category `into`, keeping its own name (`Paris` into `Places/France` is `Places/France/Paris`), or out of its category without `into`, on every file under the home folder (or `root`): the files are searched on a worker and the plan proposed for review"
+            ),
             move |a, app| {
                 let tags = everywhere::named(a.tag, a.tags);
                 everywhere::move_into(
@@ -1394,8 +1553,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<DeleteArgs, _>(
             ID, Topic::Notes,
             "tags.delete",
-            "Remove tag everywhere",
-            "Take a tag (or `tags`) from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review",
+            words!(tags_delete = "Remove tag everywhere"),
+            words!(
+                tags_delete_description = "Take a tag (or `tags`) from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review"
+            ),
             move |a, app| {
                 let from = everywhere::named(a.tag, a.tags);
                 everywhere::start(app, &everywhere, &f, from, None, root_of(a.root))?;
@@ -1408,8 +1569,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<browse::DropArgs, _>(
             ID, Topic::Notes,
             "tags.drop",
-            "Drop on a tag",
-            "Give files dropped or pasted on a tag location (`location`) its tag: a pane's selection (`pane`) or `entries`; with `move`, out of the tag location they come from (the pane's, or `from`). Tags dropped go into it, a plan to review",
+            words!(tags_drop = "Drop on a tag"),
+            words!(
+                tags_drop_description = "Give files dropped or pasted on a tag location (`location`) its tag: a pane's selection (`pane`) or `entries`; with `move`, out of the tag location they come from (the pane's, or `from`). Tags dropped go into it, a plan to review"
+            ),
             move |a, app| browse::drop(app, &everywhere, &f, a),
         )
         .plans();
@@ -1417,8 +1580,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<browse::UntagArgs, _>(
             ID, Topic::Notes,
             "tags.untag",
-            "Remove from tag",
-            "Take the tag a tag location shows (the pane's, or `location`) off the selected files; tags selected there are taken off every file, a plan to review. What Delete does in a tag location",
+            words!(tags_untag = "Remove from tag"),
+            words!(
+                tags_untag_description = "Take the tag a tag location shows (the pane's, or `location`) off the selected files; tags selected there are taken off every file, a plan to review. What Delete does in a tag location"
+            ),
             move |a, app| browse::untag(app, &everywhere, &f, &a),
         )
         .plans();
@@ -1427,53 +1592,68 @@ impl Plugin for TagsPlugin {
             app.commands.register::<browse::NewArgs, _>(
                 ID, Topic::Notes,
                 "tags.new",
-                "New tag",
-                "Make a tag `name` in the tag a tag location shows (`location`): shown there until a file is given it",
+                words!(tags_new = "New tag"),
+                words!(
+                    tags_new_description = "Make a tag `name` in the tag a tag location shows (`location`): shown there until a file is given it"
+                ),
                 move |a, app| browse::new(app, &places, &a),
             );
         }
         app.commands.register::<browse::NarrowArgs, _>(
             ID, Topic::Notes,
             "tags.narrow",
-            "Narrow a tag location",
-            "Show, in the tag location the pane shows, every file within the tag (`facet` `deep`), not only those tagged with it exactly; `on` false takes it back, omitted it switches. Other tags, kinds and years are the pane's lens (`query.narrow`)",
+            words!(tags_narrow = "Narrow a tag location"),
+            words!(
+                tags_narrow_description = "Show, in the tag location the pane shows, every file within the tag (`facet` `deep`), not only those tagged with it exactly; `on` false takes it back, omitted it switches. Other tags, kinds and years are the pane's lens (`query.narrow`)"
+            ),
             |a, app| browse::narrow(app, &a),
         )
         .shows();
         app.commands.register::<browse::OpenArgs, _>(
             ID, Topic::Notes,
             "tags.open",
-            "Open a tag",
-            "Show the files of the home folder that have a tag, and a place for each tag within it, as its pinned pill does, in the pane given or the active one",
+            words!(tags_open = "Open a tag"),
+            words!(
+                tags_open_description = "Show the files of the home folder that have a tag, and a place for each tag within it, as its pinned pill does, in the pane given or the active one"
+            ),
             |a, app| browse::open(app, &a),
         )
         .shows();
         app.commands.register::<browse::PillArgs, _>(
             ID, Topic::Notes,
             "tags.pill",
-            "A tag, here",
-            "A tag of the sidebar clicked with Shift (`how` `also`: the files shown that have it too) or Alt (`here`: its files in the folder shown)",
+            words!(tags_pill = "A tag, here"),
+            words!(
+                tags_pill_description = "A tag of the sidebar clicked with Shift (`how` `also`: the files shown that have it too) or Alt (`here`: its files in the folder shown)"
+            ),
             |a, app| browse::pill(app, &a),
         )
         .shows();
         let browsing = app.commands.register::<browse::BrowseArgs, _>(
             ID, Topic::Notes,
             "tags.browse",
-            "Tags of a folder",
-            "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of; with `toggle` and no folder, a tag location goes back to its folder instead",
+            words!(tags_browse = "Tags of a folder"),
+            words!(
+                tags_browse_description = "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of; with `toggle` and no folder, a tag location goes back to its folder instead"
+            ),
             |a, app| browse::browse(app, &a),
         );
         browsing.forms([Form::new(
             serde_json::json!({ "toggle": true }),
-            "Tags of this folder, or back to it",
+            words!(
+                tags_browse_toggle = "Tags of this folder, or back to it",
+                note = "A way to run Tags of a folder, in F1's list of actions."
+            ),
         )]);
         browsing.shows();
         app.commands.register::<browse::KeepArgs, _>(
             ID,
             Topic::Notes,
             "tags.keep",
-            "Pin the tag shown",
-            "Pin the tag a pane's tag location shows: one tag of the home folder, not narrowed",
+            words!(tags_keep = "Pin the tag shown"),
+            words!(
+                tags_keep_description = "Pin the tag a pane's tag location shows: one tag of the home folder, not narrowed"
+            ),
             |a, app| browse::keep(app, &a),
         );
         {
@@ -1481,8 +1661,10 @@ impl Plugin for TagsPlugin {
             app.commands.register::<browse::ExportArgs, _>(
                 ID, Topic::Notes,
                 "tags.export",
-                "Copy a tag into a folder",
-                "Make in `dest` a folder of the files a tag location (`location`) lists, named as its tag, with a folder inside for each tag within it: a plan proposed for review. What a tag dropped or pasted in a folder does",
+                words!(tags_export = "Copy a tag into a folder"),
+                words!(
+                    tags_export_description = "Make in `dest` a folder of the files a tag location (`location`) lists, named as its tag, with a folder inside for each tag within it: a plan proposed for review. What a tag dropped or pasted in a folder does"
+                ),
                 move |a, app| browse::export(app, &places, a),
             )
         .plans();
@@ -1492,14 +1674,16 @@ impl Plugin for TagsPlugin {
             app.commands.register::<browse::CountedArgs, _>(
                 ID, Topic::Notes,
                 "tags.counted",
-                "Tags counted",
-                "`{ root, counting, counted, partial }`: whether the tags of the files under `root` (the home folder when omitted) are being counted for its tag locations, as of when a count covers them (`counted`, in seconds since the epoch), and whether some are left out for want of room (`partial`). Answers from memory",
+                words!(tags_counted = "Tags counted"),
+                words!(
+                    tags_counted_description = r#"`{"{"} root, counting, counted, partial {"}"}`: whether the tags of the files under `root` (the home folder when omitted) are being counted for its tag locations, as of when a count covers them (`counted`, in seconds since the epoch), and whether some are left out for want of room (`partial`). Answers from memory"#
+                ),
                 move |a, _| {
                     let root = a
                         .root
                         .map(PathArg::into_inner)
                         .or_else(std::env::home_dir)
-                        .ok_or_else(|| anyhow::anyhow!("no home folder"))?;
+                        .ok_or_else(|| anyhow::Error::from(no_home()))?;
                     Ok(Outcome::Value(places.counted(&root)))
                 },
             )
@@ -1509,8 +1693,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<browse::TagMenuArgs, _>(
             ID, Topic::Notes,
             "tags.tag_menu",
-            "A tag's menu",
-            "The items of a tag's menu where it is shown: its chip in Properties (tags), its pill in the sidebar (location). Answers from memory",
+            words!(tags_tag_menu = "A tag's menu"),
+            words!(
+                tags_tag_menu_description = "The items of a tag's menu where it is shown: its chip in Properties (tags), its pill in the sidebar (location). Answers from memory"
+            ),
             move |a, app| {
                 let known = known(sidebar::pinned(app), v.known());
                 Ok(browse::tag_menu(app, &known, a))
@@ -1521,8 +1707,10 @@ impl Plugin for TagsPlugin {
             .register::<browse::PaneOnly, _>(
                 ID, Topic::Notes,
                 "tags.files_menu",
-                "Tags of the selection's menu",
-                "The context menu's Tags submenu: the tags the selected files have, then the pinned ones, each checked when they all have it, partly when some do, pressing it toggling it on them all",
+                words!(tags_files_menu = "Tags of the selection's menu"),
+                words!(
+                    tags_files_menu_description = "The context menu's Tags submenu: the tags the selected files have, then the pinned ones, each checked when they all have it, partly when some do, pressing it toggling it on them all"
+                ),
                 {
                     let vocabulary = Arc::clone(&vocabulary);
                     move |a, app| Ok(browse::files_menu(app, &vocabulary, a))
@@ -1532,8 +1720,10 @@ impl Plugin for TagsPlugin {
         app.commands.register::<browse::PaneOnly, _>(
             ID, Topic::Notes,
             "tags.place_menu",
-            "Tags' menu",
-            "The context menu's items for the tags selected in a tag location. Answers from memory",
+            words!(tags_place_menu = "Tags' menu"),
+            words!(
+                tags_place_menu_description = "The context menu's items for the tags selected in a tag location. Answers from memory"
+            ),
             {
                 let v = Arc::clone(&vocabulary);
                 move |a, app| {
@@ -1548,17 +1738,22 @@ impl Plugin for TagsPlugin {
             ID,
             Topic::Notes,
             "tags.color",
-            "Tag color",
-            "Choose the color a tag wears everywhere, or give it back the one its name gives it",
+            words!(tags_color = "Tag color"),
+            words!(
+                tags_color_description = "Choose the color a tag wears everywhere, or give it back the one its name gives it"
+            ),
             move |a, app| {
                 let tag = a.tag.trim();
-                anyhow::ensure!(!tag.is_empty(), "which tag?");
+                anyhow::ensure!(!tag.is_empty(), which_tag());
                 let color = a.color.as_deref().filter(|c| !c.is_empty());
                 if let Some(color) = color {
                     anyhow::ensure!(
                         TAG_COLORS.contains(&color),
-                        "a tag's color is one of {}",
-                        TAG_COLORS.join(", ")
+                        words!(
+                            tags_color_one_of = "a tag's color is one of { $colors }",
+                            colors = TAG_COLORS.join(", "),
+                            note = "An error. colors: the colors' names as a command takes them (red, orange…), joined by commas."
+                        )
                     );
                 }
                 set_color(app, &colors, &color_sidebar, tag, color);
@@ -1570,14 +1765,17 @@ impl Plugin for TagsPlugin {
                 ID,
                 Topic::Notes,
                 "tags.menu",
-                "Comment menu",
-                "The context menu's Comment…, holding the selected entry's comment",
+                words!(tags_comment_menu = "Comment menu"),
+                words!(
+                    tags_comment_menu_description =
+                        "The context menu's Comment…, holding the selected entry's comment"
+                ),
                 |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let comment = remembered_comment(app, pane);
                     let mut items = rating_items(remembered_rating(app, pane));
                     items.push(menu_item(
-                        "Comment…",
+                        comment_item(),
                         ask_comment(comment.as_deref()),
                         530,
                         "comment",
@@ -1594,16 +1792,20 @@ impl Plugin for TagsPlugin {
         app.commands.register::<KnownArgs, _>(
             ID, Topic::Notes,
             "tags.known",
-            "Tags known",
-            "`{ generation, tags? }`: every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first. `generation` numbers them: asked with the one held, `tags` is left out while it is current",
+            words!(tags_known = "Tags known"),
+            words!(
+                tags_known_description = r#"`{"{"} generation, tags? {"}"}`: every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first. `generation` numbers them: asked with the one held, `tags` is left out while it is current"#
+            ),
             move |a, app| Ok(Outcome::Value(every.answer(&a, app, &v, &i))),
         )
         .data();
         app.commands.register::<ListArgs, _>(
             ID, Topic::Notes,
             "tags.list",
-            "List tags",
-            "Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet too",
+            words!(tags_list = "List tags"),
+            words!(
+                tags_list_description = "Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet too"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 // Keyed by the lowercase form, shown as first spelled.
@@ -1620,7 +1822,10 @@ impl Plugin for TagsPlugin {
                 let open = {
                     let ws = app.workspace.read();
                     let Some(p) = ws.pane(pane) else {
-                        anyhow::bail!("no such pane");
+                        anyhow::bail!(words!(
+                            tags_no_such_pane = "no such pane",
+                            note = "An error: the pane a command named is not there."
+                        ));
                     };
                     for e in p.listing.iter().filter(|e| !withheld.contains(&e.id)) {
                         match tags_of(&e.metadata) {
@@ -1671,7 +1876,15 @@ impl Plugin for TagsPlugin {
             ID,
             MenuItem {
                 submenu: Some(TAGS_SUBMENU),
-                ..menu_item("Edit Tags…", Invocation::new("ui.tags_prompt"), 500, "tag")
+                ..menu_item(
+                    words!(
+                        tags_edit_item = "Edit Tags…",
+                        note = "The first item of the files' menu's Tags submenu: it opens the tag editor."
+                    ),
+                    Invocation::new("ui.tags_prompt"),
+                    500,
+                    "tag",
+                )
             },
         );
         // The folder's own menu, beside Search here and the Usage view.
@@ -1679,7 +1892,11 @@ impl Plugin for TagsPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Browse tags here",
+                words!(
+                    tags_browse_here = "Browse tags here",
+                    note =
+                        "An item of a folder's menu, on its background: its files' tags as places."
+                ),
                 "tag",
                 425,
                 Invocation::new("tags.browse"),
@@ -1690,9 +1907,10 @@ impl Plugin for TagsPlugin {
         for item in rating_items(None) {
             app.registry.menus.add(ID, item);
         }
-        app.registry
-            .menus
-            .add(ID, menu_item("Comment…", ask_comment(None), 530, "comment"));
+        app.registry.menus.add(
+            ID,
+            menu_item(comment_item(), ask_comment(None), 530, "comment"),
+        );
         // The selected files' tags, and the pinned ones, checked in the
         // Tags submenu.
         app.registry.menu_sources.add(
@@ -3263,8 +3481,11 @@ mod tests {
     #[test]
     fn edit_titles_say_what_changes() {
         let t = |s: &[&str]| s.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
-        assert_eq!(edit_title(&t(&["a"]), &[]), "add tag a");
-        assert_eq!(edit_title(&[], &t(&["a", "b"])), "remove tags a, b");
+        assert_eq!(edit_title(&t(&["a"]), &[]).english(), "add tag a");
+        assert_eq!(
+            edit_title(&[], &t(&["a", "b"])).english(),
+            "remove tags a, b"
+        );
         assert_eq!(
             edited(&t(&["A", "b"]), &t(&["a", "c"]), &t(&["B"]), &[]),
             t(&["A", "c"])

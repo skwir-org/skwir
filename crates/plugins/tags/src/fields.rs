@@ -13,6 +13,8 @@ use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::command::Invocation;
 use skwir_core::metadata::{TAG_EXCLUSIVE_SETTING, clean_tag, same_tag};
+use skwir_core::words;
+use skwir_core::words::Name;
 
 /// The categories marked, each once.
 pub fn exclusive(app: &App) -> Vec<String> {
@@ -61,13 +63,26 @@ pub fn set(app: &App, saving: &Arc<Mutex<()>>, tag: &str, on: bool, undo: bool) 
         match app.settings.save() {
             Err(error) => app.notify(
                 NotifyLevel::Error,
-                format!("“{tag}” was not changed: {error:#}"),
+                words!(
+                    tags_exclusive_not_changed = "{ $tag } was not changed: { $error }",
+                    tag = Name(tag.clone()),
+                    error = error,
+                    note = "tag: a category of tags (Status), marked as holding one tag at a time or not."
+                ),
             ),
             Ok(()) => app.notify_undoable(
                 if on {
-                    format!("A file now has one tag of “{tag}” at a time")
+                    words!(
+                        tags_exclusive_on = "A file now has one tag of { $tag } at a time",
+                        tag = Name(tag.clone()),
+                        note = "tag: a category of tags (Status), its tags now the values of one field."
+                    )
                 } else {
-                    format!("A file can have several tags of “{tag}” again")
+                    words!(
+                        tags_exclusive_off = "A file can have several tags of { $tag } again",
+                        tag = Name(tag.clone()),
+                        note = "tag: a category of tags (Status)."
+                    )
                 },
                 undo,
                 Invocation::with_args(
