@@ -382,7 +382,7 @@ fn chart_of(h: &Histogram, measure: Measure) -> Rc<Vec<bars::Bar>> {
 fn holds(b: &Bar) -> String {
     let mut words = format!(
         "{}, {}",
-        format::count(usize::try_from(b.count).unwrap_or(usize::MAX), "file"),
+        format::files(usize::try_from(b.count).unwrap_or(usize::MAX)),
         format::size(b.bytes)
     );
     if b.selected > 0 {
@@ -908,7 +908,7 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
             "no data".into()
         };
     };
-    let files = |n: u64| format::count(usize::try_from(n).unwrap_or(usize::MAX), "file");
+    let files = |n: u64| format::files(usize::try_from(n).unwrap_or(usize::MAX));
     let number = |n: u64| format::thousands(usize::try_from(n).unwrap_or(usize::MAX));
     // `end` is the first instant of the day after a bar's last: its last
     // day holds the instant before.

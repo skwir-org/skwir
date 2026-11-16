@@ -556,11 +556,7 @@ pub fn label(span: &Span) -> Arc<str> {
 
 /// What a screen reader hears of a group: "Today, 3 items".
 pub fn said(span: &Span) -> String {
-    format!(
-        "{}, {}",
-        label(span),
-        crate::format::count(span.count, "item")
-    )
+    format!("{}, {}", label(span), crate::format::items(span.count))
 }
 
 /// The heading of a group as a row `height` tall: its label in Body text,

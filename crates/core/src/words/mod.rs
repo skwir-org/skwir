@@ -58,6 +58,9 @@ pub enum Arg {
     /// A file's, a place's or a tag's name: quoted as the language quotes,
     /// its bidirectional controls shown, never obeyed.
     Name(String),
+    /// A folder's name where it is a destination ("to Docs"): unquoted,
+    /// its bidirectional controls shown, never obeyed.
+    Folder(String),
     /// A count: chooses the plural, written with its groups.
     Count(i64),
     /// A size, as the size setting counts it (`fs::size_said`).
@@ -79,6 +82,20 @@ impl Name {
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         ))
+    }
+}
+
+/// A folder named as a destination, for `Arg::Folder`.
+pub struct Folder(pub String);
+
+impl Folder {
+    /// The folder `path` is in, by its name: `Docs` for `/a/Docs/b.txt`;
+    /// nothing for a path with no folder.
+    pub fn of(path: &std::path::Path) -> Self {
+        Folder(
+            path.parent()
+                .map_or_else(String::new, |folder| Name::of(folder).0),
+        )
     }
 }
 
@@ -121,6 +138,12 @@ impl From<String> for Arg {
 impl From<Name> for Arg {
     fn from(name: Name) -> Self {
         Arg::Name(name.0)
+    }
+}
+
+impl From<Folder> for Arg {
+    fn from(folder: Folder) -> Self {
+        Arg::Folder(folder.0)
     }
 }
 
@@ -270,6 +293,7 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
     match arg {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
+        Arg::Folder(name) => out.push_str(&shown_controls(name)),
         Arg::Count(n) => out.push_str(&grouped(*n)),
         Arg::Size(bytes) => out.push_str(&crate::fs::size_said(*bytes)),
         Arg::Kind(word) => out.push_str(word),

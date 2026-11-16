@@ -9,6 +9,9 @@ use gpui::{AnyElement, Context, div, prelude::*, px};
 use skwir_core::location::{EmptyState, Failure, Unshown};
 use skwir_core::workspace::PaneId;
 
+use skwir_core::words;
+use skwir_core::words::Words;
+
 use crate::controls::{self, ButtonStyle};
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -19,7 +22,7 @@ pub struct Placeholder {
     pub title: String,
     pub detail: String,
     /// Button label and the command it runs.
-    pub action: Option<(&'static str, &'static str)>,
+    pub action: Option<(String, &'static str)>,
     pub problem: bool,
 }
 
@@ -28,23 +31,32 @@ pub struct Placeholder {
 /// for.
 pub fn failure(kind: Failure, error: &str) -> Placeholder {
     let (title, action) = match kind {
-        Failure::Denied => ("You don't have permission to open this folder", None),
+        Failure::Denied => (
+            words!(placeholder_denied = "You don't have permission to open this folder"),
+            None,
+        ),
         Failure::Missing => (
-            "This folder no longer exists",
-            Some(("Go to the parent folder", "up")),
+            words!(placeholder_gone = "This folder no longer exists"),
+            Some((words!(placeholder_up = "Go to the parent folder"), "up")),
         ),
         Failure::Other => (
-            "This location could not be opened",
-            Some(("Try again", "refresh")),
+            words!(placeholder_failed = "This location could not be opened"),
+            Some((words!(placeholder_retry = "Try again"), "refresh")),
         ),
     };
+    let action = action.map(|(label, command): (Words, _)| (label.say(), command));
     Placeholder {
         icon: "warning",
-        title: title.to_owned(),
+        title: title.say(),
         detail: error.to_owned(),
         action,
         problem: true,
     }
+}
+
+/// The way back from a filter that leaves nothing.
+fn show_everything() -> String {
+    words!(placeholder_show_everything = "Show everything").say()
 }
 
 /// A folder with nothing in it: files can be dropped in, or a folder
@@ -52,11 +64,16 @@ pub fn failure(kind: Failure, error: &str) -> Placeholder {
 pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
     Placeholder {
         icon: "folder-plus",
-        title: "This folder is empty".to_owned(),
+        title: words!(placeholder_empty = "This folder is empty").say(),
         detail: match new_folder_keys {
-            Some(keys) => format!("Drop files here, or press {keys} for a new folder."),
-            None => "Drop files here.".to_owned(),
-        },
+            Some(keys) => words!(
+                placeholder_drop_or_make = "Drop files here, or press { $keys } for a new folder.",
+                keys = keys,
+                note = "keys: the keys that make a folder, as the keymap says them (Ctrl+Shift+N)."
+            ),
+            None => words!(placeholder_drop = "Drop files here."),
+        }
+        .say(),
         action: None,
         problem: false,
     }
@@ -66,12 +83,20 @@ pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
 pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
     Placeholder {
         icon: "eye-off",
-        title: "Only hidden files here".to_owned(),
+        title: words!(placeholder_hidden = "Only hidden files here").say(),
         detail: match show_keys {
-            Some(keys) => format!("Show hidden files to see them ({keys})."),
-            None => "Show hidden files to see them.".to_owned(),
-        },
-        action: Some(("Show hidden files", "toggle_hidden")),
+            Some(keys) => words!(
+                placeholder_hidden_show_keys = "Show hidden files to see them ({ $keys }).",
+                keys = keys,
+                note = "keys: the keys that show hidden files (Ctrl+H)."
+            ),
+            None => words!(placeholder_hidden_show = "Show hidden files to see them."),
+        }
+        .say(),
+        action: Some((
+            words!(placeholder_show_hidden = "Show hidden files").say(),
+            "toggle_hidden",
+        )),
         problem: false,
     }
 }
@@ -82,9 +107,16 @@ pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
 pub fn only_companions() -> Placeholder {
     Placeholder {
         icon: "eye-off",
-        title: "Only companion files here".to_owned(),
-        detail: "They keep other files' notes: TagSpaces' .ts folder, a Mac's ._ files, XMP sidecars. Showing them turns on Show companion files in Settings (Tags and notes), for every folder.".to_owned(),
-        action: Some(("Show hidden and companion files", "show_companions")),
+        title: words!(placeholder_companions = "Only companion files here").say(),
+        detail: words!(
+            placeholder_companions_detail = "They keep other files' notes: TagSpaces' .ts folder, a Mac's ._ files, XMP sidecars. Showing them turns on Show companion files in Settings (Tags and notes), for every folder.",
+            note = "Show companion files, Settings and Tags and notes are the names of a setting and of where it is."
+        )
+        .say(),
+        action: Some((
+            words!(placeholder_show_companions = "Show hidden and companion files").say(),
+            "show_companions",
+        )),
         problem: false,
     }
 }
@@ -94,7 +126,12 @@ pub fn only_companions() -> Placeholder {
 /// `trail.rs`), never words chosen here by its scheme.
 pub fn empty_place(icon: Option<&'static str>, empty: Option<&EmptyState>) -> Placeholder {
     let (title, detail) = empty.map_or_else(
-        || ("Nothing here".to_owned(), String::new()),
+        || {
+            (
+                words!(placeholder_nothing = "Nothing here").say(),
+                String::new(),
+            )
+        },
         |empty| (empty.title.clone(), empty.detail.clone()),
     );
     Placeholder {
@@ -136,15 +173,29 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         // Only a filter that reads the files' metadata waits for it.
         let reads = !shell.ui().place.search && state.read_filter().is_some_and(|r| r.metadata);
         if let Some(reading) = shell.ui().quick_filters.reading(reads) {
-            let files = match reading {
-                crate::quick_filters::Reading::Counting => "the files".to_owned(),
-                crate::quick_filters::Reading::Files(n) => crate::format::count(n, "file"),
+            let title = match reading {
+                crate::quick_filters::Reading::Counting => {
+                    words!(placeholder_reading = "Reading the details of the files…")
+                }
+                crate::quick_filters::Reading::Files(n) => words!(
+                    placeholder_reading_files = "Reading the details of { $count ->
+                        [one] one file
+                       *[other] { $count } files
+                    }…",
+                    count = n
+                ),
             };
             return Some(Placeholder {
                 icon: "search",
-                title: format!("Reading the details of {files}…"),
-                detail: format!("The files “{filter}” keeps show as they are read."),
-                action: Some(("Show everything", "filter")),
+                title: title.say(),
+                detail: words!(
+                    placeholder_reading_detail =
+                        "The files “{ $filter }” keeps show as they are read.",
+                    filter = filter,
+                    note = "filter: what was typed in the address to filter the folder."
+                )
+                .say(),
+                action: Some((show_everything(), "filter")),
                 problem: false,
             });
         }
@@ -152,30 +203,38 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         if state.looks_below() {
             return Some(Placeholder {
                 icon: "search",
-                title: "Looking in the folders here…".to_owned(),
-                detail: format!("The folders that lead to “{filter}” show as they are found."),
-                action: Some(("Show everything", "filter")),
+                title: words!(placeholder_looking = "Looking in the folders here…").say(),
+                detail: words!(
+                    placeholder_looking_detail =
+                        "The folders that lead to “{ $filter }” show as they are found.",
+                    filter = filter
+                )
+                .say(),
+                action: Some((show_everything(), "filter")),
                 problem: false,
             });
         }
         let detail = if state.lens().is_some() {
-            format!(
-                "Nothing here is “{filter}”. The filters stay as you go to other folders and searches, until you take them off in the address."
+            words!(
+                placeholder_lens_empty = "Nothing here is “{ $filter }”. The filters stay as you go to other folders and searches, until you take them off in the address.",
+                filter = filter
             )
         } else if state.read_filter().is_some() {
-            format!(
-                "Nothing here is “{filter}”. Press Enter in the address field to search the folders inside too."
+            words!(
+                placeholder_filter_empty = "Nothing here is “{ $filter }”. Press Enter in the address field to search the folders inside too.",
+                filter = filter
             )
         } else {
-            format!(
-                "No name here holds “{filter}”. Press Enter in the address field to search the folders inside too."
+            words!(
+                placeholder_name_empty = "No name here holds “{ $filter }”. Press Enter in the address field to search the folders inside too.",
+                filter = filter
             )
         };
         return Some(Placeholder {
             icon: "search",
-            title: "Hidden by filters".to_owned(),
-            detail,
-            action: Some(("Show everything", "filter")),
+            title: words!(placeholder_filtered = "Hidden by filters").say(),
+            detail: detail.say(),
+            action: Some((show_everything(), "filter")),
             problem: false,
         });
     }
@@ -298,14 +357,18 @@ mod tests {
         let (gone, said) = of(std::fs::metadata("/nowhere/it’s gone").unwrap_err());
         assert_eq!(
             gone.action,
-            Some(("Go to the parent folder", "up")),
+            Some(("Go to the parent folder".to_owned(), "up")),
             "{said}"
         );
         #[cfg(unix)]
         for code in [24, 28] {
             // Too many open files; no space left on the device.
             let (other, said) = of(std::io::Error::from_raw_os_error(code));
-            assert_eq!(other.action, Some(("Try again", "refresh")), "{said}");
+            assert_eq!(
+                other.action,
+                Some(("Try again".to_owned(), "refresh")),
+                "{said}"
+            );
         }
         // Windows' access denied is its code 5, not errno 13.
         #[cfg(windows)]
@@ -317,7 +380,7 @@ mod tests {
         let words = skwir_core::ListingError::new("Could not connect to the server");
         assert_eq!(
             failure(words.kind, &words.message).action,
-            Some(("Try again", "refresh"))
+            Some(("Try again".to_owned(), "refresh"))
         );
     }
 

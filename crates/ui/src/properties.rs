@@ -815,14 +815,14 @@ pub fn selection_groups(
     user: &User,
 ) -> Vec<Group> {
     let folders = entries.iter().filter(|e| e.is_dir()).count();
-    let mut rows = vec![Row::new("Selected", format::count(selected, "item")).in_gist()];
+    let mut rows = vec![Row::new("Selected", format::items(selected)).in_gist()];
     if folders > 0 && folders < entries.len() {
         rows.push(Row::new(
             "Of which",
             format!(
                 "{}, {}",
-                format::count(folders, "folder"),
-                format::count(entries.len() - folders, "file")
+                format::folders(folders),
+                format::files(entries.len() - folders)
             ),
         ));
     }
@@ -955,7 +955,7 @@ impl Targets {
                     .unwrap_or(entry.path.as_os_str())
                     .to_string_lossy()
             ),
-            Targets::Selection(_) => format::count(count, "item"),
+            Targets::Selection(_) => format::items(count),
         }
     }
 }
@@ -1332,8 +1332,8 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
             "In all",
             format!(
                 "{}, {}",
-                format::count(now.files as usize, "file"),
-                format::count(now.folders as usize, "folder")
+                format::files(now.files as usize),
+                format::folders(now.folders as usize)
             ),
         ),
     ];
@@ -1342,7 +1342,7 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
             "Unreadable",
             format!(
                 "{} could not be listed",
-                format::count(now.unreadable as usize, "folder")
+                format::folders(now.unreadable as usize)
             ),
         ));
     }
@@ -1350,10 +1350,7 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
     if now.unknown > 0 {
         rows.push(Row::new(
             "Unknown",
-            format!(
-                "{} could not be read",
-                format::count(now.unknown as usize, "item")
-            ),
+            format!("{} could not be read", format::items(now.unknown as usize)),
         ));
     }
     if now.other_drives > 0 {
@@ -1455,15 +1452,11 @@ fn contains(items: usize, folders: usize) -> Row {
     let files = items.saturating_sub(folders);
     let value = match (folders, files) {
         (0, 0) => "Nothing".to_owned(),
-        (0, files) => format::count(files, "file"),
-        (folders, 0) => format::count(folders, "folder"),
-        (folders, files) => format!(
-            "{}, {}",
-            format::count(folders, "folder"),
-            format::count(files, "file")
-        ),
+        (0, files) => format::files(files),
+        (folders, 0) => format::folders(folders),
+        (folders, files) => format!("{}, {}", format::folders(folders), format::files(files)),
     };
-    Row::new("Contains", value).gist(format::count(items, "item"))
+    Row::new("Contains", value).gist(format::items(items))
 }
 
 /// What the file says of itself, beyond its measure (`measure`): a

@@ -16,6 +16,8 @@ use std::time::Duration;
 
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
 use skwir_core::op::{Change, Counted, PlanId, RunKind, Tally, Transfer};
+use skwir_core::words;
+use skwir_core::words::{Folder, Name, Size, Words};
 
 use crate::controls::{self, ButtonStyle};
 use crate::format;
@@ -199,17 +201,6 @@ impl ToastState {
     }
 }
 
-fn name_of(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
-}
-
-fn folder_of(path: &Path) -> String {
-    path.parent().map_or_else(String::new, name_of)
-}
-
 pub(crate) fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map_or_else(String::new, |first| {
@@ -217,17 +208,15 @@ pub(crate) fn capitalized(text: &str) -> String {
     })
 }
 
-/// How a sentence about `change` quotes a path: the file it acts on by
+/// How a sentence about `change` names a path: the file it acts on by
 /// `named` where the step said it (an item of a trash, by the name it had),
-/// any other path by its own name.
-fn quoting<'a>(
-    change: Option<&'a Change>,
-    named: Option<&'a str>,
-) -> impl Fn(&Path) -> String + 'a {
+/// any other path by its own name. The name is bare: the message quotes
+/// it, as its language quotes (`Name`).
+fn naming<'a>(change: Option<&'a Change>, named: Option<&'a str>) -> impl Fn(&Path) -> Name + 'a {
     let subject = change.and_then(Change::subject);
     move |path: &Path| match named {
-        Some(named) if subject == Some(path) => format!("“{named}”"),
-        _ => format!("“{}”", name_of(path)),
+        Some(named) if subject == Some(path) => Name(named.to_owned()),
+        _ => Name::of(path),
     }
 }
 
@@ -243,7 +232,8 @@ fn said_title(running: &Running) -> String {
 /// What an applied plan did, in a sentence: the item by name when there is
 /// one (by `named`, where the step said the name the user knows it by), a
 /// count otherwise. Falls back to the plan's title (`title`: an undo's,
-/// the action it takes back, `said_title`).
+/// the action it takes back, `said_title`). What a plan's title or a step's
+/// own words make is said as they are, until they are words themselves.
 pub fn describe(
     title: &str,
     run: RunKind,
@@ -251,62 +241,114 @@ pub fn describe(
     named: Option<&str>,
     applied: usize,
     kept_in: Option<&str>,
-) -> String {
-    let many = format::count(applied, "item");
+) -> Words {
+    let name = naming(first, named);
     let one = applied == 1;
-    let quoted = quoting(first, named);
     match first {
-        _ if run == RunKind::Undo => format!("Undid: {title}"),
-        Some(Change::Trash { path }) if one => format!("Moved {} to Trash", quoted(path)),
-        Some(Change::Trash { .. }) => format!("Moved {many} to Trash"),
-        Some(Change::Restore { path }) if one => format!("Restored {}", quoted(path)),
-        Some(Change::Restore { .. }) => format!("Restored {many}"),
+        _ if run == RunKind::Undo => Words::from(format!("Undid: {title}")),
+        Some(Change::Trash { path }) => words!(
+            toast_trashed = "{ $count ->
+                [1] Moved { $name } to Trash
+               *[other] Moved { $count } items to Trash
+            }",
+            count = applied,
+            name = name(path)
+        ),
+        Some(Change::Restore { path }) => words!(
+            toast_restored = "{ $count ->
+                [1] Restored { $name }
+               *[other] Restored { $count } items
+            }",
+            count = applied,
+            name = name(path)
+        ),
         // Kept by its server (a cloud's trash, ADR-086), never said gone.
-        Some(Change::Delete { path }) if one => match kept_in {
-            Some(trash) => format!("Deleted {} (in {trash})", quoted(path)),
-            None => format!("Deleted {} permanently", quoted(path)),
-        },
-        Some(Change::Delete { .. }) => match kept_in {
-            Some(trash) => format!("Deleted {many} (in {trash})"),
-            None => format!("Deleted {many} permanently"),
-        },
-        Some(Change::Rename { from, to }) if one => {
-            format!("Renamed {} to {}", quoted(from), quoted(to))
+        Some(Change::Delete { path }) => {
+            if let Some(trash) = kept_in {
+                words!(
+                    toast_deleted_kept = "{ $count ->
+                        [1] Deleted { $name } (in { $trash })
+                       *[other] Deleted { $count } items (in { $trash })
+                    }",
+                    count = applied,
+                    name = name(path),
+                    trash = trash,
+                    note = "trash: the trash the server keeps what is deleted in, as it names \
+                            it (Google Drive's trash)."
+                )
+            } else {
+                words!(
+                    toast_deleted = "{ $count ->
+                        [1] Deleted { $name } permanently
+                       *[other] Deleted { $count } items permanently
+                    }",
+                    count = applied,
+                    name = name(path)
+                )
+            }
         }
-        Some(Change::Rename { .. }) => format!("Renamed {many}"),
+        Some(Change::Rename { from, to }) => words!(
+            toast_renamed = "{ $count ->
+                [1] Renamed { $name } to { $to }
+               *[other] Renamed { $count } items
+            }",
+            count = applied,
+            name = name(from),
+            to = name(to)
+        ),
         // By the name it arrived under: a file of the trash goes back to
         // its own (`draft.txt`, not the trash's `draft.txt.2`).
-        Some(Change::Move { to, .. }) if one => {
-            format!("Moved {} to {}", quoted(to), folder_of(to))
-        }
-        Some(Change::Move { to, .. }) => format!("Moved {many} to {}", folder_of(to)),
-        Some(Change::Copy { from, to }) if one => {
-            format!("Copied {} to {}", quoted(from), folder_of(to))
-        }
-        Some(Change::Copy { to, .. }) => format!("Copied {many} to {}", folder_of(to)),
-        Some(Change::Link { from, to }) if one => {
-            format!("Made a link to {} in {}", quoted(from), folder_of(to))
-        }
-        Some(Change::Link { to, .. }) => format!(
-            "Made {} in {}",
-            format::count(applied, "link"),
-            folder_of(to)
+        Some(Change::Move { to, .. }) => words!(
+            toast_moved = "{ $count ->
+                [1] Moved { $name } to { $folder }
+               *[other] Moved { $count } items to { $folder }
+            }",
+            count = applied,
+            name = name(to),
+            folder = Folder::of(to)
+        ),
+        Some(Change::Copy { from, to }) => words!(
+            toast_copied = "{ $count ->
+                [1] Copied { $name } to { $folder }
+               *[other] Copied { $count } items to { $folder }
+            }",
+            count = applied,
+            name = name(from),
+            folder = Folder::of(to)
+        ),
+        Some(Change::Link { from, to }) => words!(
+            toast_linked = "{ $count ->
+                [1] Made a link to { $name } in { $folder }
+               *[other] Made { $count } links in { $folder }
+            }",
+            count = applied,
+            name = name(from),
+            folder = Folder::of(to)
         ),
         Some(Change::Create {
             words: Some(words), ..
-        }) if one => capitalized(&words.did),
+        }) if one => Words::from(capitalized(&words.did)),
         Some(Change::Create {
             path,
             directory: true,
             ..
-        }) if one => format!("Created folder {}", quoted(path)),
-        Some(Change::Create { path, .. }) if one => format!("Created {}", quoted(path)),
+        }) if one => words!(
+            toast_created_folder = "Created folder { $name }",
+            name = name(path)
+        ),
+        Some(Change::Create { path, .. }) if one => {
+            words!(toast_created = "Created { $name }", name = name(path))
+        }
         // A step that says what it did says it best.
         Some(Change::Metadata {
             words: Some(words), ..
-        }) if one => capitalized(&words.did),
-        _ if applied == 0 => format!("{}: nothing to do", capitalized(title)),
-        _ => format!("{} ({many})", capitalized(title)),
+        }) if one => Words::from(capitalized(&words.did)),
+        _ if applied == 0 => Words::from(format!("{}: nothing to do", capitalized(title))),
+        _ => Words::from(format!(
+            "{} ({})",
+            capitalized(title),
+            format::items(applied)
+        )),
     }
 }
 
@@ -314,48 +356,85 @@ pub fn describe(
 /// failed, by name (`named`, as `describe`), then why. An error that began
 /// with the step's own words naming its file ("“a.txt” could not be renamed
 /// …", "… could not all be deleted") gives its reason alone after it
-/// (`reason`, `Progress::reason`).
+/// (`reason`, `Progress::reason`). The error is said as it was written.
 pub fn failure(
     title: &str,
     failed: Option<&Change>,
     named: Option<&str>,
     error: &str,
     reason: Option<&str>,
-) -> String {
-    let quoted = quoting(failed, named);
-    let tried = match failed {
-        Some(Change::Copy { from, to }) => {
-            format!("Couldn't copy {} to {}", quoted(from), folder_of(to))
-        }
-        Some(Change::Move { from, to }) => {
-            format!("Couldn't move {} to {}", quoted(from), folder_of(to))
-        }
-        Some(Change::Link { from, to }) => {
-            format!(
-                "Couldn't make a link to {} in {}",
-                quoted(from),
-                folder_of(to)
-            )
-        }
-        Some(Change::Trash { path }) => format!("Couldn't move {} to Trash", quoted(path)),
-        Some(Change::Restore { path }) => format!("Couldn't restore {}", quoted(path)),
-        Some(Change::Delete { path }) => format!("Couldn't delete {}", quoted(path)),
-        Some(Change::Rename { from, to }) => {
-            format!("Couldn't rename {} to {}", quoted(from), quoted(to))
-        }
+) -> Words {
+    let name = naming(failed, named);
+    let why = reason.unwrap_or(error);
+    match failed {
+        Some(Change::Copy { from, to }) => words!(
+            toast_copy_failed = "Couldn't copy { $name } to { $folder }: { $why }",
+            name = name(from),
+            folder = Folder::of(to),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Move { from, to }) => words!(
+            toast_move_failed = "Couldn't move { $name } to { $folder }: { $why }",
+            name = name(from),
+            folder = Folder::of(to),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Link { from, to }) => words!(
+            toast_link_failed = "Couldn't make a link to { $name } in { $folder }: { $why }",
+            name = name(from),
+            folder = Folder::of(to),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Trash { path }) => words!(
+            toast_trash_failed = "Couldn't move { $name } to Trash: { $why }",
+            name = name(path),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Restore { path }) => words!(
+            toast_restore_failed = "Couldn't restore { $name }: { $why }",
+            name = name(path),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Delete { path }) => words!(
+            toast_delete_failed = "Couldn't delete { $name }: { $why }",
+            name = name(path),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Rename { from, to }) => words!(
+            toast_rename_failed = "Couldn't rename { $name } to { $to }: { $why }",
+            name = name(from),
+            to = name(to),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
         // What it said it would do, it could not.
         Some(Change::Create {
             words: Some(words), ..
-        }) => format!("Couldn't {}", words.will),
+        }) => Words::from(format!("Couldn't {}: {why}", words.will)),
         Some(Change::Create {
             path,
             directory: true,
             ..
-        }) => format!("Couldn't create folder {}", quoted(path)),
-        Some(Change::Create { path, .. }) => format!("Couldn't create {}", quoted(path)),
-        _ => return format!("{}: {error}", capitalized(title)),
-    };
-    format!("{tried}: {}", reason.unwrap_or(error))
+        }) => words!(
+            toast_create_folder_failed = "Couldn't create folder { $name }: { $why }",
+            name = name(path),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        Some(Change::Create { path, .. }) => words!(
+            toast_create_failed = "Couldn't create { $name }: { $why }",
+            name = name(path),
+            why = why,
+            note = "why: what stopped it, as the system or the step said it (permission denied)."
+        ),
+        _ => Words::from(format!("{}: {error}", capitalized(title))),
+    }
 }
 
 /// What a running plan's bar says: how far it is, from 0 to 1 (`share`),
@@ -368,32 +447,55 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     let fraction = share(items, t);
     if items <= 1 {
         let whole = t.planned.unwrap_or(t.total).max(t.done);
-        let words = format!("{} of {}", format::size(t.done), format::size(whole));
-        return (fraction, words);
+        let said = words!(
+            toast_bar_bytes = "{ $done } of { $whole }",
+            done = Size(t.done),
+            whole = Size(whole),
+            note = "How far the copy of one item is: what it moved of its size (1.1 GB of 4.3 GB)."
+        );
+        return (fraction, said.say());
     }
     if let Some(planned) = t.planned.filter(|&planned| planned > 0) {
         // Items as they come whole, a batch's before their steps place
         // them (`Transfer::finished`).
-        let words = format!(
-            "{} of {} · {} of {}",
-            format::thousands(t.finished),
-            format::count(items, "item"),
-            format::size(t.done),
-            format::size(planned.max(t.done))
+        let said = words!(
+            toast_bar_items_bytes = "{ $finished } of { $count ->
+                [one] { $count } item
+               *[other] { $count } items
+            } · { $done } of { $whole }",
+            finished = t.finished,
+            count = items,
+            done = Size(t.done),
+            whole = Size(planned.max(t.done)),
+            note = "How far an action is: the items it finished of all, then what it moved of \
+                    all it moves (1 of 3 items · 3.2 GB of 8.6 GB)."
         );
-        return (fraction, words);
+        return (fraction, said.say());
     }
-    let count = format!(
-        "{} of {}",
-        format::thousands(t.finished),
-        format::count(items, "item")
-    );
-    let words = if t.done > 0 {
-        format!("{count} · {}", format::size(t.done))
+    let said = if t.done > 0 {
+        words!(
+            toast_bar_items_moved = "{ $finished } of { $count ->
+                [one] { $count } item
+               *[other] { $count } items
+            } · { $done }",
+            finished = t.finished,
+            count = items,
+            done = Size(t.done),
+            note = "How far an action is: the items it finished of all, then what it moved \
+                    (1,286 of 40,000 items · 82.3 kB)."
+        )
     } else {
-        count
+        words!(
+            toast_bar_items = "{ $finished } of { $count ->
+                [one] { $count } item
+               *[other] { $count } items
+            }",
+            finished = t.finished,
+            count = items,
+            note = "How far an action is: the items it finished of all (0 of 2 items)."
+        )
     };
-    (fraction, words)
+    (fraction, said.say())
 }
 
 /// How far a running plan's bar is, from 0 to 1, as `bar` says it: by its
@@ -418,38 +520,66 @@ pub(crate) fn share(items: usize, t: &Transfer) -> f32 {
 /// title, and whether it is paused, when it has begun), and the two ways
 /// on, for it and the `waiting` ones behind it: Skwir finishes without its
 /// window, then quits; or stops now. No figures: the bar under the
-/// question goes on with them.
+/// question goes on with them. What runs is said by its title, as it is
+/// until titles are words.
 pub fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usize) -> String {
-    let (what, them) = match (running, others) {
-        (Some((title, paused)), 0) => {
-            let state = if paused { "paused" } else { "still running" };
-            (format!("{} is {state}.", capitalized(title)), false)
+    let what = match (running, others) {
+        (Some((title, true)), 0) => Words::from(format!("{} is paused.", capitalized(title))),
+        (Some((title, false)), 0) => {
+            Words::from(format!("{} is still running.", capitalized(title)))
         }
         // Plans that share nothing run at once (ADR-079).
-        (Some((title, paused)), others) => {
-            let state = if paused { "paused" } else { "still running" };
-            let what = format!(
-                "{} is {state}, and {} beside it.",
-                capitalized(title),
-                format::count(others, "other action")
-            );
-            (what, true)
-        }
-        (None, _) => ("A change is about to begin.".to_owned(), false),
+        (Some((title, true)), others) => Words::from(format!(
+            "{} is paused, and {} beside it.",
+            capitalized(title),
+            format::count(others, "other action")
+        )),
+        (Some((title, false)), others) => Words::from(format!(
+            "{} is still running, and {} beside it.",
+            capitalized(title),
+            format::count(others, "other action")
+        )),
+        (None, _) => words!(toast_quit_about_to_begin = "A change is about to begin."),
     };
-    let (it, its) = if them { ("them", "they") } else { ("it", "it") };
-    let after = match waiting {
-        0 => String::new(),
-        n => format!(
-            ", and the {} waiting after {it},",
-            format::count(n, "action")
-        ),
-    };
-    format!(
-        "{what} Skwir can finish {it}{after} without its window, then quit. Or stop now: \
-         what {its} finished stays, what {its} {was} in the middle of is taken back.",
-        was = if them { "were" } else { "was" }
+    // What it finishes: the one that runs, or it and those beside it.
+    let finishes = if running.is_some() { others + 1 } else { 1 };
+    let how = words!(
+        toast_quit_how = "{ $running ->
+            [1] { $waiting ->
+                [0] Skwir can finish it without its window, then quit. Or stop now: what it \
+                    finished stays, what it was in the middle of is taken back.
+                [one] Skwir can finish it, and the { $waiting } action waiting after it, \
+                    without its window, then quit. Or stop now: what it finished stays, what \
+                    it was in the middle of is taken back.
+               *[other] Skwir can finish it, and the { $waiting } actions waiting after it, \
+                    without its window, then quit. Or stop now: what it finished stays, what \
+                    it was in the middle of is taken back.
+            }
+           *[other] { $waiting ->
+                [0] Skwir can finish them without its window, then quit. Or stop now: what \
+                    they finished stays, what they were in the middle of is taken back.
+                [one] Skwir can finish them, and the { $waiting } action waiting after them, \
+                    without its window, then quit. Or stop now: what they finished stays, \
+                    what they were in the middle of is taken back.
+               *[other] Skwir can finish them, and the { $waiting } actions waiting after \
+                    them, without its window, then quit. Or stop now: what they finished \
+                    stays, what they were in the middle of is taken back.
+            }
+        }",
+        running = finishes,
+        waiting = waiting,
+        note = "What Quit asks while actions run, after what runs. running: how many actions \
+                run, which Skwir finishes or stops; waiting: how many wait their turn after \
+                them, which Skwir finishes too."
+    );
+    words!(
+        toast_quit = "{ $what } { $how }",
+        what = what,
+        how = how,
+        note = "What Quit asks while actions run. what: what runs (Copy to stick is paused.); \
+                how: the two ways on (Skwir can finish it…)."
     )
+    .say()
 }
 
 /// Words read in a second, unhurried.
@@ -609,7 +739,7 @@ impl Shell {
 /// ("“photos.zip” was already extracted to Downloads"), else after what it
 /// did ("Copied 3 items to Docs; 2 were already there"). What the steps
 /// said follows; alone when they did nothing else (a smaller copy not
-/// made).
+/// made). Said in the user's language, once, as the toast shows it.
 pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
     let End {
         applied,
@@ -646,16 +776,37 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
     };
     // A long one says how much it moved, in how long (ADR-113).
     if tone == Tone::Success && moved > 0 && ran >= AVERAGED_FROM {
-        text = format!("{text} ({} in {})", format::size(moved), format::took(ran));
+        text = words!(
+            toast_moved_in = "{ $done } ({ $size } in { $took })",
+            done = text,
+            size = Size(moved),
+            took = format::took(ran),
+            note = "done: what an action did (Copied 3 items to Docs); size: what it moved; \
+                    took: how long it ran (3 min 20 s)."
+        );
     }
     if let Some(tally) = already.filter(|t| t.done.count > 0) {
-        text = format!("{text}; {}", found_done_too(run, &tally.already));
+        text = words!(
+            toast_done_and_found = "{ $done }; { $found }",
+            done = text,
+            found = found_done_too(run, &tally.already),
+            note = "done: what an action did (Copied 3 items to Docs); found: what it found \
+                    done already (2 were already there)."
+        );
     }
-    match (said.is_empty(), nothing_else) {
-        (true, _) => (text, tone),
-        (false, true) => (said, Tone::Info),
-        (false, false) => (format!("{text}. {said}"), tone),
-    }
+    // What the steps said follows, as they wrote it.
+    let whole = match (said.is_empty(), nothing_else) {
+        (true, _) => text,
+        (false, true) => return (said, Tone::Info),
+        (false, false) => words!(
+            toast_done_then_said = "{ $done }. { $said }",
+            done = text,
+            said = Words::from(said),
+            note = "done: what an action did; said: what its steps said after (Fold each \
+                    sheet in half)."
+        ),
+    };
+    (whole.say(), tone)
 }
 
 /// From how long a plan ran its toast says what it moved in that time.
@@ -665,47 +816,61 @@ const AVERAGED_FROM: Duration = Duration::from_secs(5);
 /// (`Tally::already`): its item by name where there is one, else how
 /// many, as its change says it ("“photos.zip” was already extracted to
 /// Downloads", "3 items were already in Docs").
-pub fn found_done(title: &str, run: RunKind, found: &Counted) -> String {
+pub fn found_done(title: &str, run: RunKind, found: &Counted) -> Words {
     let (first, count) = (found.first.as_ref(), found.count);
-    let quoted = quoting(first, found.named.as_deref());
+    let name = naming(first, found.named.as_deref());
     let one = count == 1;
-    let many = format::count(count, "item");
     match first {
-        _ if run == RunKind::Undo => format!("Already undone: {title}"),
+        _ if run == RunKind::Undo => Words::from(format!("Already undone: {title}")),
         // In the folder, under the name it would have had there.
-        Some(Change::Copy { to, .. } | Change::Move { to, .. }) if one => {
-            format!("{} was already in {}", quoted(to), folder_of(to))
-        }
-        Some(Change::Copy { to, .. } | Change::Move { to, .. }) => {
-            format!("{many} were already in {}", folder_of(to))
-        }
-        Some(Change::Link { from, to }) if one => {
-            format!(
-                "A link to {} was already in {}",
-                quoted(from),
-                folder_of(to)
-            )
-        }
-        Some(Change::Link { to, .. }) => format!(
-            "{} were already in {}",
-            format::count(count, "link"),
-            folder_of(to)
+        Some(Change::Copy { to, .. } | Change::Move { to, .. }) => words!(
+            toast_already_in = "{ $count ->
+                [1] { $name } was already in { $folder }
+               *[other] { $count } items were already in { $folder }
+            }",
+            count = count,
+            name = name(to),
+            folder = Folder::of(to)
         ),
-        Some(Change::Trash { path } | Change::Delete { path } | Change::Remove { path }) if one => {
-            format!("{} was already gone", quoted(path))
-        }
-        Some(Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. }) => {
-            format!("{many} were already gone")
-        }
-        Some(Change::Restore { path }) if one => format!("{} was already restored", quoted(path)),
-        Some(Change::Restore { .. }) => format!("{many} were already restored"),
-        Some(Change::Rename { from, to }) if one => {
-            format!("{} was already named {}", quoted(from), quoted(to))
-        }
-        Some(Change::Rename { .. }) => format!("{many} already had their names"),
-        Some(Change::Swap { a, b }) if one => {
-            format!("{} and {} were already swapped", quoted(a), quoted(b))
-        }
+        Some(Change::Link { from, to }) => words!(
+            toast_link_already_in = "{ $count ->
+                [1] A link to { $name } was already in { $folder }
+               *[other] { $count } links were already in { $folder }
+            }",
+            count = count,
+            name = name(from),
+            folder = Folder::of(to)
+        ),
+        Some(Change::Trash { path } | Change::Delete { path } | Change::Remove { path }) => words!(
+            toast_already_gone = "{ $count ->
+                [1] { $name } was already gone
+               *[other] { $count } items were already gone
+            }",
+            count = count,
+            name = name(path)
+        ),
+        Some(Change::Restore { path }) => words!(
+            toast_already_restored = "{ $count ->
+                [1] { $name } was already restored
+               *[other] { $count } items were already restored
+            }",
+            count = count,
+            name = name(path)
+        ),
+        Some(Change::Rename { from, to }) => words!(
+            toast_already_named = "{ $count ->
+                [1] { $name } was already named { $to }
+               *[other] { $count } items already had their names
+            }",
+            count = count,
+            name = name(from),
+            to = name(to)
+        ),
+        Some(Change::Swap { a, b }) if one => words!(
+            toast_already_swapped = "{ $first } and { $second } were already swapped",
+            first = name(a),
+            second = name(b)
+        ),
         // A step that says what it found says it best.
         Some(
             Change::Create {
@@ -714,49 +879,93 @@ pub fn found_done(title: &str, run: RunKind, found: &Counted) -> String {
             | Change::Metadata {
                 words: Some(words), ..
             },
-        ) if one && !words.already.is_empty() => capitalized(&words.already),
+        ) if one && !words.already.is_empty() => Words::from(capitalized(&words.already)),
         Some(Change::Create {
             path,
             directory: true,
             ..
-        }) if one => format!("Folder {} was already there", quoted(path)),
-        Some(Change::Create { path, .. }) if one => format!("{} was already there", quoted(path)),
-        Some(Change::Metadata { path, .. }) if one => {
-            format!("{} was already as asked", quoted(path))
-        }
-        _ => format!("{}: already done", capitalized(title)),
+        }) if one => words!(
+            toast_folder_already_there = "Folder { $name } was already there",
+            name = name(path)
+        ),
+        Some(Change::Create { path, .. }) if one => words!(
+            toast_already_there = "{ $name } was already there",
+            name = name(path)
+        ),
+        Some(Change::Metadata { path, .. }) if one => words!(
+            toast_already_as_asked = "{ $name } was already as asked",
+            name = name(path)
+        ),
+        _ => Words::from(format!("{}: already done", capitalized(title))),
     }
 }
 
 /// What a plan that did some of what it was asked says, after what it
 /// did, of what it found done already (`Tally::already`): "Copied 3
 /// items to Docs; 2 were already there".
-pub fn found_done_too(run: RunKind, found: &Counted) -> String {
+pub fn found_done_too(run: RunKind, found: &Counted) -> Words {
     let (first, count) = (found.first.as_ref(), found.count);
-    let quoted = quoting(first, found.named.as_deref());
+    let name = naming(first, found.named.as_deref());
     let one = count == 1;
-    let was = |what: String, how: &str| format!("{what} was already {how}");
-    let were = |how: &str| format!("{count} were already {how}");
     match first {
-        _ if run == RunKind::Undo => "part of it was already undone".to_owned(),
-        Some(Change::Copy { to, .. } | Change::Move { to, .. }) if one => was(quoted(to), "there"),
-        Some(Change::Link { from, .. }) if one => {
-            was(format!("a link to {}", quoted(from)), "there")
+        _ if run == RunKind::Undo => {
+            words!(
+                toast_also_undone = "part of it was already undone",
+                note = "Said after what an action did (Copied 3 items to Docs; …)."
+            )
         }
-        Some(Change::Copy { .. } | Change::Move { .. } | Change::Link { .. }) => were("there"),
-        Some(Change::Trash { path } | Change::Delete { path } | Change::Remove { path }) if one => {
-            was(quoted(path), "gone")
-        }
-        Some(Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. }) => were("gone"),
-        Some(Change::Restore { path }) if one => was(quoted(path), "restored"),
-        Some(Change::Restore { .. }) => were("restored"),
-        Some(Change::Rename { from, to }) if one => {
-            was(quoted(from), &format!("named {}", quoted(to)))
-        }
-        Some(Change::Rename { .. }) => format!("{count} already had their names"),
-        Some(Change::Swap { a, b }) if one => {
-            format!("{} and {} were already swapped", quoted(a), quoted(b))
-        }
+        Some(Change::Copy { to, .. } | Change::Move { to, .. }) => words!(
+            toast_also_there = "{ $count ->
+                [1] { $name } was already there
+               *[other] { $count } were already there
+            }",
+            count = count,
+            name = name(to),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        Some(Change::Link { from, .. }) => words!(
+            toast_also_link_there = "{ $count ->
+                [1] a link to { $name } was already there
+               *[other] { $count } were already there
+            }",
+            count = count,
+            name = name(from),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        Some(Change::Trash { path } | Change::Delete { path } | Change::Remove { path }) => words!(
+            toast_also_gone = "{ $count ->
+                [1] { $name } was already gone
+               *[other] { $count } were already gone
+            }",
+            count = count,
+            name = name(path),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        Some(Change::Restore { path }) => words!(
+            toast_also_restored = "{ $count ->
+                [1] { $name } was already restored
+               *[other] { $count } were already restored
+            }",
+            count = count,
+            name = name(path),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        Some(Change::Rename { from, to }) => words!(
+            toast_also_named = "{ $count ->
+                [1] { $name } was already named { $to }
+               *[other] { $count } already had their names
+            }",
+            count = count,
+            name = name(from),
+            to = name(to),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        Some(Change::Swap { a, b }) if one => words!(
+            toast_also_swapped = "{ $first } and { $second } were already swapped",
+            first = name(a),
+            second = name(b),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
         Some(
             Change::Create {
                 words: Some(words), ..
@@ -764,11 +973,25 @@ pub fn found_done_too(run: RunKind, found: &Counted) -> String {
             | Change::Metadata {
                 words: Some(words), ..
             },
-        ) if one && !words.already.is_empty() => words.already.clone(),
-        Some(Change::Create { path, .. }) if one => was(quoted(path), "there"),
-        Some(Change::Metadata { path, .. }) if one => was(quoted(path), "as asked"),
-        _ if one => "1 was already done".to_owned(),
-        _ => were("done"),
+        ) if one && !words.already.is_empty() => Words::from(words.already.clone()),
+        Some(Change::Create { path, .. }) if one => words!(
+            toast_also_made_there = "{ $name } was already there",
+            name = name(path),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        Some(Change::Metadata { path, .. }) if one => words!(
+            toast_also_as_asked = "{ $name } was already as asked",
+            name = name(path),
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
+        _ => words!(
+            toast_also_done = "{ $count ->
+                [one] { $count } was already done
+               *[other] { $count } were already done
+            }",
+            count = count,
+            note = "Said after what an action did (Copied 3 items to Docs; …)."
+        ),
     }
 }
 
@@ -800,7 +1023,7 @@ fn ended_as(
     cancelled: bool,
     items: Option<skwir_core::op::Items>,
     kept_in: Option<&str>,
-) -> (String, Tone) {
+) -> (Words, Tone) {
     let said = said_title(&running);
     let (title, run) = (running.title, running.run);
     let (first, named, count) = match items.map(Arc::new).or(running.items) {
@@ -821,7 +1044,16 @@ fn ended_as(
     }
     let done = describe(&said, run, first.as_ref(), named.as_deref(), count, kept_in);
     match (error, cancelled) {
-        (Some(error), _) if applied > 0 => (format!("{done}, then stopped: {error}"), Tone::Error),
+        (Some(error), _) if applied > 0 => (
+            words!(
+                toast_then_stopped = "{ $done }, then stopped: { $error }",
+                done = done,
+                error = error,
+                note = "done: what an action did before an error stopped it (Copied 3 items \
+                        to Docs); error: what stopped it, as the system or the step said it."
+            ),
+            Tone::Error,
+        ),
         (Some(error), _) => (
             failure(
                 &title,
@@ -833,13 +1065,21 @@ fn ended_as(
             Tone::Error,
         ),
         (None, true) if applied == 0 => (
-            format!(
+            Words::from(format!(
                 "{}: cancelled before anything was done",
                 capitalized(&title)
+            )),
+            Tone::Info,
+        ),
+        (None, true) => (
+            words!(
+                toast_cancelled_after = "Cancelled. { $done }",
+                done = done,
+                note = "done: what the action did before it was cancelled (Copied 3 items to \
+                        Docs)."
             ),
             Tone::Info,
         ),
-        (None, true) => (format!("Cancelled. {done}"), Tone::Info),
         (None, false) => (done, Tone::Success),
     }
 }
@@ -860,20 +1100,34 @@ pub(crate) fn finished_actions(
     let mut actions = Vec::new();
     if retries {
         actions.push(Action {
-            label: "Retry".into(),
+            label: words!(
+                toast_retry = "Retry",
+                note = "A button on what an error stopped: try what failed again."
+            )
+            .say(),
             command: "retry".into(),
             args: serde_json::json!({ "plan": plan }),
         });
     }
     if run == RunKind::Undo {
-        actions.extend(redoes.then(|| Action {
-            label: "Redo".into(),
-            command: "redo".into(),
-            args: serde_json::json!({}),
+        actions.extend(redoes.then(|| {
+            Action {
+                label: words!(
+                    toast_redo = "Redo",
+                    note = "A button on what an undo did: do again what it took back."
+                )
+                .say(),
+                command: "redo".into(),
+                args: serde_json::json!({}),
+            }
         }));
     } else if undoes {
         actions.push(Action {
-            label: "Undo".into(),
+            label: words!(
+                toast_undo = "Undo",
+                note = "A button on what an action did: take it back."
+            )
+            .say(),
             command: "undo".into(),
             args: serde_json::json!({ "plan": plan }),
         });
@@ -905,7 +1159,11 @@ pub(crate) fn made_alone(
 pub(crate) fn show_action(made: &Path) -> Action {
     use skwir_core::os_path::PathArg;
     Action {
-        label: "Show".into(),
+        label: words!(
+            toast_show = "Show",
+            note = "A button on what an action made: show it, selected in its folder."
+        )
+        .say(),
         command: "navigate".into(),
         args: serde_json::json!({
             "location": PathArg::from(made.parent().unwrap_or(made)),
@@ -916,30 +1174,45 @@ pub(crate) fn show_action(made: &Path) -> Action {
 
 /// An action waiting its turn, as its row under the cards of what runs
 /// says it (ADR-079, 12): what it is ("Rename to b.txt"), and what it
-/// waits for ("Waits for copy to /media/stick").
+/// waits for ("Waits for copy to /media/stick"). What is named by an
+/// action's title is said as it is, until titles are words.
 pub(crate) fn waiting_words(waiting: &skwir_core::op::Waiting) -> (String, String) {
     use skwir_core::op::WaitsFor;
     let why = match &waiting.waits_for {
-        WaitsFor::Action(named) => format!("Waits for {named}"),
-        WaitsFor::Disk => "Waits for the disk".to_owned(),
-        WaitsFor::Server => "Waits for the server".to_owned(),
-        WaitsFor::Room => format!(
-            "Waits for one of the {} running to end",
-            skwir_core::op::ACTIONS_AT_ONCE
+        WaitsFor::Action(named) => Words::from(format!("Waits for {named}")),
+        WaitsFor::Disk => words!(toast_waits_for_disk = "Waits for the disk"),
+        WaitsFor::Server => words!(toast_waits_for_server = "Waits for the server"),
+        WaitsFor::Room => words!(
+            toast_waits_for_room = "Waits for one of the { $count } running to end",
+            count = skwir_core::op::ACTIONS_AT_ONCE,
+            note = "count: how many actions run at once (4)."
         ),
-        WaitsFor::Everything => "Waits for what was asked before it".to_owned(),
-        WaitsFor::Starting => "Starts".to_owned(),
+        WaitsFor::Everything => {
+            words!(toast_waits_for_everything = "Waits for what was asked before it")
+        }
+        WaitsFor::Starting => words!(
+            toast_starts = "Starts",
+            note = "What an action waiting its turn waits for: nothing more, it starts."
+        ),
     };
-    (capitalized(&waiting.named), why)
+    (capitalized(&waiting.named), why.say())
 }
 
 /// What a plan copying onto a mount that sends later says while the
 /// server takes what it wrote.
 pub(crate) fn sending(files: usize) -> String {
-    match files {
-        0 => "sending to the server".to_owned(),
-        n => format!("sending {} to the server", format::count(n, "file")),
-    }
+    words!(
+        toast_sending = "{ $count ->
+            [0] sending to the server
+            [one] sending { $count } file to the server
+           *[other] sending { $count } files to the server
+        }",
+        count = files,
+        note = "What a copy onto a server's folder does while the server takes what it \
+                wrote; count: the files it still sends. Said after other words: begins in \
+                lower case."
+    )
+    .say()
 }
 
 /// How fast a running plan goes and how long it has left, when that can
@@ -948,9 +1221,30 @@ pub(crate) fn sending(files: usize) -> String {
 pub fn pace(t: &Transfer) -> Option<String> {
     let speed = t.speed.map(format::speed);
     let left = t.left.map(format::time_left);
-    let then = t.then_sends.then(|| "then sent to the server".to_owned());
-    let said: Vec<String> = [speed, left.or(then)].into_iter().flatten().collect();
-    (!said.is_empty()).then(|| said.join(" · "))
+    let said = match (speed, left, t.then_sends) {
+        // A speed or a time left alone, as `format` says it.
+        (Some(alone), None, false) | (None, Some(alone), _) => return Some(alone),
+        (None, None, false) => return None,
+        (Some(speed), Some(left), _) => words!(
+            toast_pace = "{ $speed } · { $left }",
+            speed = speed,
+            left = left,
+            note = "How fast an action goes (23.4 MB/s), and how long it has left (about 3 \
+                    min left)."
+        ),
+        (Some(speed), None, true) => words!(
+            toast_pace_then_sent = "{ $speed } · then sent to the server",
+            speed = speed,
+            note = "How fast an action writes into a server's folder (23.4 MB/s), which then \
+                    sends it to the server: why no time left is said."
+        ),
+        (None, None, true) => words!(
+            toast_then_sent = "then sent to the server",
+            note = "Under the bar of an action that writes into a server's folder, which \
+                    then sends it to the server: why no time left is said."
+        ),
+    };
+    Some(said.say())
 }
 
 /// Where the answer said last is drawn: one place a frame
@@ -1123,9 +1417,15 @@ pub fn render_answer(
         );
     }
     let card = card.child(
-        controls::icon_button("toast-close", "close", "Close", &close, &theme)
-            .aria_live(gpui::Live::Off)
-            .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
+        controls::icon_button(
+            "toast-close",
+            "close",
+            words!(toast_close = "Close").say(),
+            &close,
+            &theme,
+        )
+        .aria_live(gpui::Live::Off)
+        .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
     );
     Some(
         card.with_animation(
@@ -1777,7 +2077,8 @@ mod tests {
                 None,
                 "permission denied",
                 None
-            ),
+            )
+            .english(),
             "Couldn't copy “it's a draft.txt” to locked: permission denied"
         );
         let rename = Change::Rename {
@@ -1791,7 +2092,8 @@ mod tests {
                 None,
                 "“a.txt” could not be renamed “b.txt”: the name is too long, or not allowed there",
                 Some("the name is too long, or not allowed there"),
-            ),
+            )
+            .english(),
             "Couldn't rename “a.txt” to “b.txt”: the name is too long, or not allowed there",
             "the reason alone, not the step twice"
         );
@@ -1806,11 +2108,12 @@ mod tests {
                 None,
                 "“it's a draft.txt” could not be linked in “locked”: permission denied",
                 Some("permission denied"),
-            ),
+            )
+            .english(),
             "Couldn't make a link to “it's a draft.txt” in locked: permission denied"
         );
         assert_eq!(
-            failure("tag 2 files", None, None, "the drive is full", None),
+            failure("tag 2 files", None, None, "the drive is full", None).english(),
             "Tag 2 files: the drive is full"
         );
         // An item of a trash, by the name it had: the error names the
@@ -1825,7 +2128,8 @@ mod tests {
                 Some("it's a draft.txt"),
                 "“it's a draft.txt.2” could not all be deleted: permission denied",
                 Some("permission denied"),
-            ),
+            )
+            .english(),
             "Couldn't delete “it's a draft.txt”: permission denied"
         );
     }
@@ -1836,11 +2140,11 @@ mod tests {
             path: PathBuf::from("/example/it's a draft.txt"),
         };
         assert_eq!(
-            describe("move to trash", RunKind::Apply, Some(&trash), None, 1, None),
+            describe("move to trash", RunKind::Apply, Some(&trash), None, 1, None).english(),
             "Moved “it's a draft.txt” to Trash"
         );
         assert_eq!(
-            describe("move to trash", RunKind::Apply, Some(&trash), None, 3, None),
+            describe("move to trash", RunKind::Apply, Some(&trash), None, 3, None).english(),
             "Moved 3 items to Trash"
         );
         let copy = Change::Copy {
@@ -1848,7 +2152,7 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("copy", RunKind::Apply, Some(&copy), None, 2, None),
+            describe("copy", RunKind::Apply, Some(&copy), None, 2, None).english(),
             "Copied 2 items to Archive 2026"
         );
         let link = Change::Link {
@@ -1856,23 +2160,23 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("link", RunKind::Apply, Some(&link), None, 1, None),
+            describe("link", RunKind::Apply, Some(&link), None, 1, None).english(),
             "Made a link to “a.txt” in Archive 2026"
         );
         assert_eq!(
-            describe("link", RunKind::Apply, Some(&link), None, 3, None),
+            describe("link", RunKind::Apply, Some(&link), None, 3, None).english(),
             "Made 3 links in Archive 2026"
         );
         assert_eq!(
-            describe("move to trash", RunKind::Undo, Some(&trash), None, 1, None),
+            describe("move to trash", RunKind::Undo, Some(&trash), None, 1, None).english(),
             "Undid: move to trash"
         );
         assert_eq!(
-            describe("add tag", RunKind::Apply, None, None, 2, None),
+            describe("add tag", RunKind::Apply, None, None, 2, None).english(),
             "Add tag (2 items)"
         );
         assert_eq!(
-            describe("paste", RunKind::Apply, None, None, 0, None),
+            describe("paste", RunKind::Apply, None, None, 0, None).english(),
             "Paste: nothing to do"
         );
         // An item of a trash, by the name the step said it had there; a
@@ -1888,7 +2192,8 @@ mod tests {
                 Some("it's a draft.txt"),
                 1,
                 None
-            ),
+            )
+            .english(),
             "Deleted “it's a draft.txt” permanently"
         );
         // Kept by its server's own trash (a cloud's): never said gone.
@@ -1903,7 +2208,8 @@ mod tests {
                 None,
                 1,
                 Some("Google Drive's trash")
-            ),
+            )
+            .english(),
             "Deleted “it's a photo.jpg” (in Google Drive's trash)"
         );
         let out = Change::Move {
@@ -1918,7 +2224,8 @@ mod tests {
                 Some("it's a draft.txt"),
                 1,
                 None
-            ),
+            )
+            .english(),
             "Moved “it's a draft.txt” to Archive 2026"
         );
     }

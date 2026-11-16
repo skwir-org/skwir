@@ -762,7 +762,7 @@ impl Build<'_> {
         }
         let said = match self.mode {
             Mode::Size | Mode::Types => format::size(measure),
-            Mode::Files => format::count(usize::try_from(measure).unwrap_or(usize::MAX), "file"),
+            Mode::Files => format::files(usize::try_from(measure).unwrap_or(usize::MAX)),
             Mode::Age => self
                 .when(node.modified)
                 .unwrap_or_else(|| format::size(measure)),
@@ -791,9 +791,8 @@ impl Build<'_> {
         let mut parts = vec![trail.to_owned()];
         match self.mode {
             Mode::Files => {
-                parts.push(counted(format::count(
+                parts.push(counted(format::files(
                     usize::try_from(node.files).unwrap_or(usize::MAX),
-                    "file",
                 )));
                 parts.push(format!(
                     "{} of the files in {}",
@@ -968,7 +967,7 @@ impl Build<'_> {
     /// What several entries drawn together hold, as the mode counts.
     fn rest_said(&self, size: u64, alloc: u64, files: u64) -> String {
         match self.mode {
-            Mode::Files => format::count(usize::try_from(files).unwrap_or(usize::MAX), "file"),
+            Mode::Files => format::files(usize::try_from(files).unwrap_or(usize::MAX)),
             Mode::Size | Mode::Age | Mode::Types => sizes(size, alloc),
         }
     }
@@ -987,9 +986,7 @@ impl Build<'_> {
             weight: (measure as f64).max(floor),
             label: what.into(),
             detail: match self.mode {
-                Mode::Files => {
-                    format::count(usize::try_from(measure).unwrap_or(usize::MAX), "file")
-                }
+                Mode::Files => format::files(usize::try_from(measure).unwrap_or(usize::MAX)),
                 Mode::Size | Mode::Age | Mode::Types => format::size(measure),
             }
             .into(),
@@ -1390,7 +1387,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 } else if status.is_some_and(|s| s.updating) {
                     let read = status.map_or(0, |s| s.scanned_dirs);
                     let read = usize::try_from(read).unwrap_or(usize::MAX);
-                    format!("Scanning… {} read", crate::format::count(read, "folder"))
+                    format!("Scanning… {} read", crate::format::folders(read))
                 } else if let Some(note) = deleting {
                     note
                 } else {
@@ -1498,8 +1495,8 @@ fn summary(state: &UsageState) -> String {
                     ""
                 },
                 sizes(s.size, s.alloc),
-                format::count(usize::try_from(s.files).unwrap_or(usize::MAX), "file"),
-                format::count(usize::try_from(s.dirs).unwrap_or(usize::MAX), "folder"),
+                format::files(usize::try_from(s.files).unwrap_or(usize::MAX)),
+                format::folders(usize::try_from(s.dirs).unwrap_or(usize::MAX)),
                 if reclaimable > 0 {
                     format!(" · {} in caches and the Trash", format::size(reclaimable))
                 } else {

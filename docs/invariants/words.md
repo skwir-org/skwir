@@ -44,6 +44,11 @@ sentence, never a sentence assembled from pieces.
   `*[other]`, and every language writes its own categories. A count that
   never reaches one still uses the selector where another language's
   categories differ (two, few, many).
+- **A message that names one thing or counts several** chooses the name
+  by the exact `[1]`, never by `[one]`: in Russian `one` also covers 21.
+  English writes `[1] Moved { $name } to Trash` and `*[other] Moved
+  { $count } items to Trash`; a language adds its categories beside
+  `[1]`.
 - **Agreement is a selector on a kind**: a message about "the item"
   takes its `Kind`, and English ignores it where its words agree
   already.
@@ -53,6 +58,8 @@ sentence, never a sentence assembled from pieces.
 
 ## Arguments
 
+- **A folder named as where something goes** ("to Docs") is a `Folder`:
+  unquoted, its controls shown as a `Name`'s are.
 - **A file's, a folder's, a place's or a tag's name is a `Name`**,
   never a string placed in the message: it carries the quotes and the
   isolation from the sentence (ADR-139, 5).
@@ -107,8 +114,10 @@ sentence, never a sentence assembled from pieces.
 ## Catalogs
 
 - **Each crate keeps its catalogs in `l10n/`**: `en.ftl`, made from its
-  code by the extraction tool, never edited by hand, and one file a
-  language, written by translators.
+  code by `just words` (`tools/words/extract.py`), never edited by hand,
+  and one file a language, written by translators. A message of a test
+  (in a `tests.rs`, a `tests/` folder, or an id beginning `test_`) is no
+  crate's.
 - **A plugin's catalogs are a contribution** like its commands:
   registered with its id, withdrawn on disable
   (`crates/skwir/tests/plugins_toggle.rs`).

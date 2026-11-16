@@ -607,7 +607,7 @@ fn why_empty(quick: &QuickFilters) -> String {
     } else if files.unknown > 0 {
         format!(
             "Reading the details of {}…",
-            crate::format::count(files.unknown, "file")
+            crate::format::files(files.unknown)
         )
     } else if files.files == 0 && files.listed > 0 {
         "Every file here is hidden by the filters".to_owned()
@@ -789,7 +789,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         // What the details still read may offer more.
         row = row.child(said(format!(
             "Reading the details of {}…",
-            crate::format::count(quick.files.unknown, "file")
+            crate::format::files(quick.files.unknown)
         )));
     }
     Some(row.into_any_element())

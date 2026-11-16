@@ -9038,6 +9038,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "skwir-words-macros",
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.8+spec-1.1.0",
@@ -10049,6 +10050,16 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "tracing",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "skwir-words-macros"
+version = "0.5.1"
+dependencies = [
+ "fluent-syntax",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

@@ -196,12 +196,18 @@ gpui-check *args:
 gpui-check-windows *args:
     tools/gpui/check-windows.sh {{args}}
 
-# Lint: rustfmt check + clippy with warnings as errors (default members).
+# Lint: rustfmt check + clippy with warnings as errors (default members),
+# and each crate's English catalog as its code says it (ADR-139).
 lint:
     cargo fmt --all -- --check
+    tools/words/extract.py --check
     cargo clippy --all-targets -- -D warnings
     tools/build/prune.py record clippy --quiet
     tools/build/prune.py --if-below 40G --quiet
+
+# Each crate's English catalog (l10n/en.ftl), made from its words! calls (ADR-139).
+words:
+    tools/words/extract.py
 
 # What no build of the workspace uses any more, out of target/debug: units
 # of other dependencies or features, split debug info no artifact names,

@@ -259,7 +259,7 @@ fn dragged(count: usize, label: &str) -> String {
     if count == 1 {
         label.to_owned()
     } else {
-        crate::format::count(count, "item")
+        crate::format::items(count)
     }
 }
 

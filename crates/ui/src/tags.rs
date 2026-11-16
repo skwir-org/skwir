@@ -895,7 +895,7 @@ impl Shell {
                     .file_name()
                     .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
             ),
-            many => format!("Tags of {}", crate::format::count(many.len(), "item")),
+            many => format!("Tags of {}", crate::format::items(many.len())),
         };
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new("Filter, or type a new tag", cx));

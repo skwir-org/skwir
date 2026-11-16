@@ -174,20 +174,16 @@ pub(crate) fn render(
         _ if held.is_some() => match held.filter(|_| loading) {
             None => String::new(),
             Some(0) => "Loading…".to_owned(),
-            Some(read) => format!("Loading… {}", format::count(read, "item")),
+            Some(read) => format!("Loading… {}", format::items(read)),
         },
         (true, false) => format!("Searching… {}", format::count(count, "result")),
         (true, true) => format::count(count, "result"),
         (false, false) if error.is_none() && loading => {
-            format!("Loading… {}", format::count(count, "item"))
+            format!("Loading… {}", format::items(count))
         }
         (false, _) => match total {
-            Some(total) => format!(
-                "{} of {}",
-                format::thousands(count),
-                format::count(total, "item")
-            ),
-            None => format::count(count, "item"),
+            Some(total) => format!("{} of {}", format::thousands(count), format::items(total)),
+            None => format::items(count),
         },
     };
     // Nothing selected: what the files shown weigh, as a selection's size
@@ -216,7 +212,7 @@ pub(crate) fn render(
     let reading = shell.ui().quick_filters.reading(reads && !is_query);
     let items = match reading.filter(|_| total.is_some()) {
         Some(crate::quick_filters::Reading::Files(n)) => {
-            format!("{items} · Reading {}…", format::count(n, "file"))
+            format!("{items} · Reading {}…", format::files(n))
         }
         Some(crate::quick_filters::Reading::Counting) => format!("{items} · Reading…"),
         // The folders under a lens show as they are found.
@@ -400,7 +396,7 @@ pub(crate) fn render(
                     this.run("clipboard_clear", serde_json::json!({}), window, cx);
                 }))
                 .child(crate::controls::glyph(icon, theme.text_muted, 13.))
-                .child(format!("{} {verb}", format::count(waiting, "item"))),
+                .child(format!("{} {verb}", format::items(waiting))),
         );
     }
     if !shell.reviews.is_empty() {

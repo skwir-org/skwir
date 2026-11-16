@@ -270,7 +270,7 @@ impl Deleting {
         let trash = !rows.is_empty() && rows.iter().all(|r| r.trashed);
         let what = match rows.as_slice() {
             [one] if !one.trashed && !one.other => format!("“{}”", one.name),
-            rows => format::count(rows.len(), "item"),
+            rows => format::items(rows.len()),
         };
         let from = if trash { " from the trash" } else { "" };
         let note = note.map_or(String::new(), |note| format!(" {note}."));
@@ -337,13 +337,13 @@ impl Deleting {
                 // Inside another folder listed: counted there.
                 None if self.counted => "folder".into(),
                 None => "…".into(),
-                Some(c) if !c.done => format!("{}…", format::count(c.files as usize, "file")),
+                Some(c) if !c.done => format!("{}…", format::files(c.files as usize)),
                 Some(c) if c.files == 0 && c.folders == 0 => "empty".into(),
                 Some(c) => format!(
                     "{}{} · {}",
                     if at_least(&c) { "at least " } else { "" },
                     format::size(c.size),
-                    format::count(c.files as usize, "file")
+                    format::files(c.files as usize)
                 ),
             },
         }
@@ -402,16 +402,12 @@ impl Deleting {
             }
             (0, 0) => return String::new(),
             (0, folders) => format::count(folders, "empty folder"),
-            (files, 0) => format!(
-                "{} in {}",
-                format::size(total.size),
-                format::count(files, "file")
-            ),
+            (files, 0) => format!("{} in {}", format::size(total.size), format::files(files)),
             (files, folders) => format!(
                 "{} in {} and {}",
                 format::size(total.size),
-                format::count(files, "file"),
-                format::count(folders, "folder")
+                format::files(files),
+                format::folders(folders)
             ),
         };
         if at_least(total) {

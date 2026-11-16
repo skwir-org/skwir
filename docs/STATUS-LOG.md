@@ -18897,3 +18897,72 @@ fixed_decimal. `just deny` passes and the notices were made again.
 - clippy `-D warnings` on skwir-core.
 - `cargo nextest run` of skwir-core and skwir-ui (1584 passed), and the
   binary's settings and plugins_toggle tests.
+
+## 2026-11-16: The words! macro, the English catalogs, and the first messages (ADR-139, step D)
+
+**`words!`** (`skwir-words-macros`, re-exported by core):
+`words!(id = "English", argument = value, …, note = "…")`.
+- **At compile time** it reads the English as Fluent's syntax, as much
+  as Skwir says. Refused where it is written: a term, a function,
+  another message referred to, attributes, an id that is not snake_case,
+  an argument named but not given, or given but not named.
+- **What it builds:** the English as statics of `Element`, so it is
+  never parsed at run time, and a `Words` whose domain is the package's
+  name.
+- **It expands to a call**, its statics inside the call's first
+  argument, so a match's arm that holds one stays one expression. A
+  first expansion as a block of statements made clippy flag such arms as
+  blocks.
+
+**English catalogs:** `just words` (`tools/words/extract.py`) writes
+each crate's `l10n/en.ftl` from its `words!` calls, sorted by id, each
+note as a comment above it, the later lines of a message indented four
+spaces. `just lint` runs it with `--check`.
+- It fails where a catalog is not what the code says, where an id has
+  two Englishes in one crate, or where a crate keeps a catalog without
+  messages.
+- A message of a test (a `tests.rs`, a `tests/` folder, an id beginning
+  `test_`) is no crate's, and a `words!(` on a commented line (a doc's
+  example) is no call.
+
+**The window's first messages** (`crates/ui/l10n/en.ftl`, 93):
+- **The placeholder:** its titles, notes and buttons, said each time it
+  is drawn.
+- **`format::items`, `files` and `folders`**, with real plurals,
+  replacing 50 calls of `format::count(n, "item" | "file" | "folder")`.
+  The other 36 calls (21 nouns) wait for step E.
+- **The toast:** 64 messages, by a subagent that owned `toast.rs`.
+  - `describe`, `failure`, `found_done` and `found_done_too` give
+    `Words`; what is made of them (a long copy's size and time, "then
+    stopped", what was found done as well) are messages taking them as
+    arguments, said once.
+  - A message that names one file or counts several chooses the name by
+    the exact `[1]` (`docs/invariants/words.md`).
+  - Names are `Name`, destinations the new `Folder` (said bare, its
+    controls shown).
+  - **What stays text for step E:** what is built from a plan's title or
+    a step's `op::Words`, the steps' own notes, the toast joined to what
+    follows it (`ToastState::joined`, `take_plans`, which read a toast's
+    text back), the waiting reason, and Quit's question's first
+    sentence.
+- **English otherwise unchanged:** every toast and placeholder test
+  passes as it was, except a count of what was found done as well,
+  which is now grouped (1,234) as every other count is.
+
+`docs/invariants/words.md` now says the `[1]` rule, `Folder`, and where
+`en.ftl` comes from.
+
+**Checked:**
+- `just lint`, including `tools/words/extract.py --check`.
+- `cargo nextest run` of skwir-core, skwir-words-macros, skwir-ui and the
+  binary's integration tests: 1819 of 1820 passed. The other, a file's
+  close told at once (`fs::watch`), failed under a load of about 46 and
+  passed alone.
+- The macro's tests: a selector over indented lines, agreement by kind, a
+  note, a plain message, braces.
+- The toast's and the placeholder's tests, with the same English as
+  before.
+
+**Not run:** the plugins' tests. Twice the disk filled as the default
+members' tests were built, so only the crates this changes were tested.
+Also not run: check-cross, a window.

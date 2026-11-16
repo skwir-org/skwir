@@ -65,7 +65,44 @@ pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
     when.strftime(format).to_string()
 }
 
-/// `1 item`, `3 items`.
+/// `1 item`, `3 items`, said in the user's language (ADR-139).
+pub fn items(n: usize) -> String {
+    skwir_core::words!(
+        count_items = "{ $count ->
+        [one] 1 item
+       *[other] { $count } items
+    }",
+        count = n
+    )
+    .say()
+}
+
+/// `1 file`, `3 files`, said in the user's language.
+pub fn files(n: usize) -> String {
+    skwir_core::words!(
+        count_files = "{ $count ->
+        [one] 1 file
+       *[other] { $count } files
+    }",
+        count = n
+    )
+    .say()
+}
+
+/// `1 folder`, `3 folders`, said in the user's language.
+pub fn folders(n: usize) -> String {
+    skwir_core::words!(
+        count_folders = "{ $count ->
+        [one] 1 folder
+       *[other] { $count } folders
+    }",
+        count = n
+    )
+    .say()
+}
+
+/// `1 item`, `3 items`: a noun made plural by its English `s`, until each
+/// count is a message (PLAN.md, step E; `items`, `files`, `folders`).
 pub fn count(n: usize, singular: &str) -> String {
     if n == 1 {
         format!("1 {singular}")

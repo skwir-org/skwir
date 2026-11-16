@@ -885,9 +885,7 @@ impl Shell {
                         Some(s) if !e.is_dir() => format::size(s),
                         // A place says how many files it holds.
                         _ => match value(keys::FILES).and_then(skwir_core::Value::as_u64) {
-                            Some(n) => {
-                                format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
-                            }
+                            Some(n) => format::files(usize::try_from(n).unwrap_or(usize::MAX)),
                             None => "—".to_owned(),
                         },
                     },

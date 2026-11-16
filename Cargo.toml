@@ -27,6 +27,7 @@ members = [
     "crates/tree-sitter-worker",
     "crates/print-worker",
     "crates/shrink",
+    "crates/words-macros",
 ]
 # The native workers link Poppler, MuPDF, DjVuLibre, GStreamer and
 # libarchive. They are optional at runtime and stay out of the default build
@@ -55,6 +56,7 @@ default-members = [
     "crates/tree-sitter-worker",
     "crates/print-worker",
     "crates/shrink",
+    "crates/words-macros",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.
@@ -73,6 +75,7 @@ publish = false
 
 [workspace.dependencies]
 skwir-core = { path = "crates/core" }
+skwir-words-macros = { path = "crates/words-macros" }
 skwir-platform = { path = "crates/platform" }
 skwir-shrink = { path = "crates/shrink" }
 skwir-alloc = { path = "crates/alloc" }

@@ -25,6 +25,13 @@
 //! The crate is toolkit-agnostic and has no async runtime: work runs on the
 //! scheduler's threads and results flow through channels.
 
+// The `words!` macro names `::skwir_core::words`, which core is too.
+extern crate self as skwir_core;
+
+/// A message of the crate it is written in, in English beside its id
+/// (ADR-139, 2): see `words`.
+pub use skwir_words_macros::words;
+
 pub mod app;
 pub mod cache;
 pub mod cancel;

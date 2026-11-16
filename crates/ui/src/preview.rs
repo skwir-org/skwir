@@ -3067,7 +3067,7 @@ impl Shell {
         self.preview.info.size = Some(if self.app.is_search(&location) {
             format::count(count, "result")
         } else {
-            format::count(count, "item")
+            format::items(count)
         });
         self.preview.properties.clear();
         self.preview.properties_at = None;
@@ -6767,9 +6767,7 @@ pub(crate) fn content(
         // says what it holds, as Properties would.
         None | Some(PreviewContent::Generic | PreviewContent::Dir { .. }) => {
             let holds = match &p.content {
-                Some(PreviewContent::Dir { items, .. }) => {
-                    Some(crate::format::count(*items, "item"))
-                }
+                Some(PreviewContent::Dir { items, .. }) => Some(crate::format::items(*items)),
                 _ => None,
             };
             match p.info.icon.as_ref().filter(|_| !p.properties_on) {

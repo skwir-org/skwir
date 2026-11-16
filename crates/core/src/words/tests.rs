@@ -185,3 +185,56 @@ fn an_argument_s_type_is_its_own() {
         Arg::Name("b.txt".into())
     );
 }
+
+/// What `words!` builds: the English read as Fluent's syntax at compile
+/// time, its arguments checked against it, said as any message is.
+#[test]
+fn words_written_beside_their_id_are_messages() {
+    let moved = |n: usize| {
+        crate::words!(
+            test_moved = "Moved { $count ->
+    [one] one item
+   *[other] { $count } items
+} to the Trash",
+            count = n
+        )
+    };
+    assert_eq!(moved(1).english(), "Moved one item to the Trash");
+    assert_eq!(moved(4).english(), "Moved 4 items to the Trash");
+    let message = moved(1).message_of().unwrap();
+    assert_eq!((message.domain, message.id), ("skwir-core", "test_moved"));
+    let named = crate::words!(
+        test_named = "{ $name } is not { $kind ->
+            [folder] a folder
+           *[other] a file
+        }",
+        name = Name("a.txt".into()),
+        kind = Kind::Folder,
+        note = "Said of what a step found where it looked."
+    );
+    assert_eq!(named.english(), "“a.txt” is not a folder");
+    assert_eq!(
+        named.message_of().unwrap().note,
+        "Said of what a step found where it looked."
+    );
+    assert_eq!(
+        crate::words!(test_plain = "Nothing here").english(),
+        "Nothing here"
+    );
+    assert_eq!(
+        crate::words!(test_brace = "A {\"{\"} and a {\"}\"}").english(),
+        "A { and a }"
+    );
+}
+
+#[test]
+fn a_folder_is_named_bare_its_controls_shown() {
+    use super::Folder;
+    assert_eq!(
+        Arg::from(Folder::of(std::path::Path::new("/a/Docs/b.txt"))),
+        Arg::Folder("Docs".into())
+    );
+    let mut out = String::new();
+    super::said_arg(&Arg::Folder("x\u{202e}y".into()), "en", &[], &mut out);
+    assert_eq!(out, "x⟨RLO⟩y");
+}

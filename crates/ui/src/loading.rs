@@ -209,7 +209,7 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
         .listing
         .filling_count()
         .filter(|&n| n > 0)
-        .map(|n| format!(" {}", crate::format::count(n, "item")))
+        .map(|n| format!(" {}", crate::format::items(n)))
         .unwrap_or_default();
     drop(ws);
     // A remote's folder whose server stopped answering says so (ADR-077):

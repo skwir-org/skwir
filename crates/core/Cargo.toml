@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 fluent-syntax.workspace = true
+skwir-words-macros.workspace = true
 icu_locale_core.workspace = true
 icu_plurals.workspace = true
 serde.workspace = true

@@ -478,7 +478,7 @@ impl PaneView for MapView {
                 icon: "map",
                 title: "Nothing here says where it is".into(),
                 detail: "No picture or track of this location has a position. Pictures keep one when the camera knew where it was.".into(),
-                action: folder.then_some(("Search the subfolders", "geo.search_subfolders")),
+                action: folder.then(|| ("Search the subfolders".to_owned(), "geo.search_subfolders")),
                 problem: false,
             };
             let focus = shell.ui().placeholder_focus.clone();
