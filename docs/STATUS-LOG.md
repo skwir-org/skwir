@@ -18348,3 +18348,73 @@ change of size.
 - Not checked: a window resized by dragging its edge, the preview and
   terminal panels (the same code: a size changed), a grid grouped under
   pinned headings, Wayland.
+
+## Release 0.5.1 (2026-11-16)
+
+Prepared in the evening and night of 2026-11-15 on the user's go-ahead;
+pushed and published by the user on GitHub (02:09 UTC, 40 assets), the
+AUR's three bases at 0.5.1. The annotated tag `v0.5.1` on 361c0b91,
+after the Release commit f130dc74: the reviews since 0.5.0 were fixed
+before (2482d57a..1bfaa732, 2abd14eb..b2d18ea5, a65c293c..0d39f3bd); the
+routine CI's first full run since then found a test that took GitHub's
+runners for a system without user namespaces (d4ffdc07), the release's
+preparation the startup-order tool holding gigabytes (80c11990), and its
+runs one race in a test (5de67171). What the keys are on kept in place
+as a view changes size (df0b456a, 4a435b3b) came after the last review
+and ships unreviewed.
+
+- **CI** (d4ffdc07): `fs::reach::tests::the_table_is_followed` runs
+  again as root of a user namespace, and skipped only where unshare said
+  "unshare failed". GitHub's Ubuntu runners make the namespace and refuse
+  to map its user (AppArmor's `restrict_unprivileged_userns`: "write
+  failed /proc/self/uid_map"), taken for the test failing.
+  `skwir_core::testing::as_root_in_a_namespace` asks a namespace running
+  `true` first, for that test and the kmtp helper's, which had the same
+  check: skipped with a stand-in `unshare` refusing as the runners do,
+  run in a namespace here; `just ci-check` passed (851 tests).
+- **startup-order** (80c11990, a356893f): the first run stood 40 minutes
+  in its decoding, the tool at 18 GB, past its scope's high mark, with
+  the machine's swap full: it read where the program's code was mapped
+  from perf's events whole, and perf script decodes every call of a
+  processor trace with them unless told otherwise (`--itrace=ce`).
+  Asked with errors alone (`--itrace=e`), the same lines (1.5 KB of a
+  trace of `ls`, 2.7 MB before); the run took 7 minutes at 216 MB:
+  11,752 functions in 16.6 MiB of code (12,026 in 16.8 MiB at 0.5.0).
+- **The Nix package** (`package-nix-check` on f130dc74): minimal
+  279.7 MiB (278.3 at 0.5.0), default 1.1 GiB, full evaluated.
+- **The disk:** 17 GB free before; `target/debug/incremental` (55 GB as
+  counted) and the published 0.5.0 bundle deleted on the user's word
+  (47 GB); the three prune records made again after the version change,
+  then the prune: 15.3 → 44.4 GB.
+- **Run 1** (23:27–00:03) passed lint-all, deny, notices, test-all,
+  smoke, a11y and the workers' checks, and stopped at `bench-check`:
+  `images10k.stream_complete_us` 13,360 µs over 12,000, every metric of
+  the disk about twice 0.5.0's, raw listing and stat too. The system's
+  `nix-gc.timer` had started `nix-collect-garbage` at midnight. Alone
+  after it: 4.9, 6.0 and 7.8 ms (0.5.0: 5.5–6.9), every budget met; no
+  fix.
+- **Run 2** (00:06–00:13) stopped at `test-all`:
+  `lens_folders::what_shows_stays_while_the_folders_are_asked_about_again`
+  took the view kept for a moment as a lens comes (`VIEW_KEPT`, 150 ms,
+  which showed `pics`, the folder's only entry) for the lens's answer;
+  under load the answer came after that moment, the view then showing
+  what was known, nothing, as ADR-126 has it. Reproduced at once with
+  the test starved of the processor (`CPUQuota` 3 %: 6 of 6, 5 %: 4 of
+  6); it now waits for `pics` dimmed as the way to a picture, shown by
+  the lens (5de67171): 12 of 12 starved. The tag moved after midnight,
+  so the release is dated 2026-11-16 (361c0b91).
+- **Run 3** (00:34–03:02) green: 3,704 tests (32 skipped), smoke, a11y,
+  the PDF and DjVu helpers, the benchmarks (`images10k.stream_complete_us`
+  6.1 ms), the AppImage and the tarball (their film played on after
+  pauses, seeks while paused and play and pause at once, 0.5.0's known
+  issue), Debian, Ubuntu, Fedora, Arch, Windows (tried under Wine) and
+  macOS (looked over). `just release-verify v0.5.1` passed: 40 files,
+  989 MB.
+- **Idle memory and first frame** (the tarballs, alternated on a
+  headless sway drawn by the Intel GPU, three rounds of three starts):
+  own share's medians 68.6, 68.0, 70.7 MiB for 0.5.0 and 69.2, 69.0,
+  69.2 MiB for 0.5.1, within the 100 MiB budget; first frame 48–76 ms
+  for both; idle at 0 % for both.
+- Two sways of 0.5.0's A/B were still running from 2026-11-14: its
+  harness stopped the wrapper, not sway. Stopped by their pids; none
+  was left running after 0.5.1's A/B.
