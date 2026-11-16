@@ -178,8 +178,8 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
     })
 }
 
-/// A size typed: `2 MB`, `1.5MB`, `500 KB`, `800k`, bytes. Units are
-/// those a file manager shows, a thousand to the next.
+/// A size typed: `2 MB`, `1.5MB`, `500 KB`, `800k`, bytes, a thousand
+/// to the next; `2 MiB`, `500 KiB`, 1024 to the next (ADR-139, 9).
 pub(crate) fn size(typed: &str) -> Result<u64, String> {
     let typed = typed.trim();
     let split = typed
@@ -195,6 +195,9 @@ pub(crate) fn size(typed: &str) -> Result<u64, String> {
         "k" | "kb" | "ko" => 1e3,
         "m" | "mb" | "mo" => 1e6,
         "g" | "gb" | "go" => 1e9,
+        "kib" => 1024.0,
+        "mib" => 1_048_576.0,
+        "gib" => 1_073_741_824.0,
         other => return Err(format!("“{other}” is no unit: write KB or MB")),
     };
     let bytes = number * scale;

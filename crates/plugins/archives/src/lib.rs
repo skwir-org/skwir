@@ -502,7 +502,7 @@ mod tests {
         assert_eq!(rows[7].target, None);
         assert_eq!(rows[8].bytes, None);
         assert_eq!(rows[8].target, None);
-        assert_eq!(rows[5].cells[1], "1.5 KB");
+        assert_eq!(rows[5].cells[1], "1.5 kB");
     }
 
     #[test]

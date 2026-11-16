@@ -743,7 +743,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     assert_eq!(asked.asker, skwir_core::app::Asker::Room);
     assert_eq!(
         asked.title,
-        "Not enough room in “dest”: 1000 B needed, 10 B free"
+        "Not enough room in “dest”: 1.0 kB needed, 10 B free"
     );
     app.answer(asked.id, false);
     let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));

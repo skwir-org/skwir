@@ -243,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             with(1000).unwrap().said(),
-            "Not enough room in “dest”: 1.1 KB needed, 1000 B free"
+            "Not enough room in “dest”: 1.1 kB needed, 1.0 kB free"
         );
     }
 

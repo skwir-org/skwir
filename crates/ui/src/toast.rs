@@ -1635,7 +1635,7 @@ mod tests {
             ..Transfer::default()
         };
         let (fraction, words) = bar(40_000, &small);
-        assert_eq!(words, "1,286 of 40,000 items · 80.4 KB");
+        assert_eq!(words, "1,286 of 40,000 items · 82.3 kB");
         assert!((fraction - 1286. / 40_000.).abs() < 1e-6);
         // Three large folders: halfway through the second is half of a third.
         let large = Transfer {
@@ -1656,7 +1656,7 @@ mod tests {
             total: 4 << 30,
             ..Transfer::default()
         };
-        assert_eq!(bar(1, &one), (0.25, "1.0 GB of 4.0 GB".into()));
+        assert_eq!(bar(1, &one), (0.25, "1.1 GB of 4.3 GB".into()));
         // Sized before it began (ADR-113): its bytes in all move it, its
         // items counted beside.
         let sized = Transfer {
@@ -1665,7 +1665,7 @@ mod tests {
         };
         assert_eq!(
             bar(3, &sized),
-            (0.375, "1 of 3 items · 3.0 GB of 8.0 GB".into())
+            (0.375, "1 of 3 items · 3.2 GB of 8.6 GB".into())
         );
         // Items a batch finished before their steps place them count as
         // they come whole; the bar still by the bytes.
@@ -1676,7 +1676,7 @@ mod tests {
         };
         assert_eq!(
             bar(3, &batched),
-            (0.375, "2 of 3 items · 3.0 GB of 8.0 GB".into())
+            (0.375, "2 of 3 items · 3.2 GB of 8.6 GB".into())
         );
         // One item sized before it began: what it was sized at.
         let one_sized = Transfer {
@@ -1684,7 +1684,7 @@ mod tests {
             total: 0,
             ..one
         };
-        assert_eq!(bar(1, &one_sized), (0.25, "1.0 GB of 4.0 GB".into()));
+        assert_eq!(bar(1, &one_sized), (0.25, "1.1 GB of 4.3 GB".into()));
     }
 
     /// How fast and how long, when that can be told: nothing before, a
@@ -1697,19 +1697,19 @@ mod tests {
             speed: Some(24.0 * 1024.0 * 1024.0),
             ..Transfer::default()
         };
-        assert_eq!(pace(&speed).as_deref(), Some("24.0 MB/s"));
+        assert_eq!(pace(&speed).as_deref(), Some("25.2 MB/s"));
         let both = Transfer {
             left: Some(Duration::from_secs(170)),
             ..speed
         };
-        assert_eq!(pace(&both).as_deref(), Some("24.0 MB/s · about 3 min left"));
+        assert_eq!(pace(&both).as_deref(), Some("25.2 MB/s · about 3 min left"));
         let then = Transfer {
             then_sends: true,
             ..speed
         };
         assert_eq!(
             pace(&then).as_deref(),
-            Some("24.0 MB/s · then sent to the server")
+            Some("25.2 MB/s · then sent to the server")
         );
         // A plan of no bytes: its time left alone.
         let steps = Transfer {
@@ -1750,7 +1750,7 @@ mod tests {
         };
         assert_eq!(
             ended(running(), long).0,
-            "Copied “it's big.iso” to it's here (5.0 GB in 3 min 20 s)"
+            "Copied “it's big.iso” to it's here (5.4 GB in 3 min 20 s)"
         );
         let short = End {
             applied: 1,

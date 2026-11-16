@@ -325,14 +325,14 @@ mod tests {
         let found = dxf(&path, 256, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(
             found.notice.as_deref(),
-            Some("Too large to draw (more than 32 MiB)")
+            Some("Too large to draw (more than 33.6 MB)")
         );
         assert!(found.whole_available);
         let found = dxf(&path, 256, Bounds::WHOLE, &CancelToken::new()).unwrap();
         assert!(!found.whole_available);
         assert_ne!(
             found.notice.as_deref(),
-            Some("Too large to draw (more than 32 MiB)")
+            Some("Too large to draw (more than 33.6 MB)")
         );
     }
 }

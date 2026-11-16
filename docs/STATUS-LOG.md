@@ -18693,3 +18693,60 @@ as before, except for two labels that were made from ids (below).
   inside).
 
 **Not run:** `just check-cross`, the workers, a window.
+
+## 2026-11-16: Sizes counted as the user chooses (ADR-139, step B)
+
+`core.size_units`, on Folders and views › Sizes, as Units: Decimal by
+default (a thousand bytes to a kilobyte: kB, MB, GB), or Binary (1024:
+KiB, MiB, GiB). It is shown while the page is folded, since people are
+divided on it. Before this, three conventions stood side by side: 1024
+labelled KB for files, a thousand for volumes ("to match the number on
+the label"), and MiB in the limits.
+
+**One formatter** says every size: `fs::size_said`, which the platform
+and the window re-export.
+- **Its users:** files, folders, Properties, toasts, the Activity's
+  speeds and bars, the Usage view, deletions, archives, the tables'
+  blobs and the smaller copies.
+- **The units** are kept process-wide as the setting was last applied
+  (`fs::size_units`). A change wakes the windows, and every size is said
+  anew where it is drawn.
+- **Volumes without a label:** a whole number in Decimal ("4 TB", as
+  sold), one decimal in Binary ("3.6 TiB"). The places plugin names them
+  anew when the setting changes.
+- **Limits** ("more than 33.6 MB") go through `limits::describe`, which
+  now says them with the formatter. So do three limits that were written
+  by hand (tree-sitter's text, a highlighted block, a Rhino model's
+  properties).
+
+**The query language does not move with it** (`lang::SIZE_UNITS`, one
+table, which the parser and the reference read):
+- `k`, `M`, `G` and `T` alone still count 1024, as saved searches hold
+  them;
+- `kB` to `TB` count a thousand, and `KiB` to `TiB` 1024, in any case of
+  letters (`10MB` was refused before);
+- what Skwir writes into a query uses the units shown: the size groups'
+  terms (`size>=100kB size<1MB`), the Size chip's presets, the plain
+  words ("big" reads `size>100MB`), the reference's examples.
+
+The smaller copies' field reads `KiB`, `MiB` and `GiB` beside its
+decimal units.
+
+**Deviation:** the hex view built as a plugin from outside has a
+formatter of its own, since a module is told no setting. It now counts in
+the default units (kB) and does not follow Binary.
+
+**Checked:**
+- `just lint`.
+- `cargo nextest run` of the default members: 3673 of 3675 passed, the
+  machine loaded (load average about 20). The two that failed, a copy
+  waiting in `arriving.rs` and Reduce Size in `shrink.rs`, passed alone.
+- Tests:
+  - the formatter at both units' bounds (999 B, 1000 B, 1023 B, 1024 B,
+    a 4 TB disk);
+  - the query's units both ways (`10MB`, `10mb`, `1.5kB`, `10MiB`,
+    `2GiB`, `1TB`, and `10XB` and `MB` refused);
+  - a size group's term read back as it means;
+  - 27 tests that pinned 1024-based "KB" strings, updated to the default.
+
+**Not run:** `just check-cross`, the workers, a window.

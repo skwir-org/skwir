@@ -3630,7 +3630,7 @@ their budgets in every language.
   - *Done when:* no code matches or takes apart Skwir's words (the rules'
     list, grepped clean), and English is byte for byte as before (the
     tests comparing prose unchanged).
-- **B. The size setting.**
+- **B. The size setting.** Built 2026-11-16 (`docs/STATUS-LOG.md`).
   - `core.size_units`: Decimal by default, or Binary. One formatter for
     every size shown (files, folders, volumes, speeds, limits) replaces
     today's three conventions.

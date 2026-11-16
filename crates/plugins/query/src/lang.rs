@@ -943,27 +943,41 @@ fn split_cmp(rest: &str) -> Result<(&str, &str), ParseError> {
     Err(ParseError(format!("expected a comparison after `{rest}`")))
 }
 
-/// What a size may end with, capitals or not, and what it counts: each
-/// 1024 times the one before (`b`, bytes, said or not). What
+/// What a size may end with, capitals or not, and what it counts
+/// (ADR-139, 9): `k`, `M`, `G` and `T` alone 1024 times the one before, as
+/// saved searches hold them; `kB` to `TB` a thousand, and `KiB` to `TiB`
+/// 1024, whatever the setting shows; `B`, bytes, said or not. What
 /// [`parse_bytes`] reads, and what the reference says (ADR-137).
-pub const SIZE_UNITS: [(char, u64); 5] = [
-    ('k', 1 << 10),
-    ('M', 1 << 20),
-    ('G', 1 << 30),
-    ('T', 1 << 40),
-    ('B', 1),
+pub const SIZE_UNITS: [(&str, u64); 13] = [
+    ("k", 1 << 10),
+    ("M", 1 << 20),
+    ("G", 1 << 30),
+    ("T", 1 << 40),
+    ("kB", 1_000),
+    ("MB", 1_000_000),
+    ("GB", 1_000_000_000),
+    ("TB", 1_000_000_000_000),
+    ("KiB", 1 << 10),
+    ("MiB", 1 << 20),
+    ("GiB", 1 << 30),
+    ("TiB", 1 << 40),
+    ("B", 1),
 ];
 
-/// `10M`, `1k`, `512`, `1.5G`.
+/// `10M`, `1k`, `512`, `1.5G`, `10MB`, `1.5GiB`.
 pub fn parse_bytes(s: &str) -> Result<u64, ParseError> {
     let s = s.trim();
-    let unit = s.chars().last().and_then(|last| {
-        SIZE_UNITS
-            .iter()
-            .find(|(unit, _)| unit.eq_ignore_ascii_case(&last))
-    });
+    // The longest unit it ends with: `MB` before `B`.
+    let unit = SIZE_UNITS
+        .iter()
+        .filter(|(unit, _)| {
+            s.len() > unit.len()
+                && s.is_char_boundary(s.len() - unit.len())
+                && s[s.len() - unit.len()..].eq_ignore_ascii_case(unit)
+        })
+        .max_by_key(|(unit, _)| unit.len());
     let (num, mult) = match unit {
-        Some((_, mult)) => (&s[..s.len() - 1], *mult),
+        Some((unit, mult)) => (&s[..s.len() - unit.len()], *mult),
         None => (s, 1),
     };
     let n: f64 = num
@@ -2525,9 +2539,20 @@ mod tests {
 
     #[test]
     fn sizes_and_needs() {
+        // A unit alone counts 1024, as saved searches hold it; spelled out,
+        // as it says, whatever the setting shows (ADR-139, 9).
         assert_eq!(parse_bytes("10M").unwrap(), 10 << 20);
         assert_eq!(parse_bytes("1.5k").unwrap(), 1536);
         assert_eq!(parse_bytes("512").unwrap(), 512);
+        assert_eq!(parse_bytes("512B").unwrap(), 512);
+        assert_eq!(parse_bytes("10MB").unwrap(), 10_000_000);
+        assert_eq!(parse_bytes("10mb").unwrap(), 10_000_000);
+        assert_eq!(parse_bytes("1.5kB").unwrap(), 1500);
+        assert_eq!(parse_bytes("10MiB").unwrap(), 10 << 20);
+        assert_eq!(parse_bytes("2GiB").unwrap(), 2 << 30);
+        assert_eq!(parse_bytes("1TB").unwrap(), 1_000_000_000_000);
+        assert!(parse_bytes("10XB").is_err());
+        assert!(parse_bytes("MB").is_err());
         let p = q("size>10M");
         assert!(p.needs_stat() && !p.needs_metadata() && !p.needs_content());
         assert!(q("tag:x").needs_metadata());

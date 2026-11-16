@@ -268,27 +268,56 @@ fn by_extension() -> Keyer {
     })
 }
 
-/// The size groups' upper bounds in bytes (1024-based, as the query's
-/// sizes are) and what they are called and kept by; Over 1 GB after.
-const SIZES: [(u64, &str, &str); 5] = [
-    (1, "Empty", "size:0"),
-    (100 << 10, "Under 100 KB", "size>0 size<100k"),
-    (1 << 20, "100 KB to 1 MB", "size>=100k size<1M"),
-    (100 << 20, "1 to 100 MB", "size>=1M size<100M"),
-    (1 << 30, "100 MB to 1 GB", "size>=100M size<1G"),
-];
+/// The size groups' upper bounds in bytes, in the units sizes are shown in
+/// (`fs::size_units`, ADR-139, 9), and what they are called and kept by,
+/// their terms in those units; Over 1 GB after, its lower bound last.
+fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
+    let units = skwir_core::fs::size_units();
+    let [_, k, m, g, ..] = units.names();
+    (
+        vec![
+            (1, "Empty".to_owned(), "size:0".to_owned()),
+            (
+                units.bytes(100, 1),
+                format!("Under 100 {k}"),
+                format!("size>0 size<100{k}"),
+            ),
+            (
+                units.bytes(1, 2),
+                format!("100 {k} to 1 {m}"),
+                format!("size>=100{k} size<1{m}"),
+            ),
+            (
+                units.bytes(100, 2),
+                format!("1 to 100 {m}"),
+                format!("size>=1{m} size<100{m}"),
+            ),
+            (
+                units.bytes(1, 3),
+                format!("100 {m} to 1 {g}"),
+                format!("size>=100{m} size<1{g}"),
+            ),
+        ],
+        (format!("Over 1 {g}"), format!("size>=1{g}")),
+    )
+}
 
-/// By size: Empty, Under 100 KB, 100 KB to 1 MB, 1 to 100 MB, 100 MB to
-/// 1 GB, Over 1 GB; Folders, which are not weighed, as having none. A
-/// place by how many files it holds, as its size.
+/// By size: Empty, Under 100 kB, 100 kB to 1 MB, 1 to 100 MB, 100 MB to
+/// 1 GB, Over 1 GB, in the units sizes are shown in; Folders, which are
+/// not weighed, as having none. A place by how many files it holds, as
+/// its size.
 fn by_size() -> Keyer {
     let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
-    let groups: Vec<Arc<Group>> = SIZES
+    let (sizes, (over_label, over_term)) = sizes();
+    let groups: Vec<Arc<Group>> = sizes
         .iter()
         .zip(1..)
-        .map(|((_, label, term), rank)| Arc::new(Group::ranked(rank, label).with_term(*term)))
+        .map(|((_, label, term), rank)| {
+            Arc::new(Group::ranked(rank, label).with_term(term.clone()))
+        })
         .collect();
-    let over = Arc::new(Group::ranked(6, "Over 1 GB").with_term("size>=1G"));
+    let below: Vec<u64> = sizes.iter().map(|(below, ..)| *below).collect();
+    let over = Arc::new(Group::ranked(6, &over_label).with_term(over_term));
     Arc::new(move |e: &Of<'_>| {
         if !SortKey::Size.applies_to(e) {
             return Arc::clone(&folders);
@@ -302,9 +331,9 @@ fn by_size() -> Keyer {
             })
             .and_then(Value::as_u64)
             .unwrap_or(0);
-        SIZES
+        below
             .iter()
-            .position(|(below, _, _)| size < *below)
+            .position(|below| size < *below)
             .map_or_else(|| Arc::clone(&over), |at| Arc::clone(&groups[at]))
     })
 }
@@ -939,31 +968,44 @@ mod tests {
                 .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
             group(&Of::entry(&e)).label.to_string()
         };
+        // A thousand to the next, as sizes are shown by default
+        // (ADR-139, 9).
         let sizes = [
             0,
             1,
-            102_399,
-            102_400,
-            1_048_575,
-            1_048_576,
-            104_857_600,
-            1_073_741_823,
-            1_073_741_824,
+            99_999,
+            100_000,
+            999_999,
+            1_000_000,
+            100_000_000,
+            999_999_999,
+            1_000_000_000,
         ];
         assert_eq!(
             sizes.map(of),
             [
                 "Empty",
-                "Under 100 KB",
-                "Under 100 KB",
-                "100 KB to 1 MB",
-                "100 KB to 1 MB",
+                "Under 100 kB",
+                "Under 100 kB",
+                "100 kB to 1 MB",
+                "100 kB to 1 MB",
                 "1 to 100 MB",
                 "100 MB to 1 GB",
                 "100 MB to 1 GB",
                 "Over 1 GB",
             ]
         );
+        // Each group kept by a term in the same units, which the query reads
+        // as it means it.
+        let term = |size: u64| {
+            let mut e = entry(1, "f", EntryKind::File);
+            e.metadata
+                .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+            group(&Of::entry(&e)).term.as_deref().map(str::to_owned)
+        };
+        assert_eq!(term(500_000).as_deref(), Some("size>=100kB size<1MB"));
+        assert_eq!(crate::lang::parse_bytes("100kB").unwrap(), 100_000);
+        assert_eq!(crate::lang::parse_bytes("1MB").unwrap(), 1_000_000);
         let folders = group(&Of::entry(&entry(2, "d", EntryKind::Directory)));
         assert!(folders.folders);
         assert_eq!(&*folders.label, "Folders");

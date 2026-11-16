@@ -668,7 +668,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
     assert_eq!(shown.kind, InspectionKind::Code);
     assert_eq!(
         shown.notice,
-        "Shown as written: Text exceeds 2 MiB preview limit"
+        "Shown as written: Text exceeds 2.1 MB preview limit"
     );
     assert!(!shown.source_available);
     assert!(shown.plain_text().starts_with("<p>Some <b>bold</b>"));
@@ -705,7 +705,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
         &CancelToken::new(),
     )
     .unwrap_err();
-    assert_eq!(error.to_string(), "Text exceeds 2 MiB preview limit");
+    assert_eq!(error.to_string(), "Text exceeds 2.1 MB preview limit");
     assert!(
         skwir_core::inspection::TooLarge::is(&error),
         "the panel offers Full preview"

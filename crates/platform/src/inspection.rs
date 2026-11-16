@@ -204,15 +204,10 @@ pub mod limits {
         }
     }
 
-    /// Whole binary units for messages: `16 MiB`, `64 KiB`, `500 bytes`.
+    /// A limit for messages, said as every size is (`fs::size_said`,
+    /// ADR-139, 9): `16.8 MB`, or `16.0 MiB`.
     pub fn describe(bytes: usize) -> String {
-        if bytes > 0 && bytes.is_multiple_of(1024 * 1024) {
-            format!("{} MiB", bytes / (1024 * 1024))
-        } else if bytes > 0 && bytes.is_multiple_of(1024) {
-            format!("{} KiB", bytes / 1024)
-        } else {
-            format!("{bytes} bytes")
-        }
+        skwir_core::fs::size_said(bytes as u64)
     }
 }
 
@@ -1723,7 +1718,7 @@ mod tests {
         file.set_len(limits::WHOLE_TEXT_INPUT as u64 + 1).unwrap();
         let error = read_text(&path, limits::Bounds::WHOLE, &cancel).unwrap_err();
         assert!(!TooLarge::is(&error), "{error}");
-        assert!(error.to_string().contains("32 MiB"), "{error}");
+        assert!(error.to_string().contains("33.6 MB"), "{error}");
         let error = read_file(&path, limits::Bounds::QUICK, "Font", &cancel).unwrap_err();
         assert!(TooLarge::is(&error), "{error}");
         assert!(read_file(&path, limits::Bounds::WHOLE, "Font", &cancel).is_ok());
@@ -1921,7 +1916,7 @@ mod tests {
             ("Title", None),
         ]);
         assert_eq!(facts, [skwir_core::inspection::Detail::new("Words", "12")]);
-        assert_eq!(details([("Size", size(1536))])[0].value, "1.5 KB");
+        assert_eq!(details([("Size", size(1536))])[0].value, "1.5 kB");
         assert_eq!(size(512), "512 B");
     }
 

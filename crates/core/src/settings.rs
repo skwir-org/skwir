@@ -93,6 +93,7 @@ pub mod section {
     pub const ACTIONS: Section = Section::new("actions", "Actions");
     // Folders and views.
     pub const SORTING: Section = Section::new("sorting", "Sorting");
+    pub const SIZES: Section = Section::new("sizes", "Sizes");
     pub const GRID: Section = Section::new("grid", "Grid");
     pub const LIST_COLUMNS: Section = Section::new("list_columns", "List columns");
     pub const THUMBNAILS: Section = Section::new("thumbnails", "Thumbnails");
@@ -1346,6 +1347,22 @@ pub(crate) fn register(app: &crate::App) {
     apply_folders_first(app);
     app.settings.declare(
         SettingSpec::choice(
+            crate::fs::SIZE_UNITS_KEY,
+            "Units",
+            "How sizes are counted. Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.",
+            crate::fs::SizeUnits::Decimal.key(),
+            &[
+                (crate::fs::SizeUnits::Decimal.key(), "Decimal"),
+                (crate::fs::SizeUnits::Binary.key(), "Binary"),
+            ],
+        )
+        .page(page::VIEWS)
+        .section(section::SIZES)
+        .essential(),
+    );
+    apply_size_units(app);
+    app.settings.declare(
+        SettingSpec::choice(
             CLOSE_SPLIT,
             "Pane that closes",
             "Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
@@ -1471,6 +1488,15 @@ pub(crate) fn register(app: &crate::App) {
 
 /// Give every pane, and every pane made from now, the user's choice of
 /// folders before files (`location::FOLDERS_FIRST`).
+/// Count sizes as the setting says (`fs::size_units`, ADR-139, 9).
+fn apply_size_units(app: &crate::App) {
+    let units = app
+        .settings
+        .get::<String>(crate::fs::SIZE_UNITS_KEY)
+        .unwrap_or_default();
+    crate::fs::set_size_units(crate::fs::SizeUnits::of_key(&units));
+}
+
 fn apply_folders_first(app: &crate::App) {
     let first = app
         .settings
@@ -1503,6 +1529,11 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
     }
     if keys.iter().any(|key| key == crate::location::FOLDERS_FIRST) {
         apply_folders_first(app);
+        app.wake();
+    }
+    // Every size is said anew where it is drawn.
+    if keys.iter().any(|key| key == crate::fs::SIZE_UNITS_KEY) {
+        apply_size_units(app);
         app.wake();
     }
     if keys.iter().any(|key| key == crate::orders::ORDERS) {

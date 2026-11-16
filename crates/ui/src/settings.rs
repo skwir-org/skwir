@@ -2203,10 +2203,11 @@ static BUILTIN: [Builtin; 13] = [
         owner: None,
         title: "Folders and views",
         icon: "grid",
-        intro: "How a folder shows its files: their order, the grid, the list's columns, the thumbnails drawn for them, what its preview shows, and what Git says of them.",
+        intro: "How a folder shows its files: their order, how their sizes are counted, the grid, the list's columns, the thumbnails drawn for them, what its preview shows, and what Git says of them.",
         when_used: true,
         sections: &[
             section::SORTING,
+            section::SIZES,
             section::GRID,
             section::LIST_COLUMNS,
             section::THUMBNAILS,
@@ -4512,7 +4513,7 @@ mod tests {
         // Thumbnails' are the plugin's, not declared here.
         assert_eq!(
             sections(&specs, &Page::Views),
-            ["Sorting", "Grid", "List columns", "Previews"]
+            ["Sorting", "Sizes", "Grid", "List columns", "Previews"]
         );
         // The core's order of folders heads the page of how folders show.
         assert_eq!(

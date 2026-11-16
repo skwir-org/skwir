@@ -156,17 +156,19 @@ fn rows(bytes: &[u8], base: u64) -> Vec<Row> {
         .collect()
 }
 
-/// `512 B`, `1.5 KB`: a size as the preview's title says it.
+/// `512 B`, `1.5 kB`: a size as the preview's title says it, as the
+/// host says it by default (ADR-139, 9), a thousand to the next. A module
+/// is told no setting, so it does not follow Binary.
 #[allow(clippy::cast_precision_loss)] // A size shown to one decimal.
 fn size(bytes: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
-    if bytes < 1024 {
+    const UNITS: [&str; 6] = ["B", "kB", "MB", "GB", "TB", "PB"];
+    if bytes < 1000 {
         return format!("{bytes} B");
     }
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
         unit += 1;
     }
     format!("{value:.1} {}", UNITS[unit])
@@ -191,7 +193,7 @@ mod tests {
     #[test]
     fn sizes_and_rows_read_as_the_preview_says_them() {
         assert_eq!(size(512), "512 B");
-        assert_eq!(size(1536), "1.5 KB");
+        assert_eq!(size(1536), "1.5 kB");
         let rows = rows(b"Hello, bytes!\x00\x01\x02more", 32);
         assert_eq!(rows[0].cells[0], "0000000000000020");
         assert_eq!(rows[0].cells[2], "Hello, bytes!...");

@@ -130,8 +130,8 @@ fn properties<S: FileSource + ?Sized>(
         }
         anyhow::ensure!(
             bytes <= limits::BINARY_INPUT,
-            "The model's properties are larger than {} MiB",
-            limits::BINARY_INPUT >> 20
+            "The model's properties are larger than {}",
+            skwir_core::fs::size_said(limits::BINARY_INPUT as u64)
         );
         let mut table = vec![0u8; bytes];
         file.read_exact(&mut table)?;

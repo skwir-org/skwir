@@ -333,8 +333,8 @@ impl Helper {
         let bytes = text.as_bytes();
         anyhow::ensure!(
             bytes.len() as u64 <= MAX_TEXT,
-            "the text exceeds {} MiB",
-            MAX_TEXT >> 20
+            "the text exceeds {}",
+            skwir_core::fs::size_said(MAX_TEXT)
         );
         let process = self.process(cancel)?;
         let id = process.next.fetch_add(1, Ordering::Relaxed);

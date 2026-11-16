@@ -659,17 +659,9 @@ fn copied(mut from: std::fs::File, to: &Path) -> std::io::Result<()> {
     out.sync_all()
 }
 
-/// `bytes` said as a size: 1.2 MB, 640 KB.
+/// `bytes` said as a size, as every size is (`fs::size_said`): 1.2 MB.
 fn sized(bytes: u64) -> String {
-    #[allow(clippy::cast_precision_loss)]
-    let value = bytes as f64;
-    if bytes >= 1_000_000 {
-        format!("{:.1} MB", value / 1_000_000.0)
-    } else if bytes >= 1_000 {
-        format!("{:.0} KB", value / 1_000.0)
-    } else {
-        format!("{bytes} bytes")
-    }
+    skwir_core::fs::size_said(bytes)
 }
 
 /// `work` run in the lane of `path` (its remote's, the shared one
@@ -728,7 +720,7 @@ mod tests {
     #[test]
     fn sizes_are_said_as_people_read_them() {
         assert_eq!(sized(1_234_567), "1.2 MB");
-        assert_eq!(sized(640_400), "640 KB");
-        assert_eq!(sized(512), "512 bytes");
+        assert_eq!(sized(640_400), "640.4 kB");
+        assert_eq!(sized(512), "512 B");
     }
 }

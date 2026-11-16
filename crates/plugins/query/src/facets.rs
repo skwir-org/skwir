@@ -58,15 +58,27 @@ pub const PERIODS: [(&str, &str); 9] = [
     ("Older than a year", ">1y"),
 ];
 
-/// How big, as the Size chip offers it.
-pub const SIZE: [(&str, &str); 6] = [
-    ("Empty", "0"),
-    ("Under 100 KB", "<100k"),
-    ("Under 1 MB", "<1M"),
-    ("1 to 100 MB", "1M..100M"),
-    ("Over 100 MB", ">100M"),
-    ("Over 1 GB", ">1G"),
-];
+/// How big, as the Size chip offers it: in the units sizes are shown in,
+/// its values written in them (`fs::size_units`, ADR-139, 9).
+pub fn sizes() -> Vec<(String, String)> {
+    let [_, k, m, g, ..] = skwir_core::fs::size_units().names();
+    vec![
+        ("Empty".to_owned(), "0".to_owned()),
+        (format!("Under 100 {k}"), format!("<100{k}")),
+        (format!("Under 1 {m}"), format!("<1{m}")),
+        (format!("1 to 100 {m}"), format!("1{m}..100{m}")),
+        (format!("Over 100 {m}"), format!(">100{m}")),
+        (format!("Over 1 {g}"), format!(">1{g}")),
+    ]
+}
+
+/// `sizes`, borrowed as the presets are read.
+pub fn presets(owned: &[(String, String)]) -> Vec<(&str, &str)> {
+    owned
+        .iter()
+        .map(|(label, value)| (label.as_str(), value.as_str()))
+        .collect()
+}
 
 /// A chip: a facet of the search, or a part of it no facet holds.
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -809,14 +821,19 @@ pub fn describe_for(
             ),
         ));
     }
+    let sizes = sizes();
+    let [_, k, m, ..] = skwir_core::fs::size_units().names();
     chips.push(preset_chip(
         r,
         "size",
         "Size",
         "sliders",
         p.size.as_ref(),
-        &SIZE,
-        ("Size", "A size or a range: >10M, 1M..5M, <500k"),
+        &presets(&sizes),
+        (
+            "Size",
+            &format!("A size or a range: >10{m}, 1{m}..5{m}, <500{k}"),
+        ),
     ));
 
     // Each tag a chip of its own, walking up to its categories; then the

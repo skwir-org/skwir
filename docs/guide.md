@@ -527,7 +527,7 @@ it, **+ Filter** adds one, and the text can be typed as is:
 | `*.pdf`, `ext:pdf` | by extension |
 | `kind:image,video`, `mime:application/pdf` | by kind or type |
 | `type:dir`, `type:file` | folders or files only |
-| `size>10M`, `size<1.5G` | by size |
+| `size>10M`, `size<1.5G`, `size>10MB`, `size<2MiB` | by size: `k`, `M`, `G` alone and `KiB`, `MiB`, `GiB` count 1024 to the next, `kB`, `MB`, `GB` a thousand, whatever the sizes shown are counted in |
 | `modified>=2026-01-01`, `modified<7d`, `modified:this-week` | by date (`created:`, `accessed:` too) |
 | `taken:2023-04`, `taken:2023-04-15..2023-04-17`, `taken>=last-year` | pictures and videos by when they were taken, as the camera's clock says |
 | `#print`, `tag:Places/France`, `-#draft` | with a tag, or without (`"#3"` is a name) |
@@ -867,7 +867,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | --- | --- |
 | General | What Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, and with what you drag and drop |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
-| Folders and views | The grid, the list's columns, thumbnails |
+| Folders and views | The order of folders and files, how sizes are counted (Decimal, a thousand bytes to a kilobyte as disks are sold; or Binary, 1024), the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |
 | Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |

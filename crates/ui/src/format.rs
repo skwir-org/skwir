@@ -135,7 +135,7 @@ mod tests {
     /// with it; what took long, to the minute past an hour.
     #[test]
     fn speeds_and_times_are_said_roughly() {
-        assert_eq!(super::speed(1536.0), "1.5 KB/s");
+        assert_eq!(super::speed(1536.0), "1.5 kB/s");
         assert_eq!(super::speed(-1.0), "0 B/s");
         let left = |secs| super::time_left(Duration::from_secs(secs));
         assert_eq!(left(3), "a few seconds left");
@@ -156,12 +156,22 @@ mod tests {
         assert_eq!(took(7_230), "2 h");
     }
 
+    /// Counted as the setting says (ADR-139, 9): a thousand to the next by
+    /// default, 1024 in binary multiples, each at its bound.
     #[test]
     fn sizes() {
+        use skwir_core::fs::{SizeUnits, size_said_in};
         assert_eq!(super::size(0), "0 B");
-        assert_eq!(super::size(1023), "1023 B");
-        assert_eq!(super::size(1536), "1.5 KB");
-        assert_eq!(super::size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(super::size(999), "999 B");
+        assert_eq!(super::size(1000), "1.0 kB");
+        assert_eq!(super::size(1536), "1.5 kB");
+        assert_eq!(super::size(5_000_000), "5.0 MB");
+        let binary = |bytes| size_said_in(bytes, SizeUnits::Binary);
+        assert_eq!(binary(1023), "1023 B");
+        assert_eq!(binary(1024), "1.0 KiB");
+        assert_eq!(binary(1536), "1.5 KiB");
+        assert_eq!(binary(5 * 1024 * 1024), "5.0 MiB");
+        assert_eq!(binary(4_000_000_000_000), "3.6 TiB");
     }
 
     #[test]

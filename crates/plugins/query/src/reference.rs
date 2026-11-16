@@ -38,12 +38,20 @@ fn groups() -> Vec<(Group, Written)> {
         .item(Item::new("-", "Not this: -draft, -#tag, -kind:image"))
         .item(Item::new("( )", "Together: (a OR b) c").inserting("("))
         .item(Item::new("\"…\"", "As written: \"two words\", \"OR\", \"#3\"").inserting("\""));
-    // What the parser reads, said from its own tables.
-    let units: Vec<String> = lang::SIZE_UNITS
-        .iter()
-        .filter(|(_, bytes)| *bytes > 1)
-        .map(|(unit, _)| unit.to_string())
-        .collect();
+    // What the parser reads, said from its own tables; its examples in
+    // the units sizes are shown in (ADR-139, 9).
+    let units_where = |keep: fn(&str) -> bool| {
+        lang::SIZE_UNITS
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| keep(name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let decimal = units_where(|name| name.len() == 2);
+    let binary = units_where(|name| name.ends_with("iB"));
+    let alone = units_where(|name| name.len() == 1 && name != "B");
+    let mb = skwir_core::fs::size_units().names()[2];
     let periods: Vec<&str> = lang::NAMED_PERIODS
         .iter()
         .map(|(name, ..)| *name)
@@ -59,13 +67,15 @@ fn groups() -> Vec<(Group, Written)> {
         .collect();
     let values = Group::new("Values")
         .item(Item::new(
-            "size>10M",
+            format!("size>10{mb}"),
             format!(
-                "More than 10 MiB: {}, each 1024 times the one before",
-                units.join(", ")
+                "More than 10 {mb}: {decimal} each a thousand times the one before; {binary} 1024 times, as {alone} alone"
             ),
         ))
-        .item(Item::new("size:1M..100M", "From one to the other, both in"))
+        .item(Item::new(
+            format!("size:1{mb}..100{mb}"),
+            "From one to the other, both in",
+        ))
         .item(Item::new(
             "rating>=3",
             "At least (> < >= <=); rating:0 unrated",
@@ -372,7 +382,7 @@ mod tests {
                 .unwrap_or_default()
         };
         assert!(says("modified:today").contains("last-year"));
-        assert!(says("size>10M").contains('T'));
+        assert!(says("size>10MB").contains("TiB"));
         assert!(says("modified<7d").contains("mo months"));
         assert!(says("content:/todo/i").contains("c: capitals told apart"));
     }

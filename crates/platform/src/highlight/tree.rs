@@ -746,8 +746,8 @@ fn color_text_in(
 ) -> anyhow::Result<Vec<Run>> {
     anyhow::ensure!(
         text.len() <= LONGEST_LINE,
-        "a block longer than {} KiB",
-        LONGEST_LINE >> 10
+        "a block longer than {}",
+        skwir_core::fs::size_said(LONGEST_LINE as u64)
     );
     let tree = Tree::open_in(helper, grammar, text.as_bytes(), palette, cancel)?;
     let spans = tree.spans(0..tree.lines(), cancel)?;

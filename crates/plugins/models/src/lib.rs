@@ -871,7 +871,7 @@ END-ISO-10303-21;
             )
             .unwrap_err();
         assert!(skwir_core::inspection::TooLarge::is(&error), "{error:#}");
-        assert_eq!(error.to_string(), "Too large to draw (more than 16 MiB)");
+        assert_eq!(error.to_string(), "Too large to draw (more than 16.8 MB)");
         let whole = InspectRequest {
             whole: true,
             ..InspectRequest::default()

@@ -2269,8 +2269,8 @@ mod tests {
 
     #[test]
     fn a_size_is_said_once_unless_the_disk_holds_another() {
-        assert_eq!(sizes(2048, 2048), "2.0 KB");
-        assert_eq!(sizes(10_000_000, 4096), "9.5 MB · 4.0 KB on disk");
+        assert_eq!(sizes(2048, 2048), "2.0 kB");
+        assert_eq!(sizes(10_000_000, 4096), "10.0 MB · 4.1 kB on disk");
         assert_eq!(share(1, 1000), "<1%");
         assert_eq!(share(0, 1000), "0%");
         assert_eq!(share(500, 1000), "50%");

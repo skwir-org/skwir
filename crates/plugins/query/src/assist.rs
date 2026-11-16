@@ -23,7 +23,7 @@ use skwir_core::reference::floor_boundary;
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
-use crate::facets::{PERIODS, SIZE};
+use crate::facets::{PERIODS, presets, sizes};
 use crate::lang;
 
 /// A key of the language: its name, the icon its values are drawn with,
@@ -683,8 +683,10 @@ fn values(
     let icon = key_info(key).map_or("search", |k| k.icon);
     let whole = &text[w.range.clone()];
     let value = w.value(text);
+    let sizes = sizes();
+    let sizes = presets(&sizes);
     let presets: &[(&str, &str)] = match key {
-        "size" => &SIZE,
+        "size" => &sizes,
         "rating" => &RATINGS,
         k if TIMES.contains(&k) => &PERIODS,
         _ => &[],
@@ -818,15 +820,19 @@ const FILLERS: [&str; 15] = [
     "and", "that", "are",
 ];
 
-/// Sizes by a word, with how a reading says them.
-const SIZE_WORDS: [(&str, &str, &str); 6] = [
-    ("big", ">100M", "over 100 MB"),
-    ("large", ">100M", "over 100 MB"),
-    ("huge", ">1G", "over 1 GB"),
-    ("small", "<100k", "under 100 KB"),
-    ("tiny", "<100k", "under 100 KB"),
-    ("empty", ":0", "that are empty"),
-];
+/// Sizes by a word, with how a reading says them: in the units sizes are
+/// shown in, written in them (ADR-139, 9).
+fn size_words() -> [(&'static str, String, String); 6] {
+    let [_, k, m, g, ..] = skwir_core::fs::size_units().names();
+    [
+        ("big", format!(">100{m}"), format!("over 100 {m}")),
+        ("large", format!(">100{m}"), format!("over 100 {m}")),
+        ("huge", format!(">1{g}"), format!("over 1 {g}")),
+        ("small", format!("<100{k}"), format!("under 100 {k}")),
+        ("tiny", format!("<100{k}"), format!("under 100 {k}")),
+        ("empty", ":0".to_owned(), "that are empty".to_owned()),
+    ]
+}
 
 /// Plain words read as terms, by rules: periods (`last week`, `today`)
 /// and years as when files were modified (taken, for pictures and
@@ -852,6 +858,7 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
     let mut kinds: Vec<Kind> = Vec::new();
     let mut when: Option<(&str, &str)> = None;
     let mut year: Option<String> = None;
+    let size_words = size_words();
     let mut size: Option<(&str, &str)> = None;
     let mut tagged: Vec<String> = Vec::new();
     let mut names: Vec<(String, bool)> = Vec::new();
@@ -897,7 +904,7 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
             if !exts.iter().any(|e| e == ext) {
                 exts.push((*ext).to_owned());
             }
-        } else if let Some(&(_, form, says)) = SIZE_WORDS.iter().find(|(w, ..)| *w == lower) {
+        } else if let Some((_, form, says)) = size_words.iter().find(|(w, ..)| *w == lower) {
             size = Some((form, says));
         } else if let Some(tag) = tags.named_by(&lower, single) {
             if !tagged.contains(tag) {
@@ -1463,7 +1470,10 @@ mod tests {
             ]
         );
         assert_eq!(c.items[0].label, "Last week");
-        assert_eq!(texts(&complete("size>1", 6, &[])), ["size>100M", "size>1G"]);
+        assert_eq!(
+            texts(&complete("size>1", 6, &[])),
+            ["size>100MB", "size>1GB"]
+        );
         // An operator alone offers every preset, each with its own.
         let c = complete("taken>", 6, &[]);
         assert_eq!(c.items.len(), PERIODS.len());
@@ -1496,7 +1506,7 @@ mod tests {
             ),
             (
                 "big downloads",
-                "downloads size>100M",
+                "downloads size>100MB",
                 "Files named “downloads” over 100 MB",
             ),
             (

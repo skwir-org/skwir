@@ -444,7 +444,7 @@ mod tests {
                 &CancelToken::new(),
             )
             .unwrap_err();
-        assert_eq!(error.to_string(), "Too large to draw (more than 32 MiB)");
+        assert_eq!(error.to_string(), "Too large to draw (more than 33.6 MB)");
         assert!(
             skwir_core::inspection::TooLarge::is(&error),
             "Full preview draws it"

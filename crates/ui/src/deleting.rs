@@ -1019,7 +1019,7 @@ mod tests {
         let weights: Vec<_> = listed.rows.iter().map(|r| listed.weight(r)).collect();
         assert_eq!(
             weights,
-            ["2.0 KB · 2 files", "500 B", "empty", "not there", "folder"]
+            ["2.0 kB · 2 files", "500 B", "empty", "not there", "folder"]
         );
         let home = skwir_core::os_path::home();
         let xmp = tmp.path().join("it's a photo.jpg.xmp");
@@ -1032,7 +1032,7 @@ mod tests {
         assert_eq!(listed.deleted_with(&listed.rows[0]), None);
         // The companion goes too; the gone one is not there to count, so
         // the sum is no lower bound.
-        assert_eq!(listed.summary(), "2.5 KB in 4 files and 3 folders");
+        assert_eq!(listed.summary(), "2.6 kB in 4 files and 3 folders");
         let place = written(tmp.path(), home.as_deref(), &[]);
         assert_eq!(listed.rows[1].folder.as_ref(), Some(&place));
         assert_eq!(listed.total.size, 2000 + 48 + 500 + 20);

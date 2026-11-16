@@ -223,17 +223,24 @@ fn carry_over(fresh: &[Place], measured: &[Place]) -> Vec<Place> {
     out
 }
 
-/// `4.0 TB`, for a volume without a label.
+/// `4 TB`, for a volume without a label: counted as sizes are
+/// (`fs::size_units`, ADR-139, 9). Disks are sold in powers of ten, so in
+/// those a whole number matches the one on the label; in powers of two
+/// (`3.6 TiB`) it is said as any size is.
 fn size_label(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    use skwir_core::fs::{SizeUnits, size_said_in, size_units};
+    let units = size_units();
+    if units == SizeUnits::Binary {
+        return size_said_in(bytes, units);
+    }
+    let names = units.names();
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1000. && unit < UNITS.len() - 1 {
+    while value >= 1000. && unit < names.len() - 1 {
         value /= 1000.;
         unit += 1;
     }
-    // Disks are sold in powers of ten; match the number on the label.
-    format!("{value:.0} {}", UNITS[unit])
+    format!("{value:.0} {}", names[unit])
 }
 
 /// What names a volume in the user's arrangement of the sidebar
@@ -1436,8 +1443,12 @@ impl Plugin for PlacesPlugin {
     }
 
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
-        // Another Skwir remembered or forgot a passphrase.
-        if keys.iter().any(|k| k == passphrases::REMEMBERED) {
+        // Another Skwir remembered or forgot a passphrase; or sizes are
+        // counted otherwise, which a volume without a label is named by.
+        if keys
+            .iter()
+            .any(|k| k == passphrases::REMEMBERED || k == skwir_core::fs::SIZE_UNITS_KEY)
+        {
             self.places.populate(app);
         }
     }
