@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Recognised, Server};
@@ -109,16 +111,21 @@ impl Connector for Fstab {
         "fstab"
     }
 
-    fn title(&self) -> &'static str {
-        "the system's mounts"
+    fn title(&self) -> Words {
+        words!(
+            remote_fstab = "the system's mounts",
+            note = "What mounts the network folders the system's table (fstab) names: a tool's \
+                    name, as sshfs and GVfs are, said before what it could not do."
+        )
     }
 
     fn schemes(&self) -> &'static [Scheme] {
         &[Scheme::Nfs, Scheme::Smb, Scheme::Sftp]
     }
 
-    fn unavailable(&self) -> Option<String> {
-        (!cfg!(target_os = "linux")).then(|| "fstab is read on Linux only".to_owned())
+    fn unavailable(&self) -> Option<Words> {
+        (!cfg!(target_os = "linux"))
+            .then(|| words!(remote_fstab_linux_only = "fstab is read on Linux only"))
     }
 
     fn connect(
@@ -135,7 +142,11 @@ impl Connector for Fstab {
                         .as_ref()
                         .is_some_and(|mounted| mounted.below(address).is_some())
             })
-            .ok_or_else(|| anyhow::anyhow!("no entry of /etc/fstab that you may mount names it"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_fstab_no_entry = "no entry of /etc/fstab that you may mount names it"
+                ))
+            })?;
         let mut command = Command::new("mount");
         command.arg(&entry.point);
         let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
@@ -175,7 +186,10 @@ impl Connector for Fstab {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             user_mountable(&remote.point),
-            "the system mounted it: only an administrator may let go of it"
+            words!(
+                remote_fstab_administrator =
+                    "the system mounted it: only an administrator may let go of it"
+            )
         );
         let umount = |lazy: bool| -> anyhow::Result<()> {
             let mut command = Command::new("umount");
@@ -214,7 +228,7 @@ impl Connector for Fstab {
                         .map_or_else(|| e.source.clone(), |n| n.to_string_lossy().into_owned()),
                     address: e.address?,
                     kind: String::new(),
-                    kept: crate::servers::Kept::Tool("in the system's fstab"),
+                    kept: crate::servers::Kept::Tool(crate::servers::Keeper::Fstab),
                 })
             })
             .collect();
@@ -230,8 +244,9 @@ impl Connector for Fstab {
 struct Busy;
 
 impl std::fmt::Display for Busy {
+    /// Its words: in the reader's language while an error's chain is said.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("another program is using it")
+        std::fmt::Display::fmt(&crate::mounter::used_by_another(), f)
     }
 }
 

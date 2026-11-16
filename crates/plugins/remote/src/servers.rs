@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use skwir_core::app::App;
 use skwir_core::settings::SettingSpec;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Server, Source};
@@ -25,22 +27,51 @@ pub const KEPT_IN: &str = "remote.servers_kept_in";
 /// Who keeps a server the Network section lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kept {
-    /// The tool that reads it, which changes it, where the words say:
-    /// "in rclone's configuration", "one of Dolphin's places".
-    Tool(&'static str),
+    /// The tool that reads it, which changes it.
+    Tool(Keeper),
     /// Skwir's own list.
     Skwir,
     /// KDE's network folders.
     Kde,
 }
 
+/// The tool that keeps a server it reads: where, said by [`Kept::words`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Keeper {
+    /// rclone's configuration.
+    Rclone,
+    /// Dolphin's places, read through KIO.
+    Dolphin,
+    /// The system's fstab.
+    Fstab,
+}
+
 impl Kept {
-    /// Where it is kept, in the user's words: "in Skwir's list".
-    pub fn said(self) -> &'static str {
+    /// Where it is kept, said: "in Skwir's list".
+    pub fn words(self) -> Words {
         match self {
-            Kept::Tool(words) => words,
-            Kept::Skwir => "in Skwir's list",
-            Kept::Kde => "in KDE's network folders",
+            Kept::Tool(Keeper::Rclone) => words!(
+                remote_servers_kept_rclone = "in rclone's configuration",
+                note = "Where a server of the Network section is kept, said after its kind or address."
+            ),
+            Kept::Tool(Keeper::Dolphin) => words!(
+                remote_servers_kept_dolphin = "one of Dolphin's places",
+                note = "Where a server of the Network section is kept, said after its kind or \
+                        address: Dolphin is KDE's file manager."
+            ),
+            Kept::Tool(Keeper::Fstab) => words!(
+                remote_servers_kept_fstab = "in the system's fstab",
+                note = "Where a server of the Network section is kept, said after its kind or \
+                        address: fstab is the system's table of mounts."
+            ),
+            Kept::Skwir => words!(
+                remote_servers_kept_skwir = "in Skwir's list",
+                note = "Where a server of the Network section is kept, said after its kind or address."
+            ),
+            Kept::Kde => words!(
+                remote_servers_kept_kde = "in KDE's network folders",
+                note = "Where a server of the Network section is kept, said after its kind or address."
+            ),
         }
     }
 
@@ -59,15 +90,24 @@ struct Entry {
 
 pub fn declare(app: &App) {
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             KEPT_IN,
-            "Where servers are kept",
-            "Where a server added by its address is kept. Automatic: in KDE's network folders on KDE's desktop, where Dolphin lists them too, and in Skwir's own list elsewhere; a kind KIO does not open (FTPS, AFP) always in Skwir's.",
+            words!(remote_servers_kept_in = "Where servers are kept"),
+            words!(
+                remote_servers_kept_in_description = "Where a server added by its address is kept. Automatic: in KDE's network folders on KDE's desktop, where Dolphin lists them too, and in Skwir's own list elsewhere; a kind KIO does not open (FTPS, AFP) always in Skwir's."
+            ),
             "automatic",
-            &[
-                ("automatic", "Automatic"),
-                ("skwir", "Skwir"),
-                ("kde", "KDE"),
+            vec![
+                (
+                    "automatic",
+                    words!(
+                        remote_servers_kept_automatic = "Automatic",
+                        note = "Where servers are kept: as the desktop is."
+                    ),
+                ),
+                // Names.
+                ("skwir", Words::as_written("Skwir")),
+                ("kde", Words::as_written("KDE")),
             ],
         )
         .now(if on_kde(&skwir_platform::apps::current_desktops()) {
@@ -80,7 +120,9 @@ pub fn declare(app: &App) {
     );
     app.settings.declare(SettingSpec::data(
         LIST,
-        "The servers added by their address that Skwir keeps itself: each one's name and address",
+        words!(
+            remote_servers_list = "The servers added by their address that Skwir keeps itself: each one's name and address"
+        ),
         toml::Value::Array(Vec::new()),
     ));
 }
@@ -151,13 +193,20 @@ pub fn find(app: &App, address: &Address) -> Option<Server> {
 /// written.
 pub fn add(app: &App, name: &str, address: &Address) -> anyhow::Result<Kept> {
     if let Some(kept) = find(app, address) {
-        anyhow::bail!("“{}” is a server already, at that address", kept.label);
+        anyhow::bail!(words!(
+            remote_servers_taken = "{ $name } is a server already, at that address",
+            name = Name(kept.label),
+            note = "name: the server's, as the Network section shows it."
+        ));
     }
     let kept = keeper(app, address.scheme);
     match kept {
         Kept::Kde => {
             let folder = kde_folder().ok_or_else(|| {
-                anyhow::anyhow!("there is no data folder for KDE's network folders")
+                anyhow::anyhow!(words!(
+                    remote_servers_no_kde_folder =
+                        "there is no data folder for KDE's network folders"
+                ))
             })?;
             std::fs::create_dir_all(&folder)?;
             write_entry(&free_name(&folder, name), name, address)?;
@@ -183,7 +232,9 @@ pub fn add(app: &App, name: &str, address: &Address) -> anyhow::Result<Kept> {
 /// be written.
 pub fn change(app: &App, old: &Address, name: &str, new: &Address) -> anyhow::Result<()> {
     if new != old && find(app, new).is_some() {
-        anyhow::bail!("another server is kept at that address");
+        anyhow::bail!(words!(
+            remote_servers_other_there = "another server is kept at that address"
+        ));
     }
     let mut all = own(app);
     if let Some(entry) = all
@@ -194,7 +245,7 @@ pub fn change(app: &App, old: &Address, name: &str, new: &Address) -> anyhow::Re
         entry.address = new.to_string();
         return keep_own(app, &all);
     }
-    let file = kde_file_of(old).ok_or_else(|| anyhow::anyhow!("no server is kept at {old}"))?;
+    let file = kde_file_of(old).ok_or_else(|| anyhow::anyhow!(none_kept(old)))?;
     write_entry(&file, name, new)?;
     tell_kde();
     Ok(())
@@ -211,11 +262,19 @@ pub fn remove(app: &App, address: &Address) -> anyhow::Result<()> {
     if all.len() != before {
         return keep_own(app, &all);
     }
-    let file =
-        kde_file_of(address).ok_or_else(|| anyhow::anyhow!("no server is kept at {address}"))?;
+    let file = kde_file_of(address).ok_or_else(|| anyhow::anyhow!(none_kept(address)))?;
     std::fs::remove_file(&file)?;
     tell_kde();
     Ok(())
+}
+
+/// No server is kept at `address`, said.
+fn none_kept(address: &Address) -> Words {
+    words!(
+        remote_servers_none_kept = "no server is kept at { $address }",
+        address = address.to_string(),
+        note = "address: a server's address (sftp://me@example.com)."
+    )
 }
 
 fn own(app: &App) -> Vec<Entry> {
@@ -356,8 +415,13 @@ fn network_folder(entry: &str) -> Option<Server> {
 /// `address` under `name`, as KDE's Add Network Folder writes one: a file
 /// KDE shares, replaced whole (`file::rewrite`).
 fn write_entry(file: &Path, name: &str, address: &Address) -> anyhow::Result<()> {
-    let url = crate::kio::kio_url(address)
-        .ok_or_else(|| anyhow::anyhow!("KIO opens no {} address", address.scheme.title()))?;
+    let url = crate::kio::kio_url(address).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_servers_kio_opens_no = "KIO opens no { $protocol } address",
+            protocol = address.scheme.title(),
+            note = "protocol: SFTP, SMB, WebDAV…"
+        ))
+    })?;
     let text = format!(
         "[Desktop Entry]\nCharset=\nIcon=folder-remote\nName={}\nType=Link\nURL={}\n",
         escaped(name),

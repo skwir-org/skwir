@@ -4,6 +4,8 @@
 //! writes it (`g_mount_spec_to_string`). Read here into an address, and
 //! back, without asking GVfs.
 
+use skwir_core::words;
+
 use crate::address::{Address, Scheme, decoded};
 
 /// A mount spec read from its folder's name.
@@ -120,16 +122,34 @@ impl Spec {
 
     /// What the user calls this mount: its address's name, else what GVfs
     /// says it is (`Phone (MTP)`). A device's volume says better, where
-    /// its monitor offers it (`Remotes::label_of`).
+    /// its monitor offers it (`Remotes::label_of`). A device's is said as
+    /// it is read, for the window: the mount's label is text.
     pub fn label(&self) -> String {
         if let Some(address) = self.address() {
             return address.label();
         }
         let host = self.get("host").unwrap_or("");
+        let device = device_name(host);
         match self.kind.as_str() {
-            "mtp" => format!("{} (MTP)", device_name(host)),
-            "gphoto2" => format!("{} (camera)", device_name(host)),
-            "afc" => format!("{} (iOS)", device_name(host)),
+            "mtp" => words!(
+                remote_gvfs_mtp_label = "{ $device } (MTP)",
+                device = device,
+                note = "What a phone GVfs reads over MTP is called: device is its name or serial."
+            )
+            .say(),
+            "gphoto2" => words!(
+                remote_gvfs_camera_label = "{ $device } (camera)",
+                device = device,
+                note = "What a camera GVfs reads is called: device is its name or where it is \
+                        plugged in."
+            )
+            .say(),
+            "afc" => words!(
+                remote_gvfs_ios_label = "{ $device } (iOS)",
+                device = device,
+                note = "What an iPhone or iPad GVfs reads is called: device is its name or serial."
+            )
+            .say(),
             "google-drive" => match self.get("user") {
                 Some(user) => format!("{user}@{host}"),
                 None => host.to_owned(),

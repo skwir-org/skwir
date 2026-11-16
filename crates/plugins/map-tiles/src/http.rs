@@ -17,6 +17,7 @@ use http_body_util::{BodyExt, Empty, Limited};
 use hyper::header::{HeaderName, HeaderValue, USER_AGENT};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
+use skwir_core::words;
 
 /// A request takes at most this long, from connecting to the last byte.
 const DEADLINE: Duration = Duration::from_secs(15);
@@ -85,7 +86,9 @@ impl Http {
     /// The first request to a server not connected to goes alone
     /// (`servers`).
     pub async fn get(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
-        let uri: hyper::Uri = url.parse().context("not an address")?;
+        let uri: hyper::Uri = url
+            .parse()
+            .context(words!(map_tiles_not_address = "not an address"))?;
         let server = format!(
             "{}://{}",
             uri.scheme_str().unwrap_or(""),
@@ -94,7 +97,11 @@ impl Http {
         let gate = Arc::clone(
             self.servers
                 .lock()
-                .map_err(|_| anyhow::anyhow!("the downloads stopped"))?
+                .map_err(|_| {
+                    anyhow::anyhow!(words!(
+                        map_tiles_downloads_stopped = "the downloads stopped"
+                    ))
+                })?
                 .entry(server)
                 .or_default(),
         );
@@ -132,7 +139,7 @@ impl Http {
     async fn get_once(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
         let mut request = hyper::Request::get(url)
             .body(Empty::<Bytes>::new())
-            .context("not an address")?;
+            .context(words!(map_tiles_not_address = "not an address"))?;
         let map = request.headers_mut();
         map.insert(USER_AGENT, self.user_agent.clone());
         for (name, value) in headers {
@@ -147,7 +154,13 @@ impl Http {
             let body = Limited::new(body, MAX_BODY)
                 .collect()
                 .await
-                .map_err(|error| anyhow::anyhow!("the tile could not be read: {error}"))?
+                .map_err(|error| {
+                    anyhow::anyhow!(words!(
+                        map_tiles_unread = "the tile could not be read: { $error }",
+                        error = error.to_string(),
+                        note = "error: what the network library said, in English."
+                    ))
+                })?
                 .to_bytes()
                 .to_vec();
             Ok(Answer {
@@ -158,7 +171,11 @@ impl Http {
             })
         })
         .await
-        .map_err(|_| anyhow::anyhow!("the tile server did not answer in time"))?
+        .map_err(|_| {
+            anyhow::anyhow!(words!(
+                map_tiles_timed_out = "the tile server did not answer in time"
+            ))
+        })?
     }
 }
 

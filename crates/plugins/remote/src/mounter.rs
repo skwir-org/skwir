@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::Address;
 use crate::connector::{self, Ask, Recognised};
@@ -21,8 +23,11 @@ use crate::connector::{self, Ask, Recognised};
 /// # Errors
 /// When the user has no runtime folder, or the folder cannot be made.
 pub fn point_for(connector: &str, top: &Address) -> anyhow::Result<PathBuf> {
-    let folder = connector::mounts_folder()
-        .ok_or_else(|| anyhow::anyhow!("there is no runtime folder to mount in"))?;
+    let folder = connector::mounts_folder().ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_mounter_no_runtime_folder = "there is no runtime folder to mount in"
+        ))
+    })?;
     skwir_core::folders::private(&folder)?;
     let point = folder.join(connector::point_name(connector, top));
     if skwir_core::fs::reach::of(&point).is_some_and(|remote| remote.point == point) {
@@ -34,7 +39,9 @@ pub fn point_for(connector: &str, top: &Address) -> anyhow::Result<PathBuf> {
                 let _ = force_unmount(&point);
                 skwir_core::fs::reach::changed();
             }
-            _ => anyhow::bail!("it is connected already"),
+            _ => anyhow::bail!(words!(
+                remote_mounter_connected_already = "it is connected already"
+            )),
         }
     }
     match std::fs::create_dir(&point) {
@@ -88,7 +95,10 @@ pub fn ended(
     error: anyhow::Error,
 ) -> anyhow::Error {
     if attempt.is_cancelled() && !connection.is_cancelled() {
-        anyhow::anyhow!("you cancelled")
+        anyhow::anyhow!(words!(
+            remote_mounter_you_cancelled = "you cancelled",
+            note = "Why a connection was not made: the user cancelled a question it asked."
+        ))
     } else {
         error
     }
@@ -115,14 +125,16 @@ pub fn mount(
     if !finished.status.success() {
         let _ = remove_point(point);
         let said = finished.stderr.trim();
-        anyhow::bail!(
-            "{}",
-            if said.is_empty() {
-                format!("it ended ({})", finished.status)
-            } else {
-                said.to_owned()
-            }
-        );
+        // What the tool said, as it said it.
+        if said.is_empty() {
+            anyhow::bail!(words!(
+                remote_mounter_ended = "it ended ({ $status })",
+                status = finished.status.to_string(),
+                note = "Why a mount failed: its program ended; status: how, as the system says \
+                        it (exit status: 1)."
+            ));
+        }
+        anyhow::bail!("{said}");
     }
     // A daemon may say it is ready a moment before the kernel lists it.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -133,7 +145,9 @@ pub fn mount(
         }
         if Instant::now() > deadline || cancel.is_cancelled() {
             let _ = remove_point(point);
-            anyhow::bail!("it said it mounted, but nothing is mounted there");
+            anyhow::bail!(words!(
+                remote_mounter_nothing_mounted = "it said it mounted, but nothing is mounted there"
+            ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -178,18 +192,36 @@ pub(crate) fn when_busy(
 ) -> anyhow::Result<()> {
     match skwir_platform::process::using(point) {
         Some(users) if users.is_empty() => lazily(),
-        Some(users) => anyhow::bail!("{}", in_use(&users)),
-        None => anyhow::bail!("another program is using it"),
+        Some(users) => anyhow::bail!(in_use(&users)),
+        None => anyhow::bail!(used_by_another()),
     }
 }
 
-/// What Eject says when `users` (programs' names) use a mount.
-fn in_use(users: &[String]) -> String {
-    let quoted: Vec<String> = users.iter().map(|u| format!("“{u}”")).collect();
-    match quoted.as_slice() {
-        [one] => format!("{one} is using it"),
-        [rest @ .., last] => format!("{} and {last} are using it", rest.join(", ")),
-        [] => "another program is using it".to_owned(),
+/// What Eject says when another program uses a mount, not known which.
+pub(crate) fn used_by_another() -> Words {
+    words!(remote_mounter_used_by_another = "another program is using it")
+}
+
+/// What Eject says when `users` (programs' names) use a mount. The names
+/// before the last are quoted and joined here: a message takes no list.
+fn in_use(users: &[String]) -> Words {
+    match users {
+        [] => used_by_another(),
+        [rest @ .., last] => words!(
+            remote_mounter_used_by = "{ $count ->
+                [1] “{ $last }” is using it
+               *[other] { $first } and “{ $last }” are using it
+            }",
+            count = users.len(),
+            first = rest
+                .iter()
+                .map(|u| format!("“{u}”"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            last = last.as_str(),
+            note = "What keeps a mount from being let go of: programs, by the names they \
+                    run under; first: those before the last, each quoted, joined by commas."
+        ),
     }
 }
 
@@ -322,21 +354,31 @@ impl Askpass {
         use skwir_platform::askpass::Kind;
         let folder = connector::mounts_folder()
             .and_then(|f| f.parent().map(Path::to_path_buf))
-            .ok_or_else(|| anyhow::anyhow!("there is no runtime folder"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_mounter_no_runtime_folder_at_all = "there is no runtime folder"
+                ))
+            })?;
         skwir_core::folders::private(&folder)?;
         let attempt = cancel.clone();
         let (ask, cancel) = (Arc::clone(ask), cancel.clone());
         let server = skwir_platform::askpass::Server::start(&folder, move |question| {
+            // ssh's question, as ssh wrote it.
             let prompt = question.prompt.trim().trim_end_matches(':').trim();
+            let connect = connector::connect_button().say();
             let answer = match question.kind {
                 // A server's password may be kept (ADR-082); a key's
                 // passphrase, a code, rclone's configuration's are not.
                 Kind::Secret if crate::passwords::is_server_password(prompt) => {
-                    ask.password(prompt, "Connect", &cancel).map(|p| p.text)
+                    ask.password(prompt, &connect, &cancel).map(|p| p.text)
                 }
-                Kind::Secret => ask.secret(prompt, "Connect", &cancel),
+                Kind::Secret => ask.secret(prompt, &connect, &cancel),
                 Kind::Confirm => ask
-                    .confirm("Connect to this server?", prompt, &cancel)
+                    .confirm(
+                        &words!(remote_mounter_trust = "Connect to this server?").say(),
+                        prompt,
+                        &cancel,
+                    )
                     .then(|| "yes".to_owned()),
                 Kind::Notice => return None,
             };
@@ -370,10 +412,11 @@ mod tests {
     #[test]
     fn eject_names_what_uses_a_mount() {
         let names = |n: &[&str]| n.iter().map(|&n| n.to_owned()).collect::<Vec<_>>();
-        assert_eq!(in_use(&names(&["vim"])), "“vim” is using it");
+        assert_eq!(in_use(&names(&["vim"])).english(), "“vim” is using it");
         assert_eq!(
-            in_use(&names(&["fish", "less", "vim"])),
+            in_use(&names(&["fish", "less", "vim"])).english(),
             "“fish”, “less” and “vim” are using it"
         );
+        assert_eq!(in_use(&[]).english(), "another program is using it");
     }
 }

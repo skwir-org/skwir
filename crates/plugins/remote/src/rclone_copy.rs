@@ -20,6 +20,8 @@ use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::op::Cancelled;
 use skwir_core::op::transfer::{Aside, Control, NotServed, Told, Transfer};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// The folder of the sockets of the mounts Skwir made, beside the mounts'
 /// own (`connector::mounts_folder`): in the runtime folder, on macOS
@@ -45,7 +47,12 @@ pub fn socket_for(point: &Path) -> Option<PathBuf> {
 /// # Errors
 /// When it cannot be made.
 pub fn socket_folder() -> anyhow::Result<PathBuf> {
-    let folder = sockets().ok_or_else(|| anyhow::anyhow!("no runtime folder"))?;
+    let folder = sockets().ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_rclone_no_runtime_folder = "no runtime folder",
+            note = "Why rclone's mount could not be given a remote control: the session has no folder for what runs in it."
+        ))
+    })?;
     skwir_core::folders::private(&folder)?;
     Ok(folder)
 }
@@ -124,7 +131,14 @@ fn copy_tree(
         copied(meta.len());
         return Ok(());
     }
-    anyhow::ensure!(meta.is_dir(), "“{}”: rclone keeps no link", src.display());
+    anyhow::ensure!(
+        meta.is_dir(),
+        words!(
+            remote_rclone_keeps_no_link = "“{ $path }”: rclone keeps no link",
+            path = src.display().to_string(),
+            note = "path: a link's path, which a copy on the server cannot make."
+        )
+    );
     call(
         socket,
         "operations/mkdir",
@@ -133,9 +147,7 @@ fn copy_tree(
     )?;
     for entry in std::fs::read_dir(src)? {
         let name = entry?.file_name();
-        let name = name
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("“{}” cannot be said to rclone", src.display()))?;
+        let name = name.to_str().ok_or_else(|| anyhow::anyhow!(unsaid(src)))?;
         copy_tree(
             socket,
             fs,
@@ -146,6 +158,15 @@ fn copy_tree(
         )?;
     }
     Ok(())
+}
+
+/// `path` holds what is no text, which rclone cannot be given.
+fn unsaid(path: &Path) -> Words {
+    words!(
+        remote_rclone_unsaid = "“{ $path }” cannot be said to rclone",
+        path = path.display().to_string(),
+        note = "path: a path whose name is not text (not UTF-8), which rclone takes none of."
+    )
 }
 
 /// rclone's copies on the server, within one mount Skwir made.
@@ -246,7 +267,7 @@ impl Transfer for RcloneCopy {
         // Beside what is there, each is made in `temp` and placed after,
         // never over anything.
         let made_in = aside.temp.unwrap_or(into);
-        let unsaid = |path: &Path| anyhow::anyhow!("“{}” cannot be said to rclone", path.display());
+        let refused = |path: &Path| anyhow::anyhow!(unsaid(path));
         let mut copied = 0u64;
         for name in names {
             checkpoint(control)?;
@@ -255,8 +276,8 @@ impl Transfer for RcloneCopy {
             let src = from.join(name);
             let dst = made_in.join(name);
             let (src_at, dst_at) = (
-                on_server(&point, &src).ok_or_else(|| unsaid(&src))?,
-                on_server(&point, &dst).ok_or_else(|| unsaid(&dst))?,
+                on_server(&point, &src).ok_or_else(|| refused(&src))?,
+                on_server(&point, &dst).ok_or_else(|| refused(&dst))?,
             );
             copy_tree(
                 &socket,
@@ -278,7 +299,7 @@ impl Transfer for RcloneCopy {
             .flatten()
         {
             checkpoint(control)?;
-            let dir = on_server(&point, folder).ok_or_else(|| unsaid(folder))?;
+            let dir = on_server(&point, folder).ok_or_else(|| refused(folder))?;
             call(
                 &socket,
                 "vfs/refresh",

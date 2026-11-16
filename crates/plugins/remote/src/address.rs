@@ -7,6 +7,8 @@
 use std::fmt::{self, Write as _};
 
 use skwir_core::location::Location;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// The protocols an address may name, as a connector maps them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -141,13 +143,14 @@ pub struct Address {
     pub path: Vec<u8>,
 }
 
-/// Why text is no address.
+/// Why text is no address, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NotAnAddress(pub String);
+pub struct NotAnAddress(pub Words);
 
 impl fmt::Display for NotAnAddress {
+    /// Its words: in the reader's language while an error's chain is said.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -161,11 +164,14 @@ impl Address {
     /// When the scheme is not one, the host is missing, or the address
     /// holds a password: Skwir keeps none, and the tool that connects asks.
     pub fn parse(text: &str) -> Result<Address, NotAnAddress> {
-        let (scheme, rest) = text
-            .split_once(':')
-            .ok_or_else(|| NotAnAddress(format!("“{text}” names no protocol")))?;
-        let scheme = Scheme::from_name(scheme)
-            .ok_or_else(|| NotAnAddress(format!("“{scheme}:” is not a protocol Skwir opens")))?;
+        let (scheme, rest) = text.split_once(':').ok_or_else(|| {
+            NotAnAddress(words!(
+                remote_address_no_protocol = "“{ $text }” names no protocol",
+                text = text,
+                note = "text: what was typed as an address."
+            ))
+        })?;
+        let scheme = Scheme::from_name(scheme).ok_or_else(|| not_a_protocol(scheme))?;
         Address::parse_rest(scheme, rest)
     }
 
@@ -176,9 +182,10 @@ impl Address {
     /// As [`Address::parse`].
     pub fn parse_rest(scheme: Scheme, rest: &str) -> Result<Address, NotAnAddress> {
         let rest = rest.strip_prefix("//").ok_or_else(|| {
-            NotAnAddress(format!(
-                "“{}:{rest}” needs // before the server",
-                scheme.name()
+            NotAnAddress(words!(
+                remote_address_no_slashes = "“{ $text }” needs // before the server",
+                text = format!("{}:{rest}", scheme.name()),
+                note = "text: what was typed as an address."
             ))
         })?;
         let (authority, path) = match rest.find('/') {
@@ -200,9 +207,10 @@ impl Address {
         let (mut user, mut domain) = (None, None);
         if let Some(info) = userinfo {
             if info.contains(':') {
-                return Err(NotAnAddress(
-                    "an address holds no password: the server asks for it".to_owned(),
-                ));
+                return Err(NotAnAddress(words!(
+                    remote_address_password =
+                        "an address holds no password: the server asks for it"
+                )));
             }
             let info = decoded_text(info);
             match info.split_once(';') {
@@ -215,19 +223,28 @@ impl Address {
         }
         let (host, port) = split_port(hostport)?;
         if host.is_empty() {
-            return Err(NotAnAddress(format!(
-                "“{}://{rest}” names no server",
-                scheme.name()
+            return Err(NotAnAddress(words!(
+                remote_address_no_server = "“{ $text }” names no server",
+                text = format!("{}://{rest}", scheme.name()),
+                note = "text: what was typed as an address."
             )));
         }
         // What reaches a tool's command line is a name, never an option of
         // it nor several words: a server's name or address, a user's.
         if !server_name(host) {
-            return Err(NotAnAddress(format!("“{host}” is no server's name")));
+            return Err(NotAnAddress(words!(
+                remote_address_bad_server = "“{ $host }” is no server's name",
+                host = host,
+                note = "host: what was typed as a server's name or address."
+            )));
         }
         for part in [&user, &domain].into_iter().flatten() {
             if !plain(part) {
-                return Err(NotAnAddress(format!("“{part}” is no user's name")));
+                return Err(NotAnAddress(words!(
+                    remote_address_bad_user = "“{ $user }” is no user's name",
+                    user = part.as_str(),
+                    note = "user: what was typed as the user's name (or an SMB domain)."
+                )));
             }
         }
         let mut path = without_dots(&decoded(path));
@@ -251,7 +268,11 @@ impl Address {
     /// When rclone would take no remote of that name.
     pub fn rclone(name: &str, path: &[u8]) -> Result<Address, NotAnAddress> {
         if !rclone_name(name) {
-            return Err(NotAnAddress(format!("“{name}” is no remote's name")));
+            return Err(NotAnAddress(words!(
+                remote_address_bad_remote = "“{ $name }” is no remote's name",
+                name = name,
+                note = "name: what was typed as the name of a remote of rclone's."
+            )));
         }
         let mut path = without_dots(path);
         if path.is_empty() {
@@ -275,13 +296,19 @@ impl Address {
     /// When it names a user, or no device GVfs would name so.
     fn of_device(scheme: Scheme, authority: &str, path: &[u8]) -> Result<Address, NotAnAddress> {
         if authority.contains('@') {
-            return Err(NotAnAddress(format!(
-                "“{authority}”: a device's address names no user"
+            return Err(NotAnAddress(words!(
+                remote_address_device_user = "“{ $text }”: a device's address names no user",
+                text = authority,
+                note = "text: what an address of a phone or a camera names as its device."
             )));
         }
         let (host, port) = split_port(authority)?;
         if !device_name(host) || (port.is_some() && scheme != Scheme::Afc) {
-            return Err(NotAnAddress(format!("“{authority}” is no device's name")));
+            return Err(NotAnAddress(words!(
+                remote_address_bad_device = "“{ $text }” is no device's name",
+                text = authority,
+                note = "text: what an address of a phone or a camera names as its device."
+            )));
         }
         let mut path = without_dots(path);
         if path.is_empty() {
@@ -302,12 +329,8 @@ impl Address {
     /// # Errors
     /// As [`Address::parse`].
     pub fn of_location(location: &Location) -> Result<Address, NotAnAddress> {
-        let scheme = Scheme::from_name(&location.scheme).ok_or_else(|| {
-            NotAnAddress(format!(
-                "“{}:” is not a protocol Skwir opens",
-                location.scheme
-            ))
-        })?;
+        let scheme =
+            Scheme::from_name(&location.scheme).ok_or_else(|| not_a_protocol(&location.scheme))?;
         Address::parse_rest(scheme, &location.rest)
     }
 
@@ -561,8 +584,10 @@ impl Address {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) =>
             {
-                Err(NotAnAddress(format!(
-                    "“{user}” is no user's name ssh can be given"
+                Err(NotAnAddress(words!(
+                    remote_address_bad_ssh_user = "“{ $user }” is no user's name ssh can be given",
+                    user = user.as_str(),
+                    note = "user: the user's name an address names."
                 )))
             }
             _ => Ok(()),
@@ -570,12 +595,27 @@ impl Address {
     }
 }
 
+/// `scheme` names no protocol Skwir opens.
+fn not_a_protocol(scheme: &str) -> NotAnAddress {
+    NotAnAddress(words!(
+        remote_address_not_protocol = "“{ $scheme }:” is not a protocol Skwir opens",
+        scheme = scheme,
+        note = "scheme: what an address names before its colon (sftp, smb)."
+    ))
+}
+
 /// `host[:port]`, an IPv6 literal in brackets.
 fn split_port(hostport: &str) -> Result<(&str, Option<u16>), NotAnAddress> {
     let (host, port) = if hostport.starts_with('[') {
         match hostport.find(']') {
             Some(end) => (&hostport[..=end], hostport[end + 1..].strip_prefix(':')),
-            None => return Err(NotAnAddress(format!("“{hostport}” ends no IPv6 address"))),
+            None => {
+                return Err(NotAnAddress(words!(
+                    remote_address_ipv6 = "“{ $text }” ends no IPv6 address",
+                    text = hostport,
+                    note = "text: what was typed as a server's address and port."
+                )));
+            }
         }
     } else {
         match hostport.rsplit_once(':') {
@@ -585,10 +625,13 @@ fn split_port(hostport: &str) -> Result<(&str, Option<u16>), NotAnAddress> {
     };
     let port = match port {
         Some("") | None => None,
-        Some(port) => Some(
-            port.parse::<u16>()
-                .map_err(|_| NotAnAddress(format!("“{port}” is no port")))?,
-        ),
+        Some(port) => Some(port.parse::<u16>().map_err(|_| {
+            NotAnAddress(words!(
+                remote_address_bad_port = "“{ $port }” is no port",
+                port = port,
+                note = "port: what was typed after the server's name and a colon."
+            ))
+        })?),
     };
     Ok((host, port))
 }
@@ -744,7 +787,7 @@ mod tests {
     #[test]
     fn a_password_in_an_address_is_refused() {
         let error = Address::parse("sftp://me:secret@h/").unwrap_err();
-        assert!(!error.0.contains("secret"), "{error}");
+        assert!(!error.0.english().contains("secret"), "{error}");
     }
 
     #[test]

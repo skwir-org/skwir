@@ -73,7 +73,8 @@ use skwir_core::plugin::Plugin;
 use skwir_core::registry::Place;
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
-use skwir_core::words::Words;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connector, Offered, Password, Recognised, Server};
@@ -516,7 +517,7 @@ impl Remotes {
         let options = options::of(app, &top).mounting(self.automatic_cache(&top).0);
         let connected = connector
             .connect_with(address, &options, &asked, cancel)
-            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+            .map_err(|error| anyhow::Error::new(Words::of_error(error)))?;
         if let Some(noted) = keyed.served() {
             self.note_remembered(app, &noted);
         }
@@ -830,7 +831,7 @@ impl Remotes {
     ) -> anyhow::Result<PathBuf> {
         self.reach_or_mount(app, address, ask, cancel)
             .map_err(|error| match self.held_by(address) {
-                Some(held) if !cancel.is_cancelled() => anyhow::anyhow!("{held}"),
+                Some(held) if !cancel.is_cancelled() => anyhow::anyhow!(held),
                 _ => error,
             })
     }
@@ -839,7 +840,7 @@ impl Remotes {
     /// the user's holds it open (KDE's `kiod6`, a camera's program): one
     /// program at a time uses a device over USB. Reads `/proc`: on a
     /// worker, once opening it failed.
-    fn held_by(&self, address: &Address) -> Option<String> {
+    fn held_by(&self, address: &Address) -> Option<Words> {
         let device = address.scheme.device()?;
         let node = self.offered_at(address)?.node?;
         // GVfs's own program for it, still letting go of the open that
@@ -847,15 +848,16 @@ impl Remotes {
         let asked = gvfs::backend_of(address.scheme);
         let mut programs = holders::of(&node);
         programs.retain(|program| *program != asked);
-        let (them, have) = match programs.as_slice() {
-            [] => return None,
-            [one] => (one.clone(), "has"),
-            [first @ .., last] => (format!("{} and {last}", first.join(", ")), "have"),
-        };
-        let quit = if programs.len() == 1 { &them } else { "them" };
-        let kind = match device {
-            connector::Device::Phone => "a phone",
-            connector::Device::Camera => "a camera",
+        if programs.is_empty() {
+            return None;
+        }
+        let count = programs.len();
+        // Programs by their names, as they were started.
+        let them = listed(programs.iter().cloned().map(Words::as_written).collect());
+        // What a language chooses its words by.
+        let device = match device {
+            connector::Device::Phone => "phone",
+            connector::Device::Camera => "camera",
         };
         // A tool that would open it through the program holding it (KDE's
         // kmtpd, through `kiod6`), and cannot here: why, before quitting.
@@ -868,11 +870,42 @@ impl Remotes {
                 .flatten()
         });
         Some(match through {
-            Some((holder, why)) => format!(
-                "{them} {have} it open, and only one program at a time can use {kind}. Skwir would open it through {holder}, but {why}; else quit {quit}, then try again."
+            Some((holder, why)) => words!(
+                remote_device_held_through = "{ $count ->
+                    [1] { $programs } has
+                   *[other] { $programs } have
+                } it open, and only one program at a time can use { $device ->
+                    [phone] a phone
+                   *[camera] a camera
+                }. Skwir would open it through { $holder }, but { $why }; else quit { $count ->
+                    [1] { $programs }
+                   *[other] them
+                }, then try again.",
+                count = count,
+                programs = them,
+                device = device,
+                holder = holder,
+                why = why,
+                note = "Why a device plugged in opens nowhere. programs: the programs that hold \
+                        it, by their names; device: phone or camera; holder: the program a tool \
+                        would open it through (kiod6); why: why that tool cannot here."
             ),
-            None => format!(
-                "{them} {have} it open, and only one program at a time can use {kind}. Quit {quit}, then try again."
+            None => words!(
+                remote_device_held = "{ $count ->
+                    [1] { $programs } has
+                   *[other] { $programs } have
+                } it open, and only one program at a time can use { $device ->
+                    [phone] a phone
+                   *[camera] a camera
+                }. Quit { $count ->
+                    [1] { $programs }
+                   *[other] them
+                }, then try again.",
+                count = count,
+                programs = them,
+                device = device,
+                note = "Why a device plugged in opens nowhere. programs: the programs that hold \
+                        it, by their names; device: phone or camera."
             ),
         })
     }
@@ -895,7 +928,7 @@ impl Remotes {
             if let Some(held) = turn.try_lock_for(Duration::from_millis(100)) {
                 break held;
             }
-            anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+            anyhow::ensure!(!cancel.is_cancelled(), connector::cancelled());
         };
         for mounted in self.mounted() {
             if let Some(below) = mounted
@@ -935,7 +968,7 @@ impl Remotes {
             }
         }
         let mut why_not = Vec::new();
-        let mut failed: Vec<(&'static str, anyhow::Error)> = Vec::new();
+        let mut failed: Vec<(Words, anyhow::Error)> = Vec::new();
         for connector in self.ordered(app) {
             if !connector.schemes().contains(&address.scheme) {
                 continue;
@@ -975,20 +1008,35 @@ impl Remotes {
         if failed.len() == 1 {
             return Err(failed.remove(0).1);
         }
+        // Failures are said together, each by its tool.
         if !failed.is_empty() {
-            let said: Vec<String> = failed
-                .iter()
-                .map(|(tool, error)| format!("{tool}: {error:#}"))
+            let said: Vec<Words> = failed
+                .into_iter()
+                .map(|(tool, error)| {
+                    words!(
+                        remote_tool_failed = "{ $tool }: { $error }",
+                        tool = tool,
+                        error = error,
+                        note = "What one tool could not do, among the failures of the tools \
+                                tried. tool: its name (sshfs, GVfs); error: why."
+                    )
+                })
                 .collect();
-            anyhow::bail!("{}", said.join("; "));
+            anyhow::bail!(OneAfterAnother(said));
         }
         if why_not.is_empty() {
-            anyhow::bail!(
-                "no tool Skwir knows opens {} addresses",
-                address.scheme.title()
-            );
+            anyhow::bail!(words!(
+                remote_no_tool = "no tool Skwir knows opens { $protocol } addresses",
+                protocol = address.scheme.title(),
+                note = "protocol: SFTP, SMB, MTP…"
+            ));
         }
-        anyhow::bail!("nothing installed can open it: {}", why_not.join("; "))
+        anyhow::bail!(words!(
+            remote_nothing_installed = "nothing installed can open it: { $why }",
+            why = OneAfterAnother(why_not).said(),
+            note = "why: why each tool that opens such addresses cannot here, one after the \
+                    other (sshfs is not installed; rclone is not installed)."
+        ))
     }
 
     /// Read again what is mounted and publish it, then what servers are
@@ -1533,9 +1581,11 @@ impl Remotes {
                         .with("path", PathArg::from(point.as_path())),
                 );
             }
+            // Said for the sidebar: a place's state is text.
             if state.lost.contains(point) {
-                place.unavailable =
-                    Some("The connection is lost: open it to connect again".to_owned());
+                place.unavailable = Some(
+                    words!(remote_lost = "The connection is lost: open it to connect again").say(),
+                );
                 if let Some(address) = address {
                     place.activate = Some(Invocation::navigate(&address.location()));
                 }
@@ -1549,7 +1599,7 @@ impl Remotes {
                         .waiting
                         .get(point)
                         .filter(|files| **files > 0)
-                        .map(|files| sending(*files))
+                        .map(|files| sending(*files).say())
                 });
             place.space = state.space.get(point).copied();
             place.menu = thumbnail_items(&key, rule);
@@ -1613,7 +1663,10 @@ impl Remotes {
                 offered.address.location(),
             );
             place.key = Some(format!("remote:{}", offered.address));
-            place.unavailable = Some("Not mounted. Click to mount and open it.".to_owned());
+            place.unavailable = Some(
+                words!(remote_device_not_mounted = "Not mounted. Click to mount and open it.")
+                    .say(),
+            );
             places.push(place);
         }
         for server in &state.servers {
@@ -1649,10 +1702,15 @@ impl Remotes {
                 ));
                 // Drawn as not ready, saying why, opened all the same.
                 if half_made {
-                    place.unavailable = Some(format!(
-                        "{name} is {}: Finish Setting Up… in its menu",
-                        configure::NOT_FINISHED
-                    ));
+                    place.unavailable = Some(
+                        words!(
+                            remote_half_made = "{ $name } is not finished setting up: Finish Setting Up… in its menu",
+                            name = name,
+                            note = "name: a remote of rclone's, as its configuration names it. \
+                                    Finish Setting Up… is the item of its menu."
+                        )
+                        .say(),
+                    );
                 }
             } else if server.kept.by_address() {
                 place.menu.extend(configure::kept_items(&server.address));
@@ -1662,7 +1720,15 @@ impl Remotes {
         // The servers announced on the local network, found while it is
         // shown (ADR-084): where Avahi and wsdd run.
         if cfg!(target_os = "linux") {
-            let mut place = Place::new(GROUP, "Nearby", "network-workgroup", nearby::location());
+            let mut place = Place::new(
+                GROUP,
+                words!(
+                    remote_nearby_title = "Nearby",
+                    note = "The place that lists the servers found on this network."
+                ),
+                "network-workgroup",
+                nearby::location(),
+            );
             place.key = Some("remote:nearby".into());
             places.push(place);
         }
@@ -1709,11 +1775,23 @@ fn thumbnails(rule: &str, near: Option<bool>, whole: bool, fast: Option<bool>) -
 
 /// The place's menu: its thumbnails, as chosen for it.
 fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem> {
+    // The choice's name, said for the menu: a choice's name is text.
+    let named = words!(
+        remote_thumbnails_choice = "Thumbnails",
+        note = "A place's menu: when its files show thumbnails."
+    )
+    .say();
     [
-        ("automatic", "Automatic"),
-        ("never", "Never"),
-        ("small", "Small Files"),
-        ("always", "Always"),
+        (
+            "automatic",
+            words!(remote_thumbnails_menu_automatic = "Automatic"),
+        ),
+        ("never", words!(remote_thumbnails_menu_never = "Never")),
+        (
+            "small",
+            words!(remote_thumbnails_menu_small = "Small Files"),
+        ),
+        ("always", words!(remote_thumbnails_menu_always = "Always")),
     ]
     .into_iter()
     .zip(500..)
@@ -1729,7 +1807,7 @@ fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem>
         )
         // In words: rows, the submenu's own row saying the rule set.
         .value_of(
-            "Thumbnails",
+            &named,
             skwir_core::registry::ChoiceLook::Icons,
             value == rule,
         );
@@ -1749,7 +1827,7 @@ fn forget_item(address: &Address, remembered: &[String]) -> Option<skwir_core::r
     remembered.contains(&key).then(|| {
         skwir_core::registry::MenuItem::new(
             "place",
-            "Forget Password",
+            words!(remote_forget_password_menu = "Forget Password"),
             "",
             530,
             Invocation::new("remote.forget_password").with("server", key),
@@ -1763,7 +1841,7 @@ fn options_item(address: &Address) -> Option<skwir_core::registry::MenuItem> {
     options::takes_options(address.scheme).then(|| {
         skwir_core::registry::MenuItem::new(
             "place",
-            "Mount Options…",
+            words!(remote_mount_options_menu = "Mount Options…"),
             "sliders",
             420,
             Invocation::new("remote.mount_options").with("address", address.top().to_string()),
@@ -1797,7 +1875,11 @@ fn note_remembered(app: &App, noted: &passwords::Noted) {
         passwords::Noted::NotKept(why) => {
             app.notify(
                 NotifyLevel::Warning,
-                format!("The password was not remembered: {why}"),
+                words!(
+                    remote_password_not_kept = "The password was not remembered: { $why }",
+                    why = why.clone(),
+                    note = "why: what the keyring said (No keyring answered)."
+                ),
             );
             return;
         }
@@ -1929,13 +2011,21 @@ impl Plugin for RemotePlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         use skwir_core::plugin::Requirement;
         vec![
-            Requirement::program("sshfs", "Opening SFTP addresses through your ssh"),
+            Requirement::program(
+                "sshfs",
+                words!(remote_needs_sshfs = "Opening SFTP addresses through your ssh"),
+            ),
             Requirement::program(
                 "gio",
-                "Opening addresses through GVfs, the desktop's remotes",
+                words!(remote_needs_gio = "Opening addresses through GVfs, the desktop's remotes"),
             ),
-            Requirement::program("rclone", "Opening rclone's remotes and other addresses"),
-            kmtp::WORKER.requirement("Opening a phone KDE's kmtpd holds"),
+            Requirement::program(
+                "rclone",
+                words!(remote_needs_rclone = "Opening rclone's remotes and other addresses"),
+            ),
+            kmtp::WORKER.requirement(words!(
+                remote_needs_kmtp = "Opening a phone KDE's kmtpd holds"
+            )),
         ]
     }
 
@@ -2021,24 +2111,29 @@ impl Plugin for RemotePlugin {
         app.settings.declare(
             SettingSpec::text(
                 CONNECTORS,
-                "Tools that open addresses",
-                "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
+                words!(remote_connectors = "Tools that open addresses"),
+                words!(
+                    remote_connectors_description = "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
+                    note = "sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated."
+                ),
                 default_order(),
             )
             .page(skwir_core::settings::page::NETWORK)
             .section(skwir_core::settings::section::OPENING_ADDRESSES),
         );
         app.settings.declare(
-            SettingSpec::choice(
+            SettingSpec::choice_words(
                 THUMBNAILS,
-                "Thumbnails in remote folders",
-                "For a remote you chose nothing for in its menu: Automatic shows them on the local network only, as reading every picture across the internet would be slow.",
+                words!(remote_thumbnails = "Thumbnails in remote folders"),
+                words!(
+                    remote_thumbnails_description = "For a remote you chose nothing for in its menu: Automatic shows them on the local network only, as reading every picture across the internet would be slow."
+                ),
                 "automatic",
-                &[
-                    ("automatic", "Automatic"),
-                    ("never", "Never"),
-                    ("small", "Small files"),
-                    ("always", "Always"),
+                vec![
+                    ("automatic", words!(remote_thumbnails_automatic = "Automatic")),
+                    ("never", words!(remote_thumbnails_never = "Never")),
+                    ("small", words!(remote_thumbnails_small = "Small files")),
+                    ("always", words!(remote_thumbnails_always = "Always")),
                 ],
             )
             .page(skwir_core::settings::page::VIEWS)
@@ -2046,22 +2141,30 @@ impl Plugin for RemotePlugin {
         );
         app.settings.declare(SettingSpec::data(
             CHOSEN,
-            "The thumbnails chosen for each remote, by its address",
+            words!(remote_chosen_data = "The thumbnails chosen for each remote, by its address"),
             toml::Value::Table(toml::map::Map::new()),
         ));
         app.settings.declare(SettingSpec::data(
             options::SETTING,
-            "The mount options chosen for each server, by its address",
+            words!(
+                remote_options_data = "The mount options chosen for each server, by its address"
+            ),
             toml::Value::Table(toml::map::Map::new()),
         ));
         app.settings.declare(SettingSpec::data(
             rclone_forms::UNFINISHED,
-            "The remotes of rclone's Skwir began to set up and did not finish, by name",
+            words!(
+                remote_unfinished_data =
+                    "The remotes of rclone's Skwir began to set up and did not finish, by name"
+            ),
             toml::Value::Array(Vec::new()),
         ));
         app.settings.declare(SettingSpec::data(
             REMEMBERED,
-            "The servers whose password is kept in the keyring, by their address",
+            words!(
+                remote_remembered_data =
+                    "The servers whose password is kept in the keyring, by their address"
+            ),
             toml::Value::Array(Vec::new()),
         ));
         for scheme in Scheme::ALL {
@@ -2099,8 +2202,10 @@ impl Plugin for RemotePlugin {
         app.commands.register::<ConnectArgs, _>(
             ID, Topic::Places,
             "remote.connect",
-            "Connect to server",
-            "Open a remote folder by its address (sftp://, smb://, dav://, ftp://, nfs://, afp://, rclone://)",
+            words!(remote_connect = "Connect to server"),
+            words!(
+                remote_connect_description = "Open a remote folder by its address (sftp://, smb://, dav://, ftp://, nfs://, afp://, rclone://)"
+            ),
             move |args, app| {
                 let address = Address::parse(args.address.trim())?;
                 let _ = &remotes;
@@ -2118,8 +2223,11 @@ impl Plugin for RemotePlugin {
             ID,
             Topic::Places,
             "remote.disconnect",
-            "Disconnect",
-            "Let go of a remote folder: what shows it goes home",
+            words!(remote_disconnect = "Disconnect"),
+            words!(
+                remote_disconnect_description =
+                    "Let go of a remote folder: what shows it goes home"
+            ),
             move |args, app| {
                 remotes.disconnect(app, &args.path.into_inner(), args.force)?;
                 Ok(Outcome::Done)
@@ -2129,12 +2237,18 @@ impl Plugin for RemotePlugin {
         app.commands.register::<ThumbnailsArgs, _>(
             ID, Topic::Places,
             "remote.thumbnails",
-            "Thumbnails of a remote",
-            "Choose when a remote folder's files show thumbnails: automatic, never, small or always",
+            words!(remote_thumbnails_of = "Thumbnails of a remote"),
+            words!(
+                remote_thumbnails_of_description = "Choose when a remote folder's files show thumbnails: automatic, never, small or always",
+                note = "automatic, never, small and always are the rules the command takes: never translated."
+            ),
             move |args, app| {
                 anyhow::ensure!(
                     ["automatic", "never", "small", "always"].contains(&args.rule.as_str()),
-                    "a rule is automatic, never, small or always"
+                    words!(
+                        remote_thumbnails_rule = "a rule is automatic, never, small or always",
+                        note = "automatic, never, small and always are the rules the command takes: never translated."
+                    )
                 );
                 let (remotes, weak) = (remotes.clone(), app.weak());
                 // Kept in the settings file: written on a worker from the
@@ -2153,7 +2267,10 @@ impl Plugin for RemotePlugin {
                     if let Err(error) = app.settings.save() {
                         app.notify(
                             NotifyLevel::Error,
-                            format!("The remote's thumbnails were not saved: {error:#}"),
+                            words!(
+                                remote_thumbnails_not_saved = "The remote's thumbnails were not saved: { $error }",
+                                error = error
+                            ),
                         );
                     }
                     remotes.publish(&app);
@@ -2175,14 +2292,19 @@ impl Plugin for RemotePlugin {
         app.commands.register::<ForgetPasswordArgs, _>(
             ID, Topic::Places,
             "remote.forget_password",
-            "Forget password",
-            "Remove from the keyring the password Skwir keeps for a server (never one another program kept)",
+            words!(remote_forget_password = "Forget password"),
+            words!(
+                remote_forget_password_description = "Remove from the keyring the password Skwir keeps for a server (never one another program kept)"
+            ),
             move |args, app| {
                 let remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
                 anyhow::ensure!(
                     remembered.contains(&args.server),
-                    "Skwir keeps no password for {}",
-                    args.server
+                    words!(
+                        remote_no_password_kept = "Skwir keeps no password for { $server }",
+                        server = args.server.clone(),
+                        note = "server: the server as the keyring knows it (smb://me@nas)."
+                    )
                 );
                 let (remotes, weak) = (remotes.clone(), app.weak());
                 // The keyring may wait on its own window: on a worker.
@@ -2195,11 +2317,17 @@ impl Plugin for RemotePlugin {
                         match remotes.keyring.forget(&args.server) {
                             Ok(()) => {
                                 remotes.note_remembered(&app, &passwords::Noted::Forgot(args.server));
-                                app.notify(NotifyLevel::Info, "The password is forgotten");
+                                app.notify(
+                                    NotifyLevel::Info,
+                                    words!(remote_password_forgotten = "The password is forgotten"),
+                                );
                             }
                             Err(error) => app.notify(
                                 NotifyLevel::Error,
-                                format!("The password was not forgotten: {error:#}"),
+                                words!(
+                                    remote_password_not_forgotten = "The password was not forgotten: { $error }",
+                                    error = error
+                                ),
                             ),
                         }
                         remotes.publish(&app);
@@ -2214,8 +2342,11 @@ impl Plugin for RemotePlugin {
                 ID,
                 Topic::Places,
                 "remote.refresh",
-                "Refresh remote folders",
-                "Read again what is mounted and which servers the tools know",
+                words!(remote_refresh = "Refresh remote folders"),
+                words!(
+                    remote_refresh_description =
+                        "Read again what is mounted and which servers the tools know"
+                ),
                 move |_, app| {
                     reach::changed();
                     rclone::forget_listed();
@@ -2339,10 +2470,7 @@ impl Remotes {
             .spawn(move || {
                 let result = letting_go();
                 if let (Err(error), Some(app)) = (result, weak.upgrade()) {
-                    app.notify(
-                        NotifyLevel::Error,
-                        format!("“{label}” was not disconnected: {error:#}"),
-                    );
+                    app.notify(NotifyLevel::Error, not_disconnected(&label, error));
                 }
             })?;
         Ok(())
@@ -2367,23 +2495,31 @@ impl Remotes {
             .mounted()
             .into_iter()
             .find(|m| m.remote.point == point)
-            .ok_or_else(|| anyhow::anyhow!("no remote folder is mounted there"))?;
-        let connector = mounted
-            .connector
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Skwir does not know the tool that mounted it"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_not_mounted_there = "no remote folder is mounted there"
+                ))
+            })?;
+        let connector = mounted.connector.clone().ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_tool_unknown = "Skwir does not know the tool that mounted it"
+            ))
+        })?;
         let label = mounted.recognised.label.clone();
         if !force {
-            under_way(app, point)
-                .map_err(|e| anyhow::anyhow!("“{label}” was not disconnected: {e:#}"))?;
+            under_way(app, point).map_err(|e| anyhow::anyhow!(not_disconnected(&label, e)))?;
         }
         let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/"));
         app.release(point, &Location::from_path(home))?;
         let key = point.display().to_string();
-        self.state
-            .lock()
-            .busy
-            .insert(key.clone(), "Disconnecting…".to_owned());
+        self.state.lock().busy.insert(
+            key.clone(),
+            words!(
+                remote_disconnecting = "Disconnecting…",
+                note = "Said on a remote folder's place while it is let go of."
+            )
+            .say(),
+        );
         self.refresh(app);
         let this = self.clone();
         let lifetime = self.lifetime().unwrap_or_default();
@@ -2435,12 +2571,12 @@ impl Remotes {
                             this.state
                                 .lock()
                                 .busy
-                                .insert(key.clone(), sending(left.files));
+                                .insert(key.clone(), sending(left.files).say());
                             this.refresh(&app);
                         }
                     };
                     uploads::send_now(at, &lifetime, &|| {}, &mut left)
-                        .map_err(|e| anyhow::anyhow!("“{said}” was not disconnected: {e:#}"))
+                        .map_err(|e| anyhow::anyhow!(not_disconnected(&said, e)))
                 });
             }
             let kept = match (&control, sends) {
@@ -2459,14 +2595,27 @@ impl Remotes {
                 this.refresh(&app);
                 match (&result, kept) {
                     (Ok(()), 0) => {
-                        app.notify(NotifyLevel::Info, format!("Disconnected from “{said}”"));
+                        app.notify(
+                            NotifyLevel::Info,
+                            words!(
+                                remote_disconnected = "Disconnected from { $name }",
+                                name = Name(said.clone()),
+                                note = "name: a remote folder's, as its place names it."
+                            ),
+                        );
                     }
                     (Ok(()), kept) => app.notify(
                         NotifyLevel::Warning,
-                        format!(
-                            "Disconnected from “{said}”: {} not sent yet stay in rclone's \
-                             cache, sent when it next connects",
-                            files(kept)
+                        words!(
+                            remote_disconnected_kept = "Disconnected from { $name }: { $count ->
+                                [one] { $count } file
+                               *[other] { $count } files
+                            } not sent yet stay in rclone's cache, sent when it next connects",
+                            name = Name(said.clone()),
+                            count = kept,
+                            note = "name: a remote folder's, as its place names it; count: the \
+                                    files other programs wrote there that its server has not \
+                                    been sent yet."
                         ),
                     ),
                     (Err(_), _) => {}
@@ -2506,16 +2655,76 @@ fn touched(points: Vec<&Path>, changes: &[skwir_core::op::Change]) -> Vec<PathBu
 }
 
 /// What a mount's place says while it sends what waits.
-fn sending(files: usize) -> String {
-    format!("Sending {} to the server…", self::files(files))
+fn sending(files: usize) -> Words {
+    words!(
+        remote_sending = "Sending { $count ->
+            [one] { $count } file
+           *[other] { $count } files
+        } to the server…",
+        count = files,
+        note = "Said on a remote folder's place while what other programs wrote there is sent."
+    )
 }
 
-/// `1 file`, `3 files`.
-fn files(n: usize) -> String {
-    if n == 1 {
-        "1 file".to_owned()
-    } else {
-        format!("{n} files")
+/// The mount `label` names was not let go of, and why.
+fn not_disconnected(label: &str, error: anyhow::Error) -> Words {
+    words!(
+        remote_not_disconnected = "{ $name } was not disconnected: { $error }",
+        name = Name(label.to_owned()),
+        error = error,
+        note = "name: a remote folder's, as its place names it."
+    )
+}
+
+/// `items` said as a list: “a”, “b” and “c”. Core has no list argument
+/// yet: the list is made of messages, each joining one more item.
+fn listed(mut items: Vec<Words>) -> Words {
+    let Some(mut list) = items.pop() else {
+        return Words::default();
+    };
+    if let Some(before) = items.pop() {
+        list = words!(
+            remote_list_last = "{ $first } and { $last }",
+            first = before,
+            last = list,
+            note = "The last two of a list (of programs, of actions): “a” and “b”."
+        );
+    }
+    while let Some(item) = items.pop() {
+        list = words!(
+            remote_list_more = "{ $first }, { $rest }",
+            first = item,
+            rest = list,
+            note = "An item of a list before the others: “a”, then the rest of it."
+        );
+    }
+    list
+}
+
+/// Sentences said one after the other, each in the reader's language
+/// where they are said (`Words::of_error`): what each tool said, why none
+/// can. Core has no list argument yet.
+#[derive(Debug)]
+struct OneAfterAnother(Vec<Words>);
+
+impl std::fmt::Display for OneAfterAnother {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (at, words) in self.0.iter().enumerate() {
+            if at > 0 {
+                f.write_str("; ")?;
+            }
+            write!(f, "{words}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for OneAfterAnother {}
+
+impl OneAfterAnother {
+    /// As words: an argument of a message.
+    fn said(self) -> Words {
+        Words::of_error(anyhow::Error::new(self))
     }
 }
 
@@ -2523,17 +2732,30 @@ fn files(n: usize) -> String {
 /// (`Executor::under_way_in`), named: letting go of the mount would cut
 /// them.
 fn under_way(app: &App, point: &Path) -> anyhow::Result<()> {
-    // English, their titles too, until the sentence is a message.
-    let named: Vec<String> = app
+    let named: Vec<Words> = app
         .executor
         .under_way_in(point)
         .into_iter()
-        .map(|n| format!("“{}”", n.english()))
+        .map(|title| {
+            words!(
+                remote_under_way_title = "“{ $title }”",
+                title = title,
+                note = "An action's title (copy 3 items to Docs), quoted."
+            )
+        })
         .collect();
-    match named.as_slice() {
-        [] => Ok(()),
-        [one] => anyhow::bail!("{one} is under way there"),
-        [rest @ .., last] => anyhow::bail!("{} and {last} are under way there", rest.join(", ")),
+    match named.len() {
+        0 => Ok(()),
+        count => anyhow::bail!(words!(
+            remote_under_way = "{ $count ->
+                [1] { $actions } is under way there
+               *[other] { $actions } are under way there
+            }",
+            count = count,
+            actions = listed(named),
+            note = "Why a remote folder is not let go of: actions: the titles of what Skwir \
+                    does there."
+        )),
     }
 }
 
@@ -2762,13 +2984,13 @@ mod tests {
         fn id(&self) -> &'static str {
             "slow"
         }
-        fn title(&self) -> &'static str {
-            "slow"
+        fn title(&self) -> Words {
+            "slow".into()
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Sftp]
         }
-        fn unavailable(&self) -> Option<String> {
+        fn unavailable(&self) -> Option<Words> {
             None
         }
         fn connect(
@@ -2828,13 +3050,13 @@ mod tests {
         fn id(&self) -> &'static str {
             self.id
         }
-        fn title(&self) -> &'static str {
-            self.id
+        fn title(&self) -> Words {
+            self.id.into()
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Nfs]
         }
-        fn unavailable(&self) -> Option<String> {
+        fn unavailable(&self) -> Option<Words> {
             None
         }
         fn connect(
@@ -2871,13 +3093,13 @@ mod tests {
         fn id(&self) -> &'static str {
             "configured"
         }
-        fn title(&self) -> &'static str {
-            "configured"
+        fn title(&self) -> Words {
+            "configured".into()
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Sftp]
         }
-        fn unavailable(&self) -> Option<String> {
+        fn unavailable(&self) -> Option<Words> {
             None
         }
         fn connect(
@@ -2903,7 +3125,7 @@ mod tests {
                     label: address.label(),
                     address,
                     kind: String::new(),
-                    kept: servers::Kept::Tool("in the test's file"),
+                    kept: servers::Kept::Tool(servers::Keeper::Fstab),
                 })
                 .collect();
             connector::Named {
@@ -2975,13 +3197,13 @@ mod tests {
         fn id(&self) -> &'static str {
             "counted"
         }
-        fn title(&self) -> &'static str {
-            "counted"
+        fn title(&self) -> Words {
+            "counted".into()
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Sftp]
         }
-        fn unavailable(&self) -> Option<String> {
+        fn unavailable(&self) -> Option<Words> {
             None
         }
         fn connect(

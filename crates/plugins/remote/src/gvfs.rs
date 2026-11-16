@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Offered, Recognised};
@@ -124,8 +126,8 @@ impl Connector for Gvfs {
         "gvfs"
     }
 
-    fn title(&self) -> &'static str {
-        "GVfs"
+    fn title(&self) -> Words {
+        Words::as_written("GVfs")
     }
 
     fn schemes(&self) -> &'static [Scheme] {
@@ -144,17 +146,17 @@ impl Connector for Gvfs {
         ]
     }
 
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Words> {
         if !cfg!(target_os = "linux") {
-            return Some("GVfs runs on Linux only".to_owned());
+            return Some(words!(remote_gvfs_linux_only = "GVfs runs on Linux only"));
         }
         if skwir_core::os_path::find_program("gio").is_none() {
-            return Some("gio (GLib) is not installed".to_owned());
+            return Some(crate::connector::not_installed("gio (GLib)"));
         }
         // Its daemon need not run yet (a desktop other than GNOME's): `gio
         // mount` starts it, and it starts its bridge.
         if self.bridge().is_none() && !self.can_start() {
-            return Some("GVfs is not installed".to_owned());
+            return Some(crate::connector::not_installed("GVfs"));
         }
         None
     }
@@ -167,7 +169,7 @@ impl Connector for Gvfs {
     ) -> anyhow::Result<Connected> {
         let top = address.top();
         let gio = skwir_core::os_path::find_program("gio")
-            .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("gio (GLib)")))?;
         mount(self.gio(&gio), &top, ask, cancel)?;
         // A daemon `gio` just started mounts its bridge as it starts: a
         // moment, looked for again.
@@ -177,14 +179,20 @@ impl Connector for Gvfs {
             skwir_core::fs::reach::changed();
         }
         if self.bridge().is_none() {
-            anyhow::bail!(
-                "GVfs mounted {top} but its FUSE bridge is not running: is gvfsd-fuse installed?"
-            );
+            anyhow::bail!(words!(
+                remote_gvfs_no_bridge = "GVfs mounted { $address } but its FUSE bridge is not running: is gvfsd-fuse installed?",
+                address = top.to_string(),
+                note = "address: the server's address (sftp://example.com/)."
+            ));
         }
         skwir_core::fs::reach::changed();
-        let (point, mounted) = self
-            .find_mount(&top)
-            .ok_or_else(|| anyhow::anyhow!("GVfs mounted {top} but its folder is not there"))?;
+        let (point, mounted) = self.find_mount(&top).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_gvfs_no_folder = "GVfs mounted { $address } but its folder is not there",
+                address = top.to_string(),
+                note = "address: the server's address (sftp://example.com/)."
+            ))
+        })?;
         // The folder asked, which is opened next.
         let asked = mounted.below(address).map_or_else(
             || point.clone(),
@@ -219,12 +227,13 @@ impl Connector for Gvfs {
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()> {
-        let address = recognised
-            .address
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("GVfs says no address for this mount"))?;
+        let address = recognised.address.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_gvfs_no_address = "GVfs says no address for this mount"
+            ))
+        })?;
         let gio = skwir_core::os_path::find_program("gio")
-            .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("gio (GLib)")))?;
         // Refused while GVfs is at work on the mount (busy: a read through
         // its bridge, a folder just listed; a file merely open is not),
         // asked again; gone, it is let go of.
@@ -307,7 +316,7 @@ fn answering(folder: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
             && Instant::now() < until
         {
             if cancel.is_cancelled() {
-                anyhow::bail!("cancelled");
+                anyhow::bail!(crate::connector::cancelled());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -317,7 +326,7 @@ fn answering(folder: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (folder, cancel, STALE_PATIENCE);
-        anyhow::bail!("GVfs runs on Linux only")
+        anyhow::bail!(words!(remote_gvfs_linux_only = "GVfs runs on Linux only"))
     }
 }
 
@@ -479,26 +488,42 @@ fn mount(
     let mut ended = false;
     let outcome = loop {
         if cancel.is_cancelled() {
-            break Err(anyhow::anyhow!("cancelled"));
+            break Err(anyhow::anyhow!(crate::connector::cancelled()));
         }
         if since.elapsed() > PATIENCE {
+            let seconds = PATIENCE.as_secs();
             // A device's name is its serial: it, as the message's start
             // names it.
-            let who = match top.scheme.device() {
-                Some(_) => "it",
-                None => top.host.as_str(),
+            let said = match top.scheme.device() {
+                Some(_) => words!(
+                    remote_gvfs_device_silent = "it did not answer within { $seconds ->
+                        [one] { $seconds } second
+                       *[other] { $seconds } seconds
+                    }",
+                    seconds = seconds,
+                    note = "it: a phone or a camera, which GVfs was asked to open."
+                ),
+                None => words!(
+                    remote_gvfs_server_silent = "{ $host } did not answer within { $seconds ->
+                        [one] { $seconds } second
+                       *[other] { $seconds } seconds
+                    }",
+                    host = top.host.as_str(),
+                    seconds = seconds,
+                    note = "host: the server's name or address, which GVfs was asked to open."
+                ),
             };
-            break Err(anyhow::anyhow!(
-                "{who} did not answer within {} seconds",
-                PATIENCE.as_secs()
-            ));
+            break Err(anyhow::anyhow!(said));
         }
         if !ended {
             match said_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Some(text)) => {
                     if let Some(asked) = prompts.feed(&text) {
                         let Some(answer) = answer(top, &asked, ask, cancel) else {
-                            break Err(anyhow::anyhow!("you cancelled"));
+                            break Err(anyhow::anyhow!(words!(
+                                remote_gvfs_you_cancelled = "you cancelled",
+                                note = "Why a connection was not made: the user cancelled a question it asked."
+                            )));
                         };
                         if let Some(stdin) = stdin.as_mut() {
                             // Written without a trace: it may be a password.
@@ -557,24 +582,32 @@ fn answer(
                 .unwrap_or_default(),
         ),
         Asked::Password { message } => {
+            // What GVfs asked, as it said it; else Skwir's own question.
             let title = if message.is_empty() {
-                format!("Password for {}", top.label())
+                crate::connector::password_for(&top.label()).say()
             } else {
                 message.clone()
             };
+            let connect = crate::connector::connect_button().say();
             // A key's passphrase is asked each time; a server's password
-            // may be kept (ADR-082).
+            // may be kept (ADR-082). GVfs's own words, read in English.
             if message.to_lowercase().contains("passphrase") {
-                ask.secret(&title, "Connect", cancel)
+                ask.secret(&title, &connect, cancel)
             } else {
-                ask.password(&title, "Connect", cancel).map(|p| p.text)
+                ask.password(&title, &connect, cancel).map(|p| p.text)
             }
         }
         Asked::Choice { message, choices } => {
             // GVfs asks to go on where it cannot vouch for the server: its
             // first choice goes on, the last cancels.
             let (go_on, _) = choices.first()?;
-            ask.confirm(&format!("Connect to {}?", top.host), message, cancel)
+            let title = words!(
+                remote_gvfs_connect_to = "Connect to { $host }?",
+                host = top.host.as_str(),
+                note = "A question asked where the server cannot be vouched for; host: its name \
+                        or address. What GVfs said is shown under it."
+            );
+            ask.confirm(&title.say(), message, cancel)
                 .then(|| go_on.to_string())
         }
     }

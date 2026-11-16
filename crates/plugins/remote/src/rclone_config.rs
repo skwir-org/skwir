@@ -26,6 +26,8 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use skwir_core::cancel::CancelToken;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::connector::Ask;
 use crate::mounter;
@@ -203,18 +205,23 @@ impl Step {
 /// Whether `name` may name a remote Skwir adds: what rclone takes
 /// (`address::rclone_name`), which its address holds, escaped
 /// (`rclone://my%20drive/`). Why not, where it may not.
-pub fn name_refusal(name: &str) -> Option<&'static str> {
+pub fn name_refusal(name: &str) -> Option<Words> {
     if crate::address::rclone_name(name) {
         return None;
     }
     Some(if name.is_empty() {
-        "A remote needs a name"
+        words!(remote_rclone_name_needed = "A remote needs a name")
     } else if name.starts_with(['-', ' ']) {
-        "A remote's name starts with neither - nor a space"
+        words!(remote_rclone_name_start = "A remote's name starts with neither - nor a space")
     } else if name.ends_with(' ') {
-        "A remote's name ends with no space"
+        words!(remote_rclone_name_end = "A remote's name ends with no space")
     } else {
-        "A remote's name holds letters, digits, spaces and _ - . + @ only"
+        words!(
+            remote_rclone_name_letters =
+                "A remote's name holds letters, digits, spaces and _ - . + @ only",
+            note = "The signs after “spaces and” are typed as they are: underscore, hyphen, \
+                    full stop, plus, at sign."
+        )
     })
 }
 
@@ -427,12 +434,12 @@ fn wait_serving(
         if child.try_wait().is_ok_and(|ended| ended.is_some()) {
             // What it said last is read whole first.
             std::thread::sleep(Duration::from_millis(50));
-            anyhow::bail!("{}", crate::rclone::words(&said.lock()));
+            anyhow::bail!(crate::rclone::words(&said.lock()));
         }
-        anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+        anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
         anyhow::ensure!(
             Instant::now() < deadline,
-            "rclone did not start serving its configuration"
+            words!(remote_rclone_not_serving = "rclone did not start serving its configuration")
         );
         std::thread::sleep(Duration::from_millis(30));
     }
@@ -633,7 +640,11 @@ pub fn config_file(
         .rev()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("rclone did not say where its configuration is"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_rclone_config_unsaid = "rclone did not say where its configuration is"
+            ))
+        })?;
     Ok(PathBuf::from(path))
 }
 
@@ -708,7 +719,6 @@ pub fn encrypt(
     drop(askpass);
     anyhow::ensure!(
         finished.status.success(),
-        "{}",
         crate::rclone::words(&finished.stderr)
     );
     Ok(())
@@ -747,8 +757,16 @@ impl Ask for ConfigAsk {
         {
             return Some(kept);
         }
-        self.inner
-            .secret("Password of rclone's configuration", "Open", cancel)
+        // Said for the window that asks it.
+        self.inner.secret(
+            &words!(remote_rclone_config_password = "Password of rclone's configuration").say(),
+            &words!(
+                remote_rclone_config_open = "Open",
+                note = "The button that gives the password of rclone's configuration, opening it."
+            )
+            .say(),
+            cancel,
+        )
     }
 
     fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {

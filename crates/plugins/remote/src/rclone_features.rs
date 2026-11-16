@@ -11,6 +11,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 use skwir_core::cancel::CancelToken;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::rc::{At, call};
 
@@ -57,7 +59,7 @@ pub fn of_mount(point: &Path, cancel: &CancelToken) -> Option<Features> {
         let listed = call(&at, "vfs/list", &json!({}), cancel)?;
         let fs = listed["vfses"][0]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("no remote mounted"))?
+            .ok_or_else(|| anyhow::anyhow!(no_remote()))?
             .to_owned();
         let info = call(&at, "operations/fsinfo", &json!({ "fs": fs }), cancel)?;
         let features = &info["Features"];
@@ -85,6 +87,14 @@ pub fn of_mount(point: &Path, cancel: &CancelToken) -> Option<Features> {
         .ok()
 }
 
+/// rclone's mount says it mounts no remote.
+fn no_remote() -> Words {
+    words!(
+        remote_rclone_no_remote = "no remote mounted",
+        note = "Why rclone could not be asked about a folder it mounted: it says it mounts none."
+    )
+}
+
 /// The configuration's remote `fs` names (`photos:` → `photos`); `None`
 /// for one made of an address's parts (`:webdav,…:`).
 fn configured(fs: &str) -> Option<&str> {
@@ -94,20 +104,32 @@ fn configured(fs: &str) -> Option<&str> {
 
 /// Where a remote of `config` (as `config/get` answers it: its `type` and
 /// options) keeps what is deleted, for the kinds of storage whose trash
-/// rclone empties (`CleanUp`), unless its options delete for good.
+/// rclone empties (`CleanUp`), unless its options delete for good. Said
+/// for the window, which names it where a deletion is asked and done
+/// (`fs::reach::Known::trash` is text).
 pub fn trash_of(config: &Value) -> Option<String> {
     let option = |name: &str| config[name].as_str().unwrap_or_default();
     let trash = match config["type"].as_str()? {
-        "drive" if option("use_trash") != "false" => "Google Drive's trash",
-        "onedrive" if option("hard_delete") != "true" => "OneDrive's recycle bin",
-        "box" => "Box's trash",
-        "pcloud" => "pCloud's trash",
-        "mega" if option("use_trash") != "false" => "MEGA's rubbish bin",
-        "jottacloud" if option("hard_delete") != "true" => "Jottacloud's trash",
-        "yandex" if option("hard_delete") != "true" => "Yandex Disk's trash",
+        "drive" if option("use_trash") != "false" => {
+            words!(remote_rclone_trash_drive = "Google Drive's trash")
+        }
+        "onedrive" if option("hard_delete") != "true" => {
+            words!(remote_rclone_trash_onedrive = "OneDrive's recycle bin")
+        }
+        "box" => words!(remote_rclone_trash_box = "Box's trash"),
+        "pcloud" => words!(remote_rclone_trash_pcloud = "pCloud's trash"),
+        "mega" if option("use_trash") != "false" => {
+            words!(remote_rclone_trash_mega = "MEGA's rubbish bin")
+        }
+        "jottacloud" if option("hard_delete") != "true" => {
+            words!(remote_rclone_trash_jottacloud = "Jottacloud's trash")
+        }
+        "yandex" if option("hard_delete") != "true" => {
+            words!(remote_rclone_trash_yandex = "Yandex Disk's trash")
+        }
         _ => return None,
     };
-    Some(trash.to_owned())
+    Some(trash.say())
 }
 
 /// `below`, a path below a mount, as rclone names it on its remote: its
@@ -130,14 +152,20 @@ fn remote_path(below: &Path) -> Option<String> {
 /// # Errors
 /// Where its remote control does not answer, or the storage refused.
 pub fn public_link(point: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
-    let at = control_of(point)
-        .ok_or_else(|| anyhow::anyhow!("Skwir did not mount it, so rclone cannot be asked"))?;
+    let at = control_of(point).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_rclone_not_asked = "Skwir did not mount it, so rclone cannot be asked"
+        ))
+    })?;
     let listed = call(&at, "vfs/list", &json!({}), cancel)?;
     let fs = listed["vfses"][0]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("no remote mounted"))?;
-    let below = remote_path(path.strip_prefix(point)?)
-        .ok_or_else(|| anyhow::anyhow!("rclone takes no such name"))?;
+        .ok_or_else(|| anyhow::anyhow!(no_remote()))?;
+    let below = remote_path(path.strip_prefix(point)?).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_rclone_no_such_name = "rclone takes no such name"
+        ))
+    })?;
     let answer = call(
         &at,
         "operations/publiclink",
@@ -148,7 +176,7 @@ pub fn public_link(point: &Path, path: &Path, cancel: &CancelToken) -> anyhow::R
         .as_str()
         .filter(|url| !url.is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("rclone made no link"))
+        .ok_or_else(|| anyhow::anyhow!(words!(remote_rclone_no_link = "rclone made no link")))
 }
 
 #[cfg(test)]

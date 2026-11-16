@@ -34,8 +34,17 @@ pub(crate) struct Failed {
 }
 
 impl std::fmt::Display for Failed {
+    /// Its words: in the reader's language while an error's chain is said.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} failed ({}): {}", self.tool, self.status, self.said)
+        let words = skwir_core::words!(
+            remote_runs_failed = "{ $tool } failed ({ $status }): { $said }",
+            tool = self.tool,
+            status = self.status.to_string(),
+            said = self.said.as_str(),
+            note = "tool: a program's name (sftp, rsync); status: how it ended, as the system \
+                    says it (exit status: 1); said: what it printed, in English."
+        );
+        std::fmt::Display::fmt(&words, f)
     }
 }
 
@@ -131,7 +140,7 @@ pub(crate) fn at_once_following(
     if let Some(error) = failed.into_inner() {
         return Err(error);
     }
-    anyhow::ensure!(!control.is_cancelled(), "cancelled");
+    anyhow::ensure!(!control.is_cancelled(), crate::connector::cancelled());
     Ok(())
 }
 

@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 
 use skwir_core::app::App;
 use skwir_core::form::{Choice, Field, Form, Kind, Values};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::address::{Address, Scheme};
 
@@ -35,41 +37,54 @@ pub struct MountOptions {
 }
 
 /// rclone's file caches, as it names them, and what each does.
-const CACHES: [(&str, &str); 4] = [
-    (
-        "full",
-        "What is read and written is kept on this disk an hour: read again from it, sent after it is closed, tried again",
-    ),
-    (
-        "writes",
-        "Files written are kept on this disk and sent after they are closed; each read asks the server",
-    ),
-    (
-        "minimal",
-        "Each read asks the server; a file written whole is on it once closed",
-    ),
-    (
-        "off",
-        "Nothing kept on this disk: some programs cannot write",
-    ),
-];
-
-/// The cache Automatic chooses for a server (ADR-102), and why: `full`,
-/// which keeps what is read and written, but `minimal` for a remote that
-/// encrypts or wraps others (`kind`, rclone's type: `full` would keep
-/// their files on this disk as read) and on the local network (`near`),
-/// where a read costs little and a server is expected to have a file
-/// written once it is closed.
-pub fn automatic(kind: Option<&str>, near: Option<bool>) -> (&'static str, &'static str) {
-    if kind.is_some_and(crate::rclone_forms::wraps_others) {
+fn caches() -> [(&'static str, Words); 4] {
+    [
+        (
+            "full",
+            words!(
+                remote_options_cache_full = "What is read and written is kept on this disk an hour: read again from it, sent after it is closed, tried again",
+                note = "What rclone's file cache “full” does."
+            ),
+        ),
+        (
+            "writes",
+            words!(
+                remote_options_cache_writes = "Files written are kept on this disk and sent after they are closed; each read asks the server",
+                note = "What rclone's file cache “writes” does."
+            ),
+        ),
         (
             "minimal",
-            "it encrypts or wraps other remotes, whose files Full would keep on this disk",
-        )
+            words!(
+                remote_options_cache_minimal =
+                    "Each read asks the server; a file written whole is on it once closed",
+                note = "What rclone's file cache “minimal” does."
+            ),
+        ),
+        (
+            "off",
+            words!(
+                remote_options_cache_off = "Nothing kept on this disk: some programs cannot write",
+                note = "What rclone's file cache “off” does."
+            ),
+        ),
+    ]
+}
+
+/// The cache Automatic chooses for a server (ADR-102), and why, as data
+/// the form says (`wraps`, `near`, `far`): `full`, which keeps what is
+/// read and written, but `minimal` for a remote that encrypts or wraps
+/// others (`kind`, rclone's type: `full` would keep their files on this
+/// disk as read) and on the local network (`near`), where a read costs
+/// little and a server is expected to have a file written once it is
+/// closed.
+pub fn automatic(kind: Option<&str>, near: Option<bool>) -> (&'static str, &'static str) {
+    if kind.is_some_and(crate::rclone_forms::wraps_others) {
+        ("minimal", "wraps")
     } else if near == Some(true) {
-        ("minimal", "it is on the local network")
+        ("minimal", "near")
     } else {
-        ("full", "what is read is read again from this disk")
+        ("full", "far")
     }
 }
 
@@ -114,7 +129,7 @@ pub fn keep(app: &App, top: &Address, options: &MountOptions) -> anyhow::Result<
 
 /// Whether `limit` is a bandwidth rclone takes: a rate (`10M`, `512k`,
 /// `1.5M`), or an upload's and a download's (`10M:1M`), or `off`.
-pub fn bandwidth_refusal(limit: &str) -> Option<&'static str> {
+pub fn bandwidth_refusal(limit: &str) -> Option<Words> {
     let rate = |rate: &str| {
         let digits = rate.trim_end_matches(['B', 'K', 'M', 'G', 'T', 'b', 'k', 'm', 'g', 't']);
         !digits.is_empty()
@@ -126,53 +141,99 @@ pub fn bandwidth_refusal(limit: &str) -> Option<&'static str> {
             Some((up, down)) => rate(up) && rate(down),
             None => rate(limit),
         };
-    (!fine).then_some(
-        "A bandwidth is a rate, as 10M or 512k, or an upload's and a download's, as 10M:1M",
-    )
+    (!fine).then(|| {
+        words!(
+            remote_options_bandwidth_refused =
+                "A bandwidth is a rate, as 10M or 512k, or an upload's and a download's, as 10M:1M"
+        )
+    })
 }
 
 /// The form of `top`'s options, holding `now`; `automatic` is what
 /// Automatic chooses there, and why (`automatic`).
 pub fn form(top: &Address, now: &MountOptions, automatic: (&str, &str)) -> Form {
-    let mut form = Form::new(format!("Mount Options of “{}”", top.label()), "Save")
-        .intro("Used when it next connects, by rclone or sshfs. GVfs and KIO mount as the desktop does.")
-        .field(
-            Field::new("read_only", "Read Only", Kind::Toggle)
-                .value(now.read_only.to_string())
-                .help("Nothing written there, by any program"),
-        );
+    let mut form = Form::new(
+        words!(
+            remote_options_title = "Mount Options of { $server }",
+            server = Name(top.label()),
+            note = "The title of a server's mount options; server: its login and name (me@nas)."
+        ),
+        words!(remote_options_save = "Save"),
+    )
+    .intro(words!(
+        remote_options_intro = "Used when it next connects, by rclone or sshfs. GVfs and KIO mount as the desktop does."
+    ))
+    .field(
+        Field::new(
+            "read_only",
+            words!(remote_options_read_only = "Read Only"),
+            Kind::Toggle,
+        )
+        .value(now.read_only.to_string())
+        .help(words!(
+            remote_options_read_only_help = "Nothing written there, by any program"
+        )),
+    );
     if top.scheme == Scheme::Sftp {
         form = form.field(
-            Field::new("compression", "Compression", Kind::Toggle)
-                .value(now.compression.to_string())
-                .help("ssh compresses what it sends (sshfs): faster on a slow network, slower on a fast one"),
+            Field::new(
+                "compression",
+                words!(remote_options_compression = "Compression"),
+                Kind::Toggle,
+            )
+            .value(now.compression.to_string())
+            .help(words!(
+                remote_options_compression_help = "ssh compresses what it sends (sshfs): faster on a slow network, slower on a fast one"
+            )),
         );
     }
+    // rclone's names for its caches are its own: as written.
+    let (chosen, why) = automatic;
     form.field(
         Field::new(
             "cache",
-            "File Cache",
+            words!(remote_options_cache = "File Cache"),
             Kind::Choice {
                 choices: std::iter::once(
-                    Choice::new("", "automatic")
-                        .detail(format!("{} here: {}", automatic.0, automatic.1)),
+                    Choice::new(
+                        "",
+                        words!(
+                            remote_options_cache_automatic = "automatic",
+                            note = "A choice of rclone's file cache, beside rclone's own (full, writes, minimal, off): Skwir chooses."
+                        ),
+                    )
+                    .detail(words!(
+                        remote_options_cache_automatic_detail = "{ $cache } here: { $why ->
+                            [wraps] it encrypts or wraps other remotes, whose files Full would keep on this disk
+                            [near] it is on the local network
+                           *[far] what is read is read again from this disk
+                        }",
+                        cache = chosen,
+                        why = why,
+                        note = "What Automatic chooses for this server, and why; cache: rclone's name for the cache chosen (full, minimal)."
+                    )),
                 )
-                .chain(
-                    CACHES
-                        .iter()
-                        .map(|(value, detail)| Choice::new(*value, *value).detail(*detail)),
-                )
+                .chain(caches().into_iter().map(|(value, detail)| {
+                    Choice::new(value, Words::as_written(value)).detail(detail)
+                }))
                 .collect(),
                 open: false,
             },
         )
         .value(now.cache.clone().unwrap_or_default())
-        .help("What rclone keeps of its files on this disk"),
+        .help(words!(
+            remote_options_cache_help = "What rclone keeps of its files on this disk"
+        )),
     )
     .field(
-        Field::text("bandwidth", "Bandwidth Limit")
-            .value(now.bandwidth.clone().unwrap_or_default())
-            .help("rclone's: 10M, or an upload's and a download's as 10M:1M; empty for none"),
+        Field::text(
+            "bandwidth",
+            words!(remote_options_bandwidth = "Bandwidth Limit"),
+        )
+        .value(now.bandwidth.clone().unwrap_or_default())
+        .help(words!(
+            remote_options_bandwidth_help = "rclone's: 10M, or an upload's and a download's as 10M:1M; empty for none"
+        )),
     )
 }
 
@@ -185,7 +246,7 @@ pub fn of_values(values: &Values) -> anyhow::Result<MountOptions> {
     if !bandwidth.is_empty()
         && let Some(refusal) = bandwidth_refusal(bandwidth)
     {
-        anyhow::bail!("{refusal}");
+        anyhow::bail!(refusal);
     }
     let cache = values.get("cache");
     Ok(MountOptions {

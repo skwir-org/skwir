@@ -270,7 +270,8 @@ impl GioCopy {
         makes_in: Option<&Path>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        let gio = program().ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
+        let gio = program()
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("gio (GLib)")))?;
         // What a run into `makes_in` makes whole: its files.
         let makes = |into: &Path, names: &[(PathBuf, u64)]| -> Vec<OsString> {
             if makes_in != Some(into) {

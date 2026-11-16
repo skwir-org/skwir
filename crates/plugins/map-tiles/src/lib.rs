@@ -27,6 +27,8 @@ use skwir_core::plugin::Plugin;
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::{RecordField, SettingSpec};
 use skwir_core::tiles::{Palette, SourceInfo, TileDone, TileRequest, TileSource};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 const ID: &str = "map-tiles";
 pub const SOURCE_KEY: &str = "map-tiles.source";
@@ -61,27 +63,43 @@ fn servers(app: &App) -> Vec<Server> {
 /// the same list.
 fn declare_source(app: &App) {
     let servers = servers(app);
-    let mut choices: Vec<(String, String)> = vec![
-        (OUTLINE.into(), "Outline".into()),
-        (server::OSM_ID.into(), "OpenStreetMap".into()),
+    let mut choices: Vec<(String, Words)> = vec![
+        (
+            OUTLINE.into(),
+            words!(
+                map_tiles_outline = "Outline",
+                note = "A map background: the outline of the land, drawn without the network."
+            ),
+        ),
+        // Names, as their owners and the user wrote them.
+        (server::OSM_ID.into(), Words::as_written("OpenStreetMap")),
     ];
-    choices.extend(
-        servers
-            .iter()
-            .map(|s| (format!("{SERVER_CHOICE}{}", s.id), s.name.clone())),
-    );
-    let choices: Vec<(&str, &str)> = choices
+    choices.extend(servers.iter().map(|s| {
+        (
+            format!("{SERVER_CHOICE}{}", s.id),
+            Words::as_written(s.name.clone()),
+        )
+    }));
+    let choices: Vec<(&str, Words)> = choices
         .iter()
-        .map(|(value, label)| (value.as_str(), label.as_str()))
+        .map(|(value, label)| (value.as_str(), label.clone()))
         .collect();
-    app.settings.declare(SettingSpec::choice(
+    app.settings.declare(SettingSpec::choice_words(
         SOURCE_KEY,
-        "Map background",
-        "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look.",
+        words!(map_tiles_source = "Map background"),
+        words!(
+            map_tiles_source_description = "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look."
+        ),
         OUTLINE,
-        &choices,
+        choices,
     )
-    .more_choices("the tile servers you add")
+    .more_choices(
+        &words!(
+            map_tiles_more_choices = "the tile servers you add",
+            note = "Said where the settings file names a background not listed: it may be among these."
+        )
+        .say(),
+    )
     .page(skwir_core::settings::page::MEDIA)
     .section(skwir_core::settings::section::MAPS));
 }
@@ -136,30 +154,83 @@ impl Plugin for MapTilesPlugin {
         app.settings.declare(
             SettingSpec::records(
                 SERVERS_KEY,
-                "Tile servers",
-                "Backgrounds from other servers, to choose in Map background or from a map.",
-                "tile server",
+                words!(map_tiles_servers = "Tile servers"),
+                words!(
+                    map_tiles_servers_description = "Backgrounds from other servers, to choose in Map background or from a map."
+                ),
+                &words!(
+                    map_tiles_server_record = "tile server",
+                    note = "What one record of the list is, placed in the settings window's buttons and titles (Add, Remove)."
+                )
+                .say(),
                 vec![
-                    RecordField::text("name", "Name", "What the server is called in the list", "Topographic").required(),
                     RecordField::text(
-                        "url",
-                        "Address",
-                        "Where a tile is: {z}, {x} and {y} (or {-y}, counted from the bottom), or {q} for a quadkey; {s} for a subdomain, {r} for @2x on a dense screen, {key} for the API key",
-                        "https://tiles.example.org/{z}/{x}/{y}.png",
+                        "name",
+                        words!(map_tiles_server_name = "Name"),
+                        words!(map_tiles_server_name_description = "What the server is called in the list"),
+                        words!(
+                            map_tiles_server_name_example = "Topographic",
+                            note = "An example of a tile server's name, shown in its empty field."
+                        ),
                     )
                     .required(),
-                    RecordField::text("subdomains", "Subdomains", "What {s} stands for, one after another", "a b c"),
-                    RecordField::text("attribution", "Attribution", "What the server's licence asks to show on the map under its tiles", "© …"),
-                    RecordField::integer("max_zoom", "Deepest zoom", "Closer views enlarge the tiles of this zoom", (0, 22)),
+                    RecordField::text(
+                        "url",
+                        words!(map_tiles_server_address = "Address"),
+                        words!(
+                            map_tiles_server_address_description = "Where a tile is: { \"{z}\" }, { \"{x}\" } and { \"{y}\" } (or { \"{-y}\" }, counted from the bottom), or { \"{q}\" } for a quadkey; { \"{s}\" } for a subdomain, { \"{r}\" } for @2x on a dense screen, { \"{key}\" } for the API key",
+                            note = "What is in braces is typed as it is in a tile server's address: never translated."
+                        ),
+                        Words::as_written("https://tiles.example.org/{z}/{x}/{y}.png"),
+                    )
+                    .required(),
+                    RecordField::text(
+                        "subdomains",
+                        words!(map_tiles_server_subdomains = "Subdomains"),
+                        words!(
+                            map_tiles_server_subdomains_description = "What { \"{s}\" } stands for, one after another"
+                        ),
+                        Words::as_written("a b c"),
+                    ),
+                    RecordField::text(
+                        "attribution",
+                        words!(map_tiles_server_attribution = "Attribution"),
+                        words!(
+                            map_tiles_server_attribution_description = "What the server's licence asks to show on the map under its tiles"
+                        ),
+                        Words::as_written("© …"),
+                    ),
+                    RecordField::integer(
+                        "max_zoom",
+                        words!(map_tiles_server_max_zoom = "Deepest zoom"),
+                        words!(
+                            map_tiles_server_max_zoom_description = "Closer views enlarge the tiles of this zoom"
+                        ),
+                        (0, 22),
+                    ),
                     RecordField::pairs(
                         "headers",
-                        "Headers",
-                        "Sent with every request: User-Agent replaces skwir's, Referer, Authorization… {key} is replaced by the API key",
+                        words!(map_tiles_server_headers = "Headers"),
+                        words!(
+                            map_tiles_server_headers_description = "Sent with every request: User-Agent replaces skwir's, Referer, Authorization… { \"{key}\" } is replaced by the API key"
+                        ),
                     ),
-                    RecordField::secret(KEY_FIELD, "API key", "Kept in your keyring, never in the settings. Put {key} in the address or a header where it goes"),
+                    RecordField::secret(
+                        KEY_FIELD,
+                        words!(map_tiles_server_key = "API key"),
+                        words!(
+                            map_tiles_server_key_description = "Kept in your keyring, never in the settings. Put { \"{key}\" } in the address or a header where it goes"
+                        ),
+                    ),
                 ],
             )
-            .record_action("Test", "map-tiles.test_server")
+            .record_action(
+                words!(
+                    map_tiles_server_test = "Test",
+                    note = "A button on each tile server: asks it for one tile."
+                ),
+                "map-tiles.test_server",
+            )
             .page(skwir_core::settings::page::MEDIA)
             .section(skwir_core::settings::section::MAPS)
             .validate_with(|value, _| server::check_servers(value)),
@@ -180,13 +251,22 @@ impl Plugin for MapTilesPlugin {
             ID,
             Topic::Skwir,
             "map-tiles.test_server",
-            "Test a tile server",
-            "Ask a tile server for one tile, now, and say what it answered",
+            words!(map_tiles_test_server = "Test a tile server"),
+            words!(
+                map_tiles_test_server_description =
+                    "Ask a tile server for one tile, now, and say what it answered"
+            ),
             move |args, app| {
                 let server = servers(app)
                     .into_iter()
                     .find(|s| s.id == args.id)
-                    .ok_or_else(|| anyhow::anyhow!("No tile server {}", args.id))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(words!(
+                            map_tiles_no_server = "No tile server { $id }",
+                            id = args.id.clone(),
+                            note = "id: the id a command was given, which no tile server has."
+                        ))
+                    })?;
                 tester.test(Arc::new(server), app);
                 Ok(Outcome::Done)
             },
@@ -289,14 +369,24 @@ impl Source {
                 match result {
                     Ok(image) => app.notify(
                         NotifyLevel::Info,
-                        format!(
-                            "“{name}” answered with a tile of {}×{}",
-                            image.width, image.height
+                        words!(
+                            map_tiles_server_answered =
+                                "{ $name } answered with a tile of { $width }×{ $height }",
+                            name = Name(name),
+                            width = image.width.to_string(),
+                            height = image.height.to_string(),
+                            note =
+                                "name: a tile server's; width and height: the tile's, in pixels."
                         ),
                     ),
                     Err(error) => app.notify_about_setting(
                         NotifyLevel::Error,
-                        format!("“{name}” gave no tile: {error:#}"),
+                        words!(
+                            map_tiles_server_failed = "{ $name } gave no tile: { $error }",
+                            name = Name(name),
+                            error = error,
+                            note = "name: a tile server's; error: why it gave none."
+                        ),
                         SERVERS_KEY,
                     ),
                 }

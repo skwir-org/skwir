@@ -12,6 +12,8 @@ use std::sync::Arc;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::address::Address;
 use crate::connector::Ask;
@@ -45,9 +47,14 @@ fn choice(value: &str, key: &Key) -> Choice {
     } else {
         format!("{} ({kind})", key.comment)
     };
+    // Its comment, type and file are ssh's: as written.
     let title = match &key.file {
-        Some(file) => format!("{said}, {}", file.display()),
-        None => format!("{said}, in the ssh agent"),
+        Some(file) => Words::as_written(format!("{said}, {}", file.display())),
+        None => words!(
+            remote_keys_in_agent = "{ $key }, in the ssh agent",
+            key = said,
+            note = "A key the ssh agent holds: key is its comment and type (me@laptop (ed25519))."
+        ),
     };
     Choice::new(value, title).detail(key.fingerprint.clone())
 }
@@ -57,33 +64,57 @@ fn choice(value: &str, key: &Key) -> Choice {
 fn form(top: &Address, offered: &[(String, Key)], ssh_dir: &std::path::Path, new: bool) -> Form {
     let mut choices: Vec<Choice> = offered.iter().map(|(v, k)| choice(v, k)).collect();
     if new {
-        choices
-            .push(Choice::new(NEW, "A new key").detail(format!("Made in {}", ssh_dir.display())));
+        choices.push(
+            Choice::new(NEW, words!(remote_keys_new = "A new key")).detail(words!(
+                remote_keys_new_made_in = "Made in { $folder }",
+                folder = ssh_dir.display().to_string(),
+                note = "Where a new key is made: folder is a path (~/.ssh)."
+            )),
+        );
     }
     let first = offered.first().map_or(NEW, |(v, _)| v.as_str()).to_owned();
-    let form = Form::new(format!("Set Up Key Login on “{}”", top.label()), "Set Up")
-        .intro("Your key's public half is added to the server's authorized keys: ssh then logs in with it, no password. Its private half never leaves this machine. The server's password is asked once.")
-        .field(
-            Field::new("key", "Key", Kind::Choice { choices, open: false })
-                .value(first)
-                .required(),
-        );
+    let form = Form::new(
+        words!(
+            remote_keys_form_title = "Set Up Key Login on { $server }",
+            server = Name(top.label()),
+            note = "server: the login and server a key is set up for (me@nas)."
+        ),
+        words!(remote_keys_form_accept = "Set Up"),
+    )
+    .intro(words!(
+        remote_keys_form_intro = "Your key's public half is added to the server's authorized keys: ssh then logs in with it, no password. Its private half never leaves this machine. The server's password is asked once."
+    ))
+    .field(
+        Field::new(
+            "key",
+            words!(remote_keys_form_key = "Key"),
+            Kind::Choice {
+                choices,
+                open: false,
+            },
+        )
+        .value(first)
+        .required(),
+    );
     if !new {
         return form;
     }
     form.field(
         Field::new(
             "passphrase",
-            "New Key's Passphrase",
+            words!(remote_keys_form_passphrase = "New Key's Passphrase"),
             Kind::Secret { kept: false },
         )
-        .help(
-            "Encrypts a new key: asked when it is used, unless the agent holds it. Empty for none.",
-        ),
+        .help(words!(
+            remote_keys_form_passphrase_help = "Encrypts a new key: asked when it is used, unless the agent holds it. Empty for none."
+        )),
     )
     .field(Field::new(
         "again",
-        "The Same Again",
+        words!(
+            remote_keys_form_again = "The Same Again",
+            note = "The field where a new key's passphrase is typed a second time."
+        ),
         Kind::Secret { kept: false },
     ))
 }
@@ -106,11 +137,11 @@ pub fn set_up(
     top: &Address,
     cancel: &CancelToken,
 ) -> anyhow::Result<()> {
-    let ssh_dir: PathBuf = with
-        .ssh_dir
-        .clone()
-        .or_else(keys::ssh_dir)
-        .ok_or_else(|| anyhow::anyhow!("there is no home folder for ssh's keys"))?;
+    let ssh_dir: PathBuf = with.ssh_dir.clone().or_else(keys::ssh_dir).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_keys_no_home = "there is no home folder for ssh's keys"
+        ))
+    })?;
     let offered = offered(
         keys::agent_keys(with.agent.as_deref(), cancel),
         keys::default_keys(&ssh_dir, cancel),
@@ -118,8 +149,12 @@ pub fn set_up(
     let new = keys::makes_new_key(&ssh_dir);
     anyhow::ensure!(
         new || !offered.is_empty(),
-        "ssh offers no key, and a new one would be made over the one at {}",
-        ssh_dir.join("id_ed25519").display()
+        words!(
+            remote_keys_none_offered =
+                "ssh offers no key, and a new one would be made over the one at { $path }",
+            path = ssh_dir.join("id_ed25519").display().to_string(),
+            note = "path: where ssh's default key is."
+        )
     );
     let blank = form(top, &offered, &ssh_dir, new);
     let mut asked = blank.clone();
@@ -128,7 +163,10 @@ pub fn set_up(
             return Ok(());
         };
         if values.get("key") == NEW && values.get("passphrase") != values.get("again") {
-            asked = blank.clone().again(&values, "The two passphrases differ");
+            asked = blank.clone().again(
+                &values,
+                words!(remote_keys_passphrases_differ = "The two passphrases differ"),
+            );
             continue;
         }
         break values;
@@ -147,22 +185,34 @@ pub fn set_up(
             .iter()
             .find(|(v, _)| v == chosen)
             .map(|(_, k)| k.clone())
-            .ok_or_else(|| anyhow::anyhow!("no such key"))?
+            .ok_or_else(|| anyhow::anyhow!(words!(remote_keys_no_such_key = "no such key")))?
     };
     let ask: Arc<dyn Ask> = Arc::new(crate::WindowAsk { app: app.weak() });
     let added = keys::install(top, std::slice::from_ref(&key), &with.ssh, &ask, cancel)?;
     let label = top.label();
     if keys::logs_in(top, &with.ssh, Some(&ask), cancel) {
         let said = if added == 0 {
-            format!("“{label}” had the key already: ssh logs in with it")
+            words!(
+                remote_keys_had_it = "{ $server } had the key already: ssh logs in with it",
+                server = Name(label),
+                note = "server: the login and server (me@nas)."
+            )
         } else {
-            format!("Key login is set up on “{label}”")
+            words!(
+                remote_keys_set_up = "Key login is set up on { $server }",
+                server = Name(label),
+                note = "server: the login and server (me@nas)."
+            )
         };
         app.notify(NotifyLevel::Info, said);
     } else {
         app.notify(
             NotifyLevel::Warning,
-            format!("The key is on “{label}”, but ssh does not log in with it: the server may not take keys"),
+            words!(
+                remote_keys_not_taken = "The key is on { $server }, but ssh does not log in with it: the server may not take keys",
+                server = Name(label),
+                note = "server: the login and server (me@nas)."
+            ),
         );
     }
     Ok(())
@@ -199,8 +249,11 @@ mod tests {
             panic!("a choice of keys");
         };
         assert!(!open);
-        assert_eq!(choices[0].title, "me@laptop (ed25519), in the ssh agent");
-        assert_eq!(choices[1].title, "ed25519, /k/id_ecdsa");
+        assert_eq!(
+            choices[0].title.english(),
+            "me@laptop (ed25519), in the ssh agent"
+        );
+        assert_eq!(choices[1].title.english(), "ed25519, /k/id_ecdsa");
         assert_eq!(choices[2].value, NEW);
         assert_eq!(form.fields[0].value, "agent:0", "the agent's first");
         // One there of its name already: no new key offered, nor asked

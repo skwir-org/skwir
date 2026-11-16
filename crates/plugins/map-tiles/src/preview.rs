@@ -11,6 +11,7 @@ use skwir_core::inspection::{InspectRequest, Inspection, InspectionKind};
 use skwir_core::preview::{PreviewProvider, PreviewRequest};
 use skwir_core::scheduler::Scheduler;
 use skwir_core::tiles::Layer;
+use skwir_core::words;
 use skwir_platform::inspection::{check, details};
 
 use crate::archive::{self, Archive, Format, Kind};
@@ -86,20 +87,32 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
     let about = archive.about();
     let area = about.bounds.unwrap_or(WORLD);
     let drawn = about.format.drawn() && about.unreadable.is_none();
+    // Said on a worker for the window that shows it.
     let notice = if drawn {
         String::new()
     } else if let Some(why) = &about.unreadable {
-        format!("{why}: the map shows where it has tiles")
-    } else if about.format == Format::Vector {
-        "Vector tiles are not drawn: the map shows where the file has tiles".into()
-    } else {
-        format!(
-            "{} tiles are not drawn: the map shows where the file has tiles",
-            match about.format {
-                Format::Avif => "AVIF",
-                _ => "Its",
-            }
+        words!(
+            map_tiles_unreadable_notice = "{ $why }: the map shows where it has tiles",
+            why = why.clone(),
+            note = "why: why a tile archive's tiles cannot be read (they are compressed in a way skwir does not read)."
         )
+        .say()
+    } else {
+        match about.format {
+            Format::Vector => words!(
+                map_tiles_vector_notice =
+                    "Vector tiles are not drawn: the map shows where the file has tiles"
+            ),
+            Format::Avif => words!(
+                map_tiles_avif_notice =
+                    "AVIF tiles are not drawn: the map shows where the file has tiles"
+            ),
+            _ => words!(
+                map_tiles_tiles_notice =
+                    "Its tiles are not drawn: the map shows where the file has tiles"
+            ),
+        }
+        .say()
     };
     let doc = GeoDoc {
         // Its own tiles show where it has them; an outline would cover
@@ -118,13 +131,26 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
     let zoom = if about.min_zoom == about.max_zoom {
         about.min_zoom.to_string()
     } else {
-        format!("{} to {}", about.min_zoom, about.max_zoom)
+        words!(
+            map_tiles_zoom_range = "{ $from } to { $to }",
+            from = about.min_zoom.to_string(),
+            to = about.max_zoom.to_string(),
+            note =
+                "The zoom levels a tile archive has tiles for: from the farthest to the closest."
+        )
+        .say()
     };
     let corners = about.bounds.map(|b| {
-        format!(
-            "{:.5}, {:.5} to {:.5}, {:.5}",
-            b.south, b.west, b.north, b.east
+        words!(
+            map_tiles_area = "{ $south }, { $west } to { $north }, { $east }",
+            south = format!("{:.5}", b.south),
+            west = format!("{:.5}", b.west),
+            north = format!("{:.5}", b.north),
+            east = format!("{:.5}", b.east),
+            note = "Where a tile archive has tiles: its south-west corner to its north-east one, \
+                    latitude then longitude, in degrees."
         )
+        .say()
     });
     let title = if about.name.is_empty() {
         about.container.clone()
@@ -135,16 +161,54 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
         kind: InspectionKind::Map,
         title,
         details: details([
-            ("Name", Some(about.name.clone())),
-            ("Description", Some(about.description.clone())),
-            ("Format", Some(about.container.clone())),
-            ("Tiles", Some(about.format.describe().to_owned())),
-            ("Zoom", Some(zoom)),
-            ("Area", corners),
-            ("Tile count", about.tiles.map(|n| n.to_string())),
-            ("Layers", Some(about.layers.join(", "))),
-            ("Attribution", Some(about.attribution.clone())),
-            ("Version", Some(about.version.clone())),
+            (
+                &*words!(map_tiles_detail_name = "Name").say(),
+                Some(about.name.clone()),
+            ),
+            (
+                &*words!(map_tiles_detail_description = "Description").say(),
+                Some(about.description.clone()),
+            ),
+            (
+                &*words!(map_tiles_detail_format = "Format").say(),
+                Some(about.container.clone()),
+            ),
+            (
+                &*words!(
+                    map_tiles_detail_tiles = "Tiles",
+                    note = "A tile archive's detail: what its tiles are (PNG pictures, vector shapes)."
+                )
+                .say(),
+                Some(about.format.describe().say()),
+            ),
+            (
+                &*words!(map_tiles_detail_zoom = "Zoom").say(),
+                Some(zoom),
+            ),
+            (
+                &*words!(
+                    map_tiles_detail_area = "Area",
+                    note = "A tile archive's detail: where on Earth it has tiles."
+                )
+                .say(),
+                corners,
+            ),
+            (
+                &*words!(map_tiles_detail_count = "Tile count").say(),
+                about.tiles.map(|n| n.to_string()),
+            ),
+            (
+                &*words!(map_tiles_detail_layers = "Layers").say(),
+                Some(about.layers.join(", ")),
+            ),
+            (
+                &*words!(map_tiles_detail_attribution = "Attribution").say(),
+                Some(about.attribution.clone()),
+            ),
+            (
+                &*words!(map_tiles_detail_version = "Version").say(),
+                Some(about.version.clone()),
+            ),
         ]),
         notice,
         // A database or a binary file: no source to read.

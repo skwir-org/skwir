@@ -30,6 +30,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
+use skwir_core::words;
 use skwir_platform::process;
 
 use crate::address::{Address, Scheme};
@@ -244,7 +245,7 @@ impl Server {
     fn of(address: &Address) -> anyhow::Result<Server> {
         anyhow::ensure!(
             address.scheme == Scheme::Sftp,
-            "key login is set up for SFTP servers"
+            words!(remote_keys_sftp_only = "key login is set up for SFTP servers")
         );
         address.ssh_user()?;
         let user = address
@@ -442,7 +443,11 @@ impl Drop for Master<'_> {
 fn private_folder() -> anyhow::Result<PathBuf> {
     let folder = connector::mounts_folder()
         .and_then(|folder| folder.parent().map(Path::to_path_buf))
-        .ok_or_else(|| anyhow::anyhow!("there is no runtime folder"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_keys_no_runtime = "there is no runtime folder"
+            ))
+        })?;
     skwir_core::folders::private(&folder)?;
     Ok(folder)
 }
@@ -553,7 +558,7 @@ pub fn new_key(
 ) -> anyhow::Result<Key> {
     anyhow::ensure!(
         !comment.chars().any(char::is_control),
-        "a key's comment is one line"
+        words!(remote_keys_comment_line = "a key's comment is one line")
     );
     let program = process::required("ssh-keygen")?;
     mounter::make_private(ssh_dir)?;
@@ -562,8 +567,10 @@ pub fn new_key(
     for path in [&file, &public] {
         anyhow::ensure!(
             std::fs::symlink_metadata(path).is_err(),
-            "there is a key at {} already",
-            path.display()
+            words!(
+                remote_keys_already_there = "there is a key at { $path } already",
+                path = path.display().to_string()
+            )
         );
     }
     // Its two questions answered with the passphrase, nothing else.
@@ -597,19 +604,26 @@ pub fn new_key(
     let finished = made.inspect_err(|_| removed())?;
     if !finished.status.success() {
         removed();
-        anyhow::bail!("ssh-keygen failed: {}", finished.stderr);
+        anyhow::bail!(words!(
+            remote_keys_keygen_failed = "ssh-keygen failed: { $said }",
+            said = finished.stderr.clone(),
+            note = "said: what ssh-keygen printed, as it wrote it."
+        ));
     }
     // An askpass that never ran would have given ssh-keygen an empty
     // passphrase: a key left unencrypted is no key the user asked for.
     if !passphrase.is_empty() && answered.load(Ordering::SeqCst) != 2 {
         removed();
-        anyhow::bail!("ssh-keygen was not given the passphrase");
+        anyhow::bail!(words!(
+            remote_keys_keygen_no_passphrase = "ssh-keygen was not given the passphrase"
+        ));
     }
     let text = skwir_core::fs::file::read_regular_text(&public, PUBLIC_MOST)?;
-    let key = text
-        .lines()
-        .find_map(Key::parse)
-        .ok_or_else(|| anyhow::anyhow!("ssh-keygen wrote no public key"))?;
+    let key = text.lines().find_map(Key::parse).ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_keys_keygen_no_public = "ssh-keygen wrote no public key"
+        ))
+    })?;
     Ok(Key {
         file: Some(file),
         ..key.found(cancel)
@@ -661,7 +675,10 @@ pub fn install(
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
 ) -> anyhow::Result<usize> {
-    anyhow::ensure!(!keys.is_empty(), "no key was chosen");
+    anyhow::ensure!(
+        !keys.is_empty(),
+        words!(remote_keys_none_chosen = "no key was chosen")
+    );
     let server = Server::of(address)?;
     let program = process::required("ssh")?;
     let attempt = mounter::attempt(cancel);
@@ -693,21 +710,25 @@ pub fn install(
         return Ok(added.trim().parse().unwrap_or(0));
     }
     if said.lines().any(|line| line == ADDING) {
-        anyhow::bail!(
-            "the server could not add the keys: {}",
-            finished
-                .stderr
-                .lines()
-                .last()
-                .unwrap_or("it did not say why")
-        );
+        // Its last line, as the server's shell wrote it.
+        anyhow::bail!(match finished.stderr.lines().last() {
+            Some(why) => words!(
+                remote_keys_not_added = "the server could not add the keys: { $why }",
+                why = why,
+                note = "why: what the server's shell printed last, as it wrote it."
+            ),
+            None => words!(
+                remote_keys_not_added_unsaid =
+                    "the server could not add the keys: it did not say why"
+            ),
+        });
     }
     let logged_in = match &master {
         Some(master) => master.running(),
         None => ran(&finished),
     };
     if !logged_in {
-        let error = anyhow::anyhow!("{}", crate::sshfs::words(&finished.stderr));
+        let error = anyhow::anyhow!(crate::sshfs::words(&finished.stderr));
         return Err(mounter::ended(&attempt, cancel, error));
     }
     typed.worked();
@@ -757,10 +778,11 @@ fn by_sftp(
     } else if got.stderr.contains("not found") {
         String::new()
     } else {
-        anyhow::bail!(
-            "the server's authorized keys could not be read: {}",
-            got.stderr
-        );
+        anyhow::bail!(words!(
+            remote_keys_unread = "the server's authorized keys could not be read: { $said }",
+            said = got.stderr.clone(),
+            note = "said: what sftp printed, as it wrote it."
+        ));
     };
     let (text, added) = merged(&had, keys);
     if added == 0 {
@@ -779,7 +801,11 @@ fn by_sftp(
     let put = session(batch)?;
     if !put.status.success() {
         let _ = session(format!("-rm {staged}\n"));
-        anyhow::bail!("the server refused the keys: {}", put.stderr);
+        anyhow::bail!(words!(
+            remote_keys_refused = "the server refused the keys: { $said }",
+            said = put.stderr.clone(),
+            note = "said: what sftp printed, as it wrote it."
+        ));
     }
     Ok(added)
 }

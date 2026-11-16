@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Offered, Recognised};
@@ -167,10 +169,14 @@ impl Kmtp {
             .held(self.on_kde())?
             .into_iter()
             .find(|h| h.offered.address.same_server(&top))
-            .ok_or_else(|| anyhow::anyhow!("KDE's kmtpd does not hold this phone"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_kmtp_not_held = "KDE's kmtpd does not hold this phone"
+                ))
+            })?;
         let helper = self
             .helper()
-            .ok_or_else(|| anyhow::anyhow!("{} is not installed", WORKER.executable))?;
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed(WORKER.executable)))?;
         let point = mounter::point_for(self.id(), &top)?;
         let mut command = std::process::Command::new(helper);
         command
@@ -225,20 +231,25 @@ impl Connector for Kmtp {
         "kmtp"
     }
 
-    fn title(&self) -> &'static str {
-        "KDE's kmtpd"
+    fn title(&self) -> Words {
+        words!(
+            remote_kmtpd = "KDE's kmtpd",
+            note = "A program of KDE's that holds phones plugged in over USB."
+        )
     }
 
     fn schemes(&self) -> &'static [Scheme] {
         &[Scheme::Mtp]
     }
 
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Words> {
         if !cfg!(target_os = "linux") {
-            return Some("KDE's kmtpd is reached on Linux only".to_owned());
+            return Some(words!(
+                remote_kmtpd_linux_only = "KDE's kmtpd is reached on Linux only"
+            ));
         }
         if self.helper().is_none() {
-            return Some(format!("{} is not installed", WORKER.executable));
+            return Some(crate::connector::not_installed(WORKER.executable));
         }
         None
     }
@@ -276,7 +287,9 @@ impl Connector for Kmtp {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (address, cancel);
-            anyhow::bail!("KDE's kmtpd is reached on Linux only")
+            anyhow::bail!(words!(
+                remote_kmtpd_linux_only = "KDE's kmtpd is reached on Linux only"
+            ))
         }
     }
 

@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::geo::Bounds;
 use skwir_core::preview::{FileSource, ReadSeek};
+use skwir_core::words;
 
 use crate::archive::{About, Archive, Compression, Format, TILE_INFLATED, inflate};
 
@@ -54,7 +55,7 @@ impl Section {
         let end = offset.checked_add(length);
         anyhow::ensure!(
             end.is_some_and(|end| end <= self.length),
-            "The archive points outside itself"
+            words!(map_tiles_points_outside = "The archive points outside itself")
         );
         Ok(Section {
             offset: self.offset + offset,
@@ -89,11 +90,17 @@ fn compression(byte: u8) -> Compression {
 }
 
 fn header(bytes: &[u8; HEADER], len: u64) -> anyhow::Result<Header> {
-    anyhow::ensure!(bytes.starts_with(MAGIC), "Not a PMTiles file");
+    anyhow::ensure!(
+        bytes.starts_with(MAGIC),
+        words!(map_tiles_not_pmtiles = "Not a PMTiles file")
+    );
     let version = bytes[7];
     anyhow::ensure!(
         version == 3,
-        "PMTiles version {version} is not read; version 3 is"
+        words!(
+            map_tiles_pmtiles_version = "PMTiles version { $version } is not read; version 3 is",
+            version = version.to_string()
+        )
     );
     let u64_at = |at: usize| {
         let mut word = [0u8; 8];
@@ -131,16 +138,18 @@ fn header(bytes: &[u8; HEADER], len: u64) -> anyhow::Result<Header> {
 fn varint(bytes: &[u8], at: &mut usize) -> anyhow::Result<u64> {
     let mut value = 0u64;
     for shift in (0..64).step_by(7) {
-        let byte = *bytes
-            .get(*at)
-            .context("A directory of the archive ends early")?;
+        let byte = *bytes.get(*at).context(words!(
+            map_tiles_directory_ends = "A directory of the archive ends early"
+        ))?;
         *at += 1;
         value |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
             return Ok(value);
         }
     }
-    anyhow::bail!("A directory of the archive holds a number too large")
+    anyhow::bail!(words!(
+        map_tiles_directory_number = "A directory of the archive holds a number too large"
+    ))
 }
 
 /// A directory inflated: how many entries, then their ids (each the
@@ -152,7 +161,7 @@ fn directory(bytes: &[u8]) -> anyhow::Result<Vec<Entry>> {
     // Each entry takes four bytes at least.
     anyhow::ensure!(
         count <= bytes.len() as u64 / 4,
-        "A directory of the archive is damaged"
+        words!(map_tiles_directory_damaged = "A directory of the archive is damaged")
     );
     let count = count as usize;
     let mut entries = vec![
@@ -166,9 +175,9 @@ fn directory(bytes: &[u8]) -> anyhow::Result<Vec<Entry>> {
     ];
     let mut id = 0u64;
     for entry in &mut entries {
-        id = id
-            .checked_add(varint(bytes, &mut at)?)
-            .context("A directory of the archive is damaged")?;
+        id = id.checked_add(varint(bytes, &mut at)?).context(words!(
+            map_tiles_directory_damaged = "A directory of the archive is damaged"
+        ))?;
         entry.tile_id = id;
     }
     for entry in &mut entries {
@@ -180,11 +189,15 @@ fn directory(bytes: &[u8]) -> anyhow::Result<Vec<Entry>> {
     for i in 0..count {
         let value = varint(bytes, &mut at)?;
         entries[i].offset = match (value, i) {
-            (0, 0) => anyhow::bail!("A directory of the archive is damaged"),
+            (0, 0) => anyhow::bail!(words!(
+                map_tiles_directory_damaged = "A directory of the archive is damaged"
+            )),
             (0, _) => entries[i - 1]
                 .offset
                 .checked_add(entries[i - 1].length)
-                .context("A directory of the archive is damaged")?,
+                .context(words!(
+                    map_tiles_directory_damaged = "A directory of the archive is damaged"
+                ))?,
             (value, _) => value - 1,
         };
     }
@@ -244,8 +257,9 @@ impl PmTiles {
         let mut file = skwir_platform::inspection::open(source)?;
         let len = source.length()?;
         let mut bytes = [0u8; HEADER];
-        file.read_exact(&mut bytes)
-            .context("Not a PMTiles file: it ends before its header")?;
+        file.read_exact(&mut bytes).context(words!(
+            map_tiles_pmtiles_short = "Not a PMTiles file: it ends before its header"
+        ))?;
         let header = header(&bytes, len)?;
         let file = Mutex::new(file);
         let root = Arc::new(directory(&read(
@@ -268,10 +282,14 @@ impl PmTiles {
             max_zoom: header.max_zoom.max(header.min_zoom),
             bounds: bounds(header.bounds),
             tiles: (header.addressed > 0).then_some(header.addressed),
-            unreadable: header
-                .tile_compression
-                .unreadable()
-                .map(|why| format!("Its tiles are {why}")),
+            unreadable: header.tile_compression.unreadable().map(|compression| {
+                words!(
+                    map_tiles_its_compressed =
+                        "Its tiles are compressed with { $compression }, which skwir does not read",
+                    compression = compression,
+                    note = "compression: the name of a way to compress (Brotli, Zstandard)."
+                )
+            }),
             ..About::default()
         };
         if header.metadata.length > 0 {
@@ -334,7 +352,7 @@ fn read(
 ) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(
         section.length <= limit as u64,
-        "A part of the archive is too large"
+        words!(map_tiles_part_too_large = "A part of the archive is too large")
     );
     let mut bytes = vec![0u8; section.length as usize];
     {
@@ -373,7 +391,9 @@ impl Archive for PmTiles {
             }
             entries = self.leaf(entry.offset, entry.length)?;
         }
-        anyhow::bail!("The archive's directories nest too deep")
+        anyhow::bail!(words!(
+            map_tiles_too_deep = "The archive's directories nest too deep"
+        ))
     }
 }
 

@@ -37,14 +37,14 @@ impl Connector for Through {
     fn id(&self) -> &'static str {
         "through"
     }
-    fn title(&self) -> &'static str {
-        "a tool through another program"
+    fn title(&self) -> skwir_core::words::Words {
+        "a tool through another program".into()
     }
     fn schemes(&self) -> &'static [skwir_plugin_remote::address::Scheme] {
         &[skwir_plugin_remote::address::Scheme::Mtp]
     }
-    fn unavailable(&self) -> Option<String> {
-        Some("its helper is not installed".to_owned())
+    fn unavailable(&self) -> Option<skwir_core::words::Words> {
+        Some("its helper is not installed".into())
     }
     fn reaches_through(&self) -> Option<&'static str> {
         *self.0.lock()

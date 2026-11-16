@@ -23,6 +23,8 @@ use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::op::Cancelled;
 use skwir_core::op::transfer::{Aside, Control, Left, NotServed, Told, Transfer};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::rc::{At, call};
 
@@ -73,12 +75,27 @@ fn asked(
         call(at, method, args, &within)
     });
     if within.is_cancelled() && !cancel.is_cancelled() {
-        anyhow::bail!(
-            "rclone did not answer within {} s: its server may have stopped answering",
-            ANSWERED_WITHIN.as_secs()
-        );
+        anyhow::bail!(words!(
+            remote_uploads_no_answer = "rclone did not answer within { $seconds } s: its server may have stopped answering",
+            seconds = ANSWERED_WITHIN.as_secs(),
+            note = "seconds: how long it was waited for; s: seconds."
+        ));
     }
     answer
+}
+
+/// The server refused `refused` as many times as it was tried, said.
+fn refused_times(refused: &Waiting) -> Words {
+    words!(
+        remote_uploads_refused = "the server refused “{ $name }” { $tries ->
+            [one] { $tries } time
+           *[other] { $tries } times
+        }: rclone keeps it on this disk and tries again",
+        name = refused.name.as_str(),
+        tries = refused.tries,
+        note = "name: a file's path in the remote, as rclone's queue names it; tries: how \
+                many times rclone sent it."
+    )
 }
 
 /// Tries after which an upload is the server refusing it: rclone goes on
@@ -95,7 +112,11 @@ pub fn cache_mode(at: &At, cancel: &CancelToken) -> anyhow::Result<String> {
     options["vfs"]["CacheMode"]
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("rclone did not say which cache it keeps"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_uploads_no_cache_mode = "rclone did not say which cache it keeps"
+            ))
+        })
 }
 
 /// Whether a mount keeping `mode` sends what is written after its `close`.
@@ -215,11 +236,7 @@ pub fn send_now(
             return Ok(());
         }
         if let Some(refused) = waiting.iter().find(|w| w.tries >= REFUSED && !w.uploading) {
-            anyhow::bail!(
-                "the server refused “{}” {} times: rclone keeps it on this disk and tries again",
-                refused.name,
-                refused.tries
-            );
+            anyhow::bail!(refused_times(refused));
         }
         // Each waits out rclone's delay (`--vfs-write-back`), and its delay
         // before trying again: asked to go now.
@@ -457,19 +474,16 @@ pub fn send_written(
             .flatten()
             .collect();
         if let Some(refused) = ours.iter().find(|w| w.tries >= REFUSED && !w.uploading) {
-            anyhow::bail!(
-                "the server refused “{}” {} times: rclone keeps it on this disk and tries again",
-                refused.name,
-                refused.tries
-            );
+            anyhow::bail!(refused_times(refused));
         }
         if began.elapsed() >= RELEASED_WITHIN
             && let Some(file) = unsent.keys().find(|file| !queued.contains(*file))
         {
-            anyhow::bail!(
-                "“{}” never reached rclone's queue: a program still holds it open there, and the server does not have it",
-                file.display()
-            );
+            anyhow::bail!(words!(
+                remote_uploads_never_queued = "“{ $path }” never reached rclone's queue: a program still holds it open there, and the server does not have it",
+                path = file.display().to_string(),
+                note = "path: a file's path, in a folder rclone mounted."
+            ));
         }
         // Each waits out rclone's delay (`--vfs-write-back`), and its delay
         // before trying again: asked to go now.
@@ -566,10 +580,12 @@ impl Transfer for RcloneSends {
             let at = control_of(&remote.point)?;
             Some((remote.point.clone(), at))
         }) else {
-            anyhow::bail!(
-                "rclone's mount of “{}” is gone before its server had what was written",
-                folder.display()
-            );
+            anyhow::bail!(words!(
+                remote_uploads_mount_gone =
+                    "rclone's mount of “{ $path }” is gone before its server had what was written",
+                path = folder.display().to_string(),
+                note = "path: a folder's path, in a folder rclone mounted."
+            ));
         };
         send_written(
             &at,

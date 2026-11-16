@@ -15,6 +15,7 @@ use skwir_core::CancelToken;
 use skwir_core::fs::kept_open::{self, KeptOpen};
 use skwir_core::geo::Bounds;
 use skwir_core::preview::Held;
+use skwir_core::words;
 
 use crate::archive::{About, Archive, Compression, Format, TILE_INFLATED, inflate};
 
@@ -105,7 +106,9 @@ impl MbTiles {
                     let zoom = |z: Option<i64>| z.and_then(|z| u8::try_from(z).ok()).unwrap_or(0);
                     (zoom(min), zoom(max))
                 })
-                .context("Not an MBTiles file: it has no tiles")?,
+                .context(words!(
+                    map_tiles_mbtiles_no_tiles = "Not an MBTiles file: it has no tiles"
+                ))?,
         };
         about.min_zoom = min.min(max);
         about.max_zoom = max;
@@ -135,7 +138,9 @@ impl MbTiles {
 fn metadata(connection: &Connection) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
     let mut statement = connection
         .prepare("SELECT name, substr(value, 1, ?1) FROM metadata")
-        .context("Not an MBTiles file: it has no metadata table")?;
+        .context(words!(
+            map_tiles_mbtiles_no_metadata = "Not an MBTiles file: it has no metadata table"
+        ))?;
     let mut rows = statement.query([METADATA_VALUE])?;
     let mut meta = serde_json::Map::new();
     let mut json = None;
@@ -229,7 +234,9 @@ impl Archive for MbTiles {
                         ValueRef::Blob(bytes) | ValueRef::Text(bytes)
                             if bytes.len() > TILE_INFLATED =>
                         {
-                            Err("A tile of the archive is too large")
+                            Err(words!(
+                                map_tiles_tile_too_large = "A tile of the archive is too large"
+                            ))
                         }
                         ValueRef::Blob(bytes) | ValueRef::Text(bytes) => Ok(Some(bytes.to_vec())),
                         _ => Ok(None),
@@ -238,7 +245,7 @@ impl Archive for MbTiles {
             )
             .optional()?;
         drop(slot);
-        let Some(bytes) = found.unwrap_or(Ok(None)).map_err(anyhow::Error::msg)? else {
+        let Some(bytes) = found.unwrap_or(Ok(None)).map_err(anyhow::Error::new)? else {
             return Ok(None);
         };
         // Vector tiles are gzipped, pictures are not: as they start.

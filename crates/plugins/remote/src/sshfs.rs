@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Recognised};
@@ -72,25 +74,29 @@ impl Connector for Sshfs {
         "sshfs"
     }
 
-    fn title(&self) -> &'static str {
-        "sshfs"
+    fn title(&self) -> Words {
+        Words::as_written("sshfs")
     }
 
     fn schemes(&self) -> &'static [Scheme] {
         &[Scheme::Sftp]
     }
 
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Words> {
         if cfg!(windows) {
-            return Some("sshfs does not run on Windows".to_owned());
+            return Some(words!(
+                remote_sshfs_not_windows = "sshfs does not run on Windows"
+            ));
         }
         #[cfg(target_os = "macos")]
         if !fuse_on_macos() {
-            return Some("macFUSE or FUSE-T is not installed".to_owned());
+            return Some(words!(
+                remote_macfuse_missing = "macFUSE or FUSE-T is not installed"
+            ));
         }
         skwir_core::os_path::find_program("sshfs")
             .is_none()
-            .then(|| "sshfs is not installed".to_owned())
+            .then(|| crate::connector::not_installed("sshfs"))
     }
 
     fn connect(
@@ -117,7 +123,7 @@ impl Connector for Sshfs {
         let top = address.top();
         top.ssh_user()?;
         let sshfs = skwir_core::os_path::find_program("sshfs")
-            .ok_or_else(|| anyhow::anyhow!("sshfs is not installed"))?;
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("sshfs")))?;
         let point = mounter::point_for(self.id(), &top)?;
         // Its ssh shares its connection (ADR-078). A socket left by an ssh
         // gone is no one's: this point is not mounted.
@@ -148,7 +154,7 @@ impl Connector for Sshfs {
         };
         askpass.give(&mut command);
         mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
-            let error = anyhow::anyhow!("{}", words(&error.to_string()));
+            let error = anyhow::anyhow!(words(&error.to_string()));
             mounter::ended(&attempt, cancel, error)
         })?;
         Ok(Connected {
@@ -241,26 +247,30 @@ pub fn of_source(source: &str) -> Option<Address> {
     Address::parse(&format!("sftp://{who}{path}")).ok()
 }
 
-/// What ssh and sshfs say on failing, in the user's words where it can be
-/// told.
-pub(crate) fn words(said: &str) -> String {
+/// What ssh and sshfs say on failing (in English, read as they print it),
+/// in the user's words where it can be told; else their last line, as
+/// written.
+pub(crate) fn words(said: &str) -> Words {
     let said = said.trim();
     if said.contains("Permission denied") {
-        "the server refused the login (wrong password, or no key it accepts)".to_owned()
+        words!(
+            remote_sshfs_login_refused =
+                "the server refused the login (wrong password, or no key it accepts)"
+        )
     } else if said.contains("Host key verification failed") {
-        "the server's identity was not confirmed".to_owned()
+        words!(remote_sshfs_identity_unconfirmed = "the server's identity was not confirmed")
     } else if said.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
-        "the server's identity changed since it was last seen: ssh refuses it \
-         (see ~/.ssh/known_hosts)"
-            .to_owned()
+        words!(
+            remote_sshfs_identity_changed = "the server's identity changed since it was last seen: ssh refuses it (see ~/.ssh/known_hosts)"
+        )
     } else if said.contains("Could not resolve hostname") {
-        "the server's name was not found".to_owned()
+        words!(remote_sshfs_name_not_found = "the server's name was not found")
     } else if said.contains("Connection refused") {
-        "the server refused the connection".to_owned()
+        words!(remote_sshfs_connection_refused = "the server refused the connection")
     } else if said.contains("Connection timed out") || said.contains("timed out") {
-        "the server did not answer".to_owned()
+        words!(remote_sshfs_no_answer = "the server did not answer")
     } else {
-        said.lines().last().unwrap_or(said).to_owned()
+        Words::as_written(said.lines().last().unwrap_or(said).to_owned())
     }
 }
 
@@ -327,8 +337,9 @@ mod tests {
     fn what_ssh_says_is_said_plainly() {
         assert!(
             words("me@h: Permission denied (publickey,password).\nread: Connection reset by peer")
+                .english()
                 .contains("refused the login")
         );
-        assert_eq!(words("something else\nlast line"), "last line");
+        assert_eq!(words("something else\nlast line").english(), "last line");
     }
 }

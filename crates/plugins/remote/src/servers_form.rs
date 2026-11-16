@@ -9,6 +9,8 @@
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 use crate::address::{Address, Scheme};
@@ -19,7 +21,12 @@ use crate::servers::Kept;
 pub const KIND_PREFIX: &str = "address:";
 
 /// The heading of the kinds added by their address in Add Server's list.
-const SECTION: &str = "Servers, by their address";
+fn section() -> Words {
+    words!(
+        remote_server_form_section = "Servers, by their address",
+        note = "A heading in Add Server's list of kinds of storage."
+    )
+}
 
 /// The schemes a server is added by, in the list's order.
 const SCHEMES: [Scheme; 8] = [
@@ -41,16 +48,22 @@ const SCHEMES: [Scheme; 8] = [
 /// As [`add`].
 pub fn add_any(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
     loop {
-        let pick = Form::new("Add Server", "Next")
-            .intro("A server by its address. With rclone installed, seventy kinds of storage more.")
-            .field(
-                Field::new(
-                    "picked",
-                    "Kind of server",
-                    Kind::Pick { choices: choices() },
-                )
-                .required(),
-            );
+        let pick = Form::new(
+            words!(remote_server_form_add_server = "Add Server"),
+            words!(remote_server_form_next = "Next"),
+        )
+        .intro(words!(
+            remote_server_form_add_intro =
+                "A server by its address. With rclone installed, seventy kinds of storage more."
+        ))
+        .field(
+            Field::new(
+                "picked",
+                words!(remote_server_form_kind = "Kind of server"),
+                Kind::Pick { choices: choices() },
+            )
+            .required(),
+        );
         let Some(Answer::Accepted(picked)) = app.fill(pick, cancel) else {
             return Ok(None);
         };
@@ -77,25 +90,36 @@ pub fn choices() -> Vec<Choice> {
     SCHEMES
         .iter()
         .map(|&scheme| {
-            let (title, detail) = match scheme {
-                Scheme::Sftp => ("SFTP Server", "A computer reached over ssh"),
-                Scheme::Smb => (
-                    "Windows Share (SMB)",
-                    "A NAS's or a computer's shared folder",
+            let detail = match scheme {
+                Scheme::Sftp => {
+                    words!(remote_server_form_sftp_detail = "A computer reached over ssh")
+                }
+                Scheme::Smb => {
+                    words!(remote_server_form_smb_detail = "A NAS's or a computer's shared folder")
+                }
+                Scheme::Dav => words!(
+                    remote_server_form_dav_detail = "Nextcloud, ownCloud and others, over HTTP"
                 ),
-                Scheme::Dav => ("WebDAV Server", "Nextcloud, ownCloud and others, over HTTP"),
-                Scheme::Davs => ("WebDAV Server (HTTPS)", "Nextcloud, ownCloud and others"),
-                Scheme::Ftp => ("FTP Server", "A server's files over FTP"),
-                Scheme::Ftps => ("FTP Server (TLS)", "A server's files over FTP with TLS"),
-                Scheme::Nfs => ("NFS Export", "A Unix server's shared folder"),
-                Scheme::Afp => ("AFP Volume", "An older Mac's or NAS's shared volume"),
+                Scheme::Davs => {
+                    words!(remote_server_form_davs_detail = "Nextcloud, ownCloud and others")
+                }
+                Scheme::Ftp => words!(remote_server_form_ftp_detail = "A server's files over FTP"),
+                Scheme::Ftps => {
+                    words!(remote_server_form_ftps_detail = "A server's files over FTP with TLS")
+                }
+                Scheme::Nfs => {
+                    words!(remote_server_form_nfs_detail = "A Unix server's shared folder")
+                }
+                Scheme::Afp => {
+                    words!(remote_server_form_afp_detail = "An older Mac's or NAS's shared volume")
+                }
                 Scheme::Rclone | Scheme::S3 | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => {
-                    ("", "")
+                    Words::default()
                 }
             };
-            Choice::new(format!("{KIND_PREFIX}{}", scheme.name()), title)
+            Choice::new(format!("{KIND_PREFIX}{}", scheme.name()), kind(scheme))
                 .detail(detail)
-                .section(SECTION)
+                .section(section())
         })
         .collect()
 }
@@ -111,33 +135,51 @@ pub fn scheme_of(kind: &str) -> Option<Scheme> {
 pub fn form(scheme: Scheme, kept: Kept, back: bool) -> Form {
     let (folder, folder_help) = match scheme {
         Scheme::Smb => (
-            "Share",
-            "The shared folder's name, and a folder of it after a /",
+            words!(remote_server_form_share = "Share"),
+            words!(
+                remote_server_form_share_help =
+                    "The shared folder's name, and a folder of it after a /"
+            ),
         ),
         Scheme::Afp => (
-            "Volume",
-            "The shared volume's name, and a folder of it after a /",
+            words!(remote_server_form_volume = "Volume"),
+            words!(
+                remote_server_form_volume_help =
+                    "The shared volume's name, and a folder of it after a /"
+            ),
         ),
         Scheme::Nfs => (
-            "Export",
-            "The exported folder's path on the server: /srv/photos",
+            words!(remote_server_form_export = "Export"),
+            words!(
+                remote_server_form_export_help =
+                    "The exported folder's path on the server: /srv/photos"
+            ),
         ),
         _ => (
-            "Folder",
-            "Where to open, on the server: empty for its top (SFTP: your home)",
+            words!(remote_server_form_folder = "Folder"),
+            words!(
+                remote_server_form_folder_help =
+                    "Where to open, on the server: empty for its top (SFTP: your home)"
+            ),
         ),
     };
-    let kept = match kept {
-        Kept::Kde => "Kept in KDE's network folders, where Dolphin lists it too.",
-        _ => "Kept in Skwir's list of servers.",
+    let intro = match kept {
+        Kept::Kde => words!(
+            remote_server_form_intro_kde = "Kept in KDE's network folders, where Dolphin lists it too. Its password is asked when it first connects."
+        ),
+        _ => words!(
+            remote_server_form_intro_skwir =
+                "Kept in Skwir's list of servers. Its password is asked when it first connects."
+        ),
     };
-    let mut form = Form::new(format!("Add {}", title(scheme)), "Add")
-        .intro(format!(
-            "{kept} Its password is asked when it first connects."
-        ))
+    let mut form = Form::new(add_title(scheme), words!(remote_server_form_add = "Add"))
+        .intro(intro)
         .field(
-            Field::text("host", "Server")
-                .help("Its name or address: nas.local, files.example.com, 192.168.1.20")
+            Field::text("host", words!(remote_server_form_host = "Server"))
+                .help(words!(
+                    remote_server_form_host_help =
+                        "Its name or address: nas.local, files.example.com, 192.168.1.20"
+                ))
                 .required(),
         )
         .field(Field::text("path", folder).help(folder_help));
@@ -145,40 +187,83 @@ pub fn form(scheme: Scheme, kept: Kept, back: bool) -> Form {
         let last = form.fields.len() - 1;
         form.fields[last].required = true;
     } else {
-        form = form.field(Field::text("user", "User").help(
-            "The name you log in with; empty for your own (SFTP: as your ssh configuration says)",
-        ));
+        form = form.field(
+            Field::text("user", words!(remote_server_form_user = "User")).help(words!(
+                remote_server_form_user_help = "The name you log in with; empty for your own (SFTP: as your ssh configuration says)"
+            )),
+        );
     }
     if scheme == Scheme::Smb {
         form = form.field(
-            Field::text("domain", "Domain")
-                .help("The Windows domain or workgroup, where the server wants one")
+            Field::text("domain", words!(remote_server_form_domain = "Domain"))
+                .help(words!(
+                    remote_server_form_domain_help =
+                        "The Windows domain or workgroup, where the server wants one"
+                ))
                 .advanced(),
         );
     }
     form = form
-        .field(Field::new("port", "Port", Kind::Integer { min: 1, max: 65535 }).advanced())
         .field(
-            Field::text("title", "Name")
-                .help("What the sidebar calls it; its address's own name where empty"),
+            Field::new(
+                "port",
+                words!(remote_server_form_port = "Port"),
+                Kind::Integer { min: 1, max: 65535 },
+            )
+            .advanced(),
+        )
+        .field(
+            Field::text(
+                "title",
+                words!(
+                    remote_server_form_name = "Name",
+                    note = "The name a server is given in the sidebar."
+                ),
+            )
+            .help(words!(
+                remote_server_form_name_help =
+                    "What the sidebar calls it; its address's own name where empty"
+            )),
         );
     if back { form.with_back() } else { form }
 }
 
-/// A scheme in the user's words, for a form's title.
-fn title(scheme: Scheme) -> &'static str {
+/// A kind of server added by its address, as Add Server's list names it.
+fn kind(scheme: Scheme) -> Words {
     match scheme {
-        Scheme::Smb => "Windows Share",
-        Scheme::Nfs => "NFS Export",
-        Scheme::Afp => "AFP Volume",
-        Scheme::Davs => "WebDAV Server (HTTPS)",
-        Scheme::Ftps => "FTP Server (TLS)",
-        _ => match scheme.title() {
-            "SFTP" => "SFTP Server",
-            "WebDAV" => "WebDAV Server",
-            "FTP" => "FTP Server",
-            other => other,
-        },
+        Scheme::Sftp => words!(remote_server_form_sftp = "SFTP Server"),
+        Scheme::Smb => words!(remote_server_form_smb = "Windows Share (SMB)"),
+        Scheme::Dav => words!(remote_server_form_dav = "WebDAV Server"),
+        Scheme::Davs => words!(remote_server_form_davs = "WebDAV Server (HTTPS)"),
+        Scheme::Ftp => words!(remote_server_form_ftp = "FTP Server"),
+        Scheme::Ftps => words!(remote_server_form_ftps = "FTP Server (TLS)"),
+        Scheme::Nfs => words!(remote_server_form_nfs = "NFS Export"),
+        Scheme::Afp => words!(remote_server_form_afp = "AFP Volume"),
+        Scheme::Rclone | Scheme::S3 | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => {
+            Words::default()
+        }
+    }
+}
+
+/// The title of the form adding a server of `scheme`.
+fn add_title(scheme: Scheme) -> Words {
+    match scheme {
+        Scheme::Sftp => words!(remote_server_form_add_sftp = "Add SFTP Server"),
+        Scheme::Smb => words!(remote_server_form_add_smb = "Add Windows Share"),
+        Scheme::Dav => words!(remote_server_form_add_dav = "Add WebDAV Server"),
+        Scheme::Davs => words!(remote_server_form_add_davs = "Add WebDAV Server (HTTPS)"),
+        Scheme::Ftp => words!(remote_server_form_add_ftp = "Add FTP Server"),
+        Scheme::Ftps => words!(remote_server_form_add_ftps = "Add FTP Server (TLS)"),
+        Scheme::Nfs => words!(remote_server_form_add_nfs = "Add NFS Export"),
+        Scheme::Afp => words!(remote_server_form_add_afp = "Add AFP Volume"),
+        // Never asked: these are added otherwise.
+        Scheme::Rclone | Scheme::S3 | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => {
+            words!(
+                remote_server_form_add_other = "Add { $kind }",
+                kind = scheme.title(),
+                note = "kind: a protocol's name (rclone, S3)."
+            )
+        }
     }
 }
 
@@ -191,14 +276,17 @@ pub fn address_of(scheme: Scheme, values: &Values) -> anyhow::Result<Address> {
         let value = values.get(key).trim();
         (!value.is_empty()).then(|| value.to_owned())
     };
-    let host = text("host").ok_or_else(|| anyhow::anyhow!("A server is needed"))?;
+    let host = text("host").ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_server_form_host_needed = "A server is needed"
+        ))
+    })?;
     let port = match text("port") {
-        Some(port) => Some(
-            port.parse::<u16>()
-                .ok()
-                .filter(|p| *p > 0)
-                .ok_or_else(|| anyhow::anyhow!("A port is a number from 1 to 65535"))?,
-        ),
+        Some(port) => Some(port.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_server_form_port_refused = "A port is a number from 1 to 65535"
+            ))
+        })?),
         None => None,
     };
     let path = text("path").unwrap_or_default();
@@ -213,7 +301,7 @@ pub fn address_of(scheme: Scheme, values: &Values) -> anyhow::Result<Address> {
     };
     // Read back as any address is: its server's name checked, `..` and
     // `.` refused.
-    Address::parse(&address.to_string()).map_err(|refused| anyhow::anyhow!("{refused}"))
+    Address::parse(&address.to_string()).map_err(anyhow::Error::new)
 }
 
 /// What became of a server's form.
@@ -247,7 +335,13 @@ pub fn add(
             .fields
             .iter_mut()
             .find(|f| f.key == *key)
-            .ok_or_else(|| anyhow::anyhow!("a server's address has no part “{key}”"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_server_form_no_part = "a server's address has no part “{ $key }”",
+                    key = key.as_str(),
+                    note = "key: the name of a part a caller gave (host, port), as it gave it."
+                ))
+            })?;
         field.value.clone_from(value);
         field.advanced = false;
     }
@@ -261,15 +355,12 @@ pub fn add(
         let address = match address_of(scheme, &values) {
             Ok(address) => address,
             Err(refused) => {
-                asked = blank.clone().again(&values, format!("{refused:#}"));
+                asked = blank.clone().again(&values, Words::of_error(refused));
                 continue;
             }
         };
         if let Some(kept) = crate::servers::find(app, &address) {
-            asked = blank.clone().again(
-                &values,
-                format!("“{}” is a server already, at that address", kept.label),
-            );
+            asked = blank.clone().again(&values, server_already(kept.label));
             continue;
         }
         let name = name_of(&values, &address);
@@ -279,6 +370,15 @@ pub fn add(
         }
         return Ok(Added::Done(name));
     }
+}
+
+/// A server is kept already at the address given: the one `named`.
+fn server_already(named: String) -> Words {
+    words!(
+        remote_server_form_already = "{ $server } is a server already, at that address",
+        server = Name(named),
+        note = "server: the name of the server kept at that address."
+    )
 }
 
 /// The name a server's form gives it: its address's own where empty.
@@ -305,11 +405,16 @@ pub fn edit(
 ) -> anyhow::Result<Option<(String, Address)>> {
     let old = &server.address;
     let mut blank = form(old.scheme, server.kept, false);
-    blank.title = format!("Edit “{}”", server.label);
-    "Save".clone_into(&mut blank.accept);
-    blank.intro = format!(
-        "Kept {}. Its mount options follow it to a new address.",
-        server.kept.said()
+    blank.title = words!(
+        remote_server_form_edit = "Edit { $server }",
+        server = Name(server.label.clone())
+    );
+    blank.accept = words!(remote_server_form_save = "Save");
+    blank.intro = words!(
+        remote_server_form_edit_intro =
+            "Kept { $kept }. Its mount options follow it to a new address.",
+        kept = server.kept.words(),
+        note = "kept: where the server is kept (in Skwir's list, in KDE's network folders, in rclone's configuration)."
     );
     let path = String::from_utf8_lossy(&old.path);
     let named = (server.label != old.label()).then(|| server.label.clone());
@@ -335,17 +440,14 @@ pub fn edit(
         let address = match address_of(old.scheme, &values) {
             Ok(address) => address,
             Err(refused) => {
-                asked = blank.clone().again(&values, format!("{refused:#}"));
+                asked = blank.clone().again(&values, Words::of_error(refused));
                 continue;
             }
         };
         if address != *old
             && let Some(other) = crate::servers::find(app, &address)
         {
-            asked = blank.clone().again(
-                &values,
-                format!("“{}” is a server already, at that address", other.label),
-            );
+            asked = blank.clone().again(&values, server_already(other.label));
             continue;
         }
         return Ok(Some((name_of(&values, &address), address)));

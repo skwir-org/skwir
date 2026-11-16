@@ -24,6 +24,8 @@ use skwir_core::location::{
     EmptyState, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 
@@ -146,18 +148,20 @@ impl LocationProvider for Provider {
         Ok(Open::start(location.clone(), &ctx))
     }
 
-    fn title(&self, _location: &Location) -> Option<skwir_core::words::Words> {
-        Some("Nearby".into())
+    fn title(&self, _location: &Location) -> Option<Words> {
+        Some(words!(
+            remote_nearby_title = "Nearby",
+            note = "The place that lists the servers found on this network."
+        ))
     }
 
     fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
-        Some(EmptyState {
-            title: "No server found nearby".into(),
-            detail: "Servers that announce themselves on this network (a NAS, a Mac, a \
-                   Windows PC) appear here, found by Avahi and wsdd while this place is \
-                   shown."
-                .into(),
-        })
+        Some(EmptyState::new(
+            words!(remote_nearby_empty = "No server found nearby"),
+            words!(
+                remote_nearby_empty_detail = "Servers that announce themselves on this network (a NAS, a Mac, a Windows PC) appear here, found by Avahi and wsdd while this place is shown."
+            ),
+        ))
     }
 }
 
@@ -238,11 +242,16 @@ fn entry_of(found: &Found) -> (EntryId, Entry) {
     let by = || Provenance::Plugin {
         name: crate::ID.into(),
     };
-    entry.metadata.set(
-        keys::PLACE_KIND,
-        Value::Text(format!("{} server", found.kind).into()),
-        by(),
+    // A value of the row, said as it is listed.
+    let kind = words!(
+        remote_nearby_server_kind = "{ $protocol } server",
+        protocol = found.kind,
+        note = "What a server found nearby is, in its row: protocol is SFTP, SMB, WebDAV, FTP, \
+                NFS or AFP."
     );
+    entry
+        .metadata
+        .set(keys::PLACE_KIND, Value::Text(kind.say().into()), by());
     entry
         .metadata
         .set(ANNOUNCED, Value::Text(found.name.clone().into()), by());
@@ -286,7 +295,13 @@ fn listing(
                     let _ = tx.send(s);
                 };
                 if let Err(error) = browse(&seen, &cancel) {
-                    let _ = said_tx.send(format!("{name}: {error:#}"));
+                    let _ = said_tx.send(words!(
+                        remote_nearby_browser_failed = "{ $finder }: { $error }",
+                        finder = name,
+                        error = error,
+                        note = "finder: Avahi or wsdd, what finds servers nearby; error: why it \
+                                found none."
+                    ));
                 }
                 // Done: whatever it said, it says nothing more.
                 let _ = tx.send(Seen::Settled);
@@ -337,12 +352,26 @@ fn listing(
         }
         if settled >= browsers && !complete {
             complete = true;
-            let said: Vec<String> = failed.iter().filter_map(|f| f.try_recv().ok()).collect();
+            let said: Vec<Words> = failed.iter().filter_map(|f| f.try_recv().ok()).collect();
             if said.len() == browsers && instances.is_empty() {
-                sink.send(ListingEvent::Error(skwir_core::ListingError::new(format!(
-                    "Servers nearby are found by Avahi or wsdd, and neither answers here ({})",
-                    said.join("; ")
-                ))));
+                // Each finder's failure, one after the other.
+                let why = said.into_iter().reduce(|first, then| {
+                    words!(
+                        remote_nearby_failures = "{ $first }; { $then }",
+                        first = first,
+                        then = then,
+                        note = "Why each finder of servers nearby found none, one after the other."
+                    )
+                });
+                // Said for the window's banner, which takes text.
+                let said = words!(
+                    remote_nearby_none_answers = "Servers nearby are found by Avahi or wsdd, and neither answers here ({ $why })",
+                    why = why.unwrap_or_default(),
+                    note = "why: what each of them said."
+                );
+                sink.send(ListingEvent::Error(skwir_core::ListingError::new(
+                    said.say(),
+                )));
             }
             sink.send(ListingEvent::Complete);
         }
@@ -521,7 +550,15 @@ fn browse_avahi(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()>
 
 #[cfg(not(target_os = "linux"))]
 fn browse_avahi(_seen: &dyn Fn(Seen), _cancel: &CancelToken) -> anyhow::Result<()> {
-    Err(skwir_core::system::not_yet("Finding servers nearby").into())
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        words!(
+            remote_nearby_not_yet = "Finding servers nearby is not available on { $system } yet",
+            system = skwir_core::system::NAME,
+            note = "system: Linux, macOS or Windows."
+        ),
+    )
+    .into())
 }
 
 /// The PCs wsdd finds, asked every [`WSDD_EVERY`] until `cancel`: the
@@ -581,7 +618,15 @@ fn browse_wsdd(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()> 
 
 #[cfg(not(target_os = "linux"))]
 fn browse_wsdd(_seen: &dyn Fn(Seen), _cancel: &CancelToken) -> anyhow::Result<()> {
-    Err(skwir_core::system::not_yet("Finding servers nearby").into())
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        words!(
+            remote_nearby_not_yet = "Finding servers nearby is not available on { $system } yet",
+            system = skwir_core::system::NAME,
+            note = "system: Linux, macOS or Windows."
+        ),
+    )
+    .into())
 }
 
 /// wsdd started here in discovery mode (`--no-host`: it announces
@@ -598,9 +643,13 @@ struct OwnWsdd {
 impl OwnWsdd {
     fn start(cancel: &CancelToken) -> anyhow::Result<Self> {
         let program = skwir_core::os_path::find_program("wsdd")
-            .ok_or_else(|| anyhow::anyhow!("wsdd is not installed"))?;
-        let folder =
-            skwir_core::folders::runtime().ok_or_else(|| anyhow::anyhow!("no runtime folder"))?;
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("wsdd")))?;
+        let folder = skwir_core::folders::runtime().ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_nearby_no_runtime = "no runtime folder",
+                note = "The folder a session keeps what it runs in ($XDG_RUNTIME_DIR)."
+            ))
+        })?;
         skwir_core::folders::private(&folder)?;
         sweep_left(&folder);
         let socket = folder.join(format!(
@@ -624,11 +673,19 @@ impl OwnWsdd {
         // makes none (a wsdd too old for `--discovery` and `--listen`).
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !own.socket.exists() {
-            anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+            anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
             if let Ok(Some(status)) = own.child.try_wait() {
-                anyhow::bail!("wsdd ended as it started ({status}): it may be too old to discover");
+                anyhow::bail!(words!(
+                    remote_nearby_wsdd_ended =
+                        "wsdd ended as it started ({ $status }): it may be too old to discover",
+                    status = status.to_string(),
+                    note = "status: how the program ended, as the system says it (exit status: 2)."
+                ));
             }
-            anyhow::ensure!(std::time::Instant::now() < deadline, "wsdd did not start");
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                words!(remote_nearby_wsdd_no_start = "wsdd did not start")
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
         Ok(own)

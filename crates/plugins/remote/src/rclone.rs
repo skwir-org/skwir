@@ -25,6 +25,8 @@ use std::time::{Duration, SystemTime};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Recognised, Server};
@@ -354,8 +356,8 @@ impl Connector for Rclone {
         "rclone"
     }
 
-    fn title(&self) -> &'static str {
-        "rclone"
+    fn title(&self) -> Words {
+        Words::as_written("rclone")
     }
 
     fn schemes(&self) -> &'static [Scheme] {
@@ -371,21 +373,24 @@ impl Connector for Rclone {
         ]
     }
 
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Words> {
         if skwir_core::os_path::find_program("rclone").is_none() {
-            return Some("rclone is not installed".to_owned());
+            return Some(crate::connector::not_installed("rclone"));
         }
         #[cfg(target_os = "linux")]
         if ["fusermount3", "fusermount"]
             .iter()
             .all(|p| skwir_core::os_path::find_program(p).is_none())
         {
-            return Some("FUSE (fusermount3) is not installed".to_owned());
+            return Some(crate::connector::not_installed("FUSE (fusermount3)"));
         }
         // Without macFUSE or FUSE-T, rclone mounts over NFS (`nfsmount`).
         #[cfg(windows)]
         if !crate::winfsp::installed() {
-            return Some("WinFsp is not installed: rclone mounts through it on Windows".to_owned());
+            return Some(words!(
+                remote_winfsp_missing =
+                    "WinFsp is not installed: rclone mounts through it on Windows"
+            ));
         }
         None
     }
@@ -413,7 +418,7 @@ impl Connector for Rclone {
     ) -> anyhow::Result<Connected> {
         let top = address.top();
         let rclone = skwir_core::os_path::find_program("rclone")
-            .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
+            .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("rclone")))?;
         let remote = remote_of(&top)?;
         let password = match password_variable(top.scheme) {
             Some(variable) => {
@@ -667,7 +672,7 @@ impl Rclone {
             .arg("--password-command")
             .arg(password_command(&program));
         mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
-            let error = anyhow::anyhow!("{}", words(&error.to_string()));
+            let error = anyhow::anyhow!(words(&error.to_string()));
             mounter::ended(&attempt, cancel, error)
         })?;
         Ok(Connected {
@@ -697,19 +702,29 @@ impl Rclone {
         use std::os::windows::process::CommandExt as _;
         /// `CREATE_NO_WINDOW`: no console behind it.
         const NO_WINDOW: u32 = 0x0800_0000;
-        let folder = crate::connector::mounts_folder()
-            .ok_or_else(|| anyhow::anyhow!("there is no folder to mount in"))?;
+        let folder = crate::connector::mounts_folder().ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_rclone_no_mounts_folder = "there is no folder to mount in"
+            ))
+        })?;
         skwir_core::folders::private(&folder)?;
         skwir_core::fs::reach::mounts_in(folder.clone(), FSTYPE);
         let point = folder.join(crate::connector::point_name(self.id(), top));
         if skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
-            anyhow::bail!("it is connected already");
+            anyhow::bail!(words!(
+                remote_rclone_connected_already = "it is connected already"
+            ));
         }
         // WinFsp makes the folder itself: one left empty goes first.
         let _ = std::fs::remove_dir(&point);
         let login = crate::rc::Login::made()?;
         let log = crate::winfsp::log_file(&point)
-            .ok_or_else(|| anyhow::anyhow!("no folder for its log"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_rclone_no_log_folder = "no folder for its log",
+                    note = "Why rclone could not mount a server on Windows: Skwir has no folder for what it writes as it runs."
+                ))
+            })?;
         let _ = std::fs::remove_file(&log);
         let mut command = command(rclone, self.config());
         command
@@ -776,7 +791,7 @@ impl Rclone {
                 return Err(mounter::ended(
                     &attempt,
                     cancel,
-                    anyhow::anyhow!("{}", words(&said)),
+                    anyhow::anyhow!(words(&said)),
                 ));
             }
             if attempt.is_cancelled() || std::time::Instant::now() > deadline {
@@ -799,7 +814,9 @@ impl Rclone {
                 return Err(mounter::ended(
                     &attempt,
                     cancel,
-                    anyhow::anyhow!("rclone did not mount it in time"),
+                    anyhow::anyhow!(words!(
+                        remote_rclone_mount_late = "rclone did not mount it in time"
+                    )),
                 ));
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -838,20 +855,24 @@ fn unmount_on_windows(point: &Path, cancel: &CancelToken) -> anyhow::Result<()> 
     let controls = crate::winfsp::controls_of(point);
     anyhow::ensure!(
         !controls.is_empty(),
-        "Skwir did not mount it, so it cannot let go of it"
+        words!(remote_rclone_not_ours = "Skwir did not mount it, so it cannot let go of it")
     );
     // A login kept from a mount gone is refused: the next is asked.
-    let mut refused = None;
+    let mut refused: Option<anyhow::Error> = None;
     let asked = controls.iter().any(|at| {
         crate::rc::call(at, "core/quit", &serde_json::json!({}), cancel)
-            .inspect_err(|error| refused = Some(format!("{error:#}")))
+            .map_err(|error| refused = Some(error))
             .is_ok()
     });
     if !asked {
-        anyhow::bail!(
-            "rclone was not reached to let go of it: {}",
-            refused.unwrap_or_default()
+        let unreached = words!(
+            remote_rclone_not_reached = "rclone was not reached to let go of it",
+            note = "Said before why: rclone's remote control did not answer."
         );
+        return Err(match refused {
+            Some(error) => error.context(unreached),
+            None => anyhow::anyhow!(unreached),
+        });
     }
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
@@ -869,7 +890,7 @@ fn unmount_on_windows(point: &Path, cancel: &CancelToken) -> anyhow::Result<()> 
         }
         anyhow::ensure!(
             std::time::Instant::now() < deadline,
-            "rclone did not let go of it"
+            words!(remote_rclone_unmount_late = "rclone did not let go of it")
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -892,7 +913,7 @@ fn remotes(listed: &str) -> Vec<Server> {
                 },
                 address,
                 kind: kind.to_owned(),
-                kept: crate::servers::Kept::Tool("in rclone's configuration"),
+                kept: crate::servers::Kept::Tool(crate::servers::Keeper::Rclone),
             })
         })
         .collect()
@@ -946,7 +967,11 @@ pub(crate) fn remote_of(top: &Address) -> anyhow::Result<String> {
             "ftp"
         }
         Scheme::Nfs | Scheme::Afp | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => {
-            anyhow::bail!("rclone does not open {} addresses", top.scheme.title())
+            anyhow::bail!(words!(
+                remote_rclone_scheme = "rclone does not open { $scheme } addresses",
+                scheme = top.scheme.title(),
+                note = "scheme: a protocol's name (NFS, AFP, MTP)."
+            ))
         }
     };
     if top.scheme != Scheme::Sftp {
@@ -1008,7 +1033,9 @@ fn logged_in(
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<String>> {
-    let title = format!("Password for {}", top.label());
+    // Said for the window that asks it.
+    let title = crate::connector::password_for(&top.label()).say();
+    let connect = crate::connector::connect_button().say();
     let mut password = ask.kept_password();
     let mut asked = 0;
     loop {
@@ -1020,15 +1047,20 @@ fn logged_in(
             Ok(()) => return Ok(given),
             Err(said) if refused(&said) && asked < TRIES => {
                 asked += 1;
-                let answer = ask
-                    .password(&title, "Connect", cancel)
-                    .ok_or_else(|| anyhow::anyhow!("you cancelled"))?;
+                let answer = ask.password(&title, &connect, cancel).ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        remote_rclone_you_cancelled = "you cancelled",
+                        note = "Why a connection did not go on: its password was not given."
+                    ))
+                })?;
                 password = Some(answer.text);
             }
             Err(said) if refused(&said) => {
-                anyhow::bail!("the server refused the login (wrong password?)")
+                anyhow::bail!(words!(
+                    remote_rclone_login_refused = "the server refused the login (wrong password?)"
+                ))
             }
-            Err(said) => anyhow::bail!("{}", words(&said)),
+            Err(said) => anyhow::bail!(words(&said)),
         }
     }
 }
@@ -1081,7 +1113,10 @@ pub(crate) fn obscured(rclone: &Path, password: &str) -> anyhow::Result<String> 
         input.write_all(b"\n")?;
     }
     let out = child.wait_with_output()?;
-    anyhow::ensure!(out.status.success(), "rclone did not obscure the password");
+    anyhow::ensure!(
+        out.status.success(),
+        words!(remote_rclone_not_obscured = "rclone did not obscure the password")
+    );
     let text = String::from_utf8(out.stdout)?;
     Ok(text.trim().to_owned())
 }
@@ -1166,8 +1201,9 @@ pub(crate) fn password_command(program: &Path) -> std::ffi::OsString {
     skwir_core::os_path::from_bytes(quoted)
 }
 
-/// What rclone says on failing, in the user's words where it can be told.
-pub(crate) fn words(said: &str) -> String {
+/// What rclone says on failing, in the user's words where it can be told,
+/// else its line as it wrote it.
+pub(crate) fn words(said: &str) -> Words {
     let said = said.trim();
     let line = said
         .lines()
@@ -1183,13 +1219,13 @@ pub(crate) fn words(said: &str) -> String {
         }
     });
     if line.contains("didn't find section in config file") {
-        "rclone's configuration names no such remote".to_owned()
+        words!(remote_rclone_no_such_remote = "rclone's configuration names no such remote")
     } else if line.contains("connection refused") {
-        "the server refused the connection".to_owned()
+        words!(remote_rclone_connection_refused = "the server refused the connection")
     } else if line.contains("no such host") {
-        "the server's name was not found".to_owned()
+        words!(remote_rclone_no_such_host = "the server's name was not found")
     } else {
-        line.to_owned()
+        Words::as_written(line.to_owned())
     }
 }
 

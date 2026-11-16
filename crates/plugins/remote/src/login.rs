@@ -30,6 +30,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
+use skwir_core::words;
+use skwir_core::words::Name;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{self, Connector as _};
@@ -85,8 +87,12 @@ pub fn id_of(connector: &str, address: &Address) -> String {
 /// # Errors
 /// Where the user has no runtime folder.
 pub fn point_of(connector: &str, address: &Address) -> anyhow::Result<PathBuf> {
-    let folder = connector::mounts_folder()
-        .ok_or_else(|| anyhow::anyhow!("there is no runtime folder to mount in"))?;
+    let folder = connector::mounts_folder().ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            remote_login_no_runtime = "there is no runtime folder to mount in",
+            note = "The folder a session keeps what it runs in ($XDG_RUNTIME_DIR)."
+        ))
+    })?;
     Ok(folder.join(connector::point_name(connector, &address.top())))
 }
 
@@ -120,7 +126,16 @@ impl AtLogin {
         #[cfg(not(any(unix, windows)))]
         {
             let _ = (program, config, top, options);
-            Err(skwir_core::system::not_yet("Mounting rclone's remotes").into())
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                words!(
+                    remote_login_rclone_not_yet =
+                        "Mounting rclone's remotes is not available on { $system } yet",
+                    system = skwir_core::system::NAME,
+                    note = "system: Linux, macOS or Windows."
+                ),
+            )
+            .into())
         }
     }
 
@@ -142,14 +157,14 @@ impl AtLogin {
         let top = address.top();
         anyhow::ensure!(
             top.scheme == Scheme::Sftp,
-            "sshfs connects SFTP addresses alone"
+            words!(remote_login_sshfs_sftp_only = "sshfs connects SFTP addresses alone")
         );
         top.ssh_user()?;
         if let Some(why) = with.unavailable() {
-            anyhow::bail!("{why}");
+            anyhow::bail!(why);
         }
         let program = skwir_core::os_path::find_program("sshfs")
-            .ok_or_else(|| anyhow::anyhow!("sshfs is not installed"))?;
+            .ok_or_else(|| anyhow::anyhow!(connector::not_installed("sshfs")))?;
         logs_in_alone(with, &top, cancel)?;
         let point = point_of(with.id(), &top)?;
         let control = crate::ssh_mount::control_path(&point);
@@ -197,14 +212,22 @@ impl AtLogin {
             .map(|path| path.as_os_str());
         for part in paths.chain(self.args.iter().map(OsString::as_os_str)) {
             let text = part.to_str().ok_or_else(|| {
-                anyhow::anyhow!("“{}” is not text a service manager reads", part.display())
+                anyhow::anyhow!(words!(
+                    remote_login_not_text = "“{ $part }” is not text a service manager reads",
+                    part = part.display().to_string(),
+                    note = "part: a path or an argument of the command that connects at login."
+                ))
             })?;
             anyhow::ensure!(
                 !text
                     .chars()
                     .any(|c| c.is_ascii_control() && !matches!(c, '\t' | '\n')),
-                "“{}” holds a character a service manager does not read",
-                text.escape_debug()
+                words!(
+                    remote_login_control_character =
+                        "“{ $part }” holds a character a service manager does not read",
+                    part = text.escape_debug().to_string(),
+                    note = "part: a path or an argument of the command that connects at login."
+                )
             );
         }
         Ok(self)
@@ -222,20 +245,21 @@ fn rclone_checked(
     let top = address.top();
     anyhow::ensure!(
         top.scheme == Scheme::Rclone,
-        "only a remote of rclone's configuration (rclone://name/) connects at login \
-         through rclone: nobody is there to give a server's password"
+        words!(
+            remote_login_rclone_remotes_only = "only a remote of rclone's configuration (rclone://name/) connects at login through rclone: nobody is there to give a server's password"
+        )
     );
     if let Some(why) = with.unavailable() {
-        anyhow::bail!("{why}");
+        anyhow::bail!(why);
     }
     let program = skwir_core::os_path::find_program("rclone")
-        .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
+        .ok_or_else(|| anyhow::anyhow!(connector::not_installed("rclone")))?;
     let config = std::path::absolute(crate::rclone_config::config_file(&program, with, cancel)?)?;
     let named = crate::rclone::Rclone::with_config(config.clone());
     if crate::rclone_config::encrypted(&program, &named, cancel)? {
-        anyhow::bail!(
-            "rclone's configuration is encrypted: at login, nobody is there to give its password"
-        );
+        anyhow::bail!(words!(
+            remote_login_rclone_encrypted = "rclone's configuration is encrypted: at login, nobody is there to give its password"
+        ));
     }
     let mut listing = crate::rclone::command(&program, Some(&config));
     listing.args(["listremotes", "--ask-password=false"]);
@@ -245,8 +269,11 @@ fn rclone_checked(
         String::from_utf8_lossy(&listed)
             .lines()
             .any(|line| line.trim() == name),
-        "rclone's configuration names no remote “{}”",
-        top.host
+        words!(
+            remote_login_rclone_no_remote = "rclone's configuration names no remote { $remote }",
+            remote = Name(top.host.clone()),
+            note = "remote: the name of one of rclone's remotes."
+        )
     );
     Ok((program, config, top))
 }
@@ -321,8 +348,11 @@ fn rclone_on_windows(
         .is_ok_and(|said| String::from_utf8_lossy(&said).contains("--log-file-max-size"));
     let mut args: Vec<OsString> = vec!["--config".into(), config.into()];
     args.extend(
-        crate::winfsp::at_login_arguments(&remote, &point, rotates)
-            .ok_or_else(|| anyhow::anyhow!("there is no folder to mount in"))?,
+        crate::winfsp::at_login_arguments(&remote, &point, rotates).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_login_no_folder = "there is no folder to mount in"
+            ))
+        })?,
     );
     // What the user chose for it: after Skwir's own, so it wins.
     args.extend(
@@ -372,7 +402,7 @@ fn logs_in_alone(
     cancel: &CancelToken,
 ) -> anyhow::Result<()> {
     let ssh = skwir_core::os_path::find_program("ssh")
-        .ok_or_else(|| anyhow::anyhow!("ssh is not installed"))?;
+        .ok_or_else(|| anyhow::anyhow!(connector::not_installed("ssh")))?;
     let mut command = Command::new(ssh);
     command.args([
         "-o",
@@ -404,19 +434,23 @@ fn logs_in_alone(
         return Ok(());
     }
     let said = finished.stderr;
+    // ssh's own words, read in English.
     if said.contains("Permission denied") {
-        anyhow::bail!(
-            "the server wants a password or a key's passphrase: at login, nobody is there \
-             to give it (a key ssh's agent holds, or one with no passphrase, logs in alone)"
-        );
+        anyhow::bail!(words!(
+            remote_login_needs_password = "the server wants a password or a key's passphrase: at login, nobody is there to give it (a key ssh's agent holds, or one with no passphrase, logs in alone)"
+        ));
     }
     if said.contains("Host key verification failed") || said.contains("host key is known") {
-        anyhow::bail!("ssh does not know the server's identity yet: connect to it once first");
+        anyhow::bail!(words!(
+            remote_login_unknown_host =
+                "ssh does not know the server's identity yet: connect to it once first"
+        ));
     }
-    anyhow::bail!(
-        "it was not reached, to know it logs in alone: {}",
-        crate::sshfs::words(&said)
-    )
+    anyhow::bail!(words!(
+        remote_login_not_reached = "it was not reached, to know it logs in alone: { $why }",
+        why = crate::sshfs::words(&said),
+        note = "it: the server; why: what ssh said."
+    ))
 }
 
 /// The programs a unit runs beside its mount's, found on `PATH` as it is
@@ -906,6 +940,20 @@ pub fn installed(id: &str) -> bool {
     Manager::user().is_ok_and(|manager| manager.installed(id))
 }
 
+/// Connecting at login is not available on this system yet, said.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn not_yet_here() -> anyhow::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        words!(
+            remote_login_not_yet = "Connecting at login is not available on { $system } yet",
+            system = skwir_core::system::NAME,
+            note = "system: Linux, macOS or Windows."
+        ),
+    )
+    .into()
+}
+
 impl Manager {
     /// The user's own: systemd's user manager, launchd's agents of the
     /// user's session, the Task Scheduler.
@@ -915,20 +963,27 @@ impl Manager {
     pub fn user() -> anyhow::Result<Manager> {
         #[cfg(target_os = "linux")]
         {
-            let config = skwir_core::xdg::config_home()
-                .ok_or_else(|| anyhow::anyhow!("there is no configuration folder"))?;
+            let config = skwir_core::xdg::config_home().ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_login_no_config = "there is no configuration folder"
+                ))
+            })?;
             Ok(Manager {
                 folder: config.join("systemd").join("user"),
                 program: skwir_core::os_path::find_program("systemctl").ok_or_else(|| {
-                    anyhow::anyhow!("systemd is not here to connect at login (no systemctl)")
+                    anyhow::anyhow!(words!(
+                        remote_login_no_systemd =
+                            "systemd is not here to connect at login (no systemctl)"
+                    ))
                 })?,
                 runtime: None,
             })
         }
         #[cfg(target_os = "macos")]
         {
-            let home = skwir_core::os_path::home()
-                .ok_or_else(|| anyhow::anyhow!("there is no home folder"))?;
+            let home = skwir_core::os_path::home().ok_or_else(|| {
+                anyhow::anyhow!(words!(remote_login_no_home = "there is no home folder"))
+            })?;
             Ok(Manager {
                 folder: home.join("Library").join("LaunchAgents"),
                 program: PathBuf::from("/bin/launchctl"),
@@ -939,14 +994,17 @@ impl Manager {
         {
             Ok(Manager {
                 folder: std::env::temp_dir(),
-                program: skwir_core::os_path::find_program("schtasks")
-                    .ok_or_else(|| anyhow::anyhow!("the Task Scheduler's schtasks is missing"))?,
+                program: skwir_core::os_path::find_program("schtasks").ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        remote_login_no_schtasks = "the Task Scheduler's schtasks is missing"
+                    ))
+                })?,
                 runtime: None,
             })
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
-            Err(skwir_core::system::not_yet("Connecting at login").into())
+            Err(not_yet_here())
         }
     }
 
@@ -988,7 +1046,7 @@ impl Manager {
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _ = (at, start, cancel);
-            Err(skwir_core::system::not_yet("Connecting at login").into())
+            Err(not_yet_here())
         }
     }
 
@@ -1023,7 +1081,7 @@ impl Manager {
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _ = (id, point, cancel);
-            Err(skwir_core::system::not_yet("Connecting at login").into())
+            Err(not_yet_here())
         }
     }
 
@@ -1109,13 +1167,17 @@ impl Manager {
         if finished.status.success() {
             return Ok(());
         }
+        // Its manager's last line, as it wrote it; else how it ended.
         let said = finished.stderr.trim();
-        anyhow::bail!(
-            "{}",
-            said.lines()
-                .next_back()
-                .map_or_else(|| format!("it ended ({})", finished.status), str::to_owned)
-        )
+        match said.lines().next_back() {
+            Some(line) => anyhow::bail!("{line}"),
+            None => anyhow::bail!(words!(
+                remote_login_ended = "it ended ({ $status })",
+                status = finished.status.to_string(),
+                note = "it: the service manager's program; status: how it ended, as the system \
+                        says it (exit status: 1)."
+            )),
+        }
     }
 }
 
@@ -1145,7 +1207,14 @@ impl Manager {
             }
             self.systemctl(&["start", name.as_str()], cancel)
                 .map_err(|error| {
-                    anyhow::anyhow!("{error:#} (journalctl --user -u {name} says why)")
+                    anyhow::anyhow!(words!(
+                        remote_login_journal =
+                            "{ $error } (journalctl --user -u { $unit } says why)",
+                        error = error,
+                        unit = name.as_str(),
+                        note = "error: why systemd did not start the unit; unit: its name. The \
+                                command in brackets is typed as it is."
+                    ))
                 })
         });
         if let Err(error) = started {
@@ -1235,7 +1304,9 @@ impl Manager {
         let user = match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
             (Ok(domain), Ok(user)) => format!("{domain}\\{user}"),
             (_, Ok(user)) => user,
-            _ => anyhow::bail!("Windows does not say who the user is (USERNAME)"),
+            _ => anyhow::bail!(words!(
+                remote_login_no_user = "Windows does not say who the user is (USERNAME)"
+            )),
         };
         // schtasks reads the task as UTF-16, as its declaration says.
         let mut bytes = vec![0xff, 0xfe];

@@ -24,6 +24,9 @@ use std::ffi::OsString;
 use std::io::BufRead as _;
 use std::path::{Path, PathBuf};
 
+use skwir_core::words;
+use skwir_core::words::Words;
+
 use crate::rc::{At, Login};
 
 /// Where `WinFsp` keeps its library, where installed: under Program Files
@@ -130,6 +133,15 @@ pub fn log_file(point: &Path) -> Option<PathBuf> {
     )
 }
 
+/// No folder holds a mount's login, said.
+fn no_login_folder() -> Words {
+    words!(
+        remote_winfsp_no_login_folder = "no folder for its login",
+        note = "Why a mount of rclone's could not be made: no folder of Skwir's keeps the \
+                login of its remote control."
+    )
+}
+
 /// Keep the remote control's login of the mount at `point`.
 ///
 /// # Errors
@@ -138,9 +150,13 @@ pub fn keep_login(point: &Path, at: &At) -> anyhow::Result<()> {
     let (port, user, pass) = match at {
         At::Loopback { port, user, pass } => (port, user, pass),
         #[cfg(unix)]
-        At::Socket(_) => anyhow::bail!("a mount on Windows answers on the loopback"),
+        At::Socket(_) => anyhow::bail!(words!(
+            remote_winfsp_loopback = "a mount on Windows answers on the loopback",
+            note = "Said where a mount's remote control was given a socket: on Windows it \
+                    answers on this machine's own network address."
+        )),
     };
-    let file = login_file(point).ok_or_else(|| anyhow::anyhow!("no folder for its login"))?;
+    let file = login_file(point).ok_or_else(|| anyhow::anyhow!(no_login_folder()))?;
     if let Some(folder) = file.parent() {
         skwir_core::folders::private(folder)?;
     }
@@ -195,7 +211,7 @@ pub fn keep_at_login(point: &Path, login: &Login) -> anyhow::Result<()> {
         at_login_file(point, "json"),
         at_login_file(point, "htpasswd"),
     ) else {
-        anyhow::bail!("no folder for its login");
+        anyhow::bail!(no_login_folder());
     };
     if let Some(folder) = kept.parent() {
         skwir_core::folders::private(folder)?;

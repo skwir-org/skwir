@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use skwir_core::thumbs::Image;
 use skwir_core::tiles::{Palette, TileRequest};
+use skwir_core::words;
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 static DATA: &[u8] = include_bytes!("../data/natural-earth.bin");
@@ -56,10 +57,11 @@ struct Reader<'a> {
 
 impl Reader<'_> {
     fn byte(&mut self) -> anyhow::Result<u8> {
-        let b = *self
-            .data
-            .get(self.at)
-            .ok_or_else(|| anyhow::anyhow!("the outline data ends early"))?;
+        let b = *self.data.get(self.at).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                map_tiles_outline_short = "the outline data ends early"
+            ))
+        })?;
         self.at += 1;
         Ok(b)
     }
@@ -73,7 +75,9 @@ impl Reader<'_> {
                 return Ok(value);
             }
         }
-        anyhow::bail!("a number in the outline data is too long")
+        anyhow::bail!(words!(
+            map_tiles_outline_number = "a number in the outline data is too long"
+        ))
     }
 
     fn signed(&mut self) -> anyhow::Result<i64> {
@@ -94,7 +98,10 @@ impl Outline {
     }
 
     fn parse(data: &[u8]) -> anyhow::Result<Outline> {
-        anyhow::ensure!(data.starts_with(b"BNE1"), "not the outline data");
+        anyhow::ensure!(
+            data.starts_with(b"BNE1"),
+            words!(map_tiles_outline_not = "not the outline data")
+        );
         let mut r = Reader { data, at: 4 };
         let count = r.byte()?;
         let mut layers = Vec::with_capacity(count.into());
@@ -134,8 +141,11 @@ impl Outline {
     /// Draw a tile.
     pub fn tile(&self, request: &TileRequest) -> anyhow::Result<Image> {
         let side = 256 * u32::from(request.scale.clamp(1, 4));
-        let mut pixmap = Pixmap::new(side, side)
-            .ok_or_else(|| anyhow::anyhow!("a tile cannot be that large"))?;
+        let mut pixmap = Pixmap::new(side, side).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                map_tiles_outline_too_large = "a tile cannot be that large"
+            ))
+        })?;
         let Palette {
             land,
             water,

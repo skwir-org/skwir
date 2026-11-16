@@ -17,6 +17,7 @@ use skwir_core::location::{
     OpenContext, OpenLocation,
 };
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
 
 use crate::Remotes;
 use crate::address::{Address, Scheme};
@@ -110,18 +111,35 @@ impl LocationProvider for Provider {
     fn empty_state(&self, location: &Location) -> Option<EmptyState> {
         let address = Address::of_location(location).ok()?;
         let label = self.remotes.label_of(&address);
+        let opening = |label: String| {
+            words!(
+                remote_provider_opening = "Opening { $label }…",
+                label = label,
+                note = "label: a phone's or a camera's name, as the sidebar shows it."
+            )
+        };
         Some(match address.scheme.device() {
             Some(Device::Phone) => EmptyState::new(
-                format!("Opening {label}…"),
-                "A phone shows its files once it is unlocked.",
+                opening(label),
+                words!(
+                    remote_provider_phone_unlocked = "A phone shows its files once it is unlocked."
+                ),
             ),
             Some(Device::Camera) => EmptyState::new(
-                format!("Opening {label}…"),
-                "A camera shows its files while it is switched on.",
+                opening(label),
+                words!(
+                    remote_provider_camera_on = "A camera shows its files while it is switched on."
+                ),
             ),
             None => EmptyState::new(
-                format!("Connecting to {label}…"),
-                "If the server asks for a password, or to be trusted the first time, the window asks you.",
+                words!(
+                    remote_provider_connecting = "Connecting to { $label }…",
+                    label = label,
+                    note = "label: the server's, as the sidebar shows it (me@example.com)."
+                ),
+                words!(
+                    remote_provider_window_asks = "If the server asks for a password, or to be trusted the first time, the window asks you."
+                ),
             ),
         })
     }
@@ -170,12 +188,27 @@ impl How {
                         .send(ListingEvent::Redirect(Location::from_path(path))),
                     Err(error) => {
                         let label = this.remotes.label_of(&this.address);
+                        let of = skwir_core::ListingError::of(&error);
+                        // Said for the window that shows the listing.
+                        let message = match this.address.scheme.device() {
+                            Some(_) => words!(
+                                remote_provider_not_opened =
+                                    "Could not open { $label }: { $error }",
+                                label = label,
+                                error = error,
+                                note = "label: a phone's or a camera's name; error: why."
+                            ),
+                            None => words!(
+                                remote_provider_not_connected =
+                                    "Could not connect to { $label }: { $error }",
+                                label = label,
+                                error = error,
+                                note = "label: the server's, as the sidebar shows it; error: why."
+                            ),
+                        };
                         this.tx.send(ListingEvent::Error(skwir_core::ListingError {
-                            message: match this.address.scheme.device() {
-                                Some(_) => format!("Could not open {label}: {error:#}"),
-                                None => format!("Could not connect to {label}: {error:#}"),
-                            },
-                            ..skwir_core::ListingError::of(&error)
+                            message: message.say(),
+                            ..of
                         }))
                     }
                 };
@@ -188,32 +221,42 @@ impl How {
     }
 
     fn reach(&self) -> anyhow::Result<PathBuf> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("Skwir is quitting"))?;
+        let app = self.app.upgrade().ok_or_else(|| {
+            anyhow::anyhow!(words!(remote_provider_quitting = "Skwir is quitting"))
+        })?;
         let ask: Arc<dyn Ask> = Arc::new(crate::WindowAsk {
             app: self.app.clone(),
         });
         // A device's files are the user's as a server's are: asked too.
         let (title, detail) = match self.address.scheme.device() {
             Some(_) => (
-                format!(
-                    "An agent asks to open {}",
-                    self.remotes.label_of(&self.address)
+                words!(
+                    remote_provider_agent_opens = "An agent asks to open { $label }",
+                    label = self.remotes.label_of(&self.address),
+                    note = "label: a phone's or a camera's name."
                 ),
-                format!("It asked to open {}.", self.address),
+                words!(
+                    remote_provider_agent_opens_detail = "It asked to open { $address }.",
+                    address = self.address.to_string(),
+                    note = "address: the device's address (mtp://Example_Phone/)."
+                ),
             ),
             None => (
-                format!("An agent asks to connect to {}", self.address.host),
-                format!(
-                    "It asked to open {}. Connecting tells the server who you are.",
-                    self.address
+                words!(
+                    remote_provider_agent_connects = "An agent asks to connect to { $host }",
+                    host = self.address.host.as_str(),
+                    note = "host: the server's name or address."
+                ),
+                words!(
+                    remote_provider_agent_connects_detail =
+                        "It asked to open { $address }. Connecting tells the server who you are.",
+                    address = self.address.to_string(),
+                    note = "address: the address asked (sftp://example.com/srv)."
                 ),
             ),
         };
-        if self.agent && !ask.confirm(&title, &detail, &self.cancel) {
-            anyhow::bail!("you did not allow it");
+        if self.agent && !ask.confirm(&title.say(), &detail.say(), &self.cancel) {
+            anyhow::bail!(words!(remote_provider_not_allowed = "you did not allow it"));
         }
         self.remotes.reach(&app, &self.address, &ask, &self.cancel)
     }

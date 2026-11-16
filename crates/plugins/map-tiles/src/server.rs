@@ -13,6 +13,8 @@ use std::hash::{Hash, Hasher};
 
 use skwir_core::settings::SECRET_STORED;
 use skwir_core::tiles::TileRequest;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 pub const OSM_ID: &str = "openstreetmap";
 const OSM_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -163,8 +165,12 @@ impl Server {
         if url.contains("{s}") {
             anyhow::ensure!(
                 !self.subdomains.is_empty(),
-                "{} has no subdomains for {{s}}",
-                self.name
+                words!(
+                    map_tiles_no_subdomains = "{ $name } has no subdomains for { \"{s}\" }",
+                    name = self.name.clone(),
+                    note = "name: a tile server's, as the user named it. What is in braces is \
+                            typed as it is in its address."
+                )
             );
             // The same tile always from the same subdomain, so caches along
             // the way hold it once.
@@ -172,9 +178,7 @@ impl Server {
             url = url.replace("{s}", &self.subdomains[pick]);
         }
         if url.contains("{key}") {
-            let key = key.ok_or_else(|| {
-                anyhow::anyhow!("The API key of {} is not in the keyring", self.name)
-            })?;
+            let key = key.ok_or_else(|| anyhow::anyhow!(self.no_key()))?;
             url = url.replace("{key}", key);
         }
         Ok(url)
@@ -186,15 +190,22 @@ impl Server {
             .iter()
             .map(|(name, value)| {
                 if value.contains("{key}") {
-                    let key = key.ok_or_else(|| {
-                        anyhow::anyhow!("The API key of {} is not in the keyring", self.name)
-                    })?;
+                    let key = key.ok_or_else(|| anyhow::anyhow!(self.no_key()))?;
                     Ok((name.clone(), value.replace("{key}", key)))
                 } else {
                     Ok((name.clone(), value.clone()))
                 }
             })
             .collect()
+    }
+
+    /// Its key is not in the keyring, said.
+    fn no_key(&self) -> Words {
+        words!(
+            map_tiles_no_key = "The API key of { $name } is not in the keyring",
+            name = self.name.clone(),
+            note = "name: a tile server's, as the user named it."
+        )
     }
 
     /// What a tile is kept under in the cache: the server and everything
@@ -238,13 +249,27 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
         let Some(table) = record.as_table() else {
             continue;
         };
+        // Its name as the user wrote it, else words for one.
         let name = Some(text(table, "name"))
             .filter(|n| !n.is_empty())
-            .unwrap_or("A tile server");
+            .map_or_else(
+                || {
+                    words!(
+                        map_tiles_unnamed_server = "A tile server",
+                        note =
+                            "A tile server not named yet, at the start of what is wrong with it."
+                    )
+                },
+                |name| Words::as_written(name.to_owned()),
+            );
         let url = text(table, "url");
         anyhow::ensure!(
             url.starts_with("https://") || url.starts_with("http://"),
-            "{name}: the address must start with https://"
+            words!(
+                map_tiles_check_https = "{ $name }: the address must start with https://",
+                name = name.clone(),
+                note = "name: a tile server's, as the user named it."
+            )
         );
         let mut rest = url.to_owned();
         for part in PARTS {
@@ -254,19 +279,34 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
             let end = rest[start..]
                 .find('}')
                 .map_or(rest.len(), |e| start + e + 1);
-            anyhow::bail!(
-                "{name}: the address has an unknown part {}",
-                &rest[start..end]
-            );
+            anyhow::bail!(words!(
+                map_tiles_check_unknown_part =
+                    "{ $name }: the address has an unknown part { $part }",
+                name = name.clone(),
+                part = &rest[start..end],
+                note = "name: a tile server's, as the user named it; part: what its address holds \
+                        in braces that skwir does not know ({zoom})."
+            ));
         }
         let rows = url.contains("{y}") || url.contains("{-y}");
         anyhow::ensure!(
             (url.contains("{z}") && url.contains("{x}") && rows) || url.contains("{q}"),
-            "{name}: the address needs {{z}}, {{x}} and {{y}} (or {{-y}}), or {{q}}"
+            words!(
+                map_tiles_check_needs = "{ $name }: the address needs { \"{z}\" }, { \"{x}\" } and { \"{y}\" } (or { \"{-y}\" }), or { \"{q}\" }",
+                name = name.clone(),
+                note = "name: a tile server's, as the user named it. What is in braces is typed \
+                        as it is in its address."
+            )
         );
         anyhow::ensure!(
             !url.contains("{s}") || !subdomains(text(table, "subdomains")).is_empty(),
-            "{name}: the address uses {{s}}, so the server needs subdomains"
+            words!(
+                map_tiles_check_subdomains =
+                    "{ $name }: the address uses { \"{s}\" }, so the server needs subdomains",
+                name = name.clone(),
+                note = "name: a tile server's, as the user named it. What is in braces is typed \
+                        as it is in its address."
+            )
         );
         let mut uses_key = url.contains("{key}");
         for pair in table
@@ -278,20 +318,45 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
         {
             let header = pair.first().and_then(toml::Value::as_str).unwrap_or("");
             let value = pair.get(1).and_then(toml::Value::as_str).unwrap_or("");
-            anyhow::ensure!(is_token(header), "{name}: “{header}” is not a header name");
+            anyhow::ensure!(
+                is_token(header),
+                words!(
+                    map_tiles_check_header_name = "{ $name }: “{ $header }” is not a header name",
+                    name = name.clone(),
+                    header = header,
+                    note = "name: a tile server's, as the user named it; header: what was typed \
+                            as a header's name."
+                )
+            );
             anyhow::ensure!(
                 !RESERVED.contains(&header.to_ascii_lowercase().as_str()),
-                "{name}: skwir sets the {header} header itself"
+                words!(
+                    map_tiles_check_header_reserved =
+                        "{ $name }: skwir sets the { $header } header itself",
+                    name = name.clone(),
+                    header = header,
+                    note = "name: a tile server's, as the user named it; header: an HTTP header's \
+                            name (Host)."
+                )
             );
             anyhow::ensure!(
                 !value.contains(['\r', '\n']),
-                "{name}: a header's value is one line"
+                words!(
+                    map_tiles_check_header_line = "{ $name }: a header's value is one line",
+                    name = name.clone(),
+                    note = "name: a tile server's, as the user named it."
+                )
             );
             uses_key |= value.contains("{key}");
         }
         anyhow::ensure!(
             !uses_key || text(table, "key") == SECRET_STORED,
-            "{name}: {{key}} is used, but no API key is set"
+            words!(
+                map_tiles_check_no_key = "{ $name }: { \"{key}\" } is used, but no API key is set",
+                name = name.clone(),
+                note = "name: a tile server's, as the user named it. What is in braces is typed \
+                        as it is in its address."
+            )
         );
     }
     Ok(())

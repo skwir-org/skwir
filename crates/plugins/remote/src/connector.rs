@@ -7,12 +7,15 @@ use std::sync::Arc;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 
 /// What a connection needs only the user can say, asked of the window
 /// (`Window`) or, in tests, answered beforehand. Each call waits for the
-/// answer; `None` and `false` are Cancel, and so is `cancel` firing.
+/// answer; `None` and `false` are Cancel, and so is `cancel` firing. What
+/// it is given is said already, for the window: its questions take text.
 pub trait Ask: Send + Sync {
     /// A secret: a password, a key's passphrase. `title` says whose
     /// ("Password for me@example.com"), `accept` the button's verb.
@@ -142,12 +145,12 @@ pub trait Connector: Send + Sync {
     /// Its name in settings and messages: `sshfs`, `gvfs`, `rclone`.
     fn id(&self) -> &'static str;
     /// Its name for the user: "sshfs", "GVfs".
-    fn title(&self) -> &'static str;
+    fn title(&self) -> Words;
     /// The schemes it opens.
     fn schemes(&self) -> &'static [Scheme];
     /// Why it cannot connect here, in the user's words ("sshfs is not
     /// installed"); `None` when it can. Cheap: a lookup on `PATH`.
-    fn unavailable(&self) -> Option<String>;
+    fn unavailable(&self) -> Option<Words>;
     /// Mount `address`'s top (`Address::top`) and say where. Blocks: on a
     /// worker, asking what it must through `ask`. Stops when `cancel`
     /// fires, leaving nothing mounted.
@@ -270,6 +273,40 @@ pub trait Connector: Send + Sync {
     fn reads_whole(&self, _remote: &Remote) -> bool {
         false
     }
+}
+
+/// `program` is not installed, said ([`Connector::unavailable`]).
+pub fn not_installed(program: &str) -> Words {
+    words!(
+        remote_not_installed = "{ $program } is not installed",
+        program = program,
+        note = "program: a program's name, as it is installed (sshfs, rclone, kio-fuse (KDE))."
+    )
+}
+
+/// The button that answers a connection's question.
+pub fn connect_button() -> Words {
+    words!(
+        remote_ask_connect = "Connect",
+        note = "The button of a question asked while connecting to a server (a password)."
+    )
+}
+
+/// The question for a server's password, `label` naming its login.
+pub fn password_for(label: &str) -> Words {
+    words!(
+        remote_password_for = "Password for { $label }",
+        label = label,
+        note = "label: the login and server asked about (me@example.com)."
+    )
+}
+
+/// A connection stopped before it was made, said.
+pub fn cancelled() -> Words {
+    words!(
+        remote_cancelled = "cancelled",
+        note = "Why a connection or a transfer did not go on: it was stopped."
+    )
 }
 
 /// Where Skwir mounts what it connects itself (sshfs, rclone): a folder

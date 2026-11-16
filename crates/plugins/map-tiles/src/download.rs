@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::cache::CacheSlot;
 use skwir_core::tiles::{TileDone, TileRequest};
+use skwir_core::words;
 use skwir_platform::secrets::{SecretRef, SecretText};
 
 use crate::http;
@@ -390,8 +391,14 @@ async fn serve(shared: &Arc<Shared>, job: Job) {
         }
         Err(error) => Err(anyhow::anyhow!("{error:#}")),
     }
-    // Whatever the server or the network said, never the key.
-    .map_err(|error| anyhow::anyhow!(redact(&format!("{error:#}"), secret.as_deref())));
+    // Whatever the server or the network said, never the key: said for
+    // the window that shows it, in its language.
+    .map_err(|error| {
+        anyhow::anyhow!(redact(
+            &words::Words::of_error(error).say(),
+            secret.as_deref()
+        ))
+    });
     // Decoding and keeping are for a worker, not the runtime's thread.
     let shared = Arc::clone(shared);
     let _ = tokio::task::spawn_blocking(move || {
@@ -464,7 +471,9 @@ async fn fetch(
     match answer.status {
         304 => {
             let stale = stale.ok_or_else(|| {
-                anyhow::anyhow!("the server said nothing changed in a tile never had")
+                anyhow::anyhow!(words!(
+                    map_tiles_not_modified = "the server said nothing changed in a tile never had"
+                ))
             })?;
             Ok(Cached {
                 expires,
@@ -479,7 +488,11 @@ async fn fetch(
             modified,
             body: answer.body,
         }),
-        status => anyhow::bail!("the tile server answered {status}"),
+        status => anyhow::bail!(words!(
+            map_tiles_answered = "the tile server answered { $status }",
+            status = status.to_string(),
+            note = "status: an HTTP status number (404)."
+        )),
     }
 }
 

@@ -17,6 +17,8 @@ use skwir_core::geo::Bounds;
 use skwir_core::preview::Held;
 use skwir_core::scheduler::{Priority, Scheduler};
 use skwir_core::tiles::{NoTile, SourceInfo, TileDone, TileRequest, TileSource};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// A tile inflated is at most this large: a raster tile is tens of
 /// kilobytes, a dense vector tile a few megabytes.
@@ -86,14 +88,17 @@ impl Format {
         matches!(self, Format::Png | Format::Jpeg | Format::Webp)
     }
 
-    pub(crate) fn describe(self) -> &'static str {
+    pub(crate) fn describe(self) -> Words {
         match self {
-            Format::Png => "PNG pictures",
-            Format::Jpeg => "JPEG pictures",
-            Format::Webp => "WebP pictures",
-            Format::Avif => "AVIF pictures",
-            Format::Vector => "Vector shapes",
-            Format::Unknown => "Unknown",
+            Format::Png => words!(map_tiles_format_png = "PNG pictures"),
+            Format::Jpeg => words!(map_tiles_format_jpeg = "JPEG pictures"),
+            Format::Webp => words!(map_tiles_format_webp = "WebP pictures"),
+            Format::Avif => words!(map_tiles_format_avif = "AVIF pictures"),
+            Format::Vector => words!(map_tiles_format_vector = "Vector shapes"),
+            Format::Unknown => words!(
+                map_tiles_format_unknown = "Unknown",
+                note = "What a tile archive's tiles are, when it does not say."
+            ),
         }
     }
 }
@@ -118,7 +123,7 @@ pub(crate) struct About {
     /// How many tiles it holds, when it says so without a count.
     pub tiles: Option<u64>,
     /// Why its tiles, pictures though they are, cannot be read.
-    pub unreadable: Option<String>,
+    pub unreadable: Option<Words>,
 }
 
 impl About {
@@ -165,7 +170,7 @@ pub(crate) fn open(held: &Arc<Held>, cancel: &CancelToken) -> anyhow::Result<Arc
     match Kind::detect(held.path(), held.head()) {
         Some(Kind::PmTiles) => Ok(Arc::new(crate::pmtiles::PmTiles::open(held)?)),
         Some(Kind::MbTiles) => Ok(Arc::new(crate::mbtiles::MbTiles::of_held(held, cancel)?)),
-        None => anyhow::bail!("Not a tile archive"),
+        None => anyhow::bail!(words!(map_tiles_not_archive = "Not a tile archive")),
     }
 }
 
@@ -181,11 +186,12 @@ pub(crate) enum Compression {
 }
 
 impl Compression {
-    /// Why skwir cannot read what is compressed this way, if it cannot.
+    /// The name of what compresses this way, where skwir cannot read
+    /// it.
     pub(crate) fn unreadable(self) -> Option<&'static str> {
         match self {
-            Compression::Brotli => Some("compressed with Brotli, which skwir does not read"),
-            Compression::Zstd => Some("compressed with Zstandard, which skwir does not read"),
+            Compression::Brotli => Some("Brotli"),
+            Compression::Zstd => Some("Zstandard"),
             Compression::None | Compression::Gzip | Compression::Unknown => None,
         }
     }
@@ -197,8 +203,13 @@ pub(crate) fn inflate(
     compression: Compression,
     limit: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    if let Some(why) = compression.unreadable() {
-        anyhow::bail!("The tiles are {why}");
+    if let Some(compression) = compression.unreadable() {
+        anyhow::bail!(words!(
+            map_tiles_compressed =
+                "The tiles are compressed with { $compression }, which skwir does not read",
+            compression = compression,
+            note = "compression: the name of a way to compress (Brotli, Zstandard)."
+        ));
     }
     let gzip = match compression {
         Compression::Gzip => true,
@@ -206,14 +217,20 @@ pub(crate) fn inflate(
         _ => false,
     };
     if !gzip {
-        anyhow::ensure!(bytes.len() <= limit, "A part of the archive is too large");
+        anyhow::ensure!(
+            bytes.len() <= limit,
+            words!(map_tiles_part_too_large = "A part of the archive is too large")
+        );
         return Ok(bytes);
     }
     let mut out = Vec::new();
     flate2::read::GzDecoder::new(bytes.as_slice())
         .take(limit as u64 + 1)
         .read_to_end(&mut out)?;
-    anyhow::ensure!(out.len() <= limit, "A part of the archive is too large");
+    anyhow::ensure!(
+        out.len() <= limit,
+        words!(map_tiles_part_too_large = "A part of the archive is too large")
+    );
     Ok(out)
 }
 

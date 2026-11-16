@@ -42,6 +42,8 @@ use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::{Forget, Remote};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Device, Recognised, Server};
@@ -129,10 +131,10 @@ impl Kio {
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(answer) => return answer.map(PathBuf::from).map_err(|e| said(&e)),
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                    anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
                 }
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                    anyhow::bail!("kio-fuse did not answer");
+                    anyhow::bail!(words!(remote_kio_no_answer = "kio-fuse did not answer"));
                 }
             }
         }
@@ -190,7 +192,11 @@ fn said(error: &anyhow::Error) -> anyhow::Error {
     let reason = text
         .rsplit_once(": ")
         .map_or(text.as_str(), |(_, reason)| reason);
-    anyhow::anyhow!("KIO could not open it: {reason}")
+    anyhow::anyhow!(words!(
+        remote_kio_could_not = "KIO could not open it: { $reason }",
+        reason = reason,
+        note = "reason: what kio-fuse said, as the system words its error."
+    ))
 }
 
 /// KIO's name of `scheme`, where it opens it.
@@ -274,8 +280,8 @@ impl Connector for Kio {
         "kio"
     }
 
-    fn title(&self) -> &'static str {
-        "KIO"
+    fn title(&self) -> Words {
+        Words::as_written("KIO")
     }
 
     fn schemes(&self) -> &'static [Scheme] {
@@ -285,12 +291,14 @@ impl Connector for Kio {
         &[Scheme::Smb, Scheme::Dav, Scheme::Davs, Scheme::Ftp]
     }
 
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Words> {
         if !cfg!(target_os = "linux") {
-            return Some("KIO's folders (kio-fuse) are on Linux only".to_owned());
+            return Some(words!(
+                remote_kio_linux_only = "KIO's folders (kio-fuse) are on Linux only"
+            ));
         }
         if !self.can_start() {
-            return Some("kio-fuse (KDE) is not installed".to_owned());
+            return Some(crate::connector::not_installed("kio-fuse (KDE)"));
         }
         None
     }
@@ -304,7 +312,11 @@ impl Connector for Kio {
         #[cfg(target_os = "linux")]
         {
             let url = kio_url(address).ok_or_else(|| {
-                anyhow::anyhow!("KIO opens no {} address", address.scheme.title())
+                anyhow::anyhow!(words!(
+                    remote_kio_opens_no = "KIO opens no { $protocol } address",
+                    protocol = address.scheme.title(),
+                    note = "protocol: SFTP, SMB, WebDAV, FTP…"
+                ))
             })?;
             // kio-fuse asks nothing: KDE asks (module documentation), then
             // kio-fuse finds what it kept. Over TLS, KDE first: on a
@@ -316,15 +328,18 @@ impl Connector for Kio {
                     Some(false) if !cancel.is_cancelled() => self.asked_by_kde(&url, cancel),
                     asked => asked,
                 };
-                anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-                anyhow::ensure!(asked != Some(false), "KIO could not open it");
+                anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
+                anyhow::ensure!(
+                    asked != Some(false),
+                    words!(remote_kio_could_not_open = "KIO could not open it")
+                );
                 self.mount_url(&url, cancel)?
             } else {
                 match self.mount_url(&url, cancel) {
                     Ok(local) => local,
                     Err(first) => {
                         let asked = self.asked_by_kde(&url, cancel);
-                        anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                        anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
                         if asked != Some(true) {
                             return Err(first);
                         }
@@ -336,7 +351,9 @@ impl Connector for Kio {
             let remote = skwir_core::fs::reach::of(&local)
                 .filter(|remote| remote.fstype == BRIDGE)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("kio-fuse mounted it but its folder is not there")
+                    anyhow::anyhow!(words!(
+                        remote_kio_no_folder = "kio-fuse mounted it but its folder is not there"
+                    ))
                 })?;
             Ok(Connected {
                 point: remote.point.clone(),
@@ -346,7 +363,9 @@ impl Connector for Kio {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (kio_url(address), server(address), cancel);
-            anyhow::bail!("KIO's folders (kio-fuse) are on Linux only")
+            anyhow::bail!(words!(
+                remote_kio_linux_only = "KIO's folders (kio-fuse) are on Linux only"
+            ))
         }
     }
 
@@ -385,7 +404,10 @@ impl Connector for Kio {
         _recognised: &Recognised,
         _cancel: &CancelToken,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("KIO keeps its folders until the session ends")
+        anyhow::bail!(words!(
+            remote_kio_keeps = "KIO keeps its folders until the session ends",
+            note = "Why a server KIO opened cannot be disconnected from."
+        ))
     }
 
     fn mounts_each_path(&self) -> bool {
@@ -471,7 +493,7 @@ fn kde_places(xml: &str) -> Vec<Server> {
                 address,
                 label,
                 kind: String::new(),
-                kept: crate::servers::Kept::Tool("one of Dolphin's places"),
+                kept: crate::servers::Kept::Tool(crate::servers::Keeper::Dolphin),
             })
         })
         .collect()

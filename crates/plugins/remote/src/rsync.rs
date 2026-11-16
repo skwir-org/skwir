@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 use skwir_core::op::transfer::{Aside, Control, NotServed, Told, Transfer};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::ssh_mount::Mount;
 
@@ -340,12 +342,12 @@ impl Transfer for Rsync {
             return Err(NotServed.into());
         };
         if !self.server_runs(&mount, control.cancel()) {
-            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            anyhow::ensure!(!control.is_cancelled(), crate::connector::cancelled());
             return Err(NotServed.into());
         }
-        let at = mount.on_server(folder).ok_or_else(|| {
-            anyhow::anyhow!("“{}” has a name rsync cannot be given", folder.display())
-        })?;
+        let at = mount
+            .on_server(folder)
+            .ok_or_else(|| anyhow::anyhow!(unnamed(folder)))?;
         crate::ssh_mount::remove_beside(folder, names, |beside| {
             // Each file's name, and the folder of Skwir's whole.
             let mut list = Vec::new();
@@ -381,12 +383,7 @@ impl Transfer for Rsync {
                 &|| control.is_paused(),
                 &mut |_: &[u8]| {},
             )?;
-            anyhow::ensure!(
-                finished.status.success(),
-                "rsync failed ({}): {}",
-                finished.status,
-                finished.stderr
-            );
+            anyhow::ensure!(finished.status.success(), failed(&finished));
             Ok(())
         })?;
         self.removed.fetch_add(1, Ordering::Relaxed);
@@ -413,26 +410,26 @@ impl Transfer for Rsync {
     ) -> anyhow::Result<()> {
         let (copied, placed, made, temp) = (told.copied, told.placed, told.made, aside.temp);
         let mut writing = Writing::new(names);
-        let rsync = program().ok_or_else(|| anyhow::anyhow!("rsync is not installed"))?;
+        let rsync =
+            program().ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("rsync")))?;
         let (remote_side, local_side, upward) = match (self.mount_of(from), self.mount_of(into)) {
             (None, Some(mount)) => (mount, from, true),
             (Some(mount), None) => (mount, into, false),
-            _ => anyhow::bail!("rsync copies between this machine and a server"),
+            _ => anyhow::bail!(words!(
+                remote_rsync_between = "rsync copies between this machine and a server"
+            )),
         };
         let mount = remote_side;
         if !self.server_runs(&mount, control.cancel()) {
-            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            anyhow::ensure!(!control.is_cancelled(), crate::connector::cancelled());
             tracing::info!(point = %mount.point.display(), "the server runs no rsync: copies go another way");
             self.without.lock().insert(mount.point);
             return Err(NotServed.into());
         }
         let remote_path = if upward { into } else { from };
-        let at = mount.on_server(remote_path).ok_or_else(|| {
-            anyhow::anyhow!(
-                "“{}” has a name rsync cannot be given",
-                remote_path.display()
-            )
-        })?;
+        let at = mount
+            .on_server(remote_path)
+            .ok_or_else(|| anyhow::anyhow!(unnamed(remote_path)))?;
         let mut local = local_side.as_os_str().to_owned();
         local.push("/");
         let remote = mount.spec(&at);
@@ -462,9 +459,7 @@ impl Transfer for Rsync {
             } else {
                 path.to_str().map(str::to_owned)
             };
-            said.ok_or_else(|| {
-                anyhow::anyhow!("“{}” has a name rsync cannot be given", path.display())
-            })
+            said.ok_or_else(|| anyhow::anyhow!(unnamed(path)))
         };
         // A file it was writing when cut short is kept there, and gone on
         // from by its retry (ADR-080): the basis of its delta copy, whose
@@ -555,8 +550,28 @@ impl Transfer for Rsync {
             tracing::info!(point = %mount.point.display(), "rsync does not reach the server: copies go through the mount");
             self.without.lock().insert(mount.point);
         }
-        anyhow::bail!("rsync failed ({}): {}", finished.status, finished.stderr)
+        anyhow::bail!(failed(&finished))
     }
+}
+
+/// `path` has a name rsync cannot be given, said.
+fn unnamed(path: &Path) -> Words {
+    words!(
+        remote_rsync_unnamed = "“{ $path }” has a name rsync cannot be given",
+        path = path.display().to_string(),
+        note = "path: a file's or a folder's path."
+    )
+}
+
+/// rsync failed, said with what it said.
+fn failed(finished: &skwir_platform::process::Finished) -> Words {
+    words!(
+        remote_rsync_failed = "rsync failed ({ $status }): { $said }",
+        status = finished.status.to_string(),
+        said = finished.stderr.clone(),
+        note = "status: how rsync ended, as the system says it (exit status: 23); said: what \
+                rsync printed, in English."
+    )
 }
 
 #[cfg(test)]

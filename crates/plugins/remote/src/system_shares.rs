@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Recognised};
@@ -30,8 +32,8 @@ impl Connector for SystemShares {
         "system"
     }
 
-    fn title(&self) -> &'static str {
-        if cfg!(windows) { "Windows" } else { "macOS" }
+    fn title(&self) -> Words {
+        Words::as_written(if cfg!(windows) { "Windows" } else { "macOS" })
     }
 
     fn schemes(&self) -> &'static [Scheme] {
@@ -48,11 +50,11 @@ impl Connector for SystemShares {
         }
     }
 
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Words> {
         (!cfg!(any(windows, target_os = "macos"))).then(|| {
-            "the system's own shares are Windows' and macOS's: here sshfs, GVfs, KIO or \
-             rclone mount them"
-                .to_owned()
+            words!(
+                remote_system_shares_elsewhere = "the system's own shares are Windows' and macOS's: here sshfs, GVfs, KIO or rclone mount them"
+            )
         })
     }
 
@@ -65,7 +67,7 @@ impl Connector for SystemShares {
         let top = address.top();
         let mut password: Option<String> = ask.kept_password();
         for _ in 0..=TRIES {
-            anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+            anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
             match attach(&top, password.as_deref()) {
                 Ok(point) => {
                     skwir_core::fs::reach::changed();
@@ -75,16 +77,19 @@ impl Connector for SystemShares {
                     });
                 }
                 Err(skwir_platform::shares::Refused::Login) => {
-                    let title = format!("Password for {}", top.label());
+                    let title = crate::connector::password_for(&top.label()).say();
+                    let connect = crate::connector::connect_button().say();
                     let answer = ask
-                        .password(&title, "Connect", cancel)
-                        .ok_or_else(|| anyhow::anyhow!("cancelled"))?;
+                        .password(&title, &connect, cancel)
+                        .ok_or_else(|| anyhow::anyhow!(crate::connector::cancelled()))?;
                     password = Some(answer.text);
                 }
                 Err(skwir_platform::shares::Refused::Other(error)) => return Err(error),
             }
         }
-        anyhow::bail!("the server refused the login")
+        anyhow::bail!(words!(
+            remote_system_shares_login_refused = "the server refused the login"
+        ))
     }
 
     fn recognises(&self, remote: &Remote) -> Option<Recognised> {
@@ -123,9 +128,12 @@ fn attach(
     let user = top.user.as_deref();
     if cfg!(windows) {
         let unc = unc_of(top).ok_or_else(|| {
-            skwir_platform::shares::Refused::Other(anyhow::anyhow!(
-                "“{top}” names no share: smb://server/share"
-            ))
+            skwir_platform::shares::Refused::Other(anyhow::anyhow!(words!(
+                remote_system_shares_no_share = "“{ $address }” names no share: smb://server/share",
+                address = top.to_string(),
+                note = "address: what was asked (smb://nas); after the colon, how an address \
+                        names a share."
+            )))
         })?;
         let user = match (&top.domain, user) {
             (Some(domain), Some(user)) => Some(format!("{domain}\\{user}")),

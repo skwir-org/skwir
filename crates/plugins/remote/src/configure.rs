@@ -16,6 +16,8 @@ use skwir_core::app::{App, NotifyLevel};
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::registry::MenuItem;
 use skwir_core::settings::{RecordField, SettingSpec};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::address::{Address, Scheme};
 use crate::{ID, Remotes};
@@ -125,14 +127,14 @@ pub(crate) fn kept_items(address: &Address) -> Vec<MenuItem> {
     vec![
         MenuItem::new(
             "place",
-            "Edit Server…",
+            edit_server(),
             "settings",
             410,
             Invocation::with_args("remote.edit_server", &id),
         ),
         MenuItem::new(
             "place",
-            "Remove Server…",
+            remove_server(),
             "trash",
             290,
             Invocation::with_args("remote.remove_server", &id),
@@ -150,26 +152,30 @@ fn record_actions(
     remembered: &[String],
     unfinished: &[String],
 ) -> Vec<serde_json::Value> {
-    let action = |label: &str, command: &str, args: serde_json::Value| serde_json::json!({ "label": label, "command": command, "args": args });
+    // Said for Settings' list, which draws them.
+    let action = |label: Words, command: &str, args: serde_json::Value| serde_json::json!({ "label": label.say(), "command": command, "args": args });
     let top = server.address.top();
     let mut actions = Vec::new();
     if let Some(name) = remote_name(&server.address).filter(|n| unfinished.iter().any(|u| u == n)) {
         actions.push(action(
-            FINISH,
+            finish(),
             "remote.edit_server",
             serde_json::json!({ "id": name }),
         ));
     }
     if let Some(name) = remote_name(&server.address) {
         actions.push(action(
-            "Test",
+            words!(
+                remote_configure_test = "Test",
+                note = "A button on a server's line in Settings: asks whether it answers."
+            ),
             "remote.test_server",
             serde_json::json!({ "id": name }),
         ));
     }
     if crate::options::takes_options(top.scheme) {
         actions.push(action(
-            "Mount Options…",
+            words!(remote_configure_mount_options_button = "Mount Options…"),
             "remote.mount_options",
             serde_json::json!({ "address": top.to_string() }),
         ));
@@ -178,9 +184,13 @@ fn record_actions(
         let on = at_login.contains(&id);
         actions.push(action(
             if on {
-                "Connect at Login ✓"
+                words!(
+                    remote_configure_at_login_on = "Connect at Login ✓",
+                    note = "A button on a server's line in Settings, while it connects at login: \
+                            the mark says it does."
+                )
             } else {
-                "Connect at Login"
+                connect_at_login()
             },
             "remote.connect_at_login",
             serde_json::json!({ "address": top.to_string(), "on": !on }),
@@ -188,14 +198,14 @@ fn record_actions(
     }
     if top.scheme == Scheme::Sftp {
         actions.push(action(
-            "Set Up Key Login…",
+            set_up_key_login(),
             "remote.setup_key_login",
             serde_json::json!({ "address": top.to_string() }),
         ));
     }
     if remote_name(&server.address).is_some() && signs_in(&server.kind) {
         actions.push(action(
-            "Sign In Again…",
+            sign_in_again(),
             "remote.reconnect",
             serde_json::json!({ "id": server.address.host }),
         ));
@@ -206,7 +216,7 @@ fn record_actions(
     );
     if remembered.contains(&key) {
         actions.push(action(
-            "Forget Password",
+            words!(remote_configure_forget_password = "Forget Password"),
             "remote.forget_password",
             serde_json::json!({ "server": key }),
         ));
@@ -222,15 +232,21 @@ pub(crate) fn menu_items(name: &str, signs_in: bool, unfinished: bool) -> Vec<Me
     let mut items = vec![
         MenuItem::new(
             "place",
-            "Edit Server…",
+            edit_server(),
             "settings",
             410,
             named("remote.edit_server"),
         ),
-        MenuItem::new("place", "Test Server", "", 411, named("remote.test_server")),
         MenuItem::new(
             "place",
-            "Remove Server…",
+            words!(remote_configure_test_server_menu = "Test Server"),
+            "",
+            411,
+            named("remote.test_server"),
+        ),
+        MenuItem::new(
+            "place",
+            remove_server(),
             "trash",
             290,
             named("remote.remove_server"),
@@ -239,7 +255,7 @@ pub(crate) fn menu_items(name: &str, signs_in: bool, unfinished: bool) -> Vec<Me
     if signs_in {
         items.push(MenuItem::new(
             "place",
-            "Sign In Again…",
+            sign_in_again(),
             "",
             412,
             named("remote.reconnect"),
@@ -248,7 +264,7 @@ pub(crate) fn menu_items(name: &str, signs_in: bool, unfinished: bool) -> Vec<Me
     if unfinished {
         items.push(MenuItem::new(
             "place",
-            FINISH,
+            finish(),
             "settings",
             405,
             named("remote.edit_server"),
@@ -260,11 +276,40 @@ pub(crate) fn menu_items(name: &str, signs_in: bool, unfinished: bool) -> Vec<Me
 /// What finishes setting up a remote of rclone's Skwir did not finish
 /// (`rclone_forms::UNFINISHED`): its Edit, which asks rclone's questions
 /// again.
-const FINISH: &str = "Finish Setting Up…";
+fn finish() -> Words {
+    words!(
+        remote_configure_finish = "Finish Setting Up…",
+        note = "A menu item of a remote of rclone's whose setting up was not finished."
+    )
+}
 
-/// What a remote of rclone's Skwir did not finish setting up says of
-/// itself where it is listed.
-pub(crate) const NOT_FINISHED: &str = "not finished setting up";
+/// A server's Edit, in its menu.
+fn edit_server() -> Words {
+    words!(remote_configure_edit_server_menu = "Edit Server…")
+}
+
+/// A server's Remove, in its menu.
+fn remove_server() -> Words {
+    words!(remote_configure_remove_server_menu = "Remove Server…")
+}
+
+/// A server's Sign In Again, in its menu and its line in Settings.
+fn sign_in_again() -> Words {
+    words!(
+        remote_configure_sign_in_again = "Sign In Again…",
+        note = "Signs a remote of rclone's in again through the browser."
+    )
+}
+
+/// A server's Connect at Login, in its menu and its line in Settings.
+fn connect_at_login() -> Words {
+    words!(remote_configure_at_login = "Connect at Login")
+}
+
+/// A server's Set Up Key Login, in its menu and its line in Settings.
+fn set_up_key_login() -> Words {
+    words!(remote_configure_key_login = "Set Up Key Login…")
+}
 
 /// The id of the entry that connects `address`'s server at login, where
 /// one may (ADR-087): a remote of rclone's configuration, by rclone; an
@@ -289,7 +334,7 @@ pub(crate) fn server_items(
         items.push(
             MenuItem::new(
                 "place",
-                "Connect at Login",
+                connect_at_login(),
                 "",
                 430,
                 Invocation::with_args(
@@ -303,7 +348,7 @@ pub(crate) fn server_items(
     if address.scheme == Scheme::Sftp {
         items.push(MenuItem::new(
             "place",
-            "Set Up Key Login…",
+            set_up_key_login(),
             "lock",
             431,
             Invocation::new("remote.setup_key_login").with("address", address.top().to_string()),
@@ -349,12 +394,31 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.settings.declare(
         SettingSpec::records(
             RECORDS,
-            "Servers",
-            "The servers of the sidebar's Network section, each changed where it is kept. Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too.",
-            "Server",
+            words!(remote_configure_servers = "Servers"),
+            words!(
+                remote_configure_servers_description = "The servers of the sidebar's Network section, each changed where it is kept. Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too."
+            ),
+            &words!(
+                remote_configure_server_record = "Server",
+                note = "What one record of Settings' list of servers is."
+            )
+            .say(),
             vec![
-                RecordField::text("name", "Name", "", ""),
-                RecordField::text("kind", "Kind", "", ""),
+                RecordField::text(
+                    "name",
+                    words!(remote_configure_record_name = "Name"),
+                    Words::default(),
+                    Words::default(),
+                ),
+                RecordField::text(
+                    "kind",
+                    words!(
+                        remote_configure_record_kind = "Kind",
+                        note = "What kind of storage a server is, and where it is kept."
+                    ),
+                    Words::default(),
+                    Words::default(),
+                ),
             ],
         )
         .records_kept_by(remotes.records.clone())
@@ -367,7 +431,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         ID,
         MenuItem::new(
             "sidebar:network",
-            "Add Server…",
+            words!(remote_configure_add_server_menu = "Add Server…"),
             "plus",
             -100,
             Invocation::new("remote.add_server"),
@@ -378,8 +442,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<skwir_core::command::NoArgs, _>(
             ID, Topic::Places,
             "remote.server_records",
-            "Servers",
-            "Every server as Settings lists it: each one's name, kind and where it is kept, what its line does, and whether Skwir changes it (`fixed`: another program does)",
+            words!(remote_configure_server_records = "Servers"),
+            words!(
+                remote_configure_server_records_description = "Every server as Settings lists it: each one's name, kind and where it is kept, what its line does, and whether Skwir changes it (`fixed`: another program does)"
+            ),
             move |_, app| {
                 // What the lines say reads the user database (a password's
                 // key): not under the state's lock.
@@ -392,21 +458,38 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 let records: Vec<serde_json::Value> = servers
                     .iter()
                     .map(|server| {
+                        // Said for Settings' list, which draws them: its
+                        // kind (rclone's type, or its address) as written.
                         let (id, name, kind) = match remote_name(&server.address) {
                             Some(name) if unfinished.iter().any(|u| u == name) => (
                                 name.to_owned(),
                                 name.to_owned(),
-                                format!("{} · {} · {NOT_FINISHED}", server.kind, server.kept.said()),
+                                words!(
+                                    remote_configure_record_unfinished = "{ $kind } · { $kept } · not finished setting up",
+                                    kind = server.kind.clone(),
+                                    kept = server.kept.words(),
+                                    note = "A server's line in Settings: kind is rclone's type of storage (drive, s3); kept where it is kept (in rclone's configuration)."
+                                ),
                             ),
                             Some(name) => (
                                 name.to_owned(),
                                 name.to_owned(),
-                                format!("{} · {}", server.kind, server.kept.said()),
+                                words!(
+                                    remote_configure_record_kept = "{ $kind } · { $kept }",
+                                    kind = server.kind.clone(),
+                                    kept = server.kept.words(),
+                                    note = "A server's line in Settings: kind is its type of storage (drive, s3) or its address; kept where it is kept (in Skwir's list)."
+                                ),
                             ),
                             None => (
                                 server.address.to_string(),
                                 server.label.clone(),
-                                format!("{} · {}", server.address, server.kept.said()),
+                                words!(
+                                    remote_configure_record_kept = "{ $kind } · { $kept }",
+                                    kind = server.address.to_string(),
+                                    kept = server.kept.words(),
+                                    note = "A server's line in Settings: kind is its type of storage (drive, s3) or its address; kept where it is kept (in Skwir's list)."
+                                ),
                             ),
                         };
                         let fixed =
@@ -414,7 +497,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         serde_json::json!({
                             "id": id,
                             "name": name,
-                            "kind": kind,
+                            "kind": kind.say(),
                             "actions": record_actions(server, &at_login, &remembered, &unfinished),
                             "fixed": fixed,
                         })
@@ -429,8 +512,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<AddArgs, _>(
             ID, Topic::Places,
             "remote.add_server",
-            "Add server…",
-            "Add a server: a remote of rclone's (cloud storage, S3, WebDAV, SFTP and seventy more), in a form the user fills; what it starts from may be given, never a secret",
+            words!(remote_configure_add_server = "Add server…"),
+            words!(
+                remote_configure_add_server_description = "Add a server: a remote of rclone's (cloud storage, S3, WebDAV, SFTP and seventy more), in a form the user fills; what it starts from may be given, never a secret"
+            ),
             move |args, app| {
                 window_for_forms(app)?;
                 // Resolved now: the form may end long after, another pane
@@ -446,12 +531,12 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 if skwir_core::os_path::find_program("rclone").is_none() {
                     return servers_alone(&remotes_, app, prefill, pane);
                 }
-                in_form(&remotes_, app, "added", move |flow, remotes, app| {
+                in_form(&remotes_, app, ADDED, move |flow, remotes, app| {
                     let made = flow.add(&prefill, pane)?;
                     if let Some(crate::rclone_forms::Made::Server(name)) = &made {
                         remotes.refresh(app);
                         remotes.records.changed();
-                        app.notify(NotifyLevel::Info, format!("“{name}” is added"));
+                        app.notify(NotifyLevel::Info, added(name.clone()));
                     }
                     if let Some(crate::rclone_forms::Made::Remote(name)) = made {
                         remotes.refresh(app);
@@ -465,12 +550,19 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         if plain {
                             app.notify_with_action(
                                 NotifyLevel::Info,
-                                format!("“{name}” is added. rclone keeps its secrets only obscured: encrypt its configuration?"),
-                                "Encrypt…",
+                                words!(
+                                    remote_configure_added_obscured = "{ $server } is added. rclone keeps its secrets only obscured: encrypt its configuration?",
+                                    server = Name(name),
+                                    note = "server: the name of the remote just added to rclone's configuration."
+                                ),
+                                words!(
+                                    remote_configure_encrypt_button = "Encrypt…",
+                                    note = "The button that encrypts rclone's configuration."
+                                ),
                                 Invocation::new("remote.encrypt_rclone_config"),
                             );
                         } else {
-                            app.notify(NotifyLevel::Info, format!("“{name}” is added"));
+                            app.notify(NotifyLevel::Info, added(name));
                         }
                     }
                     Ok(())
@@ -485,19 +577,21 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             ID,
             Topic::Places,
             "remote.edit_server",
-            "Edit server…",
-            "Change a server in its form: a remote of rclone's, or one added by its address",
+            words!(remote_configure_edit_server = "Edit server…"),
+            words!(
+                remote_configure_edit_server_description = "Change a server in its form: a remote of rclone's, or one added by its address"
+            ),
             move |args, app| {
                 window_for_forms(app)?;
                 if let Some(address) = by_address(&args.id)? {
-                    return on_form_thread(&remotes_, app, "saved", move |remotes, app, cancel| {
+                    return on_form_thread(&remotes_, app, SAVED, move |remotes, app, cancel| {
                         edit_kept(remotes, app, &address, cancel)
                     });
                 }
-                in_form(&remotes_, app, "saved", move |flow, remotes, app| {
+                in_form(&remotes_, app, SAVED, move |flow, remotes, app| {
                     if flow.edit(&args.id)? {
                         remotes.refresh(app);
-                        app.notify(NotifyLevel::Info, format!("“{}” is saved", args.id));
+                        app.notify(NotifyLevel::Info, saved(args.id));
                     }
                     Ok(())
                 })?;
@@ -510,14 +604,23 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<NamedArgs, _>(
             ID, Topic::Places,
             "remote.reconnect",
-            "Sign in again…",
-            "Sign a remote of rclone's in again through the browser, its access having expired or been revoked",
+            words!(remote_configure_reconnect = "Sign in again…"),
+            words!(
+                remote_configure_reconnect_description = "Sign a remote of rclone's in again through the browser, its access having expired or been revoked"
+            ),
             move |args, app| {
                 window_for_forms(app)?;
-                in_form(&remotes_, app, "signed in", move |flow, remotes, app| {
+                in_form(&remotes_, app, SIGNED_IN, move |flow, remotes, app| {
                     if flow.reconnect(&args.id)? {
                         remotes.refresh(app);
-                        app.notify(NotifyLevel::Info, format!("“{}” is signed in again", args.id));
+                        app.notify(
+                            NotifyLevel::Info,
+                            words!(
+                                remote_configure_signed_in = "{ $server } is signed in again",
+                                server = Name(args.id),
+                                note = "server: the name of a remote of rclone's."
+                            ),
+                        );
                     }
                     Ok(())
                 })?;
@@ -530,16 +633,18 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<ServerArgs, _>(
             ID, Topic::Places,
             "remote.remove_server",
-            "Remove server…",
-            "Remove a server once the user confirms, where it is kept (rclone's configuration, Skwir's list, KDE's network folders), with its mount options and its entry connecting it at login: what it holds stays where it is",
+            words!(remote_configure_remove_server = "Remove server…"),
+            words!(
+                remote_configure_remove_server_description = "Remove a server once the user confirms, where it is kept (rclone's configuration, Skwir's list, KDE's network folders), with its mount options and its entry connecting it at login: what it holds stays where it is"
+            ),
             move |args, app| {
                 window_for_forms(app)?;
                 if let Some(address) = by_address(&args.id)? {
-                    return on_form_thread(&remotes_, app, "removed", move |remotes, app, cancel| {
+                    return on_form_thread(&remotes_, app, REMOVED, move |remotes, app, cancel| {
                         remove_kept(remotes, app, &address, cancel)
                     });
                 }
-                in_form(&remotes_, app, "removed", move |flow, remotes, app| {
+                in_form(&remotes_, app, REMOVED, move |flow, remotes, app| {
                     let address = Address::rclone(&args.id, b"/")?;
                     let mounted: Vec<std::path::PathBuf> = remotes
                         .mounted()
@@ -556,13 +661,19 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     for point in mounted {
                         remotes
                             .disconnect_here(app, &point, false)
-                            .map_err(|error| anyhow::anyhow!("it stays mounted: {error:#}"))?;
+                            .map_err(|error| {
+                                anyhow::anyhow!(words!(
+                                    remote_configure_stays_mounted = "it stays mounted: { $error }",
+                                    error = error,
+                                    note = "Why a remote was not removed: letting go of its mount failed (error)."
+                                ))
+                            })?;
                     }
                     flow.session.delete(&args.id, flow.cancel)?;
                     crate::rclone_forms::note_unfinished(app, &args.id, false);
                     forget_kept_for(remotes, app, &address, flow.cancel);
                     remotes.refresh(app);
-                    app.notify(NotifyLevel::Info, format!("“{}” is removed", args.id));
+                    app.notify(NotifyLevel::Info, removed(args.id));
                     Ok(())
                 })?;
                 Ok(Outcome::Done)
@@ -574,16 +685,16 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<skwir_core::command::NoArgs, _>(
             ID, Topic::Places,
             "remote.encrypt_rclone_config",
-            "Encrypt rclone's configuration…",
-            "Encrypt rclone's configuration file, which keeps its remotes' secrets only obscured, with a password the user types and may keep in the keyring",
+            words!(remote_configure_encrypt = "Encrypt rclone's configuration…"),
+            words!(
+                remote_configure_encrypt_description = "Encrypt rclone's configuration file, which keeps its remotes' secrets only obscured, with a password the user types and may keep in the keyring"
+            ),
             move |_, app| {
                 window_for_forms(app)?;
                 let remotes = remotes_.clone();
                 let rclone = skwir_core::os_path::find_program("rclone")
-                    .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
-                let lifetime = remotes
-                    .lifetime()
-                    .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+                    .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("rclone")))?;
+                let lifetime = remotes.lifetime().ok_or_else(turned_off)?;
                 let weak = app.weak();
                 std::thread::Builder::new()
                     .name("skwir-remote-form".into())
@@ -595,7 +706,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         {
                             app.notify(
                                 NotifyLevel::Error,
-                                format!("rclone's configuration was not encrypted: {error:#}"),
+                                words!(
+                                    remote_configure_not_encrypted = "rclone's configuration was not encrypted: { $error }",
+                                    error = error
+                                ),
                             );
                         }
                     })?;
@@ -611,8 +725,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<PaneArg, _>(
             ID, Topic::Places,
             "remote.public_link_menu",
-            "Offer a public link in the context menu",
-            "The context menu's Copy Public Link, for a file of a remote whose storage makes one. Answers from memory",
+            words!(remote_configure_public_link_menu = "Offer a public link in the context menu"),
+            words!(
+                remote_configure_public_link_menu_description = "The context menu's Copy Public Link, for a file of a remote whose storage makes one. Answers from memory"
+            ),
             move |args, app| {
                 let refs = app.selected_refs(app.pane_or_active(args.pane));
                 let [one] = refs.as_slice() else {
@@ -631,7 +747,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     .then(|| {
                         MenuItem::new(
                             "context",
-                            "Copy Public Link",
+                            words!(remote_configure_copy_public_link = "Copy Public Link"),
                             "link",
                             150,
                             Invocation::new("remote.public_link").with(
@@ -658,16 +774,21 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.commands.register::<EntriesArgs, _>(
         ID, Topic::Places,
         "remote.public_link",
-        "Copy public link",
-        "Make a public link to a file of a remote whose storage makes one (a cloud's share link), and put it on the clipboard",
+        words!(remote_configure_public_link = "Copy public link"),
+        words!(
+            remote_configure_public_link_description = "Make a public link to a file of a remote whose storage makes one (a cloud's share link), and put it on the clipboard"
+        ),
         move |args, app| {
             let target = app
                 .targets(args.pane, args.entries)?
                 .into_iter()
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("nothing to link to"))?;
-            let remote = skwir_core::fs::reach::of(&target.path)
-                .ok_or_else(|| anyhow::anyhow!("it is not in a remote folder"))?;
+                .ok_or_else(|| anyhow::anyhow!(words!(remote_configure_nothing_to_link = "nothing to link to")))?;
+            let remote = skwir_core::fs::reach::of(&target.path).ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_configure_not_remote = "it is not in a remote folder"
+                ))
+            })?;
             let weak = app.weak();
             let cancel = app.lifetime().child();
             // The storage may take its time: in the remote's own lane.
@@ -680,13 +801,25 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     let made = crate::rclone_features::public_link(&remote.point, &target.path, &cancel);
                     let Some(app) = weak.upgrade() else { return };
                     match made {
+                        // What was copied, said in the window's words: it
+                        // takes text.
                         Ok(url) => app.request_front(Invocation::with_args(
                             "ui.copy_text",
-                            &serde_json::json!({ "text": url, "what": "the public link" }),
+                            &serde_json::json!({
+                                "text": url,
+                                "what": words!(
+                                    remote_configure_copied_what = "the public link",
+                                    note = "What was put on the clipboard, placed in the window's “Copied …”."
+                                )
+                                .say(),
+                            }),
                         )),
                         Err(error) => app.notify(
                             NotifyLevel::Error,
-                            format!("No public link was made: {error:#}"),
+                            words!(
+                                remote_configure_no_public_link = "No public link was made: { $error }",
+                                error = error
+                            ),
                         ),
                     }
                 },
@@ -699,19 +832,22 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<AddressArgs, _>(
             ID, Topic::Places,
             "remote.mount_options",
-            "Mount options…",
-            "Choose how a server is mounted when it next connects: read only, rclone's file cache and bandwidth, sshfs's compression",
+            words!(remote_configure_mount_options = "Mount options…"),
+            words!(
+                remote_configure_mount_options_description = "Choose how a server is mounted when it next connects: read only, rclone's file cache and bandwidth, sshfs's compression"
+            ),
             move |args, app| {
                 window_for_forms(app)?;
                 let top = Address::parse(args.address.trim())?.top();
                 anyhow::ensure!(
                     crate::options::takes_options(top.scheme),
-                    "no tool Skwir mounts {} with takes options",
-                    top.scheme.title()
+                    words!(
+                        remote_configure_no_options = "no tool Skwir mounts { $protocol } with takes options",
+                        protocol = top.scheme.title(),
+                        note = "protocol: a protocol's name (NFS, AFP)."
+                    )
                 );
-                let lifetime = remotes_
-                    .lifetime()
-                    .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+                let lifetime = remotes_.lifetime().ok_or_else(turned_off)?;
                 let (remotes, weak) = (remotes_.clone(), app.weak());
                 std::thread::Builder::new()
                     .name("skwir-remote-form".into())
@@ -736,26 +872,29 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                     // Its entry at login mounts so too.
                                     let kept = crate::options::keep(&app, &top, &options)
                                         .map_err(|error| {
-                                            format!("The mount options were not saved: {error:#}")
+                                            words!(
+                                                remote_configure_options_unsaved = "The mount options were not saved: { $error }",
+                                                error = error
+                                            )
                                         })
                                         .and_then(|()| {
                                             let mounting =
                                                 options.clone().mounting(automatic.0);
                                             renew_at_login(&remotes, &top, &mounting, &cancel)
                                                 .map_err(|error| {
-                                                    format!(
-                                                        "The mount options were saved, but \
-                                                         connecting at login mounts as before: \
-                                                         {error:#}"
+                                                    words!(
+                                                        remote_configure_options_not_at_login = "The mount options were saved, but connecting at login mounts as before: { $error }",
+                                                        error = error
                                                     )
                                                 })
                                         });
                                     match kept {
                                         Ok(_) => app.notify(
                                             NotifyLevel::Info,
-                                            format!(
-                                                "“{}” is mounted so when it next connects",
-                                                top.label()
+                                            words!(
+                                                remote_configure_options_saved = "{ $server } is mounted so when it next connects",
+                                                server = Name(top.label()),
+                                                note = "server: the login and server (me@nas)."
                                             ),
                                         ),
                                         Err(said) => app.notify(NotifyLevel::Error, said),
@@ -763,7 +902,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                     return;
                                 }
                                 Err(refused) => {
-                                    asked = blank.clone().again(&values, format!("{refused:#}"));
+                                    asked = blank.clone().again(&values, Words::of_error(refused));
                                 }
                             }
                         }
@@ -776,17 +915,19 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.commands.register::<AtLoginArgs, _>(
         ID, Topic::Places,
         "remote.connect_at_login",
-        "Connect at login",
-        "Have the system's service manager connect a server when the user logs in (a systemd user unit, a launch agent, a logon task), or no longer; connects it now too. Only what asks nothing at login: a remote of rclone's configuration not encrypted, an SFTP server logged in to by key",
+        words!(remote_configure_connect_at_login = "Connect at login"),
+        words!(
+            remote_configure_connect_at_login_description = "Have the system's service manager connect a server when the user logs in (a systemd user unit, a launch agent, a logon task), or no longer; connects it now too. Only what asks nothing at login: a remote of rclone's configuration not encrypted, an SFTP server logged in to by key"
+        ),
         move |args, app| {
             let top = Address::parse(args.address.trim())?.top();
             let id = login_id(&top).ok_or_else(|| {
-                anyhow::anyhow!("only rclone's remotes and SFTP servers connect at login")
+                anyhow::anyhow!(words!(
+                    remote_configure_at_login_which = "only rclone's remotes and SFTP servers connect at login"
+                ))
             })?;
             let (remotes, weak) = (remotes_.clone(), app.weak());
-            let lifetime = remotes
-                .lifetime()
-                .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+            let lifetime = remotes.lifetime().ok_or_else(turned_off)?;
             // It logs in and waits on the service manager: on a thread.
             std::thread::Builder::new()
                 .name("skwir-at-login".into())
@@ -799,15 +940,28 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     match (done, args.on) {
                         (Ok(()), true) => app.notify(
                             NotifyLevel::Info,
-                            format!("“{label}” connects at login"),
+                            words!(
+                                remote_configure_connects_at_login = "{ $server } connects at login",
+                                server = Name(label),
+                                note = "server: the login and server, or a remote of rclone's."
+                            ),
                         ),
                         (Ok(()), false) => app.notify(
                             NotifyLevel::Info,
-                            format!("“{label}” no longer connects at login"),
+                            words!(
+                                remote_configure_no_longer_at_login = "{ $server } no longer connects at login",
+                                server = Name(label),
+                                note = "server: the login and server, or a remote of rclone's."
+                            ),
                         ),
                         (Err(error), _) if !cancel.is_cancelled() => app.notify(
                             NotifyLevel::Error,
-                            format!("“{label}” was not set to connect at login: {error:#}"),
+                            words!(
+                                remote_configure_at_login_failed = "{ $server } was not set to connect at login: { $error }",
+                                server = Name(label),
+                                error = error,
+                                note = "server: the login and server, or a remote of rclone's."
+                            ),
                         ),
                         (Err(_), _) => {}
                     }
@@ -820,16 +974,19 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<AddressArgs, _>(
             ID, Topic::Places,
             "remote.setup_key_login",
-            "Set up key login…",
-            "Let ssh log in to an SFTP server by key, no password: a key the ssh agent holds, the user's default one, or a new one, its public half added to the server's authorized keys once the user chose it",
+            words!(remote_configure_setup_key_login = "Set up key login…"),
+            words!(
+                remote_configure_setup_key_login_description = "Let ssh log in to an SFTP server by key, no password: a key the ssh agent holds, the user's default one, or a new one, its public half added to the server's authorized keys once the user chose it"
+            ),
             move |args, app| {
                 window_for_forms(app)?;
                 let top = Address::parse(args.address.trim())?.top();
-                anyhow::ensure!(top.scheme == Scheme::Sftp, "key login is ssh's: SFTP servers alone");
+                anyhow::ensure!(
+                    top.scheme == Scheme::Sftp,
+                    words!(remote_configure_key_login_sftp = "key login is ssh's: SFTP servers alone")
+                );
                 let (remotes, weak) = (remotes_.clone(), app.weak());
-                let lifetime = remotes
-                    .lifetime()
-                    .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+                let lifetime = remotes.lifetime().ok_or_else(turned_off)?;
                 std::thread::Builder::new()
                     .name("skwir-remote-form".into())
                     .spawn(move || {
@@ -840,7 +997,12 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         {
                             app.notify(
                                 NotifyLevel::Error,
-                                format!("Key login was not set up on “{}”: {error:#}", top.label()),
+                                words!(
+                                    remote_configure_key_login_failed = "Key login was not set up on { $server }: { $error }",
+                                    server = Name(top.label()),
+                                    error = error,
+                                    note = "server: the login and server (me@nas)."
+                                ),
                             );
                         }
                     })?;
@@ -853,15 +1015,29 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         ID,
         Topic::Places,
         "remote.test_server",
-        "Test server",
-        "List the top of a remote of rclone's, as connecting would, and say whether it answers",
+        words!(remote_configure_test_server = "Test server"),
+        words!(
+            remote_configure_test_server_description = "List the top of a remote of rclone's, as connecting would, and say whether it answers"
+        ),
         move |args, app| {
-            in_form(&remotes_, app, "tested", move |flow, _, app| {
+            in_form(&remotes_, app, TESTED, move |flow, _, app| {
                 match flow.session.list_top(&format!("{}:", args.id), flow.cancel) {
-                    Ok(()) => app.notify(NotifyLevel::Info, format!("“{}” answers", args.id)),
+                    Ok(()) => app.notify(
+                        NotifyLevel::Info,
+                        words!(
+                            remote_configure_answers = "{ $server } answers",
+                            server = Name(args.id),
+                            note = "server: the name of a remote of rclone's, which was tested."
+                        ),
+                    ),
                     Err(error) => app.notify(
                         NotifyLevel::Error,
-                        format!("“{}” does not answer: {error:#}", args.id),
+                        words!(
+                            remote_configure_does_not_answer = "{ $server } does not answer: { $error }",
+                            server = Name(args.id),
+                            error = error,
+                            note = "server: the name of a remote of rclone's, which was tested."
+                        ),
                     ),
                 }
                 Ok(())
@@ -876,8 +1052,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<LocationArgs, _>(
             ID, Topic::Places,
             "remote.keep_as_server_menu",
-            "Offer Keep as Server in a place's menu",
-            "A sidebar place's Keep as Server, for a remote folder's address that is no server yet (a bookmark's). Answers from memory",
+            words!(remote_configure_keep_as_server_menu = "Offer Keep as Server in a place's menu"),
+            words!(
+                remote_configure_keep_as_server_menu_description = "A sidebar place's Keep as Server, for a remote folder's address that is no server yet (a bookmark's). Answers from memory"
+            ),
             move |args, _| {
                 let items: Vec<MenuItem> = Address::parse(&args.location)
                     .ok()
@@ -893,7 +1071,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     .map(|address| {
                         MenuItem::new(
                             "place",
-                            "Keep as Server",
+                            words!(remote_configure_keep_as_server_item = "Keep as Server"),
                             "",
                             415,
                             Invocation::new("remote.keep_as_server")
@@ -922,8 +1100,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<PaneArg, _>(
             ID, Topic::Places,
             "remote.nearby_menu",
-            "Nearby server's menu",
-            "The context menu's items for the one server selected in the Nearby place: Add as Server…, its form filled in with the name and address it announced, where no server holds that address. Answers from memory",
+            words!(remote_configure_nearby_menu = "Nearby server's menu"),
+            words!(
+                remote_configure_nearby_menu_description = "The context menu's items for the one server selected in the Nearby place: Add as Server…, its form filled in with the name and address it announced, where no server holds that address. Answers from memory"
+            ),
             move |args, app| {
                 let pane = app.pane_or_active(args.pane);
                 let items: Vec<MenuItem> = nearby_selected(app, pane)
@@ -938,7 +1118,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     .map(|(address, name)| {
                         MenuItem::new(
                             "context",
-                            "Add as Server…",
+                            words!(remote_configure_add_as_server = "Add as Server…"),
                             "",
                             410,
                             Invocation::with_args("remote.add_server", &add_found(&address, &name)),
@@ -964,17 +1144,22 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .register::<KeepArgs, _>(
             ID, Topic::Places,
             "remote.keep_as_server",
-            "Keep as server",
-            "Make a remote folder's address a server of the Network section, kept in Skwir's list or KDE's network folders, under its bookmark's name; its bookmark, if it has one, is taken out",
+            words!(remote_configure_keep_as_server = "Keep as server"),
+            words!(
+                remote_configure_keep_as_server_description = "Make a remote folder's address a server of the Network section, kept in Skwir's list or KDE's network folders, under its bookmark's name; its bookmark, if it has one, is taken out"
+            ),
             move |args, app| {
                 let address = Address::parse(args.address.trim())?;
                 anyhow::ensure!(
                     !matches!(address.scheme, Scheme::Rclone | Scheme::S3),
-                    "{} is kept by rclone or the AWS tools",
-                    address.scheme.title()
+                    words!(
+                        remote_configure_kept_by_tools = "{ $protocol } is kept by rclone or the AWS tools",
+                        protocol = address.scheme.title(),
+                        note = "protocol: rclone or S3."
+                    )
                 );
                 let name = args.name;
-                on_form_thread(&remotes_, app, "kept", move |remotes, app, _| {
+                on_form_thread(&remotes_, app, KEPT, move |remotes, app, _| {
                     keep_as_server(remotes, app, &address, name)
                 })
             },
@@ -1052,13 +1237,21 @@ fn keep_as_server(
             "places.unbookmark_address",
             &serde_json::json!({ "address": bookmark.address }),
         ))
-        .map_err(|error| anyhow::anyhow!("its bookmark stays: {error:#}"))?;
+        .map_err(|error| {
+            anyhow::anyhow!(words!(
+                remote_configure_bookmark_stays = "its bookmark stays: { $error }",
+                error = error
+            ))
+        })?;
     }
     app.notify(
         NotifyLevel::Info,
-        format!(
-            "“{name}” is a server of the Network section, kept {}",
-            kept.said()
+        words!(
+            remote_configure_kept_as_server =
+                "{ $server } is a server of the Network section, kept { $kept }",
+            server = Name(name),
+            kept = kept.words(),
+            note = "kept: where it is kept (in Skwir's list, in KDE's network folders)."
         ),
     );
     Ok(())
@@ -1134,7 +1327,7 @@ fn servers_alone(
     prefill: crate::rclone_forms::Prefill,
     pane: skwir_core::workspace::PaneId,
 ) -> anyhow::Result<Outcome> {
-    on_form_thread(remotes, app, "added", move |remotes, app, cancel| {
+    on_form_thread(remotes, app, ADDED, move |remotes, app, cancel| {
         // A kind given (Nearby's Add as Server), its form as given.
         let given = prefill
             .kind
@@ -1154,10 +1347,69 @@ fn servers_alone(
         };
         if let Some(name) = added {
             remotes.refresh(app);
-            app.notify(NotifyLevel::Info, format!("“{name}” is added"));
+            app.notify(NotifyLevel::Info, self::added(name));
         }
         Ok(())
     })
+}
+
+/// What a form was to do, which failing it says (`not_done`).
+const ADDED: &str = "added";
+const SAVED: &str = "saved";
+const SIGNED_IN: &str = "signed_in";
+const REMOVED: &str = "removed";
+const TESTED: &str = "tested";
+const KEPT: &str = "kept";
+
+/// What was to be `done` to a server (`ADDED`…) was not, for `error`.
+fn not_done(done: &'static str, error: anyhow::Error) -> Words {
+    words!(
+        remote_configure_not_done = "{ $done ->
+            [added] The server was not added: { $error }
+            [saved] The server was not saved: { $error }
+            [signed_in] The server was not signed in: { $error }
+            [tested] The server was not tested: { $error }
+            [kept] The server was not kept: { $error }
+           *[removed] The server was not removed: { $error }
+        }",
+        done = done,
+        error = error,
+        note = "What was to be done to a server (done: added, saved, signed in, tested, kept, removed) failed for error."
+    )
+}
+
+/// `name`, a server's, is added.
+fn added(name: String) -> Words {
+    words!(
+        remote_configure_added = "{ $server } is added",
+        server = Name(name),
+        note = "server: the name of the server just added."
+    )
+}
+
+/// `name`, a server's, is saved.
+fn saved(name: String) -> Words {
+    words!(
+        remote_configure_saved = "{ $server } is saved",
+        server = Name(name),
+        note = "server: the name of the server just changed."
+    )
+}
+
+/// `name`, a server's, is removed.
+fn removed(name: String) -> Words {
+    words!(
+        remote_configure_removed = "{ $server } is removed",
+        server = Name(name),
+        note = "server: the name of the server just removed."
+    )
+}
+
+/// Remote folders are turned off: a command that needs them refused.
+fn turned_off() -> anyhow::Error {
+    anyhow::anyhow!(words!(
+        remote_configure_turned_off = "remote folders are turned off"
+    ))
 }
 
 /// Run `work`, which may fill forms in, on a thread of its own: what
@@ -1171,9 +1423,7 @@ fn on_form_thread(
     + Send
     + 'static,
 ) -> anyhow::Result<Outcome> {
-    let lifetime = remotes
-        .lifetime()
-        .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+    let lifetime = remotes.lifetime().ok_or_else(turned_off)?;
     let (remotes, weak) = (remotes.clone(), app.weak());
     std::thread::Builder::new()
         .name("skwir-remote-form".into())
@@ -1185,10 +1435,7 @@ fn on_form_thread(
             if let Err(error) = result
                 && !cancel.is_cancelled()
             {
-                app.notify(
-                    NotifyLevel::Error,
-                    format!("The server was not {done}: {error:#}"),
-                );
+                app.notify(NotifyLevel::Error, not_done(done, error));
             }
         })?;
     Ok(Outcome::Done)
@@ -1203,13 +1450,21 @@ fn kept_at(remotes: &Remotes, address: &Address) -> anyhow::Result<crate::connec
         .iter()
         .find(|s| s.address == *address)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no server is known at {address}"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_configure_unknown_server = "no server is known at { $address }",
+                address = address.to_string()
+            ))
+        })
         .and_then(|server| {
             anyhow::ensure!(
                 server.kept.by_address(),
-                "“{}” is {}: change it there",
-                server.label,
-                server.kept.said()
+                words!(
+                    remote_configure_kept_elsewhere = "{ $server } is { $kept }: change it there",
+                    server = Name(server.label.clone()),
+                    kept = server.kept.words(),
+                    note = "kept: where the server is kept (in rclone's configuration, one of Dolphin's places)."
+                )
             );
             Ok(server)
         })
@@ -1237,12 +1492,17 @@ fn edit_kept(
         if login_off(remotes, app, &old_top, cancel)? {
             app.notify(
                 NotifyLevel::Info,
-                format!("“{name}” no longer connects at login: its address changed"),
+                words!(
+                    remote_configure_moved_off_login =
+                        "{ $server } no longer connects at login: its address changed",
+                    server = Name(name.clone()),
+                    note = "server: the name of the server just changed."
+                ),
             );
         }
     }
     remotes.refresh(app);
-    app.notify(NotifyLevel::Info, format!("“{name}” is saved"));
+    app.notify(NotifyLevel::Info, saved(name));
     Ok(())
 }
 
@@ -1256,22 +1516,34 @@ fn remove_kept(
 ) -> anyhow::Result<()> {
     use skwir_core::form::{Answer, Form};
     let server = kept_at(remotes, address)?;
-    let password = if password_of(remotes, app, address).is_some() {
-        ", and the password it keeps for it in the keyring"
+    let intro = if password_of(remotes, app, address).is_some() {
+        words!(
+            remote_configure_remove_intro_password = "Skwir forgets the server, kept { $kept }, and the password it keeps for it in the keyring: what it holds stays where it is, and adding it again brings it back.",
+            kept = server.kept.words(),
+            note = "kept: where the server is kept (in Skwir's list, in KDE's network folders)."
+        )
     } else {
-        ""
+        words!(
+            remote_configure_remove_intro = "Skwir forgets the server, kept { $kept }: what it holds stays where it is, and adding it again brings it back.",
+            kept = server.kept.words(),
+            note = "kept: where the server is kept (in Skwir's list, in KDE's network folders)."
+        )
     };
-    let form = Form::new(format!("Remove “{}”?", server.label), "Remove").intro(format!(
-        "Skwir forgets the server, kept {}{password}: what it holds stays where it is, and adding it again brings it back.",
-        server.kept.said()
-    ));
+    let form = Form::new(
+        words!(
+            remote_configure_remove_title = "Remove { $server }?",
+            server = Name(server.label.clone())
+        ),
+        words!(remote_configure_remove = "Remove"),
+    )
+    .intro(intro);
     if !matches!(app.fill(form, cancel), Some(Answer::Accepted(_))) {
         return Ok(());
     }
     crate::servers::remove(app, address)?;
     forget_kept_for(remotes, app, address, cancel);
     remotes.refresh(app);
-    app.notify(NotifyLevel::Info, format!("“{}” is removed", server.label));
+    app.notify(NotifyLevel::Info, removed(server.label));
     Ok(())
 }
 
@@ -1315,9 +1587,12 @@ fn forget_kept_for(
             Ok(()) => remotes.note_remembered(app, &crate::passwords::Noted::Forgot(key)),
             Err(error) => app.notify(
                 NotifyLevel::Warning,
-                format!(
-                    "The password Skwir keeps for {} stays in the keyring: {error:#}",
-                    address.top().label()
+                words!(
+                    remote_configure_password_stays =
+                        "The password Skwir keeps for { $server } stays in the keyring: { $error }",
+                    server = address.top().label(),
+                    error = error,
+                    note = "server: the login and server (me@nas)."
                 ),
             ),
         }
@@ -1337,7 +1612,12 @@ fn forget_kept_for(
     if let Err(error) = forgot {
         app.notify(
             NotifyLevel::Warning,
-            format!("What Skwir kept for {} stays: {error:#}", top.label()),
+            words!(
+                remote_configure_kept_stays = "What Skwir kept for { $server } stays: { $error }",
+                server = top.label(),
+                error = error,
+                note = "server: the login and server (me@nas); what was kept: its mount options, its entry connecting it at login."
+            ),
         );
     }
 }
@@ -1372,20 +1652,50 @@ fn encrypt_in_form(
     if crate::rclone_config::encrypted(rclone, &remotes.rclone, cancel)? {
         app.notify(
             NotifyLevel::Info,
-            "rclone's configuration is encrypted already",
+            words!(
+                remote_configure_encrypted_already = "rclone's configuration is encrypted already"
+            ),
         );
         return Ok(());
     }
     connecting_at_login_alone(remotes)?;
-    let form = Form::new("Encrypt rclone's Configuration", "Encrypt")
-        .intro("rclone keeps its remotes' keys and passwords in its configuration file, only obscured: anyone who reads the file can use them. Encrypted, it opens with a password.")
-        .field(Field::new("password", "Password", Kind::Secret { kept: false }).required())
-        .field(Field::new("again", "The Same Again", Kind::Secret { kept: false }).required())
-        .field(
-            Field::new("keep", "Keep It in the Keyring", Kind::Toggle)
-                .value("true")
-                .help("Skwir then opens the configuration without asking. rclone in a terminal asks for it, or reads it from RCLONE_CONFIG_PASS."),
-        );
+    let form = Form::new(
+        words!(remote_configure_encrypt_title = "Encrypt rclone's Configuration"),
+        words!(remote_configure_encrypt_accept = "Encrypt"),
+    )
+    .intro(words!(
+        remote_configure_encrypt_intro = "rclone keeps its remotes' keys and passwords in its configuration file, only obscured: anyone who reads the file can use them. Encrypted, it opens with a password."
+    ))
+    .field(
+        Field::new(
+            "password",
+            words!(remote_configure_encrypt_password = "Password"),
+            Kind::Secret { kept: false },
+        )
+        .required(),
+    )
+    .field(
+        Field::new(
+            "again",
+            words!(
+                remote_configure_encrypt_again = "The Same Again",
+                note = "The field where the password is typed a second time."
+            ),
+            Kind::Secret { kept: false },
+        )
+        .required(),
+    )
+    .field(
+        Field::new(
+            "keep",
+            words!(remote_configure_encrypt_keep = "Keep It in the Keyring"),
+            Kind::Toggle,
+        )
+        .value("true")
+        .help(words!(
+            remote_configure_encrypt_keep_help = "Skwir then opens the configuration without asking. rclone in a terminal asks for it, or reads it from RCLONE_CONFIG_PASS."
+        )),
+    );
     let mut asked = form.clone();
     let values = loop {
         let Some(Answer::Accepted(values)) = app.fill(asked, cancel) else {
@@ -1394,7 +1704,10 @@ fn encrypt_in_form(
         if values.get("password") == values.get("again") {
             break values;
         }
-        asked = form.clone().again(&values, "The two passwords differ");
+        asked = form.clone().again(
+            &values,
+            words!(remote_configure_passwords_differ = "The two passwords differ"),
+        );
     };
     let password = values.get("password");
     // One turned on meanwhile.
@@ -1408,7 +1721,10 @@ fn encrypt_in_form(
         )?;
     }
     crate::rclone_config::encrypt(rclone, &remotes.rclone, password, cancel)?;
-    app.notify(NotifyLevel::Info, "rclone's configuration is encrypted");
+    app.notify(
+        NotifyLevel::Info,
+        words!(remote_configure_encrypted = "rclone's configuration is encrypted"),
+    );
     Ok(())
 }
 
@@ -1427,16 +1743,18 @@ fn connecting_at_login_alone(remotes: &Remotes) -> anyhow::Result<()> {
         .map(|address| format!("“{}”", address.label()))
         .collect();
     connecting.sort();
+    // The names quoted, joined as a list: no list is an argument yet.
     anyhow::ensure!(
         connecting.is_empty(),
-        "{} {} at login, which an encrypted configuration cannot: nobody is there to \
-         give its password. Turn Connect at Login off first",
-        connecting.join(", "),
-        if connecting.len() == 1 {
-            "connects"
-        } else {
-            "connect"
-        }
+        words!(
+            remote_configure_at_login_encrypted = "{ $count ->
+                [1] { $remotes } connects at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
+               *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
+            }",
+            count = connecting.len(),
+            remotes = connecting.join(", "),
+            note = "remotes: the names of the remotes of rclone's that connect at login, each quoted, separated by commas."
+        )
     );
     Ok(())
 }
@@ -1446,7 +1764,10 @@ fn connecting_at_login_alone(remotes: &Remotes) -> anyhow::Result<()> {
 fn window_for_forms(app: &App) -> anyhow::Result<()> {
     anyhow::ensure!(
         app.window_shown(),
-        "this is asked in a form, filled in Skwir's window: open it first"
+        words!(
+            remote_configure_window_needed =
+                "this is asked in a form, filled in Skwir's window: open it first"
+        )
     );
     Ok(())
 }
@@ -1464,10 +1785,8 @@ fn in_form(
     + 'static,
 ) -> anyhow::Result<()> {
     let rclone = skwir_core::os_path::find_program("rclone")
-        .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
-    let lifetime = remotes
-        .lifetime()
-        .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("rclone")))?;
+    let lifetime = remotes.lifetime().ok_or_else(turned_off)?;
     let (remotes, weak) = (remotes.clone(), app.weak());
     std::thread::Builder::new()
         .name("skwir-remote-form".into())
@@ -1496,10 +1815,7 @@ fn in_form(
             if let Err(error) = result
                 && !cancel.is_cancelled()
             {
-                app.notify(
-                    NotifyLevel::Error,
-                    format!("The server was not {done}: {error:#}"),
-                );
+                app.notify(NotifyLevel::Error, not_done(done, error));
             }
         })?;
     Ok(())
@@ -1519,8 +1835,8 @@ mod tests {
         };
         assert!(titles(menu_items("photos", true, false)).contains(&"Sign In Again…".to_owned()));
         assert!(!titles(menu_items("nas", false, false)).contains(&"Sign In Again…".to_owned()));
-        assert!(titles(menu_items("nas", false, true)).contains(&FINISH.to_owned()));
-        assert!(!titles(menu_items("nas", false, false)).contains(&FINISH.to_owned()));
+        assert!(titles(menu_items("nas", false, true)).contains(&finish().english()));
+        assert!(!titles(menu_items("nas", false, false)).contains(&finish().english()));
         let item = &menu_items("it's", false, false)[0];
         assert_eq!(item.command.args["id"], "it's");
         assert!(signs_in("drive") && !signs_in("s3"));

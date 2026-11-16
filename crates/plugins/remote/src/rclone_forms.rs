@@ -24,6 +24,8 @@ use serde_json::{Map, Value};
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 use crate::rclone_config::{self, Backend, Opt, Session, Step};
@@ -102,18 +104,33 @@ impl Prefill {
     /// option, which the user sets there too: some have rclone run a
     /// program (SFTP's `ssh`, WebDAV's `bearer_token_command`), which a
     /// long form shown unasked would not make plain.
-    pub fn refusal(&self, backend: &Backend) -> Option<String> {
+    pub fn refusal(&self, backend: &Backend) -> Option<Words> {
         for key in self.options.keys() {
             match backend.options.iter().find(|o| o.name == *key) {
-                None => return Some(format!("{} has no option “{key}”", backend.title)),
+                None => {
+                    return Some(words!(
+                        remote_rclone_no_option = "{ $kind } has no option “{ $option }”",
+                        kind = backend.title.clone(),
+                        option = key.clone(),
+                        note = "Read by agents. kind: a kind of storage as rclone names it \
+                                (Amazon S3); option: one of its options, as rclone names it \
+                                (endpoint)."
+                    ));
+                }
                 Some(opt) if opt.secret() => {
-                    return Some(format!(
-                        "“{key}” is a secret: the user types it in the window"
+                    return Some(words!(
+                        remote_rclone_option_secret =
+                            "“{ $option }” is a secret: the user types it in the window",
+                        option = key.clone(),
+                        note = "Read by agents. option: an option of rclone's, as rclone names it."
                     ));
                 }
                 Some(opt) if opt.advanced => {
-                    return Some(format!(
-                        "“{key}” is an advanced option: the user sets it in the window"
+                    return Some(words!(
+                        remote_rclone_option_advanced =
+                            "“{ $option }” is an advanced option: the user sets it in the window",
+                        option = key.clone(),
+                        note = "Read by agents. option: an option of rclone's, as rclone names it."
                     ));
                 }
                 Some(_) => {}
@@ -165,11 +182,13 @@ fn examples(opt: &Opt, provider: &str) -> Vec<Choice> {
         .iter()
         .filter(|e| rclone_config::applies(&e.provider, provider))
         .map(|e| {
+            // rclone's, as it writes them.
             let help = e.help.lines().next().unwrap_or_default().to_owned();
+            let choice = Choice::new(e.value.clone(), Words::as_written(e.value.clone()));
             if help.is_empty() || help == e.value {
-                Choice::new(e.value.clone(), e.value.clone())
+                choice
             } else {
-                Choice::new(e.value.clone(), e.value.clone()).detail(help)
+                choice.detail(Words::as_written(help))
             }
         })
         .collect()
@@ -197,7 +216,7 @@ fn field_of(
         Kind::Choice {
             choices: remotes
                 .iter()
-                .map(|r| Choice::new(format!("{r}:"), format!("{r}:")))
+                .map(|r| Choice::new(format!("{r}:"), Words::as_written(format!("{r}:"))))
                 .collect(),
             open: true,
         }
@@ -217,8 +236,9 @@ fn field_of(
     // What an option that is advanced holds unchanged stays folded; one
     // set otherwise (by the user, by a caller) is shown.
     let advanced = opt.advanced && value == opt.default;
-    let mut field = Field::new(opt.name.clone(), title, kind)
-        .help(help)
+    // rclone's words, as it writes them.
+    let mut field = Field::new(opt.name.clone(), Words::as_written(title), kind)
+        .help(Words::as_written(help))
         .value(value);
     field.required = opt.required;
     field.advanced = advanced;
@@ -244,41 +264,85 @@ pub fn signs_in(backend: &Backend) -> bool {
 
 /// The pick of what kind of storage to add.
 fn kind_form(backends: &[Backend], chosen: Option<&str>) -> Form {
-    let mut choices: Vec<Choice> = backends
+    // Storage first, then what stands on other remotes, each by rclone's
+    // name for it: sorted by what they are, never by their words.
+    let mut kinds: Vec<(bool, String, Choice)> = backends
         .iter()
         .filter(|b| !NOT_OFFERED.contains(&b.name.as_str()))
         .map(|b| {
-            let section = if ON_REMOTES.contains(&b.name.as_str()) {
-                "On other remotes"
+            let on_remotes = ON_REMOTES.contains(&b.name.as_str());
+            let section = if on_remotes {
+                words!(
+                    remote_rclone_on_remotes = "On other remotes",
+                    note = "A heading among the kinds of storage to add: those that stand on \
+                            other remotes (crypt, union)."
+                )
             } else {
-                "Storage"
+                words!(
+                    remote_rclone_storage = "Storage",
+                    note = "A heading among the kinds of storage to add: those that keep files."
+                )
             };
+            // rclone's name and description, as it writes them.
             let detail = if b.description == b.title {
                 b.name.clone()
             } else {
                 format!("{} ({})", b.description, b.name)
             };
-            Choice::new(b.name.clone(), b.title.clone())
-                .detail(format!("{detail}: a remote of rclone's"))
-                .section(section)
+            let choice = Choice::new(b.name.clone(), Words::as_written(b.title.clone()))
+                .detail(words!(
+                    remote_rclone_kind_detail = "{ $kind }: a remote of rclone's",
+                    kind = detail,
+                    note = "kind: what rclone says a kind of storage is, and its type, as rclone \
+                            writes them (Amazon S3 Compliant Storage Providers (s3))."
+                ))
+                .section(section);
+            (on_remotes, b.title.to_lowercase(), choice)
         })
         .collect();
-    choices.sort_by(|a, b| {
-        (a.section != "Storage")
-            .cmp(&(b.section != "Storage"))
-            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
-    });
+    kinds.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     // The servers kept as bookmarks first, in their own order.
-    let mut all = crate::servers_form::choices();
-    all.extend(choices);
-    let choices = all;
-    Form::new("Add Server", "Next")
-        .intro("A server by its address, kept in Skwir's list or KDE's network folders, or a remote of rclone's, kept in rclone's own configuration where rclone in a terminal finds it too.")
-        .field(
-            Field::new(PICKED, "Kind of storage", Kind::Pick { choices })
-                .value(chosen.unwrap_or_default())
-                .required(),
+    let mut choices = crate::servers_form::choices();
+    choices.extend(kinds.into_iter().map(|(_, _, choice)| choice));
+    Form::new(
+        words!(remote_rclone_add_server = "Add Server"),
+        next(),
+    )
+    .intro(words!(
+        remote_rclone_add_server_intro = "A server by its address, kept in Skwir's list or KDE's network folders, or a remote of rclone's, kept in rclone's own configuration where rclone in a terminal finds it too."
+    ))
+    .field(
+        Field::new(
+            PICKED,
+            words!(remote_rclone_kind_field = "Kind of storage"),
+            Kind::Pick { choices },
         )
+        .value(chosen.unwrap_or_default())
+        .required(),
+    )
+}
+
+/// The button that goes on to the next form.
+fn next() -> Words {
+    words!(
+        remote_rclone_next = "Next",
+        note = "The button of a form that goes on to the next one."
+    )
+}
+
+/// The title of the form adding a remote of `kind`, as rclone names it.
+fn add_kind(kind: &str) -> Words {
+    words!(
+        remote_rclone_add_kind = "Add { $kind }",
+        kind = kind,
+        note =
+            "A form's title. kind: a kind of storage as rclone names it (Amazon S3, Google Drive)."
+    )
+}
+
+/// The button that closes a form that waits.
+fn ok() -> Words {
+    words!(remote_rclone_ok = "OK")
 }
 
 /// The pick of `backend`'s provider (S3's: AWS, `MinIO`, Cloudflare…).
@@ -291,17 +355,26 @@ fn provider_form(backend: &Backend, chosen: Option<&str>) -> Option<Form> {
         .examples
         .iter()
         .map(|e| {
+            // rclone's, as it writes them.
             let title = e.help.lines().next().unwrap_or(&e.value).to_owned();
-            Choice::new(e.value.clone(), title).detail(e.value.clone())
+            Choice::new(e.value.clone(), Words::as_written(title))
+                .detail(Words::as_written(e.value.clone()))
         })
         .collect();
     Some(
-        Form::new(format!("Add {}", backend.title), "Next")
+        Form::new(add_kind(&backend.title), next())
             .with_back()
             .field(
-                Field::new(PICKED, "Provider", Kind::Pick { choices })
-                    .value(chosen.unwrap_or_default())
-                    .required(),
+                Field::new(
+                    PICKED,
+                    words!(
+                        remote_rclone_provider = "Provider",
+                        note = "Who provides a kind of storage (S3's: AWS, MinIO, Cloudflare)."
+                    ),
+                    Kind::Pick { choices },
+                )
+                .value(chosen.unwrap_or_default())
+                .required(),
             ),
     )
 }
@@ -321,8 +394,8 @@ fn options_form(
     provider: &str,
     start: &Start<'_>,
     remotes: &[String],
-    title: String,
-    accept: &str,
+    title: Words,
+    accept: Words,
     back: bool,
 ) -> Form {
     let mut form = Form::new(title, accept);
@@ -331,9 +404,20 @@ fn options_form(
     }
     if start.name.is_none() {
         form = form.field(
-            Field::text(NAME, "Name")
-                .help("What the sidebar and rclone call it: letters a–z, digits and _ - . +")
-                .required(),
+            Field::text(
+                NAME,
+                words!(
+                    remote_rclone_name = "Name",
+                    note = "The field naming a remote of rclone's."
+                ),
+            )
+            .help(words!(
+                remote_rclone_name_help =
+                    "What the sidebar and rclone call it: letters a–z, digits and _ - . +",
+                note = "The signs after “digits and” are typed as they are: underscore, hyphen, \
+                        full stop, plus."
+            ))
+            .required(),
         );
     }
     for opt in shown_options(backend, provider) {
@@ -347,7 +431,12 @@ fn options_form(
                 form = form.field(
                     Field::new(
                         format!("{UPSTREAM}{remote}"),
-                        format!("Include “{remote}”"),
+                        words!(
+                            remote_rclone_include = "Include { $remote }",
+                            remote = Name(remote.clone()),
+                            note = "A switch of a union or a combine of remotes: remote is one \
+                                    of rclone's remotes, by its name."
+                        ),
                         Kind::Toggle,
                     )
                     .value(on.to_string()),
@@ -501,21 +590,41 @@ fn parameters(
 /// says, then the question itself (its last line, where it asks one) as
 /// the field's label.
 fn question_form(name: &str, option: &Opt, error: &str) -> Form {
+    // rclone's question, as it writes it; Answer where it asks none.
     let help = option.help.trim();
     let (said, asked) = match help.rsplit_once('\n') {
-        Some((said, last)) if last.trim().ends_with('?') => (said.trim(), last.trim()),
-        _ if help.ends_with('?') && !help.contains('\n') => ("", help),
-        _ => (help, "Answer"),
+        Some((said, last)) if last.trim().ends_with('?') => {
+            (said.trim(), Words::as_written(last.trim().to_owned()))
+        }
+        _ if help.ends_with('?') && !help.contains('\n') => {
+            ("", Words::as_written(help.to_owned()))
+        }
+        _ => (
+            help,
+            words!(
+                remote_rclone_answer = "Answer",
+                note = "The field answering one of rclone's questions, where rclone asks none \
+                        in words."
+            ),
+        ),
     };
     let mut field = field_of(option, "", None, false, &[]);
     field.key = ANSWER.into();
-    asked.clone_into(&mut field.title);
-    field.help = String::new();
+    field.title = asked;
+    field.help = Words::default();
     field.advanced = false;
-    Form::new(format!("Set Up “{name}”"), "Continue")
-        .intro(said.to_owned())
-        .field(field)
-        .error((!error.is_empty()).then(|| error.to_owned()))
+    Form::new(
+        words!(
+            remote_rclone_set_up = "Set Up { $remote }",
+            remote = Name(name.to_owned()),
+            note = "A form's title, where rclone asks a question about a remote it sets up: \
+                    remote is its name."
+        ),
+        words!(remote_rclone_continue = "Continue"),
+    )
+    .intro(Words::as_written(said.to_owned()))
+    .field(field)
+    .error((!error.is_empty()).then(|| Words::as_written(error.to_owned())))
 }
 
 /// What a flow does with rclone's questions about a remote's sign-in.
@@ -588,11 +697,11 @@ impl Flow<'_> {
             let backend = backends
                 .iter()
                 .find(|b| b.name == *chosen)
-                .ok_or_else(|| anyhow::anyhow!("rclone has no kind of storage “{chosen}”"))?;
+                .ok_or_else(|| anyhow::anyhow!(no_kind(chosen)))?;
             if given {
                 given = false;
                 if let Some(refusal) = prefill.refusal(backend) {
-                    anyhow::bail!("{refusal}");
+                    anyhow::bail!(refusal);
                 }
             }
             let mut asked_provider = false;
@@ -634,7 +743,7 @@ impl Flow<'_> {
         values: &mut BTreeMap<String, String>,
     ) -> anyhow::Result<Added> {
         let remotes = self.others(None)?;
-        let mut error: Option<String> = None;
+        let mut error: Option<Words> = None;
         // The secrets typed in a form refused, for the form asked again:
         // shown kept, used where left empty. In memory, for the form's
         // while.
@@ -654,8 +763,11 @@ impl Flow<'_> {
                     kept: &typed,
                 },
                 &remotes,
-                format!("Add {}", backend.title),
-                "Add",
+                add_kind(&backend.title),
+                words!(
+                    remote_rclone_add = "Add",
+                    note = "The button that adds a remote to rclone's configuration."
+                ),
                 true,
             );
             if let Some(field) = form.fields.iter_mut().find(|f| f.key == NAME) {
@@ -677,14 +789,17 @@ impl Flow<'_> {
             }
             let chosen = answer.get(NAME).trim().to_owned();
             if let Some(refusal) = rclone_config::name_refusal(&chosen) {
-                error = Some(refusal.to_owned());
+                error = Some(refusal);
                 continue;
             }
             // Asked again now: one made meanwhile (an agent's, rclone's in
             // a terminal) would be replaced, rclone making a remote anew
             // over one of its name.
             if self.others(None)?.contains(&chosen) {
-                error = Some(format!("rclone has a remote named “{chosen}” already"));
+                error = Some(words!(
+                    remote_rclone_name_taken = "rclone has a remote named { $remote } already",
+                    remote = Name(chosen.clone())
+                ));
                 continue;
             }
             let parameters = parameters(backend, provider, &answer, &BTreeMap::new());
@@ -699,7 +814,7 @@ impl Flow<'_> {
                     if !self.session.remotes(self.cancel)?.contains(&chosen) {
                         note_unfinished(self.app, &chosen, false);
                     }
-                    error = Some(said(&refused));
+                    error = Some(said(refused));
                     continue;
                 }
             };
@@ -780,7 +895,7 @@ impl Flow<'_> {
         }
         // Most answers come at once: no form flashes.
         if let Ok(step) = answered.recv_timeout(Duration::from_millis(800)) {
-            return step.map(Some).map_err(|e| anyhow::anyhow!("{}", said(&e)));
+            return step.map(Some).map_err(|e| anyhow::anyhow!(said(e)));
         }
         let mut shown: Option<(u64, crossbeam_channel::Receiver<Option<Answer>>)> = None;
         let mut page: Option<String> = None;
@@ -803,8 +918,10 @@ impl Flow<'_> {
             crossbeam_channel::select! {
                 recv(answered) -> step => {
                     self.app.withdraw_form(*id);
-                    let step = step.map_err(|_| anyhow::anyhow!("rclone stopped"))?;
-                    return step.map(Some).map_err(|e| anyhow::anyhow!("{}", said(&e)));
+                    let step = step.map_err(|_| {
+                        anyhow::anyhow!(words!(remote_rclone_stopped = "rclone stopped"))
+                    })?;
+                    return step.map(Some).map_err(|e| anyhow::anyhow!(said(e)));
                 }
                 recv(gave_up) -> _ => {
                     self.stop_answer(&asking, &answered);
@@ -845,8 +962,12 @@ impl Flow<'_> {
         loop {
             let fs = format!("{name}:");
             let listed = self.waited(
-                &format!("Trying “{name}”"),
-                "rclone lists its top, as connecting would.",
+                words!(
+                    remote_rclone_trying = "Trying { $remote }",
+                    remote = Name(name.to_owned()),
+                    note = "A form's title while a remote of rclone's just made is tried."
+                ),
+                words!(remote_rclone_trying_what = "rclone lists its top, as connecting would."),
                 move |session, cancel| session.list_top(&fs, cancel),
             );
             let failed = match listed {
@@ -854,13 +975,30 @@ impl Flow<'_> {
                 // Answered, or not waited for.
                 _ => return Ok(Checked::Kept),
             };
-            let drop = if new { " Cancel removes it." } else { "" };
-            let form = Form::new(format!("“{name}” Does Not Answer"), "Keep It")
-                .intro(format!(
-                    "rclone could not list it: {}. Keep it as it is, or go back and change it.{drop}",
-                    said(&failed)
-                ))
-                .with_back();
+            let why = said(failed);
+            let intro = if new {
+                words!(
+                    remote_rclone_unlisted_new = "rclone could not list it: { $why }. Keep it as it is, or go back and change it. Cancel removes it.",
+                    why = why,
+                    note = "why: what rclone said, in its words or Skwir's."
+                )
+            } else {
+                words!(
+                    remote_rclone_unlisted = "rclone could not list it: { $why }. Keep it as it is, or go back and change it.",
+                    why = why,
+                    note = "why: what rclone said, in its words or Skwir's."
+                )
+            };
+            let form = Form::new(
+                words!(
+                    remote_rclone_no_answer = "{ $remote } Does Not Answer",
+                    remote = Name(name.to_owned()),
+                    note = "A form's title: a remote of rclone's could not be listed."
+                ),
+                words!(remote_rclone_keep_it = "Keep It"),
+            )
+            .intro(intro)
+            .with_back();
             match self.fill(form) {
                 Some(Answer::Back(_)) => {
                     if self.change(name, backend, provider, Token::Keep)? {
@@ -888,8 +1026,8 @@ impl Flow<'_> {
     /// Cancel), `work` then cancelled.
     fn waited<T: Send + 'static>(
         &self,
-        title: &str,
-        what: &str,
+        title: Words,
+        what: Words,
         work: impl FnOnce(&Session, &CancelToken) -> T + Send + 'static,
     ) -> Option<T> {
         let (done, finished) = crossbeam_channel::bounded(1);
@@ -907,7 +1045,7 @@ impl Flow<'_> {
         if let Ok(result) = finished.recv_timeout(Duration::from_millis(800)) {
             return Some(result);
         }
-        let (id, gave_up) = self.app.ask_form(Form::new(title, "OK").waiting(what));
+        let (id, gave_up) = self.app.ask_form(Form::new(title, ok()).waiting(what));
         crossbeam_channel::select! {
             recv(finished) -> result => {
                 self.app.withdraw_form(id);
@@ -927,7 +1065,13 @@ impl Flow<'_> {
         let kind = config
             .get("type")
             .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("rclone's configuration names no remote “{name}”"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_rclone_no_remote_named =
+                        "rclone's configuration names no remote { $remote }",
+                    remote = Name(name.to_owned())
+                ))
+            })?
             .to_owned();
         let mut values = BTreeMap::new();
         for (key, value) in &config {
@@ -971,8 +1115,12 @@ impl Flow<'_> {
                     kept: &kept,
                 },
                 &remotes,
-                format!("Edit “{name}”"),
-                "Save",
+                words!(
+                    remote_rclone_edit = "Edit { $remote }",
+                    remote = Name(name.to_owned()),
+                    note = "A form's title: remote is one of rclone's remotes, by its name."
+                ),
+                words!(remote_rclone_save = "Save"),
                 false,
             )
             .error(error.take());
@@ -983,7 +1131,7 @@ impl Flow<'_> {
             let step = match self.session.update(name, &parameters, false, self.cancel) {
                 Ok(step) => step,
                 Err(refused) => {
-                    error = Some(said(&refused));
+                    error = Some(said(refused));
                     continue;
                 }
             };
@@ -1001,7 +1149,7 @@ impl Flow<'_> {
         let backend = backends
             .iter()
             .find(|b| b.name == kind)
-            .ok_or_else(|| anyhow::anyhow!("rclone has no kind of storage “{kind}”"))?;
+            .ok_or_else(|| anyhow::anyhow!(no_kind(&kind)))?;
         let provider = values.get("provider").cloned().unwrap_or_default();
         if !self.change(name, backend, &provider, Token::Keep)? {
             return Ok(false);
@@ -1024,24 +1172,52 @@ impl Flow<'_> {
 
     /// Ask whether to remove remote `name`: whether the user said so.
     pub fn confirm_remove(&self, name: &str, mounted: bool) -> bool {
-        let mut intro = format!(
-            "rclone's configuration forgets “{name}”: what it holds stays where it is, and adding it again brings it back."
-        );
-        if mounted {
-            intro.push_str(" Skwir disconnects it first.");
-        }
-        let form = Form::new(format!("Remove “{name}”?"), "Remove").intro(intro);
+        let intro = if mounted {
+            words!(
+                remote_rclone_remove_mounted_intro = "rclone's configuration forgets { $remote }: what it holds stays where it is, and adding it again brings it back. Skwir disconnects it first.",
+                remote = Name(name.to_owned())
+            )
+        } else {
+            words!(
+                remote_rclone_remove_intro = "rclone's configuration forgets { $remote }: what it holds stays where it is, and adding it again brings it back.",
+                remote = Name(name.to_owned())
+            )
+        };
+        let form = Form::new(
+            words!(
+                remote_rclone_remove_title = "Remove { $remote }?",
+                remote = Name(name.to_owned()),
+                note = "A form's title: remote is one of rclone's remotes, by its name."
+            ),
+            words!(remote_rclone_remove = "Remove"),
+        )
+        .intro(intro);
         matches!(self.fill(form), Some(Answer::Accepted(_)))
     }
 }
 
 /// The waiting form of remote `name`'s sign-in, its `page` once known.
 fn waiting_form(name: &str, page: Option<&str>) -> Form {
-    let mut form = Form::new(format!("Sign In to “{name}”"), "OK").waiting(
-        "Finish signing in in your browser: rclone waits for the answer. If no page opened, open it here.",
-    );
+    let mut form = Form::new(
+        words!(
+            remote_rclone_sign_in = "Sign In to { $remote }",
+            remote = Name(name.to_owned()),
+            note = "A form's title while a browser's sign-in to a remote of rclone's is waited for."
+        ),
+        ok(),
+    )
+    .waiting(words!(
+        remote_rclone_sign_in_waiting = "Finish signing in in your browser: rclone waits for the answer. If no page opened, open it here."
+    ));
     if let Some(page) = page {
-        form = form.field(Field::new("page", "Open the Sign-In Page", Kind::Link).value(page));
+        form = form.field(
+            Field::new(
+                "page",
+                words!(remote_rclone_sign_in_page = "Open the Sign-In Page"),
+                Kind::Link,
+            )
+            .value(page),
+        );
     }
     form
 }
@@ -1077,15 +1253,27 @@ fn keep_typed(
     }
 }
 
-/// What rclone refused, in its words.
-fn said(error: &anyhow::Error) -> String {
-    let text = format!("{error:#}");
-    let text = text
-        .strip_prefix("rclone refused ")
-        .map_or(text.as_str(), |rest| {
-            rest.split_once(": ").map_or(rest, |(_, why)| why)
-        });
-    crate::rclone::words(text)
+/// What rclone refused, in its words: why alone, where rclone refused a
+/// call (`rc::Refused`, its data); else the error, said link by link.
+fn said(error: anyhow::Error) -> Words {
+    let refused = error
+        .chain()
+        .next()
+        .and_then(|outer| outer.downcast_ref::<crate::rc::Refused>());
+    match refused {
+        Some(crate::rc::Refused::Said { why: Some(why), .. }) => crate::rclone::words(why),
+        Some(refused) => refused.why(),
+        None => Words::of_error(error),
+    }
+}
+
+/// rclone has no kind of storage of type `kind`.
+fn no_kind(kind: &str) -> Words {
+    words!(
+        remote_rclone_no_kind = "rclone has no kind of storage “{ $kind }”",
+        kind = kind,
+        note = "kind: a type of rclone's storage, as rclone names it (s3, drive)."
+    )
 }
 
 enum Added {
@@ -1287,10 +1475,16 @@ mod tests {
             prefill
                 .refusal(&backend)
                 .unwrap()
+                .english()
                 .contains("the user types it")
         );
         let mut odd = Prefill::default();
         odd.options.insert("nothing".into(), "x".into());
-        assert!(odd.refusal(&backend).unwrap().contains("no option"));
+        assert!(
+            odd.refusal(&backend)
+                .unwrap()
+                .english()
+                .contains("no option")
+        );
     }
 }

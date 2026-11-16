@@ -48,6 +48,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 use skwir_core::op::transfer::{Aside, Control, Layout, NotServed, Told, Transfer};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::ssh_mount::Mount;
 
@@ -208,6 +210,15 @@ impl Sftp {
     }
 }
 
+/// `path` cannot be written on sftp's command line, said.
+fn unsaid(path: &Path) -> Words {
+    words!(
+        remote_sftp_unsaid = "“{ $path }” cannot be said to sftp",
+        path = path.display().to_string(),
+        note = "path: a file's path, which sftp's commands cannot hold (a line break in it, or not UTF-8)."
+    )
+}
+
 /// The local sftp, found once.
 fn program() -> Option<&'static PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -277,7 +288,7 @@ impl Sftp {
         told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        let unsaid = |path: &Path| anyhow::anyhow!("“{}” cannot be said to sftp", path.display());
+        let unsaid = |path: &Path| anyhow::anyhow!(unsaid(path));
         let server = |path: &Path| {
             mount
                 .on_server(path)
@@ -386,7 +397,7 @@ impl Transfer for Sftp {
             return Err(NotServed.into());
         };
         if !self.opens(sftp, &mount, control.cancel()) {
-            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            anyhow::ensure!(!control.is_cancelled(), crate::connector::cancelled());
             self.without.lock().insert(mount.point);
             return Err(NotServed.into());
         }
@@ -395,7 +406,7 @@ impl Transfer for Sftp {
                 .on_server(path)
                 .as_deref()
                 .and_then(quoted)
-                .ok_or_else(|| anyhow::anyhow!("“{}” cannot be said to sftp", path.display()))
+                .ok_or_else(|| anyhow::anyhow!(unsaid(path)))
         };
         let lines = |verb: &str, paths: &[PathBuf]| -> anyhow::Result<Vec<Lines>> {
             paths
@@ -458,26 +469,32 @@ impl Transfer for Sftp {
         // writing, read back as its source's start (`aside.goes_on`), is
         // gone on from by `reput` (`put -a`), which appends from its size.
         let temp = aside.temp;
-        let sftp = program().ok_or_else(|| anyhow::anyhow!("sftp is not installed"))?;
+        let sftp =
+            program().ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("sftp")))?;
         let Some(mount) = self.mount_of(into) else {
-            anyhow::bail!("sftp copies onto a server");
+            anyhow::bail!(words!(
+                remote_sftp_onto_server = "sftp copies onto a server"
+            ));
         };
         let within = skwir_core::fs::reach::of(from).is_some();
         anyhow::ensure!(
             !within || Mount::of(from).is_some_and(|m| m.point == mount.point),
-            "sftp copies from this machine onto a server, or within one"
+            words!(
+                remote_sftp_from_here =
+                    "sftp copies from this machine onto a server, or within one"
+            )
         );
         if !self.opens(sftp, &mount, control.cancel()) {
-            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            anyhow::ensure!(!control.is_cancelled(), crate::connector::cancelled());
             tracing::info!(point = %mount.point.display(), "sftp does not reach the server: copies go another way");
             self.without.lock().insert(mount.point);
             return Err(NotServed.into());
         }
         if within && !self.copies_there(sftp, &mount, control.cancel()) {
-            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            anyhow::ensure!(!control.is_cancelled(), crate::connector::cancelled());
             return Err(NotServed.into());
         }
-        let unsaid = |path: &Path| anyhow::anyhow!("“{}” cannot be said to sftp", path.display());
+        let unsaid = |path: &Path| anyhow::anyhow!(unsaid(path));
         let server = |path: &Path| {
             mount
                 .on_server(path)

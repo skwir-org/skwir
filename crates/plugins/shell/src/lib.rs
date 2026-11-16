@@ -22,6 +22,8 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::MenuItem;
 use skwir_core::settings::SettingSpec;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 use std::fmt::Write as _;
@@ -252,20 +254,47 @@ impl<'a> Line<'a> {
     /// What runs, said: the command with the paths it is given, whole and
     /// quoted as its program reads them (`shown` of them, and how many
     /// `more`), after it or where it names them.
-    fn said(&self, shown: &[PathBuf], more: usize) -> String {
-        let mut paths = shown
+    fn said(&self, shown: &[PathBuf], more: usize) -> Words {
+        let command = self.command.to_owned();
+        if shown.is_empty() {
+            return words!(
+                shell_line_no_paths = "{ $command }  with no paths",
+                command = command,
+                note = "What a command runs, said as it is typed: command is the command line, \
+                        given no paths."
+            );
+        }
+        // A command line, the paths as its shell reads them: not words.
+        let paths = shown
             .iter()
             .map(|path| self.quoted(path))
             .collect::<Vec<_>>()
             .join(" ");
-        if more > 0 {
-            let _ = write!(paths, " … and {more} more");
-        }
-        let command = self.command;
-        match (shown.is_empty(), self.after) {
-            (true, _) => format!("{command}  with no paths"),
-            (false, true) => format!("{command} {paths}"),
-            (false, false) => format!("{command}  with the paths where it names them: {paths}"),
+        let with_more = |line: String| {
+            if more == 0 {
+                return Words::as_written(line);
+            }
+            words!(
+                shell_line_more = "{ $line } … and { $more ->
+                    [one] { $more } more
+                   *[other] { $more } more
+                }",
+                line = line,
+                more = more,
+                note = "line: a command line with the first paths it is given, as its shell \
+                        reads them; more: how many paths it is given beyond them."
+            )
+        };
+        if self.after {
+            with_more(format!("{command} {paths}"))
+        } else {
+            words!(
+                shell_line_named = "{ $command }  with the paths where it names them: { $paths }",
+                command = command,
+                paths = with_more(paths),
+                note = "command: a command line that names its arguments itself (\"$@\", $1); \
+                        paths: the paths it is given, as its shell reads them."
+            )
         }
     }
 
@@ -312,7 +341,16 @@ fn runs_here() -> anyhow::Result<()> {
     if RUNS {
         Ok(())
     } else {
-        Err(skwir_core::system::not_yet("Running a command in a terminal").into())
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            words!(
+                shell_run_not_yet =
+                    "Running a command in a terminal is not available on { $system } yet",
+                system = skwir_core::system::NAME,
+                note = "system: Linux, macOS or Windows."
+            ),
+        )
+        .into())
     }
 }
 
@@ -375,7 +413,9 @@ fn where_and_what(
             let dir = skwir_core::app::common_parent(entries.iter().map(|entry| match entry {
                 EntryArg::Path(path) | EntryArg::Named { path, .. } => path.as_ref(),
             }))
-            .ok_or_else(|| anyhow::anyhow!("the entries are in no folder"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(shell_no_folder = "the entries are in no folder"))
+            })?;
             (dir, paths, entries.len())
         }
         // The selection: in the folder shown, or the one holding it in a
@@ -402,8 +442,12 @@ fn asked<'a>(command: &'a str, on: &On) -> anyhow::Result<&'a str> {
     anyhow::ensure!(
         !command.is_empty(),
         match on {
-            On::Entries(_) => "Write the command to run: the selected paths are its arguments",
-            On::Folder(_) => "Write the command to run in this folder",
+            On::Entries(_) => words!(
+                shell_write_command =
+                    "Write the command to run: the selected paths are its arguments"
+            ),
+            On::Folder(_) =>
+                words!(shell_write_command_here = "Write the command to run in this folder"),
         }
     );
     Ok(command)
@@ -422,41 +466,77 @@ fn said(app: &App, command: &str, pane: Option<PaneId>, on: On) -> anyhow::Resul
     let (dir, shown, count) = where_and_what(app, pane, on, SAID)?;
     let program = program(app);
     let line = Line::new(&program, command).said(&shown, count - shown.len());
-    Ok(format!(
-        "Runs {line}  in {}",
-        skwir_core::os_path::from_home(&dir)
-    ))
+    // Drawn under the window's field as the command is typed.
+    Ok(words!(
+        shell_runs = "Runs { $line }  in { $folder }",
+        line = line,
+        folder = skwir_core::os_path::from_home(&dir),
+        note = "Said as a command is typed in Run Command…: line is what runs (the command \
+                with its paths); folder the path of the folder it runs in."
+    )
+    .say())
 }
 
 /// What Run Command…'s field takes (ADR-137): on the selection, or in the
 /// folder with no paths (`here`).
 pub fn reference(here: bool) -> skwir_core::reference::Reference {
     use skwir_core::reference::{Group, Item, Reference};
+    let for_example = words!(
+        shell_examples = "For example",
+        note = "The heading of commands given as examples under Run Command…'s field."
+    );
     let group = if here {
-        Group::new("For example")
-            .item(Item::new("ls -la", "What it holds, hidden files too"))
-            .item(Item::new("du -sh", "How much it takes"))
-            .item(Item::new("df -h .", "How full its disk is"))
-            .item(Item::new("git status", "What git says of it"))
-            .note(
-                "It runs in a terminal, in this folder, with no paths after it, with the shell \
-                 Settings › Terminal names, the terminal staying open after.",
-            )
+        Group::new(for_example)
+            .item(Item::new(
+                "ls -la",
+                words!(shell_example_ls = "What it holds, hidden files too"),
+            ))
+            .item(Item::new(
+                "du -sh",
+                words!(shell_example_du_here = "How much it takes"),
+            ))
+            .item(Item::new(
+                "df -h .",
+                words!(shell_example_df = "How full its disk is"),
+            ))
+            .item(Item::new(
+                "git status",
+                words!(shell_example_git = "What git says of it"),
+            ))
+            .note(words!(
+                shell_runs_here_note = "It runs in a terminal, in this folder, with no paths after it, with the shell Settings › Terminal names, the terminal staying open after."
+            ))
     } else {
-        Group::new("For example")
-            .item(Item::new("du -sh", "How much each takes"))
-            .item(Item::new("file", "What each is"))
-            .item(Item::new("wc -l", "How many lines each has"))
-            .item(Item::new("sha256sum", "Their checksums"))
-            .item(Item::new("ls -ld", "Their details"))
-            .note(
-                "The selected paths come after it, each one argument, unless it names them \
-                 itself (\"$@\" or $1… in sh, bash or zsh, $argv in fish): then they go only \
-                 there. It runs in a terminal, in the folder holding them, with the shell \
-                 Settings › Terminal names, the terminal staying open after.",
-            )
+        Group::new(for_example)
+            .item(Item::new(
+                "du -sh",
+                words!(shell_example_du = "How much each takes"),
+            ))
+            .item(Item::new(
+                "file",
+                words!(shell_example_file = "What each is"),
+            ))
+            .item(Item::new(
+                "wc -l",
+                words!(shell_example_wc = "How many lines each has"),
+            ))
+            .item(Item::new(
+                "sha256sum",
+                words!(shell_example_sha = "Their checksums"),
+            ))
+            .item(Item::new(
+                "ls -ld",
+                words!(shell_example_ls_ld = "Their details"),
+            ))
+            .note(words!(
+                shell_runs_note = "The selected paths come after it, each one argument, unless it names them itself (\"$@\" or $1… in sh, bash or zsh, $argv in fish): then they go only there. It runs in a terminal, in the folder holding them, with the shell Settings › Terminal names, the terminal staying open after."
+            ))
     };
-    Reference::new("Command").group(group)
+    Reference::new(words!(
+        shell_reference_title = "Command",
+        note = "The title of what Run Command…'s field takes."
+    ))
+    .group(group)
 }
 
 /// Run `command` in a terminal: on `on`'s entries (`App::targets`), in
@@ -482,7 +562,7 @@ fn run(app: &App, command: &str, pane: Option<PaneId>, on: On) -> anyhow::Result
                 if let Err(e) = skwir_platform::open::open_terminal_watched(&dir, &argv, |_| {})
                     && let Some(app) = weak.upgrade()
                 {
-                    app.notify(skwir_core::app::NotifyLevel::Error, format!("{e:#}"));
+                    app.notify(skwir_core::app::NotifyLevel::Error, Words::of_error(e));
                 }
             },
         );
@@ -522,8 +602,10 @@ impl Plugin for ShellPlugin {
         // next.
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,
-            "Program for commands",
-            "The shell that runs a command on the selection: a POSIX shell or fish. Leave empty for yours ($SHELL) when it is one of them, else sh.",
+            words!(shell_program = "Program for commands"),
+            words!(
+                shell_program_description = "The shell that runs a command on the selection: a POSIX shell or fish. Leave empty for yours ($SHELL) when it is one of them, else sh."
+            ),
             "",
         )
         .page(skwir_core::settings::page::TERMINAL)
@@ -533,8 +615,11 @@ impl Plugin for ShellPlugin {
                 ID,
                 Topic::Files,
                 "shell.copy_paths",
-                "Copy paths for a shell",
-                "The selected paths, or the entries', shell-quoted, for the clipboard",
+                words!(shell_copy_paths = "Copy paths for a shell"),
+                words!(
+                    shell_copy_paths_description =
+                        "The selected paths, or the entries', shell-quoted, for the clipboard"
+                ),
                 |a, app| {
                     let paths: Vec<PathBuf> = app
                         .targets(a.pane, a.entries)?
@@ -544,7 +629,13 @@ impl Plugin for ShellPlugin {
                     let n = paths.len();
                     Ok(Outcome::Clipboard {
                         text: quote_paths(&paths),
-                        said: format!("Copied {n} path{}", if n == 1 { "" } else { "s" }),
+                        said: words!(
+                            shell_copied_paths = "Copied { $count ->
+                                [one] { $count } path
+                               *[other] { $count } paths
+                            }",
+                            count = n
+                        ),
                     })
                 },
             )
@@ -552,8 +643,10 @@ impl Plugin for ShellPlugin {
         app.commands.register::<RunArgs, _>(
             ID, Topic::Terminal,
             "shell.run",
-            "Run command on selection…",
-            "Run a shell command in a terminal with the selected paths, or the entries', as its arguments",
+            words!(shell_run = "Run command on selection…"),
+            words!(
+                shell_run_description = "Run a shell command in a terminal with the selected paths, or the entries', as its arguments"
+            ),
             |a, app| run(app, &a.command, a.pane, On::Entries(a.entries)),
         );
         app.commands
@@ -561,8 +654,10 @@ impl Plugin for ShellPlugin {
                 ID,
                 Topic::Terminal,
                 "shell.run.describe",
-                "Say what a command runs",
-                "Say what `shell.run` would run with `command` on the selected paths, or the entries': the line with the first paths as its shell is given them (after it, or where it names its arguments), how many more, and the folder; an error for an empty command, or where nothing runs",
+                words!(shell_run_describe = "Say what a command runs"),
+                words!(
+                    shell_run_describe_description = "Say what `shell.run` would run with `command` on the selected paths, or the entries': the line with the first paths as its shell is given them (after it, or where it names its arguments), how many more, and the folder; an error for an empty command, or where nothing runs"
+                ),
                 |a, app| {
                     Ok(Outcome::Value(serde_json::json!({
                         "says": said(app, &a.command, a.pane, On::Entries(a.entries))?
@@ -574,8 +669,10 @@ impl Plugin for ShellPlugin {
             ID,
             Topic::Terminal,
             "shell.run_here",
-            "Run command here…",
-            "Run a shell command in a terminal in a folder (`in`, else the one the pane shows), with no paths",
+            words!(shell_run_here = "Run command here…"),
+            words!(
+                shell_run_here_description = "Run a shell command in a terminal in a folder (`in`, else the one the pane shows), with no paths"
+            ),
             |a, app| run(app, &a.command, a.pane, On::Folder(a.folder)),
         );
         app.commands
@@ -583,8 +680,10 @@ impl Plugin for ShellPlugin {
                 ID,
                 Topic::Terminal,
                 "shell.run_here.describe",
-                "Say what a command runs here",
-                "Say what `shell.run_here` would run with `command`: the line and the folder; an error for an empty command, or where nothing runs",
+                words!(shell_run_here_describe = "Say what a command runs here"),
+                words!(
+                    shell_run_here_describe_description = "Say what `shell.run_here` would run with `command`: the line and the folder; an error for an empty command, or where nothing runs"
+                ),
                 |a, app| {
                     Ok(Outcome::Value(serde_json::json!({
                         "says": said(app, &a.command, a.pane, On::Folder(a.folder))?
@@ -602,16 +701,16 @@ impl Plugin for ShellPlugin {
             (
                 "selection !place",
                 skwir_core::registry::submenus::OPEN_WITH,
-                "Run command on selection",
-                "Command; the selected paths are its arguments",
+                words!(shell_ask_run = "Run command on selection"),
+                words!(shell_ask_run_placeholder = "Command; the selected paths are its arguments"),
                 "shell.run",
                 false,
             ),
             (
                 "empty folder",
                 skwir_core::registry::submenus::OPEN_FOLDER_WITH,
-                "Run command in this folder",
-                "Command; it runs in this folder",
+                words!(shell_ask_run_here = "Run command in this folder"),
+                words!(shell_ask_run_here_placeholder = "Command; it runs in this folder"),
                 "shell.run_here",
                 true,
             ),
@@ -622,14 +721,20 @@ impl Plugin for ShellPlugin {
                 ID,
                 MenuItem {
                     menu: "context".into(),
-                    title: "Run Command…".into(),
+                    title: words!(shell_run_menu = "Run Command…"),
                     // The command is asked for: neither runs without one.
                     command: Invocation::with_args(
                         "ui.ask",
                         &serde_json::json!({
-                            "title": title,
-                            "accept": "Run",
-                            "placeholder": placeholder,
+                            // Said when the menu is made: the question's
+                            // arguments are text.
+                            "title": title.say(),
+                            "accept": words!(
+                                shell_ask_accept = "Run",
+                                note = "The button that runs the command typed."
+                            )
+                            .say(),
+                            "placeholder": placeholder.say(),
                             "command": command,
                             "field": "command",
                             "reference": reference(here),
@@ -758,12 +863,15 @@ mod tests {
 
         let line = Line::new("/bin/sh", r#"cp -r "$@" /backup"#);
         assert_eq!(
-            line.said(&["/x/a b".into()], 2),
+            line.said(&["/x/a b".into()], 2).english(),
             r#"cp -r "$@" /backup  with the paths where it names them: '/x/a b' … and 2 more"#
         );
         let line = Line::new("/bin/sh", "echo '$@'");
-        assert_eq!(line.said(&["/x/a b".into()], 0), "echo '$@' '/x/a b'");
-        assert_eq!(line.said(&[], 0), "echo '$@'  with no paths");
+        assert_eq!(
+            line.said(&["/x/a b".into()], 0).english(),
+            "echo '$@' '/x/a b'"
+        );
+        assert_eq!(line.said(&[], 0).english(), "echo '$@'  with no paths");
     }
 
     /// Runs `script` in `program` (`-c`) with `args` as its arguments, and
@@ -806,7 +914,7 @@ mod tests {
         for shell in shells {
             let program = shell.to_string_lossy();
             let line = Line::new(&program, "printf '<%s>'");
-            let typed = printed(&shell, &line.said(&paths, 0), &[]);
+            let typed = printed(&shell, &line.said(&paths, 0).english(), &[]);
             // What runs: the argv's script, given the paths.
             let argv = line.argv(&paths);
             let ran = printed(
@@ -995,7 +1103,7 @@ mod tests {
                 .menus
                 .all()
                 .iter()
-                .all(|m| m.title != "Run Command…")
+                .all(|m| m.title.english() != "Run Command…")
         );
     }
 
@@ -1042,7 +1150,7 @@ mod tests {
             panic!()
         };
         assert_eq!(text, format!("'{}'", dir.join("a b.txt").display()));
-        assert_eq!(said, "Copied 1 path");
+        assert_eq!(said.english(), "Copied 1 path");
 
         // What the terminal was handed, once it has: its argv, then the
         // folder it ran in.

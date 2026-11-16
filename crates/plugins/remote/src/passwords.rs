@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use skwir_core::cancel::CancelToken;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Password};
@@ -194,8 +195,28 @@ pub enum Noted {
     /// Skwir's own, refused and answered otherwise, is forgotten.
     Forgot(String),
     /// The user asked for it to be kept, and the keyring refused: why.
-    NotKept(String),
+    NotKept(Words),
 }
+
+/// What `error` says first, alone: its outermost link, said in the
+/// reader's language where it is words (`Words::of_error` says it while
+/// its chain is said), never its text taken apart.
+fn first_link(error: anyhow::Error) -> Words {
+    Words::of_error(anyhow::Error::new(FirstLink(error)))
+}
+
+/// An error said by its outermost link alone ([`first_link`]).
+#[derive(Debug)]
+struct FirstLink(anyhow::Error);
+
+impl std::fmt::Display for FirstLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let link: &(dyn std::error::Error + 'static) = self.0.as_ref();
+        write!(f, "{link}")
+    }
+}
+
+impl std::error::Error for FirstLink {}
 
 /// A connection's questions, a server's password answered from the
 /// keyring first (module documentation); the rest as `inner` answers.
@@ -284,15 +305,15 @@ impl Keyed {
                 let label = label(&self.address, self.user.as_deref());
                 let (keyring, kept) = (Arc::clone(&self.keyring), key.clone());
                 let keeping = self.heard(move || keyring.keep(&kept, &label, &answer.text));
-                match keeping.unwrap_or_else(|| Err(anyhow::anyhow!("Cancelled"))) {
+                match keeping.unwrap_or_else(|| Err(anyhow::anyhow!(crate::connector::cancelled())))
+                {
                     Ok(()) => Some(Noted::Kept(key)),
                     Err(error) => {
                         tracing::warn!("the password was not kept: {error:#}");
                         // Its first words for the window ("No keyring
-                        // answered"), the rest in the log.
-                        let said = format!("{error:#}");
-                        let first = said.split(": ").next().unwrap_or(&said);
-                        Some(Noted::NotKept(first.to_lowercase()))
+                        // answered"), the rest in the log: the error's
+                        // first link, never its text taken apart.
+                        Some(Noted::NotKept(first_link(error)))
                     }
                 }
             }
@@ -300,7 +321,7 @@ impl Keyed {
                 let (keyring, forgot) = (Arc::clone(&self.keyring), key.clone());
                 let forgotten = self
                     .heard(move || keyring.forget(&forgot))
-                    .unwrap_or_else(|| Err(anyhow::anyhow!("Cancelled")));
+                    .unwrap_or_else(|| Err(anyhow::anyhow!(crate::connector::cancelled())));
                 match forgotten {
                     Ok(()) => Some(Noted::Forgot(key)),
                     Err(error) => {

@@ -19,6 +19,8 @@ use std::time::Duration;
 use serde_json::Value;
 use skwir_core::CancelToken;
 use skwir_core::op::Cancelled;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// Where a remote control of rclone's answers.
 #[derive(Clone, PartialEq, Eq)]
@@ -321,6 +323,61 @@ fn check_cancelled(cancel: &CancelToken) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A call rclone refused, as data: what a form shows of it is why, as
+/// rclone said it (`said`), never read back from the words.
+#[derive(Debug)]
+pub enum Refused {
+    /// Its login was refused.
+    Login { method: String },
+    /// rclone answered with an error: what it said, as it wrote it, `None`
+    /// where it said nothing.
+    Said { method: String, why: Option<String> },
+}
+
+impl Refused {
+    /// Why, alone: what rclone said, else words for it.
+    pub fn why(&self) -> Words {
+        match self {
+            Refused::Login { .. } => words!(
+                remote_rclone_login_refused_rc = "its login was refused",
+                note = "Why rclone's remote control refused a call: the login Skwir gave it."
+            ),
+            Refused::Said { why: Some(why), .. } => Words::as_written(why.clone()),
+            Refused::Said { why: None, .. } => words!(
+                remote_rclone_no_reason = "no reason given",
+                note = "rclone refused a call and said nothing of why."
+            ),
+        }
+    }
+
+    fn words(&self) -> Words {
+        match self {
+            Refused::Login { method } => words!(
+                remote_rclone_rc_login = "rclone refused { $method }: its login was refused",
+                method = method.clone(),
+                note = "method: a call of rclone's remote control (operations/copyfile)."
+            ),
+            Refused::Said { method, .. } => words!(
+                remote_rclone_rc_refused = "rclone refused { $method }: { $why }",
+                method = method.clone(),
+                why = self.why(),
+                note = "method: a call of rclone's remote control (operations/copyfile); why: \
+                        what rclone said, as it wrote it."
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for Refused {
+    /// Its words: in English, or in the reader's language while an error's
+    /// chain is said (`Words::of_error`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.words())
+    }
+}
+
+impl std::error::Error for Refused {}
+
 /// Keep the request synchronous: rclone ties its job to the HTTP request's
 /// context, so closing the connection cancels the server's work too. An
 /// asynchronous job would outlive a lost response naming its job id.
@@ -351,7 +408,13 @@ fn request(
     let at = answer
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| anyhow::anyhow!("rclone's answer to {method} is no HTTP"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                remote_rclone_rc_no_http = "rclone's answer to { $method } is no HTTP",
+                method = method,
+                note = "method: a call of rclone's remote control (operations/copyfile)."
+            ))
+        })?;
     let head = String::from_utf8_lossy(&answer[..at]);
     let status = head
         .lines()
@@ -371,11 +434,17 @@ fn request(
     }
     let json: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
     if status == "401" {
-        anyhow::bail!("rclone refused {method}: its login was refused");
+        return Err(Refused::Login {
+            method: method.to_owned(),
+        }
+        .into());
     }
     if status != "200" {
-        let said = json["error"].as_str().unwrap_or("no reason given");
-        anyhow::bail!("rclone refused {method}: {said}");
+        return Err(Refused::Said {
+            method: method.to_owned(),
+            why: json["error"].as_str().map(str::to_owned),
+        }
+        .into());
     }
     Ok(json)
 }
