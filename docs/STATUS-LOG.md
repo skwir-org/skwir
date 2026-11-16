@@ -19153,3 +19153,56 @@ own tests, so no title reaches the window as silent English.
 the user's leave, `target/cross`, `macos`, `windows`, `package` and
 `dist` were deleted (about 18 GB on disk); the libraries' tests and the
 binary's now run apart.
+
+## 2026-11-16/17: Every plugin, core and the platform crate speak messages (ADR-139, step E)
+
+Nine agents converted the words of every plugin, of `extend`, of core and
+of the platform crate to messages, each owning whole crates and building
+nothing. The integrator checked, linted, tested and committed each batch;
+agents fixed what the compiler found in their crates.
+
+- **Messages written (each crate's `l10n/en.ftl`):**
+  - core 952, platform 229;
+  - remote 482, query 379, tags 239, print 136, places 81, books 71,
+    archives 79, geo 165, models 74, circuits 75, rename-bulk 68,
+    shrink 51, open-with 47;
+  - and the rest, each between 3 and 40: about 4,000 in all.
+- **Checked per batch:**
+  - `cargo check --tests`: 25 errors across seven batches, most in tests
+    comparing a value that became words;
+  - clippy `-D warnings`: 3 findings;
+  - each batch's tests, then the default members' (3,459 + 234 passed,
+    two test fixes: a reference compared after a JSON round trip, a
+    grouped count).
+- **Readings of words made data:**
+  - the query assist's "missing `)`";
+  - the lens's waits;
+  - rclone's errors, now a typed `rc::Refused`;
+  - where a server is kept;
+  - the shrink dialog's opening quote;
+  - print's "to " and its capitalising;
+  - models' "Unit" row.
+- **One bug of the words module found:** words holding an error inside
+  an error's chain panicked ("RefCell already borrowed"). It is fixed,
+  and the pseudo-language now says nested messages too.
+- **English that changed, on purpose:**
+  - counts are grouped (1,234);
+  - plurals agree where the code wrote "1 items";
+  - a system's errors are said through Skwir's words for their kind;
+  - access modes say one sentence per action;
+  - rename-bulk quotes names with “” rather than backticks.
+
+**Left for the API pass** (the agents' wishes, gathered in the session's
+notes):
+- fields that still take text and are said once when made, such as
+  places' notes, plan notes, conflict reasons, `ask`, `ListingError`,
+  inspections' titles and notices, and Properties' rows;
+- functions added beside the old ones (`*_words`), whose callers are to
+  move;
+- a list argument;
+- forms, references and menus sent as JSON, which arrive in English;
+- Properties' groups and menu choices that meet by their words.
+
+**Disk:** a core change rebuilds every crate. The libraries' tests filled
+the disk from 13.6 GB free, and with the user's leave
+`target/debug/incremental` was deleted (14 → 93 GB free).
