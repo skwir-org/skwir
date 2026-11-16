@@ -289,9 +289,17 @@ impl Words {
             Inner::Message(message, args) => (*message, args),
         };
         if languages.first().is_some_and(|first| first == PSEUDO) {
+            // Its English accented, nested words said in the
+            // pseudo-language too (bracketed apart from what is as written).
             let mut english = String::new();
-            let rest = &languages[1..];
-            say(message.english, args, ENGLISH, rest, &mut english, true);
+            say(
+                message.english,
+                args,
+                ENGLISH,
+                languages,
+                &mut english,
+                true,
+            );
             return out.push_str(&pseudo(&english));
         }
         match find(message.domain, message.id, languages) {
@@ -521,9 +529,11 @@ impl fmt::Display for Words {
     /// (`Words::of_error`, `Arg::Error`), in the languages it is said in:
     /// words that are a link of it say themselves there.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let said =
-            SAYING_IN.with_borrow(|saying| saying.as_ref().map(|languages| self.say_in(languages)));
-        f.write_str(&said.unwrap_or_else(|| self.english()))
+        // The languages taken out before saying: words holding an error
+        // say its chain, which sets them again.
+        let languages = SAYING_IN.with_borrow(Clone::clone);
+        let said = languages.map_or_else(|| self.english(), |languages| self.say_in(&languages));
+        f.write_str(&said)
     }
 }
 

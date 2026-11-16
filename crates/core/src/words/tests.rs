@@ -266,3 +266,24 @@ fn an_error_is_said_link_by_link_in_the_reader_s_language() {
     assert_eq!(failed.to_string(), "It failed");
     assert!(failed.downcast_ref::<Words>().is_some());
 }
+
+/// Words holding an error, themselves a link of an error's chain, are said
+/// whole: the nested chain is said in the same languages.
+#[test]
+fn an_error_in_words_in_an_error_is_said() {
+    let inner = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+    let outer = anyhow::Error::new(crate::words!(
+        test_tool_failed = "the tool failed: { $error }",
+        error = inner
+    ))
+    .context("trying the next");
+    let said = Words::of_error(outer);
+    assert_eq!(
+        said.english(),
+        "trying the next: the tool failed: permission denied"
+    );
+    assert_eq!(
+        said.say_in(&langs(&[PSEUDO, "en"])),
+        "trying the next: [tĥéé tööööļ fááííļééd: ‹[péérmííššííööñ dééñííééd]›]"
+    );
+}
