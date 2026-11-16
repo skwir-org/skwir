@@ -50,6 +50,21 @@ fn attributes<'a>(
     attributes
 }
 
+/// What a secret kept as bytes that are no text is said as.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    windows,
+    target_os = "macos"
+))]
+fn not_text() -> anyhow::Error {
+    skwir_core::words!(
+        secrets_not_text = "The keyring's secret is not text",
+        note = "A password kept in the system's keyring cannot be read as text."
+    )
+    .into()
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod backend {
     use std::collections::HashMap;
@@ -60,7 +75,14 @@ mod backend {
     async fn keyring() -> anyhow::Result<oo7::Keyring> {
         oo7::Keyring::new()
             .await
-            .map_err(|error| anyhow::anyhow!("No keyring answered: {error}"))
+            .map_err(|error| {
+                skwir_core::words!(
+                    secrets_no_keyring = "No keyring answered: { $error }",
+                    error = anyhow::Error::from(error),
+                    note = "The desktop's keyring, which keeps passwords (GNOME Keyring, KWallet), did not answer. error: why."
+                )
+                .into()
+            })
     }
 
     pub fn store(at: SecretRef<'_>, label: &str, secret: &str) -> anyhow::Result<()> {
@@ -92,8 +114,7 @@ mod backend {
                 item.unlock().await?;
             }
             let secret = item.secret().await?;
-            let text = String::from_utf8(secret.to_vec())
-                .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+            let text = String::from_utf8(secret.to_vec()).map_err(|_| super::not_text())?;
             Ok(Some(SecretText(text)))
         })
     }
@@ -126,8 +147,7 @@ mod backend {
                 item.unlock().await?;
             }
             let secret = item.secret().await?;
-            let text = String::from_utf8(secret.to_vec())
-                .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+            let text = String::from_utf8(secret.to_vec()).map_err(|_| super::not_text())?;
             Ok(Some(SecretText(text)))
         })
     }
@@ -157,8 +177,7 @@ mod backend {
         let Some(bytes) = credentials::read(&name(at.setting, at.record, at.field))? else {
             return Ok(None);
         };
-        let text = String::from_utf8(bytes)
-            .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+        let text = String::from_utf8(bytes).map_err(|_| super::not_text())?;
         Ok(Some(SecretText(text)))
     }
 
@@ -197,8 +216,7 @@ mod backend {
     pub fn lookup(at: SecretRef<'_>) -> anyhow::Result<Option<SecretText>> {
         match passwords::get_generic_password(SERVICE, &account(at.setting, at.record, at.field)) {
             Ok(bytes) => {
-                let text = String::from_utf8(bytes)
-                    .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+                let text = String::from_utf8(bytes).map_err(|_| super::not_text())?;
                 Ok(Some(SecretText(text)))
             }
             Err(e) if e.code() == NOT_FOUND => Ok(None),
@@ -251,16 +269,21 @@ mod backend {
 mod backend {
     use super::{SecretRef, SecretText};
 
-    const NONE: &str = "No keyring is supported on this system yet";
+    fn none() -> skwir_core::words::Words {
+        skwir_core::words!(
+            secrets_unsupported = "No keyring is supported on this system yet",
+            note = "Skwir keeps passwords in the system's keyring; it knows none on this system."
+        )
+    }
 
     pub fn store(_: SecretRef<'_>, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!(NONE)
+        anyhow::bail!(none())
     }
     pub fn lookup(_: SecretRef<'_>) -> anyhow::Result<Option<SecretText>> {
-        anyhow::bail!(NONE)
+        anyhow::bail!(none())
     }
     pub fn delete(_: &str, _: &str, _: Option<&str>) -> anyhow::Result<()> {
-        anyhow::bail!(NONE)
+        anyhow::bail!(none())
     }
 }
 

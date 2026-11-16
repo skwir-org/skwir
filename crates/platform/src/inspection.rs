@@ -4,6 +4,8 @@ use skwir_core::{
     inspection::{Block, Inspection, InspectionKind, Row},
     preview::{FileSource, ReadSeek},
     thumbs::Image,
+    words,
+    words::{Size, Words},
 };
 use std::{borrow::Cow, io::Read, path::Path};
 
@@ -202,6 +204,20 @@ pub mod limits {
                 skwir_core::inspection::TooLarge(message).into()
             }
         }
+
+        /// [`Bounds::refuse`], saying `message`: a whole message, its
+        /// bound an argument of it (ADR-139), never a fragment the refusal
+        /// is written around.
+        pub fn refuse_words(self, message: impl Into<skwir_core::words::Words>) -> anyhow::Error {
+            let message: skwir_core::words::Words = message.into();
+            if self.whole {
+                message.into()
+            } else {
+                // Transitional: `TooLarge` holds text, said once here
+                // (ADR-139).
+                skwir_core::inspection::TooLarge(message.say()).into()
+            }
+        }
     }
 
     /// A limit for messages, said as every size is (`fs::size_said`,
@@ -222,10 +238,21 @@ pub mod limits {
 pub fn xml_depth(text: &[u8]) -> anyhow::Result<()> {
     anyhow::ensure!(
         nesting(text, limits::XML_PARSED_DEPTH) <= limits::XML_PARSED_DEPTH,
-        "it nests its elements deeper than {} levels",
-        limits::XML_PARSED_DEPTH
+        too_deep()
     );
     Ok(())
+}
+
+/// Why an XML text nested past `limits::XML_PARSED_DEPTH` is not read.
+fn too_deep() -> Words {
+    words!(
+        inspection_xml_too_deep = "it nests its elements deeper than { $count ->
+                [one] { $count } level
+               *[other] { $count } levels
+            }",
+        count = limits::XML_PARSED_DEPTH,
+        note = "Why an XML file is not shown, after what could not be read. count: the most levels read (512)."
+    )
 }
 
 /// How deep `text` nests its elements, counted up to just past `most`.
@@ -328,13 +355,15 @@ pub fn xml_document(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
     let (added, deepest) = declared.named(body);
     anyhow::ensure!(
         nesting(body, limits::XML_PARSED_DEPTH).saturating_add(deepest) <= limits::XML_PARSED_DEPTH,
-        "it nests its elements deeper than {} levels",
-        limits::XML_PARSED_DEPTH
+        too_deep()
     );
     anyhow::ensure!(
         added <= limits::TEXT_INPUT as u64,
-        "its entities expand past {}",
-        limits::describe(limits::TEXT_INPUT)
+        words!(
+            inspection_xml_entities = "its entities expand past { $size }",
+            size = Size(limits::TEXT_INPUT as u64),
+            note = "Why an XML file is not shown: the entities its document type declares would make it larger than this. size: that bound (2 MB)."
+        )
     );
     let options = roxmltree::ParsingOptions {
         allow_dtd: true,
@@ -371,7 +400,12 @@ impl Expansion {
 
 impl<'a> Declared<'a> {
     fn of(text: &'a [u8]) -> anyhow::Result<Self> {
-        let unread = || anyhow::anyhow!("its document type is not read");
+        let unread = || {
+            anyhow::Error::from(words!(
+                inspection_xml_doctype = "its document type is not read",
+                note = "Why an XML file is not shown: its DOCTYPE declaration is written in a way the reader does not take."
+            ))
+        };
         let none = |end| Declared {
             expanded: std::collections::HashMap::new(),
             end,
@@ -622,7 +656,11 @@ pub fn check(cancel: &CancelToken) -> anyhow::Result<()> {
 fn opened<T>(result: std::io::Result<T>) -> anyhow::Result<T> {
     result.map_err(|error| {
         if error.kind() == std::io::ErrorKind::InvalidInput {
-            anyhow::anyhow!("preview needs a regular file")
+            words!(
+                inspection_not_regular = "preview needs a regular file",
+                note = "Why a pipe, a socket or a device is not previewed."
+            )
+            .into()
         } else {
             error.into()
         }
@@ -651,6 +689,9 @@ pub fn read<S: FileSource + ?Sized>(
 /// `what` in the message, so the panel offers Full preview while they are
 /// the quick ones. Its length is asked first: a file far past the bound is
 /// refused unread.
+///
+/// Transitional: `what` is a fragment the refusal is written around;
+/// [`read_within_words`] takes the refusal whole (ADR-139).
 pub fn read_within<'a, S: FileSource + ?Sized>(
     file: &'a S,
     limit: usize,
@@ -658,18 +699,40 @@ pub fn read_within<'a, S: FileSource + ?Sized>(
     what: &str,
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
-    check(cancel)?;
-    let bytes = opened(file.read_whole(limit as u64, cancel))?;
-    check(cancel)?;
-    bytes.ok_or_else(|| {
+    whole_within(file, limit, cancel, || {
         bounds.refuse(format!(
             "{what} exceeds {} preview limit",
             limits::describe(limit)
         ))
     })
 }
+/// [`read_within`], refused past `limit` saying `refusal`: a whole
+/// message, the bound an argument of it (`words::Size`).
+pub fn read_within_words<'a, S: FileSource + ?Sized>(
+    file: &'a S,
+    limit: usize,
+    bounds: limits::Bounds,
+    refusal: impl Into<Words>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    whole_within(file, limit, cancel, move || bounds.refuse_words(refusal))
+}
+/// A whole file of at most `limit` bytes, else what `refuse` makes.
+fn whole_within<'a, S: FileSource + ?Sized>(
+    file: &'a S,
+    limit: usize,
+    cancel: &CancelToken,
+    refuse: impl FnOnce() -> anyhow::Error,
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    check(cancel)?;
+    let bytes = opened(file.read_whole(limit as u64, cancel))?;
+    check(cancel)?;
+    bytes.ok_or_else(refuse)
+}
 /// A file read whole (a font, a message, a notebook) within `bounds`'
 /// `binary_input` (`read_within`).
+///
+/// Transitional: [`read_file_words`] takes the refusal whole (ADR-139).
 pub fn read_file<'a, S: FileSource + ?Sized>(
     file: &'a S,
     bounds: limits::Bounds,
@@ -678,19 +741,44 @@ pub fn read_file<'a, S: FileSource + ?Sized>(
 ) -> anyhow::Result<Cow<'a, [u8]>> {
     read_within(file, bounds.binary_input(), bounds, what, cancel)
 }
+/// [`read_file`], refused saying `refusal` (`read_within_words`): its
+/// bound is `bounds.binary_input()`.
+pub fn read_file_words<'a, S: FileSource + ?Sized>(
+    file: &'a S,
+    bounds: limits::Bounds,
+    refusal: impl Into<Words>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    read_within_words(file, bounds.binary_input(), bounds, refusal, cancel)
+}
 /// Read a whole file of at most `limit` bytes, or fail with `what` in the message.
+///
+/// Transitional: [`read_bounded_words`] takes the refusal whole (ADR-139).
 pub fn read_bounded<'a, S: FileSource + ?Sized>(
     file: &'a S,
     limit: usize,
     what: &str,
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
-    check(cancel)?;
-    let bytes = opened(file.read_whole(limit as u64, cancel))?;
-    check(cancel)?;
-    bytes.ok_or_else(|| anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit)))
+    whole_within(file, limit, cancel, || {
+        anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit))
+    })
+}
+/// [`read_bounded`], refused past `limit` saying `refusal`: a whole
+/// message, the bound an argument of it (`words::Size`).
+pub fn read_bounded_words<'a, S: FileSource + ?Sized>(
+    file: &'a S,
+    limit: usize,
+    refusal: impl Into<Words>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    whole_within(file, limit, cancel, move || {
+        anyhow::Error::from(Into::<Words>::into(refusal))
+    })
 }
 /// Copy at most `limit` bytes from a stream; more is an error, never a truncation.
+///
+/// Transitional: [`copy_bounded_words`] takes the refusal whole (ADR-139).
 pub fn copy_bounded(
     source: impl Read,
     limit: usize,
@@ -699,6 +787,18 @@ pub fn copy_bounded(
 ) -> anyhow::Result<Vec<u8>> {
     copy_with(source, limit, cancel, |limit| {
         anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit))
+    })
+}
+/// [`copy_bounded`], refused past `limit` saying `refusal`: a whole
+/// message, the bound an argument of it (`words::Size`).
+pub fn copy_bounded_words(
+    source: impl Read,
+    limit: usize,
+    refusal: impl Into<Words>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Vec<u8>> {
+    copy_with(source, limit, cancel, move |_| {
+        anyhow::Error::from(Into::<Words>::into(refusal))
     })
 }
 /// `copy_bounded`, refused past `limit` with what `refuse` makes of it.
@@ -760,7 +860,14 @@ impl Encoding {
     }
     /// What a preview says about the encoding, or nothing for UTF-8.
     pub fn notice(self) -> Option<String> {
-        (self != Self::Utf8).then(|| format!("Read as {}", self.name()))
+        (self != Self::Utf8).then(|| {
+            words!(
+                inspection_read_as = "Read as { $encoding }",
+                encoding = self.name(),
+                note = "A preview's notice: the text had no mark of its encoding and was read in this one. encoding: its name (Windows-1252, UTF-16LE)."
+            )
+            .say()
+        })
     }
 }
 
@@ -797,7 +904,13 @@ pub fn read_text<S: FileSource + ?Sized>(
     bounds: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<(String, Encoding)> {
-    let bytes = read_within(file, bounds.text_input(), bounds, "Text", cancel)?;
+    let limit = bounds.text_input();
+    let refusal = words!(
+        inspection_text_too_large = "Text exceeds { $size } preview limit",
+        size = Size(limit as u64),
+        note = "Why a text is not previewed: it is larger than the preview reads. size: that bound (2 MB)."
+    );
+    let bytes = read_within_words(file, limit, bounds, refusal, cancel)?;
     let (text, encoding) = decode(&bytes);
     Ok((text.into_owned(), encoding))
 }
@@ -835,10 +948,18 @@ pub fn plain(
     Ok(Inspection {
         kind: InspectionKind::Code,
         // Counted by the view, as it reads, unless this is all of it.
-        title: match (whole, lines) {
-            (false, _) => String::new(),
-            (true, 1) => "1 line".into(),
-            (true, _) => format!("{lines} lines"),
+        title: if whole {
+            words!(
+                inspection_lines = "{ $count ->
+                        [one] { $count } line
+                       *[other] { $count } lines
+                    }",
+                count = lines,
+                note = "A text preview's title: how many lines the file has."
+            )
+            .say()
+        } else {
+            String::new()
         },
         blocks: rows
             .into_iter()
@@ -928,8 +1049,11 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     let side = side.clamp(64, limits::PICTURE_SIDE);
     anyhow::ensure!(
         bytes.len() <= limits::BINARY_INPUT,
-        "Embedded image exceeds {}",
-        limits::describe(limits::BINARY_INPUT)
+        words!(
+            inspection_image_too_large = "Embedded image exceeds { $size }",
+            size = Size(limits::BINARY_INPUT as u64),
+            note = "Why a picture inside a document is not shown. size: the largest read (16 MB)."
+        )
     );
     if is_svg(bytes) {
         return svg(bytes, side);
@@ -1034,15 +1158,19 @@ pub fn read_drawing<'a, S: FileSource + ?Sized>(
     bounds: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
-    let bytes = read_file(file, bounds, "Drawing", cancel)?;
+    let refusal = || {
+        words!(
+            inspection_drawing_too_large = "Drawing exceeds { $size } preview limit",
+            size = Size(bounds.binary_input() as u64),
+            note = "Why an SVG drawing is not previewed: it is larger than the preview reads. size: that bound (16 MB)."
+        )
+    };
+    let bytes = read_file_words(file, bounds, refusal(), cancel)?;
     if bytes.starts_with(&[0x1f, 0x8b]) {
         // Larger inflated than read: refused as a larger file would be.
         let inflated = flate2::read::GzDecoder::new(&bytes[..]);
-        return copy_with(inflated, bounds.binary_input(), cancel, |limit| {
-            bounds.refuse(format!(
-                "Drawing exceeds {} preview limit",
-                limits::describe(limit)
-            ))
+        return copy_with(inflated, bounds.binary_input(), cancel, |_| {
+            bounds.refuse_words(refusal())
         })
         .map(Cow::Owned);
     }
@@ -1107,8 +1235,12 @@ fn render_svg(
     use resvg::tiny_skia;
     let drawn = tree.size();
     let scale = (width as f32 / drawn.width()).min(height as f32 / drawn.height());
-    let mut pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| anyhow::anyhow!("SVG picture has no size"))?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
+        anyhow::Error::from(words!(
+            inspection_svg_no_size = "SVG picture has no size",
+            note = "Why a drawing is not shown: it declares a width or height of zero."
+        ))
+    })?;
     resvg::render(
         tree,
         tiny_skia::Transform::from_scale(scale, scale),
@@ -1161,7 +1293,10 @@ fn svg_tree_styled(bytes: &[u8], style_sheet: Option<&str>) -> anyhow::Result<re
         )?;
         anyhow::ensure!(
             out.len() <= limits::BINARY_INPUT,
-            "The drawing is too large to read"
+            words!(
+                inspection_drawing_inflated = "The drawing is too large to read",
+                note = "Why a compressed drawing (.svgz) is not shown: unpacked, it is larger than the preview reads."
+            )
         );
         unpacked = out;
         unpacked.as_slice()
@@ -1260,28 +1395,63 @@ fn roman(mut n: u32) -> String {
 }
 /// One fact for the panel's Properties, or nothing when the format left it
 /// blank. Bounded: a title can be a whole abstract.
+///
+/// Transitional: [`detail_words`] takes its label as words (ADR-139).
 pub fn detail(label: &str, value: impl AsRef<str>) -> Option<skwir_core::inspection::Detail> {
-    let value = value.as_ref().trim();
+    detail_value(value.as_ref()).map(|text| skwir_core::inspection::Detail::new(label, text))
+}
+/// [`detail`], its label a message (`words!`): Properties' labels are said
+/// in the reader's language.
+pub fn detail_words(
+    label: impl Into<Words>,
+    value: impl AsRef<str>,
+) -> Option<skwir_core::inspection::Detail> {
+    // Transitional: a detail's label is text, said once here (ADR-139).
+    detail_value(value.as_ref())
+        .map(|text| skwir_core::inspection::Detail::new(label.into().say(), text))
+}
+/// A fact's value as Properties shows it, bounded; nothing when blank.
+fn detail_value(value: &str) -> Option<String> {
+    let value = value.trim();
     (!value.is_empty()).then(|| {
         let mut text: String = value.chars().take(limits::DETAIL_CHARS).collect();
         if text.len() < value.len() {
             text.push('…');
         }
-        skwir_core::inspection::Detail::new(label, text)
+        text
     })
 }
 /// What a rich document cut at `bounds`' `blocks` says in its notice.
 pub fn blocks_notice(bounds: limits::Bounds) -> String {
-    format!("First {} blocks · Source shows the rest", bounds.blocks())
+    words!(
+        inspection_blocks_notice = "{ $count ->
+                [one] First { $count } block
+               *[other] First { $count } blocks
+            } · Source shows the rest",
+        count = bounds.blocks(),
+        note = "A preview's notice: only the beginning of a long document is shown; Source is the button that shows the file's own text."
+    )
+    .say()
 }
 /// The facts of `Inspection::details` from `(label, value)` pairs, in order,
 /// leaving out what is blank or `None` (`count` makes a zero blank).
+///
+/// Transitional: [`details_words`] takes the labels as words (ADR-139).
 pub fn details<'a, V: Into<Option<String>>>(
     facts: impl IntoIterator<Item = (&'a str, V)>,
 ) -> Vec<skwir_core::inspection::Detail> {
     facts
         .into_iter()
         .filter_map(|(label, value)| detail(label, value.into()?))
+        .collect()
+}
+/// [`details`], each label a message (`words!`).
+pub fn details_words<V: Into<Option<String>>>(
+    facts: impl IntoIterator<Item = (Words, V)>,
+) -> Vec<skwir_core::inspection::Detail> {
+    facts
+        .into_iter()
+        .filter_map(|(label, value)| detail_words(label, value.into()?))
         .collect()
 }
 /// The Map view's id (the `geo` plugin's lens): a position shown in
@@ -1293,8 +1463,13 @@ pub const MAP_VIEW: &str = "map";
 /// of a disabled plugin does.
 #[must_use]
 pub fn on_map(detail: skwir_core::inspection::Detail) -> skwir_core::inspection::Detail {
+    // Transitional: a detail's action is text, said once here (ADR-139).
     detail.with_action(
-        "Show on map",
+        words!(
+            inspection_show_on_map = "Show on map",
+            note = "A link after a picture's position in Properties: it opens the Map view."
+        )
+        .say(),
         skwir_core::command::Invocation::with_args(
             "ui.view",
             &serde_json::json!({ "id": MAP_VIEW }),
@@ -1375,8 +1550,13 @@ pub fn hex_bytes(bytes: &[u8]) -> String {
 /// Header cells: offset, byte positions in row layout, ASCII.
 pub fn hex_columns() -> Vec<String> {
     vec![
-        "Offset".into(),
+        words!(
+            inspection_hex_offset = "Offset",
+            note = "A column's header in the hexadecimal view: where each row of bytes is in the file."
+        )
+        .say(),
         hex_bytes(&(0..HEX_ROW as u8).collect::<Vec<_>>()),
+        // The character set's name, as written.
         "ASCII".into(),
     ]
 }

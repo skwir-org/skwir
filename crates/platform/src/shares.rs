@@ -22,7 +22,15 @@ pub enum Refused {
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Refused::Login => f.write_str("the server refused the login"),
+            // Words, so that a chain said in the reader's language says it
+            // so.
+            Refused::Login => std::fmt::Display::fmt(
+                &skwir_core::words!(
+                    shares_login_refused = "the server refused the login",
+                    note = "Why a server's shared folder was not connected: the name or the password was not accepted."
+                ),
+                f,
+            ),
             Refused::Other(error) => write!(f, "{error:#}"),
         }
     }
@@ -136,8 +144,16 @@ pub fn mount_url(
     /// `NetFS`'s refused login (`EAUTH`), and a bad password (`EPERM`-like
     /// answers some servers give).
     const EAUTH: i32 = 80;
-    let url = CFURL::from_string(None, &CFString::from_str(url), None)
-        .ok_or_else(|| Refused::Other(anyhow::anyhow!("“{url}” is no address the system reads")))?;
+    let url = CFURL::from_string(None, &CFString::from_str(url), None).ok_or_else(|| {
+        Refused::Other(
+            skwir_core::words!(
+                shares_no_address = "“{ $address }” is no address the system reads",
+                address = url,
+                note = "address: what was typed to connect to a server (smb://server/share)."
+            )
+            .into(),
+        )
+    })?;
     let user = user.map(CFString::from_str);
     let password = password.map(CFString::from_str);
     let mut mounted: *const CFArray = std::ptr::null();
@@ -166,15 +182,25 @@ pub fn mount_url(
         ));
     }
     let mounted = std::ptr::NonNull::new(mounted.cast_mut())
-        .ok_or_else(|| Refused::Other(anyhow::anyhow!("NetFS said no mount point")))?;
+        .ok_or_else(|| Refused::Other(no_mount_point()))?;
     // SAFETY: a +1 array `NetFS` created, released once here.
     let mounted: CFRetained<CFArray> = unsafe { CFRetained::from_raw(mounted) };
     if mounted.count() < 1 {
-        return Err(Refused::Other(anyhow::anyhow!("NetFS said no mount point")));
+        return Err(Refused::Other(no_mount_point()));
     }
     // SAFETY: its values are the CFStrings of the mount points.
     let first = unsafe { &*mounted.value_at_index(0).cast::<CFString>() };
     Ok(PathBuf::from(first.to_string()))
+}
+
+/// What `NetFS` mounting a share and saying nowhere is said as.
+#[cfg(target_os = "macos")]
+fn no_mount_point() -> anyhow::Error {
+    skwir_core::words!(
+        shares_no_mount_point = "NetFS said no mount point",
+        note = "NetFS is macOS's service that connects servers' shared folders (a name): it said it connected one, and not where."
+    )
+    .into()
 }
 
 /// [`connect_unc`] where Windows' own calls are not.

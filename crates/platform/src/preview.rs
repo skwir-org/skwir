@@ -9,7 +9,7 @@ use anyhow::Context;
 use parking_lot::{Mutex, MutexGuard};
 use skwir_core::cache::CacheSlot;
 use skwir_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
-use skwir_core::{CancelToken, thumbs::Image};
+use skwir_core::{CancelToken, thumbs::Image, words};
 
 use crate::inspection::check;
 use crate::process;
@@ -40,11 +40,23 @@ fn acquire<'a, T>(gate: &'a Mutex<T>, cancel: &CancelToken) -> anyhow::Result<Mu
 fn read_artifact(path: &Path) -> anyhow::Result<Vec<u8>> {
     crate::file::read_regular(path, MAX_ARTIFACT).map_err(|error| {
         if error.kind() == std::io::ErrorKind::InvalidData {
-            anyhow::anyhow!("preview output is too large")
+            words!(
+                preview_output_too_large = "preview output is too large",
+                note = "Why a picture of a file is not shown: the program that drew it wrote more than the preview reads."
+            )
+            .into()
         } else {
             error.into()
         }
     })
+}
+
+/// Why a preview was given up: its file changed while it was made.
+fn changed_during_preview() -> skwir_core::words::Words {
+    words!(
+        preview_changed = "file changed during preview",
+        note = "Why a picture of a file is not shown: the file was written to while it was drawn."
+    )
 }
 
 pub(crate) fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
@@ -53,7 +65,10 @@ pub(crate) fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Imag
     let side = max_side.clamp(64, MAX_VIDEO_SIDE);
     anyhow::ensure!(
         w > 0 && h > 0 && w <= side && h <= side,
-        "preview dimensions exceed limit"
+        words!(
+            preview_too_wide = "preview dimensions exceed limit",
+            note = "Why a picture of a file is not shown: the program that drew it made it larger than asked."
+        )
     );
     // Renderers already size their output, so the image is taken as it is:
     // nothing is resampled again, not even on cache hits.
@@ -214,15 +229,20 @@ impl PreviewProvider for MediaPreviews {
         if session.is_none() && self.backend != "auto" {
             // In the words of the Video page: audio has no still to fall
             // back to.
-            let instead = if self.audio {
-                ""
-            } else {
-                ", or choose Still frames as the Video engine"
-            };
-            anyhow::bail!(
-                "Install {} and GStreamer's playback plugins to play this{instead}",
-                crate::media::WORKER.executable
-            );
+            let program = crate::media::WORKER.executable;
+            if self.audio {
+                anyhow::bail!(words!(
+                    preview_install_audio =
+                        "Install { $program } and GStreamer's playback plugins to play this",
+                    program = program,
+                    note = "Why a sound file does not play. program: the helper's name (skwir-media-worker)."
+                ));
+            }
+            anyhow::bail!(words!(
+                preview_install_video = "Install { $program } and GStreamer's playback plugins to play this, or choose Still frames as the Video engine",
+                program = program,
+                note = "Why a film does not play. program: the helper's name (skwir-media-worker); Still frames is a choice of the Video engine setting, Video the settings page."
+            ));
         }
         Ok(session)
     }
@@ -327,10 +347,7 @@ impl PreviewProvider for MediaPreviews {
                 None => (exact(Some(seconds))?, seconds),
             }
         };
-        anyhow::ensure!(
-            fingerprint(req, &path)? == base,
-            "file changed during preview"
-        );
+        anyhow::ensure!(fingerprint(req, &path)? == base, changed_during_preview());
         let image = decode_preview(&picture, req.max_side)?;
         // Stored as it is decoded; turned, a phone's film is the other way.
         let own = stored.map(|(w, h)| {
@@ -419,17 +436,24 @@ impl DocumentPreviews {
                 "pdf",
                 cancel,
             )?;
-            let bytes = read_artifact(&pdf).context(
-                "LibreOffice did not produce a PDF (the file may be encrypted or unsupported)",
-            )?;
+            let bytes = read_artifact(&pdf).context(words!(
+                preview_office_no_pdf = "LibreOffice did not produce a PDF (the file may be encrypted or unsupported)",
+                note = "Why an office document is not shown: LibreOffice, which turns it into a PDF to show, made none."
+            ))?;
             anyhow::ensure!(
                 bytes.starts_with(b"%PDF-"),
-                "conversion did not produce a PDF"
+                words!(
+                    preview_office_not_pdf = "conversion did not produce a PDF",
+                    note = "Why an office document is not shown: what LibreOffice made of it is not a PDF."
+                )
             );
             check(cancel)?;
             anyhow::ensure!(
                 fingerprint(req, source)? == base,
-                "file changed during conversion"
+                words!(
+                    preview_changed_converting = "file changed during conversion",
+                    note = "Why an office document is not shown: it was written to while it was turned into a PDF."
+                )
             );
             if self.cache.put(&conversion_key, &bytes).is_ok() {
                 self.cache.trim_soon(bytes.len() as u64, 128 * 1024 * 1024);
@@ -596,7 +620,11 @@ impl PreviewProvider for DocumentPreviews {
                 self.backend.as_str(),
                 "auto" | "pdfium" | "poppler" | "mupdf"
             ),
-            "unknown PDF backend; choose auto, pdfium, poppler or mupdf"
+            words!(
+                preview_unknown_backend =
+                    "unknown PDF backend; choose auto, pdfium, poppler or mupdf",
+                note = "Why a PDF is not shown: the settings name an engine that is none. auto, pdfium, poppler and mupdf are the setting's values, as written in a settings file."
+            )
         );
         let engines: &[Engine] = match self.backend.as_str() {
             "pdfium" => &[Engine::Pdfium],
@@ -646,7 +674,10 @@ impl PreviewProvider for DocumentPreviews {
             };
             anyhow::ensure!(
                 fingerprint(req, &source)? == base,
-                "file changed during document open"
+                words!(
+                    preview_changed_opening = "file changed during document open",
+                    note = "Why a document is not shown: it was written to while it was opened."
+                )
             );
             let setup = crate::document::Setup {
                 library: self.library.clone(),
@@ -670,18 +701,20 @@ impl PreviewProvider for DocumentPreviews {
         if let ([crate::document::Engine::Pdfium], Some(library)) = (engines, &self.library)
             && !library.is_file()
         {
-            anyhow::bail!(
-                "PDFium's library is not at “{}”, where the settings say it is \
-                 (Settings › Reading › Documents › PDFium library)",
-                library.display()
-            );
+            anyhow::bail!(words!(
+                preview_pdfium_library_missing = "PDFium's library is not at “{ $path }”, where the settings say it is (Settings › Reading › Documents › PDFium library)",
+                path = library.display().to_string(),
+                note = "Why a PDF is not shown. path: where the setting says the library is; Settings › Reading › Documents › PDFium library is where that setting is, as the window names it."
+            ));
         }
         if let [engine] = engines {
-            anyhow::bail!(
-                "Install {} and its library to read documents with {}",
-                crate::document::worker(*engine).executable,
-                engine.label()
-            );
+            anyhow::bail!(words!(
+                preview_install_engine =
+                    "Install { $program } and its library to read documents with { $engine }",
+                program = crate::document::worker(*engine).executable,
+                engine = engine.label(),
+                note = "Why a PDF is not shown with the engine the settings chose. program: its helper's name (skwir-poppler-worker); engine: the engine's name (Poppler, MuPDF)."
+            ));
         }
         Ok(None)
     }
@@ -746,7 +779,10 @@ impl PreviewProvider for DocumentPreviews {
                             .and_then(|n| n.trim().parse::<u32>().ok())
                     })
                     .filter(|n| *n > 0)
-                    .context("PDF has no readable pages")?;
+                    .context(words!(
+                        preview_no_pages = "PDF has no readable pages",
+                        note = "Why a PDF is not shown: the program that reads it found no page."
+                    ))?;
                 *document = Some((metadata_key, pages));
                 pages
             }
@@ -755,10 +791,7 @@ impl PreviewProvider for DocumentPreviews {
         let rendering = Instant::now();
         let image = render_pdf_page(&renderer, &pdf, page, req.max_side, tmp.path(), cancel)?;
         let render_ms = rendering.elapsed().as_millis();
-        anyhow::ensure!(
-            fingerprint(req, &path)? == base,
-            "file changed during preview"
-        );
+        anyhow::ensure!(fingerprint(req, &path)? == base, changed_during_preview());
         check(cancel)?;
         let png = encode_preview(&image)?;
         let preview = finish(

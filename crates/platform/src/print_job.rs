@@ -18,6 +18,7 @@ use resvg::usvg::fontdb;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{self, Inspection, InspectionKind};
 use skwir_core::print::{self, Face, Family, Fonts, Job, Line, Made, Part};
+use skwir_core::words;
 
 use crate::highlight::{CodeTheme, DEFAULT, Highlighter, LIGHT_KEY, Palette};
 use crate::sandbox::Otherwise;
@@ -383,11 +384,17 @@ fn code(
         let runs = highlighter.line(&text).iter().map(run).collect();
         lines.push(Line { text, runs });
     }
+    // Transitional: `Parts::notice` is text, said once here (ADR-139).
     let notice = cut.then(|| {
-        format!(
-            "Only the first {} lines are printed",
-            separated(lines.len())
+        words!(
+            print_job_lines_cut = "{ $count ->
+                    [one] Only the first { $count } line is printed
+                   *[other] Only the first { $count } lines are printed
+                }",
+            count = lines.len(),
+            note = "Said when a long code file is printed: the rest of its lines are left out."
         )
+        .say()
     });
     Ok((
         Part::Code {
@@ -397,19 +404,6 @@ fn code(
         },
         notice,
     ))
-}
-
-/// `n` with its thousands apart: 1,000,000.
-fn separated(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (at, digit) in digits.chars().enumerate() {
-        if at > 0 && (digits.len() - at).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
 }
 
 /// The lines of a file read where it is shown, all of them up to `most`
@@ -553,7 +547,11 @@ pub fn make(
     cancel: &CancelToken,
     follow: &crate::process::Follow<'_>,
 ) -> Result<Made> {
-    let program = WORKER.require("print")?;
+    let program = WORKER.require_words(words!(
+        print_job_install = "Install { $program } to print",
+        program = WORKER.executable,
+        note = "The helper program that lays out what is printed is missing. program: its name."
+    ))?;
     made(&program, job, work, cancel, follow)
         .map_err(|error| crate::process::explain(&program, cancel, error))
 }
@@ -618,14 +616,22 @@ fn made(
     let finished = finished?;
     if !finished.status.success() {
         let said = finished.stderr.lines().next().unwrap_or_default().trim();
-        bail!("The PDF could not be made ({}): {said}", finished.status);
+        bail!(words!(
+            print_job_failed = "The PDF could not be made ({ $status }): { $said }",
+            status = finished.status.to_string(),
+            said = said,
+            note = "The print helper failed. status: how it ended, as the system says; said: the first line it wrote of why."
+        ));
     }
     let said = String::from_utf8_lossy(&finished.stdout);
     let line = said
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())
-        .context("the print helper said nothing")?;
+        .context(words!(
+            print_job_silent = "the print helper said nothing",
+            note = "The helper program that makes what is printed ended without its answer."
+        ))?;
     let made: Made =
         serde_json::from_str(line).context("the print helper's answer could not be read")?;
     // Taken only as the regular file it is: a link the helper left there
@@ -633,15 +639,29 @@ fn made(
     let size = skwir_core::fs::file::open_regular_unfollowed(&output)
         .and_then(|file| file.metadata())
         .map(|meta| meta.len())
-        .context("the print helper wrote no PDF")?;
-    ensure!(size > 0, "the print helper wrote an empty PDF");
+        .context(words!(
+            print_job_no_pdf = "the print helper wrote no PDF",
+            note = "The helper program that makes what is printed left no document."
+        ))?;
+    ensure!(
+        size > 0,
+        words!(
+            print_job_empty_pdf = "the print helper wrote an empty PDF",
+            note = "The helper program that makes what is printed left an empty document."
+        )
+    );
     Ok(made)
 }
 
 /// The job written for the helper to read.
 fn write_job(job: &Job, path: &Path) -> Result<()> {
-    let file = std::fs::File::create(path)
-        .with_context(|| format!("{} could not be written", path.display()))?;
+    let file = std::fs::File::create(path).with_context(|| {
+        words!(
+            print_job_unwritten = "{ $path } could not be written",
+            path = path.display().to_string(),
+            note = "path: the file Skwir writes the print job to, in a folder of its own."
+        )
+    })?;
     let mut writer = std::io::BufWriter::new(file);
     serde_json::to_writer(&mut writer, job)?;
     writer.flush()?;
@@ -905,8 +925,6 @@ mod tests {
         assert!(cut && lines.len() == 100);
         let (lines, cut) = read_lines(&file, 1000, 64, &cancel).unwrap();
         assert!(cut && lines.len() < 10, "{lines:?}");
-        assert_eq!(separated(1_000_000), "1,000,000");
-        assert_eq!(separated(999), "999");
     }
 
     fn row(cells: &[&str], header: bool) -> Block {

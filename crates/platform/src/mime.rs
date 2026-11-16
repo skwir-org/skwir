@@ -334,7 +334,61 @@ impl Kind {
         }
     }
 
+    /// What people call a group of them, as a message: `Images`.
+    pub fn words(self) -> skwir_core::words::Words {
+        use skwir_core::words;
+        match self {
+            Kind::Folder => words!(
+                mime_kind_folders = "Folders",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Image => words!(
+                mime_kind_images = "Images",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Video => words!(
+                mime_kind_videos = "Videos",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Audio => words!(
+                mime_kind_audio = "Music and audio",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Document => words!(
+                mime_kind_documents = "Documents",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Spreadsheet => words!(
+                mime_kind_spreadsheets = "Spreadsheets",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Presentation => words!(
+                mime_kind_presentations = "Presentations",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Text => words!(
+                mime_kind_text = "Text and code",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Archive => words!(
+                mime_kind_archives = "Archives",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Font => words!(
+                mime_kind_fonts = "Fonts",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+            Kind::Program => words!(
+                mime_kind_programs = "Programs",
+                note = "A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters."
+            ),
+        }
+    }
+
     /// What people call a group of them: `Images`.
+    ///
+    /// Transitional: English; [`Kind::words`] says it in the reader's
+    /// language (ADR-139).
     pub fn title(self) -> &'static str {
         match self {
             Kind::Folder => "Folders",

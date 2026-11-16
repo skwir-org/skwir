@@ -732,6 +732,43 @@ impl Again {
     }
 }
 
+/// The menu of the program's presence: its entry that opens a window.
+#[cfg(any(target_os = "linux", windows))]
+fn tray_open() -> skwir_core::words::Words {
+    skwir_core::words!(
+        desktop_tray_open = "Open Skwir",
+        note = "An entry of the menu of Skwir's icon in the tray, while it works without a window: it opens a window."
+    )
+}
+
+/// The menu of the program's presence: its entry that pauses every action.
+#[cfg(any(target_os = "linux", windows))]
+fn tray_pause() -> skwir_core::words::Words {
+    skwir_core::words!(
+        desktop_tray_pause = "Pause all",
+        note =
+            "An entry of the menu of Skwir's icon in the tray: it pauses every action under way."
+    )
+}
+
+/// The menu of the program's presence: its entry that lets every paused action go on.
+#[cfg(any(target_os = "linux", windows))]
+fn tray_go_on() -> skwir_core::words::Words {
+    skwir_core::words!(
+        desktop_tray_go_on = "Go on",
+        note = "An entry of the menu of Skwir's icon in the tray, in place of Pause all: every paused action goes on."
+    )
+}
+
+/// The menu of the program's presence: its entry that stops every action, then Skwir.
+#[cfg(any(target_os = "linux", windows))]
+fn tray_stop() -> skwir_core::words::Words {
+    skwir_core::words!(
+        desktop_tray_stop = "Stop all and quit",
+        note = "An entry of the menu of Skwir's icon in the tray: it stops every action, and Skwir ends."
+    )
+}
+
 /// `text` as markup and XML hold it: `&`, `<` and `>` escaped, and the
 /// control characters XML refuses even escaped dropped (a tab and line
 /// ends kept), as one would refuse the whole notice.

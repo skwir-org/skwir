@@ -107,8 +107,46 @@ impl Source {
         }
     }
 
+    /// [`Source::short`] as words: a message choosing by the source's
+    /// key (`key`), its editors' names as they write them.
+    pub fn short_words(self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            grammars_source_short = "{ $source ->
+                    [skwir] Skwir's folder
+                    [tree-sitter] tree-sitter CLI
+                    [zed] Zed
+                    [helix] Helix
+                    [neovim] Neovim
+                    [emacs] Emacs
+                   *[system] System
+                }",
+            source = self.key(),
+            note = "Where tree-sitter grammars were found, at the head of a choice on the Reading page. Zed, Helix, Neovim and Emacs are editors' names."
+        )
+    }
+
+    /// [`Source::label`] as words, as [`Source::short_words`] makes them.
+    pub fn label_words(self) -> skwir_core::words::Words {
+        skwir_core::words!(
+            grammars_source_label = "{ $source ->
+                    [skwir] Skwir
+                    [tree-sitter] the tree-sitter CLI
+                    [zed] Zed
+                    [helix] Helix
+                    [neovim] Neovim
+                    [emacs] Emacs
+                   *[system] the system
+                }",
+            source = self.key(),
+            note = "Where tree-sitter grammars were found, as the Reading page names it. Zed, Helix, Neovim and Emacs are editors' names."
+        )
+    }
+
     /// Its library, as a combined grammar names it after its queries'
     /// source ("tree-sitter CLI, with Emacs's library", ADR-110).
+    ///
+    /// Transitional: a fragment for a sentence; a message names a source's
+    /// library by a selector on its `key` (`library_refused`).
     pub fn library(self) -> &'static str {
         match self {
             Source::Skwir => "a library in Skwir's folder",
@@ -250,7 +288,8 @@ impl Answer {
     fn of(checked: anyhow::Result<crate::tree_sitter::Checked>) -> Answer {
         let checked = match checked {
             Ok(checked) => checked,
-            Err(error) => return Answer::Failed(format!("{error:#}")),
+            // Transitional: said once here, kept as text (ADR-139).
+            Err(error) => return Answer::Failed(skwir_core::words::Words::of_error(error).say()),
         };
         Answer::Fit(match (checked.refused, checked.colorless) {
             (Some(why), _) => Fit::Library(why),
@@ -388,11 +427,22 @@ fn fitted(
 /// with its paths from `~/`: "Emacs's library cannot be used (its ABI is
 /// 16, …)". Its queries are not the matter.
 fn library_refused(found: &Found, why: &str) -> String {
-    format!(
-        "{} cannot be used ({})",
-        found.source.library(),
-        home_in(why)
+    // Transitional: a grammar's problem is text, said once here (ADR-139).
+    skwir_core::words!(
+        grammars_library_refused = "{ $source ->
+                [skwir] a library in Skwir's folder
+                [tree-sitter] the tree-sitter CLI's library
+                [zed] Zed's library
+                [helix] Helix's library
+                [neovim] Neovim's library
+                [emacs] Emacs's library
+               *[system] the system's library
+            } cannot be used ({ $why })",
+        source = found.source.key(),
+        why = home_in(why),
+        note = "Why a grammar made of one program's library and another's queries is not offered. source: whose library it is; why: what the tree-sitter helper said, as it wrote it."
     )
+    .say()
 }
 
 /// Why none of a combined grammar's queries colors its library, and what
@@ -400,16 +450,40 @@ fn library_refused(found: &Found, why: &str) -> String {
 /// the revision the library was built from; the system's are for its own
 /// library, so the repository goes in Skwir's folder.
 fn queries_refused(found: &Found, why: &str) -> String {
-    let library = found.source.library();
+    let source = found.source.key();
     let why = home_in(why);
+    // Transitional: a grammar's problem is text, said once here (ADR-139).
     match found.queries_from {
-        Some(Source::Skwir | Source::TreeSitter) => format!(
-            "its repository's queries do not fit {library} ({why}): check the repository out at the revision its library was built from"
+        Some(Source::Skwir | Source::TreeSitter) => skwir_core::words!(
+            grammars_repository_queries_refused = "its repository's queries do not fit { $source ->
+                    [skwir] a library in Skwir's folder
+                    [tree-sitter] the tree-sitter CLI's library
+                    [zed] Zed's library
+                    [helix] Helix's library
+                    [neovim] Neovim's library
+                    [emacs] Emacs's library
+                   *[system] the system's library
+                } ({ $why }): check the repository out at the revision its library was built from",
+            source = source,
+            why = why,
+            note = "Why a grammar made of one program's library and a repository's queries is not offered. source: whose library it is; why: what the tree-sitter helper said, as it wrote it."
         ),
-        _ => format!(
-            "the system's queries do not fit {library} ({why}): put the grammar's repository, at the revision its library was built from, in Skwir's grammars folder"
+        _ => skwir_core::words!(
+            grammars_system_queries_refused = "the system's queries do not fit { $source ->
+                    [skwir] a library in Skwir's folder
+                    [tree-sitter] the tree-sitter CLI's library
+                    [zed] Zed's library
+                    [helix] Helix's library
+                    [neovim] Neovim's library
+                    [emacs] Emacs's library
+                   *[system] the system's library
+                } ({ $why }): put the grammar's repository, at the revision its library was built from, in Skwir's grammars folder",
+            source = source,
+            why = why,
+            note = "Why a grammar made of one program's library and the system's queries is not offered. source: whose library it is; why: what the tree-sitter helper said, as it wrote it."
         ),
     }
+    .say()
 }
 
 /// `found` colored by the set of its queries at `set` of
@@ -1259,17 +1333,27 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
     if let Some(config) = &roots.tree_sitter_config
         && config.is_file()
         && let Err(error) = read_text(config)
-            .ok_or_else(|| "cannot be read".to_owned())
+            .ok_or_else(|| {
+                skwir_core::words!(
+                    grammars_config_unreadable = "its configuration does not read (cannot be read): none of its parser directories is read",
+                    note = "Said of the tree-sitter CLI's configuration file on the Reading page: it could not be read."
+                )
+            })
             .and_then(|text| {
-                serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())
+                serde_json::from_str::<serde_json::Value>(&text).map_err(|e| {
+                    skwir_core::words!(
+                        grammars_config_invalid = "its configuration does not read ({ $error }): none of its parser directories is read",
+                        error = e.to_string(),
+                        note = "Said of the tree-sitter CLI's configuration file on the Reading page: it is not JSON. error: what the JSON reader said, in English."
+                    )
+                })
             })
     {
         nearly.push(Nearly {
             source: Source::TreeSitter,
             what: config.clone(),
-            said: format!(
-                "its configuration does not read ({error}): none of its parser directories is read"
-            ),
+            // Transitional: `Nearly::said` is text (ADR-139).
+            said: error.say(),
         });
     }
     let parser_dirs = roots
@@ -1282,7 +1366,11 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
             nearly.push(Nearly {
                 source: Source::TreeSitter,
                 what: dir.clone(),
-                said: "a parser directory its configuration names, not there".to_owned(),
+                said: skwir_core::words!(
+                    grammars_parser_dir_missing = "a parser directory its configuration names, not there",
+                    note = "Said of a folder on the Reading page: the tree-sitter CLI's configuration names it, and it does not exist."
+                )
+                .say(),
             });
         }
     }
@@ -1293,16 +1381,20 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
     for (source, dir) in nested {
         for (folder, repository) in nested_repositories(dir) {
             let said = match source {
-                Source::Skwir => format!(
-                    "one folder too deep: Skwir reads only the folders directly in it ({}); move or link the repository there",
-                    shown(dir)
+                Source::Skwir => skwir_core::words!(
+                    grammars_too_deep_skwir = "one folder too deep: Skwir reads only the folders directly in it ({ $folder }); move or link the repository there",
+                    folder = shown(dir),
+                    note = "Said of a grammar's repository on the Reading page: it is in a folder inside Skwir's grammars folder. folder: Skwir's grammars folder, a path."
                 ),
-                _ => format!(
-                    "one folder too deep: it reads only the folders directly in {}; add {} to its parser-directories, or link the repository into Skwir's grammars folder",
-                    shown(dir),
-                    shown(&folder)
+                _ => skwir_core::words!(
+                    grammars_too_deep_cli = "one folder too deep: it reads only the folders directly in { $folder }; add { $inner } to its parser-directories, or link the repository into Skwir's grammars folder",
+                    folder = shown(dir),
+                    inner = shown(&folder),
+                    note = "Said of a grammar's repository on the Reading page: the tree-sitter CLI does not look this deep. folder: the folder it reads, a path; inner: the folder between, a path; parser-directories is its setting's name."
                 ),
-            };
+            }
+            // Transitional: `Nearly::said` is text (ADR-139).
+            .say();
             nearly.push(Nearly {
                 source,
                 what: repository,
@@ -1512,7 +1604,14 @@ impl Confined {
                         Some(real) => candidate.library = Some(real),
                         None => {
                             candidate.problem.get_or_insert_with(|| {
-                                format!("its library {} lies outside its folder", library.display())
+                                // Transitional: a grammar's problem is
+                                // text, said once here (ADR-139).
+                                skwir_core::words!(
+                                    grammars_library_outside = "its library { $library } lies outside its folder",
+                                    library = library.display().to_string(),
+                                    note = "Why a grammar is not offered: its library, a path, is not in the folder it was found in, which is all its helper may read."
+                                )
+                                .say()
                             });
                         }
                     }
@@ -1701,7 +1800,13 @@ fn alternative(
         .problem
         .clone()
         .or_else(|| match (&own.library, queries.is_empty()) {
-            (None, _) => Some("no library: build the grammar (`tree-sitter build`)".to_owned()),
+            (None, _) => Some(
+                skwir_core::words!(
+                    grammars_no_library = "no library: build the grammar (`tree-sitter build`)",
+                    note = "Why a grammar is not offered: its repository holds no compiled library. `tree-sitter build` is a command, as written."
+                )
+                .say(),
+            ),
             (Some(_), true) => Some(no_highlights(source, unlent)),
             (Some(_), false) => None,
         });
@@ -1739,19 +1844,32 @@ fn alternative(
 /// Lisp); a repository of Skwir's or the CLI's has none of its own; an
 /// editor's queries of it, `unlent`, are not lent to another's library.
 fn no_highlights(source: Source, unlent: Option<Source>) -> String {
-    const PUT: &str =
-        "put the grammar's repository in Skwir's grammars folder (it need not be built)";
+    // Transitional: a grammar's problem is text, said once here (ADR-139).
     match (source, unlent) {
-        (Source::Emacs, _) => format!("Emacs keeps no colors with its grammars: {PUT}"),
-        (Source::Skwir | Source::TreeSitter, _) => {
-            "no highlights query in its repository, nor in the system's".to_owned()
-        }
-        (_, Some(editor)) => format!(
-            "no queries installed with it, and {}'s are not lent to another's library: {PUT}",
-            editor.label()
+        (Source::Emacs, _) => skwir_core::words!(
+            grammars_emacs_no_colors = "Emacs keeps no colors with its grammars: put the grammar's repository in Skwir's grammars folder (it need not be built)",
+            note = "Why a grammar of Emacs's is not offered: Emacs colors code otherwise. Emacs is an editor's name."
         ),
-        (_, None) => format!("no highlights query found for its language: {PUT}"),
+        (Source::Skwir | Source::TreeSitter, _) => skwir_core::words!(
+            grammars_no_highlights_repository = "no highlights query in its repository, nor in the system's",
+            note = "Why a grammar is not offered: nothing says how its language is colored (a highlights query, a file of tree-sitter's)."
+        ),
+        (_, Some(editor)) => skwir_core::words!(
+            grammars_queries_not_lent = "no queries installed with it, and { $editor ->
+                    [zed] Zed's
+                    [helix] Helix's
+                    [emacs] Emacs's
+                   *[neovim] Neovim's
+                } are not lent to another's library: put the grammar's repository in Skwir's grammars folder (it need not be built)",
+            editor = editor.key(),
+            note = "Why a grammar is not offered: an editor's queries color only its own grammars. editor: which editor's (Zed, Helix, Neovim, Emacs are their names)."
+        ),
+        (_, None) => skwir_core::words!(
+            grammars_no_highlights = "no highlights query found for its language: put the grammar's repository in Skwir's grammars folder (it need not be built)",
+            note = "Why a grammar is not offered: nothing says how its language is colored (a highlights query, a file of tree-sitter's)."
+        ),
     }
+    .say()
 }
 
 /// The key a language is known by: its name in lower case, `-` read as

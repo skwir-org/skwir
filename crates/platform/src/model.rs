@@ -195,7 +195,12 @@ pub fn draw(
     asked: Asked,
     cancel: &CancelToken,
 ) -> anyhow::Result<Drawn> {
-    let worker = WORKER.require("draw 3D models")?;
+    let worker = WORKER.require_words(skwir_core::words!(
+        model_install = "Install { $program } to draw 3D models",
+        program = WORKER.executable,
+        note =
+            "What to do to see 3D models. program: the model helper's name (skwir-model-worker)."
+    ))?;
     let turn = match asked {
         Asked::Preview | Asked::Turned { .. } => TURNS.take(cancel),
         Asked::Thumbnail => Some(
@@ -267,8 +272,11 @@ fn draw_with(
     )?;
     anyhow::ensure!(
         finished.status.success(),
-        "The model cannot be drawn: {}",
-        finished.stderr.trim()
+        skwir_core::words!(
+            model_failed = "The model cannot be drawn: { $said }",
+            said = finished.stderr.trim(),
+            note = "said: what the model helper wrote of why, as it wrote it."
+        )
     );
     let out = finished.stdout;
     let line = out

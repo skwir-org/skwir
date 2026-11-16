@@ -6,6 +6,8 @@ use anyhow::Context;
 use serde::Deserialize;
 use skwir_core::CancelToken;
 use skwir_core::fs::kept_open::WhileOpen;
+use skwir_core::words;
+use skwir_core::words::{Name, Size, Words};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -61,7 +63,19 @@ pub fn worker_path() -> Option<std::path::PathBuf> {
     WORKER.find()
 }
 fn worker() -> anyhow::Result<std::path::PathBuf> {
-    WORKER.require("open archives")
+    WORKER.require_words(words!(
+        archive_install = "Install { $program } to open archives",
+        program = WORKER.executable,
+        note = "Said where an archive cannot be opened. program: the helper's name (skwir-archive-worker)."
+    ))
+}
+/// Why a member is not previewed: past `most` bytes.
+fn member_too_large(most: usize) -> Words {
+    words!(
+        archive_member_too_large = "Member preview exceeds { $size } limit",
+        size = Size(most as u64),
+        note = "Why a file inside an archive is not previewed: it is larger than the preview reads. size: that bound (16 MB)."
+    )
 }
 /// An archive's members as the helper listed them: the first its bounds'
 /// `members`, within their `member_names` bytes of names.
@@ -167,7 +181,10 @@ pub fn member(path: &Path, index: u64, cancel: &CancelToken) -> anyhow::Result<M
             break;
         }
     }
-    anyhow::bail!("Missing archive member")
+    anyhow::bail!(words!(
+        archive_member_missing = "Missing archive member",
+        note = "Why a file inside an archive cannot be shown: the archive no longer lists it."
+    ))
 }
 
 fn read_listing(path: &Path, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Listing> {
@@ -245,14 +262,15 @@ fn write_member(
 ) -> anyhow::Result<()> {
     let most = bounds.binary_input();
     if u64::try_from(member.size).unwrap_or(0) > most as u64 {
-        return Err(bounds.refuse(format!(
-            "Member preview exceeds {} limit",
-            limits::describe(most)
-        )));
+        return Err(bounds.refuse_words(member_too_large(most)));
     }
     // It writes in the folder that will hold the member, and nowhere else.
     let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
-        anyhow::bail!("Nowhere to write the member");
+        anyhow::bail!(words!(
+            archive_member_nowhere = "Nowhere to write the member",
+            note =
+                "Why a file inside an archive cannot be taken out: the place asked has no folder."
+        ));
     };
     let worker = worker()?;
     let written = || -> anyhow::Result<()> {
@@ -292,8 +310,13 @@ pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Resul
     let temp = crate::file::memory_dir("skwir-member-")?;
     let output = temp.path().join("member");
     write_member(path, member, &output, Bounds::QUICK, cancel)?;
-    inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
-        .map(std::borrow::Cow::into_owned)
+    inspection::read_bounded_words(
+        &output,
+        limits::BINARY_INPUT,
+        member_too_large(limits::BINARY_INPUT),
+        cancel,
+    )
+    .map(std::borrow::Cow::into_owned)
 }
 
 /// What a session's helper is asked (`--serve` in the helper).
@@ -376,7 +399,12 @@ impl Session {
         lifetime: &CancelToken,
         isolate: bool,
     ) -> anyhow::Result<Session> {
-        let key = listing_key(path).ok_or_else(|| anyhow::anyhow!("The archive is gone"))?;
+        let key = listing_key(path).ok_or_else(|| {
+            anyhow::Error::from(words!(
+                archive_gone = "The archive is gone",
+                note = "Why an archive cannot be read: it was moved or deleted."
+            ))
+        })?;
         let scratch = crate::file::memory_dir("skwir-archive-")?;
         let (jobs, asked) = crossbeam_channel::unbounded::<Job>();
         let lifetime = lifetime.clone();
@@ -445,10 +473,7 @@ impl Session {
         for member in order {
             let most = bounds.binary_input();
             if u64::try_from(member.size).unwrap_or(0) > most as u64 {
-                return Err(bounds.refuse(format!(
-                    "Member preview exceeds {} limit",
-                    limits::describe(most)
-                )));
+                return Err(bounds.refuse_words(member_too_large(most)));
             }
             let Answer::Read(bytes) = self.ask(Asked::Read(member.clone(), bounds), cancel)? else {
                 anyhow::bail!("unexpected archive reply");
@@ -605,7 +630,10 @@ impl Manager {
             return Ok(());
         }
         self.helper = None;
-        anyhow::bail!("Archive changed since it was listed; select it again")
+        anyhow::bail!(words!(
+            archive_changed = "Archive changed since it was listed; select it again",
+            note = "Why a file inside an archive cannot be read: the archive was rewritten since it was shown."
+        ))
     }
 
     /// Send `request` and wait for its answer, starting a helper if there
@@ -653,9 +681,23 @@ impl Manager {
             .args(stem(&self.path))
             .arg("--serve")
             .arg(&run.work);
-        let mut helper = crate::process::Helper::new(
+        let mut helper = crate::process::Helper::saying(
             crate::line_channel::LineChannel::spawn(&mut run.command, MAX_REPLY, "skwir-archive")?,
             "archive helper",
+            crate::process::Says {
+                exited: || {
+                    words!(
+                        archive_helper_exited = "archive helper exited unexpectedly",
+                        note = "Why an archive's file could not be read: the program that reads archives stopped."
+                    )
+                },
+                timed_out: || {
+                    words!(
+                        archive_helper_timed_out = "archive helper timed out",
+                        note = "Why an archive's file could not be read: the program that reads archives took too long."
+                    )
+                },
+            },
         );
         let cancelled = cancel.subscribe();
         let deadline = crossbeam_channel::after(SESSION_STARTUP);
@@ -757,7 +799,12 @@ fn quarantine(archive: &Path, into: &Path) -> anyhow::Result<()> {
         Ok(Some(value)) => value,
         Ok(None) => return Ok(()),
         Err(error) if xattr::refused(&error) => return Ok(()),
-        Err(error) => return Err(error).context("the archive's quarantine could not be read"),
+        Err(error) => {
+            return Err(error).context(words!(
+                archive_quarantine_unread = "the archive's quarantine could not be read",
+                note = "macOS: what a downloaded archive is marked with (where it came from) could not be read, so its files are not marked alike."
+            ));
+        }
     };
     // A file the archive made read-only is opened to its owner for it,
     // and closed again: what is not held in quarantine is not placed.
@@ -778,9 +825,10 @@ fn quarantine(archive: &Path, into: &Path) -> anyhow::Result<()> {
             other => other,
         };
         held.with_context(|| {
-            format!(
-                "“{}” could not be held in quarantine",
-                path.file_name().unwrap_or_default().to_string_lossy()
+            words!(
+                archive_quarantine_unheld = "{ $name } could not be held in quarantine",
+                name = Name::of(path),
+                note = "macOS: a file taken out of a downloaded archive could not be marked as downloaded too. name: the file's name."
             )
         })
     };
@@ -835,11 +883,8 @@ fn extract_all_with(
         run.command.process_group(0);
     }
     anyhow::ensure!(!cancel.is_cancelled(), "the extraction was cancelled");
-    let mut child = crate::process::ChildGuard::new(
-        run.command
-            .spawn()
-            .context("the archive helper could not start")?,
-    );
+    let mut child =
+        crate::process::ChildGuard::new(run.command.spawn().context(helper_not_started())?);
     // The command holds the pipe's other end; the helper has its own.
     drop(run);
     let (mut sent, mut used) = (0u64, 0u64);
@@ -895,13 +940,30 @@ fn extract_all_with(
         std::io::Seek::rewind(&mut errors)?;
         errors.take(4096).read_to_string(&mut said)?;
         let said = said.trim();
-        anyhow::bail!(if said.is_empty() {
-            format!("the archive helper failed ({status})")
-        } else {
-            said.to_owned()
-        });
+        if said.is_empty() {
+            anyhow::bail!(helper_failed(status));
+        }
+        anyhow::bail!("{said}");
     }
     Ok(())
+}
+
+/// Why the archive helper did nothing: it could not start.
+fn helper_not_started() -> Words {
+    words!(
+        archive_helper_not_started = "the archive helper could not start",
+        note = "Why an archive could not be extracted or made, before the system's reason."
+    )
+}
+
+/// Why the archive helper did not finish, when it said nothing: `status`,
+/// how it ended, as the system says it.
+fn helper_failed(status: std::process::ExitStatus) -> Words {
+    words!(
+        archive_helper_failed = "the archive helper failed ({ $status })",
+        status = status.to_string(),
+        note = "Why an archive could not be extracted or made, its helper saying nothing. status: how it ended, as the system says it (exit status: 2)."
+    )
 }
 
 /// What an archive is made as (ADR-059), told by the end of its name.
@@ -1134,11 +1196,18 @@ fn create_with(
 ) -> anyhow::Result<()> {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
-        anyhow::bail!("Nowhere to write the archive");
+        anyhow::bail!(words!(
+            archive_nowhere = "Nowhere to write the archive",
+            note = "Why an archive cannot be made: the place asked has no folder."
+        ));
     };
     anyhow::ensure!(
         passphrase.is_none() || format.encrypts(),
-        "Only a ZIP archive can have a password"
+        words!(
+            archive_password_zip_only = "Only a ZIP archive can have a password",
+            note =
+                "Why an archive of another format (7z, tar) cannot be made with a password here."
+        )
     );
     let mut run = sandbox::fed(worker, into, Otherwise::Run)?;
     // A 7z is written whole to a temporary file first: on the disk it is
@@ -1172,11 +1241,8 @@ fn create_with(
         run.command.process_group(0);
     }
     anyhow::ensure!(!cancel.is_cancelled(), "making the archive was cancelled");
-    let mut child = crate::process::ChildGuard::new(
-        run.command
-            .spawn()
-            .context("the archive helper could not start")?,
-    );
+    let mut child =
+        crate::process::ChildGuard::new(run.command.spawn().context(helper_not_started())?);
     // The command holds the pipe's other end; the helper has its own.
     drop(run);
     let handed = AtomicU64::new(0);
@@ -1210,7 +1276,13 @@ fn create_with(
         }
         let handing = feeder
             .join()
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("handing the files over failed")));
+            .unwrap_or_else(|_| {
+                Err(words!(
+                    archive_handing_failed = "handing the files over failed",
+                    note = "Why an archive could not be made: what reads the files for the helper stopped."
+                )
+                .into())
+            });
         (ended, handing)
     });
     let now = handed.load(Ordering::Relaxed);
@@ -1237,11 +1309,10 @@ fn create_with(
         std::io::Seek::rewind(&mut errors)?;
         errors.take(4096).read_to_string(&mut said)?;
         let said = said.trim();
-        anyhow::bail!(if said.is_empty() {
-            format!("the archive helper failed ({status})")
-        } else {
-            said.to_owned()
-        });
+        if said.is_empty() {
+            anyhow::bail!(helper_failed(status));
+        }
+        anyhow::bail!("{said}");
     }
     handing
 }
@@ -1281,8 +1352,20 @@ fn hand(
             continue;
         };
         let shown = String::from_utf8_lossy(&part.name).into_owned();
-        let unread = || format!("“{shown}” could not be read");
-        let changed = || anyhow::anyhow!("“{shown}” changed as it was read");
+        let unread = || {
+            words!(
+                archive_part_unread = "{ $name } could not be read",
+                name = Name(shown.clone()),
+                note = "Why an archive could not be made: a file to put in it could not be read. name: its name in the archive."
+            )
+        };
+        let changed = || {
+            anyhow::Error::from(words!(
+                archive_part_changed = "{ $name } changed as it was read",
+                name = Name(shown.clone()),
+                note = "Why an archive could not be made: a file to put in it was written to while it was read. name: its name in the archive."
+            ))
+        };
         let mut file = crate::file::open_regular(path).with_context(unread)?;
         // The file walked, as it was walked: not another put at its name
         // since (a link, a file saved anew), nor one written to meanwhile.

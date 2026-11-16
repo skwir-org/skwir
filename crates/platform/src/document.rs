@@ -21,6 +21,7 @@ use skwir_core::document::{
     SearchHit, WorkerReply, WorkerRequest,
 };
 use skwir_core::fs::kept_open::WhileOpen;
+use skwir_core::words;
 
 use crate::line_channel::LineChannel;
 use crate::process::Failure;
@@ -323,7 +324,10 @@ pub fn compose(
     let scratch = tempfile::Builder::new()
         .prefix("compose-")
         .tempdir_in(beside)
-        .context("a folder to compose the document in")?;
+        .context(words!(
+            document_compose_folder = "a folder to compose the document in",
+            note = "What could not be made when pages were joined into a PDF, before the system's reason: a temporary folder beside the result."
+        ))?;
     let Some(session) = WorkerSession::start(
         executable,
         pdf.to_owned(),
@@ -339,7 +343,10 @@ pub fn compose(
     match session.request(WorkerRequest::Compose(compose), cancel)? {
         Response::Composed(path, pages) => {
             // Moved before the session ends: its folder goes with it.
-            std::fs::rename(&path, dest).context("keep the composed document")?;
+            std::fs::rename(&path, dest).context(words!(
+                document_compose_keep = "keep the composed document",
+                note = "What could not be done when pages were joined into a PDF, before the system's reason: putting the result in its place."
+            ))?;
             Ok(Some(pages))
         }
         _ => anyhow::bail!("unexpected document reply"),
@@ -505,7 +512,10 @@ impl WorkerSession {
                 Ok(Ok(info)) => Ok(Some(Self { info, jobs, pdf: is_pdf.then_some(read) })),
                 Ok(Err(error)) if error.is::<Unavailable>() => Ok(None),
                 Ok(Err(error)) => Err(error),
-                Err(_) => anyhow::bail!("document worker stopped during startup"),
+                Err(_) => anyhow::bail!(words!(
+                    document_worker_stopped = "document worker stopped during startup",
+                    note = "Why a PDF or another document could not be opened: the program that reads it stopped before it was ready."
+                )),
             },
             recv(cancelled.receiver()) -> _ => anyhow::bail!("document open cancelled"),
         }
@@ -564,7 +574,13 @@ impl DocumentSession for WorkerSession {
         }
     }
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
-        anyhow::ensure!(query.len() <= 4096, "search query exceeds limit");
+        anyhow::ensure!(
+            query.len() <= 4096,
+            words!(
+                document_search_too_long = "search query exceeds limit",
+                note = "Why a search in a PDF's text was not run: what was typed is too long."
+            )
+        );
         match self.request(
             WorkerRequest::Search {
                 query: query.into(),
@@ -581,7 +597,13 @@ impl DocumentSession for WorkerSession {
         }
     }
     fn locate(&self, text: &str, near: u32, cancel: &CancelToken) -> anyhow::Result<Option<u32>> {
-        anyhow::ensure!(text.len() <= 4096, "text to locate exceeds limit");
+        anyhow::ensure!(
+            text.len() <= 4096,
+            words!(
+                document_locate_too_long = "text to locate exceeds limit",
+                note = "Why a passage of a document was not looked for in its pages: the passage is too long."
+            )
+        );
         match self.request(
             WorkerRequest::Locate {
                 text: text.into(),
@@ -741,7 +763,10 @@ impl Manager {
     fn unchanged(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             file_version(&self.source)? == self.version,
-            "document changed; reopen the preview"
+            words!(
+                document_changed = "document changed; reopen the preview",
+                note = "Why a page of a document is not shown: the file was rewritten since it was opened."
+            )
         );
         Ok(())
     }
@@ -775,9 +800,13 @@ impl Manager {
                 }
             })?;
             if !matches!(greeting, WorkerReply::Ready(_)) {
-                return Err(Failure::Broken(anyhow::anyhow!(
-                    "could not reopen document worker"
-                )));
+                return Err(Failure::Broken(
+                    words!(
+                        document_reopen = "could not reopen document worker",
+                        note = "Why a page of a document is not shown: the program that reads it was started again and did not open it."
+                    )
+                    .into(),
+                ));
             }
             self.worker = Some(worker);
         }
@@ -865,9 +894,23 @@ fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Worker, Worke
     if let Some(library) = &library {
         command.env("SKWIR_PDFIUM_LIBRARY", library);
     }
-    let mut worker = Worker::new(
+    let mut worker = Worker::saying(
         LineChannel::spawn(&mut command, MAX_REPLY, "skwir-pdf")?,
         "document worker",
+        crate::process::Says {
+            exited: || {
+                words!(
+                    document_worker_exited = "document worker exited unexpectedly",
+                    note = "Why a page of a PDF or another document is not shown: the program that reads it stopped."
+                )
+            },
+            timed_out: || {
+                words!(
+                    document_worker_timed_out = "document worker timed out",
+                    note = "Why a page of a PDF or another document is not shown: the program that reads it took too long."
+                )
+            },
+        },
     );
     let cancelled = cancel.subscribe();
     let deadline = crossbeam_channel::after(STARTUP_TIMEOUT);

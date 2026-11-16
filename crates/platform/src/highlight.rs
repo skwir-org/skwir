@@ -452,7 +452,23 @@ fn is_dark(colors: &Colors) -> bool {
 /// the user's taking the place of bat's of the same name as in bat. The
 /// one chosen is always among them, said missing once the user's are
 /// read and none has its name.
+///
+/// Transitional: [`choices_words`] gives the labels as words (ADR-139).
 pub fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec<(String, String)> {
+    choices_words(dark, chosen, user)
+        .into_iter()
+        .map(|(value, label)| (value, label.say()))
+        .collect()
+}
+
+/// [`choices`], each label words: Default and a theme not found are
+/// messages, a theme's name is as written.
+pub fn choices_words(
+    dark: bool,
+    chosen: &str,
+    user: Option<&[Arc<UserTheme>]>,
+) -> Vec<(String, skwir_core::words::Words)> {
+    use skwir_core::words::Words;
     let theirs = |name: &str| user.is_some_and(|user| user.iter().any(|theme| theme.name == name));
     let mut bat: Vec<_> = BAT
         .iter()
@@ -466,19 +482,32 @@ pub fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec
         .map(|(name, label, _)| (name.to_owned(), label.to_owned()))
         .collect();
     bat.sort_by_cached_key(|(_, label)| label.to_lowercase());
-    let mut choices = vec![(DEFAULT.to_owned(), "Default".to_owned())];
-    choices.extend(bat);
+    let mut choices = vec![(
+        DEFAULT.to_owned(),
+        skwir_core::words!(
+            highlight_default = "Default",
+            note = "A choice of the code theme settings: the colors of the palette chosen, else Skwir's own."
+        ),
+    )];
+    choices.extend(
+        bat.into_iter()
+            .map(|(value, label)| (value, Words::as_written(label))),
+    );
     choices.extend(
         user.unwrap_or_default()
             .iter()
             .filter(|theme| theme.dark == dark)
-            .map(|theme| (theme.name.clone(), theme.name.clone())),
+            .map(|theme| (theme.name.clone(), Words::as_written(theme.name.clone()))),
     );
     if !choices.iter().any(|(value, _)| value == chosen) {
         let label = if user.is_some() {
-            format!("{chosen} (not found)")
+            skwir_core::words!(
+                highlight_not_found = "{ $theme } (not found)",
+                theme = chosen,
+                note = "A choice of the code theme settings: the theme chosen, which bat's themes folder no longer has. theme: its name."
+            )
         } else {
-            chosen.to_owned()
+            Words::as_written(chosen.to_owned())
         };
         choices.push((chosen.to_owned(), label));
     }

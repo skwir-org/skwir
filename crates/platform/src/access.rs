@@ -13,9 +13,69 @@ const ACL_DEFAULT: &str = "system.posix_acl_default";
 const CAPABILITIES: &str = "security.capability";
 const SELINUX: &str = "security.selinux";
 
+/// What a fact of `facts` is.
+#[derive(Clone, Copy)]
+enum Fact {
+    Access,
+    Default,
+    Capabilities,
+    SELinux,
+}
+
+impl Fact {
+    /// Its label in English.
+    fn english(self) -> &'static str {
+        match self {
+            Fact::Access => "Access list",
+            Fact::Default => "Default for new items",
+            Fact::Capabilities => "Capabilities",
+            Fact::SELinux => "SELinux",
+        }
+    }
+
+    /// Its label, as words.
+    fn words(self) -> skwir_core::words::Words {
+        match self {
+            Fact::Access => skwir_core::words!(
+                access_acl = "Access list",
+                note = "A row of Properties: who else may read or change the file, beyond its mode (a POSIX access control list)."
+            ),
+            Fact::Default => skwir_core::words!(
+                access_acl_default = "Default for new items",
+                note = "A row of a folder's Properties: the access list each item made in it is given."
+            ),
+            Fact::Capabilities => skwir_core::words!(
+                access_capabilities = "Capabilities",
+                note = "A row of a program's Properties: the privileges it is given when it runs (file capabilities, as setcap sets them)."
+            ),
+            // A name, as written.
+            Fact::SELinux => skwir_core::words::Words::as_written("SELinux"),
+        }
+    }
+}
+
 /// The facts of `path` beyond its mode, each with its label, in the
 /// order Properties shows them; nothing for a file that has none.
+///
+/// Transitional: English labels; [`facts_words`] gives them as words
+/// (ADR-139).
 pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
+    read_facts(path)
+        .into_iter()
+        .map(|(fact, value)| (fact.english(), value))
+        .collect()
+}
+
+/// [`facts`], each label words.
+pub fn facts_words(path: &Path) -> Vec<(skwir_core::words::Words, String)> {
+    read_facts(path)
+        .into_iter()
+        .map(|(fact, value)| (fact.words(), value))
+        .collect()
+}
+
+/// The facts of `path`, by what each is.
+fn read_facts(path: &Path) -> Vec<(Fact, String)> {
     let Ok(names) = skwir_core::fs::xattr::list_deref(path) else {
         return Vec::new();
     };
@@ -32,13 +92,13 @@ pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
     };
     let mut out = Vec::new();
     if let Some(acl) = read(ACL_ACCESS).as_deref().and_then(acl) {
-        out.push(("Access list", acl));
+        out.push((Fact::Access, acl));
     }
     if let Some(acl) = read(ACL_DEFAULT).as_deref().and_then(acl) {
-        out.push(("Default for new items", acl));
+        out.push((Fact::Default, acl));
     }
     if let Some(caps) = read(CAPABILITIES).as_deref().and_then(capabilities) {
-        out.push(("Capabilities", caps));
+        out.push((Fact::Capabilities, caps));
     }
     if let Some(label) = read(SELINUX) {
         let label = String::from_utf8_lossy(&label)
@@ -46,7 +106,7 @@ pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
             .trim()
             .to_owned();
         if !label.is_empty() {
-            out.push(("SELinux", label));
+            out.push((Fact::SELinux, label));
         }
     }
     out
@@ -82,30 +142,69 @@ fn acl(value: &[u8]) -> Option<String> {
         let tag = u16::from_le_bytes([t0, t1]);
         let perm = u16::from_le_bytes([p0, p1]);
         let id = u64::from(u32::from_le_bytes([i0, i1, i2, i3]));
+        // Transitional: each entry said once here, the list joined in
+        // code (ADR-139); `rwx` is the mode's notation, as written.
         match tag {
-            USER => named.push(format!(
-                "user {}: {}",
-                crate::users::user(id).unwrap_or_else(|| id.to_string()),
-                rwx(perm)
-            )),
-            GROUP => named.push(format!(
-                "group {}: {}",
-                crate::users::group(id).unwrap_or_else(|| id.to_string()),
-                rwx(perm)
-            )),
+            USER => named.push(
+                skwir_core::words!(
+                    access_acl_user = "user { $user }: { $permissions }",
+                    user = crate::users::user(id).unwrap_or_else(|| id.to_string()),
+                    permissions = rwx(perm),
+                    note = "An entry of a file's access list in Properties. user: a user's name or number; permissions: rwx notation (r read, w write, x run), as written."
+                )
+                .say(),
+            ),
+            GROUP => named.push(
+                skwir_core::words!(
+                    access_acl_group = "group { $group }: { $permissions }",
+                    group = crate::users::group(id).unwrap_or_else(|| id.to_string()),
+                    permissions = rwx(perm),
+                    note = "An entry of a file's access list in Properties. group: a group's name or number; permissions: rwx notation, as written."
+                )
+                .say(),
+            ),
             MASK => mask = Some(rwx(perm)),
-            USER_OBJ => base.push(format!("owner: {}", rwx(perm))),
-            GROUP_OBJ => base.push(format!("group: {}", rwx(perm))),
-            OTHER => base.push(format!("others: {}", rwx(perm))),
+            USER_OBJ => base.push(
+                skwir_core::words!(
+                    access_acl_owner = "owner: { $permissions }",
+                    permissions = rwx(perm),
+                    note = "An entry of a folder's default access list: what the owner of an item made in it may do. permissions: rwx notation, as written."
+                )
+                .say(),
+            ),
+            GROUP_OBJ => base.push(
+                skwir_core::words!(
+                    access_acl_owning_group = "group: { $permissions }",
+                    permissions = rwx(perm),
+                    note = "An entry of a folder's default access list: what the group of an item made in it may do. permissions: rwx notation, as written."
+                )
+                .say(),
+            ),
+            OTHER => base.push(
+                skwir_core::words!(
+                    access_acl_others = "others: { $permissions }",
+                    permissions = rwx(perm),
+                    note = "An entry of a folder's default access list: what everyone else may do with an item made in it. permissions: rwx notation, as written."
+                )
+                .say(),
+            ),
             _ => return None,
         }
     }
     // A default list has no mode to repeat: it is said in full.
+    // Transitional: a list argument (ADR-139).
     if named.is_empty() {
         return (!base.is_empty()).then(|| base.join(", "));
     }
     if let Some(mask) = mask {
-        named.push(format!("at most {mask}"));
+        named.push(
+            skwir_core::words!(
+                access_acl_mask = "at most { $permissions }",
+                permissions = mask,
+                note = "The last entry of a file's access list: what no user or group it names may exceed. permissions: rwx notation, as written."
+            )
+            .say(),
+        );
     }
     Some(named.join(", "))
 }

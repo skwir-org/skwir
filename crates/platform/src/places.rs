@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use skwir_core::CancelToken;
+use skwir_core::words;
 
 /// An XDG user directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -346,7 +347,13 @@ fn udisks(
         .args(extra);
     let finished =
         crate::process::run_to_exit(&mut command, input, &CancelToken::new(), UDISKS_TIMEOUT)
-            .map_err(|error| anyhow::anyhow!("udisksctl could not be run: {error:#}"))?;
+            .map_err(|error| {
+                anyhow::Error::from(words!(
+                    places_udisks_unrun = "udisksctl could not be run: { $error }",
+                    error = error,
+                    note = "udisksctl is the program that mounts and unlocks volumes (a name). error: why it could not be run."
+                ))
+            })?;
     // udisks says what went wrong on standard error, in the user's words.
     anyhow::ensure!(finished.status.success(), "{}", finished.stderr);
     Ok(String::from_utf8_lossy(&finished.stdout).into_owned())
@@ -388,8 +395,13 @@ pub fn mount(device: &str) -> anyhow::Result<PathBuf> {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let message = udisks("mount", device, &[], None)?;
-        mount_point_of(&message)
-            .ok_or_else(|| anyhow::anyhow!("udisksctl did not say where it mounted the volume"))
+        mount_point_of(&message).ok_or_else(|| {
+            words!(
+                places_udisks_no_mount_point = "udisksctl did not say where it mounted the volume",
+                note = "udisksctl is the program that mounts volumes (a name)."
+            )
+            .into()
+        })
     }
 }
 
@@ -400,7 +412,14 @@ pub struct Refused;
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("The passphrase was not accepted")
+        // Words, so that a chain said in the reader's language says it so.
+        std::fmt::Display::fmt(
+            &words!(
+                places_passphrase_refused = "The passphrase was not accepted",
+                note = "Why an encrypted volume was not unlocked: the passphrase was typed wrong, or has changed."
+            ),
+            f,
+        )
     }
 }
 
@@ -424,7 +443,11 @@ pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
     #[cfg(windows)]
     {
         let _ = (device, passphrase);
-        anyhow::bail!("Windows asks for a BitLocker drive's password itself: open the drive")
+        anyhow::bail!(words!(
+            places_bitlocker_asks =
+                "Windows asks for a BitLocker drive's password itself: open the drive",
+            note = "BitLocker is Windows' encryption of drives (a name)."
+        ))
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -450,8 +473,13 @@ fn unlock_luks(device: &str, passphrase: &str) -> anyhow::Result<String> {
             error
         }
     })?;
-    cleartext_of(&message)
-        .ok_or_else(|| anyhow::anyhow!("udisksctl did not name the unlocked device"))
+    cleartext_of(&message).ok_or_else(|| {
+        words!(
+            places_udisks_no_device = "udisksctl did not name the unlocked device",
+            note = "udisksctl is the program that unlocks encrypted volumes (a name)."
+        )
+        .into()
+    })
 }
 
 /// Whether the system asks for a locked volume's passphrase itself, in a
@@ -471,7 +499,10 @@ pub fn unlock_by_system(device: &str, cancel: &CancelToken) -> anyhow::Result<Op
     #[cfg(not(windows))]
     {
         let _ = (device, cancel);
-        anyhow::bail!("This system does not ask for a volume's passphrase itself")
+        anyhow::bail!(words!(
+            places_system_asks_not = "This system does not ask for a volume's passphrase itself",
+            note = "Skwir asks for an encrypted volume's passphrase on this system; the system has no dialog of its own for it."
+        ))
     }
 }
 
@@ -1038,8 +1069,18 @@ pub fn bookmarks_folders() -> Vec<PathBuf> {
 /// `None` when nothing changed. Writes a file: call from a worker. A link
 /// is followed and a read-only file refused ([`crate::file::rewrite`]).
 pub fn edit_bookmarks(edit: &BookmarkEdit) -> anyhow::Result<Option<BookmarkEdit>> {
-    let link = bookmarks_file().ok_or_else(|| anyhow::anyhow!("no configuration directory"))?;
-    crate::file::rewrite(&link, "the bookmarks file", |text| edit_text(text, edit))
+    let link = bookmarks_file().ok_or_else(|| {
+        anyhow::Error::from(words!(
+            places_no_config_dir = "no configuration directory",
+            note = "Why a bookmark cannot be kept: the user has no configuration folder to write it in."
+        ))
+    })?;
+    let read_only = words!(
+        places_bookmarks_read_only =
+            "the bookmarks file is read-only; change it where it is managed",
+        note = "Why a bookmark was not kept: the desktop's bookmarks file is a link to a file that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it."
+    );
+    crate::file::rewrite_words(&link, read_only, |text| edit_text(text, edit))
 }
 
 /// Mounted volumes the user cares about.
@@ -1091,7 +1132,13 @@ pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
             continue;
         }
         let label = if mountpoint == Path::new("/") {
-            "Root".to_owned()
+            // Transitional: a mount's label is text, said once here
+            // (ADR-139).
+            words!(
+                places_root = "Root",
+                note = "The name of the volume the system runs from (/), in the sidebar's Devices."
+            )
+            .say()
         } else {
             mountpoint
                 .file_name()
@@ -1146,10 +1193,23 @@ mod imp {
                 let information = crate::windows::volume_information(&root);
                 let locked = information.is_none() && crate::windows::drive_locked(&root);
                 let (label, fstype) = information.unwrap_or_default();
+                // Transitional: a mount's label is text, said once here
+                // (ADR-139).
                 let label = if label.is_empty() {
-                    format!("Local Disk ({letter})")
+                    skwir_core::words!(
+                        places_local_disk = "Local Disk ({ $letter })",
+                        letter = letter.clone(),
+                        note = "A Windows drive that has no name of its own, as Windows names it. letter: its drive letter (C:)."
+                    )
+                    .say()
                 } else {
-                    format!("{label} ({letter})")
+                    skwir_core::words!(
+                        places_drive = "{ $label } ({ $letter })",
+                        label = label,
+                        letter = letter.clone(),
+                        note = "A Windows drive, as Windows names it. label: the drive's own name; letter: its drive letter (C:)."
+                    )
+                    .say()
                 };
                 Mount {
                     label,
@@ -1297,7 +1357,14 @@ mod apfs {
             &skwir_core::CancelToken::new(),
             super::UDISKS_TIMEOUT,
         )
-        .map_err(|error| anyhow::anyhow!("diskutil could not be run: {error:#}"))
+        .map_err(|error| {
+            skwir_core::words!(
+                places_diskutil_unrun = "diskutil could not be run: { $error }",
+                error = error,
+                note = "diskutil is the program that mounts and unlocks a Mac's volumes (a name). error: why it could not be run."
+            )
+            .into()
+        })
     }
 
     /// `diskutil apfs list -plist`.
@@ -1347,7 +1414,13 @@ mod apfs {
         }
         let finished = diskutil(&["mount", device], None)?;
         anyhow::ensure!(finished.status.success(), "{}", finished.stderr.trim());
-        at()?.ok_or_else(|| anyhow::anyhow!("diskutil did not say where it mounted the volume"))
+        at()?.ok_or_else(|| {
+            skwir_core::words!(
+                places_diskutil_no_mount_point = "diskutil did not say where it mounted the volume",
+                note = "diskutil is the program that mounts a Mac's volumes (a name)."
+            )
+            .into()
+        })
     }
 }
 

@@ -30,6 +30,8 @@ use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::document::Tagged;
 use skwir_core::syntax::{Grammar, MAX_REPLY, MAX_REQUEST, MAX_TEXT, Reply, Request, Span, Symbol};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::line_channel::LineChannel;
 use crate::sandbox::{self, Otherwise};
@@ -333,8 +335,11 @@ impl Helper {
         let bytes = text.as_bytes();
         anyhow::ensure!(
             bytes.len() as u64 <= MAX_TEXT,
-            "the text exceeds {}",
-            skwir_core::fs::size_said(MAX_TEXT)
+            words!(
+                tree_sitter_too_large = "the text exceeds { $size }",
+                size = words::Size(MAX_TEXT),
+                note = "Why a text is not colored by its tree-sitter grammar: it is larger than the helper reads. size: that bound."
+            )
         );
         let process = self.process(cancel)?;
         let id = process.next.fetch_add(1, Ordering::Relaxed);
@@ -594,6 +599,26 @@ fn let_go_when_unused(inner: &Inner) {
     }
 }
 
+/// Why no answer came: the helper exited.
+fn exited() -> Words {
+    words!(
+        tree_sitter_exited = "the tree-sitter helper exited unexpectedly",
+        note = "Why code was not colored: the helper that colors it stopped."
+    )
+}
+
+/// Why the helper is not there: it did not greet in `STARTUP`.
+fn not_started() -> Words {
+    words!(
+        tree_sitter_not_started = "the tree-sitter helper did not start in { $count ->
+                [one] { $count } second
+               *[other] { $count } seconds
+            }",
+        count = STARTUP.as_secs(),
+        note = "Why code was not colored: the helper that colors it took too long to start."
+    )
+}
+
 fn unexpected(reply: &Reply) -> anyhow::Error {
     anyhow::anyhow!("the tree-sitter helper answered out of turn: {reply:?}")
 }
@@ -615,7 +640,7 @@ struct Process {
     /// The key of the next call, which a caller giving up names.
     keys: AtomicU64,
     /// Why it ended, once it did: what is asked of it is refused so.
-    ended: Arc<OnceLock<String>>,
+    ended: Arc<OnceLock<Words>>,
 }
 
 /// Why a call's answer did not come.
@@ -675,7 +700,11 @@ impl Process {
     ) -> anyhow::Result<Arc<Process>> {
         let executable = match &inner.executable {
             Some(executable) => executable.clone(),
-            None => WORKER.require("color code with tree-sitter grammars")?,
+            None => WORKER.require_words(words!(
+                tree_sitter_install = "Install { $program } to color code with tree-sitter grammars",
+                program = WORKER.executable,
+                note = "What to do to color code with the grammars found. program: the helper's name (skwir-tree-sitter-worker)."
+            ))?,
         };
         let told = Request::Grammars(grammars.grammars.clone());
         anyhow::ensure!(
@@ -685,7 +714,11 @@ impl Process {
             })?
             .len()
                 <= MAX_REQUEST,
-            "the grammars found are more than the tree-sitter helper is told at once"
+            words!(
+                tree_sitter_too_many =
+                    "the grammars found are more than the tree-sitter helper is told at once",
+                note = "Why code is not colored by the tree-sitter grammars found: there are too many of them."
+            )
         );
         let work = crate::file::memory_dir("skwir-tree-sitter-")?;
         let folders = readable(&grammars.folders);
@@ -721,13 +754,13 @@ impl Process {
             crossbeam_channel::select! {
                 recv(channel.replies()) -> reply => {
                     let reply = reply
-                        .map_err(|_| anyhow::anyhow!("the tree-sitter helper exited unexpectedly"))?
+                        .map_err(|_| anyhow::Error::from(exited()))?
                         .map_err(explain)?;
                     anyhow::ensure!(reply.id == id, "the tree-sitter helper answered out of order");
                     Ok(reply.body)
                 }
                 recv(cancelled.receiver()) -> _ => anyhow::bail!("cancelled"),
-                recv(deadline) -> _ => Err(explain(anyhow::anyhow!("the tree-sitter helper did not start in {STARTUP:?}"))),
+                recv(deadline) -> _ => Err(explain(not_started().into())),
             }
         };
         match said(0)? {
@@ -743,13 +776,13 @@ impl Process {
             crossbeam_channel::select! {
                 recv(channel.replies()) -> reply => {
                     let reply = reply
-                        .map_err(|_| anyhow::anyhow!("the tree-sitter helper exited unexpectedly"))?
+                        .map_err(|_| anyhow::Error::from(exited()))?
                         .map_err(|error| crate::process::explain(&executable, cancel, error))?;
                     anyhow::ensure!(reply.id == id, "the tree-sitter helper answered out of order");
                     Ok(reply.body)
                 }
                 recv(cancelled.receiver()) -> _ => anyhow::bail!("cancelled"),
-                recv(deadline) -> _ => Err(crate::process::explain(&executable, cancel, anyhow::anyhow!("the tree-sitter helper did not start in {STARTUP:?}"))),
+                recv(deadline) -> _ => Err(crate::process::explain(&executable, cancel, not_started().into())),
             }
         };
         match said(1)? {
@@ -800,7 +833,11 @@ impl Process {
         cancel: &CancelToken,
     ) -> anyhow::Result<Reply> {
         if let Some(why) = self.ended.get() {
-            anyhow::bail!("the tree-sitter helper ended: {why}");
+            anyhow::bail!(words!(
+                tree_sitter_ended_why = "the tree-sitter helper ended: { $why }",
+                why = why.clone(),
+                note = "Why code was not colored: the helper that colors it had stopped. why: what stopped it."
+            ));
         }
         anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
         let key = self.keys.fetch_add(1, Ordering::Relaxed);
@@ -813,7 +850,10 @@ impl Process {
             reply: Some(reply),
         };
         if self.jobs.send(Job::Ask(asked)).is_err() {
-            anyhow::bail!("the tree-sitter helper ended");
+            anyhow::bail!(words!(
+                tree_sitter_ended = "the tree-sitter helper ended",
+                note = "Why code was not colored: the helper that colors it had stopped."
+            ));
         }
         let cancelled = cancel.subscribe();
         let answer = crossbeam_channel::select! {
@@ -823,7 +863,14 @@ impl Process {
             recv(cancelled.receiver()) -> _ => Err(Failure::Cancelled),
             recv(crossbeam_channel::after(timeout)) -> _ => {
                 let _ = self.jobs.send(Job::GiveUp(key));
-                anyhow::bail!("the tree-sitter helper did not answer in {timeout:?}");
+                anyhow::bail!(words!(
+                    tree_sitter_no_answer = "the tree-sitter helper did not answer in { $count ->
+                            [one] { $count } second
+                           *[other] { $count } seconds
+                        }",
+                    count = timeout.as_secs().max(1),
+                    note = "Why code was not colored: the helper that colors it took too long."
+                ));
             }
         };
         match answer {
@@ -909,7 +956,7 @@ impl Drop for Written {
 struct Manager {
     /// `None` once it ended.
     channel: Option<LineChannel<Tagged<Reply>>>,
-    ended: Arc<OnceLock<String>>,
+    ended: Arc<OnceLock<Words>>,
     /// The id of the last request sent.
     sent: u64,
     /// What was sent and not answered, by id.
@@ -937,7 +984,7 @@ impl Manager {
                 let Ok(job) = jobs.recv() else { return };
                 if let Job::Ask(asked) = job {
                     let why = self.ended.get().cloned().unwrap_or_default();
-                    asked.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+                    asked.answer(Err(Failure::Broken(why.into())));
                 }
                 continue;
             };
@@ -954,7 +1001,10 @@ impl Manager {
                     Err(_) => return,
                 },
                 recv(replies) -> reply => self.accept(reply),
-                recv(due) -> _ => self.end("the tree-sitter helper timed out"),
+                recv(due) -> _ => self.end(&words!(
+                    tree_sitter_timed_out = "the tree-sitter helper timed out",
+                    note = "Why code was not colored: the helper that colors it took too long, and was stopped."
+                )),
             }
         }
     }
@@ -973,7 +1023,7 @@ impl Manager {
     fn send(&mut self, asked: Asked) {
         let Some(channel) = self.channel.as_mut() else {
             let why = self.ended.get().cloned().unwrap_or_default();
-            asked.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+            asked.answer(Err(Failure::Broken(why.into())));
             return;
         };
         let id = self.sent + 1;
@@ -981,8 +1031,8 @@ impl Manager {
             id,
             body: &asked.request,
         }) {
-            let why = format!("{error:#}");
-            asked.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+            let why = Words::of_error(error);
+            asked.answer(Err(Failure::Broken(why.clone().into())));
             self.end(&why);
             return;
         }
@@ -1053,11 +1103,14 @@ impl Manager {
     ) {
         let reply = match reply {
             Ok(Ok(reply)) => reply,
-            Ok(Err(error)) => return self.end(&format!("{error:#}")),
-            Err(_) => return self.end("the tree-sitter helper exited unexpectedly"),
+            Ok(Err(error)) => return self.end(&Words::of_error(error)),
+            Err(_) => return self.end(&exited()),
         };
         let Some(flying) = self.flying.remove(&reply.id) else {
-            return self.end("the tree-sitter helper answered what it was not asked");
+            // A broken protocol: Skwir's own, said in English.
+            return self.end(&Words::as_written(
+                "the tree-sitter helper answered what it was not asked",
+            ));
         };
         if self.parsing == Some(reply.id) {
             self.parsing = None;
@@ -1070,12 +1123,12 @@ impl Manager {
 
     /// End the helper (killed and reaped here), saying why to what asks,
     /// what was asked and not answered too.
-    fn end(&mut self, why: &str) {
+    fn end(&mut self, why: &Words) {
         tracing::debug!("tree-sitter helper ended: {why}");
-        let _ = self.ended.set(why.to_owned());
+        let _ = self.ended.set(why.clone());
         self.channel = None;
         self.parsing = None;
-        let broken = || Failure::Broken(anyhow::anyhow!("{why}"));
+        let broken = || Failure::Broken(why.clone().into());
         for (_, flying) in self.flying.drain() {
             flying.asked.answer(Err(broken()));
         }

@@ -1352,8 +1352,12 @@ fn render(
         ..usvg::Options::default()
     };
     options.image_href_resolver.resolve_string = std::boxed::Box::new(|_, _| None);
-    let mut pixmap =
-        tiny_skia::Pixmap::new(width, height).ok_or_else(|| anyhow::anyhow!("page has no size"))?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
+        anyhow::Error::from(skwir_core::words!(
+            rich_preview_page_no_size = "page has no size",
+            note = "Why a book's fixed-layout page is not shown: it declares a width or height of zero."
+        ))
+    })?;
     pixmap.fill(tiny_skia::Color::WHITE);
     let view = tiny_skia::Transform::from_scale(scale, scale);
     let mut decoded: HashMap<String, Option<image::DynamicImage>> = HashMap::new();

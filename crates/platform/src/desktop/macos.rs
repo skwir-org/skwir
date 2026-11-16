@@ -143,7 +143,14 @@ impl Backend {
     /// `AppKit` asks for it.
     #[allow(clippy::unused_self)] // Each system's backend is told alike.
     pub(super) fn progress(&mut self, shown: Option<Shown>) {
-        let label = shown.map(|shown| format!("{}%", shown.permille / 10));
+        let label = shown.map(|shown| {
+            skwir_core::words!(
+                desktop_dock_percent = "{ $percent }%",
+                percent = shown.permille / 10,
+                note = "The badge on Skwir's tile in the Dock: how far the actions under way are, in percent (42%)."
+            )
+            .say()
+        });
         dispatch2::DispatchQueue::main().exec_async(move || {
             let Some(main) = MainThreadMarker::new() else {
                 return;

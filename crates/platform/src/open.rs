@@ -3,6 +3,8 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use skwir_core::words;
+
 /// Whether `uri` is a web link this surface follows: `http` or `https`,
 /// with a host, and nothing a handler could take for another argument.
 /// What a file names (a download's origin) comes here, so nothing else
@@ -37,7 +39,10 @@ pub fn is_mail_uri(uri: &str) -> bool {
 pub fn open_address(uri: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         is_web_uri(uri) || is_mail_uri(uri),
-        "only web and mail links open from here"
+        words!(
+            open_not_web_or_mail = "only web and mail links open from here",
+            note = "Why a link in a document or the terminal is not followed: it is neither a web page nor a mail address."
+        )
     );
     open::that_detached(uri).map_err(Into::into)
 }
@@ -47,14 +52,25 @@ pub fn open_address(uri: &str) -> anyhow::Result<()> {
 pub fn open_geo_uri(uri: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         uri.starts_with("geo:") && !uri.contains(char::is_whitespace),
-        "not a map location"
+        words!(
+            open_not_geo = "not a map location",
+            note = "Why a position is not shown in the desktop's maps application: it is no geo: address."
+        )
     );
     open::that_detached(uri).map_err(Into::into)
 }
 
 /// Open `path` with the system default application, detached.
 pub fn open_path(path: &Path) -> anyhow::Result<()> {
-    open::that_detached(path).map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))
+    open::that_detached(path).map_err(|e| {
+        words!(
+            open_path_failed = "open { $path }: { $error }",
+            path = path.display().to_string(),
+            error = anyhow::Error::from(e),
+            note = "The desktop's default application could not be started for a file. path: the file; error: why."
+        )
+        .into()
+    })
 }
 
 /// Open a terminal in `dir` running `argv`, and call `on_exit` once the
@@ -67,15 +83,24 @@ pub fn open_terminal_watched<S: AsRef<OsStr>>(
     on_exit: impl FnOnce(std::io::Result<std::process::ExitStatus>) + Send + 'static,
 ) -> anyhow::Result<()> {
     let mut command = imp::terminal_with(dir, argv)?;
-    crate::process::spawn_watched(&mut command, on_exit)
-        .map_err(|e| anyhow::anyhow!("launch {}: {e}", command.get_program().display()))
+    crate::process::spawn_watched(&mut command, on_exit).map_err(|e| launch_failed(&command, e))
 }
 
 /// Open a terminal emulator in `dir`, detached.
 pub fn open_terminal(dir: &Path) -> anyhow::Result<()> {
     let mut command = imp::terminal(dir)?;
-    crate::process::spawn_detached(&mut command)
-        .map_err(|e| anyhow::anyhow!("launch {}: {e}", command.get_program().display()))
+    crate::process::spawn_detached(&mut command).map_err(|e| launch_failed(&command, e))
+}
+
+/// Why the terminal `command` did not start.
+fn launch_failed(command: &std::process::Command, error: std::io::Error) -> anyhow::Error {
+    words!(
+        open_launch_failed = "launch { $program }: { $error }",
+        program = command.get_program().display().to_string(),
+        error = anyhow::Error::from(error),
+        note = "A terminal could not be started. program: the terminal's program; error: why."
+    )
+    .into()
 }
 
 #[cfg(target_os = "linux")]
@@ -106,7 +131,13 @@ mod imp {
                     .find(|c| find_program(c).is_some())
                     .map(OsString::from)
             })
-            .ok_or_else(|| anyhow::anyhow!("no terminal emulator found (set $TERMINAL)"))
+            .ok_or_else(|| {
+                skwir_core::words!(
+                    open_no_terminal = "no terminal emulator found (set $TERMINAL)",
+                    note = "No terminal program is installed that Skwir knows; $TERMINAL is the environment variable that names one (not translated)."
+                )
+                .into()
+            })
     }
 
     fn detached(term: &OsStr, dir: &Path) -> Command {
@@ -127,7 +158,13 @@ mod imp {
     /// otherwise returns at once), `start --always-new-process --` for
     /// wezterm.
     pub fn terminal_with<S: AsRef<OsStr>>(dir: &Path, argv: &[S]) -> anyhow::Result<Command> {
-        anyhow::ensure!(!argv.is_empty(), "no command to run");
+        anyhow::ensure!(
+            !argv.is_empty(),
+            skwir_core::words!(
+                open_no_command = "no command to run",
+                note = "A terminal was asked to run a program, and none was given."
+            )
+        );
         let term = program()?;
         let name = Path::new(&term)
             .file_name()
@@ -215,9 +252,12 @@ mod imp {
     }
 
     pub fn terminal_with<S: AsRef<OsStr>>(dir: &Path, argv: &[S]) -> anyhow::Result<Command> {
-        let (program, rest) = argv
-            .split_first()
-            .ok_or_else(|| anyhow::anyhow!("no command to run"))?;
+        let (program, rest) = argv.split_first().ok_or_else(|| {
+            anyhow::Error::from(skwir_core::words!(
+                open_no_command = "no command to run",
+                note = "A terminal was asked to run a program, and none was given."
+            ))
+        })?;
         let mut c = Command::new(program);
         c.args(rest).current_dir(dir).creation_flags(NEW_CONSOLE);
         Ok(c)

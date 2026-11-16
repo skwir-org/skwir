@@ -10,8 +10,9 @@ use exif::{Exif, In, Tag, Value};
 use skwir_core::geo::LatLon;
 use skwir_core::inspection::Detail;
 use skwir_core::preview::FileSource;
+use skwir_core::words;
 
-use crate::inspection::{detail, limits};
+use crate::inspection::{detail_words, limits};
 
 /// What is read of a TIFF-based file (a camera's raw file, a scan) for its
 /// metadata: its first directories and what they hold are at its start.
@@ -305,37 +306,116 @@ fn read(exif: &Exif) -> Vec<Detail> {
     let position = located(exif).map(|at| format!("{:.5}, {:.5}", at.lat, at.lon));
     [
         (
-            "Taken",
+            words!(
+                exif_taken = "Taken",
+                note = "A label in Properties: when a photo was taken, as its camera wrote."
+            ),
             text(exif, Tag::DateTimeOriginal)
                 .or_else(|| text(exif, Tag::DateTime))
                 .map(|taken| date(&taken)),
             false,
         ),
-        ("Camera", camera, false),
-        ("Lens", text(exif, Tag::LensModel), false),
-        ("Exposure", exposure, false),
         (
-            "Aperture",
+            words!(
+                exif_camera = "Camera",
+                note = "A label in Properties: the camera a photo was taken with."
+            ),
+            camera,
+            false,
+        ),
+        (
+            words!(
+                exif_lens = "Lens",
+                note = "A label in Properties: the lens a photo was taken with."
+            ),
+            text(exif, Tag::LensModel),
+            false,
+        ),
+        (
+            words!(
+                exif_exposure = "Exposure",
+                note = "A label in Properties: a photo's exposure time (1/250 s)."
+            ),
+            exposure,
+            false,
+        ),
+        (
+            words!(
+                exif_aperture = "Aperture",
+                note = "A label in Properties: a photo's aperture (f/2.8)."
+            ),
             rational(exif, Tag::FNumber).map(|f| format!("f/{f}")),
             false,
         ),
-        ("ISO", text(exif, Tag::PhotographicSensitivity), false),
         (
-            "Focal length",
+            words!(
+                exif_iso = "ISO",
+                note = "A label in Properties: a photo's sensitivity, as cameras name it."
+            ),
+            text(exif, Tag::PhotographicSensitivity),
+            false,
+        ),
+        (
+            words!(
+                exif_focal_length = "Focal length",
+                note = "A label in Properties: the focal length a photo was taken at (35 mm)."
+            ),
             rational(exif, Tag::FocalLength).map(|mm| format!("{mm} mm")),
             false,
         ),
-        ("Flash", text(exif, Tag::Flash), false),
-        ("Orientation", text(exif, Tag::Orientation), false),
-        ("Position", position, true),
-        ("Software", text(exif, Tag::Software), false),
-        ("Artist", text(exif, Tag::Artist), false),
-        ("Copyright", text(exif, Tag::Copyright), false),
+        (
+            words!(
+                exif_flash = "Flash",
+                note = "A label in Properties: whether the flash fired, as the camera wrote."
+            ),
+            text(exif, Tag::Flash),
+            false,
+        ),
+        (
+            words!(
+                exif_orientation = "Orientation",
+                note = "A label in Properties: how a photo is turned, as the camera wrote."
+            ),
+            text(exif, Tag::Orientation),
+            false,
+        ),
+        (
+            words!(
+                exif_position = "Position",
+                note = "A label in Properties: where a photo was taken, as latitude and longitude."
+            ),
+            position,
+            true,
+        ),
+        (
+            words!(
+                exif_software = "Software",
+                note = "A label in Properties: the program that last wrote a photo."
+            ),
+            text(exif, Tag::Software),
+            false,
+        ),
+        (
+            words!(
+                exif_artist = "Artist",
+                note = "A label in Properties: who took a photo, as written in it."
+            ),
+            text(exif, Tag::Artist),
+            false,
+        ),
+        (
+            words!(
+                exif_copyright = "Copyright",
+                note = "A label in Properties: a photo's copyright notice, as written in it."
+            ),
+            text(exif, Tag::Copyright),
+            false,
+        ),
     ]
     .into_iter()
     // The position told by the table, never by its label (ADR-139, 8).
     .filter_map(|(label, value, mapped)| {
-        let row = detail(label, value?)?;
+        let row = detail_words(label, value?)?;
         Some(if mapped {
             crate::inspection::on_map(row)
         } else {

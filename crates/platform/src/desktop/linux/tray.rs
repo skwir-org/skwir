@@ -409,20 +409,20 @@ struct Node(i32, HashMap<String, OwnedValue>, Vec<OwnedValue>);
 fn properties(id: i32, pause: Option<bool>) -> Option<Vec<(&'static str, Value<'static>)>> {
     Some(match id {
         0 => vec![("children-display", Value::from("submenu"))],
-        OPEN => vec![("label", Value::from("Open Skwir"))],
+        OPEN => vec![("label", Value::from(super::super::tray_open().say()))],
         SEPARATOR => vec![("type", Value::from("separator"))],
         PAUSE => vec![
             (
                 "label",
                 Value::from(if pause == Some(false) {
-                    "Go on"
+                    super::super::tray_go_on().say()
                 } else {
-                    "Pause all"
+                    super::super::tray_pause().say()
                 }),
             ),
             ("visible", Value::Bool(pause.is_some())),
         ],
-        STOP => vec![("label", Value::from("Stop all and quit"))],
+        STOP => vec![("label", Value::from(super::super::tray_stop().say()))],
         _ => return None,
     })
 }

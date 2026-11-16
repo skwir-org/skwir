@@ -635,7 +635,11 @@ impl Application {
             .unwrap_or_else(|| PathBuf::from("/"));
         for argv in self.command_lines(files) {
             let Some((program, args)) = argv.split_first() else {
-                anyhow::bail!("{} has no command to run", self.name);
+                anyhow::bail!(skwir_core::words!(
+                    apps_no_command = "{ $app } has no command to run",
+                    app = self.name.clone(),
+                    note = "An application's desktop entry gives no program to start. app: the application's name, as it names itself."
+                ));
             };
             if self.terminal {
                 crate::open::open_terminal_watched(&dir, &argv, |_| {})?;
@@ -649,7 +653,14 @@ impl Application {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
             crate::process::spawn_detached(&mut command)
-                .map_err(|e| anyhow::anyhow!("launch {}: {e}", self.name))?;
+                .map_err(|e| {
+                    anyhow::Error::from(skwir_core::words!(
+                        apps_launch_failed = "launch { $app }: { $error }",
+                        app = self.name.clone(),
+                        error = anyhow::Error::from(e),
+                        note = "An application could not be started. app: its name, as it names itself; error: why."
+                    ))
+                })?;
         }
         Ok(())
     }
@@ -745,7 +756,12 @@ impl AssociationEdit {
                     .iter()
                     .position(|l| l.file_name().is_some_and(|n| n == "mimeapps.list"))
             })
-            .ok_or_else(|| anyhow::anyhow!("no configuration directory"))?;
+            .ok_or_else(|| {
+                anyhow::Error::from(skwir_core::words!(
+                    apps_no_config_dir = "no configuration directory",
+                    note = "Why a default application cannot be chosen: the user has no configuration folder to write the choice in."
+                ))
+            })?;
         Ok(Self::making_default(
             lists[index].clone(),
             &texts[index],
@@ -873,9 +889,12 @@ fn edit_list_text(text: &str, edit: &AssociationEdit) -> Option<(String, Associa
 /// # Errors
 /// When the list cannot be read or written.
 pub fn edit_associations(edit: &AssociationEdit) -> anyhow::Result<Option<AssociationEdit>> {
-    crate::file::rewrite(&edit.file, "the list of default applications", |text| {
-        edit_list_text(text, edit)
-    })
+    let read_only = skwir_core::words!(
+        apps_list_read_only =
+            "the list of default applications is read-only; change it where it is managed",
+        note = "Why a default application was not chosen: the desktop's list of them (mimeapps.list) is a link to a file that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it."
+    );
+    crate::file::rewrite_words(&edit.file, read_only, |text| edit_list_text(text, edit))
 }
 
 #[cfg(test)]

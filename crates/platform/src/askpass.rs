@@ -144,7 +144,18 @@ fn serve(stream: &mut (impl Read + Write), answer: &impl Fn(Question) -> Option<
 /// the program reading it. Whether it was answered: the exit status a
 /// confirmation is read from.
 pub fn answer_as_askpass(socket: &Path, prompt: Option<&str>) -> bool {
-    let prompt = prompt.unwrap_or("Password").to_owned();
+    // Transitional: the question carries text, said here, in the process
+    // ssh started (ADR-139).
+    let prompt = prompt.map_or_else(
+        || {
+            skwir_core::words!(
+                askpass_password = "Password",
+                note = "What a password prompt asks when the program asking (ssh, rclone) said nothing of its own."
+            )
+            .say()
+        },
+        str::to_owned,
+    );
     let said = std::env::var("SSH_ASKPASS_PROMPT").ok();
     let kind = kind_of(&prompt, said.as_deref());
     let Some(answer) = ask(socket, &Question { prompt, kind }) else {
@@ -254,9 +265,11 @@ impl Server {
         #[cfg(not(any(unix, windows)))]
         {
             let _ = (folder, answer, stopped);
-            Err(std::io::Error::other(
-                "asking for a password through ssh is not available on this system yet",
-            ))
+            Err(std::io::Error::other(skwir_core::words!(
+                askpass_unsupported =
+                    "asking for a password through ssh is not available on this system yet",
+                note = "ssh is the program that connects to servers (a name)."
+            )))
         }
     }
 

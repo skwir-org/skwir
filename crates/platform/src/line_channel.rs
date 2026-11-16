@@ -16,6 +16,14 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::process::ChildGuard;
 
+/// Why a request could not be written: the worker reads none.
+fn not_reading() -> skwir_core::words::Words {
+    skwir_core::words!(
+        line_channel_not_reading = "worker is not reading its requests",
+        note = "Why a helper program was asked nothing more: it has stopped, or hangs."
+    )
+}
+
 /// How long a worker may read none of a long request before it is said
 /// wedged.
 const STUCK: std::time::Duration = std::time::Duration::from_secs(10);
@@ -48,7 +56,13 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        let mut child = ChildGuard::new(command.spawn().with_context(|| format!("start {name}"))?);
+        let mut child = ChildGuard::new(command.spawn().with_context(|| {
+            skwir_core::words!(
+                line_channel_start = "start { $program }",
+                program = name,
+                note = "What could not be done, before why (start skwir-archive: No such file or directory). program: the helper's name."
+            )
+        })?);
         let input = child.child.stdin.take().context("worker stdin")?;
         #[cfg(unix)]
         {
@@ -87,16 +101,16 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
     pub(crate) fn send(&mut self, request: &impl Serialize) -> anyhow::Result<()> {
         let line = skwir_core::jsonl::encode(request)?;
         if line.len() <= PIPE {
-            return self
-                .input
-                .write_all(&line)
-                .context("worker is not reading its requests");
+            return self.input.write_all(&line).context(not_reading());
         }
         let mut written = 0;
         let mut since = std::time::Instant::now();
         while written < line.len() {
             match self.input.write(&line[written..]) {
-                Ok(0) => anyhow::bail!("worker closed its requests"),
+                Ok(0) => anyhow::bail!(skwir_core::words!(
+                    line_channel_closed = "worker closed its requests",
+                    note = "Why a helper program was asked nothing more: it stopped reading what Skwir asks."
+                )),
                 Ok(n) => {
                     written += n;
                     since = std::time::Instant::now();
@@ -104,11 +118,11 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if since.elapsed() > STUCK {
-                        return Err(e).context("worker is not reading its requests");
+                        return Err(e).context(not_reading());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(2));
                 }
-                Err(e) => return Err(e).context("worker is not reading its requests"),
+                Err(e) => return Err(e).context(not_reading()),
             }
         }
         Ok(())

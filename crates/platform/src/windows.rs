@@ -260,7 +260,10 @@ pub fn unlock_drive(
         })?;
     let cancelled = cancel.subscribe();
     let waited = crossbeam_channel::select! {
-        recv(rx) -> ran => ran.map_err(|_| anyhow::anyhow!("Windows' unlock dialog did not answer"))??,
+        recv(rx) -> ran => ran.map_err(|_| anyhow::Error::from(skwir_core::words!(
+            windows_unlock_silent = "Windows' unlock dialog did not answer",
+            note = "Windows' own dialog for a BitLocker drive's password ended without an answer."
+        )))??,
         recv(cancelled.receiver()) -> _ => return Ok(None),
     };
     if !waited {
@@ -301,10 +304,12 @@ fn run_verb(path: &Path, verb: &str) -> anyhow::Result<bool> {
     info.nShow = ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0;
     // SAFETY: `info` filled as the call asks, its strings outliving it.
     if unsafe { ShellExecuteExW(&raw mut info) } == 0 {
-        anyhow::bail!(
-            "Windows' unlock dialog could not be opened: {}",
-            std::io::Error::last_os_error()
-        );
+        anyhow::bail!(skwir_core::words!(
+            windows_unlock_unopened = "Windows' unlock dialog could not be opened: { $error }",
+            error = anyhow::Error::from(std::io::Error::last_os_error()),
+            note =
+                "Windows' own dialog for a BitLocker drive's password. error: why it did not open."
+        ));
     }
     if info.hProcess.is_null() {
         return Ok(false);
@@ -556,7 +561,12 @@ pub mod pipe {
     /// When Windows will not say who the user is, or makes no pipe.
     pub fn instance(name: &OsStr, first: bool) -> io::Result<OwnedHandle> {
         let sid = super::user_sid()
-            .ok_or_else(|| io::Error::other("Windows does not say who the user is"))?;
+            .ok_or_else(|| {
+                io::Error::other(skwir_core::words!(
+                    windows_no_user = "Windows does not say who the user is",
+                    note = "Why a private channel for scripts and agents cannot be made: Windows did not name the user it is for."
+                ))
+            })?;
         // Protected, its one entry the user's: all access, for them alone.
         let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})")
             .encode_utf16()

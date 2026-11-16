@@ -62,10 +62,40 @@ const SESSION_MANAGERS: [&str; 2] = ["org.gnome.SessionManager", "org.kde.ksmser
 const LAUNCHER_ENTRY: &str = "com.canonical.Unity.LauncherEntry";
 /// The action a click on the notice itself invokes.
 const DEFAULT: &str = "default";
-const ACTIONS: [&str; 2] = [DEFAULT, "Show"];
 /// The notice that stays's other action.
 const STOP: &str = "stop";
-const RESIDENT_ACTIONS: [&str; 4] = [DEFAULT, "Open Skwir", STOP, "Stop all"];
+
+/// A notice's actions, each its key then its label: the click on the
+/// notice itself, and its button that shows the window.
+fn actions() -> Vec<String> {
+    vec![
+        DEFAULT.to_owned(),
+        skwir_core::words!(
+            desktop_notice_show = "Show",
+            note =
+                "A button of the desktop's notice that an action ended: it shows Skwir's window."
+        )
+        .say(),
+    ]
+}
+
+/// The notice that stays's actions, each its key then its label (`actions`).
+fn resident_actions() -> Vec<String> {
+    vec![
+        DEFAULT.to_owned(),
+        skwir_core::words!(
+            desktop_open = "Open Skwir",
+            note = "A button of the notice, or an entry of the tray's menu, that shows while Skwir works without a window: it opens a window."
+        )
+        .say(),
+        STOP.to_owned(),
+        skwir_core::words!(
+            desktop_notice_stop = "Stop all",
+            note = "A button of the notice that shows while Skwir works without a window: it stops every action."
+        )
+        .say(),
+    ]
+}
 /// How long a server is waited for: the session's connection is
 /// shared and has no timeout of its own, and one that hangs would
 /// hold every later ask.
@@ -327,11 +357,13 @@ impl Backend {
             ("desktop-entry", Value::from(self.app_id.clone())),
             ("urgency", Value::U8(1)),
         ]);
+        let actions = actions();
+        let actions: Vec<&str> = actions.iter().map(String::as_str).collect();
         let shown = self.show_notice(
             &bus,
             replaces,
             (&notice.title, &notice.body),
-            &ACTIONS,
+            &actions,
             hints,
             -1,
         );
@@ -639,11 +671,13 @@ impl Backend {
             ("resident", Value::Bool(true)),
             ("urgency", Value::U8(1)),
         ]);
+        let actions = resident_actions();
+        let actions: Vec<&str> = actions.iter().map(String::as_str).collect();
         let shown = self.show_notice(
             bus,
             replaces,
             (&presence.title, &presence.about),
-            &RESIDENT_ACTIONS,
+            &actions,
             hints,
             0,
         );

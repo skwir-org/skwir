@@ -1072,7 +1072,7 @@ fn compressed_files_and_long_archives_are_listed() {
         skwir_platform::inspection::limits::CONTAINER_MEMBERS
     );
     assert!(
-        listing.notice.starts_with("First 4000 members"),
+        listing.notice.starts_with("First 4,000 members"),
         "{}",
         listing.notice
     );

@@ -332,7 +332,11 @@ pub fn patch(
 ) -> anyhow::Result<(PathBuf, Patched)> {
     anyhow::ensure!(
         !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
-        "Not a commit: {id}"
+        skwir_core::words!(
+            git_not_commit = "Not a commit: { $id }",
+            id = id,
+            note = "Why a commit's changes are not shown: what was asked is no commit's id. id: what was asked, as written."
+        )
     );
     let name = format!("{}.patch", &id[..id.len().min(12)]);
     let deadline = if whole { DEADLINE_WHOLE } else { DEADLINE };
@@ -356,7 +360,13 @@ pub fn patch(
     )?;
     let patched: Patched = serde_json::from_slice(&stdout)?;
     let written = into.join(&name);
-    anyhow::ensure!(written.is_file(), "The patch was not written");
+    anyhow::ensure!(
+        written.is_file(),
+        skwir_core::words!(
+            git_patch_not_written = "The patch was not written",
+            note = "Why a commit's changes are not shown: the Git helper wrote no file of them."
+        )
+    );
     Ok((written, patched))
 }
 
@@ -377,7 +387,12 @@ pub fn status(
     let work_tree = repo
         .work_tree
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("A bare repository has no files checked out"))?;
+        .ok_or_else(|| {
+            anyhow::Error::from(skwir_core::words!(
+                git_bare = "A bare repository has no files checked out",
+                note = "Why the files' Git state is not shown: the repository has no work tree (a bare repository, in Git's words)."
+            ))
+        })?;
     let User {
         excludes_file,
         settings,
@@ -519,19 +534,35 @@ enum Ran {
 }
 
 impl Ran {
-    /// What it needs the helper for, as `Worker::require` says it.
-    fn need(self) -> &'static str {
+    /// What to do without the helper, as `Worker::require_words` says it.
+    fn missing(self) -> skwir_core::words::Words {
         match self {
-            Ran::History => "show a history of commits",
-            Ran::Status => "show the files' Git state",
+            Ran::History => skwir_core::words!(
+                git_install_history = "Install { $program } to show a history of commits",
+                program = WORKER.executable,
+                note = "program: the Git helper's name (skwir-git-worker)."
+            ),
+            Ran::Status => skwir_core::words!(
+                git_install_status = "Install { $program } to show the files' Git state",
+                program = WORKER.executable,
+                note = "program: the Git helper's name (skwir-git-worker). The files' Git state: whether each is changed, new, ignored."
+            ),
         }
     }
 
-    /// What a failure says could not be read.
-    fn failed(self) -> &'static str {
+    /// What a failure says could not be read, `said` by the helper.
+    fn failed(self, said: &str) -> skwir_core::words::Words {
         match self {
-            Ran::History => "The history cannot be read",
-            Ran::Status => "The files' Git state cannot be read",
+            Ran::History => skwir_core::words!(
+                git_history_failed = "The history cannot be read: { $said }",
+                said = said,
+                note = "said: what the Git helper wrote of why, as it wrote it."
+            ),
+            Ran::Status => skwir_core::words!(
+                git_status_failed = "The files' Git state cannot be read: { $said }",
+                said = said,
+                note = "said: what the Git helper wrote of why, as it wrote it."
+            ),
         }
     }
 }
@@ -550,7 +581,7 @@ fn run(
     cancel: &CancelToken,
     ask: impl FnOnce(&Path) -> Ask,
 ) -> anyhow::Result<Vec<u8>> {
-    let worker = WORKER.require(ran.need())?;
+    let worker = WORKER.require_words(ran.missing())?;
     let readable: Vec<&Path> = repo
         .readable
         .iter()
@@ -575,9 +606,7 @@ fn run(
     .map_err(|error| crate::process::explain(&worker, cancel, error))?;
     anyhow::ensure!(
         finished.status.success(),
-        "{}: {}",
-        ran.failed(),
-        finished.stderr.trim()
+        ran.failed(finished.stderr.trim())
     );
     Ok(finished.stdout)
 }

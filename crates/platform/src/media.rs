@@ -16,6 +16,8 @@ use skwir_core::{
         Control, Frame, MAX_MESSAGE, MediaSession, PIXELS_FILE, Playback, Reply, Request, Update,
     },
     op::PlanId,
+    words,
+    words::Words,
 };
 use std::{
     fs::OpenOptions,
@@ -216,6 +218,14 @@ impl Drop for WorkerSession {
         self.lifetime.cancel();
     }
 }
+/// Why a control was not taken: the player is busy, or has ended.
+fn controls_busy() -> Words {
+    words!(
+        media_controls_busy = "video controls busy or session closed",
+        note = "Why a play, pause or seek was not done: the player is still taking the ones before, or it has stopped."
+    )
+}
+
 impl MediaSession for WorkerSession {
     fn control(&self, command: Control) -> anyhow::Result<()> {
         anyhow::ensure!(command.valid(), "invalid playback control");
@@ -229,7 +239,7 @@ impl MediaSession for WorkerSession {
                 generation,
                 command,
             })
-            .context("video controls busy or session closed")?;
+            .context(controls_busy())?;
         self.shared.generation.store(generation, Ordering::Release);
         self.shared
             .asked
@@ -241,7 +251,7 @@ impl MediaSession for WorkerSession {
         anyhow::ensure!(!self.lifetime.is_cancelled(), "video session closed");
         self.commands
             .try_send(Request::Next { path })
-            .context("video controls busy or session closed")
+            .context(controls_busy())
     }
     fn take_update(&self) -> Update {
         std::mem::take(&mut *self.shared.update.lock())
@@ -318,11 +328,14 @@ impl WorkerSession {
                 if let Some(plan) = taken {
                     manager_shared.publish(|u| u.taken = Some(plan));
                 } else if let Err(error) = result {
-                    let error = crate::process::explain(&helper, &manager_lifetime, error);
-                    let message = format!("{error:#}");
-                    let _ = startup.try_send(Err(anyhow::anyhow!("{message}")));
+                    let error =
+                        Arc::new(crate::process::explain(&helper, &manager_lifetime, error));
+                    let _ = startup.try_send(Err(Words::of_error_from(&error, 0).into()));
                     if !manager_lifetime.is_cancelled() {
-                        manager_shared.publish(|u| u.error = Some(message));
+                        // Transitional: an update's error is text, said
+                        // once here (ADR-139).
+                        let said = Words::of_error_from(&error, 0).say();
+                        manager_shared.publish(|u| u.error = Some(said));
                     }
                 }
                 manager_lifetime.cancel();
@@ -339,7 +352,10 @@ impl WorkerSession {
                 }))),
                 Ok(Ok(false)) => Ok(None),
                 Ok(Err(error)) => Err(error),
-                Err(_) => anyhow::bail!("video worker stopped during startup"),
+                Err(_) => anyhow::bail!(words!(
+                    media_worker_stopped = "video worker stopped during startup",
+                    note = "Why a film or a sound does not play: the program that plays it stopped before it was ready."
+                )),
             },
             recv(cancelled.receiver()) -> _ => {
                 // The manager cancels its lifetime right after sending its
@@ -536,7 +552,14 @@ fn manage(
                 continue;
             }
             recv(worker.replies()) -> reply => {
-                let result = reply.map_err(|_| anyhow::anyhow!("video worker exited")).and_then(|r| r);
+                let result = reply
+                    .map_err(|_| {
+                        anyhow::Error::from(words!(
+                            media_worker_exited = "video worker exited",
+                            note = "Why a film or a sound stopped playing: the program that plays it stopped."
+                        ))
+                    })
+                    .and_then(|r| r);
                 if result.is_err() && !ready && worker.missing_runtime() {
                     // Decoder/file errors have a protocol reply and never fall back.
                     let _ = startup.send(Ok(false));
@@ -558,7 +581,13 @@ fn manage(
                 continue;
             }
             recv(deadline) -> _ => {
-                anyhow::ensure!(ready, "video worker timed out");
+                anyhow::ensure!(
+                    ready,
+                    words!(
+                        media_worker_timed_out = "video worker timed out",
+                        note = "Why a film or a sound does not play: the program that plays it took too long to start."
+                    )
+                );
                 continue;
             }
         };
@@ -636,7 +665,10 @@ fn manage(
 /// `/dev/shm` where that exists and is writable, otherwise the ordinary
 /// temporary directory, which may be disk-backed.
 fn frame_slot_dir() -> anyhow::Result<tempfile::TempDir> {
-    crate::file::memory_dir("skwir-video-").context("create video frame slot")
+    crate::file::memory_dir("skwir-video-").context(words!(
+        media_frame_slot = "create video frame slot",
+        note = "What could not be done before a film plays, before the system's reason: a place in memory for its pictures."
+    ))
 }
 
 #[cfg(all(test, target_os = "linux"))]

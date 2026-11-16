@@ -278,9 +278,12 @@ fn ask(
         crate::process::run_capped_without_terminal(&mut command, None, cancel, AT_MOST, 1 << 20)?;
     anyhow::ensure!(
         finished.status.success(),
-        "{} ended with {}",
-        shell.display(),
-        finished.status
+        skwir_core::words!(
+            shell_environment_failed = "{ $shell } ended with { $status }",
+            shell = shell.display().to_string(),
+            status = finished.status.to_string(),
+            note = "Why the variables a login shell sets were not read: the shell failed. shell: its path; status: how it ended, as the system says it (exit status: 1)."
+        )
     );
     let mut read = names.clone();
     read.insert(ZDOTDIR.to_owned());

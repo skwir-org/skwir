@@ -171,9 +171,17 @@ fn isolates() -> bool {
 /// Why a program that must run isolated does not run here.
 fn needed() -> anyhow::Error {
     if cfg!(target_os = "linux") {
-        anyhow::anyhow!("This needs bubblewrap, to run isolated from your files")
+        skwir_core::words!(
+            sandbox_needs_bubblewrap = "This needs bubblewrap, to run isolated from your files",
+            note = "Why a converter or plugin program does not run: bubblewrap, a program's name, is not installed."
+        )
+        .into()
     } else if cfg!(target_os = "macos") {
-        anyhow::anyhow!("This needs the system's sandbox, to run isolated from your files")
+        skwir_core::words!(
+            sandbox_needs_sandbox = "This needs the system's sandbox, to run isolated from your files",
+            note = "Why a converter or plugin program does not run on macOS: the system's sandbox does not work here."
+        )
+        .into()
     } else {
         skwir_core::system::not_yet("Running a converter isolated from your files").into()
     }

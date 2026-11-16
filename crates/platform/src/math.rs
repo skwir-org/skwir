@@ -89,7 +89,11 @@ pub fn typeset(formulas: &[Formula], cancel: &CancelToken) -> anyhow::Result<Vec
     if asked.is_empty() {
         return Ok(drawn);
     }
-    let worker = WORKER.require("typeset formulas")?;
+    let worker = WORKER.require_words(skwir_core::words!(
+        math_install = "Install { $program } to typeset formulas",
+        program = WORKER.executable,
+        note = "What to do to see a document's formulas drawn. program: the math helper's name (skwir-math-worker)."
+    ))?;
     let batch: Vec<&Formula> = asked.iter().map(|&k| &formulas[k]).collect();
     let answer = typeset_by(&worker, &batch, cancel)
         .map_err(|error| crate::process::explain(&worker, cancel, error))?;
@@ -181,8 +185,11 @@ fn typeset_by(
     )?;
     anyhow::ensure!(
         finished.status.success(),
-        "The formulas cannot be typeset: {}",
-        finished.stderr.trim()
+        skwir_core::words!(
+            math_failed = "The formulas cannot be typeset: { $said }",
+            said = finished.stderr.trim(),
+            note = "said: what the math helper wrote of why, as it wrote it."
+        )
     );
     Ok(serde_json::from_slice(&finished.stdout)?)
 }

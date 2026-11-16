@@ -49,8 +49,32 @@ pub enum First {
 
 impl First {
     /// The setting's choices, `(value, label)`, the default first.
+    ///
+    /// Transitional: English; [`First::choices_words`] gives the labels as
+    /// words (ADR-139).
     pub const CHOICES: [(&'static str, &'static str); 2] =
         [("bat", "bat first"), ("tree_sitter", "Tree-sitter first")];
+
+    /// [`First::CHOICES`], each label a message (for
+    /// `SettingSpec::choice_words`).
+    pub fn choices_words() -> Vec<(&'static str, skwir_core::words::Words)> {
+        vec![
+            (
+                Self::CHOICES[0].0,
+                skwir_core::words!(
+                    highlight_bat_first = "bat first",
+                    note = "A choice of which grammars color code: bat's (bat is a program's name, written in lower case), unless only a tree-sitter grammar knows the language."
+                ),
+            ),
+            (
+                Self::CHOICES[1].0,
+                skwir_core::words!(
+                    highlight_tree_sitter_first = "Tree-sitter first",
+                    note = "A choice of which grammars color code: the tree-sitter grammars found, unless only bat's know the language."
+                ),
+            ),
+        ]
+    }
 
     /// The choice a setting's value says; bat's for any other.
     pub fn of(value: Option<&str>) -> First {
@@ -746,8 +770,11 @@ fn color_text_in(
 ) -> anyhow::Result<Vec<Run>> {
     anyhow::ensure!(
         text.len() <= LONGEST_LINE,
-        "a block longer than {}",
-        skwir_core::fs::size_said(LONGEST_LINE as u64)
+        skwir_core::words!(
+            highlight_block_too_long = "a block longer than { $size }",
+            size = skwir_core::words::Size(LONGEST_LINE as u64),
+            note = "Why a block of code in a document is not colored by its tree-sitter grammar. size: the longest colored."
+        )
     );
     let tree = Tree::open_in(helper, grammar, text.as_bytes(), palette, cancel)?;
     let spans = tree.spans(0..tree.lines(), cancel)?;

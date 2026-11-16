@@ -269,7 +269,16 @@ mod portal {
             let mut options: HashMap<&str, Value<'_>> = HashMap::new();
             options.insert("handle_token", Value::from(token));
             options.insert("modal", Value::from(true));
-            options.insert("accept_label", Value::from("Print"));
+            options.insert(
+                "accept_label",
+                Value::from(
+                    skwir_core::words!(
+                        print_accept = "Print",
+                        note = "The button of the desktop's print dialog that prints."
+                    )
+                    .say(),
+                ),
+            );
             options.insert("has_current_page", Value::from(false));
             options.insert("has_selected_pages", Value::from(false));
             options.insert("supported_output_file_formats", Value::from(vec!["pdf"]));
@@ -283,7 +292,11 @@ mod portal {
         })? {
             Ended::Answered(results) => results,
             Ended::Code(1) | Ended::Closed => return Ok(None),
-            Ended::Code(code) => anyhow::bail!("the print dialog ended ({code})"),
+            Ended::Code(code) => anyhow::bail!(skwir_core::words!(
+                print_dialog_ended = "the print dialog ended ({ $code })",
+                code = code.to_string(),
+                note = "The desktop's print dialog ended in a way it does not explain. code: the number it answered."
+            )),
         };
         Ok(Some(chosen(&results)?))
     }
@@ -293,7 +306,12 @@ mod portal {
         let token: u32 = results
             .get("token")
             .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| anyhow::anyhow!("the print dialog answered no token"))?;
+            .ok_or_else(|| {
+                anyhow::Error::from(skwir_core::words!(
+                    print_no_token = "the print dialog answered no token",
+                    note = "The desktop's print dialog answered without what Skwir needs to print what was chosen."
+                ))
+            })?;
         let dict = |key: &str| -> HashMap<String, OwnedValue> {
             results
                 .get(key)
@@ -315,18 +333,24 @@ mod portal {
                 .filter(|n| n.is_finite() && *n >= 0.0)
         };
         // A range Skwir cannot read is an error, never every page.
-        let pages =
-            match text(&settings, "print-pages").as_deref() {
-                Some("current") => Pages::Current,
-                Some("selection") => Pages::Selection,
-                Some("ranges") => {
-                    let ranges = text(&settings, "page-ranges").unwrap_or_default();
-                    Pages::Ranges(skwir_core::print::from_zero_based(&ranges).map_err(
-                        |refused| anyhow::anyhow!("the print dialog's pages “{ranges}”: {refused}"),
+        let pages = match text(&settings, "print-pages").as_deref() {
+            Some("current") => Pages::Current,
+            Some("selection") => Pages::Selection,
+            Some("ranges") => {
+                let ranges = text(&settings, "page-ranges").unwrap_or_default();
+                Pages::Ranges(skwir_core::print::from_zero_based(&ranges).map_err(
+                        |refused| {
+                            anyhow::Error::from(skwir_core::words!(
+                                print_dialog_pages = "the print dialog's pages “{ $ranges }”: { $refused }",
+                                ranges = ranges.clone(),
+                                refused = refused,
+                                note = "The pages chosen in the desktop's print dialog cannot be read. ranges: what it answered (1-2,4); refused: why."
+                            ))
+                        },
                     )?)
-                }
-                _ => Pages::All,
-            };
+            }
+            _ => Pages::All,
+        };
         let page_set = match text(&settings, "page-set").as_deref() {
             Some("even") => PageSet::Even,
             Some("odd") => PageSet::Odd,
@@ -416,9 +440,12 @@ mod portal {
             }
             (Ended::Code(1), BackEnd::Other) => Ok(Sent::Cancelled),
             (Ended::Closed, _) => Err(anyhow::anyhow!("printing was cancelled")),
-            (Ended::Code(code), _) => Err(anyhow::anyhow!(
-                "the desktop's printing did not take it ({code})"
-            )),
+            (Ended::Code(code), _) => Err(skwir_core::words!(
+                print_not_taken = "the desktop's printing did not take it ({ $code })",
+                code = code.to_string(),
+                note = "The desktop refused to print what its dialog chose. code: the number it answered."
+            )
+            .into()),
         }
     }
 
@@ -572,17 +599,21 @@ mod portal {
             result
         };
         if ready_rx.recv().is_err() {
-            return finish(Err(anyhow::anyhow!(
-                "the print portal cannot be listened to"
-            )));
+            return finish(Err(anyhow::Error::from(skwir_core::words!(
+                print_portal_unheard = "the print portal cannot be listened to",
+                note = "Why no print dialog shows: Skwir cannot hear the desktop's answers (its print portal, on the session bus)."
+            ))));
         }
         let handle: OwnedObjectPath =
             match call(&token).and_then(|reply| reply.body().deserialize()) {
                 Ok(handle) => handle,
                 Err(error) => {
-                    return finish(Err(anyhow::anyhow!(
-                        "this desktop shows no print dialog (its print portal: {error})"
-                    )));
+                    return finish(Err(anyhow::Error::from(skwir_core::words!(
+                        print_no_dialog =
+                            "this desktop shows no print dialog (its print portal: { $error })",
+                        error = anyhow::Error::from(error),
+                        note = "error: what the desktop's print portal answered."
+                    ))));
                 }
             };
         let ours = |path: &Option<String>| answers(path.as_deref(), expected.as_deref(), &handle);
@@ -597,8 +628,14 @@ mod portal {
                         });
                     }
                     Ok(Heard::Response { .. }) => {}
-                    Ok(Heard::Gone) => break Err(anyhow::anyhow!("the print portal stopped")),
-                    Err(_) => break Err(anyhow::anyhow!("the print portal stopped answering")),
+                    Ok(Heard::Gone) => break Err(anyhow::Error::from(skwir_core::words!(
+                        print_portal_stopped = "the print portal stopped",
+                        note = "The desktop's printing service ended while its dialog was shown."
+                    ))),
+                    Err(_) => break Err(anyhow::Error::from(skwir_core::words!(
+                        print_portal_silent = "the print portal stopped answering",
+                        note = "The desktop's printing service no longer answers."
+                    ))),
                 },
                 recv(cancelled.receiver()) -> _ => {
                     let _ = bus.call_method(destination, handle.as_str(), Some(REQUEST), "Close", &());
@@ -1231,7 +1268,14 @@ mod macos {
         lp.arg("--").arg(pdf);
         crate::process::run(&mut lp, cancel, std::time::Duration::from_secs(120))
             .map(|_| ())
-            .map_err(|error| anyhow::anyhow!("the printer refused it: {error:#}"))
+            .map_err(|error| {
+                skwir_core::words!(
+                    print_refused = "the printer refused it: { $error }",
+                    error = error,
+                    note = "error: why the printing system did not take the document."
+                )
+                .into()
+            })
     }
 }
 
@@ -1275,7 +1319,12 @@ mod windows {
             .name("skwir-print-dialog".into())
             .spawn(dialog)?
             .join()
-            .map_err(|_| anyhow::anyhow!("the print dialog stopped"))??
+            .map_err(|_| {
+                anyhow::Error::from(skwir_core::words!(
+                    print_dialog_stopped = "the print dialog stopped",
+                    note = "Windows' print dialog ended before it answered."
+                ))
+            })??
         else {
             return Ok(None);
         };
@@ -1342,7 +1391,10 @@ mod windows {
     fn read_devmode(bytes: &[u8]) -> anyhow::Result<DEVMODEW> {
         anyhow::ensure!(
             bytes.len() >= std::mem::size_of::<DEVMODEW>(),
-            "the printer's settings are not whole"
+            skwir_core::words!(
+                print_settings_short = "the printer's settings are not whole",
+                note = "Windows' print dialog answered settings shorter than they are."
+            )
         );
         #[allow(unsafe_code)]
         // SAFETY: `bytes` holds at least a DEVMODEW, a plain C structure;
@@ -1448,8 +1500,12 @@ mod windows {
     ) -> anyhow::Result<()> {
         // On Windows what the dialog keeps is the printer and its settings.
         let System::Printer { name, devmode } = &chosen.system;
-        crate::document::print_on(pdf, name, devmode, title, None, cancel)?
-            .ok_or_else(|| anyhow::anyhow!("printing needs PDFium, which is not there"))?;
+        crate::document::print_on(pdf, name, devmode, title, None, cancel)?.ok_or_else(|| {
+            anyhow::Error::from(skwir_core::words!(
+                print_needs_pdfium = "printing needs PDFium, which is not there",
+                note = "PDFium is the library that draws the pages on the printer (a name)."
+            ))
+        })?;
         Ok(())
     }
 }

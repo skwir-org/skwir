@@ -49,9 +49,24 @@ impl Worker {
 
     /// [`Worker::find`], or what to do without it, in one wording for
     /// every worker: "Install skwir-archive-worker to open archives".
+    ///
+    /// Transitional: `purpose` is a fragment the sentence is written
+    /// around; [`Worker::require_words`] takes the sentence whole
+    /// (ADR-139).
     pub fn require(&self, purpose: &str) -> anyhow::Result<PathBuf> {
         self.find()
             .with_context(|| format!("Install {} to {purpose}", self.executable))
+    }
+
+    /// [`Worker::find`], or `missing`: what to do without it, a whole
+    /// message naming the program as an argument ("Install { $program } to
+    /// open archives", `program = WORKER.executable`).
+    pub fn require_words(
+        &self,
+        missing: impl Into<skwir_core::words::Words>,
+    ) -> anyhow::Result<PathBuf> {
+        self.find()
+            .ok_or_else(|| anyhow::Error::from(Into::<skwir_core::words::Words>::into(missing)))
     }
 
     /// Whether it can work here: found, and answering `--probe` (`probe`).
@@ -148,23 +163,32 @@ fn explain_as(
     if cancel.is_cancelled() {
         return error;
     }
-    let build = match build_of(helper) {
-        Said::Build(theirs) if theirs == ours => return error,
-        Said::Unknown => return error,
-        Said::Build(theirs) => format!("another build of skwir ({theirs}; skwir is {ours})"),
-        Said::Nothing => "an older build of skwir".to_owned(),
-    };
     let name = helper
         .file_name()
         .unwrap_or(helper.as_os_str())
-        .to_string_lossy();
+        .to_string_lossy()
+        .into_owned();
     // The failure first, whole, as it would read without this: one line
     // where it is shown.
-    let failure = format!("{error:#}");
-    anyhow::anyhow!(
-        "{}. {name} is from {build}, which may be why: rebuild or reinstall it",
-        failure.trim_end_matches('.')
-    )
+    let explained = match build_of(helper) {
+        Said::Build(theirs) if theirs == ours => return error,
+        Said::Unknown => return error,
+        Said::Build(theirs) => skwir_core::words!(
+            process_other_build = "{ $error }. { $program } is from another build of skwir ({ $theirs }; skwir is { $ours }), which may be why: rebuild or reinstall it",
+            error = error,
+            program = name,
+            theirs = theirs,
+            ours = ours,
+            note = "A helper program failed, and it is not of the build Skwir is. error: why it failed; program: the helper's file name; theirs, ours: the two builds' versions."
+        ),
+        Said::Nothing => skwir_core::words!(
+            process_older_build = "{ $error }. { $program } is from an older build of skwir, which may be why: rebuild or reinstall it",
+            error = error,
+            program = name,
+            note = "A helper program failed, and it is older than Skwir. error: why it failed; program: the helper's file name."
+        ),
+    };
+    explained.into()
 }
 
 /// What a helper said when asked `--build`.
@@ -254,7 +278,13 @@ pub fn required(program: &str) -> anyhow::Result<PathBuf> {
     find_program(program)
         .or_else(|| application(program))
         .and_then(|path| skwir_core::os_path::canonical(path).ok())
-        .with_context(|| format!("{program} is not installed"))
+        .with_context(|| {
+            skwir_core::words!(
+                process_not_installed = "{ $program } is not installed",
+                program = program,
+                note = "program: the name of a program Skwir runs (libreoffice, bwrap)."
+            )
+        })
 }
 
 /// Where an application that puts no program on any path keeps the one
@@ -745,7 +775,7 @@ fn run_until_exit(
     anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
     let stdin = match input {
         Some(bytes) => {
-            anyhow::ensure!(bytes.len() <= MAX_INPUT, "{program}: input too large");
+            anyhow::ensure!(bytes.len() <= MAX_INPUT, too_much_input(&program));
             let mut file = tempfile::tempfile()?;
             file.write_all(bytes)?;
             file.seek(io::SeekFrom::Start(0))?;
@@ -760,11 +790,7 @@ fn run_until_exit(
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
     apart(command);
-    let mut child = ChildGuard::new(
-        command
-            .spawn()
-            .with_context(|| format!("start {program}"))?,
-    );
+    let mut child = ChildGuard::new(command.spawn().with_context(|| started(&program))?);
     // The pipe's write end was dropped above and the child holds the read
     // end: it sees the input, then end of file.
     let start = Instant::now();
@@ -774,8 +800,8 @@ fn run_until_exit(
     };
     loop {
         anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
-        anyhow::ensure!(start.elapsed() < timeout, "{program} timed out");
-        anyhow::ensure!(!too_much(&stdout, &stderr)?, "{program}: excessive output");
+        anyhow::ensure!(start.elapsed() < timeout, timed_out(&program));
+        anyhow::ensure!(!too_much(&stdout, &stderr)?, too_much_output(&program));
         if child.exited()? {
             break;
         }
@@ -783,7 +809,7 @@ fn run_until_exit(
     }
     // What it wrote since the last look: cut to the limit, a program that
     // wrote too much and ended in between said less than it did.
-    anyhow::ensure!(!too_much(&stdout, &stderr)?, "{program}: excessive output");
+    anyhow::ensure!(!too_much(&stdout, &stderr)?, too_much_output(&program));
     let status = child.finish_leaving(leave)?;
     stderr.rewind()?;
     let mut diagnostic = Vec::new();
@@ -812,11 +838,13 @@ pub fn run(
             .unwrap_or(command.get_program())
             .to_string_lossy()
             .into_owned();
-        anyhow::bail!(
-            "{program} failed ({}): {}",
-            finished.status,
-            finished.stderr
-        );
+        anyhow::bail!(skwir_core::words!(
+            process_failed = "{ $program } failed ({ $status }): { $said }",
+            program = program,
+            status = finished.status.to_string(),
+            said = finished.stderr,
+            note = "A program Skwir ran ended with an error. program: its name; status: how it ended, as the system says it (exit status: 1); said: what it wrote of why."
+        ));
     }
     Ok(finished.stdout)
 }
@@ -1256,7 +1284,7 @@ fn helper(
         .unwrap_or(command.get_program())
         .to_string_lossy()
         .into_owned();
-    anyhow::ensure!(!too_much, "{program}: excessive output");
+    anyhow::ensure!(!too_much, too_much_output(&program));
     Ok(Finished {
         stdout: kept,
         ..finished
@@ -1277,13 +1305,68 @@ enum Limit<'a> {
     },
 }
 
-/// `time` as a stall is said: whole minutes past one, else seconds.
-fn said_for(time: Duration) -> String {
-    let (n, unit) = match time.as_secs() {
-        secs @ 60.. => (secs.saturating_add(30) / 60, "minute"),
-        secs => (secs.max(1), "second"),
-    };
-    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+/// Why `program` was stopped after saying nothing of its progress for
+/// `time`: in whole minutes past one, else seconds.
+fn stalled(program: &str, time: Duration) -> skwir_core::words::Words {
+    match time.as_secs() {
+        secs @ 60.. => skwir_core::words!(
+            process_stalled_minutes =
+                "{ $program } stopped: it said nothing of its progress for { $count ->
+                    [one] { $count } minute
+                   *[other] { $count } minutes
+                }",
+            program = program,
+            count = secs.saturating_add(30) / 60,
+            note = "A program that copies or converts was stopped: it stopped saying how far it went. program: its name (rsync)."
+        ),
+        secs => skwir_core::words!(
+            process_stalled_seconds =
+                "{ $program } stopped: it said nothing of its progress for { $count ->
+                    [one] { $count } second
+                   *[other] { $count } seconds
+                }",
+            program = program,
+            count = secs.max(1),
+            note = "A program that copies or converts was stopped: it stopped saying how far it went. program: its name (rsync)."
+        ),
+    }
+}
+
+/// The context of a program that could not start.
+fn started(program: &str) -> skwir_core::words::Words {
+    skwir_core::words!(
+        process_start = "start { $program }",
+        program = program,
+        note = "What could not be done, before why (start ffmpeg: No such file or directory). program: the program's name."
+    )
+}
+
+/// Why `program` was stopped: it ran past its time.
+fn timed_out(program: &str) -> skwir_core::words::Words {
+    skwir_core::words!(
+        process_timed_out = "{ $program } timed out",
+        program = program,
+        note = "program: the name of a program Skwir ran, stopped as it took too long."
+    )
+}
+
+/// Why `program` was stopped: it wrote more than is read of it.
+fn too_much_output(program: &str) -> skwir_core::words::Words {
+    skwir_core::words!(
+        process_too_much_output = "{ $program }: excessive output",
+        program = program,
+        note =
+            "program: the name of a program Skwir ran, stopped as it wrote more than Skwir reads."
+    )
+}
+
+/// Why `program` was not run: what it would be given is too large.
+fn too_much_input(program: &str) -> skwir_core::words::Words {
+    skwir_core::words!(
+        process_too_much_input = "{ $program }: input too large",
+        program = program,
+        note = "program: the name of a program Skwir would run, not run as what it would be given is too large."
+    )
 }
 
 /// [`run_watching`], stopped past its `limit`.
@@ -1304,7 +1387,7 @@ fn watched(
     anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
     let stdin = match input {
         Some(bytes) => {
-            anyhow::ensure!(bytes.len() <= MAX_INPUT, "{program}: input too large");
+            anyhow::ensure!(bytes.len() <= MAX_INPUT, too_much_input(&program));
             let mut file = tempfile::tempfile()?;
             file.write_all(bytes)?;
             file.seek(io::SeekFrom::Start(0))?;
@@ -1322,11 +1405,7 @@ fn watched(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let mut child = ChildGuard::new(
-        command
-            .spawn()
-            .with_context(|| format!("start {program}"))?,
-    );
+    let mut child = ChildGuard::new(command.spawn().with_context(|| started(&program))?);
     let mut out = child
         .child
         .stdout
@@ -1365,7 +1444,7 @@ fn watched(
             since = Instant::now();
             let stalled = match limit {
                 Limit::None => None,
-                Limit::Total(timeout) => (ran >= timeout).then(|| format!("{program} timed out")),
+                Limit::Total(timeout) => (ran >= timeout).then(|| timed_out(&program)),
                 Limit::Stalled {
                     stall,
                     ceiling,
@@ -1376,14 +1455,9 @@ fn watched(
                         heard = (now, ran);
                     }
                     if ran >= ceiling {
-                        Some(format!("{program} timed out"))
+                        Some(timed_out(&program))
                     } else {
-                        (ran.saturating_sub(heard.1) >= stall).then(|| {
-                            format!(
-                                "{program} stopped: it said nothing of its progress for {}",
-                                said_for(stall)
-                            )
-                        })
+                        (ran.saturating_sub(heard.1) >= stall).then(|| stalled(&program, stall))
                     }
                 }
             };
@@ -1869,11 +1943,24 @@ mod reaper {
 /// not a reason to start another helper.
 pub(crate) struct Helper<Reply> {
     pub(crate) channel: crate::line_channel::LineChannel<skwir_core::document::Tagged<Reply>>,
-    /// What the helper is called in what goes wrong: "document worker".
+    /// What the helper is called in logs and a broken protocol's error:
+    /// "document worker".
     what: &'static str,
+    /// What its failures say, whole.
+    says: Says,
     /// Id of the last request sent, and of the next reply due.
     sent: u64,
     due: u64,
+}
+
+/// What a helper's failures say, each a whole message (ADR-139): a
+/// function, as a message is made where it is said.
+#[derive(Clone, Copy)]
+pub(crate) struct Says {
+    /// It exited before it answered.
+    pub(crate) exited: fn() -> skwir_core::words::Words,
+    /// It did not answer in time.
+    pub(crate) timed_out: fn() -> skwir_core::words::Words,
 }
 
 /// Why a helper's answer did not come.
@@ -1885,17 +1972,31 @@ pub(crate) enum Failure {
 }
 
 impl<Reply: serde::de::DeserializeOwned + Send + 'static> Helper<Reply> {
-    /// A helper started on `channel`, its greeting not read yet.
-    pub(crate) fn new(
+    /// A helper started on `channel`, its greeting not read yet, its
+    /// failures saying `says`; `what` names it in logs and in a broken
+    /// protocol's error.
+    pub(crate) fn saying(
         channel: crate::line_channel::LineChannel<skwir_core::document::Tagged<Reply>>,
         what: &'static str,
+        says: Says,
     ) -> Self {
         Helper {
             channel,
             what,
+            says,
             sent: 0,
             due: 0,
         }
+    }
+
+    /// Why no answer came: it exited.
+    fn exited(&self) -> anyhow::Error {
+        (self.says.exited)().into()
+    }
+
+    /// Why no answer came: it took too long.
+    fn timed_out(&self) -> anyhow::Error {
+        (self.says.timed_out)().into()
     }
 
     /// Whether a request sent is still unanswered.
@@ -1921,7 +2022,7 @@ impl<Reply: serde::de::DeserializeOwned + Send + 'static> Helper<Reply> {
         >,
     ) -> anyhow::Result<skwir_core::document::Tagged<Reply>> {
         let what = self.what;
-        let reply = reply.map_err(|_| anyhow::anyhow!("{what} exited unexpectedly"))??;
+        let reply = reply.map_err(|_| self.exited())??;
         anyhow::ensure!(
             reply.id == self.due && reply.id <= self.sent,
             "{what} answered out of order"
@@ -1946,10 +2047,7 @@ impl<Reply: serde::de::DeserializeOwned + Send + 'static> Helper<Reply> {
                     }
                 }
                 recv(cancelled.receiver()) -> _ => return Err(Failure::Cancelled),
-                recv(deadline) -> _ => {
-                    let what = self.what;
-                    return Err(Failure::Broken(anyhow::anyhow!("{what} timed out")));
-                }
+                recv(deadline) -> _ => return Err(Failure::Broken(self.timed_out())),
             }
         }
     }
@@ -2141,9 +2239,17 @@ mod tests {
         );
         assert!(ran.unwrap_err().to_string().contains("timed out"));
         assert!(took < Duration::from_secs(10), "{took:?}");
-        assert_eq!(said_for(Duration::from_secs(180)), "3 minutes");
-        assert_eq!(said_for(Duration::from_secs(60)), "1 minute");
-        assert_eq!(said_for(Duration::from_millis(200)), "1 second");
+        let said = |time| stalled("rsync", time).english();
+        let stopped = "rsync stopped: it said nothing of its progress for";
+        assert_eq!(
+            said(Duration::from_secs(180)),
+            format!("{stopped} 3 minutes")
+        );
+        assert_eq!(said(Duration::from_secs(60)), format!("{stopped} 1 minute"));
+        assert_eq!(
+            said(Duration::from_millis(200)),
+            format!("{stopped} 1 second")
+        );
     }
 
     /// What `a_program_that_ends_with_its_starter_goes_when_skwir_is_killed`

@@ -444,22 +444,36 @@ impl Context {
             .presence
             .as_ref()
             .and_then(|presence| presence.pause);
+        // Its entries' words, said as the menu opens, as Windows takes
+        // them: UTF-16, ending in a zero, alive until it is destroyed.
+        let wide = |words: skwir_core::words::Words| -> Vec<u16> {
+            words.say().encode_utf16().chain([0]).collect()
+        };
+        let open = wide(super::super::tray_open());
+        let pausing = pause.map(|pause| {
+            wide(if pause {
+                super::super::tray_pause()
+            } else {
+                super::super::tray_go_on()
+            })
+        });
+        let stop = wide(super::super::tray_stop());
         #[allow(unsafe_code)]
         // SAFETY: a menu made, shown and destroyed here, on this thread's
         // window, as the documentation asks: the window brought forward
         // first, so the menu closes when clicked away from, and a message
-        // posted after, so the next one opens.
+        // posted after, so the next one opens. Its entries' words outlive
+        // it.
         let chosen = unsafe {
             let Ok(menu) = CreatePopupMenu() else {
                 return;
             };
-            let _ = AppendMenuW(menu, MF_STRING, OPEN, w!("Open Skwir"));
+            let _ = AppendMenuW(menu, MF_STRING, OPEN, PCWSTR(open.as_ptr()));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            if let Some(pause) = pause {
-                let label = if pause { w!("Pause all") } else { w!("Go on") };
-                let _ = AppendMenuW(menu, MF_STRING, PAUSE, label);
+            if let Some(label) = &pausing {
+                let _ = AppendMenuW(menu, MF_STRING, PAUSE, PCWSTR(label.as_ptr()));
             }
-            let _ = AppendMenuW(menu, MF_STRING, STOP, w!("Stop all and quit"));
+            let _ = AppendMenuW(menu, MF_STRING, STOP, PCWSTR(stop.as_ptr()));
             let _ = SetForegroundWindow(window);
             self.in_menu.set(true);
             let chosen = TrackPopupMenuEx(

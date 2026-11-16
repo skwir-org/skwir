@@ -14,6 +14,7 @@ use std::io::{BufReader, Read};
 
 use skwir_core::CancelToken;
 use skwir_core::preview::{FileSource, ReadSeek};
+use skwir_core::words::Words;
 
 use crate::inspection::{self, limits};
 
@@ -32,6 +33,9 @@ impl Package {
     /// `what` naming it in the message of a package with too many members
     /// ("The document"); its names compared without case when `folded`.
     ///
+    /// Transitional: `what` is a fragment the refusal is written around;
+    /// [`Package::open_words`] takes the refusal whole (ADR-139).
+    ///
     /// # Errors
     /// When it cannot be read, is no zip, or holds too many members.
     pub fn open<S: FileSource + ?Sized>(
@@ -40,12 +44,43 @@ impl Package {
         folded: bool,
         cancel: &CancelToken,
     ) -> anyhow::Result<Self> {
+        Self::opened(file, folded, cancel, || {
+            anyhow::anyhow!(
+                "{what} holds more than {} members",
+                limits::CONTAINER_MEMBERS
+            )
+        })
+    }
+
+    /// [`Package::open`], refused past `limits::CONTAINER_MEMBERS` members
+    /// saying `too_many`: a whole message, the bound an argument of it
+    /// ("The document holds more than { $count } members").
+    ///
+    /// # Errors
+    /// When it cannot be read, is no zip, or holds too many members.
+    pub fn open_words<S: FileSource + ?Sized>(
+        file: &S,
+        too_many: impl Into<Words>,
+        folded: bool,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Self> {
+        Self::opened(file, folded, cancel, move || {
+            anyhow::Error::from(Into::<Words>::into(too_many))
+        })
+    }
+
+    /// The package `file`, else what `too_many` makes past
+    /// `limits::CONTAINER_MEMBERS` members.
+    fn opened<S: FileSource + ?Sized>(
+        file: &S,
+        folded: bool,
+        cancel: &CancelToken,
+        too_many: impl FnOnce() -> anyhow::Error,
+    ) -> anyhow::Result<Self> {
         let mut archive = zip::ZipArchive::new(BufReader::new(inspection::open(file)?))?;
-        anyhow::ensure!(
-            archive.len() <= limits::CONTAINER_MEMBERS,
-            "{what} holds more than {} members",
-            limits::CONTAINER_MEMBERS
-        );
+        if archive.len() > limits::CONTAINER_MEMBERS {
+            return Err(too_many());
+        }
         let mut members = HashMap::new();
         for index in 0..archive.len() {
             inspection::check(cancel)?;
@@ -94,6 +129,9 @@ impl Package {
     /// Member `name`, whole within `bound` bytes inflated; `what` names it
     /// in the messages.
     ///
+    /// Transitional: [`Package::read_words`] takes what it says whole
+    /// (ADR-139).
+    ///
     /// # Errors
     /// When it is missing, damaged, longer than `bound` or cancelled.
     pub fn read(
@@ -108,6 +146,27 @@ impl Package {
             .ok_or_else(|| anyhow::anyhow!("{what} is missing"))?;
         let file = self.archive.by_index(index)?;
         inspection::copy_bounded(file, bound, what, cancel)
+    }
+
+    /// [`Package::read`], saying `missing` when it has no member `name`
+    /// and `too_large` when the member inflates past `bound`: whole
+    /// messages, the bound an argument of the second (`words::Size`).
+    ///
+    /// # Errors
+    /// When it is missing, damaged, longer than `bound` or cancelled.
+    pub fn read_words(
+        &mut self,
+        name: &str,
+        bound: usize,
+        missing: impl Into<Words>,
+        too_large: impl Into<Words>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Vec<u8>> {
+        let index = self
+            .index(name)
+            .ok_or_else(|| anyhow::Error::from(Into::<Words>::into(missing)))?;
+        let file = self.archive.by_index(index)?;
+        inspection::copy_bounded_words(file, bound, too_large, cancel)
     }
 
     /// The start of member `name`, at most `limit` bytes of it: enough to

@@ -67,7 +67,14 @@ pub fn details<S: FileSource + ?Sized>(source: &S) -> Vec<Detail> {
     taken(source)
         .at
         .and_then(|at| {
-            crate::inspection::detail("Position", format!("{:.5}, {:.5}", at.lat, at.lon))
+            crate::inspection::detail_words(
+                skwir_core::words!(
+                    mp4_position = "Position",
+                    note =
+                        "A label in Properties: where a film was made, as latitude and longitude."
+                ),
+                format!("{:.5}, {:.5}", at.lat, at.lon),
+            )
         })
         .map(crate::inspection::on_map)
         .into_iter()

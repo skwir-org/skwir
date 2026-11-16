@@ -29,6 +29,8 @@ use skwir_core::document::DocumentSession;
 use skwir_core::op::EntryRef;
 use skwir_core::preview::{HeldSlot, PreviewRequest};
 use skwir_core::shrink::{Changed, Job, Kind, Made};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::process::Follow;
 use crate::sandbox::Otherwise;
@@ -74,7 +76,12 @@ pub fn run(
     cancel: &CancelToken,
     follow: &Follow<'_>,
 ) -> Result<Made> {
-    let program = crate::print_job::WORKER.require("make smaller copies")?;
+    let program = crate::print_job::WORKER.require_words(words!(
+        shrink_install = "Install { $program } to make smaller copies",
+        program = crate::print_job::WORKER.executable,
+        note =
+            "The helper program that makes smaller copies of files is missing. program: its name."
+    ))?;
     ran(&program, job, work, name, cancel, follow)
         .map_err(|error| crate::process::explain(&program, cancel, error))
 }
@@ -97,7 +104,7 @@ pub fn made(
     again: &dyn Fn(),
 ) -> Result<(Option<Copy>, Made)> {
     let size = std::fs::metadata(&job.input)
-        .with_context(|| format!("{} could not be read", job.input.display()))?
+        .with_context(|| unread(&job.input))?
         .len();
     if job.kind != Kind::Pdf {
         let made = run(&mut job, work, name, cancel, follow)?;
@@ -120,11 +127,11 @@ pub fn made(
             Looked::Images(keep) if pass < PASSES => keep,
             Looked::Images(_) => {
                 tracing::info!("a smaller copy looked different with its images put back");
-                return Ok((None, not_kept(size, STILL_UNLIKE)));
+                return Ok((None, not_kept(size, &still_unlike())));
             }
             Looked::Unlike => {
                 tracing::info!("a smaller copy looked different beyond its images");
-                return Ok((None, not_kept(size, UNLIKE)));
+                return Ok((None, not_kept(size, &unlike())));
             }
         };
         tracing::info!(
@@ -138,7 +145,7 @@ pub fn made(
         made = run(&mut job, work, name, cancel, &follow.part(0.0, MAKING))?;
         pass += 1;
         if !made.written {
-            return Ok((None, not_kept(size, PUT_BACK)));
+            return Ok((None, not_kept(size, &put_back())));
         }
     }
     follow.went(1.0);
@@ -146,18 +153,47 @@ pub fn made(
 }
 
 /// Why a PDF's copy was not kept, said after "No smaller copy was made".
-const UNLIKE: &str = "a copy made looked different from it beyond its images, so none was kept";
-const STILL_UNLIKE: &str =
-    "a copy made still looked different from it with its images put back, so none was kept";
-const PUT_BACK: &str = "its images made smaller looked different in a copy and were put back as they were, which left it no smaller";
+fn unlike() -> Words {
+    words!(
+        shrink_unlike = "a copy made looked different from it beyond its images, so none was kept",
+        note = "Why no smaller copy of a PDF was kept, said after “No smaller copy was made”: its pages, drawn, did not look the same."
+    )
+}
+
+/// [`unlike`], after its images were put back.
+fn still_unlike() -> Words {
+    words!(
+        shrink_still_unlike =
+            "a copy made still looked different from it with its images put back, so none was kept",
+        note = "Why no smaller copy of a PDF was kept, said after “No smaller copy was made”."
+    )
+}
+
+/// Why a PDF's copy was not kept once its images were all put back.
+fn put_back() -> Words {
+    words!(
+        shrink_put_back = "its images made smaller looked different in a copy and were put back as they were, which left it no smaller",
+        note = "Why no smaller copy of a PDF was kept, said after “No smaller copy was made”."
+    )
+}
+
+/// What a file at `path` that could not be read is said as.
+fn unread(path: &Path) -> Words {
+    words!(
+        shrink_unread = "{ $path } could not be read",
+        path = path.display().to_string(),
+        note = "path: the file a smaller copy is made of."
+    )
+}
 
 /// Nothing kept of a file of `size` bytes, `why`.
-fn not_kept(size: u64, why: &str) -> Made {
+fn not_kept(size: u64, why: &Words) -> Made {
     Made {
         before: size,
         after: size,
         written: false,
-        notes: vec![why.to_owned()],
+        // Transitional: `Made::notes` is text, said once here (ADR-139).
+        notes: vec![why.say()],
         ..Made::default()
     }
 }
@@ -180,16 +216,30 @@ fn kept(job: &Job, made: Made, size: u64) -> Result<(Option<Copy>, Made)> {
 /// file itself, never through a link at its end), and its size, which is
 /// more than nothing and less than the file's `size`.
 fn opened(path: &Path, size: u64) -> Result<(std::fs::File, u64)> {
-    let file = skwir_core::fs::file::open_regular_unfollowed(path)
-        .context("the shrink helper wrote no copy")?;
+    let file = skwir_core::fs::file::open_regular_unfollowed(path).context(words!(
+        shrink_no_copy = "the shrink helper wrote no copy",
+        note = "The helper program that makes smaller copies left no copy."
+    ))?;
     let written = file
         .metadata()
-        .context("the shrink helper's copy could not be read")?
+        .context(words!(
+            shrink_copy_unread = "the shrink helper's copy could not be read",
+            note = "The copy the helper program made cannot be read."
+        ))?
         .len();
-    ensure!(written > 0, "the shrink helper wrote an empty copy");
+    ensure!(
+        written > 0,
+        words!(
+            shrink_empty_copy = "the shrink helper wrote an empty copy",
+            note = "The helper program that makes smaller copies left an empty copy."
+        )
+    );
     ensure!(
         written < size,
-        "the shrink helper wrote a copy no smaller than the file"
+        words!(
+            shrink_no_smaller = "the shrink helper wrote a copy no smaller than the file",
+            note = "The helper program said it made a smaller copy, and the copy is not smaller."
+        )
     );
     Ok((file, written))
 }
@@ -207,7 +257,7 @@ fn ran(
     let _ = std::fs::remove_file(&output);
     let input = job.input.clone();
     let size = std::fs::metadata(&input)
-        .with_context(|| format!("{} could not be read", input.display()))?
+        .with_context(|| unread(&input))?
         .len();
     let mut run = crate::sandbox::untrusted(program, &input, work, Otherwise::Run)?;
     // The job names the input and the copy where the helper sees them.
@@ -224,17 +274,22 @@ fn ran(
     let finished = finished?;
     if !finished.status.success() {
         let said = finished.stderr.lines().next().unwrap_or_default().trim();
-        bail!(
-            "No smaller copy could be made ({}): {said}",
-            finished.status
-        );
+        bail!(words!(
+            shrink_failed = "No smaller copy could be made ({ $status }): { $said }",
+            status = finished.status.to_string(),
+            said = said,
+            note = "The helper program that makes smaller copies failed. status: how it ended, as the system says; said: the first line it wrote of why."
+        ));
     }
     let said = String::from_utf8_lossy(&finished.stdout);
     let line = said
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())
-        .context("the shrink helper said nothing")?;
+        .context(words!(
+            shrink_silent = "the shrink helper said nothing",
+            note = "The helper program that makes smaller copies ended without its answer."
+        ))?;
     let made: Made =
         serde_json::from_str(line).context("the shrink helper's answer could not be read")?;
     if made.written {
@@ -247,8 +302,13 @@ fn ran(
 
 /// The job written for the helper to read.
 fn write_job(job: &Job, path: &Path) -> Result<()> {
-    let file = std::fs::File::create(path)
-        .with_context(|| format!("{} could not be written", path.display()))?;
+    let file = std::fs::File::create(path).with_context(|| {
+        words!(
+            shrink_unwritten = "{ $path } could not be written",
+            path = path.display().to_string(),
+            note = "path: the file Skwir writes the helper's job to, in a folder of its own."
+        )
+    })?;
     let mut writer = std::io::BufWriter::new(file);
     serde_json::to_writer(&mut writer, job)?;
     writer.flush()?;
@@ -390,8 +450,13 @@ fn session(
     lifetime: &CancelToken,
 ) -> Result<Option<std::sync::Arc<dyn DocumentSession>>> {
     let request = PreviewRequest {
-        entry: EntryRef::from_path(path)
-            .with_context(|| format!("{} is not there", path.display()))?,
+        entry: EntryRef::from_path(path).with_context(|| {
+            words!(
+                shrink_gone = "{ $path } is not there",
+                path = path.display().to_string(),
+                note = "path: a PDF whose smaller copy is checked, gone meanwhile."
+            )
+        })?,
         mime: Some("application/pdf".to_owned()),
         page: 1,
         seconds: None,

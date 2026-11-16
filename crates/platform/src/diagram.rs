@@ -25,8 +25,18 @@ pub fn worker_path() -> Option<PathBuf> {
 /// The SVG of the diagram `source` describes. An error when the helper is
 /// missing, or says `source` is not a diagram it can draw.
 pub fn mermaid(source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
-    anyhow::ensure!(source.len() <= SOURCE, "The diagram is too long to draw");
-    let worker = WORKER.require("draw diagrams")?;
+    anyhow::ensure!(
+        source.len() <= SOURCE,
+        skwir_core::words!(
+            diagram_too_long = "The diagram is too long to draw",
+            note = "Why a Mermaid diagram in a document is shown as its text: it is longer than is drawn."
+        )
+    );
+    let worker = WORKER.require_words(skwir_core::words!(
+        diagram_install = "Install { $program } to draw diagrams",
+        program = WORKER.executable,
+        note = "What to do to see a document's Mermaid diagrams drawn. program: the diagram helper's name (skwir-mermaid-worker)."
+    ))?;
     drawn(&worker, source, cancel).map_err(|error| crate::process::explain(&worker, cancel, error))
 }
 
@@ -48,8 +58,11 @@ fn drawn(worker: &Path, source: &str, cancel: &CancelToken) -> anyhow::Result<St
     )?;
     anyhow::ensure!(
         finished.status.success(),
-        "The diagram cannot be drawn: {}",
-        finished.stderr.trim()
+        skwir_core::words!(
+            diagram_failed = "The diagram cannot be drawn: { $said }",
+            said = finished.stderr.trim(),
+            note = "said: what the diagram helper wrote of why (often the diagram's mistake), as it wrote it."
+        )
     );
     Ok(String::from_utf8(finished.stdout)?)
 }

@@ -29,11 +29,55 @@ pub use skwir_core::fs::file::{
 /// refused, naming the file as `what`, rather than replaced by a copy that
 /// silently parts from the declaration.
 ///
+/// Transitional: `what` is a fragment the refusals are written around;
+/// [`rewrite_words`] takes the refusal whole (ADR-139).
+///
 /// # Errors
 /// When the file cannot be read or written.
 pub fn rewrite<T>(
     link: &Path,
     what: &str,
+    change: impl FnOnce(&str) -> Option<(String, T)>,
+) -> anyhow::Result<Option<T>> {
+    rewrite_with(
+        link,
+        || anyhow::anyhow!("{what} has no folder"),
+        || anyhow::anyhow!("{what} is read-only; change it where it is managed"),
+        change,
+    )
+}
+
+/// [`rewrite`], a read-only file refused saying `read_only`, a whole
+/// message naming it ("The bookmarks file is read-only; change it where
+/// it is managed").
+///
+/// # Errors
+/// When the file cannot be read or written.
+pub fn rewrite_words<T>(
+    link: &Path,
+    read_only: impl Into<skwir_core::words::Words>,
+    change: impl FnOnce(&str) -> Option<(String, T)>,
+) -> anyhow::Result<Option<T>> {
+    rewrite_with(
+        link,
+        || {
+            skwir_core::words!(
+                file_no_folder = "{ $path } has no folder",
+                path = link.display().to_string(),
+                note = "Why a file of the desktop's (its bookmarks, its default applications) was not changed: its path names no folder. path: the file's path."
+            )
+            .into()
+        },
+        move || anyhow::Error::from(Into::<skwir_core::words::Words>::into(read_only)),
+        change,
+    )
+}
+
+/// [`rewrite`], refused with what `no_folder` and `read_only` make.
+fn rewrite_with<T>(
+    link: &Path,
+    no_folder: impl FnOnce() -> anyhow::Error,
+    read_only: impl FnOnce() -> anyhow::Error,
     change: impl FnOnce(&str) -> Option<(String, T)>,
 ) -> anyhow::Result<Option<T>> {
     use std::io::Write as _;
@@ -50,11 +94,9 @@ pub fn rewrite<T>(
     let Some((updated, value)) = change(&text) else {
         return Ok(None);
     };
-    let parent = file
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("{what} has no folder"))?;
+    let parent = file.parent().ok_or_else(no_folder)?;
     std::fs::create_dir_all(parent)?;
-    let read_only = |error: &io::Error| {
+    let refused = |error: &io::Error| {
         matches!(
             error.kind(),
             io::ErrorKind::ReadOnlyFilesystem | io::ErrorKind::PermissionDenied
@@ -62,9 +104,7 @@ pub fn rewrite<T>(
     };
     let mut staged = match tempfile::NamedTempFile::new_in(parent) {
         Ok(staged) => staged,
-        Err(error) if read_only(&error) => {
-            anyhow::bail!("{what} is read-only; change it where it is managed")
-        }
+        Err(error) if refused(&error) => return Err(read_only()),
         Err(error) => return Err(error.into()),
     };
     if let Ok(metadata) = std::fs::metadata(&file) {
