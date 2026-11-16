@@ -17,6 +17,8 @@ use skwir_core::command::Invocation;
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::suggest::{self, Answer, Ask, Section, SuggestSource, Suggestion, Typed};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::assist::{self, SpanKind};
 use crate::{ID, lang};
@@ -80,20 +82,33 @@ fn scope_of(ask: &Ask) -> Option<Location> {
 /// What a scope is called in a row: a place with depths searched with
 /// everything within it says so (`searched_place`).
 fn scope_said(app: &App, scope: &Location, ask: &Ask) -> String {
-    match scope.path() {
-        Some(path) if path.parent().is_none() => "on the whole disk".to_owned(),
-        Some(path) if Some(&path) == skwir_core::os_path::home().as_ref() => {
-            "everywhere in Home".to_owned()
-        }
-        Some(_) => format!("in {} and its folders", app.location_title(scope).say()),
-        None if searched_place(app, scope, ask).is_some_and(|(_, within)| within) => {
-            format!(
-                "among every file within {}",
-                app.location_title(scope).say()
-            )
-        }
-        None => format!("among the files in {}", app.location_title(scope).say()),
-    }
+    let said = match scope.path() {
+        Some(path) if path.parent().is_none() => words!(
+            query_field_whole_disk = "on the whole disk",
+            note = "Beside a search the address field offers: where it looks."
+        ),
+        Some(path) if Some(&path) == skwir_core::os_path::home().as_ref() => words!(
+            query_field_home = "everywhere in Home",
+            note = "Beside a search the address field offers: where it looks, the home folder and every folder within it."
+        ),
+        Some(_) => words!(
+            query_field_in_folders = "in { $place } and its folders",
+            place = app.location_title(scope),
+            note =
+                "Beside a search the address field offers: where it looks. place: a folder's name."
+        ),
+        None if searched_place(app, scope, ask).is_some_and(|(_, within)| within) => words!(
+            query_field_within = "among every file within { $place }",
+            place = app.location_title(scope),
+            note = "Beside a search the address field offers: where it looks. place: a place with places within it (a tag holding tags)."
+        ),
+        None => words!(
+            query_field_among = "among the files in { $place }",
+            place = app.location_title(scope),
+            note = "Beside a search the address field offers: where it looks. place: a place that lists files (Recent)."
+        ),
+    };
+    said.say()
 }
 
 /// The place a place with depths (a tag's, ADR-108) is searched as, and
@@ -202,7 +217,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                 SpanKind::Operator => suggest::SpanKind::Operator,
                 SpanKind::Error => suggest::SpanKind::Error,
             },
-            message: s.message,
+            message: s.message.as_ref().map(Words::say),
         })
         .collect();
     let Some(scope) = scope_of(ask) else {
@@ -238,20 +253,34 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     // the scope, and elsewhere below.
     let expr = first.map_or_else(|| words.to_owned(), |item| with(item).trim().to_owned());
     if let Some(problem) = problem.filter(|_| first.is_none()) {
-        let mut row = Suggestion::new(Section::Run, problem).icon("warning");
+        let mut row = Suggestion::new(Section::Run, problem.say()).icon("warning");
         row.error = true;
         rows.push(row);
     } else if completed.typing && first.is_none() {
         let said = if assist::quote_open(text) {
-            "Close the quote to search"
+            words!(
+                query_field_close_quote = "Close the quote to search",
+                note = "In the address field, in place of the search: a quote typed is not closed yet."
+            )
         } else {
-            "Type a value to search"
+            words!(
+                query_field_type_value = "Type a value to search",
+                note = "In the address field, in place of the search: a key typed has no value yet (kind:)."
+            )
         };
-        let mut row = Suggestion::new(Section::Run, said).icon("warning");
+        let mut row = Suggestion::new(Section::Run, said.say()).icon("warning");
         row.error = true;
         rows.push(row);
     } else {
-        let mut row = Suggestion::new(Section::Run, format!("Search “{expr}”"))
+        let mut row = Suggestion::new(
+            Section::Run,
+            words!(
+                query_field_search = "Search “{ $search }”",
+                search = expr.as_str(),
+                note = "The address field's first row: runs the search typed. search: the search, as written."
+            )
+            .say(),
+        )
             .detail(scope_said(app, &scope, ask))
             .icon("search")
             .runs(search(app, &expr, &scope, ask));
@@ -272,8 +301,12 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     // writes it.
     for (i, item) in completed.items.iter().enumerate() {
         let is_key = item.text.ends_with(':') && !item.text.contains("::");
-        let mut row = Suggestion::new(Section::Complete, item.label.clone())
-            .detail(item.detail.clone().unwrap_or_else(|| item.text.clone()))
+        let mut row = Suggestion::new(Section::Complete, item.label.say())
+            .detail(
+                item.detail
+                    .as_ref()
+                    .map_or_else(|| item.text.clone(), Words::say),
+            )
             .icon(&item.icon)
             .rank(i32::try_from(i).unwrap_or(i32::MAX));
         row.detail_typed = true;
@@ -290,8 +323,25 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     // nothing): the window's arrows pass over it, and Enter takes nothing.
     if completed.more > 0 {
         let more = completed.more;
-        let row = Suggestion::new(Section::Complete, format!("{more} more tags"))
-            .detail("Type more of the name to narrow them")
+        let row = Suggestion::new(
+            Section::Complete,
+            words!(
+                query_field_more_tags = "{ $count ->
+                    [one] { $count } more tag
+                   *[other] { $count } more tags
+                }",
+                count = more,
+                note = "Below the tags the address field offers: how many more go on with what is typed."
+            )
+            .say(),
+        )
+        .detail(
+            words!(
+                query_field_narrow_tags = "Type more of the name to narrow them",
+                note = "Beside how many more tags go on with what is typed in the address field."
+            )
+            .say(),
+        )
             .icon("tag")
             .rank(i32::try_from(completed.items.len()).unwrap_or(i32::MAX));
         rows.push(row);
@@ -306,7 +356,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         &tags.here
     };
     if let Some(reading) = assist::interpret_in(words, named) {
-        let mut row = Suggestion::new(Section::Reading, reading.label)
+        let mut row = Suggestion::new(Section::Reading, reading.label.say())
             .detail(reading.expr.clone())
             .icon("sliders")
             .runs(search(app, &reading.expr, &scope, ask));
@@ -332,7 +382,11 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
             };
             seen.push(other.clone());
             let title = match other.path() {
-                Some(path) if path.parent().is_none() => "Whole disk".to_owned(),
+                Some(path) if path.parent().is_none() => words!(
+                    query_field_search_disk = "Whole disk",
+                    note = "A row of the address field: the same search on the whole disk."
+                )
+                .say(),
                 _ => app.location_title(&other).say(),
             };
             rows.push(
@@ -344,7 +398,14 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         }
         if lang::parse(words).is_ok_and(|q| !q.reads_files()) && assist::only_words(words) {
             rows.push(
-                Suggestion::new(Section::SearchIn, "Contents")
+                Suggestion::new(
+                    Section::SearchIn,
+                    words!(
+                        query_field_search_contents = "Contents",
+                        note = "A row of the address field: the words typed searched in what the files hold."
+                    )
+                    .say(),
+                )
                     .icon("contents")
                     .rank(3)
                     .runs(search(
@@ -359,7 +420,14 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         // name that has one (`#3`, an editor's `#notes#`).
         if let Some(names) = assist::hashes_as_names(words) {
             rows.push(
-                Suggestion::new(Section::SearchIn, "Names")
+                Suggestion::new(
+                    Section::SearchIn,
+                    words!(
+                        query_field_search_names = "Names",
+                        note = "A row of the address field: words written #tag searched in names, not as tags."
+                    )
+                    .say(),
+                )
                     .detail(names.clone())
                     .icon("search")
                     .rank(4)
@@ -376,7 +444,15 @@ fn at_words(app: &App, ask: &Ask) -> Suggestion {
     let words = ask.words();
     let expr = lang::quote(words);
     let scope = scope_of(ask).unwrap_or_else(|| Location::from_path(PathBuf::from("/")));
-    Suggestion::new(Section::Run, format!("Search for “{words}”"))
+    Suggestion::new(
+        Section::Run,
+        words!(
+            query_field_search_for = "Search for “{ $words }”",
+            words = words,
+            note = "A row of the address field: the words typed after @ searched in names, as written."
+        )
+        .say(),
+    )
         .detail(scope_said(app, &scope, ask))
         .icon("search")
         .rank(1)
@@ -394,17 +470,59 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
         format!("{text} ")
     };
     for (rank, (key, title, icon)) in [
-        ("kind:", "Kind", "grid"),
-        ("modified:", "Modified", "calendar"),
-        ("size:", "Size", "sliders"),
-        ("tag:", "Tag", "tag"),
-        ("content:", "Contains", "contents"),
-        ("taken:", "Taken", "calendar"),
+        (
+            "kind:",
+            words!(
+                query_term_kind = "Kind",
+                note = "A term the address field offers to add to a search before anything is typed: of a kind."
+            ),
+            "grid",
+        ),
+        (
+            "modified:",
+            words!(
+                query_term_modified = "Modified",
+                note = "A term the address field offers to add to a search: when files were last changed."
+            ),
+            "calendar",
+        ),
+        (
+            "size:",
+            words!(
+                query_term_size = "Size",
+                note = "A term the address field offers to add to a search: how big files are."
+            ),
+            "sliders",
+        ),
+        (
+            "tag:",
+            words!(
+                query_term_tag = "Tag",
+                note = "A term the address field offers to add to a search: a tag files have."
+            ),
+            "tag",
+        ),
+        (
+            "content:",
+            words!(
+                query_term_contains = "Contains",
+                note = "A term the address field offers to add to a search: text files hold."
+            ),
+            "contents",
+        ),
+        (
+            "taken:",
+            words!(
+                query_term_taken = "Taken",
+                note = "A term the address field offers to add to a search: when pictures were taken."
+            ),
+            "calendar",
+        ),
     ]
     .into_iter()
     .enumerate()
     {
-        let mut row = Suggestion::new(Section::Terms, title)
+        let mut row = Suggestion::new(Section::Terms, title.say())
             .icon(icon)
             .rank(i32::try_from(rank).unwrap_or(0));
         row.completion = Some(format!("{before}{key}"));
@@ -432,7 +550,14 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| recent.expr.clone());
         let mut row = Suggestion::new(Section::Recent, words.clone())
-            .detail(format!("in {}", app.location_title(&scope).say()))
+            .detail(
+                words!(
+                    query_field_recent_in = "in { $place }",
+                    place = app.location_title(&scope),
+                    note = "Beside a search run lately, offered by the address field: where it looked."
+                )
+                .say(),
+            )
             .icon("recent")
             .rank(i32::try_from(rank).unwrap_or(0))
             .runs(search(app, &words, &scope, &as_it_was));
@@ -455,7 +580,13 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
                 (Location::new(crate::SCHEME, saved.expr), None, detail)
             }
             Some(at) => {
-                let detail = format!("{} in {}", saved.expr, app.location_title(&at).say());
+                let detail = words!(
+                    query_field_saved_in = "{ $filter } in { $place }",
+                    filter = saved.expr.as_str(),
+                    place = app.location_title(&at),
+                    note = "Beside a saved place, offered by the address field: what filters it, as written, and where it is."
+                )
+                .say();
                 (at, Some(saved.expr), detail)
             }
         };

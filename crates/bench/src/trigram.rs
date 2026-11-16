@@ -848,7 +848,7 @@ fn scan(app: &skwir_core::App, expr: &str, root: &Path) -> Result<(Duration, Has
 
 /// The one `content:` term of `expr`.
 fn content_term(expr: &str) -> Result<ContentPat> {
-    let q = lang::parse(expr).map_err(|e| anyhow::anyhow!("`{expr}`: {}", e.0))?;
+    let q = lang::parse(expr).map_err(|e| anyhow::anyhow!("`{expr}`: {}", e.words))?;
     match q.expr {
         Some(Expr::Term(Term::Content(p))) => Ok(p),
         _ => bail!("`{expr}` is not one content: term"),

@@ -13,6 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use skwir_core::entry::Entry;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::{Lens, ReadFilter};
 
 use crate::facets;
@@ -119,6 +121,35 @@ fn keeps(test: &Expr, entry: &Entry, types: &lang::Types) -> bool {
     test.eval(&c, false) == Verdict::Yes
 }
 
+/// What only a search can tell of a file, left out of a filter until
+/// Enter.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Waits {
+    Contents,
+    Taken,
+    Places,
+}
+
+impl Waits {
+    /// What it is called where the filter says what waits.
+    fn words(self) -> Words {
+        match self {
+            Waits::Contents => words!(
+                query_waits_contents = "contents",
+                note = "What a filter leaves to a search (Enter): what files contain."
+            ),
+            Waits::Taken => words!(
+                query_waits_taken = "dates taken",
+                note = "What a filter leaves to a search (Enter): when pictures were taken."
+            ),
+            Waits::Places => words!(
+                query_waits_places = "places",
+                note = "What a filter leaves to a search (Enter): where pictures were taken."
+            ),
+        }
+    }
+}
+
 /// What words typed over a folder keep (ADR-098): the core's filter
 /// reader. The longest start of `text` that reads as a query is read, so
 /// a term still being typed (`dunes kind:im`) leaves the words before it
@@ -151,11 +182,11 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
     for item in all {
         if item.any_term(&reads_file) {
             let what = if item.any_term(&|t| matches!(t, Term::Content(_))) {
-                "contents"
+                Waits::Contents
             } else if item.any_term(&|t| matches!(t, Term::Taken { .. })) {
-                "dates taken"
+                Waits::Taken
             } else {
-                "places"
+                Waits::Places
             };
             if !waits.contains(&what) {
                 waits.push(what);
@@ -191,7 +222,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
             }
             files.eval(&c, false) == Verdict::Yes
         }),
-        waits: waits.into_iter().map(str::to_owned).collect(),
+        waits: waits.into_iter().map(|what| what.words().say()).collect(),
         metadata,
         lens,
         next_change: q.next_change(),

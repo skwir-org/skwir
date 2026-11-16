@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use skwir_core::words;
 use skwir_core::{
     App, CancelToken,
     inspection::{
@@ -46,7 +47,10 @@ impl Plugin for GitPlugin {
         skwir_core::plugin::Category::Previews
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
-        vec![git::WORKER.requirement("Histories of commits")]
+        vec![git::WORKER.requirement(words!(
+            git_requirement = "Histories of commits",
+            note = "What stops working without the Git helper program, on the Plugins page."
+        ))]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
         use skwir_core::permissions::Capability;
@@ -56,8 +60,10 @@ impl Plugin for GitPlugin {
         app.settings.declare(
             skwir_core::settings::SettingSpec::toggle(
                 state::SHOWN,
-                "Show the files' Git state",
-                "Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository. The list's Git column says the same.",
+                words!(git_states_setting = "Show the files' Git state"),
+                words!(
+                    git_states_setting_description = "Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository. The list's Git column says the same."
+                ),
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)
@@ -118,8 +124,11 @@ impl PreviewProvider for Provider {
     }
     fn way(&self) -> Option<Way> {
         Some(Way {
-            label: "History",
-            tip: "Its history of commits, read from Git",
+            label: words!(
+                git_way = "History",
+                note = "A button of the preview's bar: shows the file's or the folder's history of commits."
+            ),
+            tip: words!(git_way_tip = "Its history of commits, read from Git"),
             icon: "history",
             folders: true,
         })
@@ -135,8 +144,7 @@ impl PreviewProvider for Provider {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let (repo, path) =
-            located(request).ok_or_else(|| anyhow::anyhow!("Not in a Git repository"))?;
+        let (repo, path) = located(request).ok_or_else(not_in_a_repository)?;
         let log = git::log(&repo, &path, view.whole, cancel)?;
         Ok(Some(history(&log, &path, view.whole)))
     }
@@ -150,8 +158,7 @@ impl PreviewProvider for Provider {
         into: &Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Member>> {
-        let (repo, path) =
-            located(request).ok_or_else(|| anyhow::anyhow!("Not in a Git repository"))?;
+        let (repo, path) = located(request).ok_or_else(not_in_a_repository)?;
         let (id, name) = asked(target, &path);
         let (written, _) = git::patch(&repo, id, name, into, view.whole, cancel)?;
         let name = written
@@ -164,6 +171,11 @@ impl PreviewProvider for Provider {
             own_file: false,
         }))
     }
+}
+
+/// Why there is no history: the entry is in no repository.
+fn not_in_a_repository() -> anyhow::Error {
+    words!(git_not_in_repository = "Not in a Git repository").into()
 }
 
 /// The commit a row's target opens, and the name its patch is read under:
@@ -209,29 +221,56 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
             ..Row::default()
         })
         .collect();
-    let mut notice = String::new();
-    if log.stopped {
-        notice = format!(
-            "The newest {} commits: reading stopped before the oldest",
-            rows.len()
-        );
-    } else if log.more {
-        notice = format!("The newest {} commits", rows.len());
-    }
-    if log.names_cut {
-        let more = "Some commits have more branches and tags than are shown";
-        notice = if notice.is_empty() {
-            more.to_owned()
-        } else {
-            format!("{notice}. {more}")
-        };
-    }
+    let count = rows.len();
+    let notice = match (log.stopped, log.more, log.names_cut) {
+        (true, _, true) => Some(words!(
+            git_stopped_names_cut = "{ $count ->
+                [one] The newest { $count } commit: reading stopped before the oldest. Some commits have more branches and tags than are shown
+               *[other] The newest { $count } commits: reading stopped before the oldest. Some commits have more branches and tags than are shown
+            }",
+            count = count,
+            note = "Under a history of commits: reading was stopped, and some commits' names are left out."
+        )),
+        (true, _, false) => Some(words!(
+            git_stopped = "{ $count ->
+                [one] The newest { $count } commit: reading stopped before the oldest
+               *[other] The newest { $count } commits: reading stopped before the oldest
+            }",
+            count = count,
+            note = "Under a history of commits: reading was stopped before the oldest commit."
+        )),
+        (false, true, true) => Some(words!(
+            git_newest_names_cut = "{ $count ->
+                [one] The newest { $count } commit. Some commits have more branches and tags than are shown
+               *[other] The newest { $count } commits. Some commits have more branches and tags than are shown
+            }",
+            count = count,
+            note = "Under a history of commits: older commits are left, and some commits' names are left out."
+        )),
+        (false, true, false) => Some(words!(
+            git_newest = "{ $count ->
+                [one] The newest { $count } commit
+               *[other] The newest { $count } commits
+            }",
+            count = count,
+            note = "Under a history of commits: older commits are left, read by Full preview."
+        )),
+        (false, false, true) => Some(words!(
+            git_names_cut = "Some commits have more branches and tags than are shown",
+            note = "Under a history of commits."
+        )),
+        (false, false, false) => None,
+    };
     let blocks = if rows.is_empty() {
         vec![Block {
             text: if path.is_empty() {
-                "No commit yet".into()
+                words!(git_no_commit = "No commit yet").say()
             } else {
-                "No commit changed it".into()
+                words!(
+                    git_no_commit_changed = "No commit changed it",
+                    note = "A file's or a folder's history of commits, empty."
+                )
+                .say()
             },
             ..Block::default()
         }]
@@ -239,17 +278,30 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         Vec::new()
     };
     let mut details = vec![skwir_core::inspection::Detail {
-        label: "Commits".into(),
+        label: words!(
+            git_detail_commits = "Commits",
+            note = "A history's detail: how many commits it lists."
+        )
+        .say(),
         value: if log.more || log.stopped {
-            format!("{} shown", rows.len())
+            words!(
+                git_commits_shown = "{ $count } shown",
+                count = count,
+                note = "How many commits a history lists, older ones left."
+            )
+            .say()
         } else {
-            rows.len().to_string()
+            count.to_string()
         },
         action: None,
     }];
     if let Some(head) = &log.head {
         details.push(skwir_core::inspection::Detail {
-            label: "Branch".into(),
+            label: words!(
+                git_detail_branch = "Branch",
+                note = "A history's detail: the branch checked out."
+            )
+            .say(),
             value: head.clone(),
             action: None,
         });
@@ -259,19 +311,38 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         // What the bar's caption says is shown: where it is read from, and
         // the branch checked out.
         title: log.head.as_ref().map_or_else(
-            || "Git history".to_owned(),
-            |head| format!("Git history · {head}"),
+            || words!(git_history = "Git history").say(),
+            |head| {
+                words!(
+                    git_history_on = "Git history · { $branch }",
+                    branch = head.as_str(),
+                    note = "The caption of a history of commits; branch: the branch checked out, as Git names it."
+                )
+                .say()
+            },
         ),
         blocks,
         columns: vec![
-            "Commit".into(),
-            "Hash".into(),
-            "Author".into(),
-            "Date".into(),
-            "Branches and tags".into(),
+            words!(
+                git_column_commit = "Commit",
+                note = "A column's header in a history of commits: its summary."
+            )
+            .say(),
+            words!(
+                git_column_hash = "Hash",
+                note = "A column's header in a history of commits: its short id."
+            )
+            .say(),
+            words!(git_column_author = "Author", note = "A column's header in a history of commits.").say(),
+            words!(git_column_date = "Date", note = "A column's header in a history of commits.").say(),
+            words!(
+                git_column_names = "Branches and tags",
+                note = "A column's header in a history of commits: the names at each commit."
+            )
+            .say(),
         ],
         rows,
-        notice,
+        notice: notice.map(|notice| notice.say()).unwrap_or_default(),
         details,
         whole_available: !whole && (log.more || log.stopped),
         ..Inspection::default()

@@ -23,6 +23,8 @@ use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::EntryKind;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 use skwir_core::{EntryId, FileId};
 
@@ -760,12 +762,18 @@ impl<'a> Scanner<'a> {
         let path = self.path;
         anyhow::ensure!(
             !virtual_filesystem(path),
-            "Disk usage is not available for virtual filesystems"
+            words!(
+                usage_virtual = "Disk usage is not available for virtual filesystems",
+                note = "Said in the Usage view of /proc or /sys, whose files are made up by the system."
+            )
         );
         let covered = self.watch(path)?;
         let metadata = std::fs::metadata(path)?;
         self.ensure()?;
-        anyhow::ensure!(metadata.is_dir(), "Disk usage needs a directory");
+        anyhow::ensure!(
+            metadata.is_dir(),
+            words!(usage_needs_directory = "Disk usage needs a directory")
+        );
         self.dev = meta::device(&metadata);
         let shown = &self.request.path;
         self.preview = Some(Progress {
@@ -890,7 +898,10 @@ impl<'a> Scanner<'a> {
                 branch.id = Some(id);
             }
         }
-        anyhow::ensure!(depth < 256, "Directory nesting exceeds the scan limit");
+        anyhow::ensure!(
+            depth < 256,
+            words!(usage_too_deep = "Directory nesting exceeds the scan limit")
+        );
         let mut node = Node {
             id: Some(id),
             name: path.file_name().map_or_else(
@@ -1643,28 +1654,52 @@ impl Worker {
                 .err()
                 .map(|error| {
                     if error.downcast_ref::<std::io::Error>().is_some() {
-                        "Unable to read this directory".to_owned()
+                        words!(usage_unreadable = "Unable to read this directory").say()
                     } else {
-                        error.to_string()
+                        // Words said in the reader's language; any other
+                        // error as it is.
+                        error
+                            .downcast_ref::<Words>()
+                            .map_or_else(|| error.to_string(), Words::say)
                     }
                 })
                 .or_else(|| {
                     (errors > 0).then(|| {
-                        format!("{errors} entries could not be read; totals are incomplete")
+                        words!(
+                            usage_entries_unread = "{ $count ->
+                                [one] { $count } entry could not be read; totals are incomplete
+                               *[other] { $count } entries could not be read; totals are incomplete
+                            }",
+                            count = errors,
+                            note = "Said in the Usage view: entries of the folder could not be read."
+                        )
+                        .say()
                     })
                 })
                 .or_else(|| {
-                    incomplete
-                        .then(|| "Directory changed during scan; totals are incomplete".into())
+                    incomplete.then(|| {
+                        words!(
+                            usage_changed_during = "Directory changed during scan; totals are incomplete"
+                        )
+                        .say()
+                    })
                 })
                 .or_else(|| match coverage {
                     Coverage::Full => None,
-                    Coverage::Partial => {
-                        Some("Some folders cannot be monitored; rechecking periodically".into())
-                    }
-                    Coverage::None => {
-                        Some("Live monitoring unavailable; rechecking periodically".into())
-                    }
+                    Coverage::Partial => Some(
+                        words!(
+                            usage_partly_watched = "Some folders cannot be monitored; rechecking periodically",
+                            note = "Said in the Usage view: some folders' changes cannot be followed as they happen."
+                        )
+                        .say(),
+                    ),
+                    Coverage::None => Some(
+                        words!(
+                            usage_unwatched = "Live monitoring unavailable; rechecking periodically",
+                            note = "Said in the Usage view: no folder's changes can be followed as they happen."
+                        )
+                        .say(),
+                    ),
                 });
             let node = tree.ok();
             *s = Status {
@@ -3067,7 +3102,7 @@ mod tests {
             status
                 .error
                 .unwrap()
-                .starts_with("1 entries could not be read")
+                .starts_with("1 entry could not be read")
         );
         assert_eq!(worker.active[&PaneId(0)].coverage, Coverage::Full);
         let registered = scan_registrations(&worker);

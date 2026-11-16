@@ -26,6 +26,8 @@ use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote
 use skwir_core::op::{EntryRef, Plan, Rename, RenameOrderError, RenameRequest, order_renames};
 use skwir_core::plugin::{Category, Plugin};
 use skwir_core::registry::MenuItem;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 pub(crate) const ID: &str = "name-tags";
@@ -337,7 +339,7 @@ fn planned(
             }
             match answer {
                 Ok(plan) => app.apply_whole(plan),
-                Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
             }
         },
     );
@@ -353,7 +355,10 @@ fn tag_names(
     known: Vec<Option<Vec<String>>>,
     convention: Convention,
 ) -> anyhow::Result<Plan> {
-    let mut plan = Plan::new("put tags in names");
+    let mut plan = Plan::new(words!(
+        name_tags_plan_into = "put tags in names",
+        note = "A plan's title, in its review and in what is said after it (Undid: …)."
+    ));
     let mut renames: Vec<RenameRequest> = Vec::new();
     let mut left_out: Vec<String> = Vec::new();
     let policy = app.notes.policy();
@@ -385,10 +390,14 @@ fn tag_names(
         plan.push(rename);
     }
     if !left_out.is_empty() {
-        plan = plan.with_note(format!(
-            "Left out, as a name cannot hold them: {}.",
-            left_out.join(", ")
-        ));
+        plan = plan.with_note(
+            words!(
+                name_tags_left_out = "Left out, as a name cannot hold them: { $tags }.",
+                tags = left_out.join(", "),
+                note = "A note in the review of a plan putting tags in names. tags: the tags left out, as written, separated by commas."
+            )
+            .say(),
+        );
     }
     Ok(plan)
 }
@@ -401,7 +410,10 @@ fn untag_names(
     _known: Vec<Option<Vec<String>>>,
     convention: Convention,
 ) -> anyhow::Result<Plan> {
-    let mut plan = Plan::new("take tags out of names");
+    let mut plan = Plan::new(words!(
+        name_tags_plan_out = "take tags out of names",
+        note = "A plan's title, in its review and in what is said after it (Undid: …)."
+    ));
     let mut renames: Vec<RenameRequest> = Vec::new();
     let name_store = store_id(convention);
     for r in refs {
@@ -446,21 +458,24 @@ fn ordered(requests: &[RenameRequest]) -> anyhow::Result<Vec<Rename>> {
     };
     order_renames(requests, |path| path.symlink_metadata().is_ok()).map_err(|e| match e {
         RenameOrderError::Duplicate { target, .. } => {
-            anyhow::anyhow!("Several files would be named “{}”", name(&target))
+            anyhow::anyhow!(words!(
+                name_tags_same_name = "Several files would be named { $name }",
+                name = Name(name(&target))
+            ))
         }
-        RenameOrderError::Conflict { item, target } => anyhow::anyhow!(
-            "“{}” would be named “{}”, which already exists",
-            name(&requests[item].entry.path),
-            name(&target)
-        ),
+        RenameOrderError::Conflict { item, target } => anyhow::anyhow!(words!(
+            name_tags_name_taken = "{ $name } would be named { $target }, which already exists",
+            name = Name(name(&requests[item].entry.path)),
+            target = Name(name(&target))
+        )),
         RenameOrderError::InvalidName { reason, .. } => anyhow::anyhow!(reason),
     })
 }
 
-fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
+fn menu_item(title: Words, command: &str, order: i32, icon: &str) -> MenuItem {
     MenuItem {
         menu: "context".into(),
-        title: title.into(),
+        title,
         command: skwir_core::command::Invocation::new(command),
         // Files' names, never a place's (a tag's has none).
         when: Some("selection !place".into()),
@@ -504,26 +519,41 @@ impl Plugin for NameTagsPlugin {
         app.commands.register::<NameArgs, _>(
             ID, Topic::Notes,
             "names.tag",
-            "Tags into name",
-            "Rename the entries given, or the selection, to hold their tags in their names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
+            words!(name_tags_tag = "Tags into name"),
+            words!(
+                name_tags_tag_description = "Rename the entries given, or the selection, to hold their tags in their names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
+                note = "Read by agents and in F1's list of actions. `tagspaces` and `filetags` are values to give as written; name[a b].ext and name -- a b.ext are examples of file names."
+            ),
             |a, app| planned(app, a, tag_names),
         )
         .plans();
         app.commands.register::<NameArgs, _>(
             ID, Topic::Notes,
             "names.untag",
-            "Tags out of name",
-            "Rename the entries given, or the selection, without the tags in their names, the other stores keeping them first (plan)",
+            words!(name_tags_untag = "Tags out of name"),
+            words!(
+                name_tags_untag_description = "Rename the entries given, or the selection, without the tags in their names, the other stores keeping them first (plan)"
+            ),
             |a, app| planned(app, a, untag_names),
         )
         .plans();
         app.registry.menus.add(
             ID,
-            menu_item("Write Tags into Name", "names.tag", 570, "tag"),
+            menu_item(
+                words!(name_tags_tag_menu = "Write Tags into Name"),
+                "names.tag",
+                570,
+                "tag",
+            ),
         );
         app.registry.menus.add(
             ID,
-            menu_item("Take Tags out of Name", "names.untag", 571, "rename"),
+            menu_item(
+                words!(name_tags_untag_menu = "Take Tags out of Name"),
+                "names.untag",
+                571,
+                "rename",
+            ),
         );
     }
 }

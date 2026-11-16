@@ -25,6 +25,7 @@ pub mod within;
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
@@ -35,6 +36,8 @@ use skwir_core::plugin::Plugin;
 use skwir_core::registry::{Keeper, KeyBinding, MenuItem, Opens, Place, Reorder};
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
+use skwir_core::words;
+use skwir_core::words::{Folder, Name, Words};
 use skwir_core::workspace::PaneId;
 
 pub use provider::{QueryProvider, SCHEME};
@@ -260,6 +263,18 @@ struct EditArgs {
     undo: bool,
 }
 
+/// An error in a search's text (`lang::ParseError`, or what a facet
+/// refused), said as the search's.
+pub(crate) fn query_error(error: impl Into<anyhow::Error>) -> anyhow::Error {
+    let error: anyhow::Error = error.into();
+    words!(
+        query_error = "query: { $error }",
+        error = error,
+        note = "An error in a search's text; error says what is wrong in it (kind: expects …)."
+    )
+    .into()
+}
+
 /// The location string for `expr` rooted at `root` (unless `expr` names a
 /// root with `in:`, as the parser reads it).
 pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
@@ -296,14 +311,26 @@ pub fn suggested_name(app: Option<&App>, expr: &str) -> String {
     let Ok(query) = lang::parse(expr) else {
         return expr.to_owned();
     };
-    let what = query
-        .expr
-        .as_ref()
-        .map_or_else(|| "Everything".to_owned(), lang::Expr::label);
+    let what = query.expr.as_ref().map_or_else(
+        || {
+            words!(
+                query_everything = "Everything",
+                note = "What a saved search of every file is named, made from its terms: Everything in Documents."
+            )
+            .say()
+        },
+        lang::Expr::label,
+    );
     if !query.root_given {
         return what;
     }
-    format!("{what} in {}", place_name(app, &query.root))
+    words!(
+        query_named_in = "{ $what } in { $place }",
+        what = what,
+        place = Folder(place_name(app, &query.root)),
+        note = "The name made for a saved search: what it looks for, as the search writes it (*.pdf modified<7d), and the folder it looks in."
+    )
+    .say()
 }
 
 /// A search's root as its name and its chip say it: as the sidebar names
@@ -315,7 +342,11 @@ pub fn place_name(app: Option<&App>, root: &std::path::Path) -> String {
     }
     let home = skwir_core::os_path::home();
     if home.as_deref() == Some(root) {
-        "Home".to_owned()
+        words!(
+            query_home = "Home",
+            note = "The home folder, as a search's chip and a saved search's name say it."
+        )
+        .say()
     } else {
         root.file_name().map_or_else(
             || root.display().to_string(),
@@ -330,9 +361,11 @@ fn pane_search(app: &App, pane: PaneId) -> anyhow::Result<String> {
     if let Some(location) = app.pane_location(pane).filter(|l| &*l.scheme == SCHEME) {
         return Ok(location.rest);
     }
-    let dir = app
-        .pane_dir(pane)
-        .map_err(|_| anyhow::anyhow!("the pane shows no search and no folder"))?;
+    let dir = app.pane_dir(pane).map_err(|_| {
+        anyhow::anyhow!(words!(
+            query_no_search_no_folder = "the pane shows no search and no folder"
+        ))
+    })?;
     Ok(location_for("", Some(&dir)).rest)
 }
 
@@ -343,7 +376,7 @@ fn refine_search(app: &App, pane: PaneId, facet: &str, value: Option<&str>) -> a
         .pane_location(pane)
         .is_some_and(|l| &*l.scheme == SCHEME);
     let expr = pane_search(app, pane)?;
-    let refined = facets::refine(&expr, facet, value).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+    let refined = facets::refine(&expr, facet, value).map_err(query_error)?;
     if !shown {
         return app.navigate(pane, &refined_location(&expr, &refined));
     }
@@ -373,8 +406,7 @@ fn refine_filter(app: &App, pane: PaneId, facet: &str, value: Option<&str>) -> a
         .unwrap_or_default();
     // What it applies: a part that does not read is no facet.
     let applied = lens::applied(&typed).unwrap_or_default();
-    let refined =
-        facets::refine(&applied, facet, value).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+    let refined = facets::refine(&applied, facet, value).map_err(query_error)?;
     set_filter(app, pane, &refined)
 }
 
@@ -434,9 +466,7 @@ fn stored(app: &App) -> Stored {
 }
 
 fn check(expr: &str) -> anyhow::Result<()> {
-    lang::parse(expr)
-        .map(drop)
-        .map_err(|e| anyhow::anyhow!("query: {e}"))
+    lang::parse(expr).map(drop).map_err(query_error)
 }
 
 /// What a saved entry holds reads: a search as a search ([`check`]); a
@@ -446,7 +476,11 @@ fn check(expr: &str) -> anyhow::Result<()> {
 fn check_kept(expr: &str, at: Option<&Location>) -> anyhow::Result<()> {
     match at {
         None => check(expr),
-        Some(_) if expr.trim().is_empty() => anyhow::bail!("a saved place needs a filter"),
+        Some(_) if expr.trim().is_empty() => {
+            anyhow::bail!(words!(
+                query_place_needs_filter = "a saved place needs a filter"
+            ))
+        }
         Some(_) => Ok(()),
     }
 }
@@ -476,18 +510,22 @@ fn shown_key(app: &App, pane: PaneId) -> anyhow::Result<Key> {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        let location = p
-            .location()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to save"))?;
+            .ok_or_else(|| anyhow::anyhow!(words!(query_no_pane = "no such pane")))?;
+        let location = p.location().cloned().ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                query_nothing_to_save = "the pane shows nothing to save"
+            ))
+        })?;
         (location, p.filter().map(str::to_owned))
     };
     if &*location.scheme == SCHEME {
         return Ok(Key::from(location.rest.as_str()));
     }
-    let filter =
-        filter.ok_or_else(|| anyhow::anyhow!("the pane shows neither a search nor a filter"))?;
+    let filter = filter.ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            query_no_search_no_filter = "the pane shows neither a search nor a filter"
+        ))
+    })?;
     Ok(Key::new(filter, Some(app.kept_location(&location))))
 }
 
@@ -503,9 +541,12 @@ fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Opti
     // A list that did not read is never written over: it is the user's.
     anyhow::ensure!(
         !unreadable,
-        "the saved searches in the settings file do not read; nothing was written"
+        words!(
+            query_saved_unreadable =
+                "the saved searches in the settings file do not read; nothing was written"
+        )
     );
-    let Some(inverse) = edit.apply(&mut list).map_err(anyhow::Error::msg)? else {
+    let Some(inverse) = edit.apply(&mut list)? else {
         return Ok(None);
     };
     let arr = list
@@ -521,13 +562,17 @@ fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Opti
         })
         .chain(unread.into_iter().map(Ok))
         .collect::<Result<_, toml::ser::Error>>()
-        .map_err(|e| anyhow::anyhow!("the saved searches were not written: {e}"))?;
+        .with_context(not_written)?;
     app.settings.set(SAVED_KEY, toml::Value::Array(arr));
-    app.settings
-        .save()
-        .map_err(|e| anyhow::anyhow!("the saved searches were not written: {e:#}"))?;
+    app.settings.save().with_context(not_written)?;
     register_places(app);
     Ok(Some(inverse))
+}
+
+/// Why an edit of the saved searches did nothing: they were not written,
+/// the cause after it.
+fn not_written() -> Words {
+    words!(query_saved_not_written = "the saved searches were not written")
 }
 
 /// The command that applies `edit`, from a toast's button.
@@ -562,29 +607,55 @@ fn kept_name(app: &App, key: &Key) -> String {
         None => suggested_name(Some(app), &key.expr),
         Some(at) => {
             // Said as the window says it, as `suggested_name` says a root.
-            let place = app.location_title(at).say();
-            format!("{place} · {}", suggested_name(Some(app), &key.expr))
+            words!(
+                query_place_named = "{ $place } · { $filter }",
+                place = app.location_title(at),
+                filter = suggested_name(Some(app), &key.expr),
+                note = "The name made for a saved place (ADR-109): the place, then what filters it (Pictures · kind:image)."
+            )
+            .say()
         }
     }
 }
 
 /// What an edit did, in a sentence, or what it found when it did nothing.
 /// `shown` is the entry's name before the edit, when it was saved.
-fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<String> {
-    let name = || shown.map_or_else(|| kept_name(app, edit.key()), str::to_owned);
+fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<Words> {
+    let name = || Name(shown.map_or_else(|| kept_name(app, edit.key()), str::to_owned));
     if edit.key().at.is_some() {
         return describe_place(edit, &name, done);
     }
     Some(match (edit, done) {
-        (Edit::Add { name: new, .. }, true) => format!("Saved search “{new}”"),
-        (Edit::Add { .. }, false) => format!("This search is already saved as “{}”", name()),
-        (Edit::Remove { .. }, true) => format!("Removed saved search “{}”", name()),
-        (Edit::Remove { .. }, false) => "This search is not saved".to_owned(),
-        (Edit::Rename { name: new, .. }, true) => {
-            format!("Renamed saved search “{}” to “{new}”", name())
+        (Edit::Add { name: new, .. }, true) => words!(
+            query_search_saved = "Saved search { $name }",
+            name = Name(new.clone())
+        ),
+        (Edit::Add { .. }, false) => words!(
+            query_search_saved_already = "This search is already saved as { $name }",
+            name = name()
+        ),
+        (Edit::Remove { .. }, true) => words!(
+            query_search_removed = "Removed saved search { $name }",
+            name = name()
+        ),
+        (Edit::Remove { .. }, false) => {
+            words!(query_search_not_saved = "This search is not saved")
         }
-        (Edit::Move { .. }, true) => format!("Moved saved search “{}”", name()),
-        (Edit::Change { .. }, true) => format!("Changed saved search “{}”", name()),
+        (Edit::Rename { name: new, .. }, true) => words!(
+            query_search_renamed = "Renamed saved search { $name } to { $new }",
+            name = name(),
+            new = Name(new.clone())
+        ),
+        (Edit::Move { .. }, true) => words!(
+            query_search_moved = "Moved saved search { $name }",
+            name = name(),
+            note = "Said once a saved search was put elsewhere in the sidebar's list."
+        ),
+        (Edit::Change { .. }, true) => words!(
+            query_search_changed = "Changed saved search { $name }",
+            name = name(),
+            note = "Said once what a saved search looks for was edited."
+        ),
         // Renamed to its own name, dropped where it was, edited to the same
         // search, or no longer saved: nothing to say.
         (Edit::Rename { .. } | Edit::Move { .. } | Edit::Change { .. }, false) => return None,
@@ -592,15 +663,42 @@ fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<S
 }
 
 /// `describe` for a saved place (ADR-109).
-fn describe_place(edit: &Edit, name: &dyn Fn() -> String, done: bool) -> Option<String> {
+fn describe_place(edit: &Edit, name: &dyn Fn() -> Name, done: bool) -> Option<Words> {
     Some(match (edit, done) {
-        (Edit::Add { name: new, .. }, true) => format!("Saved “{new}”"),
-        (Edit::Add { .. }, false) => format!("This is already saved as “{}”", name()),
-        (Edit::Remove { .. }, true) => format!("Removed “{}” from Saved", name()),
-        (Edit::Remove { .. }, false) => "This is not saved".to_owned(),
-        (Edit::Rename { name: new, .. }, true) => format!("Renamed “{}” to “{new}”", name()),
-        (Edit::Move { .. }, true) => format!("Moved “{}”", name()),
-        (Edit::Change { .. }, true) => format!("Changed the filter of “{}”", name()),
+        (Edit::Add { name: new, .. }, true) => words!(
+            query_place_saved = "Saved { $name }",
+            name = Name(new.clone()),
+            note = "Said once a place was kept with what filters it in the sidebar's Saved."
+        ),
+        (Edit::Add { .. }, false) => words!(
+            query_place_saved_already = "This is already saved as { $name }",
+            name = name(),
+            note = "A place with what filters it, kept already in the sidebar's Saved."
+        ),
+        (Edit::Remove { .. }, true) => words!(
+            query_place_removed = "Removed { $name } from Saved",
+            name = name(),
+            note = "Saved: the sidebar's section of saved searches and places."
+        ),
+        (Edit::Remove { .. }, false) => words!(
+            query_place_not_saved = "This is not saved",
+            note = "A place with what filters it, not kept in the sidebar's Saved."
+        ),
+        (Edit::Rename { name: new, .. }, true) => words!(
+            query_place_renamed = "Renamed { $name } to { $new }",
+            name = name(),
+            new = Name(new.clone()),
+            note = "A saved place renamed in the sidebar's Saved."
+        ),
+        (Edit::Move { .. }, true) => words!(
+            query_place_moved = "Moved { $name }",
+            name = name(),
+            note = "A saved place put elsewhere in the sidebar's Saved."
+        ),
+        (Edit::Change { .. }, true) => words!(
+            query_place_changed = "Changed the filter of { $name }",
+            name = name()
+        ),
         (Edit::Rename { .. } | Edit::Move { .. } | Edit::Change { .. }, false) => return None,
     })
 }
@@ -637,7 +735,10 @@ impl Editor {
                 }
                 Err(error) => app.notify(
                     NotifyLevel::Error,
-                    format!("The saved searches were not changed: {error:#}"),
+                    words!(
+                        query_saved_not_changed = "The saved searches were not changed: { $error }",
+                        error = error
+                    ),
                 ),
             }
             app.wake();
@@ -652,7 +753,7 @@ impl Editor {
 }
 
 /// An item of a saved search's own menu.
-fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
+fn menu_item(title: Words, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("place", title, icon, order, command)
 }
 
@@ -665,24 +766,48 @@ fn place(search: SavedQuery) -> Place {
     if let Some(at) = &search.at {
         named["at"] = serde_json::json!(at.arg());
     }
-    let (kept, title, placeholder) = match &search.at {
+    // What its dialogs say, said as the sidebar's places are listed.
+    let (item, title, placeholder, rename_title, name_placeholder) = match &search.at {
         None => (
-            "search",
-            "Edit saved search",
-            "kind:document modified:this-week *.pdf  (in: picks the root)",
+            words!(query_edit_search_menu = "Edit Search…"),
+            words!(query_edit_search_title = "Edit saved search"),
+            words!(
+                query_edit_search_placeholder = "{ $example }  ({ $key } picks the root)",
+                example = "kind:document modified:this-week *.pdf",
+                key = "in:",
+                note = "The example of a search in the field where a saved search is edited. example: a search, as written; key: the term that says where it looks."
+            )
+            .say(),
+            words!(query_rename_search_title = "Rename saved search"),
+            words!(
+                query_rename_search_placeholder = "Name (empty: made from the search)",
+                note = "The field where a saved search is renamed, while empty."
+            ),
         ),
         Some(_) => (
-            "filter",
-            "Edit filter",
-            "kind:image modified:this-year report",
+            words!(
+                query_edit_filter_menu = "Edit Filter…",
+                note = "A saved place's menu item: edits what filters it."
+            ),
+            words!(query_edit_filter_title = "Edit filter"),
+            // A filter as written: no words of Skwir's.
+            "kind:image modified:this-year report".to_owned(),
+            words!(
+                query_rename_place_title = "Rename",
+                note = "The title of the dialog renaming a saved place."
+            ),
+            words!(
+                query_rename_place_placeholder = "Name (empty: made from the filter)",
+                note = "The field where a saved place is renamed, while empty."
+            ),
         ),
     };
     let rename = Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": if search.at.is_none() { "Rename saved search" } else { "Rename" },
-            "accept": "Rename",
-            "placeholder": format!("Name (empty: made from the {kept})"),
+            "title": rename_title.say(),
+            "accept": words!(query_rename_accept = "Rename", note = "The button that renames a saved search or place.").say(),
+            "placeholder": name_placeholder.say(),
             "text": search.name,
             "command": "query.rename",
             "args": named,
@@ -692,16 +817,12 @@ fn place(search: SavedQuery) -> Place {
     // Rename… and the item that removes it are the sidebar's, from
     // `rename` and `forget`.
     let menu = vec![menu_item(
-        if search.at.is_none() {
-            "Edit Search…"
-        } else {
-            "Edit Filter…"
-        },
+        item,
         Invocation::with_args(
             "ui.ask",
             &serde_json::json!({
-                "title": title,
-                "accept": "Save",
+                "title": title.say(),
+                "accept": words!(query_edit_accept = "Save", note = "The button that keeps a saved search or filter as edited.").say(),
                 "placeholder": placeholder,
                 "text": search.expr,
                 "command": "query.edit",
@@ -770,7 +891,11 @@ impl Plugin for QueryPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![skwir_core::plugin::Requirement::program(
             "plocate",
-            "Instant name searches over whole disks (a directory walk is used otherwise)",
+            words!(
+                query_requirement_plocate =
+                    "Instant name searches over whole disks (a directory walk is used otherwise)",
+                note = "What stops working without plocate, on the Plugins page."
+            ),
         )]
     }
 
@@ -826,7 +951,11 @@ impl Plugin for QueryPlugin {
 
         app.settings.declare(SettingSpec::data(
             SAVED_KEY,
-            "Saved searches shown in the sidebar, in order: [{ name, expr }]",
+            words!(
+                query_saved_setting = "Saved searches shown in the sidebar, in order: { $shape }",
+                shape = "[{ name, expr }]",
+                note = "Read by agents: the setting holding the saved searches. shape: how each is written, as written."
+            ),
             toml::Value::Array(Vec::new()),
         ));
         register_places(app);
@@ -834,16 +963,19 @@ impl Plugin for QueryPlugin {
         app.commands.register::<SearchArgs, _>(
             ID, Topic::Find,
             "query.search",
-            "Search",
-            "Search, shown in the pane, the pane's lens added unless `as_is` (ADR-107: the terms of a filter or a search the listing can decide, kept as the pane goes elsewhere until taken off; then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `excluded:yes` in the folders searches leave out (Settings › General › Searches: `node_modules`, caches; never a trash nor a network folder), `depth:2` bounds it. `root` (or `in:`) is where it looks",
+            words!(query_search = "Search"),
+            words!(
+                query_search_description = "Search, shown in the pane, the pane's lens added unless `as_is` (ADR-107: the terms of a filter or a search the listing can decide, kept as the pane goes elsewhere until taken off; then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `excluded:yes` in the folders searches leave out (Settings › General › Searches: `node_modules`, caches; never a trash nor a network folder), `depth:2` bounds it. `root` (or `in:`) is where it looks",
+                note = "Read by agents and in F1's list of actions. What is between backticks is written as a search writes it: keep it as it is."
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                lang::parse(&a.expr).map_err(query_error)?;
                 let root = match a.root {
                     Some(r) => Some(
                         Location::parse_os(r.as_os_str())
                             .path()
-                            .ok_or_else(|| anyhow::anyhow!("root must be a path"))?,
+                            .ok_or_else(|| anyhow::anyhow!(words!(query_root_not_path = "root must be a path", note = "An error of a command given a root that is no folder's path: root is the argument's name.")))?,
                     ),
                     // A pane showing another query searches from home.
                     None => app.pane_dir(pane).ok(),
@@ -868,8 +1000,11 @@ impl Plugin for QueryPlugin {
             ID,
             Topic::Find,
             "query.forget_recent",
-            "Forget a recent search",
-            "Take a search out of those the address field offers as run lately",
+            words!(query_forget_recent = "Forget a recent search"),
+            words!(
+                query_forget_recent_description =
+                    "Take a search out of those the address field offers as run lately"
+            ),
             |a, app| {
                 let root = a.root.map(|r| std::path::PathBuf::from(r.as_os_str()));
                 field::forget(app, &a.expr, root.as_deref());
@@ -879,8 +1014,10 @@ impl Plugin for QueryPlugin {
         app.settings.declare(
             SettingSpec::toggle(
                 field::REMEMBER_KEY,
-                "Remember recent searches",
-                "The address field offers the searches run from it lately, kept in the cache; turned off, they are forgotten.",
+                words!(query_remember_setting = "Remember recent searches"),
+                words!(
+                    query_remember_setting_description = "The address field offers the searches run from it lately, kept in the cache; turned off, they are forgotten."
+                ),
                 true,
             )
             .page(skwir_core::settings::page::GENERAL)
@@ -923,8 +1060,10 @@ impl Plugin for QueryPlugin {
             ID,
             Topic::Find,
             "query.save",
-            "Save search",
-            "Keep a search in the sidebar's Saved, or with `at` a place and what filters it there, shown so when opened (ADR-109); what the pane shows when `expr` is omitted",
+            words!(query_save = "Save search"),
+            words!(
+                query_save_description = "Keep a search in the sidebar's Saved, or with `at` a place and what filters it there, shown so when opened (ADR-109); what the pane shows when `expr` is omitted"
+            ),
             move |a, app| {
                 let key = match a.expr {
                     Some(expr) => key_of(expr, a.at.as_ref()),
@@ -947,8 +1086,10 @@ impl Plugin for QueryPlugin {
             ID,
             Topic::Find,
             "query.forget",
-            "Remove saved search",
-            "Take a saved search out of the sidebar, named by its search (a saved place by its filter and `at`) or its name",
+            words!(query_forget = "Remove saved search"),
+            words!(
+                query_forget_description = "Take a saved search out of the sidebar, named by its search (a saved place by its filter and `at`) or its name"
+            ),
             move |a, app| {
                 let key = match (a.expr, a.name) {
                     (Some(expr), _) => key_of(expr, a.at.as_ref()),
@@ -956,8 +1097,16 @@ impl Plugin for QueryPlugin {
                         .into_iter()
                         .find(|s| s.name == name)
                         .map(|s| s.key())
-                        .ok_or_else(|| anyhow::anyhow!("no saved search named “{name}”"))?,
-                    (None, None) => anyhow::bail!("which saved search? pass its expr or name"),
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(words!(
+                                query_no_saved_named = "no saved search named { $name }",
+                                name = Name(name)
+                            ))
+                        })?,
+                    (None, None) => anyhow::bail!(words!(
+                        query_which_saved = "which saved search? pass its expr or name",
+                        note = "An error of a command: expr and name are its arguments' names."
+                    )),
                 };
                 edits.run(app, Edit::Remove { key }, a.undo);
                 Ok(Outcome::Done)
@@ -969,8 +1118,10 @@ impl Plugin for QueryPlugin {
             ID,
             Topic::Find,
             "query.rename",
-            "Rename saved search",
-            "Change the name a saved search shows in the sidebar",
+            words!(query_rename = "Rename saved search"),
+            words!(
+                query_rename_description = "Change the name a saved search shows in the sidebar"
+            ),
             move |a, app| {
                 let key = key_of(a.expr, a.at.as_ref());
                 let name = name_or_suggested(app, &a.name, &key);
@@ -984,8 +1135,11 @@ impl Plugin for QueryPlugin {
             ID,
             Topic::Find,
             "query.move",
-            "Move saved search",
-            "Put a saved search before another in the sidebar, or last",
+            words!(query_move = "Move saved search"),
+            words!(
+                query_move_description =
+                    "Put a saved search before another in the sidebar, or last"
+            ),
             move |a, app| {
                 let edit = Edit::Move {
                     key: key_of(a.expr, a.at.as_ref()),
@@ -1001,8 +1155,10 @@ impl Plugin for QueryPlugin {
             ID,
             Topic::Find,
             "query.edit",
-            "Edit saved search",
-            "Change what a saved search looks for, or what filters a saved place; its name and place in the sidebar stay",
+            words!(query_edit = "Edit saved search"),
+            words!(
+                query_edit_description = "Change what a saved search looks for, or what filters a saved place; its name and place in the sidebar stay"
+            ),
             move |a, app| {
                 let to = a.to.trim().to_owned();
                 let key = key_of(a.expr, a.at.as_ref());
@@ -1017,24 +1173,26 @@ impl Plugin for QueryPlugin {
                 ID,
                 Topic::Find,
                 "query.list",
-                "List saved searches",
-                "Return the saved searches, in sidebar order",
+                words!(query_list = "List saved searches"),
+                words!(query_list_description = "Return the saved searches, in sidebar order"),
                 |_, app| Ok(Outcome::Value(serde_json::to_value(saved(app))?)),
             )
             .data();
         app.commands.register::<DescribeArgs, _>(
             ID, Topic::Find,
             "query.describe",
-            "Describe search",
-            "The search's chips for the designer: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation every choice runs, then the parts no facet holds",
+            words!(query_describe = "Describe search"),
+            words!(
+                query_describe_description = "The search's chips for the designer: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation every choice runs, then the parts no facet holds"
+            ),
             |a, app| {
                 let expr = match a.expr {
                     Some(expr) => expr,
                     None => pane_search(app, app.pane_or_active(a.pane))?,
                 };
                 let tags_known = app.commands.get("tags.list").is_some();
-                let description = facets::describe(&expr, tags_known, Some(app))
-                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                let description =
+                    facets::describe(&expr, tags_known, Some(app)).map_err(query_error)?;
                 Ok(Outcome::Value(serde_json::to_value(description)?))
             },
         )
@@ -1042,8 +1200,10 @@ impl Plugin for QueryPlugin {
         app.commands.register::<TagChoicesArgs, _>(
             ID, Topic::Find,
             "query.tag_choices",
-            "Tags to refine by",
-            "The Tag chip's picker: the tags on the pane's files, read from them, each refining the search (or what `refines` names: the folder's `narrowing` or `filter`)",
+            words!(query_tag_choices = "Tags to refine by"),
+            words!(
+                query_tag_choices_description = "The Tag chip's picker: the tags on the pane's files, read from them, each refining the search (or what `refines` names: the folder's `narrowing` or `filter`)"
+            ),
             |a, app| {
                 // The tags plugin reads tags; without it, only a tag to type.
                 let counts = app
@@ -1070,8 +1230,10 @@ impl Plugin for QueryPlugin {
                 ID,
                 Topic::Find,
                 "query.reference",
-                "Say what a search takes",
-                "What a search's text takes (ADR-137): its terms and options with what each means and examples, how terms go together, values, names' wildcards and what `content:` reads, regex signs included; each item as written, what it says and what choosing it writes",
+                words!(query_reference = "Say what a search takes"),
+                words!(
+                    query_reference_description = "What a search's text takes (ADR-137): its terms and options with what each means and examples, how terms go together, values, names' wildcards and what `content:` reads, regex signs included; each item as written, what it says and what choosing it writes"
+                ),
                 |_, _| Ok(Outcome::Value(serde_json::to_value(reference::reference())?)),
             )
             .data();
@@ -1079,8 +1241,12 @@ impl Plugin for QueryPlugin {
             .register::<assist::TokensArgs, _>(
                 ID, Topic::Find,
                 "query.tokens",
-                "Pieces of a search",
-                "`[{ range, kind, facet?, message? }]`: the pieces of a search's text as the parser reads them (word, key, value, option, operator, or an error with the parser's message), byte ranges; a term still being typed at `caret` is not an error yet",
+                words!(query_tokens = "Pieces of a search"),
+                words!(
+                    query_tokens_description = "{ $shape }: the pieces of a search's text as the parser reads them (word, key, value, option, operator, or an error with the parser's message), byte ranges; a term still being typed at `caret` is not an error yet",
+                    shape = "`[{ range, kind, facet?, message? }]`",
+                    note = "shape: what it answers, written as JSON."
+                ),
                 |a, _| {
                     let caret = a.caret.unwrap_or(a.text.len()).min(a.text.len());
                     Ok(Outcome::Value(serde_json::to_value(assist::tokens_at(
@@ -1093,8 +1259,12 @@ impl Plugin for QueryPlugin {
             .register::<assist::CompleteArgs, _>(
                 ID, Topic::Find,
                 "query.complete",
-                "Complete a search",
-                "`{ range, items: [{ label, text, detail?, icon, tag? }], typing, more? }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the tags of the pane's files then the user's others, at most 200 of them, `more` counting those left out, periods, sizes, stars); `typing` when that term is still incomplete",
+                words!(query_complete = "Complete a search"),
+                words!(
+                    query_complete_description = "{ $shape }: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the tags of the pane's files then the user's others, at most 200 of them, `more` counting those left out, periods, sizes, stars); `typing` when that term is still incomplete",
+                    shape = "`{ range, items: [{ label, text, detail?, icon, tag? }], typing, more? }`",
+                    note = "shape: what it answers, written as JSON."
+                ),
                 move |a, app| {
                     let caret = a.caret.unwrap_or(a.text.len());
                     let tags = tag_offers.offered(app, a.pane);
@@ -1108,8 +1278,12 @@ impl Plugin for QueryPlugin {
             .register::<assist::InterpretArgs, _>(
                 ID, Topic::Find,
                 "query.interpret",
-                "Read words as a search",
-                "`{ label, expr }` or null: plain words read as terms by rules (periods and years, kinds, extensions, sizes, the pane's tags), the rest kept as names; never applied by itself",
+                words!(query_interpret = "Read words as a search"),
+                words!(
+                    query_interpret_description = "{ $shape } or null: plain words read as terms by rules (periods and years, kinds, extensions, sizes, the pane's tags), the rest kept as names; never applied by itself",
+                    shape = "`{ label, expr }`",
+                    note = "shape: what it answers, written as JSON."
+                ),
                 |a, app| {
                     let tags = assist::pane_tags(app, a.pane);
                     Ok(Outcome::Value(serde_json::to_value(assist::interpret(
@@ -1122,8 +1296,10 @@ impl Plugin for QueryPlugin {
         app.commands.register::<SimilarArgs, _>(
             ID, Topic::Find,
             "query.similar",
-            "Find similar",
-            "Search for files like the selected one: of the same kind, modified the same day, of a similar size, or sharing a tag, in the folder searched or shown",
+            words!(query_similar = "Find similar"),
+            words!(
+                query_similar_description = "Search for files like the selected one: of the same kind, modified the same day, of a similar size, or sharing a tag, in the folder searched or shown"
+            ),
             move |a, app| {
                 similar::start(app, a.pane, a.entries, a.by, &similar_lifetime)?;
                 Ok(Outcome::Done)
@@ -1133,10 +1309,43 @@ impl Plugin for QueryPlugin {
         for (title, by, when, order) in [
             // A file's likes: a place (a tag's) has none.
             // Found from the file, among what is made from it (ADR-099).
-            ("Same Kind", similar::By::Kind, "single !place", 330),
-            ("Same Day", similar::By::Day, "single !place", 331),
-            ("Similar Size", similar::By::Size, "single file", 332),
-            ("Same Tags", similar::By::Tags, "single !place", 333),
+            (
+                words!(
+                    query_similar_kind = "Same Kind",
+                    note = "An item of the context menu's Find Similar: files of the same kind."
+                ),
+                similar::By::Kind,
+                "single !place",
+                330,
+            ),
+            (
+                words!(
+                    query_similar_day = "Same Day",
+                    note =
+                        "An item of the context menu's Find Similar: files modified the same day."
+                ),
+                similar::By::Day,
+                "single !place",
+                331,
+            ),
+            (
+                words!(
+                    query_similar_size = "Similar Size",
+                    note = "An item of the context menu's Find Similar."
+                ),
+                similar::By::Size,
+                "single file",
+                332,
+            ),
+            (
+                words!(
+                    query_similar_tags = "Same Tags",
+                    note = "An item of the context menu's Find Similar: files sharing a tag."
+                ),
+                similar::By::Tags,
+                "single !place",
+                333,
+            ),
         ] {
             app.registry.menus.add(
                 ID,
@@ -1154,8 +1363,10 @@ impl Plugin for QueryPlugin {
         app.commands.register::<RefineArgs, _>(
             ID, Topic::Find,
             "query.refine",
-            "Refine search",
-            "Change one facet of the pane's search (or start one in its folder, its lens added) and show the result: a change of its lens alone in place of it, any other as a step Back undoes; its last term taken away, the pane shows the place it searched",
+            words!(query_refine = "Refine search"),
+            words!(
+                query_refine_description = "Change one facet of the pane's search (or start one in its folder, its lens added) and show the result: a change of its lens alone in place of it, any other as a step Back undoes; its last term taken away, the pane shows the place it searched"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 refine_search(app, pane, &a.facet, a.value.as_deref())?;
@@ -1166,16 +1377,20 @@ impl Plugin for QueryPlugin {
         app.commands.register::<PaneOnly, _>(
             ID, Topic::Find,
             "query.here",
-            "This folder only",
-            "Show the pane's search as the folder it looks in, filtered by its words, when the folder alone can tell them; else search that folder alone. A folder stays as it is",
+            words!(query_here = "This folder only"),
+            words!(
+                query_here_description = "Show the pane's search as the folder it looks in, filtered by its words, when the folder alone can tell them; else search that folder alone. A folder stays as it is"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let Some(search) = app.pane_location(pane).filter(|l| &*l.scheme == SCHEME) else {
                     return Ok(Outcome::Done);
                 };
-                let q = lang::parse(&search.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                let q = lang::parse(&search.rest).map_err(query_error)?;
                 if q.within.is_some() {
-                    anyhow::bail!("a place is searched as it lists, never below it");
+                    anyhow::bail!(words!(
+                        query_place_not_below = "a place is searched as it lists, never below it"
+                    ));
                 }
                 if let Some(words) = facets::as_filter(&search.rest) {
                     app.navigate(pane, &Location::from_path(&q.root))?;
@@ -1186,7 +1401,7 @@ impl Plugin for QueryPlugin {
                     ))?;
                 } else {
                     let refined = facets::refine(&search.rest, "where", Some("here"))
-                        .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                        .map_err(query_error)?;
                     app.navigate(pane, &Location::new(SCHEME, refined))?;
                 }
                 Ok(Outcome::Done)
@@ -1196,17 +1411,21 @@ impl Plugin for QueryPlugin {
         app.commands.register::<PaneOnly, _>(
             ID, Topic::Find,
             "query.below",
-            "This folder and its subfolders",
-            "Search the pane's folder and its subfolders for what filters it: its lens and the words typed over it",
+            words!(query_below = "This folder and its subfolders"),
+            words!(
+                query_below_description = "Search the pane's folder and its subfolders for what filters it: its lens and the words typed over it"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let (folder, typed) = {
                     let ws = app.workspace.read();
                     let p = ws
                         .pane(pane)
-                        .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
+                        .ok_or_else(|| anyhow::anyhow!(words!(query_no_pane_numbered = "no pane { $pane }", pane = pane.0.to_string(), note = "pane: a pane's number, as agents name it.")))?;
                     let folder = p.location().and_then(Location::path).ok_or_else(|| {
-                        anyhow::anyhow!("only a folder's subfolders are searched")
+                        anyhow::anyhow!(words!(
+                            query_only_folders_below = "only a folder's subfolders are searched"
+                        ))
                     })?;
                     (folder, p.filter().map(str::to_owned).unwrap_or_default())
                 };
@@ -1220,8 +1439,10 @@ impl Plugin for QueryPlugin {
         app.commands.register::<NarrowArgs, _>(
             ID, Topic::Find,
             "query.narrow",
-            "Change the lens",
-            "Change one facet of the pane's lens (ADR-107: what of its filter or its search the listing can decide, its files of a kind, a year, with or without a tag), kept as the pane shows other locations until taken off: a search's in place of it, anything else's filter; without `facet`, take the lens off",
+            words!(query_narrow = "Change the lens"),
+            words!(
+                query_narrow_description = "Change one facet of the pane's lens (ADR-107: what of its filter or its search the listing can decide, its files of a kind, a year, with or without a tag), kept as the pane shows other locations until taken off: a search's in place of it, anything else's filter; without `facet`, take the lens off"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let search = app
@@ -1230,9 +1451,11 @@ impl Plugin for QueryPlugin {
                 if let Some(facet) = a.facet.as_deref()
                     && matches!(facet, "content" | "taken" | "words")
                 {
-                    anyhow::bail!(
-                        "a lens is what is known of the files: `{facet}` is a search's (what they contain, when a picture was taken, the names)"
-                    );
+                    anyhow::bail!(words!(
+                        query_not_a_lens = "a lens is what is known of the files: `{ $facet }` is a search's (what they contain, when a picture was taken, the names)",
+                        facet = facet,
+                        note = "An error of Change the lens. facet: the facet asked, as a command names it (content, taken, words)."
+                    ));
                 }
                 match (a.facet, search) {
                     (Some(facet), true) => refine_search(app, pane, &facet, a.value.as_deref())?,
@@ -1261,8 +1484,10 @@ impl Plugin for QueryPlugin {
         app.commands.register::<RefineArgs, _>(
             ID, Topic::Find,
             "query.filter",
-            "Filter folder",
-            "Change one facet of what filters the pane (the words typed over it in the address field, its lens), as `query.refine` changes a search's; the location stays shown",
+            words!(query_filter = "Filter folder"),
+            words!(
+                query_filter_description = "Change one facet of what filters the pane (the words typed over it in the address field, its lens), as `query.refine` changes a search's; the location stays shown"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 refine_filter(app, pane, &a.facet, a.value.as_deref())?;
@@ -1274,15 +1499,19 @@ impl Plugin for QueryPlugin {
             .register::<PaneOnly, _>(
                 ID, Topic::Find,
                 "query.describe_filter",
-                "Describe filter",
-                "`{ depth, filter }`: what filters the pane (its lens and the words typed over it, ADR-107) as a search's chips (`query.describe`), each choice changing it (`query.filter`): how deep it looks (a folder's: this folder only, or its subfolders searched, `query.below`), then each facet, set and not",
+                words!(query_describe_filter = "Describe filter"),
+                words!(
+                    query_describe_filter_description = "{ $shape }: what filters the pane (its lens and the words typed over it, ADR-107) as a search's chips (`query.describe`), each choice changing it (`query.filter`): how deep it looks (a folder's: this folder only, or its subfolders searched, `query.below`), then each facet, set and not",
+                    shape = "`{ depth, filter }`",
+                    note = "shape: what it answers, written as JSON."
+                ),
                 |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let (typed, folder) = {
                         let ws = app.workspace.read();
                         let p = ws
                             .pane(pane)
-                            .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
+                            .ok_or_else(|| anyhow::anyhow!(words!(query_no_pane_numbered = "no pane { $pane }", pane = pane.0.to_string(), note = "pane: a pane's number, as agents name it.")))?;
                         (
                             p.filter().map(str::to_owned).unwrap_or_default(),
                             p.location().is_some_and(Location::is_path),
@@ -1292,22 +1521,34 @@ impl Plugin for QueryPlugin {
                     let applied = lens::applied(&typed).unwrap_or_default();
                     let filter = facets::describe_for(facets::Refines::Filter, &applied, tags_known, Some(app))
                         .map(|d| d.chips)
-                        .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                        .map_err(query_error)?;
                     // How deep the words look: a folder's alone, its
                     // subfolders searched for them (ADR-098).
                     let depth = folder.then(|| facets::Chip {
                         id: "where".into(),
-                        title: "This folder only".into(),
+                        title: words!(
+                            query_depth_chip = "This folder only",
+                            note = "A filter's chip: how deep its words look, a folder's own files alone."
+                        )
+                        .say(),
                         value: None,
                         icon: "filter".into(),
                         choices: vec![
                             facets::Choice {
-                                label: "This folder only".into(),
+                                label: words!(
+                                    query_depth_here = "This folder only",
+                                    note = "A choice of a filter's chip: the folder's own files alone."
+                                )
+                                .say(),
                                 command: Invocation::new("query.here"),
                                 active: true,
                             },
                             facets::Choice {
-                                label: "This folder and its subfolders".into(),
+                                label: words!(
+                                    query_depth_below = "This folder and its subfolders",
+                                    note = "A choice of a filter's chip: the folder searched with its subfolders."
+                                )
+                                .say(),
                                 command: Invocation::new("query.below"),
                                 active: false,
                             },
@@ -1326,18 +1567,28 @@ impl Plugin for QueryPlugin {
         app.commands.register::<LocationArgs, _>(
             ID, Topic::Find,
             "query.location",
-            "Search location",
-            "`{ location }`: the search for one facet's value (`tag` `work`, or `tag` alone for any tag) from `root` or the home folder, for whoever shows or runs a search without writing its syntax",
+            words!(query_location = "Search location"),
+            words!(
+                query_location_description = "{ $shape }: the search for one facet's value (`tag` `work`, or `tag` alone for any tag) from `root` or the home folder, for whoever shows or runs a search without writing its syntax",
+                shape = "`{ location }`",
+                note = "shape: what it answers, written as JSON."
+            ),
             |a, _| {
                 let expr = match (a.facet.as_str(), a.value) {
                     ("tag", None) => lang::Term::AnyTag.to_string(),
-                    (_, None) => anyhow::bail!("query: `{}` needs a value", a.facet),
-                    (facet, Some(value)) => facets::refine("", facet, Some(&value))
-                        .map_err(|e| anyhow::anyhow!("query: {e}"))?,
+                    (_, None) => {
+                        return Err(query_error(words!(
+                            query_needs_value = "`{ $facet }` needs a value",
+                            facet = a.facet.as_str(),
+                            note = "facet: the facet asked, as a command names it (tag, kind)."
+                        )));
+                    }
+                    (facet, Some(value)) => {
+                        facets::refine("", facet, Some(&value)).map_err(query_error)?
+                    }
                 };
                 let expr = if a.hidden {
-                    facets::refine(&expr, "where", Some("hidden"))
-                        .map_err(|e| anyhow::anyhow!("query: {e}"))?
+                    facets::refine(&expr, "where", Some("hidden")).map_err(query_error)?
                 } else {
                     expr
                 };
@@ -1345,7 +1596,7 @@ impl Plugin for QueryPlugin {
                     Some(r) => Some(
                         Location::parse_os(r.as_os_str())
                             .path()
-                            .ok_or_else(|| anyhow::anyhow!("root must be a path"))?,
+                            .ok_or_else(|| anyhow::anyhow!(words!(query_root_not_path = "root must be a path", note = "An error of a command given a root that is no folder's path: root is the argument's name.")))?,
                     ),
                     None => None,
                 };
@@ -1362,8 +1613,16 @@ impl Plugin for QueryPlugin {
                 scheme: SCHEME.into(),
                 filtered: false,
                 save: Invocation::new("query.save"),
-                save_title: "Save this search".into(),
-                forget_title: "Remove saved search".into(),
+                save_title: words!(
+                    query_keep_search = "Save this search",
+                    note = "The pane's keep button over a search: keeps it in the sidebar's Saved."
+                )
+                .say(),
+                forget_title: words!(
+                    query_unkeep_search = "Remove saved search",
+                    note = "The pane's keep button over a saved search: takes it out of the sidebar's Saved."
+                )
+                .say(),
                 keeps: None,
             },
         );
@@ -1375,8 +1634,16 @@ impl Plugin for QueryPlugin {
                 scheme: SCHEME.into(),
                 filtered: true,
                 save: Invocation::new("query.save"),
-                save_title: "Save with this filter".into(),
-                forget_title: "Remove from Saved".into(),
+                save_title: words!(
+                    query_keep_place = "Save with this filter",
+                    note = "The pane's keep button over a filtered place: keeps it with its filter in the sidebar's Saved."
+                )
+                .say(),
+                forget_title: words!(
+                    query_unkeep_place = "Remove from Saved",
+                    note = "The pane's keep button over a saved place: takes it out of the sidebar's Saved."
+                )
+                .say(),
                 keeps: None,
             },
         );
@@ -1393,7 +1660,10 @@ impl Plugin for QueryPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Search here…",
+                words!(
+                    query_search_here = "Search here…",
+                    note = "A context menu's item over a folder's background: opens the search in the address field."
+                ),
                 "search",
                 420,
                 Invocation::new("ui.search"),
@@ -1822,7 +2092,7 @@ mod tests {
         // Keeping it again says so and changes nothing.
         app.dispatch(&Invocation::new("keep")).unwrap();
         let again = note(&app);
-        assert!(again.action.is_none() && again.text.contains("already saved"));
+        assert!(again.action.is_none() && again.text.english().contains("already saved"));
         // Undo, then Redo, from the notifications' buttons.
         let redo = edit(&app, &undo.name, undo.args.clone());
         assert!(exprs(&app).is_empty());
@@ -3007,7 +3277,7 @@ mod tests {
         assert_eq!(
             as_of,
             Some(AsOf {
-                by: plocate::BY.into(),
+                by: plocate::by(),
                 updated: Some(updated),
             })
         );

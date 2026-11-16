@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use anyhow::Context as _;
 use crossbeam_channel::Receiver;
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -28,11 +29,19 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, Place};
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "jump";
+
 /// What `recent:` is called, in the sidebar and wherever it is shown.
-const RECENT: &str = "Recent";
+fn recent_title() -> Words {
+    words!(
+        jump_recent = "Recent",
+        note = "The place listing the files recently used in any application, in the sidebar and the address."
+    )
+}
 
 /// A ranked jump target.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -357,8 +366,11 @@ fn recent_files() -> Vec<xbel::Recent> {
 fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
     anyhow::ensure!(
         path.is_absolute(),
-        "{} is not an absolute path",
-        path.display()
+        words!(
+            jump_not_absolute = "{ $path } is not an absolute path",
+            path = path.display().to_string(),
+            note = "An error of Jump to: the path it was given."
+        )
     );
     let pane = app.pane_or_active(pane);
     let visit = app
@@ -366,7 +378,7 @@ fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Out
         .read()
         .pane(pane)
         .map(skwir_core::workspace::Pane::location_lifetime)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        .ok_or_else(|| anyhow::anyhow!(words!(jump_no_pane = "no such pane")))?;
     let cancel = app.lifetime().linked(&visit);
     let weak = app.weak();
     app.scheduler.spawn_in(
@@ -377,7 +389,7 @@ fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Out
         move || {
             let Some(app) = weak.upgrade() else { return };
             if let Err(e) = go(&app, pane, &path, &cancel) {
-                app.notify(NotifyLevel::Error, format!("{e:#}"));
+                app.notify(NotifyLevel::Error, Words::of_error(e));
             }
         },
     );
@@ -386,7 +398,7 @@ fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Out
 
 fn go(app: &App, pane: PaneId, path: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
     let is_dir = std::fs::metadata(path)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?
+        .with_context(|| Words::as_written(path.display().to_string()))?
         .is_dir();
     if cancel.is_cancelled() {
         return Ok(());
@@ -395,7 +407,11 @@ fn go(app: &App, pane: PaneId, path: &Path, cancel: &CancelToken) -> anyhow::Res
         return app.navigate(pane, &Location::from_path(path));
     }
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-        anyhow::bail!("{} has no folder", path.display());
+        anyhow::bail!(words!(
+            jump_no_folder = "{ $path } has no folder",
+            path = path.display().to_string(),
+            note = "An error of Jump to: the path it was given is in no folder."
+        ));
     };
     app.navigate(pane, &Location::from_path(parent))?;
     if let Some(p) = app.workspace.write().pane_mut(pane) {
@@ -536,8 +552,11 @@ impl Plugin for JumpPlugin {
         app.commands.register::<CandidatesArgs, _>(
             ID, Topic::Go,
             "jump.candidates",
-            "Jump candidates",
-            "Rank jump targets for a query, from what zoxide and the recent files list said last",
+            words!(jump_candidates = "Jump candidates"),
+            words!(
+                jump_candidates_description = "Rank jump targets for a query, from what zoxide and the recent files list said last",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |a, app| {
                 first_need(&gathered, &index, &lifetime, app);
                 let ranked = {
@@ -555,8 +574,10 @@ impl Plugin for JumpPlugin {
         app.commands.register::<ScoresArgs, _>(
             ID, Topic::Go,
             "jump.scores",
-            "Jump scores in a folder",
-            "How much the user goes to each name of a folder, from what zoxide and the recent files list said last: a folder counts the folders within it",
+            words!(jump_scores = "Jump scores in a folder"),
+            words!(
+                jump_scores_description = "How much the user goes to each name of a folder, from what zoxide and the recent files list said last: a folder counts the folders within it"
+            ),
             move |a, app| {
                 first_need(&gathered, &index, &lifetime, app);
                 let scores = {
@@ -573,8 +594,11 @@ impl Plugin for JumpPlugin {
                 ID,
                 Topic::Go,
                 "jump.to",
-                "Jump to",
-                "Go to a directory, or to a file's directory selecting it",
+                words!(jump_to = "Jump to"),
+                words!(
+                    jump_to_description =
+                        "Go to a directory, or to a file's directory selecting it"
+                ),
                 |a, app| jump_to(a.path.into_inner(), a.pane, app),
             )
             .shows();
@@ -583,7 +607,7 @@ impl Plugin for JumpPlugin {
             ID,
             Place::new(
                 skwir_core::registry::groups::PLACES.id,
-                RECENT,
+                recent_title(),
                 "document-open-recent",
                 Location::parse("recent:"),
             ),
@@ -618,7 +642,7 @@ impl LocationProvider for RecentProvider {
     }
 
     fn title(&self, _location: &Location) -> Option<skwir_core::words::Words> {
-        Some(RECENT.into())
+        Some(recent_title())
     }
 
     fn icon(&self, _location: &Location) -> Option<&'static str> {
@@ -627,8 +651,10 @@ impl LocationProvider for RecentProvider {
 
     fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
         Some(EmptyState::new(
-            "No recent files",
-            "The files you open in your applications are listed here, as the desktop records them.",
+            words!(jump_recent_empty = "No recent files"),
+            words!(
+                jump_recent_empty_detail = "The files you open in your applications are listed here, as the desktop records them."
+            ),
         ))
     }
 
@@ -1052,7 +1078,11 @@ mod tests {
         let recent = Location::parse("recent:");
         // It reads as one place in the address, under its own glyph.
         let crumbs = app.trail(&recent).unwrap().crumbs;
-        assert_eq!(crumbs, [skwir_core::Crumb::new("Recent", recent.clone())]);
+        assert_eq!(
+            crumbs,
+            [skwir_core::Crumb::new(recent_title(), recent.clone())]
+        );
+        assert_eq!(crumbs[0].label.english(), "Recent");
         assert_eq!(app.location_icon(&recent), Some("recent"));
         app.navigate(pane, &recent).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));

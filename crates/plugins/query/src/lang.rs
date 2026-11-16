@@ -89,6 +89,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
 use skwir_core::entry::{EntryKind, Metadata, Value, keys};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::calendar::{Calendar, Period, civil_day, civil_from_days};
 
 /// Types asked by name once per suffix (`mime::BySuffix`): the filter
@@ -230,7 +232,14 @@ impl ContentPat {
             .case_insensitive(!case_sensitive)
             .fixed_strings(!regex)
             .build(text)
-            .map_err(|e| ParseError(format!("bad regex `{text}`: {e}")))?;
+            .map_err(|e| {
+                ParseError::new(words!(
+                    query_bad_regex = "bad regex `{ $regex }`: { $error }",
+                    regex = text,
+                    error = e.to_string(),
+                    note = "An error in a search's text. regex: the pattern as written; error: what the regex library said of it."
+                ))
+            })?;
         Ok(ContentPat {
             text: text.to_owned(),
             regex,
@@ -301,12 +310,31 @@ pub enum Term {
     },
 }
 
+/// What is wrong in a search's text: its words, said in the reader's
+/// language where it is shown (`words.say()`) and inside an error's
+/// chain, and what the field needs to know of it as data.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseError(pub String);
+pub struct ParseError {
+    pub words: Words,
+    /// A parenthesis is left open: the text reads once it is closed, as
+    /// it is while still being typed.
+    pub unclosed: bool,
+}
+
+impl ParseError {
+    fn new(words: Words) -> Self {
+        ParseError {
+            words,
+            unclosed: false,
+        }
+    }
+}
 
 impl fmt::Display for ParseError {
+    /// In English, but while an error's chain is said: then in the
+    /// language it is said in (`Words`'s `Display`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        fmt::Display::fmt(&self.words, f)
     }
 }
 impl std::error::Error for ParseError {}
@@ -345,7 +373,13 @@ struct Word {
 impl Word {
     fn text(&self) -> Result<&str, ParseError> {
         std::str::from_utf8(&self.value)
-            .map_err(|_| ParseError("only in: accepts bytes that are not UTF-8 (\\xNN)".into()))
+            .map_err(|_| {
+                ParseError::new(words!(
+                    query_only_in_bytes = "only { $key } accepts bytes that are not UTF-8 (\\xNN)",
+                    key = "in:",
+                    note = "An error in a search's text. key: a key of the search language, as written; \\xNN is how such a byte is written: keep it."
+                ))
+            })
     }
 }
 
@@ -433,7 +467,7 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, ParseError> {
             i += 1;
             loop {
                 match cs.get(i) {
-                    None => return Err(ParseError("unterminated quote".into())),
+                    None => return Err(unterminated()),
                     Some(&c) if c == q => {
                         i += 1;
                         break;
@@ -449,7 +483,7 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, ParseError> {
                             push_char(&mut word.value, n);
                             i += 2;
                         } else {
-                            return Err(ParseError("unterminated quote".into()));
+                            return Err(unterminated());
                         }
                     }
                     Some(&c) => {
@@ -472,6 +506,14 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, ParseError> {
         });
     }
     Ok(out)
+}
+
+/// A quote opened and never closed.
+pub(crate) fn unterminated() -> ParseError {
+    ParseError::new(words!(
+        query_unterminated_quote = "unterminated quote",
+        note = "An error in a search's text: a quote is opened and never closed."
+    ))
 }
 
 // ---------------------------------------------------------------- parser
@@ -506,7 +548,11 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
             match w.key {
                 Some("in") => {
                     if w.value.is_empty() {
-                        return Err(ParseError("in: expects a folder".into()));
+                        return Err(ParseError::new(words!(
+                            query_expects_folder = "{ $key } expects a folder",
+                            key = "in:",
+                            note = "An error in a search's text. key: a key of the search language, as written."
+                        )));
                     }
                     match place_of(w) {
                         Some(place) => within = Some(place),
@@ -518,7 +564,12 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
                     let v = w.text()?;
                     depth =
                         Some(v.parse::<usize>().map_err(|_| {
-                            ParseError(format!("depth: expects a number, got `{v}`"))
+                            ParseError::new(words!(
+                                query_expects_number = "{ $key } expects a number, got `{ $value }`",
+                                key = "depth:",
+                                value = v,
+                                note = "An error in a search's text. key: a key of the search language, as written; value: what was typed after it."
+                            ))
                         })?);
                     continue;
                 }
@@ -535,8 +586,14 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
                         "sensitive" | "true" | "yes" => true,
                         "insensitive" | "false" | "no" => false,
                         v => {
-                            return Err(ParseError(format!(
-                                "case: expects sensitive or insensitive, got `{v}`"
+                            return Err(ParseError::new(words!(
+                                query_expects_either =
+                                    "{ $key } expects { $one } or { $other }, got `{ $value }`",
+                                key = "case:",
+                                one = "sensitive",
+                                other = "insensitive",
+                                value = v,
+                                note = "An error in a search's text. key: a key of the search language; one and other: the values it takes; value: what was typed. All as written."
                             )));
                         }
                     };
@@ -560,7 +617,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
         Some(p.or_expr()?)
     };
     if p.pos < rest.len() {
-        return Err(ParseError("unexpected `)`".into()));
+        return Err(unexpected_paren());
     }
     let root_given = root.is_some();
     let root =
@@ -612,8 +669,30 @@ fn parse_bool(v: &str) -> Result<bool, ParseError> {
     match v {
         "true" | "yes" | "1" => Ok(true),
         "false" | "no" | "0" => Ok(false),
-        _ => Err(ParseError(format!("expected true or false, got `{v}`"))),
+        _ => Err(ParseError::new(words!(
+            query_expected_bool = "expected { $yes } or { $no }, got `{ $value }`",
+            yes = "true",
+            no = "false",
+            value = v,
+            note = "An error in a search's text. yes and no: the values an option takes; value: what was typed. All as written."
+        ))),
     }
+}
+
+/// A term was looked for and none was there (`a OR`, `()`).
+fn expected_term() -> ParseError {
+    ParseError::new(words!(
+        query_expected_term = "expected a term",
+        note = "An error in a search's text: something to look for is missing (after OR, in parentheses)."
+    ))
+}
+
+/// A `)` with no `(` before it.
+fn unexpected_paren() -> ParseError {
+    ParseError::new(words!(
+        query_unexpected_paren = "unexpected `)`",
+        note = "An error in a search's text: a closing parenthesis with none opened."
+    ))
 }
 
 impl Parser<'_> {
@@ -643,7 +722,7 @@ impl Parser<'_> {
             }
         }
         if items.is_empty() {
-            return Err(ParseError("expected a term".into()));
+            return Err(expected_term());
         }
         Ok(if items.len() == 1 {
             items.pop().unwrap()
@@ -654,7 +733,7 @@ impl Parser<'_> {
 
     fn unary(&mut self) -> Result<Expr, ParseError> {
         let Some(tok) = self.peek() else {
-            return Err(ParseError("expected a term".into()));
+            return Err(expected_term());
         };
         match tok {
             Tok::Not => {
@@ -669,11 +748,17 @@ impl Parser<'_> {
                         self.pos += 1;
                         Ok(e)
                     }
-                    _ => Err(ParseError("missing `)`".into())),
+                    _ => Err(ParseError {
+                        unclosed: true,
+                        ..ParseError::new(words!(
+                            query_missing_paren = "missing `)`",
+                            note = "An error in a search's text: a parenthesis opened and never closed."
+                        ))
+                    }),
                 }
             }
-            Tok::RParen => Err(ParseError("unexpected `)`".into())),
-            Tok::Or => Err(ParseError("expected a term".into())),
+            Tok::RParen => Err(unexpected_paren()),
+            Tok::Or => Err(expected_term()),
             Tok::Word(w) => {
                 let term = self.term(w)?;
                 self.pos += 1;
@@ -713,7 +798,11 @@ impl Parser<'_> {
             return Ok(Term::Name(NamePat::new(v, cs)));
         };
         if v.is_empty() {
-            return Err(ParseError(format!("{key}: expects a value")));
+            return Err(ParseError::new(words!(
+                query_expects_value = "{ $key } expects a value",
+                key = format!("{key}:"),
+                note = "An error in a search's text. key: a key of the search language, as written (kind:)."
+            )));
         }
         match key {
             "name" => Ok(Term::Name(NamePat::new(v, cs))),
@@ -724,7 +813,11 @@ impl Parser<'_> {
                     .map(|e| e.trim_start_matches('.').to_lowercase())
                     .collect();
                 if exts.is_empty() {
-                    return Err(ParseError("ext: expects at least one extension".into()));
+                    return Err(ParseError::new(words!(
+                        query_expects_extension = "{ $key } expects at least one extension",
+                        key = "ext:",
+                        note = "An error in a search's text. key: a key of the search language, as written."
+                    )));
                 }
                 Ok(Term::Ext(exts))
             }
@@ -732,27 +825,53 @@ impl Parser<'_> {
                 "file" | "f" => Ok(Term::Type(KindSel::File)),
                 "dir" | "d" | "directory" | "folder" => Ok(Term::Type(KindSel::Dir)),
                 "symlink" | "link" | "l" => Ok(Term::Type(KindSel::Symlink)),
-                _ => Err(ParseError(format!(
-                    "type: expects file, dir, or symlink, got `{v}`"
+                _ => Err(ParseError::new(words!(
+                    query_expects_type =
+                        "{ $key } expects { $file }, { $dir }, or { $link }, got `{ $value }`",
+                    key = "type:",
+                    file = "file",
+                    dir = "dir",
+                    link = "symlink",
+                    value = v,
+                    note = "An error in a search's text. key: a key of the search language; file, dir and link: the values it takes; value: what was typed. All as written."
                 ))),
             },
             "mime" => {
                 let g =
-                    Glob::new(v).map_err(|e| ParseError(format!("bad mime glob `{v}`: {e}")))?;
+                    Glob::new(v).map_err(|e| {
+                        ParseError::new(words!(
+                            query_bad_glob = "bad { $key } glob `{ $glob }`: { $error }",
+                            key = "mime",
+                            glob = v,
+                            error = e.to_string(),
+                            note = "An error in a search's text. key: a key of the search language (mime, a file's type); glob: the pattern typed; error: what the pattern library said of it."
+                        ))
+                    })?;
                 Ok(Term::Mime(g.compile_matcher(), v.to_owned()))
             }
             "kind" => {
                 let mut kinds = Vec::new();
                 for word in v.split(',').filter(|w| !w.is_empty()) {
                     let kind = skwir_platform::mime::Kind::from_name(word).ok_or_else(|| {
-                        ParseError(format!("kind: expects {}, got `{word}`", kind_words()))
+                        ParseError::new(words!(
+                            query_expects_kind = "{ $key } expects { $kinds }, got `{ $value }`",
+                            key = "kind:",
+                            kinds = kind_words(),
+                            value = word,
+                            note = "An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, separated by commas; value: what was typed."
+                        ))
                     })?;
                     if !kinds.contains(&kind) {
                         kinds.push(kind);
                     }
                 }
                 if kinds.is_empty() {
-                    return Err(ParseError(format!("kind: expects {}", kind_words())));
+                    return Err(ParseError::new(words!(
+                        query_expects_kinds = "{ $key } expects { $kinds }",
+                        key = "kind:",
+                        kinds = kind_words(),
+                        note = "An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, separated by commas."
+                    )));
                 }
                 Ok(Term::Kind(kinds))
             }
@@ -769,7 +888,13 @@ impl Parser<'_> {
                 let field = TimeField::ALL
                     .into_iter()
                     .find(|f| f.name() == key)
-                    .ok_or_else(|| ParseError(format!("{key}: is not allowed here")))?;
+                    .ok_or_else(|| {
+                        ParseError::new(words!(
+                            query_not_allowed = "{ $key } is not allowed here",
+                            key = format!("{key}:"),
+                            note = "An error in a search's text. key: a key of the search language, as written."
+                        ))
+                    })?;
                 parse_time(field, &format!(":{v}"), self.now, self.calendar)
             }
         }
@@ -800,14 +925,20 @@ fn parse_distance(text: &str) -> Result<(f64, String), ParseError> {
         (text, 1000.)
     };
     let value: f64 = number.trim().parse().map_err(|_| {
-        ParseError(format!(
-            "near: expects a distance such as 5km or 500m, got `{text}`"
+        ParseError::new(words!(
+            query_expects_distance = "{ $key } expects a distance such as 5km or 500m, got `{ $value }`",
+            key = "near:",
+            value = text,
+            note = "An error in a search's text. key: a key of the search language; 5km and 500m are distances as the search language writes them: keep them; value: what was typed."
         ))
     })?;
     let metres = value * metres_per;
     if !(metres > 0. && metres <= 20_037_509.) {
-        return Err(ParseError(format!(
-            "near: a distance of `{text}` is not one on the Earth"
+        return Err(ParseError::new(words!(
+            query_not_on_earth = "{ $key } a distance of `{ $value }` is not one on the Earth",
+            key = "near:",
+            value = text,
+            note = "An error in a search's text. key: a key of the search language, as written; value: the distance typed."
         )));
     }
     let written = if metres >= 1000. {
@@ -818,33 +949,59 @@ fn parse_distance(text: &str) -> Result<(f64, String), ParseError> {
     Ok((metres, written))
 }
 
-/// Numbers separated by commas, as many as asked.
-fn numbers(text: &str, count: usize, key: &str, expected: &str) -> Result<Vec<f64>, ParseError> {
+/// Numbers separated by commas, as many as asked; `refused` says what
+/// was expected.
+fn numbers(
+    text: &str,
+    count: usize,
+    refused: fn(&str) -> ParseError,
+) -> Result<Vec<f64>, ParseError> {
     let values: Vec<f64> = text
         .split(',')
         .map(|n| n.trim().parse::<f64>())
         .collect::<Result<_, _>>()
-        .map_err(|_| ParseError(format!("{key}: expects {expected}, got `{text}`")))?;
+        .map_err(|_| refused(text))?;
     if values.len() != count || values.iter().any(|v| !v.is_finite()) {
-        return Err(ParseError(format!(
-            "{key}: expects {expected}, got `{text}`"
-        )));
+        return Err(refused(text));
     }
     Ok(values)
+}
+
+/// `near:` given what is not a point.
+fn not_a_point(text: &str) -> ParseError {
+    ParseError::new(words!(
+        query_expects_point =
+            "{ $key } expects a latitude and a longitude, such as 45.1,6.2, got `{ $value }`",
+        key = "near:",
+        value = text,
+        note = "An error in a search's text. key: a key of the search language; 45.1,6.2 is a point as the search language writes it: keep it; value: what was typed."
+    ))
+}
+
+/// `inside:` given what is not an area.
+fn not_an_area(text: &str) -> ParseError {
+    ParseError::new(words!(
+        query_expects_edges = "{ $key } expects south, west, north and east edges, such as 9.9,19.9,10.2,20.3, got `{ $value }`",
+        key = "inside:",
+        value = text,
+        note = "An error in a search's text. key: a key of the search language; 9.9,19.9,10.2,20.3 is an area as the search language writes it: keep it; value: what was typed."
+    ))
 }
 
 /// `near:10.12,20.12~5km`: a point, and how far from it (1 km unsaid).
 fn parse_near(v: &str) -> Result<Term, ParseError> {
     let (point, distance) = v.split_once('~').map_or((v, None), |(p, d)| (p, Some(d)));
-    let values = numbers(
-        point,
-        2,
-        "near",
-        "a latitude and a longitude, such as 45.1,6.2",
-    )?;
+    let values = numbers(point, 2, not_a_point)?;
     let at = skwir_core::geo::LatLon::new(values[0], values[1])
         .filter(|_| (-90. ..=90.).contains(&values[0]))
-        .ok_or_else(|| ParseError(format!("near: `{point}` is not a place")))?;
+        .ok_or_else(|| {
+            ParseError::new(words!(
+                query_not_a_place = "{ $key } `{ $value }` is not a place",
+                key = "near:",
+                value = point,
+                note = "An error in a search's text. key: a key of the search language, as written; value: the point typed, not one on the Earth."
+            ))
+        })?;
     let (radius, written) = match distance {
         Some(d) => parse_distance(d)?,
         None => (1000., "1km".into()),
@@ -858,14 +1015,13 @@ fn parse_near(v: &str) -> Result<Term, ParseError> {
 
 /// `inside:9.9,19.9,10.2,20.3`: south, west, north, east.
 fn parse_inside(v: &str) -> Result<Term, ParseError> {
-    let expected = "south, west, north and east edges, such as 9.9,19.9,10.2,20.3";
-    let values = numbers(v, 4, "inside", expected)?;
+    let values = numbers(v, 4, not_an_area)?;
     let (south, west, north, east) = (values[0], values[1], values[2], values[3]);
     let latitude = |x: f64| (-90. ..=90.).contains(&x);
     let longitude = |x: f64| (-180. ..=180.).contains(&x);
     if !(latitude(south) && latitude(north) && south <= north && longitude(west) && longitude(east))
     {
-        return Err(ParseError(format!("inside: expects {expected}, got `{v}`")));
+        return Err(not_an_area(v));
     }
     Ok(Term::Inside {
         south,
@@ -882,7 +1038,8 @@ fn parse_inside(v: &str) -> Result<Term, ParseError> {
     })
 }
 
-/// The words `kind:` takes, for an error message.
+/// The words `kind:` takes, for an error message: words of the search
+/// language, as written.
 fn kind_words() -> String {
     let words: Vec<&str> = skwir_platform::mime::Kind::ALL
         .iter()
@@ -907,18 +1064,22 @@ fn parse_content(v: &str, quoted: bool, cs: bool) -> Result<ContentPat, ParseErr
         return ContentPat::text(v, cs);
     };
     if pattern.is_empty() {
-        return Err(ParseError("content: empty regex".into()));
+        return Err(ParseError::new(words!(
+            query_empty_regex = "{ $key } empty regex",
+            key = "content:",
+            note = "An error in a search's text: content:// holds no pattern. key: a key of the search language, as written."
+        )));
     }
     let mut case_sensitive = cs;
     for flag in flags.chars() {
-        let Some((_, sensitive, _)) = REGEX_FLAGS.iter().find(|(f, ..)| *f == flag) else {
-            let flags: Vec<String> = REGEX_FLAGS
-                .iter()
-                .map(|(flag, _, means)| format!("{flag}: {means}"))
-                .collect();
-            return Err(ParseError(format!(
-                "content: unknown regex flag `{flag}` ({}; quote text that starts with /)",
-                flags.join(", ")
+        let Some((_, sensitive)) = REGEX_FLAGS.iter().find(|(f, _)| *f == flag) else {
+            return Err(ParseError::new(words!(
+                query_unknown_flag = "{ $key } unknown regex flag `{ $flag }` ({ $i }: capitals or not, { $c }: capitals told apart; quote text that starts with /)",
+                key = "content:",
+                flag = flag.to_string(),
+                i = REGEX_FLAGS[0].0.to_string(),
+                c = REGEX_FLAGS[1].0.to_string(),
+                note = "An error in a search's text: what follows content:/…/ is no flag. key: a key of the search language; flag: what was typed; i and c: the flags, as written."
             )));
         };
         case_sensitive = *sensitive;
@@ -926,13 +1087,11 @@ fn parse_content(v: &str, quoted: bool, cs: bool) -> Result<ContentPat, ParseErr
     ContentPat::regex(&pattern, case_sensitive)
 }
 
-/// What may follow a `content:/…/` regex: each flag, whether capitals
-/// are then told apart, and what it means; without one, `case:` decides.
-/// What [`parse_content`] reads, and what the reference says (ADR-137).
-pub const REGEX_FLAGS: [(char, bool, &str); 2] = [
-    ('i', false, "capitals or not"),
-    ('c', true, "capitals told apart"),
-];
+/// What may follow a `content:/…/` regex: each flag, and whether capitals
+/// are then told apart; without one, `case:` decides. What
+/// [`parse_content`] reads, and what the reference says (ADR-137): `i`
+/// capitals or not, `c` capitals told apart, in that order.
+pub const REGEX_FLAGS: [(char, bool); 2] = [('i', false), ('c', true)];
 
 fn split_cmp(rest: &str) -> Result<(&str, &str), ParseError> {
     for op in [">=", "<=", ">", "<", "=", ":"] {
@@ -940,7 +1099,11 @@ fn split_cmp(rest: &str) -> Result<(&str, &str), ParseError> {
             return Ok((op, v));
         }
     }
-    Err(ParseError(format!("expected a comparison after `{rest}`")))
+    Err(ParseError::new(words!(
+        query_expected_comparison = "expected a comparison after `{ $text }`",
+        text = rest,
+        note = "An error in a search's text: a comparison (>, <, =) was expected after what was typed."
+    )))
 }
 
 /// What a size may end with, capitals or not, and what it counts
@@ -980,12 +1143,17 @@ pub fn parse_bytes(s: &str) -> Result<u64, ParseError> {
         Some((unit, mult)) => (&s[..s.len() - unit.len()], *mult),
         None => (s, 1),
     };
-    let n: f64 = num
-        .parse()
-        .map_err(|_| ParseError(format!("bad size `{s}`")))?;
+    let bad = || {
+        ParseError::new(words!(
+            query_bad_size = "bad size `{ $value }`",
+            value = s,
+            note = "An error in a search's text: what was typed is no size (10M, 1.5GB)."
+        ))
+    };
+    let n: f64 = num.parse().map_err(|_| bad())?;
     // `inf` and `nan` parse as floats; they are not sizes.
     if !n.is_finite() || n < 0.0 {
-        return Err(ParseError(format!("bad size `{s}`")));
+        return Err(bad());
     }
     // Saturating: a size beyond u64 is "as large as it gets".
     Ok((n * mult as f64) as u64)
@@ -1000,7 +1168,7 @@ fn parse_size(rest: &str) -> Result<Term, ParseError> {
         "<" => {
             let n = parse_bytes(v)?;
             if n == 0 {
-                return Err(ParseError("size<0 matches nothing".into()));
+                return Err(matches_nothing("size<0"));
             }
             (None, Some(n - 1))
         }
@@ -1021,6 +1189,15 @@ fn parse_size(rest: &str) -> Result<Term, ParseError> {
     })
 }
 
+/// A term that can match no file (`size<0`).
+fn matches_nothing(term: &str) -> ParseError {
+    ParseError::new(words!(
+        query_matches_nothing = "{ $term } matches nothing",
+        term = term,
+        note = "An error in a search's text. term: the term typed, as written (size<0)."
+    ))
+}
+
 /// A number of stars (`4`, `3.5`) in half stars.
 fn half_stars(v: &str) -> Result<u64, ParseError> {
     let stars: f64 = v
@@ -1029,8 +1206,11 @@ fn half_stars(v: &str) -> Result<u64, ParseError> {
         .ok()
         .filter(|s: &f64| (0.0..=5.0).contains(s) && (s * 2.).fract() == 0.)
         .ok_or_else(|| {
-            ParseError(format!(
-                "rating expects stars from 0 to 5 (halves allowed), got `{v}`"
+            ParseError::new(words!(
+                query_expects_stars = "{ $key } expects stars from 0 to 5 (halves allowed), got `{ $value }`",
+                key = "rating",
+                value = v,
+                note = "An error in a search's text. key: a key of the search language, as written; value: what was typed."
             ))
         })?;
     Ok((stars * 2.) as u64)
@@ -1044,7 +1224,7 @@ fn parse_rating(rest: &str) -> Result<Term, ParseError> {
         ">" => (half_stars(v)? + 1, MAX),
         ">=" => (half_stars(v)?, MAX),
         "<" => match half_stars(v)? {
-            0 => return Err(ParseError("rating<0 matches nothing".into())),
+            0 => return Err(matches_nothing("rating<0")),
             n => (0, n - 1),
         },
         "<=" => (0, half_stars(v)?),
@@ -1122,16 +1302,10 @@ enum TimeLit {
 }
 
 /// The units a duration back from now is written in (`7d`, `2h30m`), as
-/// the calendar reads them (`Calendar::ago`), and what each counts: what
-/// the reference says (ADR-137), each read back by a test.
-pub const DURATION_UNITS: [(&str, &str); 6] = [
-    ("m", "minutes"),
-    ("h", "hours"),
-    ("d", "days"),
-    ("w", "weeks"),
-    ("mo", "months"),
-    ("y", "years"),
-];
+/// the calendar reads them (`Calendar::ago`): minutes, hours, days, weeks,
+/// months and years, in that order, as the reference says (ADR-137), each
+/// read back by a test.
+pub const DURATION_UNITS: [&str; 6] = ["m", "h", "d", "w", "mo", "y"];
 
 fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, ParseError> {
     if let Some(days) = parse_date(s, cal) {
@@ -1148,8 +1322,10 @@ fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, P
     if let Ok(d) = humantime::parse_duration(s) {
         return Ok(TimeLit::Ago(now.checked_sub(d).unwrap_or(UNIX_EPOCH)));
     }
-    Err(ParseError(format!(
-        "bad date or duration `{s}` (try 2026-05-01, this-week or 7d)"
+    Err(ParseError::new(words!(
+        query_bad_time = "bad date or duration `{ $value }` (try 2026-05-01, this-week or 7d)",
+        value = s,
+        note = "An error in a search's text. value: what was typed; 2026-05-01, this-week and 7d are written as the search language writes them: keep them."
     )))
 }
 

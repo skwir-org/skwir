@@ -13,6 +13,8 @@ use std::path::PathBuf;
 
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 /// One saved search or saved place, as stored under `query.saved`.
 #[derive(
@@ -157,7 +159,7 @@ impl Edit {
     /// Apply the edit to `list`: the edit that reverts it when something
     /// changed, `None` when there was nothing to do (already saved, not
     /// saved, the same name or place). An error leaves `list` as it was.
-    pub fn apply(&self, list: &mut Vec<SavedQuery>) -> Result<Option<Edit>, String> {
+    pub fn apply(&self, list: &mut Vec<SavedQuery>) -> Result<Option<Edit>, Words> {
         let find = |list: &[SavedQuery], key: &Key| list.iter().position(|s| s.key() == *key);
         // What follows the entry at `i`: where it goes back to.
         let next = |list: &[SavedQuery], i: usize| list.get(i + 1).map(SavedQuery::key);
@@ -232,8 +234,16 @@ impl Edit {
                 };
                 if let Some(other) = list.iter().find(|s| s.key() == changed) {
                     return Err(match &key.at {
-                        None => format!("this search is already saved as “{}”", other.name),
-                        Some(_) => format!("this filter is already saved as “{}”", other.name),
+                        None => words!(
+                            query_search_taken = "this search is already saved as { $name }",
+                            name = Name(other.name.clone()),
+                            note = "Why a saved search was not changed: another saved search looks for that."
+                        ),
+                        Some(_) => words!(
+                            query_filter_taken = "this filter is already saved as { $name }",
+                            name = Name(other.name.clone()),
+                            note = "Why a saved place's filter was not changed: another saved place is that."
+                        ),
                     });
                 }
                 let Some(entry) = list.iter_mut().find(|s| s.key() == *key) else {
@@ -389,7 +399,7 @@ mod tests {
             key: "a".into(),
             to: "b".into(),
         };
-        assert!(edit.apply(&mut l).unwrap_err().contains("n-b"));
+        assert!(edit.apply(&mut l).unwrap_err().english().contains("n-b"));
         assert_eq!(l, start);
     }
 }

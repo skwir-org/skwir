@@ -29,55 +29,182 @@
 use serde::Serialize;
 use skwir_core::command::Invocation;
 use skwir_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_within};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_platform::mime::Kind;
 
 use crate::lang::{self, ContentPat, Expr, Query, Term, quote};
 
 /// The times a search can be narrowed to: when files were modified,
 /// created, last opened, and when a picture or a video was taken. Each is
-/// a facet named as its term's key, with its chip's title and whether the
-/// chip is offered while not set.
-const WHEN: [(&str, &str, bool); 4] = [
-    ("modified", "Modified", true),
-    ("created", "Created", false),
-    ("accessed", "Accessed", false),
-    ("taken", "Taken", true),
+/// a facet named as its term's key, and whether the chip is offered while
+/// not set; its chip's title is [`when_title`].
+const WHEN: [(&str, bool); 4] = [
+    ("modified", true),
+    ("created", false),
+    ("accessed", false),
+    ("taken", true),
 ];
 
-/// When, as the chips of [`WHEN`] offer it: a label and what follows the
-/// key in the query (`:` is implied before a word).
-pub const PERIODS: [(&str, &str); 9] = [
-    ("Today", "today"),
-    ("Yesterday", "yesterday"),
-    ("This week", "this-week"),
-    ("Last week", "last-week"),
-    ("This month", "this-month"),
-    ("Last month", "last-month"),
-    ("This year", "this-year"),
-    ("Last year", "last-year"),
-    ("Older than a year", ">1y"),
+/// The title of [`WHEN`]'s chip for `facet`.
+fn when_title(facet: &str) -> Words {
+    match facet {
+        "modified" => words!(
+            query_chip_modified = "Modified",
+            note = "A search's chip: when its files were last changed."
+        ),
+        "created" => words!(
+            query_chip_created = "Created",
+            note = "A search's chip: when its files were made."
+        ),
+        "accessed" => words!(
+            query_chip_accessed = "Accessed",
+            note = "A search's chip: when its files were last opened."
+        ),
+        _ => words!(
+            query_chip_taken = "Taken",
+            note = "A search's chip: when its pictures and videos were taken."
+        ),
+    }
+}
+
+/// A preset's label, and what it writes after the key.
+pub type Presets = Vec<(Words, String)>;
+
+/// When, as the chips of [`WHEN`] offer it: what follows the key in the
+/// query (`:` is implied before a word); each said by [`period_label`].
+pub const PERIODS: [&str; 9] = [
+    "today",
+    "yesterday",
+    "this-week",
+    "last-week",
+    "this-month",
+    "last-month",
+    "this-year",
+    "last-year",
+    ">1y",
 ];
+
+/// What a choice of [`PERIODS`] says.
+pub fn period_label(period: &str) -> Words {
+    match period {
+        "today" => words!(
+            query_period_today = "Today",
+            note = "A period files were changed in, offered by a search's chip."
+        ),
+        "yesterday" => words!(query_period_yesterday = "Yesterday"),
+        "this-week" => words!(query_period_this_week = "This week"),
+        "last-week" => words!(query_period_last_week = "Last week"),
+        "this-month" => words!(query_period_this_month = "This month"),
+        "last-month" => words!(query_period_last_month = "Last month"),
+        "this-year" => words!(query_period_this_year = "This year"),
+        "last-year" => words!(query_period_last_year = "Last year"),
+        _ => words!(query_period_older = "Older than a year"),
+    }
+}
+
+/// [`PERIODS`] as presets.
+pub fn periods() -> Presets {
+    PERIODS
+        .iter()
+        .map(|period| (period_label(period), (*period).to_owned()))
+        .collect()
+}
 
 /// How big, as the Size chip offers it: in the units sizes are shown in,
 /// its values written in them (`fs::size_units`, ADR-139, 9).
-pub fn sizes() -> Vec<(String, String)> {
+pub fn sizes() -> Presets {
     let [_, k, m, g, ..] = skwir_core::fs::size_units().names();
     vec![
-        ("Empty".to_owned(), "0".to_owned()),
-        (format!("Under 100 {k}"), format!("<100{k}")),
-        (format!("Under 1 {m}"), format!("<1{m}")),
-        (format!("1 to 100 {m}"), format!("1{m}..100{m}")),
-        (format!("Over 100 {m}"), format!(">100{m}")),
-        (format!("Over 1 {g}"), format!(">1{g}")),
+        (
+            words!(
+                query_size_empty = "Empty",
+                note = "A size a search offers: files of no bytes."
+            ),
+            "0".to_owned(),
+        ),
+        (
+            words!(
+                query_size_under_100 = "Under 100 { $unit }",
+                unit = k,
+                note = "A size a search offers; unit: a unit of size as the size setting writes it (kB, KiB)."
+            ),
+            format!("<100{k}"),
+        ),
+        (
+            words!(
+                query_size_under_1 = "Under 1 { $unit }",
+                unit = m,
+                note = "A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB)."
+            ),
+            format!("<1{m}"),
+        ),
+        (
+            words!(
+                query_size_1_to_100 = "1 to 100 { $unit }",
+                unit = m,
+                note = "A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB)."
+            ),
+            format!("1{m}..100{m}"),
+        ),
+        (
+            words!(
+                query_size_over_100 = "Over 100 { $unit }",
+                unit = m,
+                note = "A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB)."
+            ),
+            format!(">100{m}"),
+        ),
+        (
+            words!(
+                query_size_over_1 = "Over 1 { $unit }",
+                unit = g,
+                note = "A size a search offers; unit: a unit of size as the size setting writes it (GB, GiB)."
+            ),
+            format!(">1{g}"),
+        ),
     ]
 }
 
-/// `sizes`, borrowed as the presets are read.
-pub fn presets(owned: &[(String, String)]) -> Vec<(&str, &str)> {
-    owned
-        .iter()
-        .map(|(label, value)| (label.as_str(), value.as_str()))
-        .collect()
+/// `items` said as a list: `a, b`, each item as it is.
+pub(crate) fn comma_list(items: Vec<Words>) -> Words {
+    let mut items = items.into_iter().rev();
+    let Some(last) = items.next() else {
+        return Words::default();
+    };
+    items.fold(last, |rest, first| {
+        words!(
+            query_list_comma = "{ $first }, { $rest }",
+            first = first,
+            rest = rest,
+            note = "A list said in a chip (Images, Videos): first, then the rest of the list."
+        )
+    })
+}
+
+/// `items` said as a list: `a`, `a and b`, `a, b and c`.
+pub(crate) fn and_list(items: Vec<Words>) -> Words {
+    let mut items = items.into_iter().rev();
+    let Some(last) = items.next() else {
+        return Words::default();
+    };
+    let Some(before) = items.next() else {
+        return last;
+    };
+    let pair = words!(
+        query_list_and = "{ $first } and { $last }",
+        first = before,
+        last = last,
+        note = "The end of a list in a sentence (PDFs and JPGs): its last two items."
+    );
+    items.fold(pair, |rest, first| {
+        words!(
+            query_list_and_more = "{ $first }, { $rest }",
+            first = first,
+            rest = rest,
+            note = "A list in a sentence (PDFs, JPGs and PNGs): its first item, then the rest of it, which ends in its last two."
+        )
+    })
 }
 
 /// A chip: a facet of the search, or a part of it no facet holds.
@@ -146,10 +273,16 @@ impl Refines {
     }
 
     /// What the button that applies a value typed says.
-    fn accept(self) -> &'static str {
+    fn accept(self) -> Words {
         match self {
-            Refines::Search => "Search",
-            Refines::Filter => "Filter",
+            Refines::Search => words!(
+                query_accept_search = "Search",
+                note = "The button that searches with a value typed in a search's chip."
+            ),
+            Refines::Filter => words!(
+                query_accept_filter = "Filter",
+                note = "The button that filters the folder with a value typed in a chip."
+            ),
         }
     }
 }
@@ -369,22 +502,27 @@ fn with_key(key: &str, value: &str) -> String {
 }
 
 /// Parse `term` alone and check it is the facet's kind of term.
-fn check(term: &str, is: impl Fn(&Term) -> bool) -> Result<(), String> {
-    let q = lang::parse(term).map_err(|e| e.to_string())?;
+fn check(term: &str, is: impl Fn(&Term) -> bool) -> Result<(), Words> {
+    let q = lang::parse(term).map_err(|e| e.words)?;
     match q.expr {
         Some(Expr::Term(t)) if is(&t) => Ok(()),
-        _ => Err(format!("`{term}` is not one condition")),
+        _ => Err(words!(
+            query_not_one_condition = "`{ $term }` is not one condition",
+            term = term,
+            note =
+                "An error of a value given a search's chip. term: the term it makes, as written."
+        )),
     }
 }
 
 /// `expr` with one facet changed: `value` sets it (a kind toggles in and
 /// out), `None` clears it. `facet` is a chip's id; for `advanced`, `value`
 /// is the index of the part to remove.
-pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, String> {
-    let mut q = lang::parse(expr).map_err(|e| e.to_string())?;
+pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, Words> {
+    let mut q = lang::parse(expr).map_err(|e| e.words)?;
     let mut p = Parts::of(&q);
     // A time: set to a term of its own key, or cleared.
-    if let Some(i) = WHEN.iter().position(|(w, ..)| *w == facet) {
+    if let Some(i) = WHEN.iter().position(|(w, _)| *w == facet) {
         p.when[i] = match value {
             None => None,
             Some(v) => {
@@ -400,13 +538,19 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
             p.words.clear();
             let text = value.unwrap_or_default().trim();
             if !text.is_empty() {
-                let typed = lang::parse(text).map_err(|e| e.to_string())?;
+                let typed = lang::parse(text).map_err(|e| e.words)?;
                 p.merge(Parts::of(&typed));
             }
         }
         ("kind", None) => p.kinds.clear(),
         ("kind", Some(word)) => {
-            let kind = Kind::from_name(word).ok_or_else(|| format!("no kind `{word}`"))?;
+            let kind = Kind::from_name(word).ok_or_else(|| {
+                words!(
+                    query_no_kind = "no kind `{ $kind }`",
+                    kind = word,
+                    note = "An error of a value given a search's Kind chip: kind, as given, is no kind: of the search language."
+                )
+            })?;
             if let Some(at) = p.kinds.iter().position(|k| *k == kind) {
                 p.kinds.remove(at);
             } else {
@@ -458,7 +602,7 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
         ("content", None) => p.content = None,
         ("content", Some(text)) => {
             p.content = Some(
-                Term::Content(ContentPat::text(text, q.case_sensitive).map_err(|e| e.to_string())?)
+                Term::Content(ContentPat::text(text, q.case_sensitive).map_err(|e| e.words)?)
                     .to_string(),
             );
         }
@@ -466,7 +610,7 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
         // besides the rest: in its facet where that is free, else as a part
         // of its own, so every part still holds.
         ("also", Some(term)) => {
-            let more = lang::parse(term.trim()).map_err(|e| e.to_string())?;
+            let more = lang::parse(term.trim()).map_err(|e| e.words)?;
             p.merge(Parts::of(&more));
         }
         ("where", Some("subtree")) => q.depth = None,
@@ -477,12 +621,24 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
         }
         ("where", Some("excluded")) => q.excluded = !q.excluded,
         ("advanced", Some(index)) => {
-            let at: usize = index.parse().map_err(|_| format!("no part `{index}`"))?;
+            let at: usize = index.parse().map_err(|_| {
+                words!(
+                    query_no_part = "no part `{ $part }`",
+                    part = index,
+                    note = "An error of a choice of a search's chip: part, as given, numbers no part of the search."
+                )
+            })?;
             if at < p.advanced.len() {
                 p.advanced.remove(at);
             }
         }
-        (facet, _) => return Err(format!("no facet `{facet}`")),
+        (facet, _) => {
+            return Err(words!(
+                query_no_facet = "no facet `{ $facet }`",
+                facet = facet,
+                note = "An error of a choice of a search's chip: facet, as given, is no chip's."
+            ));
+        }
     }
     Ok(p.write(&q))
 }
@@ -494,14 +650,15 @@ fn refine_invocation(r: Refines, facet: &str, value: Option<&str>) -> Invocation
     )
 }
 
-/// Ask for a line of text and refine `facet` with it.
-fn ask(r: Refines, facet: &str, title: &str, placeholder: &str, text: &str) -> Invocation {
+/// Ask for a line of text and refine `facet` with it: its words said for
+/// the window, which draws the question.
+fn ask(r: Refines, facet: &str, title: &Words, placeholder: &Words, text: &str) -> Invocation {
     Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": title,
-            "accept": r.accept(),
-            "placeholder": placeholder,
+            "title": title.say(),
+            "accept": r.accept().say(),
+            "placeholder": placeholder.say(),
             "text": text,
             "command": r.command(),
             "args": { "facet": facet },
@@ -512,7 +669,24 @@ fn ask(r: Refines, facet: &str, title: &str, placeholder: &str, text: &str) -> I
 
 /// Ask for a tag to type.
 fn ask_tag(r: Refines, current: &str) -> Invocation {
-    ask(r, "tag", "Tagged", "A tag", current)
+    ask(
+        r,
+        "tag",
+        &tagged(),
+        &words!(
+            query_ask_tag_placeholder = "A tag",
+            note = "What the field asking for a tag holds while empty."
+        ),
+        current,
+    )
+}
+
+/// The title of what asks for a tag every file has.
+fn tagged() -> Words {
+    words!(
+        query_tagged = "Tagged",
+        note = "The title of what asks for, or chooses, a tag a search's files have."
+    )
 }
 
 /// The picker's answer for the Tag chip (`ui.choose`'s source): the tags
@@ -529,44 +703,53 @@ pub fn tag_choices(
         .map(|(tag, n)| {
             serde_json::json!({
                 "title": tag,
-                "detail": if *n == 1 { "1 file".to_owned() } else { format!("{n} files") },
+                "detail": words!(
+                    query_tag_files = "{ $count ->
+                        [one] { $count } file
+                       *[other] { $count } files
+                    }",
+                    count = *n,
+                    note = "Beside a tag to choose: how many of the files shown have it."
+                )
+                .say(),
                 "icon": "tag",
                 "command": refine_invocation(r, "tag", Some(tag)),
             })
         })
         .collect();
     choices.push(serde_json::json!({
-        "title": "Another tag…",
-        "section": "Other",
+        "title": words!(query_another_tag = "Another tag…", note = "Chooses a tag to type, among the tags the files have.").say(),
+        "section": words!(query_tag_section_other = "Other", note = "The heading of the choices that are no tag of the files.").say(),
         "command": ask_tag(r, ""),
     }));
     serde_json::json!({
-        "title": "Tagged",
-        "empty": "No tags among these files",
+        "title": tagged().say(),
+        "empty": words!(query_no_tags_among = "No tags among these files").say(),
         "choices": choices,
     })
 }
 
 /// What a preset list says a term is: its label when it is one of them,
-/// else what follows the key.
-fn label_of(term: &str, key: &str, presets: &[(&str, &str)]) -> String {
+/// else what follows the key, as written.
+fn label_of(term: &str, key: &str, presets: &[(Words, String)]) -> String {
     let rest = term.strip_prefix(key).unwrap_or(term);
     let bare = rest.strip_prefix(':').unwrap_or(rest);
     presets
         .iter()
-        .find(|(_, v)| *v == bare || *v == rest)
-        .map_or_else(|| bare.to_owned(), |(label, _)| (*label).to_owned())
+        .find(|(_, v)| v == bare || v == rest)
+        .map_or_else(|| bare.to_owned(), |(label, _)| label.say())
 }
 
-/// A chip of presets, one active when the term is it, and Custom….
+/// A chip of presets, one active when the term is it, and Custom…, which
+/// asks for a value with `custom`'s title and placeholder.
 fn preset_chip(
     r: Refines,
     id: &str,
-    title: &str,
+    title: &Words,
     icon: &str,
     term: Option<&String>,
-    presets: &[(&str, &str)],
-    custom: (&str, &str),
+    presets: &[(Words, String)],
+    custom: (&Words, &Words),
 ) -> Chip {
     let current = term.map(|t| t.strip_prefix(id).unwrap_or(t).to_owned());
     let bare = current
@@ -575,13 +758,18 @@ fn preset_chip(
     let mut choices: Vec<Choice> = presets
         .iter()
         .map(|(label, value)| Choice {
-            label: (*label).to_owned(),
-            command: refine_invocation(r, id, Some(value)),
-            active: bare.as_deref() == Some(*value) || current.as_deref() == Some(*value),
+            label: label.say(),
+            command: refine_invocation(r, id, Some(value.as_str())),
+            active: bare.as_deref() == Some(value.as_str())
+                || current.as_deref() == Some(value.as_str()),
         })
         .collect();
     choices.push(Choice {
-        label: "Custom…".to_owned(),
+        label: words!(
+            query_custom = "Custom…",
+            note = "A chip's last choice: asks for a value to type."
+        )
+        .say(),
         command: ask(
             r,
             id,
@@ -593,7 +781,7 @@ fn preset_chip(
     });
     Chip {
         id: id.to_owned(),
-        title: title.to_owned(),
+        title: title.say(),
         value: term.map(|t| label_of(t, id, presets)),
         icon: icon.to_owned(),
         choices,
@@ -615,7 +803,12 @@ fn tag_chip(r: Refines, tag: &str) -> Chip {
         let command = (!last).then(|| refine_invocation(r, "tag_up", Some(&up)));
         if let Some(command) = &command {
             choices.push(Choice {
-                label: format!("All of “{part}”"),
+                label: words!(
+                    query_tag_all_of = "All of { $tag }",
+                    tag = Name((*part).to_owned()),
+                    note = "A tag chip's choice: goes up to the category tag, every tag within it."
+                )
+                .say(),
                 command: command.clone(),
                 active: false,
             });
@@ -626,13 +819,17 @@ fn tag_chip(r: Refines, tag: &str) -> Chip {
         });
     }
     choices.push(Choice {
-        label: "Not tagged so instead".into(),
+        label: words!(
+            query_not_tagged_instead = "Not tagged so instead",
+            note = "A tag chip's choice: the files without the tag, rather than those with it."
+        )
+        .say(),
         command: refine_invocation(r, "not_tag", Some(tag)),
         active: false,
     });
     Chip {
         id: "tag".into(),
-        title: "Tag".into(),
+        title: tag_title().say(),
         value: Some(tag.to_owned()),
         icon: "tag".into(),
         choices,
@@ -642,15 +839,23 @@ fn tag_chip(r: Refines, tag: &str) -> Chip {
     }
 }
 
+/// The title of a chip of a tag the files have.
+fn tag_title() -> Words {
+    words!(
+        query_chip_tag = "Tag",
+        note = "A search's chip: a tag its files have."
+    )
+}
+
 /// The search `expr` with the lens `lens` brought into it (ADR-107): a
 /// facet the search sets is its own (a date the timeline chose replaces
 /// the lens's), any other the lens's; tags add up, and the lens's other
 /// terms join the search's but for one it has already. Its words, what it
 /// reads from the files and where it looks stay the search's.
-pub fn with_lens(expr: &str, lens: &str) -> Result<String, String> {
-    let q = lang::parse(expr).map_err(|e| e.to_string())?;
+pub fn with_lens(expr: &str, lens: &str) -> Result<String, Words> {
+    let q = lang::parse(expr).map_err(|e| e.words)?;
     let mut p = Parts::of(&q);
-    let l = Parts::of(&lang::parse(lens).map_err(|e| e.to_string())?);
+    let l = Parts::of(&lang::parse(lens).map_err(|e| e.words)?);
     if p.kinds.is_empty() {
         p.kinds = l.kinds;
     }
@@ -681,14 +886,14 @@ pub fn with_lens(expr: &str, lens: &str) -> Result<String, String> {
 
 /// The facets a lens sets (`kind`, `modified`…), which Quick filters do
 /// not offer again.
-pub fn set_facets(expr: &str) -> Result<Vec<String>, String> {
-    let q = lang::parse(expr).map_err(|e| e.to_string())?;
+pub fn set_facets(expr: &str) -> Result<Vec<String>, Words> {
+    let q = lang::parse(expr).map_err(|e| e.words)?;
     let p = Parts::of(&q);
     let mut set = Vec::new();
     if !p.kinds.is_empty() {
         set.push("kind".to_owned());
     }
-    for ((facet, ..), term) in WHEN.iter().zip(&p.when) {
+    for ((facet, _), term) in WHEN.iter().zip(&p.when) {
         if term.is_some() {
             set.push((*facet).to_owned());
         }
@@ -735,7 +940,7 @@ pub fn describe(
     expr: &str,
     tags_known: bool,
     app: Option<&skwir_core::App>,
-) -> Result<Description, String> {
+) -> Result<Description, Words> {
     describe_for(Refines::Search, expr, tags_known, app)
 }
 
@@ -746,30 +951,46 @@ pub fn describe_for(
     expr: &str,
     tags_known: bool,
     app: Option<&skwir_core::App>,
-) -> Result<Description, String> {
+) -> Result<Description, Words> {
     let search = r == Refines::Search;
-    let q = lang::parse(expr).map_err(|e| e.to_string())?;
+    let q = lang::parse(expr).map_err(|e| e.words)?;
     let p = Parts::of(&q);
     let mut chips = Vec::new();
 
     let words = p.words.join(" ");
     chips.push(Chip {
         id: "words".into(),
-        title: "Name".into(),
+        title: words!(
+            query_chip_name = "Name",
+            note = "A search's chip: the words its files' names hold."
+        )
+        .say(),
         value: (!words.is_empty()).then(|| words.clone()),
         icon: "search".into(),
         choices: vec![Choice {
             label: if words.is_empty() {
-                "Name contains…"
+                words!(
+                    query_name_contains_menu = "Name contains…",
+                    note = "The Name chip's choice: asks for words the names hold."
+                )
             } else {
-                "Change…"
+                words!(
+                    query_name_change = "Change…",
+                    note = "The Name chip's choice once set: asks for other words."
+                )
             }
-            .into(),
+            .say(),
             command: ask(
                 r,
                 "words",
-                "Name contains",
-                "Words or patterns: invoice *.pdf",
+                &words!(
+                    query_name_contains = "Name contains",
+                    note = "The title of what asks for words the names hold."
+                ),
+                &words!(
+                    query_name_placeholder = "Words or patterns: invoice *.pdf",
+                    note = "What the field asking for words of names holds while empty; invoice *.pdf is an example as written."
+                ),
                 &words,
             ),
             active: false,
@@ -781,13 +1002,19 @@ pub fn describe_for(
 
     chips.push(Chip {
         id: "kind".into(),
-        title: "Kind".into(),
+        title: words!(
+            query_chip_kind = "Kind",
+            note = "A search's chip: the kinds of its files (images, documents)."
+        )
+        .say(),
         value: (!p.kinds.is_empty()).then(|| {
-            p.kinds
-                .iter()
-                .map(|k| k.title())
-                .collect::<Vec<_>>()
-                .join(", ")
+            comma_list(
+                p.kinds
+                    .iter()
+                    .map(|k| Words::as_written(k.title()))
+                    .collect(),
+            )
+            .say()
         }),
         icon: "grid".into(),
         choices: Kind::ALL
@@ -803,36 +1030,49 @@ pub fn describe_for(
         lens: false,
     });
 
-    for ((facet, title, offered), term) in WHEN.iter().zip(&p.when) {
+    let periods = periods();
+    for ((facet, offered), term) in WHEN.iter().zip(&p.when) {
         // When a picture was taken is read from it: a search's.
         if term.is_none() && !(*offered && (search || *facet != "taken")) {
             continue;
         }
+        let title = when_title(facet);
         chips.push(preset_chip(
             r,
             facet,
-            title,
+            &title,
             "calendar",
             term.as_ref(),
-            &PERIODS,
+            &periods,
             (
-                title,
-                "A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d",
+                &title,
+                &words!(
+                    query_when_placeholder = "A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d",
+                    note = "What the field asking for a date holds while empty; the examples are written as the search language writes them: keep them."
+                ),
             ),
         ));
     }
-    let sizes = sizes();
     let [_, k, m, ..] = skwir_core::fs::size_units().names();
+    let size = words!(
+        query_chip_size = "Size",
+        note = "A search's chip: how big its files are."
+    );
     chips.push(preset_chip(
         r,
         "size",
-        "Size",
+        &size,
         "sliders",
         p.size.as_ref(),
-        &presets(&sizes),
+        &sizes(),
         (
-            "Size",
-            &format!("A size or a range: >10{m}, 1{m}..5{m}, <500{k}"),
+            &size,
+            &words!(
+                query_size_placeholder = "A size or a range: >10{ $m }, 1{ $m }..5{ $m }, <500{ $k }",
+                m = m,
+                k = k,
+                note = "What the field asking for a size holds while empty; the examples are written as the search language writes them, m and k units of size as the size setting writes them (MB, kB)."
+            ),
         ),
     ));
 
@@ -844,11 +1084,19 @@ pub fn describe_for(
     for tag in &p.not_tags {
         chips.push(Chip {
             id: "not_tag".into(),
-            title: "Not tagged".into(),
+            title: words!(
+                query_chip_not_tag = "Not tagged",
+                note = "A search's chip: a tag none of its files has."
+            )
+            .say(),
             value: Some(tag.clone()),
             icon: "tag".into(),
             choices: vec![Choice {
-                label: "Tagged instead".into(),
+                label: words!(
+                    query_tagged_instead = "Tagged instead",
+                    note = "A Not tagged chip's choice: the files with the tag, rather than those without it."
+                )
+                .say(),
                 command: refine_invocation(r, "tag", Some(tag)),
                 active: false,
             }],
@@ -859,17 +1107,25 @@ pub fn describe_for(
     }
     chips.push(Chip {
         id: "tag".into(),
-        title: "Tag".into(),
+        title: tag_title().say(),
         value: None,
         icon: "tag".into(),
         choices: vec![Choice {
-            label: "Tagged…".into(),
+            label: words!(
+                query_tagged_menu = "Tagged…",
+                note = "The Tag chip's choice: chooses or asks for a tag the files have."
+            )
+            .say(),
             command: if tags_known {
                 Invocation::with_args(
                     "ui.choose",
                     &serde_json::json!({
-                        "title": "Tagged",
-                        "placeholder": "Filter tags",
+                        "title": tagged().say(),
+                        "placeholder": words!(
+                            query_filter_tags = "Filter tags",
+                            note = "What the field filtering the tags to choose holds while empty."
+                        )
+                        .say(),
                         "source": Invocation::with_args(
                             "query.tag_choices",
                             &serde_json::json!({ "refines": r }),
@@ -892,18 +1148,29 @@ pub fn describe_for(
         .map(|c| c.strip_prefix("content:").unwrap_or(c).to_owned());
     // What the files contain is read from them: a search's.
     if search || content.is_some() {
+        let contains = words!(
+            query_chip_contains = "Contains",
+            note = "A search's chip: text its files hold."
+        );
         chips.push(Chip {
             id: "content".into(),
-            title: "Contains".into(),
+            title: contains.say(),
             value: content.clone(),
             icon: "contents".into(),
             choices: vec![Choice {
-                label: "Text in the file…".into(),
+                label: words!(
+                    query_text_in_file = "Text in the file…",
+                    note = "The Contains chip's choice: asks for text the files hold."
+                )
+                .say(),
                 command: ask(
                     r,
                     "content",
-                    "Contains",
-                    "Text the files contain",
+                    &contains,
+                    &words!(
+                        query_contains_placeholder = "Text the files contain",
+                        note = "What the field asking for text the files hold holds while empty."
+                    ),
                     content.as_deref().unwrap_or_default(),
                 ),
                 active: false,
@@ -918,20 +1185,52 @@ pub fn describe_for(
     // search's trail is its folder's (ADR-098): this chip says how deep
     // it looks, and switches it; a place is searched as it lists.
     if search {
+        let within = |place: Words| {
+            words!(
+                query_chip_in = "In { $place }",
+                place = place,
+                note = "A search's chip of where it looks: in a place, searched as it lists (In Recent)."
+            )
+        };
         let (title, icon) = match (&q.within, app) {
-            (Some(place), Some(app)) => (format!("In {}", app.location_title(place).say()), "list"),
-            (Some(place), None) => (format!("In {place}"), "list"),
-            (None, _) if q.depth == Some(1) => ("This folder only".to_owned(), "filter"),
-            (None, _) => ("And subfolders".to_owned(), "search"),
+            (Some(place), Some(app)) => (within(app.location_title(place)), "list"),
+            (Some(place), None) => (within(Words::as_written(place.to_string())), "list"),
+            (None, _) if q.depth == Some(1) => (this_folder_only(), "filter"),
+            (None, _) => (
+                words!(
+                    query_chip_subfolders = "And subfolders",
+                    note =
+                        "A search's chip of where it looks: the folder and the folders within it."
+                ),
+                "search",
+            ),
         };
         chips.push(Chip {
             id: "where".into(),
-            title,
+            title: title.say(),
             value: match (q.hidden, q.excluded) {
                 (false, false) => None,
-                (true, false) => Some("hidden files".to_owned()),
-                (false, true) => Some("excluded".to_owned()),
-                (true, true) => Some("hidden files, excluded".to_owned()),
+                (true, false) => Some(
+                    words!(
+                        query_where_hidden = "hidden files",
+                        note = "Said by the where chip of a search that looks at hidden files too."
+                    )
+                    .say(),
+                ),
+                (false, true) => Some(
+                    words!(
+                        query_where_excluded = "excluded",
+                        note = "Said by the where chip of a search that looks in the folders searches leave out too."
+                    )
+                    .say(),
+                ),
+                (true, true) => Some(
+                    words!(
+                        query_where_hidden_excluded = "hidden files, excluded",
+                        note = "Said by the where chip of a search that looks at hidden files and in the folders searches leave out too."
+                    )
+                    .say(),
+                ),
             },
             icon: icon.into(),
             // A place is searched as it lists, never below it.
@@ -942,24 +1241,36 @@ pub fn describe_for(
                     // The folder filtered by the words, when it alone
                     // can tell them (`query.here`).
                     Choice {
-                        label: "This folder only".into(),
+                        label: this_folder_only().say(),
                         command: Invocation::new("query.here"),
                         active: q.depth == Some(1),
                     },
                     Choice {
-                        label: "This folder and its subfolders".into(),
+                        label: words!(
+                            query_where_subfolders = "This folder and its subfolders",
+                            note = "The where chip's choice: search the folder and the folders within it."
+                        )
+                        .say(),
                         command: refine_invocation(r, "where", Some("subtree")),
                         active: q.depth.is_none(),
                     },
                     Choice {
-                        label: "Hidden files".into(),
+                        label: words!(
+                            query_where_hidden_files = "Hidden files",
+                            note = "The where chip's choice, on or off: look at hidden files too."
+                        )
+                        .say(),
                         command: refine_invocation(r, "where", Some("hidden")),
                         active: q.hidden,
                     },
                     // What searches leave out (Settings › Exclusions):
                     // `excluded:yes`.
                     Choice {
-                        label: "Excluded files and folders".into(),
+                        label: words!(
+                            query_where_excluded_files = "Excluded files and folders",
+                            note = "The where chip's choice, on or off: look in the folders searches leave out too (Settings › Exclusions)."
+                        )
+                        .say(),
                         command: refine_invocation(r, "where", Some("excluded")),
                         active: q.excluded,
                     },
@@ -979,7 +1290,11 @@ pub fn describe_for(
             value: Some(text.clone()),
             icon: "code".into(),
             choices: vec![Choice {
-                label: "Remove".into(),
+                label: words!(
+                    query_remove_part = "Remove",
+                    note = "The choice of a chip holding a part of a search no other chip holds: takes it out."
+                )
+                .say(),
                 command: refine_invocation(r, "advanced", Some(&index)),
                 active: false,
             }],
@@ -1004,6 +1319,14 @@ pub fn describe_for(
         text,
         within: q.within,
     })
+}
+
+/// The where chip's title and choice for a search of the folder alone.
+fn this_folder_only() -> Words {
+    words!(
+        query_this_folder_only = "This folder only",
+        note = "Where a search looks: in the folder, not the folders within it."
+    )
 }
 
 #[cfg(test)]

@@ -74,10 +74,17 @@ pub fn open(
 ) -> anyhow::Result<Arc<dyn OpenLocation>> {
     anyhow::ensure!(
         &*place.scheme != crate::SCHEME,
-        "a search cannot look within another search"
+        skwir_core::words!(
+            query_not_within_search = "a search cannot look within another search",
+            note = "An error of a search whose in: names another search."
+        )
     );
     let provider = app.provider(&place.scheme).ok_or_else(|| {
-        anyhow::anyhow!("nothing opens {place}: a folder is written as its whole path")
+        anyhow::anyhow!(skwir_core::words!(
+            query_nothing_opens = "nothing opens { $place }: a folder is written as its whole path",
+            place = place.to_string(),
+            note = "An error of a search whose in: names what no plugin opens. place: what it names, as written."
+        ))
     })?;
     let (tx, rx) = ctx.channel();
     let lifetime = ctx.cancel.linked(plugin);

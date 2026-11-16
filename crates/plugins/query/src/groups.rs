@@ -21,6 +21,7 @@ use skwir_core::entry::{Entry, Value, keys};
 use skwir_core::grouping::{Group, Keyer, Keys, Of};
 use skwir_core::location::{SortKey, extension_of, tags_of};
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
 use skwir_platform::calendar::{Calendar, Period, date_string};
 use skwir_platform::mime::{self, Kind, Mime};
 
@@ -96,7 +97,14 @@ fn keyer(
 /// a filter tests a file by itself, not where it is.
 fn by_folder() -> Keyer {
     let made = Made::new();
-    let none = Arc::new(Group::ranked(0, "No folder"));
+    let none = Arc::new(Group::ranked(
+        0,
+        &words!(
+            query_group_no_folder = "No folder",
+            note = "A group's heading, grouped by folder: what is in no folder (a place)."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| match e.folder {
         Some(folder) => made.get(folder.to_path_buf(), || Group {
             rank: 1,
@@ -137,7 +145,16 @@ fn by_name() -> Keyer {
             .or_else(|| String::from_utf8_lossy(&key).chars().next());
         match first {
             // A run of digits starts with the marker `0`.
-            Some('0') => made.get('0', || Group::ranked(1, "0–9")),
+            Some('0') => made.get('0', || {
+                Group::ranked(
+                    1,
+                    &words!(
+                        query_group_digits = "0–9",
+                        note = "A group's heading, grouped by name: names that begin with a digit."
+                    )
+                    .say(),
+                )
+            }),
             Some(c) if c.is_alphabetic() => made.get(c, || {
                 let mut bytes = [0; 4];
                 Group {
@@ -148,7 +165,16 @@ fn by_name() -> Keyer {
                     term: None,
                 }
             }),
-            _ => made.get('\0', || Group::ranked(0, "Other")),
+            _ => made.get('\0', || {
+                Group::ranked(
+                    0,
+                    &words!(
+                        query_group_other_names = "Other",
+                        note = "A group's heading, grouped by name: names that begin with neither a digit nor a letter."
+                    )
+                    .say(),
+                )
+            }),
         }
     })
 }
@@ -168,7 +194,14 @@ fn by_kind() -> Keyer {
             (kind, Arc::new(group))
         })
         .collect();
-    let other = Arc::new(Group::ranked(0, "Other"));
+    let other = Arc::new(Group::ranked(
+        0,
+        &words!(
+            query_group_other_kind = "Other",
+            note = "A group's heading, grouped by kind: files of no kind (images, documents…)."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| {
         let kind = if e.is_dir() {
             Some(Kind::Folder)
@@ -215,7 +248,14 @@ fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
     let app = app.clone();
     let changed = Arc::clone(&keys.changed);
     let asked: Arc<Mutex<std::collections::HashSet<String>>> = Arc::default();
-    let unknown = Arc::new(Group::ranked(0, "Unknown type"));
+    let unknown = Arc::new(Group::ranked(
+        0,
+        &words!(
+            query_group_unknown_type = "Unknown type",
+            note = "A group's heading, grouped by type: files whose type is not known."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| {
         let Some(mime) = mime::of_entry(e) else {
             return Arc::clone(&unknown);
@@ -252,8 +292,15 @@ fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
 /// have none, first.
 fn by_extension() -> Keyer {
     let made = Made::<String>::new();
-    let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
-    let none = Arc::new(Group::ranked(1, "No extension"));
+    let folders = Arc::new(Group::ranked(0, &folders_heading()).of_folders());
+    let none = Arc::new(Group::ranked(
+        1,
+        &words!(
+            query_group_no_extension = "No extension",
+            note = "A group's heading, grouped by extension."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| {
         if e.is_dir() {
             return Arc::clone(&folders);
@@ -268,6 +315,16 @@ fn by_extension() -> Keyer {
     })
 }
 
+/// The heading of the group of folders, where folders have none of what
+/// groups (no extension, no size, no dimensions, no duration).
+fn folders_heading() -> String {
+    words!(
+        query_group_folders = "Folders",
+        note = "A group's heading: the folders, which have none of what the files are grouped by."
+    )
+    .say()
+}
+
 /// The size groups' upper bounds in bytes, in the units sizes are shown in
 /// (`fs::size_units`, ADR-139, 9), and what they are called and kept by,
 /// their terms in those units; Over 1 GB after, its lower bound last.
@@ -276,29 +333,67 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
     let [_, k, m, g, ..] = units.names();
     (
         vec![
-            (1, "Empty".to_owned(), "size:0".to_owned()),
+            (
+                1,
+                words!(
+                    query_group_empty = "Empty",
+                    note = "A group's heading, grouped by size: empty files."
+                )
+                .say(),
+                "size:0".to_owned(),
+            ),
             (
                 units.bytes(100, 1),
-                format!("Under 100 {k}"),
+                words!(
+                    query_group_under_100 = "Under 100 { $unit }",
+                    unit = k,
+                    note = "A group's heading, grouped by size. unit: a unit of size, as sizes are shown (kB, KiB)."
+                )
+                .say(),
                 format!("size>0 size<100{k}"),
             ),
             (
                 units.bytes(1, 2),
-                format!("100 {k} to 1 {m}"),
+                words!(
+                    query_group_100_to_1 = "100 { $unit } to 1 { $next }",
+                    unit = k,
+                    next = m,
+                    note = "A group's heading, grouped by size. unit and next: units of size, as sizes are shown (kB and MB)."
+                )
+                .say(),
                 format!("size>=100{k} size<1{m}"),
             ),
             (
                 units.bytes(100, 2),
-                format!("1 to 100 {m}"),
+                words!(
+                    query_group_1_to_100 = "1 to 100 { $unit }",
+                    unit = m,
+                    note = "A group's heading, grouped by size. unit: a unit of size, as sizes are shown (MB, MiB)."
+                )
+                .say(),
                 format!("size>=1{m} size<100{m}"),
             ),
             (
                 units.bytes(1, 3),
-                format!("100 {m} to 1 {g}"),
+                words!(
+                    query_group_100_to_1 = "100 { $unit } to 1 { $next }",
+                    unit = m,
+                    next = g,
+                    note = "A group's heading, grouped by size. unit and next: units of size, as sizes are shown (kB and MB)."
+                )
+                .say(),
                 format!("size>=100{m} size<1{g}"),
             ),
         ],
-        (format!("Over 1 {g}"), format!("size>=1{g}")),
+        (
+            words!(
+                query_group_over_1 = "Over 1 { $unit }",
+                unit = g,
+                note = "A group's heading, grouped by size. unit: a unit of size, as sizes are shown (GB, GiB)."
+            )
+            .say(),
+            format!("size>=1{g}"),
+        ),
     )
 }
 
@@ -307,7 +402,7 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
 /// not weighed, as having none. A place by how many files it holds, as
 /// its size.
 fn by_size() -> Keyer {
-    let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
+    let folders = Arc::new(Group::ranked(0, &folders_heading()).of_folders());
     let (sizes, (over_label, over_term)) = sizes();
     let groups: Vec<Arc<Group>> = sizes
         .iter()
@@ -342,20 +437,59 @@ fn by_size() -> Keyer {
 /// have none, first while folders come first; No dimensions for what says
 /// none. No term: a filter cannot read a picture's size.
 fn by_dimensions() -> Keyer {
-    const CLASSES: [(u64, &str); 4] = [
-        (1_000_000, "Under 1 MP"),
-        (4_000_000, "1 to 4 MP"),
-        (12_000_000, "4 to 12 MP"),
-        (24_000_000, "12 to 24 MP"),
+    let classes = [
+        (
+            1_000_000,
+            words!(
+                query_group_under_1_mp = "Under 1 MP",
+                note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
+            ),
+        ),
+        (
+            4_000_000,
+            words!(
+                query_group_1_to_4_mp = "1 to 4 MP",
+                note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
+            ),
+        ),
+        (
+            12_000_000,
+            words!(
+                query_group_4_to_12_mp = "4 to 12 MP",
+                note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
+            ),
+        ),
+        (
+            24_000_000,
+            words!(
+                query_group_12_to_24_mp = "12 to 24 MP",
+                note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
+            ),
+        ),
     ];
-    let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
-    let none = Arc::new(Group::ranked(1, "No dimensions"));
-    let groups: Vec<Arc<Group>> = CLASSES
+    let folders = Arc::new(Group::ranked(0, &folders_heading()).of_folders());
+    let none = Arc::new(Group::ranked(
+        1,
+        &words!(
+            query_group_no_dimensions = "No dimensions",
+            note = "A group's heading, grouped by a picture's dimensions: what says none."
+        )
+        .say(),
+    ));
+    let groups: Vec<Arc<Group>> = classes
         .iter()
         .zip(2..)
-        .map(|((_, label), rank)| Arc::new(Group::ranked(rank, label)))
+        .map(|((_, label), rank)| Arc::new(Group::ranked(rank, &label.say())))
         .collect();
-    let over = Arc::new(Group::ranked(6, "Over 24 MP"));
+    let classes: Vec<u64> = classes.iter().map(|(below, _)| *below).collect();
+    let over = Arc::new(Group::ranked(
+        6,
+        &words!(
+            query_group_over_24_mp = "Over 24 MP",
+            note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| {
         if !SortKey::Dimensions.applies_to(e) {
             return Arc::clone(&folders);
@@ -365,9 +499,9 @@ fn by_dimensions() -> Keyer {
         };
         let side = |at: usize| sides.get(at).and_then(Value::as_u64).unwrap_or(0);
         let area = side(0).saturating_mul(side(1));
-        CLASSES
+        classes
             .iter()
-            .position(|(below, _)| area < *below)
+            .position(|below| area < *below)
             .map_or_else(|| Arc::clone(&over), |at| Arc::clone(&groups[at]))
     })
 }
@@ -376,20 +510,60 @@ fn by_dimensions() -> Keyer {
 /// folders come first; No duration for what says none. No term: a filter
 /// cannot read a length.
 fn by_duration() -> Keyer {
-    const CLASSES: [(u64, &str); 4] = [
-        (60_000, "Under 1 minute"),
-        (300_000, "1 to 5 minutes"),
-        (1_200_000, "5 to 20 minutes"),
-        (3_600_000, "20 minutes to 1 hour"),
+    let classes = [
+        (
+            60_000,
+            words!(
+                query_group_under_1_minute = "Under 1 minute",
+                note = "A group's heading, grouped by how long a sound or a film lasts."
+            ),
+        ),
+        (
+            300_000,
+            words!(
+                query_group_1_to_5_minutes = "1 to 5 minutes",
+                note = "A group's heading, grouped by how long a sound or a film lasts."
+            ),
+        ),
+        (
+            1_200_000,
+            words!(
+                query_group_5_to_20_minutes = "5 to 20 minutes",
+                note = "A group's heading, grouped by how long a sound or a film lasts."
+            ),
+        ),
+        (
+            3_600_000,
+            words!(
+                query_group_20_minutes_to_1_hour = "20 minutes to 1 hour",
+                note = "A group's heading, grouped by how long a sound or a film lasts."
+            ),
+        ),
     ];
-    let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
-    let none = Arc::new(Group::ranked(1, "No duration"));
-    let groups: Vec<Arc<Group>> = CLASSES
+    let folders = Arc::new(Group::ranked(0, &folders_heading()).of_folders());
+    let none = Arc::new(Group::ranked(
+        1,
+        &words!(
+            query_group_no_duration = "No duration",
+            note =
+                "A group's heading, grouped by how long a sound or a film lasts: what says none."
+        )
+        .say(),
+    ));
+    let groups: Vec<Arc<Group>> = classes
         .iter()
         .zip(2..)
-        .map(|((_, label), rank)| Arc::new(Group::ranked(rank, label)))
+        .map(|((_, label), rank)| Arc::new(Group::ranked(rank, &label.say())))
         .collect();
-    let over = Arc::new(Group::ranked(6, "Over 1 hour"));
+    let classes: Vec<u64> = classes.iter().map(|(below, _)| *below).collect();
+    let over = Arc::new(Group::ranked(
+        6,
+        &words!(
+            query_group_over_1_hour = "Over 1 hour",
+            note = "A group's heading, grouped by how long a sound or a film lasts."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| {
         if !SortKey::Duration.applies_to(e) {
             return Arc::clone(&folders);
@@ -397,9 +571,9 @@ fn by_duration() -> Keyer {
         let Some(ms) = e.metadata.value(keys::DURATION).and_then(Value::as_u64) else {
             return Arc::clone(&none);
         };
-        CLASSES
+        classes
             .iter()
-            .position(|(below, _)| ms < *below)
+            .position(|below| ms < *below)
             .map_or_else(|| Arc::clone(&over), |at| Arc::clone(&groups[at]))
     })
 }
@@ -453,7 +627,15 @@ fn by_rating() -> Keyer {
     let groups: Vec<Arc<Group>> = (0..=10u64)
         .map(|r| {
             Arc::new(if r == 0 {
-                Group::ranked(0, "Unrated").with_term("rating:0")
+                Group::ranked(
+                    0,
+                    &words!(
+                        query_group_unrated = "Unrated",
+                        note = "A group's heading, grouped by rating: files with no stars."
+                    )
+                    .say(),
+                )
+                .with_term("rating:0")
             } else {
                 let stars = "★".repeat(usize::try_from(r / 2).unwrap_or(0))
                     + if r % 2 == 1 { "½" } else { "" };
@@ -486,11 +668,19 @@ fn by_vcs() -> Keyer {
     use skwir_core::vcs::{Known, State};
     let group = |known: Known| {
         let label = match known {
-            Known::Is(state) => state.title(),
-            Known::Committed => "Unchanged",
-            Known::Not => "Not known",
+            Known::Is(state) => state.title().to_owned(),
+            Known::Committed => words!(
+                query_group_unchanged = "Unchanged",
+                note = "A group's heading, grouped by Git state: files as the last commit has them."
+            )
+            .say(),
+            Known::Not => words!(
+                query_group_state_unknown = "Not known",
+                note = "A group's heading, grouped by Git state: files nothing was said of (in no repository, not read yet)."
+            )
+            .say(),
         };
-        Arc::new(Group::ranked(u64::from(State::rank(known)), label))
+        Arc::new(Group::ranked(u64::from(State::rank(known)), &label))
     };
     let (unchanged, unknown) = (group(Known::Committed), group(Known::Not));
     let said: Vec<(State, Arc<Group>)> = State::ALL
@@ -511,7 +701,14 @@ fn by_vcs() -> Keyer {
 /// shown twice; No tags first going up.
 fn by_tags() -> Keyer {
     let made = Made::<String>::new();
-    let none = Arc::new(Group::ranked(0, "No tags"));
+    let none = Arc::new(Group::ranked(
+        0,
+        &words!(
+            query_group_no_tags = "No tags",
+            note = "A group's heading, grouped by tags: files with none."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| match tags_of(e) {
         Some(tags) => made.get(tags.clone(), || Group::new(1, &tags)),
         None => Arc::clone(&none),
@@ -528,7 +725,14 @@ fn by_owner(app: &Weak<App>, keys: &Keys) -> Keyer {
         read_names(app, keys);
     }
     let made = Made::<u64>::new();
-    let none = Arc::new(Group::ranked(0, "No owner"));
+    let none = Arc::new(Group::ranked(
+        0,
+        &words!(
+            query_group_no_owner = "No owner",
+            note = "A group's heading, grouped by owner: what says none."
+        )
+        .say(),
+    ));
     Arc::new(move |e: &Of<'_>| {
         let Some(uid) = e.metadata.value(keys::UID).and_then(Value::as_u64) else {
             return Arc::clone(&none);
@@ -614,22 +818,59 @@ impl Dates {
         };
         let yesterday = today - 1;
         let starts = [
-            ("Today", today, Some(today + 1)),
-            ("Yesterday", yesterday, Some(today)),
-            ("Earlier this week", week, Some(yesterday)),
-            ("Last week", dates.last_week, Some(week.min(yesterday))),
             (
-                "Earlier this month",
+                words!(
+                    query_group_today = "Today",
+                    note = "A group's heading, grouped by a date."
+                ),
+                today,
+                Some(today + 1),
+            ),
+            (
+                words!(
+                    query_group_yesterday = "Yesterday",
+                    note = "A group's heading, grouped by a date."
+                ),
+                yesterday,
+                Some(today),
+            ),
+            (
+                words!(
+                    query_group_earlier_this_week = "Earlier this week",
+                    note = "A group's heading, grouped by a date: this week, before yesterday."
+                ),
+                week,
+                Some(yesterday),
+            ),
+            (
+                words!(
+                    query_group_last_week = "Last week",
+                    note = "A group's heading, grouped by a date."
+                ),
+                dates.last_week,
+                Some(week.min(yesterday)),
+            ),
+            (
+                words!(
+                    query_group_earlier_this_month = "Earlier this month",
+                    note = "A group's heading, grouped by a date: this month, before last week."
+                ),
                 month,
                 Some(dates.last_week.min(yesterday)),
             ),
             (
-                "Last month",
+                words!(
+                    query_group_last_month = "Last month",
+                    note = "A group's heading, grouped by a date."
+                ),
                 dates.last_month,
                 Some(month.min(dates.last_week).min(yesterday)),
             ),
             (
-                "Earlier this year",
+                words!(
+                    query_group_earlier_this_year = "Earlier this year",
+                    note = "A group's heading, grouped by a date: this year, before last month."
+                ),
                 dates.year,
                 Some(dates.last_month.min(dates.last_week).min(yesterday)),
             ),
@@ -639,20 +880,34 @@ impl Dates {
         for ((label, from, to), stands) in starts.into_iter().zip((2u8..=8).rev()) {
             let mut group = Group {
                 key: Arc::from([stands]),
-                ..Group::ranked(day_rank(from), label)
+                ..Group::ranked(day_rank(from), &label.say())
             };
             group.term = to.and_then(|to| dates.term(from, to)).map(Arc::from);
             dates.groups.push(Arc::new(group));
         }
         let mut future = Group {
             key: Arc::from([9u8]),
-            ..Group::ranked(day_rank(today + 1), "In the future")
+            ..Group::ranked(
+                day_rank(today + 1),
+                &words!(
+                    query_group_future = "In the future",
+                    note = "A group's heading, grouped by a date: dates after today."
+                )
+                .say(),
+            )
         };
         if field != keys::TRASHED && field != keys::TAKEN {
             future.term = Some(Arc::from(format!("{word}>today")));
         }
         dates.groups.push(Arc::new(future));
-        dates.groups.push(Arc::new(Group::ranked(0, "No date")));
+        dates.groups.push(Arc::new(Group::ranked(
+            0,
+            &words!(
+                query_group_no_date = "No date",
+                note = "A group's heading, grouped by a date: what says none."
+            )
+            .say(),
+        )));
         dates
     }
 

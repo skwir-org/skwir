@@ -24,6 +24,7 @@ use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::ViewSpec;
+use skwir_core::words;
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "usage";
@@ -250,8 +251,11 @@ impl Status {
         Status {
             root: Some(root),
             error: Some(
-                "A network folder: Refresh (F5) measures it, reading every folder of it across the network"
-                    .to_owned(),
+                words!(
+                    usage_network_folder = "A network folder: Refresh (F5) measures it, reading every folder of it across the network",
+                    note = "Said in the Usage view of a folder on a server, measured only when asked."
+                )
+                .say(),
             ),
             ..Status::default()
         }
@@ -280,7 +284,7 @@ impl UsagePlugin {
             let ws = app.workspace.read();
             let lifetime = ws
                 .pane(pane)
-                .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+                .ok_or_else(|| anyhow::anyhow!(words!(usage_no_pane = "no such pane")))?
                 .location_lifetime();
             let open: HashSet<PaneId> = ws.panes().iter().map(|p| p.id).collect();
             (lifetime, open)
@@ -340,7 +344,17 @@ impl Plugin for UsagePlugin {
     fn register(&self, app: &App) {
         app.registry.views.add(
             ID,
-            ViewSpec::named(ID, "Usage", "usage", Arc::clone(&self.revision)).lens(),
+            ViewSpec::named(
+                ID,
+                &words!(
+                    usage_view = "Usage",
+                    note = "The view that shows what each folder takes on disk, among the views (List, Grid…)."
+                )
+                .say(),
+                "usage",
+                Arc::clone(&self.revision),
+            )
+            .lens(),
         );
         let this = Arc::new(Self {
             runtime: Arc::clone(&self.runtime),
@@ -350,15 +364,22 @@ impl Plugin for UsagePlugin {
         app.commands.register::<ScanArgs, _>(
             ID, Topic::View,
             "usage.scan",
-            "Scan disk usage",
-            "Show cached directory sizes, computing missing or changed branches in the background",
+            words!(usage_scan = "Scan disk usage"),
+            words!(
+                usage_scan_description = "Show cached directory sizes, computing missing or changed branches in the background",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let path = match a.path {
                     Some(path) => Location::parse_os(path.as_os_str()).path(),
                     None => app.pane_dir(pane).ok(),
                 }
-                .ok_or_else(|| anyhow::anyhow!("disk usage needs a filesystem directory"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        usage_needs_folder = "disk usage needs a filesystem directory"
+                    ))
+                })?;
                 t.start(app, pane, path, a.force)?;
                 Ok(Outcome::Done)
             },
@@ -370,8 +391,8 @@ impl Plugin for UsagePlugin {
                 ID,
                 Topic::View,
                 "usage.status",
-                "Disk usage status",
-                "The selected pane's latest size breakdown",
+                words!(usage_status = "Disk usage status"),
+                words!(usage_status_description = "The selected pane's latest size breakdown"),
                 move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let status = t
@@ -386,12 +407,20 @@ impl Plugin for UsagePlugin {
             )
             .data();
         for (name, title, release) in [
-            ("usage.cancel", "Cancel disk usage scan", false),
-            ("usage.release", "Release disk usage view", true),
+            (
+                "usage.cancel",
+                words!(usage_cancel = "Cancel disk usage scan"),
+                false,
+            ),
+            (
+                "usage.release",
+                words!(usage_release = "Release disk usage view"),
+                true,
+            ),
         ] {
             let t = Arc::clone(&this);
             app.commands
-                .register::<PaneArg, _>(ID, Topic::View, name, title, title, move |a, app| {
+                .register::<PaneArg, _>(ID, Topic::View, name, title.clone(), title, move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let shared = {
                         let mut runtime = t.runtime.lock();
@@ -404,7 +433,13 @@ impl Plugin for UsagePlugin {
                             } else if let Some(s) = r.shared.statuses.lock().get_mut(&pane) {
                                 s.scanning = false;
                                 s.updating = false;
-                                s.error = Some("Scan cancelled".into());
+                                s.error = Some(
+                                    words!(
+                                        usage_cancelled = "Scan cancelled",
+                                        note = "Said in the Usage view once its measuring was stopped."
+                                    )
+                                    .say(),
+                                );
                             }
                             let _ = r.tx.send(Message::Release(pane));
                             Some(Arc::clone(&r.shared))
@@ -451,7 +486,10 @@ impl Plugin for UsagePlugin {
             ID,
             skwir_core::registry::MenuItem {
                 menu: "context".into(),
-                title: "Usage view".into(),
+                title: words!(
+                    usage_menu = "Usage view",
+                    note = "A context menu's item: shows the folder in the Usage view."
+                ),
                 command: Invocation::with_args("ui.view", &serde_json::json!({"id": ID})),
                 when: Some("empty folder".into()),
                 order: 430,

@@ -46,6 +46,7 @@ use skwir_core::fs::reach;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
 use skwir_core::workspace::PaneId;
 use skwir_platform::calendar::{
     Calendar, Period, civil_day, civil_from_days, date_string, days_from_civil,
@@ -665,7 +666,7 @@ fn pane_view(app: &App, pane: PaneId) -> anyhow::Result<(PathBuf, bool, CancelTo
     let ws = app.workspace.read();
     let p = ws
         .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        .ok_or_else(|| anyhow::anyhow!(words!(timeline_no_pane = "no such pane")))?;
     Ok((dir, p.sort.show_hidden, p.location_lifetime()))
 }
 
@@ -844,13 +845,13 @@ impl TimelinePlugin {
             .workspace
             .read()
             .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+            .ok_or_else(|| anyhow::anyhow!(words!(timeline_no_pane = "no such pane")))?
             .order();
         for slice in order.chunks(SLICE) {
             let ws = app.workspace.read();
             let p = ws
                 .pane(pane)
-                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                .ok_or_else(|| anyhow::anyhow!(words!(timeline_no_pane = "no such pane")))?;
             for id in slice.iter().filter(|id| !withheld.contains(id)) {
                 if let Some(e) = p.entry(*id) {
                     // `path_of` answers from memory, under the lock by
@@ -932,7 +933,7 @@ impl TimelinePlugin {
     ) -> anyhow::Result<SubtreeStatus> {
         let mut state = self.state.lock();
         let Some(lifetime) = state.lifetime.clone() else {
-            anyhow::bail!("the timeline is disabled");
+            anyhow::bail!(words!(timeline_disabled = "the timeline is disabled"));
         };
         {
             // Forget panes that were closed.
@@ -1060,7 +1061,7 @@ impl TimelinePlugin {
             .workspace
             .read()
             .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+            .ok_or_else(|| anyhow::anyhow!(words!(timeline_no_pane = "no such pane")))?
             .location_lifetime();
         let what = Counted::Listing {
             files: Listed::signature(&files),
@@ -1127,8 +1128,11 @@ impl Plugin for TimelinePlugin {
             .register::<HistogramArgs, _>(
                 ID, Topic::View,
                 "timeline.histogram",
-                "Timeline",
-                "Histogram of the listing's modification times (or creation, access, or pictures' clocks), or of the subtree's in the background",
+                words!(timeline_histogram = "Timeline"),
+                words!(
+                    timeline_histogram_description = "Histogram of the listing's modification times (or creation, access, or pictures' clocks), or of the subtree's in the background",
+                    note = "Read by agents and in F1's list of actions."
+                ),
                 move |a, app| {
                     let asked = (a.date, a.bucket, a.window());
                     let pane = app.pane_or_active(a.pane);
@@ -1150,8 +1154,11 @@ impl Plugin for TimelinePlugin {
                 ID,
                 Topic::View,
                 "timeline.status",
-                "Timeline status",
-                "The pane's subtree histogram, once the walk is done",
+                words!(timeline_status = "Timeline status"),
+                words!(
+                    timeline_status_description =
+                        "The pane's subtree histogram, once the walk is done"
+                ),
                 move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let status = t
@@ -1170,8 +1177,11 @@ impl Plugin for TimelinePlugin {
             .register::<SelectArgs, _>(
                 ID, Topic::Find,
                 "timeline.select",
-                "Show files from a period",
-                "Show the files modified (or created, accessed, taken) in [start, end): a folder's own, by a time it lists, through its lens (`query.narrow`), kept as the pane goes elsewhere until taken off; its subtree, or by when pictures were taken, as a search; a search's, by narrowing it",
+                words!(timeline_select = "Show files from a period"),
+                words!(
+                    timeline_select_description = "Show the files modified (or created, accessed, taken) in [start, end): a folder's own, by a time it lists, through its lens (`query.narrow`), kept as the pane goes elsewhere until taken off; its subtree, or by when pictures were taken, as a search; a search's, by narrowing it",
+                    note = "start and end are the command's arguments; `query.narrow` is a command's id."
+                ),
                 move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let (last_subtree, last_date) = t
@@ -1250,7 +1260,10 @@ impl Plugin for TimelinePlugin {
             ID,
             skwir_core::registry::MenuItem {
                 menu: "context".into(),
-                title: "Timeline…".into(),
+                title: words!(
+                    timeline_menu = "Timeline…",
+                    note = "A context menu's item: opens the timeline of the folder."
+                ),
                 command: Invocation::new("ui.timeline"),
                 when: Some("empty folder".into()),
                 order: 440,

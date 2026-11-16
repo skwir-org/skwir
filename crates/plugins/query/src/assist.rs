@@ -20,10 +20,12 @@ use skwir_core::app::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::metadata::tag_leaf;
 use skwir_core::reference::floor_boundary;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
-use crate::facets::{PERIODS, presets, sizes};
+use crate::facets::{self, PERIODS, Presets, periods, sizes};
 use crate::lang;
 
 /// A key of the language: its name, the icon its values are drawn with,
@@ -32,9 +34,10 @@ use crate::lang;
 struct KeyInfo {
     name: &'static str,
     /// What it tests or sets, in words (the reference's, ADR-137).
-    means: &'static str,
+    means: fn() -> Words,
     icon: &'static str,
-    example: &'static str,
+    /// Examples of its values: as written, or words around them.
+    example: fn() -> Words,
     option: bool,
 }
 
@@ -43,122 +46,308 @@ struct KeyInfo {
 static KEYS: [KeyInfo; 21] = [
     key(
         "kind",
-        "Of a kind",
+        || {
+            words!(
+                query_key_kind = "Of a kind",
+                note = "What the key kind: of a search tests, in its reference and beside it when offered."
+            )
+        },
         "grid",
-        "image, video, document…",
+        || Words::as_written("image, video, document…"),
         false,
     ),
     key(
         "modified",
-        "Modified",
+        || {
+            words!(
+                query_key_modified = "Modified",
+                note = "What the key modified: of a search tests: when files were last changed."
+            )
+        },
         "calendar",
-        "today, last-week, 2026-05, <7d",
+        || Words::as_written("today, last-week, 2026-05, <7d"),
         false,
     ),
     key(
         "size",
-        "Of a size",
+        || {
+            words!(
+                query_key_size = "Of a size",
+                note = "What the key size: of a search tests."
+            )
+        },
         "sliders",
-        ">100M, <1M, 1M..100M",
+        || Words::as_written(">100M, <1M, 1M..100M"),
         false,
     ),
     key(
         "tag",
-        "With a tag",
+        || {
+            words!(
+                query_key_tag = "With a tag",
+                note = "What the key tag: of a search tests."
+            )
+        },
         "tag",
-        "a tag, or * for any; #tag too",
+        || {
+            words!(
+                query_key_tag_example = "a tag, or * for any; #tag too",
+                note = "The values of the key tag: of a search; * and #tag are written as the search language writes them: keep them."
+            )
+        },
         false,
     ),
     key(
         "content",
-        "Holding text",
+        || {
+            words!(
+                query_key_content = "Holding text",
+                note = "What the key content: of a search tests: text the files hold."
+            )
+        },
         "contents",
-        "\"words\" or /regex/",
+        || {
+            words!(
+                query_key_content_example = "\"words\" or /regex/",
+                note = "The values of the key content: of a search: words in quotes, or a pattern between slashes; keep the quotes and the slashes."
+            )
+        },
         false,
     ),
     key(
         "taken",
-        "Taken, pictures and videos",
+        || {
+            words!(
+                query_key_taken = "Taken, pictures and videos",
+                note =
+                    "What the key taken: of a search tests: when a picture or a video was taken."
+            )
+        },
         "calendar",
-        "2023, last-year, by the camera's clock",
+        || {
+            words!(
+                query_key_taken_example = "2023, last-year, by the camera's clock",
+                note = "The values of the key taken: of a search; 2023 and last-year are written as the search language writes them: keep them."
+            )
+        },
         false,
     ),
-    key("name", "Named", "search", "*.pdf, report-??", false),
-    key("ext", "With an extension", "search", "pdf,jpg", false),
+    key(
+        "name",
+        || {
+            words!(
+                query_key_name = "Named",
+                note = "What the key name: of a search tests."
+            )
+        },
+        "search",
+        || Words::as_written("*.pdf, report-??"),
+        false,
+    ),
+    key(
+        "ext",
+        || {
+            words!(
+                query_key_ext = "With an extension",
+                note = "What the key ext: of a search tests."
+            )
+        },
+        "search",
+        || Words::as_written("pdf,jpg"),
+        false,
+    ),
     key(
         "type",
-        "Files, folders or links",
+        || {
+            words!(
+                query_key_type = "Files, folders or links",
+                note = "What the key type: of a search tests."
+            )
+        },
         "search",
-        "file, dir, symlink",
+        || Words::as_written("file, dir, symlink"),
         false,
     ),
-    key("created", "Made", "calendar", "this-month, >1y", false),
+    key(
+        "created",
+        || {
+            words!(
+                query_key_created = "Made",
+                note = "What the key created: of a search tests: when files were made."
+            )
+        },
+        "calendar",
+        || Words::as_written("this-month, >1y"),
+        false,
+    ),
     key(
         "accessed",
-        "Last opened",
+        || {
+            words!(
+                query_key_accessed = "Last opened",
+                note = "What the key accessed: of a search tests."
+            )
+        },
         "calendar",
-        "yesterday, <3d",
+        || Words::as_written("yesterday, <3d"),
         false,
     ),
-    key("rating", "Rated", "star", ">=3, 2..4", false),
+    key(
+        "rating",
+        || {
+            words!(
+                query_key_rating = "Rated",
+                note = "What the key rating: of a search tests."
+            )
+        },
+        "star",
+        || Words::as_written(">=3, 2..4"),
+        false,
+    ),
     key(
         "comment",
-        "With a comment holding",
+        || {
+            words!(
+                query_key_comment = "With a comment holding",
+                note = "What the key comment: of a search tests: words a file's comment holds."
+            )
+        },
         "comment",
-        "words in a file's comment",
+        || {
+            words!(
+                query_key_comment_example = "words in a file's comment",
+                note = "The values of the key comment: of a search."
+            )
+        },
         false,
     ),
     key(
         "mime",
-        "Of a type",
+        || {
+            words!(
+                query_key_mime = "Of a type",
+                note = "What the key mime: of a search tests: a file's type (image/png)."
+            )
+        },
         "search",
-        "image/*, application/pdf",
+        || Words::as_written("image/*, application/pdf"),
         false,
     ),
-    key("near", "Made near a point", "map", "45.0,6.0~5km", false),
+    key(
+        "near",
+        || {
+            words!(
+                query_key_near = "Made near a point",
+                note = "What the key near: of a search tests: where a picture was taken."
+            )
+        },
+        "map",
+        || Words::as_written("45.0,6.0~5km"),
+        false,
+    ),
     key(
         "inside",
-        "Made inside a box",
+        || {
+            words!(
+                query_key_inside = "Made inside a box",
+                note = "What the key inside: of a search tests: where a picture was taken."
+            )
+        },
         "map",
-        "south,west,north,east",
+        || {
+            words!(
+                query_key_inside_example = "south,west,north,east",
+                note = "The values of the key inside: of a search: the box's edges, in that order, separated by commas as the search language writes them."
+            )
+        },
         false,
     ),
     key(
         "in",
-        "Where to look",
+        || {
+            words!(
+                query_key_in = "Where to look",
+                note = "What the option in: of a search sets."
+            )
+        },
         "folder",
-        "a folder, \"~/My Files\"",
+        || {
+            words!(
+                query_key_in_example = "a folder, \"~/My Files\"",
+                note = "The values of the option in: of a search; \"~/My Files\" is a folder written as the search language writes it."
+            )
+        },
         true,
     ),
-    key("depth", "How deep to look", "layers", "how deep: 2", true),
+    key(
+        "depth",
+        || {
+            words!(
+                query_key_depth = "How deep to look",
+                note = "What the option depth: of a search sets."
+            )
+        },
+        "layers",
+        || {
+            words!(
+                query_key_depth_example = "how deep: 2",
+                note =
+                    "The values of the option depth: of a search: how many folders down it looks."
+            )
+        },
+        true,
+    ),
     key(
         "hidden",
-        "Hidden files too, or never",
+        || {
+            words!(
+                query_key_hidden = "Hidden files too, or never",
+                note = "What the option hidden: of a search sets."
+            )
+        },
         "eye",
-        "true, false",
+        || Words::as_written("true, false"),
         true,
     ),
     key(
         "excluded",
-        "Excluded folders too",
+        || {
+            words!(
+                query_key_excluded = "Excluded folders too",
+                note = "What the option excluded: of a search sets: whether it looks in the folders searches leave out."
+            )
+        },
         "folder",
-        "what your exclusions leave out too: true, false",
+        || {
+            words!(
+                query_key_excluded_example =
+                    "what your exclusions leave out too: { $yes }, { $no }",
+                yes = "true",
+                no = "false",
+                note = "The values of the option excluded: of a search; yes and no are its values, as written."
+            )
+        },
         true,
     ),
     key(
         "case",
-        "Capitals told apart, or not",
+        || {
+            words!(
+                query_key_case = "Capitals told apart, or not",
+                note = "What the option case: of a search sets."
+            )
+        },
         "code",
-        "sensitive, insensitive",
+        || Words::as_written("sensitive, insensitive"),
         true,
     ),
 ];
 
 const fn key(
     name: &'static str,
-    means: &'static str,
+    means: fn() -> Words,
     icon: &'static str,
-    example: &'static str,
+    example: fn() -> Words,
     option: bool,
 ) -> KeyInfo {
     KeyInfo {
@@ -173,9 +362,9 @@ const fn key(
 /// Every key, as the reference says it: written before its value
 /// (`kind:`), what it means, examples of its values, and whether it is an
 /// option rather than a test.
-pub fn keys_said() -> impl Iterator<Item = (String, &'static str, &'static str, bool)> {
+pub fn keys_said() -> impl Iterator<Item = (String, Words, Words, bool)> {
     KEYS.iter()
-        .map(|k| (format!("{}:", k.name), k.means, k.example, k.option))
+        .map(|k| (format!("{}:", k.name), (k.means)(), (k.example)(), k.option))
 }
 
 fn key_info(name: &str) -> Option<&'static KeyInfo> {
@@ -189,12 +378,38 @@ const COMPARED: [&str; 6] = ["size", "rating", "modified", "created", "accessed"
 const TIMES: [&str; 4] = ["modified", "created", "accessed", "taken"];
 
 /// How many stars, as the field offers them.
-const RATINGS: [(&str, &str); 4] = [
-    ("One star or more", ">=1"),
-    ("Three stars or more", ">=3"),
-    ("Five stars", "5"),
-    ("Unrated", "0"),
-];
+fn ratings() -> Presets {
+    vec![
+        (
+            words!(
+                query_rating_one = "One star or more",
+                note = "A rating a search offers."
+            ),
+            ">=1".to_owned(),
+        ),
+        (
+            words!(
+                query_rating_three = "Three stars or more",
+                note = "A rating a search offers."
+            ),
+            ">=3".to_owned(),
+        ),
+        (
+            words!(
+                query_rating_five = "Five stars",
+                note = "A rating a search offers."
+            ),
+            "5".to_owned(),
+        ),
+        (
+            words!(
+                query_rating_none = "Unrated",
+                note = "A rating a search offers: files not rated."
+            ),
+            "0".to_owned(),
+        ),
+    ]
+}
 
 /// Kinds by another of their words, offered when no kind's own name
 /// starts with what is typed (`pic` for images).
@@ -391,13 +606,13 @@ fn word_at(lexemes: &[Lexeme], caret: usize) -> Option<&WordLex> {
 }
 
 /// Whether `w` parses on its own, else the parser's message.
-fn verdict(text: &str, w: &WordLex) -> Result<(), String> {
+fn verdict(text: &str, w: &WordLex) -> Result<(), Words> {
     if w.unterminated {
-        return Err("unterminated quote".into());
+        return Err(lang::unterminated().words);
     }
     lang::parse(&text[w.range.clone()])
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.words)
 }
 
 /// Whether `w`, at the caret, is a term still being typed: a key with no
@@ -444,7 +659,8 @@ pub enum SpanKind {
 }
 
 /// A piece of the text: its byte range, what it is, the key it belongs
-/// to, and why it is an error.
+/// to, and why it is an error (said where it is shown; in English to
+/// agents).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Span {
     pub range: Range<usize>,
@@ -452,7 +668,7 @@ pub struct Span {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub facet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub message: Option<Words>,
 }
 
 impl Span {
@@ -513,8 +729,8 @@ pub fn tokens_at(text: &str, caret: usize) -> Vec<Span> {
 }
 
 /// Why `text` does not parse, as the parser says it; `None` when it does.
-pub fn check(text: &str) -> Option<String> {
-    lang::parse(text).err().map(|e| e.to_string())
+pub fn check(text: &str) -> Option<Words> {
+    lang::parse(text).err().map(|e| e.words)
 }
 
 /// Whether `text` is words alone: no key, comparison or operator.
@@ -547,22 +763,22 @@ pub fn hashes_as_names(text: &str) -> Option<String> {
 /// caret at `caret`: the first term that does not parse, else what the
 /// parser says of the whole. A term still being typed at the caret, an
 /// operator or an open parenthesis just typed, is not a problem yet.
-pub fn problem(text: &str, caret: usize) -> Option<String> {
+pub fn problem(text: &str, caret: usize) -> Option<Words> {
     let spans = tokens_at(text, caret);
     if let Some(span) = spans.iter().find(|s| s.kind == SpanKind::Error) {
         return span.message.clone();
     }
-    let error = check(text)?;
+    let error = lang::parse(text).err()?;
     let at_end = caret >= text.trim_end().len();
     let last = lex(text).pop();
     let still_typing = match &last {
         Some(Lexeme::Operator(r)) => {
             at_end && r.end == text.trim_end().len() && &text[r.clone()] != ")"
         }
-        Some(Lexeme::Word(w)) => typing(text, w, caret) || (at_end && error == "missing `)`"),
+        Some(Lexeme::Word(w)) => typing(text, w, caret) || (at_end && error.unclosed),
         None => false,
     };
-    (!still_typing).then_some(error)
+    (!still_typing).then_some(error.words)
 }
 
 // ---------------------------------------------------------------- complete
@@ -597,13 +813,14 @@ fn is_zero(n: &usize) -> bool {
 pub const MOST_TAGS_OFFERED: usize = 200;
 
 /// One way to go on: what it reads as, the term it writes in place of
-/// `Completed::range`, a word on it, its icon, and the tag it names.
+/// `Completed::range`, a word on it, its icon, and the tag it names. Its
+/// label and detail are said where they are shown, in English to agents.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Item {
-    pub label: String,
+    pub label: Words,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub detail: Option<Words>,
     pub icon: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
@@ -659,9 +876,9 @@ fn keys(word: &str) -> Vec<Item> {
     KEYS.iter()
         .filter(|k| k.name.starts_with(&word))
         .map(|k| Item {
-            label: format!("{}:", k.name),
+            label: Words::as_written(format!("{}:", k.name)),
             text: format!("{}:", k.name),
-            detail: Some(k.example.to_owned()),
+            detail: Some((k.example)()),
             icon: k.icon.to_owned(),
             tag: None,
         })
@@ -683,23 +900,21 @@ fn values(
     let icon = key_info(key).map_or("search", |k| k.icon);
     let whole = &text[w.range.clone()];
     let value = w.value(text);
-    let sizes = sizes();
-    let sizes = presets(&sizes);
-    let presets: &[(&str, &str)] = match key {
-        "size" => &sizes,
-        "rating" => &RATINGS,
-        k if TIMES.contains(&k) => &PERIODS,
-        _ => &[],
+    let presets: Presets = match key {
+        "size" => sizes(),
+        "rating" => ratings(),
+        k if TIMES.contains(&k) => periods(),
+        _ => Vec::new(),
     };
     if !presets.is_empty() {
         // What follows the key's name, written whole for these (never
         // `#`): the colon or comparison, then the value.
         let after = &whole[key.len()..];
         return presets
-            .iter()
+            .into_iter()
             .filter_map(|(label, preset)| {
                 let form = if preset.starts_with(['<', '>', '=']) {
-                    (*preset).to_owned()
+                    preset
                 } else {
                     format!(":{preset}")
                 };
@@ -707,9 +922,9 @@ fn values(
                 goes_on.then(|| {
                     let term = format!("{key}{form}");
                     Item {
-                        label: (*label).to_owned(),
+                        label,
                         text: term.clone(),
-                        detail: Some(term),
+                        detail: Some(Words::as_written(term)),
                         icon: icon.to_owned(),
                         tag: None,
                     }
@@ -728,21 +943,22 @@ fn values(
         format!("{head},")
     };
     let typed_lower = typed.to_lowercase();
-    let item = |label: String, written: &str, tag: Option<String>| {
+    let item = |label: Words, written: &str, tag: Option<String>| {
         let term = format!("{prefix}{head}{written}");
         Item {
             label,
-            detail: Some(term.clone()),
+            detail: Some(Words::as_written(term.clone())),
             text: term,
             icon: icon.to_owned(),
             tag,
         }
     };
-    let words = |names: &[&str]| -> Vec<Item> {
+    // The words a key takes, as written, each said by its label.
+    let values_of = |names: Vec<(&str, Words)>| -> Vec<Item> {
         names
-            .iter()
-            .filter(|n| n.starts_with(&typed_lower) && **n != typed_lower)
-            .map(|n| item(capitalized(n), n, None))
+            .into_iter()
+            .filter(|(n, _)| n.starts_with(&typed_lower) && *n != typed_lower)
+            .map(|(n, label)| item(label, n, None))
             .collect()
     };
     match key {
@@ -762,12 +978,64 @@ fn values(
             found
                 .into_iter()
                 .filter(|k| !listed.contains(&k.name()))
-                .map(|k| item(k.title().to_owned(), k.name(), None))
+                .map(|k| item(Words::as_written(k.title()), k.name(), None))
                 .collect()
         }
-        "type" => words(&["file", "dir", "symlink"]),
-        "hidden" | "excluded" => words(&["true", "false"]),
-        "case" => words(&["sensitive", "insensitive"]),
+        "type" => values_of(vec![
+            (
+                "file",
+                words!(
+                    query_value_file = "File",
+                    note = "A value of the key type: of a search, offered as it is typed: files."
+                ),
+            ),
+            (
+                "dir",
+                words!(
+                    query_value_dir = "Dir",
+                    note = "A value of the key type: of a search, offered as it is typed: folders."
+                ),
+            ),
+            (
+                "symlink",
+                words!(
+                    query_value_symlink = "Symlink",
+                    note = "A value of the key type: of a search, offered as it is typed: links."
+                ),
+            ),
+        ]),
+        "hidden" | "excluded" => values_of(vec![
+            (
+                "true",
+                words!(
+                    query_value_true = "True",
+                    note = "A value of an option of a search, offered as it is typed: yes."
+                ),
+            ),
+            (
+                "false",
+                words!(
+                    query_value_false = "False",
+                    note = "A value of an option of a search, offered as it is typed: no."
+                ),
+            ),
+        ]),
+        "case" => values_of(vec![
+            (
+                "sensitive",
+                words!(
+                    query_value_sensitive = "Sensitive",
+                    note = "A value of the option case: of a search, offered as it is typed: capitals told apart."
+                ),
+            ),
+            (
+                "insensitive",
+                words!(
+                    query_value_insensitive = "Insensitive",
+                    note = "A value of the option case: of a search, offered as it is typed: capitals or not."
+                ),
+            ),
+        ]),
         "tag" => {
             let mut found = Vec::new();
             for (tag, (lower, leaf)) in tags.tags.iter().zip(&tags.lower) {
@@ -777,7 +1045,11 @@ fn values(
                     continue;
                 }
                 if found.len() < MOST_TAGS_OFFERED {
-                    found.push(item(tag.clone(), &lang::quote(tag), Some(tag.clone())));
+                    found.push(item(
+                        Words::as_written(tag.clone()),
+                        &lang::quote(tag),
+                        Some(tag.clone()),
+                    ));
                 } else {
                     *more += 1;
                 }
@@ -788,21 +1060,15 @@ fn values(
     }
 }
 
-fn capitalized(word: &str) -> String {
-    let mut cs = word.chars();
-    cs.next()
-        .map(|c| c.to_uppercase().chain(cs).collect())
-        .unwrap_or_default()
-}
-
 // ---------------------------------------------------------------- interpret
 
 /// Words read as terms: what the field offers below a search of the
 /// words themselves ("Did you mean"), applied only when picked.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Reading {
-    /// What it finds, in words: "PDFs modified last week".
-    pub label: String,
+    /// What it finds, in words: "PDFs modified last week"; said where it
+    /// is shown, in English to agents.
+    pub label: Words,
     /// The search, in the language.
     pub expr: String,
 }
@@ -820,17 +1086,46 @@ const FILLERS: [&str; 15] = [
     "and", "that", "are",
 ];
 
-/// Sizes by a word, with how a reading says them: in the units sizes are
-/// shown in, written in them (ADR-139, 9).
-fn size_words() -> [(&'static str, String, String); 6] {
+/// Sizes by a word, with how a reading says them (after the words before
+/// them): in the units sizes are shown in, written in them (ADR-139, 9).
+fn size_words() -> [(&'static str, String, Words); 6] {
     let [_, k, m, g, ..] = skwir_core::fs::size_units().names();
+    let over_100 = || {
+        words!(
+            query_reading_over_100 = "{\" \"}over 100 { $unit }",
+            unit = m,
+            note = "The end of a reading of words as a search (PDFs over 100 MB): it begins with a space. unit: a unit of size as the size setting writes it."
+        )
+    };
+    let under_100 = || {
+        words!(
+            query_reading_under_100 = "{\" \"}under 100 { $unit }",
+            unit = k,
+            note = "The end of a reading of words as a search (PDFs under 100 kB): it begins with a space. unit: a unit of size as the size setting writes it."
+        )
+    };
     [
-        ("big", format!(">100{m}"), format!("over 100 {m}")),
-        ("large", format!(">100{m}"), format!("over 100 {m}")),
-        ("huge", format!(">1{g}"), format!("over 1 {g}")),
-        ("small", format!("<100{k}"), format!("under 100 {k}")),
-        ("tiny", format!("<100{k}"), format!("under 100 {k}")),
-        ("empty", ":0".to_owned(), "that are empty".to_owned()),
+        ("big", format!(">100{m}"), over_100()),
+        ("large", format!(">100{m}"), over_100()),
+        (
+            "huge",
+            format!(">1{g}"),
+            words!(
+                query_reading_over_1 = "{\" \"}over 1 { $unit }",
+                unit = g,
+                note = "The end of a reading of words as a search (Videos over 1 GB): it begins with a space. unit: a unit of size as the size setting writes it."
+            ),
+        ),
+        ("small", format!("<100{k}"), under_100()),
+        ("tiny", format!("<100{k}"), under_100()),
+        (
+            "empty",
+            ":0".to_owned(),
+            words!(
+                query_reading_empty = "{\" \"}that are empty",
+                note = "The end of a reading of words as a search (Files that are empty): it begins with a space."
+            ),
+        ),
     ]
 }
 
@@ -856,10 +1151,10 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
     }
     let mut exts: Vec<String> = Vec::new();
     let mut kinds: Vec<Kind> = Vec::new();
-    let mut when: Option<(&str, &str)> = None;
+    let mut when: Option<&str> = None;
     let mut year: Option<String> = None;
     let size_words = size_words();
-    let mut size: Option<(&str, &str)> = None;
+    let mut size: Option<(&str, &Words)> = None;
     let mut tagged: Vec<String> = Vec::new();
     let mut names: Vec<(String, bool)> = Vec::new();
     let mut read = 0;
@@ -876,7 +1171,7 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
         if let ("last" | "this", Some((next, false))) = (lower.as_str(), words.get(i))
             && let Some(period) = PERIODS
                 .iter()
-                .find(|(_, v)| *v == format!("{lower}-{}", next.to_lowercase()))
+                .find(|v| **v == format!("{lower}-{}", next.to_lowercase()))
         {
             when = Some(*period);
             read += 1;
@@ -885,7 +1180,7 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
         }
         if let Some(period) = PERIODS
             .iter()
-            .find(|(_, v)| *v == lower && (lower == "today" || lower == "yesterday"))
+            .find(|v| **v == lower && (lower == "today" || lower == "yesterday"))
         {
             when = Some(*period);
         } else if lower.len() == 4
@@ -940,7 +1235,7 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
             if pictures { "taken" } else { "modified" }
         ));
     }
-    if let Some((_, period)) = when {
+    if let Some(period) = when {
         terms.push(if period.starts_with(['<', '>']) {
             format!("modified{period}")
         } else {
@@ -955,29 +1250,34 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
     }
 
     let subject = if !exts.is_empty() {
-        joined(
+        facets::and_list(
             exts.iter()
-                .map(|e| format!("{}s", e.to_uppercase()))
+                .map(|e| {
+                    words!(
+                        query_reading_extension = "{ $ext }s",
+                        ext = e.to_uppercase(),
+                        note = "Files of an extension, as a reading of words as a search names them (PDFs modified last week). ext: the extension in capitals."
+                    )
+                })
                 .collect(),
         )
     } else if !kinds.is_empty() {
-        let titles: Vec<String> = kinds
-            .iter()
-            .enumerate()
-            .map(|(i, k)| {
-                if i == 0 {
-                    k.title().to_owned()
-                } else {
-                    k.title().to_lowercase()
-                }
-            })
-            .collect();
-        joined(titles)
+        facets::and_list(
+            kinds
+                .iter()
+                .enumerate()
+                .map(|(i, kind)| kind_said(*kind, i == 0))
+                .collect(),
+        )
     } else {
-        "Files".to_owned()
+        words!(
+            query_reading_files = "Files",
+            note = "The start of a reading of words as a search that names no kind (Files modified today)."
+        )
     };
-    let mut label = vec![subject];
-    if !names.is_empty() {
+    let by_name = if names.is_empty() {
+        Words::default()
+    } else {
         let said: Vec<String> = names
             .iter()
             .map(|(w, quoted)| {
@@ -988,38 +1288,151 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
                 }
             })
             .collect();
-        label.push(format!("named “{}”", said.join(" ")));
-    }
-    if !tagged.is_empty() {
-        label.push(format!("tagged {}", joined(tagged.clone())));
-    }
-    if let Some(y) = &year {
-        label.push(format!(
-            "{} in {y}",
-            if pictures { "taken" } else { "modified" }
-        ));
-    }
-    if let Some((title, _)) = when {
-        label.push(format!("modified {}", title.to_lowercase()));
-    }
-    if let Some((_, says)) = size {
-        label.push(says.to_owned());
-    }
+        words!(
+            query_reading_named = "{\" \"}named { $names }",
+            names = Name(said.join(" ")),
+            note = "A part of a reading of words as a search (PDFs named “invoice”): it begins with a space. names: the words typed, as written."
+        )
+    };
+    let tagged = if tagged.is_empty() {
+        Words::default()
+    } else {
+        words!(
+            query_reading_tagged = "{\" \"}tagged { $tags }",
+            tags = facets::and_list(tagged.into_iter().map(Words::as_written).collect()),
+            note = "A part of a reading of words as a search (Images tagged work): it begins with a space. tags: the tags, as written, in a list."
+        )
+    };
+    let year = match &year {
+        None => Words::default(),
+        Some(year) if pictures => words!(
+            query_reading_taken_in = "{\" \"}taken in { $year }",
+            year = year.as_str(),
+            note = "A part of a reading of words as a search (Images taken in 2023): it begins with a space."
+        ),
+        Some(year) => words!(
+            query_reading_modified_in = "{\" \"}modified in { $year }",
+            year = year.as_str(),
+            note = "A part of a reading of words as a search (PDFs modified in 2023): it begins with a space."
+        ),
+    };
     Some(Reading {
-        label: label.join(" "),
+        label: words!(
+            query_reading = "{ $subject }{ $named }{ $tagged }{ $year }{ $period }{ $size }",
+            subject = subject,
+            named = by_name,
+            tagged = tagged,
+            year = year,
+            period = when.map_or_else(Words::default, period_said),
+            size = size.map_or_else(Words::default, |(_, says)| says.clone()),
+            note = "Plain words read as a search, offered below them (Did you mean: PDFs modified last week). subject: what files; each other part is said beginning with a space, or is nothing."
+        ),
         expr: terms.join(" "),
     })
 }
 
-/// `a`, `a and b`, `a, b and c`.
-fn joined(mut items: Vec<String>) -> String {
-    match items.len() {
-        0 => String::new(),
-        1 => items.remove(0),
-        _ => {
-            let last = items.pop().unwrap_or_default();
-            format!("{} and {last}", items.join(", "))
-        }
+/// Files of `kind`, as a reading of words says them: first, or after
+/// another kind (`Images and videos`).
+fn kind_said(kind: Kind, first: bool) -> Words {
+    let at = if first { "first" } else { "after" };
+    match kind {
+        Kind::Folder => words!(
+            query_reading_folders = "{ $at ->
+                [first] Folders
+               *[after] folders
+            }",
+            at = at,
+            note = "Files of a kind, as a reading of words as a search names them: first (at the start of the sentence) or after another kind."
+        ),
+        Kind::Image => words!(
+            query_reading_images = "{ $at ->
+                [first] Images
+               *[after] images
+            }",
+            at = at
+        ),
+        Kind::Video => words!(
+            query_reading_videos = "{ $at ->
+                [first] Videos
+               *[after] videos
+            }",
+            at = at
+        ),
+        Kind::Audio => words!(
+            query_reading_audio = "{ $at ->
+                [first] Music and audio
+               *[after] music and audio
+            }",
+            at = at
+        ),
+        Kind::Document => words!(
+            query_reading_documents = "{ $at ->
+                [first] Documents
+               *[after] documents
+            }",
+            at = at
+        ),
+        Kind::Spreadsheet => words!(
+            query_reading_spreadsheets = "{ $at ->
+                [first] Spreadsheets
+               *[after] spreadsheets
+            }",
+            at = at
+        ),
+        Kind::Presentation => words!(
+            query_reading_presentations = "{ $at ->
+                [first] Presentations
+               *[after] presentations
+            }",
+            at = at
+        ),
+        Kind::Text => words!(
+            query_reading_text = "{ $at ->
+                [first] Text and code
+               *[after] text and code
+            }",
+            at = at
+        ),
+        Kind::Archive => words!(
+            query_reading_archives = "{ $at ->
+                [first] Archives
+               *[after] archives
+            }",
+            at = at
+        ),
+        Kind::Font => words!(
+            query_reading_fonts = "{ $at ->
+                [first] Fonts
+               *[after] fonts
+            }",
+            at = at
+        ),
+        Kind::Program => words!(
+            query_reading_programs = "{ $at ->
+                [first] Programs
+               *[after] programs
+            }",
+            at = at
+        ),
+    }
+}
+
+/// When files were changed, as a reading of words says it (after the
+/// words before it): a period of [`PERIODS`].
+fn period_said(period: &str) -> Words {
+    match period {
+        "today" => words!(
+            query_reading_today = "{\" \"}modified today",
+            note = "A part of a reading of words as a search (PDFs modified today): it begins with a space."
+        ),
+        "yesterday" => words!(query_reading_yesterday = "{\" \"}modified yesterday"),
+        "this-week" => words!(query_reading_this_week = "{\" \"}modified this week"),
+        "last-week" => words!(query_reading_last_week = "{\" \"}modified last week"),
+        "this-month" => words!(query_reading_this_month = "{\" \"}modified this month"),
+        "last-month" => words!(query_reading_last_month = "{\" \"}modified last month"),
+        "this-year" => words!(query_reading_this_year = "{\" \"}modified this year"),
+        "last-year" => words!(query_reading_last_year = "{\" \"}modified last year"),
+        _ => words!(query_reading_older = "{\" \"}modified older than a year"),
     }
 }
 
@@ -1246,7 +1659,7 @@ mod tests {
         let every = complete_in("tag:", 4, &all);
         assert_eq!(every.items.len(), MOST_TAGS_OFFERED);
         assert_eq!(every.more, count - MOST_TAGS_OFFERED);
-        assert_eq!(every.items[0].label, "Lot/tag0000");
+        assert_eq!(every.items[0].label.english(), "Lot/tag0000");
         assert!(serde_json::to_value(&every).unwrap()["more"].is_number());
         let narrowed = complete_in("tag:tag49", 9, &all);
         assert_eq!(narrowed.items.len(), 100, "by the leaf");
@@ -1361,26 +1774,26 @@ mod tests {
     fn a_term_that_does_not_parse_says_why_in_the_parsers_words() {
         let spans = tokens("kind:pix");
         assert_eq!(kinds(&spans), vec![(0..8, SpanKind::Error)]);
-        let message = spans[0].message.as_deref().unwrap();
+        let said = spans[0].message.clone().unwrap();
+        let message = said.english();
         assert!(message.starts_with("kind: expects "), "{message}");
         assert!(message.ends_with("got `pix`"), "{message}");
-        assert_eq!(Some(message.to_owned()), check("kind:pix"));
+        assert_eq!(Some(said), check("kind:pix"));
 
         let spans = tokens("dunes size>10X");
         assert_eq!(
             kinds(&spans),
             vec![(0..5, SpanKind::Word), (6..14, SpanKind::Error)]
         );
-        assert_eq!(spans[1].message.as_deref(), Some("bad size `10X`"));
+        assert_eq!(
+            spans[1].message.as_ref().map(Words::english).as_deref(),
+            Some("bad size `10X`")
+        );
         assert_eq!(spans[1].facet.as_deref(), Some("size"));
         // Away from the caret, an empty value is an error too.
         let spans = tokens_at("kind: x", 7);
         assert_eq!(spans[0].kind, SpanKind::Error);
-        assert_eq!(
-            spans[0].message.as_deref(),
-            check("kind:").as_deref(),
-            "the parser's own message"
-        );
+        assert_eq!(spans[0].message, check("kind:"), "the parser's own message");
     }
 
     #[test]
@@ -1410,12 +1823,13 @@ mod tests {
         assert_eq!(problem("kind:im", 7), None);
         assert_eq!(problem("a OR", 4), None);
         assert_eq!(problem("(a", 2), None);
-        assert_eq!(problem("(a b", 2), Some("missing `)`".to_owned()));
-        assert_eq!(problem("a b)", 4), Some("unexpected `)`".to_owned()));
-        let message = problem("kind:pix dunes", 14).unwrap();
+        let said = |words: Option<Words>| words.as_ref().map(Words::english);
+        assert_eq!(said(problem("(a b", 2)).as_deref(), Some("missing `)`"));
+        assert_eq!(said(problem("a b)", 4)).as_deref(), Some("unexpected `)`"));
+        let message = problem("kind:pix dunes", 14).unwrap().english();
         assert!(message.ends_with("got `pix`"), "{message}");
         assert_eq!(check("report kind:image"), None);
-        assert_eq!(check("(a"), Some("missing `)`".to_owned()));
+        assert_eq!(said(check("(a")).as_deref(), Some("missing `)`"));
     }
 
     fn texts(c: &Completed) -> Vec<&str> {
@@ -1439,7 +1853,7 @@ mod tests {
         let c = complete("dunes kind:im", 13, &[]);
         assert_eq!(c.range, 6..13);
         assert_eq!(texts(&c), ["kind:image"]);
-        assert_eq!(c.items[0].label, "Images");
+        assert_eq!(c.items[0].label.english(), "Images");
         assert!(c.typing);
         let c = complete("kind:image,vi", 13, &[]);
         assert_eq!(texts(&c), ["kind:image,video"]);
@@ -1469,7 +1883,7 @@ mod tests {
                 "modified:last-year"
             ]
         );
-        assert_eq!(c.items[0].label, "Last week");
+        assert_eq!(c.items[0].label.english(), "Last week");
         assert_eq!(
             texts(&complete("size>1", 6, &[])),
             ["size>100MB", "size>1GB"]
@@ -1528,7 +1942,7 @@ mod tests {
         for (text, expr, label) in cases {
             let reading = interpret(text, &tags).unwrap_or_else(|| panic!("{text}"));
             assert_eq!(reading.expr, expr, "{text}");
-            assert_eq!(reading.label, label, "{text}");
+            assert_eq!(reading.label.english(), label, "{text}");
             assert!(lang::parse(&reading.expr).is_ok(), "{}", reading.expr);
         }
         assert_eq!(interpret("dunes", &tags), None);

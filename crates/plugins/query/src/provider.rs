@@ -23,6 +23,7 @@ use skwir_core::location::{
 use skwir_core::op::Change;
 use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::walks::{Below, LeftOut};
+use skwir_core::words;
 use skwir_core::words::Words;
 
 use crate::lang::{self, Candidate, Late, Query, Verdict};
@@ -212,12 +213,20 @@ impl LocationProvider for QueryProvider {
         let detail = crate::facets::text_of(&location.rest)
             .filter(|text| !text.is_empty())
             .map(|text| {
-                format!(
-                    "No file matches “{text}” here. Check the spelling or search a folder higher up."
+                words!(
+                    query_nothing_found_detail = "No file matches “{ $text }” here. Check the spelling or search a folder higher up.",
+                    text = text,
+                    note = "Under Nothing found, in a search's pane. text: the words searched for, as typed."
                 )
             })
             .unwrap_or_default();
-        Some(EmptyState::new("Nothing found", detail))
+        Some(EmptyState::new(
+            words!(
+                query_nothing_found = "Nothing found",
+                note = "A search's pane when it found no file."
+            ),
+            detail,
+        ))
     }
 
     fn follows_hidden(&self, location: &Location) -> bool {
@@ -229,7 +238,7 @@ impl LocationProvider for QueryProvider {
     }
 
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
-        let mut query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+        let mut query = lang::parse(&location.rest).map_err(crate::query_error)?;
         // Hidden files as it says, else as the pane shows them.
         query.hidden = query.hidden_asked.unwrap_or(ctx.hidden_shown);
         // A search of what a place lists (`in:recent:`), not a walk.
@@ -237,7 +246,7 @@ impl LocationProvider for QueryProvider {
             let app = self
                 .app
                 .upgrade()
-                .ok_or_else(|| anyhow::anyhow!("the app has ended"))?;
+                .ok_or_else(|| anyhow::anyhow!(words!(query_app_ended = "the app has ended")))?;
             return crate::within::open(
                 &app,
                 location.clone(),
@@ -251,8 +260,11 @@ impl LocationProvider for QueryProvider {
         // it): the walk checks, and reports a listing error.
         anyhow::ensure!(
             query.root.is_absolute(),
-            "query root {} is not an absolute path",
-            query.root.display()
+            words!(
+                query_root_not_absolute = "query root { $path } is not an absolute path",
+                path = query.root.display().to_string(),
+                note = "An error of a search whose folder is not written whole (from /). path: the folder, as written."
+            )
         );
         let app = self.app.clone();
         let rule: Rule = Arc::new(move || {
@@ -914,10 +926,13 @@ impl Shared {
                 let _walk = this.walk.lock();
                 if !cancel.is_cancelled() {
                     this.tx.send(ListingEvent::Error(skwir_core::ListingError {
-                        message: format!(
-                            "query root {} is not a folder: {error}",
-                            query.root.display()
-                        ),
+                        message: words!(
+                            query_root_not_folder = "query root { $path } is not a folder: { $error }",
+                            path = query.root.display().to_string(),
+                            error = skwir_core::op::io_words(&error),
+                            note = "A search's pane whose folder cannot be opened. path: the folder; error: why (permission denied)."
+                        )
+                        .say(),
                         ..skwir_core::ListingError::of_io(&error)
                     }));
                 }
@@ -954,9 +969,9 @@ impl Shared {
             Ok(query) => query,
             Err(e) => {
                 this.tx
-                    .send(ListingEvent::Error(skwir_core::ListingError::new(format!(
-                        "query: {e}"
-                    ))));
+                    .send(ListingEvent::Error(skwir_core::ListingError::new(
+                        Words::of_error(crate::query_error(e)).say(),
+                    )));
                 return;
             }
         };
@@ -1274,7 +1289,7 @@ impl Shared {
             self.rests_on(
                 cancel,
                 Some(AsOf {
-                    by: crate::plocate::BY.to_owned(),
+                    by: crate::plocate::by(),
                     updated: located.updated,
                 }),
             );

@@ -5,7 +5,7 @@
 //! can block on a sleeping disk.
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use skwir_core::app::{App, NotifyLevel};
@@ -13,6 +13,8 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{Entry, Value, keys};
 use skwir_core::location::Location;
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::calendar::{Calendar, date_string};
 use skwir_platform::mime;
@@ -62,8 +64,8 @@ fn bytes(n: u64) -> String {
 }
 
 /// The terms that find files like `s` by `by`, or why there are none.
-pub fn terms(s: &Sample<'_>, by: By, cal: &Calendar) -> Result<String, String> {
-    let name = s.name.to_string_lossy();
+pub fn terms(s: &Sample<'_>, by: By, cal: &Calendar) -> Result<String, Words> {
+    let name = || Name(s.name.to_string_lossy().into_owned());
     match by {
         By::Kind if s.dir => Ok("kind:folder".into()),
         By::Kind if let Some(inode) = s.inode => Ok(format!("mime:{}", lang::quote(inode))),
@@ -80,13 +82,23 @@ pub fn terms(s: &Sample<'_>, by: By, cal: &Calendar) -> Result<String, String> {
                 Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
                     Ok(format!("ext:{}", lang::quote(ext)))
                 }
-                _ => Err(format!("“{name}” is of no kind the desktop knows")),
+                _ => Err(words!(
+                    query_similar_no_kind = "{ $name } is of no kind the desktop knows",
+                    name = name(),
+                    note = "Why Find Similar › Same Kind found nothing to search by."
+                )),
             }
         }
         By::Day => s
             .modified
             .map(|t| format!("modified:{}", date_string(cal.day_of(t))))
-            .ok_or_else(|| format!("“{name}” has no modification date")),
+            .ok_or_else(|| {
+                words!(
+                    query_similar_no_date = "{ $name } has no modification date",
+                    name = name(),
+                    note = "Why Find Similar › Same Day found nothing to search by."
+                )
+            }),
         By::Size => match s.size {
             Some(0) => Ok("size:0".into()),
             // Half to twice as big: what "about this size" reads as.
@@ -95,10 +107,18 @@ pub fn terms(s: &Sample<'_>, by: By, cal: &Calendar) -> Result<String, String> {
                 bytes(n / 2),
                 bytes(n.saturating_mul(2))
             )),
-            None => Err(format!("“{name}” has no size")),
+            None => Err(words!(
+                query_similar_no_size = "{ $name } has no size",
+                name = name(),
+                note = "Why Find Similar › Similar Size found nothing to search by."
+            )),
         },
         By::Tags => match s.tags.as_slice() {
-            [] => Err(format!("“{name}” has no tags")),
+            [] => Err(words!(
+                query_similar_no_tags = "{ $name } has no tags",
+                name = name(),
+                note = "Why Find Similar › Same Tags found nothing to search by."
+            )),
             [one] => Ok(format!("tag:{}", lang::quote(one))),
             many => {
                 let any: Vec<String> = many
@@ -125,7 +145,7 @@ fn tags_of(entry: &Entry) -> Vec<String> {
 fn root_of(app: &App, pane: PaneId) -> anyhow::Result<PathBuf> {
     if let Some(location) = app.pane_location(pane).filter(|l| &*l.scheme == SCHEME) {
         return Ok(lang::parse(&location.rest)
-            .map_err(|e| anyhow::anyhow!("query: {e}"))?
+            .map_err(crate::query_error)?
             .root);
     }
     app.pane_dir(pane)
@@ -142,17 +162,19 @@ pub fn start(
     by: By,
     lifetime: &CancelToken,
 ) -> anyhow::Result<()> {
-    let [selected] = app
-        .targets(pane, entries)?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("select one file to find others like it"))?;
+    let [selected] = app.targets(pane, entries)?.try_into().map_err(|_| {
+        anyhow::anyhow!(words!(
+            query_similar_one = "select one file to find others like it",
+            note = "An error of Find Similar given several files or none."
+        ))
+    })?;
     let pane = app.pane_or_active(pane);
     let root = root_of(app, pane)?;
     let (known, visit) = {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+            .ok_or_else(|| anyhow::anyhow!(words!(query_no_pane = "no such pane")))?;
         (
             p.entry_at(selected.id, &selected.path).cloned(),
             p.location_lifetime(),
@@ -175,7 +197,11 @@ pub fn start(
                     let Some(entry) = skwir_core::fs::hydrate_path(&path, &app.metadata) else {
                         app.notify(
                             NotifyLevel::Error,
-                            format!("“{}” cannot be read", name(&path)),
+                            words!(
+                                query_similar_unreadable = "{ $name } cannot be read",
+                                name = Name::of(&path),
+                                note = "Why Find Similar found nothing: the file selected cannot be read."
+                            ),
                         );
                         return;
                     };
@@ -207,7 +233,7 @@ pub fn start(
                 Ok(terms) => {
                     let location: Location = location_for(&terms, Some(&root));
                     if let Err(e) = app.navigate(pane, &location) {
-                        app.notify(NotifyLevel::Error, format!("{e:#}"));
+                        app.notify(NotifyLevel::Error, Words::of_error(e));
                     }
                 }
                 Err(why) => app.notify(NotifyLevel::Info, why),
@@ -216,13 +242,6 @@ pub fn start(
         },
     );
     Ok(())
-}
-
-fn name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    )
 }
 
 // Types are read from the free desktops' database (ADR-035).
