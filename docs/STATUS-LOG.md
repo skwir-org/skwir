@@ -18804,3 +18804,28 @@ at once.
   and `aarch64-apple-darwin`.
 
 **Not run:** macOS itself, a window.
+
+## 2026-11-16: Steps A to C seen in a window
+
+The debug build on Xvfb (lavapipe), with its own home and XDG folders,
+on a folder of five files: 999 B, 1500 B, 5 MiB, a 1.6 MB PNG and a
+sparse 1.5 GB file.
+- **Decimal, the default:** the list says 999 B, 1.5 kB, 5.2 MB, 1.6 MB
+  and 1.5 GB, and the footer 1.5 GB.
+- **Binary, set by editing the settings file while the window ran:** the
+  list and the footer changed at once to 1.5 KiB, 5.0 MiB, 1.6 MiB and
+  1.4 GiB.
+- **Decimal again, chosen in Settings:** the list followed at once, and
+  the file holds `size_units = "decimal"`.
+- **Settings:** General › Language shows Automatic chosen, English
+  outlined as what it comes to; Folders and views › Sizes › Units shows
+  Decimal and Binary, with the reset.
+- **A picture's context menu:**
+  - Open With, Compress, Find Similar and Tags each stand as one row;
+  - Compress holds the archives' To ZIP, Choose Format… and With a
+    Password…, then the smaller copies' Reduce Size….
+- **The sidebar's headings** (Places, Tags, Devices, Network) are core's
+  words.
+
+Not seen: a volume without a label (the machine's volumes all have
+one), a search typed in the address, Binary's size groups.
