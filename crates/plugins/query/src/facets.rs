@@ -919,7 +919,7 @@ pub fn describe_for(
     // it looks, and switches it; a place is searched as it lists.
     if search {
         let (title, icon) = match (&q.within, app) {
-            (Some(place), Some(app)) => (format!("In {}", app.location_title(place)), "list"),
+            (Some(place), Some(app)) => (format!("In {}", app.location_title(place).say()), "list"),
             (Some(place), None) => (format!("In {place}"), "list"),
             (None, _) if q.depth == Some(1) => ("This folder only".to_owned(), "filter"),
             (None, _) => ("And subfolders".to_owned(), "search"),

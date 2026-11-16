@@ -23,6 +23,7 @@ use skwir_core::location::{
 use skwir_core::op::Change;
 use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::walks::{Below, LeftOut};
+use skwir_core::words::Words;
 
 use crate::lang::{self, Candidate, Late, Query, Verdict};
 
@@ -127,12 +128,13 @@ impl LocationProvider for QueryProvider {
         Some((shown, own))
     }
 
-    /// What the search looks for and where, as a saved one is named.
-    fn title(&self, location: &Location) -> Option<String> {
-        Some(crate::suggested_name(
+    /// What the search looks for and where, as a saved one is named:
+    /// what it looks for is the query's own words, as written.
+    fn title(&self, location: &Location) -> Option<Words> {
+        Some(Words::as_written(crate::suggested_name(
             self.app.upgrade().as_deref(),
             &location.rest,
-        ))
+        )))
     }
 
     /// A search is in the folder it looks in, or the place it searches as
@@ -142,14 +144,15 @@ impl LocationProvider for QueryProvider {
         let query = lang::parse(&location.rest).ok()?;
         let app = self.app.upgrade();
         let own = skwir_core::location::Crumb::new(
-            crate::suggested_name(app.as_deref(), &location.rest),
+            Words::as_written(crate::suggested_name(app.as_deref(), &location.rest)),
             location.clone(),
         );
         let (base, crumbs) = match query.within {
             Some(place) => {
-                let title = app
-                    .as_deref()
-                    .map_or_else(|| place.to_string(), |app| app.location_title(&place));
+                let title = app.as_deref().map_or_else(
+                    || Words::as_written(place.to_string()),
+                    |app| app.location_title(&place),
+                );
                 (
                     None,
                     vec![skwir_core::location::Crumb::new(title, place), own],
@@ -2222,13 +2225,11 @@ mod tests {
         let provider = QueryProvider::new(CancelToken::new(), Searches::default(), Weak::new());
         let location = crate::location_for("it's a draft", Some(Path::new("/x/a folder")));
         let empty = provider.empty_state(&location).unwrap();
-        assert_eq!(empty.title, "Nothing found");
+        assert_eq!(empty.title.english(), "Nothing found");
+        let detail = empty.detail.english();
         assert!(
-            empty
-                .detail
-                .starts_with("No file matches “it's a draft” here."),
-            "{}",
-            empty.detail
+            detail.starts_with("No file matches “it's a draft” here."),
+            "{detail}"
         );
         assert_eq!(provider.icon(&location), Some("search"));
     }

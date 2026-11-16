@@ -584,7 +584,7 @@ fn a_folder_s_tags_are_one_step_from_it() {
     // first, then its folders.
     let folder = Location::from_path(&s.root);
     let inside = s.app.places_in(&folder, None, false).unwrap();
-    let labels: Vec<&str> = inside.iter().map(|c| c.label.as_str()).collect();
+    let labels: Vec<String> = inside.iter().map(|c| c.label.english()).collect();
     assert_eq!(labels, ["Tags", "trips"]);
     assert_eq!(inside[0].location, tag_location(&s.root, None));
     // Shown with sub-tags, the trail goes on into its tags so: the menu

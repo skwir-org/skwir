@@ -207,7 +207,7 @@ impl Shell {
         let rows = places
             .into_iter()
             .map(|(steps, location)| NavRow {
-                label: self.app.location_title(&location).into(),
+                label: self.app.location_title(&location).say().into(),
                 tip: match location.path() {
                     Some(path) => path.display().to_string().into(),
                     None => location.to_string().into(),
@@ -275,7 +275,7 @@ impl Shell {
                 let inside = match read {
                     Ok(inside) => inside,
                     Err(error) => {
-                        let name = shell.app.location_title(&of);
+                        let name = shell.app.location_title(&of).say();
                         shell.set_status(format!("Could not read “{name}”: {error}"), true, cx);
                         return;
                     }
@@ -358,8 +358,8 @@ impl Shell {
         let app = &self.app;
         for segment in places {
             rows.push(NavRow {
-                label: segment.label.clone().into(),
-                tip: app.location_title(&segment.location).into(),
+                label: segment.label.say().into(),
+                tip: app.location_title(&segment.location).say().into(),
                 icon: crate::trail::glyph(app, &segment.location),
                 command: "navigate",
                 args: serde_json::json!({ "location": segment.location.arg() }),
@@ -397,10 +397,10 @@ fn inside_rows(
         .into_iter()
         .take(FOLDER_ROWS)
         .map(|place| NavRow {
-            label: place.label.clone().into(),
+            label: place.label.say().into(),
             tip: match place.location.path() {
                 Some(path) => path.display().to_string().into(),
-                None => app.location_title(&place.location).into(),
+                None => app.location_title(&place.location).say().into(),
             },
             icon: crate::trail::glyph(app, &place.location),
             command: "navigate",
@@ -671,7 +671,7 @@ mod tests {
             folder.as_deref(),
             Some(Path::new("/home/example/Documents"))
         );
-        let labels: Vec<&str> = places.iter().map(|c| c.label.as_str()).collect();
+        let labels: Vec<String> = places.iter().map(|c| c.label.english()).collect();
         assert_eq!(labels, ["Tags", "Places"]);
         // A trail of places only, as the trash's.
         let trash = [

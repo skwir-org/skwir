@@ -368,7 +368,7 @@ fn an_agent_is_told_the_entries_its_undo_and_redo_took() {
     mkdir("inside", &root.join("it's a"));
     mkdir("beside", &root);
     let rows = app.executor.history().rows;
-    let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+    let titles: Vec<String> = rows.iter().map(|r| r.title.english()).collect();
     assert_eq!(
         titles,
         [
@@ -408,7 +408,10 @@ fn an_agent_is_told_the_entries_its_undo_and_redo_took() {
     assert_eq!(redone["redone"], "new folder it's a");
     assert_eq!(redone["error"], serde_json::Value::Null);
     assert_eq!(
-        app.executor.last_undo_title().as_deref(),
+        app.executor
+            .last_undo_title()
+            .map(|t| t.english())
+            .as_deref(),
         Some("new folder beside")
     );
     let undone = answer("undo", serde_json::json!({ "entry": beside }));
@@ -732,7 +735,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
     assert!(matches!(
         events.last(),
-        Some(ExecEvent::Finished { applied: 0, error: Some(e), .. }) if e.starts_with("Not enough room")
+        Some(ExecEvent::Finished { applied: 0, error: Some(e), .. }) if e.english().starts_with("Not enough room")
     ));
     assert!(app.take_questions().is_empty(), "no one to ask");
     assert!(!root.join("dest/a.bin").exists(), "nothing copied");
@@ -749,7 +752,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
     assert!(matches!(
         events.last(),
-        Some(ExecEvent::Finished { applied: 0, error: Some(e), .. }) if e.starts_with("Not enough room")
+        Some(ExecEvent::Finished { applied: 0, error: Some(e), .. }) if e.english().starts_with("Not enough room")
     ));
     assert!(!root.join("dest/a.bin").exists(), "nothing copied");
 
@@ -1970,7 +1973,7 @@ fn undo_of_one_trashing_is_not_refused_for_another() {
         .executor
         .undo_of_blocking(again, app.lifetime())
         .unwrap();
-    let error = r.error.unwrap_or_default();
+    let error = r.error.map(|e| e.english()).unwrap_or_default();
     assert!(error.contains("touched what it did"), "{error}");
     assert_eq!(r.applied, 0);
     assert!(!a.exists());

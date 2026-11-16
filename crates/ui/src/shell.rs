@@ -1823,7 +1823,7 @@ impl Shell {
         if let Some(name) = hidden {
             let joined = self.say_with(
                 answer,
-                format!("Hidden files are shown, “{name}” among them"),
+                format!("Hidden files are shown, “{name}” among them").into(),
                 cx,
             );
             if let Some(reveal) = self.reveal.as_mut() {
@@ -2211,7 +2211,7 @@ impl Shell {
         };
         if let Some(said) = said {
             let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
-            let joined = self.say_with(answer, said, cx);
+            let joined = self.say_with(answer, said.into(), cx);
             if let Some(reveal) = self.reveal.as_mut() {
                 reveal.answer = joined.or(reveal.answer);
             }
@@ -3154,9 +3154,13 @@ impl Shell {
             .first()
             .map(|running| {
                 let paused = self.app.executor.is_paused(running.plan);
-                (running.title.as_str(), paused)
+                (running.title.clone(), paused)
             })
-            .or_else(|| tasks.first().map(|task| (task.title.as_str(), false)));
+            .or_else(|| {
+                tasks
+                    .first()
+                    .map(|task| (skwir_core::words::Words::from(task.title.clone()), false))
+            });
         let waiting = self.app.executor.queued();
         if running.is_none() && waiting == 0 && work.waits_for_server() {
             // Nothing runs nor waits its turn: what keeps it waits for
@@ -3167,7 +3171,7 @@ impl Shell {
                 .filter(|stopped| self.app.executor.waits_for_server(stopped.plan))
                 .map_or_else(
                     || "An action".to_owned(),
-                    |stopped| crate::toast::capitalized(&stopped.title),
+                    |stopped| crate::toast::capitalized(&stopped.title.say()),
                 );
             return format!(
                 "{what} waits for its server to answer again, to go on by itself. \
@@ -3176,7 +3180,11 @@ impl Shell {
             );
         }
         let others = (work.running.len() + tasks.len()).saturating_sub(1);
-        crate::toast::quit_question(running, others, waiting)
+        crate::toast::quit_question(
+            running.as_ref().map(|(title, paused)| (title, *paused)),
+            others,
+            waiting,
+        )
     }
 
     /// Stop what runs and quit: the window closes at once, and the program
@@ -4141,19 +4149,19 @@ impl Shell {
                 (Some(key), _) if error => self.set_status_about(n.text, &key, cx),
                 // Something done outside the journal, with its own way back.
                 (_, Some(action)) => self.toast(
-                    crate::toast::Toast {
-                        text: n.text,
-                        tone: if error {
+                    crate::toast::Toast::new(
+                        n.text,
+                        if error {
                             crate::toast::Tone::Error
                         } else {
                             crate::toast::Tone::Success
                         },
-                        actions: vec![crate::toast::Action {
+                        vec![crate::toast::Action {
                             label: action.label,
                             command: action.command.name.to_string(),
                             args: action.command.args,
                         }],
-                    },
+                    ),
                     cx,
                 ),
                 _ => self.set_status(n.text, error, cx),

@@ -237,7 +237,7 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
         Banner::said(format!("Loading location…{read}"))
     } else {
         Banner {
-            text: format!("Opening {}…", shell.app.location_title(&location)),
+            text: format!("Opening {}…", shell.app.location_title(&location).say()),
             ways: cancel(back).into_iter().collect(),
         }
     })

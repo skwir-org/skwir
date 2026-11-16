@@ -42,6 +42,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
+use crate::words::Words;
+
 pub use builtin::{
     Copy, CopyUndo, Delete, InTrash, Landed, Link, MadeBeside, Mkdir, Move, NewFile,
     RemoveEmptyFile, Rename, Restore, RestorePart, ReturnPart, Rmdir, Swap, Trash, Uncopy, Unlink,
@@ -167,8 +169,9 @@ impl fmt::Display for Couldnt {
 
 /// What stopped `change`'s step, said alone, where its error begins with
 /// the step's own words naming the file it acts on ([`Couldnt`]): what
-/// follows them in its chain. `None` where the error begins otherwise.
-pub fn reason_after(error: &anyhow::Error, change: &Change) -> Option<String> {
+/// follows them in its chain, in the reader's language where it is words.
+/// `None` where the error begins otherwise.
+pub fn reason_after(error: &Arc<anyhow::Error>, change: &Change) -> Option<Words> {
     // A downcast finds the outermost of its kind wherever it stands in the
     // chain; it is the first link where the error's own text is its text,
     // the same value said twice (which link, not what it says).
@@ -178,13 +181,13 @@ pub fn reason_after(error: &anyhow::Error, change: &Change) -> Option<String> {
     // By name: a copy's words name it where it lands, an item of a trash
     // by the trash's name, the same as the step's.
     let named = change.subject().and_then(Path::file_name);
-    (named.is_some() && own.subject.file_name() == named).then(|| said_of(error.chain().skip(1)))
+    (named.is_some() && own.subject.file_name() == named).then(|| Words::of_error_from(error, 1))
 }
 
 /// A system's error in words: by its kind where the kind says it (the
 /// same words on every system, said in the reader's language), else its
 /// own message, as the system wrote it, its number left out.
-pub fn io_words(error: &std::io::Error) -> crate::words::Words {
+pub fn io_words(error: &std::io::Error) -> Words {
     use crate::words;
     use std::io::ErrorKind as K;
     match error.kind() {
@@ -204,7 +207,7 @@ pub fn io_words(error: &std::io::Error) -> crate::words::Words {
         K::TimedOut => words!(io_timed_out = "the drive did not answer in time"),
         _ => {
             let text = error.to_string();
-            words::Words::as_written(match text.rfind(" (os error ") {
+            Words::as_written(match text.rfind(" (os error ") {
                 Some(at) if text.ends_with(')') => text[..at].to_owned(),
                 _ => text,
             })
@@ -343,7 +346,7 @@ pub enum Change {
         /// What the step does, in the user's words, when making it is not
         /// all it says (an archive extracted as this folder).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        words: Option<Words>,
+        words: Option<Tenses>,
     },
     Remove {
         #[serde(with = "crate::os_path")]
@@ -359,7 +362,7 @@ pub enum Change {
         /// What the step does, in the user's words, for the review and the
         /// toast; without it, the field's name is all they can say.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        words: Option<Words>,
+        words: Option<Tenses>,
     },
 }
 
@@ -368,15 +371,27 @@ pub enum Change {
 /// says it ("Placed “a.jpg” at 10.12000, 20.12000"), and what its check
 /// found when it was done already (`StepStatus::AlreadyDone`), which the
 /// toast says instead ("“a.jpg” was already at 10.12000, 20.12000"):
-/// never that it did what it found done.
+/// never that it did what it found done. Its words in three tenses, each
+/// said where it is shown.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct Words {
-    pub will: String,
-    pub did: String,
-    /// Empty in words written before it was said: then the toast says it
-    /// as it says a change without words.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub already: String,
+pub struct Tenses {
+    pub will: Words,
+    pub did: Words,
+    /// `None` in words written before it was said (absent, or empty as an
+    /// older plugin from outside wrote it): then the toast says it as it
+    /// says a change without words.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "unless_empty"
+    )]
+    pub already: Option<Words>,
+}
+
+/// Text that comes in as words, none where it is empty.
+fn unless_empty<'de, D: serde::Deserializer<'de>>(to: D) -> Result<Option<Words>, D::Error> {
+    let text = Option::<String>::deserialize(to)?;
+    Ok(text.filter(|text| !text.is_empty()).map(Words::as_written))
 }
 
 impl fmt::Display for Change {
@@ -457,7 +472,7 @@ impl Change {
             }
             | Change::Metadata {
                 words: Some(words), ..
-            } => f.write_str(&words.will),
+            } => f.write_str(&words.will.english()),
             Change::Create {
                 path,
                 directory: true,
@@ -489,6 +504,16 @@ pub enum Followed {
 }
 
 impl Change {
+    /// Its own words, where it says what it does in words of its own (an
+    /// archive extracted, a picture placed): what its `Display` says of it
+    /// in English, said in the reader's language where it is shown.
+    pub fn tenses(&self) -> Option<&Tenses> {
+        match self {
+            Change::Create { words, .. } | Change::Metadata { words, .. } => words.as_ref(),
+            _ => None,
+        }
+    }
+
     /// The file it acts on, as it was asked: what is copied, moved, linked,
     /// renamed, trashed, restored (where it goes back), deleted or made.
     pub fn subject(&self) -> Option<&Path> {
@@ -1071,7 +1096,9 @@ impl PlanId {
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub id: PlanId,
-    pub title: String,
+    /// What the user knows it by, said where it is shown: a card, a
+    /// toast, the History, the review.
+    pub title: Words,
     /// What the review says under the title: what the plan left out and
     /// why ("3 pictures outside the track's times"). The toast does not
     /// repeat it.
@@ -1091,7 +1118,7 @@ pub struct Plan {
     /// For an undo's run, the title of the action it takes back, as its
     /// history keeps it: what tells of the run says it apart from the
     /// run's own `title`, never by taking that apart (ADR-139, 8).
-    pub undoes: Option<String>,
+    pub undoes: Option<Words>,
 }
 
 /// A folder as a title names it (ADR-135): by its name, "/" by itself.
@@ -1208,7 +1235,8 @@ pub struct Counted {
 /// Serialized plan.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanData {
-    pub title: String,
+    /// English where it leaves the process; as written where it comes in.
+    pub title: Words,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub steps: Vec<OpData>,
@@ -1221,14 +1249,14 @@ pub struct PlanData {
 /// The dry-run view of a plan: what each step will do and whether it can.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanDiff {
-    pub title: String,
+    pub title: Words,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub steps: Vec<(Change, StepStatus)>,
 }
 
 impl Plan {
-    pub fn new(title: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<Words>) -> Self {
         Plan {
             id: PlanId::fresh(),
             title: title.into(),
@@ -1262,7 +1290,7 @@ impl Plan {
         self
     }
 
-    pub fn with_steps(title: impl Into<String>, steps: Vec<Box<dyn Operation>>) -> Self {
+    pub fn with_steps(title: impl Into<Words>, steps: Vec<Box<dyn Operation>>) -> Self {
         let mut p = Plan::new(title);
         p.steps = steps;
         p
@@ -1434,7 +1462,7 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Follow, Followed, Through, Words, io_words, said};
+    use super::{Change, Follow, Followed, Tenses, Through, io_words, said};
     use std::path::{Path, PathBuf};
 
     /// A step's own words naming its file are told apart by their make, not
@@ -1452,6 +1480,9 @@ mod tests {
         };
         let denied =
             || anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let reason = |error: anyhow::Error, step: &Change| {
+            reason_after(&std::sync::Arc::new(error), step).map(|why| why.english())
+        };
         let failed = own(
             "/a/it's a.txt",
             "“it's a.txt” could not be renamed “b.txt”",
@@ -1461,16 +1492,24 @@ mod tests {
             said(&failed),
             "“it's a.txt” could not be renamed “b.txt”: permission denied"
         );
+        let failed = std::sync::Arc::new(failed);
         assert_eq!(
-            reason_after(&failed, &step).as_deref(),
+            reason_after(&failed, &step)
+                .map(|why| why.english())
+                .as_deref(),
             Some("permission denied")
         );
         // Words of another file's: said whole.
         let other = own("/a/other.txt", "“other.txt” could not be read", denied());
-        assert_eq!(reason_after(&other, &step), None);
+        assert_eq!(reason(other, &step), None);
         // The step's words inside another's: they are not its first.
-        let wrapped = failed.context("the folder could not be read");
-        assert_eq!(reason_after(&wrapped, &step), None);
+        let wrapped = own(
+            "/a/it's a.txt",
+            "“it's a.txt” could not be renamed “b.txt”",
+            denied(),
+        )
+        .context("the folder could not be read");
+        assert_eq!(reason(wrapped, &step), None);
         // Where it lands, by its name: a copy's words name its target.
         let copy = Change::Copy {
             from: PathBuf::from("/a/it's a.txt"),
@@ -1481,10 +1520,7 @@ mod tests {
             "“it's a.txt” could not be placed in “b”",
             denied(),
         );
-        assert_eq!(
-            reason_after(&placed, &copy).as_deref(),
-            Some("permission denied")
-        );
+        assert_eq!(reason(placed, &copy).as_deref(), Some("permission denied"));
         // A cancelled step is still told cancelled through its words.
         let cancelled = own(
             "/a/it's a.txt",
@@ -1553,10 +1589,10 @@ mod tests {
         let placed = Change::Metadata {
             path: dir.join("a.jpg"),
             field: "position".into(),
-            words: Some(Words {
+            words: Some(Tenses {
                 will: "place “a.jpg” at 10, 20".into(),
                 did: "Placed “a.jpg” at 10, 20".into(),
-                already: "“a.jpg” was already at 10, 20".into(),
+                already: Some("“a.jpg” was already at 10, 20".into()),
             }),
         };
         assert_eq!(placed.within(dir).to_string(), "place “a.jpg” at 10, 20");

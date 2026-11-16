@@ -99,8 +99,11 @@ impl SuggestSource for Tabs {
             .into_iter()
             .filter(|tab| !tab.shown)
             .filter_map(|tab| {
+                // What it is called, as its tab says it: what is typed
+                // finds it by that.
+                let title = tab.title.say();
                 let rank = if ask.typed == Typed::Words {
-                    rank_of(&tab.title, words)?
+                    rank_of(&title, words)?
                 } else {
                     0
                 };
@@ -109,7 +112,7 @@ impl SuggestSource for Tabs {
                 } else {
                     Section::Tabs
                 };
-                let mut row = Suggestion::new(section, tab.title.clone())
+                let mut row = Suggestion::new(section, title)
                     .detail("Switch to tab")
                     .icon("tab-new")
                     .rank(rank)
@@ -158,13 +161,14 @@ impl SuggestSource for History {
             .into_iter()
             .enumerate()
             .map(|(i, location)| {
-                let mut row = Suggestion::new(Section::History, app.location_title(&location))
-                    .icon("back")
-                    .rank(i32::try_from(i).unwrap_or(i32::MAX))
-                    .runs(Invocation::with_args(
-                        "back",
-                        &serde_json::json!({ "steps": i + 1, "pane": ask.pane }),
-                    ));
+                let mut row =
+                    Suggestion::new(Section::History, app.location_title(&location).say())
+                        .icon("back")
+                        .rank(i32::try_from(i).unwrap_or(i32::MAX))
+                        .runs(Invocation::with_args(
+                            "back",
+                            &serde_json::json!({ "steps": i + 1, "pane": ask.pane }),
+                        ));
                 // A folder says where it is; a search's title says it all.
                 row.detail = location.path().is_some().then(|| said(&location));
                 row.scope = scope_of(app, &location);

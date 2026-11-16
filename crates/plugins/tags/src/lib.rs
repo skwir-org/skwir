@@ -1931,7 +1931,7 @@ mod tests {
                 .expect("tags.toggle")
                 .forms
                 .into_iter()
-                .map(|form| (form.title, form.args))
+                .map(|form| (form.title.english(), form.args))
                 .collect()
         };
         assert!(forms(&app).is_empty(), "nothing pinned");
@@ -3061,7 +3061,10 @@ mod tests {
             "tags.edit",
             &serde_json::json!({ "add": ["urgent", "WORK"], "remove": ["Draft"] }),
         );
-        assert_eq!(edit.title, "add tags urgent, WORK and remove tag Draft");
+        assert_eq!(
+            edit.title.english(),
+            "add tags urgent, WORK and remove tag Draft"
+        );
         app.executor.execute_blocking(&edit, app.lifetime());
         assert_eq!(read_tags(&a), ["Work", "urgent"], "spelling kept");
         assert_eq!(read_tags(&b), ["home", "urgent", "WORK"]);

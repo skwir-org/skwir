@@ -27,11 +27,11 @@ impl Shell {
             tracing::warn!(%text, "status");
         }
         self.toast(
-            Toast {
+            Toast::new(
                 text,
-                tone: if error { Tone::Error } else { Tone::Info },
-                actions: Vec::new(),
-            },
+                if error { Tone::Error } else { Tone::Info },
+                Vec::new(),
+            ),
             cx,
         );
     }
@@ -73,15 +73,15 @@ impl Shell {
 
     fn toast_about(&mut self, text: String, tone: Tone, setting: &str, cx: &mut Context<Self>) {
         self.toast(
-            Toast {
+            Toast::new(
                 text,
                 tone,
-                actions: vec![Action {
+                vec![Action {
                     label: "Open setting".into(),
                     command: "ui.settings".into(),
                     args: serde_json::json!({ "key": setting }),
                 }],
-            },
+            ),
             cx,
         );
     }

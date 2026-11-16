@@ -518,7 +518,7 @@ fn a_name_taken_with_no_one_to_ask_applies_nothing() {
             applied: 0,
             error: Some(error),
             ..
-        } => assert_eq!(error, "“b.txt” is already there"),
+        } => assert_eq!(error.english(), "“b.txt” is already there"),
         other => panic!("{other:?}"),
     }
     assert!(!root.join("dest/a.txt").exists(), "nothing applied");

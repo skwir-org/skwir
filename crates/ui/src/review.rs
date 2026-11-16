@@ -43,9 +43,12 @@ pub fn line(
     status: &StepStatus,
     folder: Option<&Path>,
 ) -> (String, &'static str, LineKind) {
-    let said = match folder {
-        Some(folder) => change.within(folder).to_string(),
-        None => change.to_string(),
+    // A step that says what it will do in words of its own says it in the
+    // window's language; any other as its change says it.
+    let said = match (change.tenses(), folder) {
+        (Some(tenses), _) => tenses.will.say(),
+        (None, Some(folder)) => change.within(folder).to_string(),
+        (None, None) => change.to_string(),
     };
     match status {
         StepStatus::Pending { reversible: true } => (said, "pending", LineKind::Pending),
@@ -300,7 +303,11 @@ impl Shell {
         match self.take_review() {
             Some(Review::Plan { plan, .. }) => {
                 self.app.dismissed(plan.id);
-                self.set_status(format!("Discarded proposal: {}", plan.title), false, cx);
+                self.set_status(
+                    format!("Discarded proposal: {}", plan.title.say()),
+                    false,
+                    cx,
+                );
             }
             Some(Review::Question(question)) => {
                 self.app.answer(question.id, false);
@@ -361,8 +368,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             };
             (
                 match &plan.by {
-                    Some(who) => format!("{who} proposes: {}", plan.title),
-                    None => format!("Proposed: {}", plan.title),
+                    Some(who) => format!("{who} proposes: {}", plan.title.say()),
+                    None => format!("Proposed: {}", plan.title.say()),
                 },
                 format!("{}{more}", crate::format::count(steps, "step")),
                 note,

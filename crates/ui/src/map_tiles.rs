@@ -84,16 +84,17 @@ struct Waiting {
 pub struct Backgrounds {
     pub setting: String,
     pub current: String,
-    /// Values and labels.
-    pub choices: Vec<(String, String)>,
+    /// Values and labels, said where they are drawn.
+    pub choices: Vec<(String, skwir_core::words::Words)>,
 }
 
 impl Backgrounds {
-    pub fn label(&self) -> &str {
+    /// The chosen one's label, as the window says it.
+    pub fn label(&self) -> String {
         self.choices
             .iter()
             .find(|(value, _)| *value == self.current)
-            .map_or(self.current.as_str(), |(_, label)| label.as_str())
+            .map_or_else(|| self.current.clone(), |(_, label)| label.say())
     }
 }
 
@@ -172,7 +173,7 @@ impl TileStore {
                     .constraints
                     .choices
                     .iter()
-                    .map(|value| (value.clone(), spec.choice_label(value).to_owned()))
+                    .map(|value| (value.clone(), spec.choice_label(value)))
                     .collect();
                 Some(Backgrounds {
                     setting: key.to_owned(),

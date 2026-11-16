@@ -12,7 +12,7 @@ use super::{Kept, NoteStores, Notes, Policy, Probe, Tag, Write, Wrote, stars};
 use crate::entry::keys;
 use crate::metadata::same_tag;
 use crate::op::{
-    Change, EntryRef, Operation, Rename, ResolveError, StepContext, StepStatus, Words,
+    Change, EntryRef, Operation, Rename, ResolveError, StepContext, StepStatus, Tenses,
 };
 
 fn name_of(path: &Path) -> String {
@@ -126,7 +126,7 @@ pub struct SetNotes {
     /// the tags it ends with ("remove the tag “France” from “a.jpg”", not
     /// "tag “a.jpg” family").
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub words: Option<Words>,
+    pub words: Option<Tenses>,
     #[serde(skip)]
     #[schemars(skip)]
     stores: Option<Arc<NoteStores>>,
@@ -175,7 +175,7 @@ impl SetNotes {
     /// what its fields say.
     #[must_use]
     pub fn saying(mut self, will: String, did: String, already: String) -> Self {
-        self.words = Some(Words { will, did, already });
+        self.words = Some(Said { will, did, already }.into());
         self
     }
 
@@ -283,9 +283,7 @@ impl SetNotes {
 
     /// What it says it will do, did, and found done already, and the
     /// field it is about.
-    fn words(&self) -> (Words, &'static str) {
-        let name = name_of(&self.entry.path);
-        let said = |will: String, did: String, already: String| Words { will, did, already };
+    fn words(&self) -> (Tenses, &'static str) {
         if let Some(words) = &self.words {
             let field = if self.tags.is_some() || self.change_tags.is_some() {
                 keys::TAGS
@@ -296,6 +294,15 @@ impl SetNotes {
             };
             return (words.clone(), field);
         }
+        let (said, field) = self.said();
+        (said.into(), field)
+    }
+
+    /// What its fields say it will do, did, and found done already, and
+    /// the field it is about: text until its sentences are messages.
+    fn said(&self) -> (Said, &'static str) {
+        let name = name_of(&self.entry.path);
+        let said = |will: String, did: String, already: String| Said { will, did, already };
         if self.sync {
             return (
                 said(
@@ -309,7 +316,7 @@ impl SetNotes {
         if let Some(change) = &self.change_tags {
             // Each part said every way at once: a name or a tag may hold
             // any word.
-            let mut parts: Vec<Words> = Vec::new();
+            let mut parts: Vec<Said> = Vec::new();
             for r in &change.rename {
                 parts.push(match &r.to {
                     Some(to) => said(
@@ -347,7 +354,7 @@ impl SetNotes {
                     format!("{taken} {were} already off “{name}”"),
                 ));
             }
-            let joined = |part: fn(&Words) -> &String| {
+            let joined = |part: fn(&Said) -> &String| {
                 parts
                     .iter()
                     .map(part)
@@ -423,6 +430,24 @@ impl SetNotes {
                 ),
                 keys::COMMENT,
             ),
+        }
+    }
+}
+
+/// A step's words in three tenses, as text (`op::Tenses`).
+struct Said {
+    will: String,
+    did: String,
+    already: String,
+}
+
+impl From<Said> for Tenses {
+    /// As written; what it found done already, unless it says nothing.
+    fn from(said: Said) -> Self {
+        Tenses {
+            will: said.will.into(),
+            did: said.did.into(),
+            already: (!said.already.is_empty()).then(|| said.already.into()),
         }
     }
 }
@@ -782,10 +807,10 @@ impl Operation for RestoreNotes {
         Change::Metadata {
             path: self.entry.path.clone(),
             field: self.field.clone(),
-            words: Some(Words {
-                will: format!("put back the notes of “{name}”"),
-                did: format!("put back the notes of “{name}”"),
-                already: format!("the notes of “{name}” were already back"),
+            words: Some(Tenses {
+                will: format!("put back the notes of “{name}”").into(),
+                did: format!("put back the notes of “{name}”").into(),
+                already: Some(format!("the notes of “{name}” were already back").into()),
             }),
         }
     }
@@ -876,22 +901,22 @@ mod tests {
         let (words, _) = edit.words();
         let name = "take rename tag “x”.txt";
         assert_eq!(
-            words.will,
+            words.will.english(),
             format!(
                 "rename the tag “a” to “b” on “{name}” and rename the tag “c” to “d” on “{name}” and tag “{name}” new and take old off “{name}”"
             )
         );
         assert_eq!(
-            words.did,
+            words.did.english(),
             format!(
                 "renamed the tag “a” to “b” on “{name}” and renamed the tag “c” to “d” on “{name}” and tagged “{name}” new and took old off “{name}”"
             )
         );
         assert_eq!(
-            words.already,
-            format!(
+            words.already.as_ref().map(crate::words::Words::english),
+            Some(format!(
                 "the tag “a” was already “b” on “{name}” and the tag “c” was already “d” on “{name}” and “{name}” was already tagged new and old was already off “{name}”"
-            )
+            ))
         );
     }
 

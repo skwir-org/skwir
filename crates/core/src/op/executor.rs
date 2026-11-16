@@ -38,6 +38,7 @@ use super::{Cancelled, Change, Operation, Plan, PlanId, StepContext, StepStatus}
 use crate::cancel::CancelToken;
 use crate::registry::Contributions;
 use crate::scheduler::{Priority, Scheduler};
+use crate::words::Words;
 
 /// Progress of one step.
 #[derive(Clone, Debug, Serialize)]
@@ -53,12 +54,12 @@ pub struct Progress {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub named: Option<String>,
     pub status: StepStatus,
-    pub error: Option<String>,
+    pub error: Option<Words>,
     /// What stopped the step, said alone, where its error begins with the
     /// step's own words naming its file (`op::reason_after`): what words
     /// of their own for the failure say after them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    pub reason: Option<Words>,
 }
 
 /// What `change` acts on, by the name the user knows it by where its path
@@ -202,7 +203,7 @@ fn tally(
 pub enum ExecEvent {
     Started {
         plan: PlanId,
-        title: String,
+        title: Words,
         total: usize,
         /// Whether this run applies a plan or takes one back (or again).
         run: RunKind,
@@ -212,7 +213,7 @@ pub enum ExecEvent {
         /// For an undo, the title of the action it takes back
         /// (`Plan::undoes`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        undoes: Option<String>,
+        undoes: Option<Words>,
         /// Whether it counts as an action of its own while things run one
         /// after another ([`counts_as_action`]): as it counted waiting
         /// ([`Waiting::counts`]); one refused before it began does not.
@@ -236,7 +237,7 @@ pub enum ExecEvent {
         plan: PlanId,
         applied: usize,
         skipped: usize,
-        error: Option<String>,
+        error: Option<Words>,
         cancelled: bool,
         undoable: bool,
         /// What the user asked for, as it was done, where the steps are
@@ -267,7 +268,7 @@ pub enum ExecEvent {
     GoesOn {
         plan: PlanId,
         next: PlanId,
-        title: String,
+        title: Words,
     },
     /// What the plan `plan` had left when a step's error stopped it is
     /// retried, asked for (`Executor::retry`): the same action going on,
@@ -276,7 +277,7 @@ pub enum ExecEvent {
     Retried {
         plan: PlanId,
         next: PlanId,
-        title: String,
+        title: Words,
     },
 }
 
@@ -289,8 +290,9 @@ pub enum Verdict {
         /// Steps applied, and steps found already done.
         applied: usize,
         skipped: usize,
-        /// What stopped it, or made it apply nothing (a conflict).
-        error: Option<String>,
+        /// What stopped it, or made it apply nothing (a conflict): English
+        /// to whoever waits (an agent).
+        error: Option<Words>,
         cancelled: bool,
         /// What its steps said beside what they did, each once.
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -373,7 +375,7 @@ fn seconds<S: serde::Serializer>(left: &Option<Duration>, to: S) -> Result<S::Ok
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RunningPlan {
     pub plan: PlanId,
-    pub title: String,
+    pub title: Words,
     pub paused: bool,
     #[serde(flatten)]
     pub transfer: Transfer,
@@ -404,7 +406,7 @@ pub type PlanObserver = Arc<dyn Fn(PlanId, &[Change]) + Send + Sync>;
 #[derive(Debug)]
 pub struct JournalEntry {
     /// The title of the plan as the user knows it.
-    pub title: String,
+    pub title: Words,
     pub applied_at: SystemTime,
     /// On the undo stack, the inverse of what was applied; on the redo
     /// stack, the inverse of the undo. Built from what really happened, so
@@ -459,7 +461,7 @@ impl JournalEntry {
 pub struct ExecResult {
     pub applied: usize,
     pub skipped: usize,
-    pub error: Option<String>,
+    pub error: Option<Words>,
     pub cancelled: bool,
     /// Whether an inverse was journaled.
     pub undoable: bool,
@@ -467,7 +469,7 @@ pub struct ExecResult {
     pub complete: bool,
     /// An undo's or a redo's: the title of the entry of the history it
     /// took back or applied again, or would have; `None` for a plan.
-    pub entry_title: Option<String>,
+    pub entry_title: Option<Words>,
 }
 
 /// The undo and redo stacks, each in its entries' `stacked` order.
@@ -811,7 +813,7 @@ struct Job {
     target: Option<u64>,
     /// Why an undo of a plan named cannot be, said by its run, with the
     /// title of the plan it names where known.
-    refused: Option<(Option<String>, String)>,
+    refused: Option<(Option<Words>, Words)>,
     /// One undo of Undo with what came after ([`Executor::undo_with_after`]),
     /// and whether it is the last, the entry asked for.
     chain: Option<(Arc<Chain>, bool)>,
@@ -826,7 +828,7 @@ struct Job {
 /// those still waiting, and the last, the entry asked for, says why.
 struct Chain {
     /// Why it stopped: the undo that did not go, and how.
-    stopped: Mutex<Option<String>>,
+    stopped: Mutex<Option<Words>>,
 }
 
 /// A job started, until it ends.
@@ -837,9 +839,9 @@ struct Begun {
     /// The entry a retry joins (`Continues::seq`).
     joins: Option<u64>,
     /// A plan's title, which Undo names while it runs.
-    title: Option<String>,
+    title: Option<Words>,
     /// What it is called, an undo's or a redo's too (`Executor::waiting`).
-    named: String,
+    named: Words,
     footprint: Arc<Footprint>,
     /// Whole, with its folder (`Job::exact`).
     exact: Option<Arc<Kept>>,
@@ -957,7 +959,7 @@ pub struct HistoryRow {
     /// Its place in the order asked: what an undo or a redo of an entry
     /// names ([`Executor::undo_entry`], [`Executor::redo_entry`]).
     pub entry: u64,
-    pub title: String,
+    pub title: Words,
     /// The runs that made it, as their events named them (a plan, its
     /// retries, a redo of it): what a toast's Undo names.
     pub plans: Vec<PlanId>,
@@ -995,7 +997,7 @@ pub enum Can {
     /// entry and title, and how that one stands.
     After {
         entry: u64,
-        title: String,
+        title: Words,
         since: Since,
     },
     /// It is being undone or redone.
@@ -1036,7 +1038,7 @@ struct Ahead {
     plan: Option<PlanId>,
     /// The entry it joins, a retry.
     joins: Option<u64>,
-    title: String,
+    title: Words,
     /// The entries before it its footprint meets (`Job::meets`); `None`
     /// until worked out: taken to meet them all.
     meets: Option<HashSet<u64>>,
@@ -1047,7 +1049,7 @@ struct Ahead {
 struct Read {
     seq: u64,
     stacked: u64,
-    title: String,
+    title: Words,
     asked: Vec<PlanId>,
     at: SystemTime,
     undone: bool,
@@ -1125,10 +1127,14 @@ fn rows_of(rows: &[Read], ahead: &[Ahead], going: &HashMap<(bool, u64), bool>) -
     // is named as that undo (redo), running or waiting.
     let held_by = |r: &Read, since: Since| match going.get(&(r.undone, r.stacked)) {
         Some(&running) => {
-            let verb = if r.undone { "redo" } else { "undo" };
+            let direction = if r.undone {
+                Direction::Redo
+            } else {
+                Direction::Undo
+            };
             Can::After {
                 entry: r.seq,
-                title: format!("{verb} {}", r.title),
+                title: replay_title(direction, &r.title),
                 since: if running {
                     Since::Running
                 } else {
@@ -1288,12 +1294,14 @@ fn chains_of(rows: &[Read], free: impl Fn(&Read) -> bool) -> HashMap<u64, Vec<u6
 /// Why the entry `title` cannot be undone (`direction`'s verb) alone:
 /// `other`, after it on its stack, touched what it did, and cannot be
 /// undone itself (`for_good`) or is to be taken back first.
-fn held_back(direction: Direction, title: &str, other: &str, for_good: bool) -> String {
+/// English, its titles too, until it is a message.
+fn held_back(direction: Direction, title: &Words, other: &Words, for_good: bool) -> Words {
     let (verb, done, after) = match direction {
         Direction::Undo => ("undo", "undone", "asked after it"),
         Direction::Redo => ("redo", "redone", "undone after it"),
     };
-    if for_good {
+    let (title, other) = (title.english(), other.english());
+    Words::from(if for_good {
         format!(
             "“{title}” cannot be {done}: “{other}”, {after}, touched what it did and cannot be undone"
         )
@@ -1301,6 +1309,28 @@ fn held_back(direction: Direction, title: &str, other: &str, for_good: bool) -> 
         format!(
             "“{title}” cannot be {done} alone: “{other}”, {after}, touched what it did; {verb} that first"
         )
+    })
+}
+
+/// What an undo or a redo of the action titled `title` is called while it
+/// waits or runs, and an undo's run ("undo copy 3 items to Docs"); a
+/// redo's run goes by the action's own title.
+fn replay_title(direction: Direction, title: &Words) -> Words {
+    match direction {
+        Direction::Undo => crate::words!(
+            op_undo_title = "undo { $title }",
+            title = title.clone(),
+            note = "What an undo is called while it waits or runs, and in the History: undo, then \
+                    the action it takes back (undo copy 3 items to Docs). Begins in lower case: \
+                    said inside other words too."
+        ),
+        Direction::Redo => crate::words!(
+            op_redo_title = "redo { $title }",
+            title = title.clone(),
+            note = "What a redo is called while it waits or runs: redo, then the action it \
+                    applies again (redo copy 3 items to Docs). Begins in lower case: said \
+                    inside other words too."
+        ),
     }
 }
 
@@ -1346,7 +1376,7 @@ pub struct Waiting {
     /// takes.
     pub asked: u64,
     /// Its title: a plan's, or "undo …" and "redo …".
-    pub named: String,
+    pub named: Words,
     /// A plan's id, as its `ExecEvent::Started` will name it: what tells
     /// the window an action waiting from the same action started (the
     /// strip announces each once, ADR-114); `None` for an undo or a redo.
@@ -1395,7 +1425,7 @@ impl Job {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WaitsFor {
     /// An action asked before it that touches what it does, by its title.
-    Action(String),
+    Action(Words),
     /// A heavy action on one of its disks.
     Disk,
     /// A heavy action on its server.
@@ -1499,7 +1529,7 @@ pub type ChangedBeside = Arc<dyn Fn(&[PathBuf]) + Send + Sync>;
 /// Asks whether the plan titled so, short of room (`room::Short`), goes
 /// on anyway; answers on the channel, true to go on.
 pub type RoomAsker =
-    Arc<dyn Fn(&str, &super::room::Short) -> crossbeam_channel::Receiver<bool> + Send + Sync>;
+    Arc<dyn Fn(&Words, &super::room::Short) -> crossbeam_channel::Receiver<bool> + Send + Sync>;
 
 /// Asks the user for what a step needs that only they know (an archive's
 /// password), titled with the question and its button's verb, and waits
@@ -1515,7 +1545,7 @@ pub type SecretAsker = Arc<
 /// cancel. `None` when no one can be asked: the plan applies nothing.
 pub type ClashAsker = Arc<
     dyn Fn(
-            &str,
+            &Words,
             &[super::clash::Clash],
         ) -> Option<crossbeam_channel::Receiver<Option<super::clash::Answer>>>
         + Send
@@ -1527,7 +1557,7 @@ enum Named {
     /// That plan has not ended.
     Waits,
     /// It cannot be: the title of the plan named, where known, and why.
-    Refused(Option<String>, String),
+    Refused(Option<Words>, Words),
     /// Its place on the undo stack, and the steps that take it back.
     Entry(u64, Vec<Box<dyn Operation>>),
 }
@@ -1538,7 +1568,7 @@ enum Settling {
     /// It goes on, these steps in place of its own where they differ.
     Steps(Option<Box<super::clash::Settled>>),
     /// A name taken, and no one to ask: what it says.
-    Refused(String),
+    Refused(Words),
     /// The user cancelled.
     Cancelled,
 }
@@ -1546,7 +1576,7 @@ enum Settling {
 /// A plan being applied: what stops it, what holds it, what it moved.
 struct Active {
     plan: PlanId,
-    title: String,
+    title: Words,
     cancel: CancelToken,
     pause: Arc<Pause>,
     meter: Arc<Meter>,
@@ -1753,7 +1783,7 @@ impl Executor {
         } else {
             let asker = self.clash_asker.lock().clone();
             let Some(answer) = asker.and_then(|asker| asker(&plan.title, &first.clashes)) else {
-                return Settling::Refused(first.clashes[0].said());
+                return Settling::Refused(first.clashes[0].said().into());
             };
             let answer = loop {
                 match answer.recv_timeout(Duration::from_millis(100)) {
@@ -2108,7 +2138,7 @@ impl Executor {
     /// each is, how far it went, how fast it goes and how long it has left
     /// (the `running` command).
     pub fn running(&self) -> Vec<RunningPlan> {
-        let running: Vec<(PlanId, String, bool)> = self
+        let running: Vec<(PlanId, Words, bool)> = self
             .running
             .lock()
             .iter()
@@ -2198,7 +2228,7 @@ impl Executor {
     }
 
     /// The title of the plan `plan`, which a step's error stopped.
-    pub fn stopped_title(&self, plan: PlanId) -> Option<String> {
+    pub fn stopped_title(&self, plan: PlanId) -> Option<Words> {
         let stopped = self.stopped.lock();
         let found = stopped.iter().find(|s| s.plan == plan)?;
         Some(found.rest.title.clone())
@@ -2401,7 +2431,7 @@ impl Executor {
             }) else {
                 continue;
             };
-            tracing::info!(%title, "its server answers again: it goes on");
+            tracing::info!(title = %title.english(), "its server answers again: it goes on");
             self.emit(ExecEvent::GoesOn { plan, next, title });
             self.submit(work, CancelToken::new());
             drop(handing);
@@ -2662,7 +2692,7 @@ impl Executor {
     }
 
     /// The title of what Undo would take back, without copying the stack.
-    pub fn last_undo_title(&self) -> Option<String> {
+    pub fn last_undo_title(&self) -> Option<Words> {
         let journal = self.journal.lock();
         journal
             .undo
@@ -2673,7 +2703,7 @@ impl Executor {
     }
 
     /// The title of what Redo would apply again.
-    pub fn last_redo_title(&self) -> Option<String> {
+    pub fn last_redo_title(&self) -> Option<Words> {
         let journal = self.journal.lock();
         journal
             .redo
@@ -2686,7 +2716,7 @@ impl Executor {
     /// What Undo takes now (ADR-079, 9): the latest plan asked that may be
     /// in the history, by its title, and whether it has not ended (Undo
     /// waits for it then); `None` with nothing to undo.
-    pub fn undo_target(&self) -> Option<(String, bool)> {
+    pub fn undo_target(&self) -> Option<(Words, bool)> {
         let lane = self.lane.lock();
         let pending = lane
             .queue
@@ -2718,14 +2748,14 @@ impl Executor {
     }
 
     /// Titles of the undo stack, most recent last, but for one being
-    /// undone.
+    /// undone: in English, as a test or a script reads them.
     pub fn undo_titles(&self) -> Vec<String> {
         self.journal
             .lock()
             .undo
             .iter()
             .filter(|e| !e.going)
-            .map(|e| e.title.clone())
+            .map(|e| e.title.english())
             .collect()
     }
 
@@ -2871,22 +2901,23 @@ impl Executor {
 
     /// What `job` is called: its plan's title, or "undo …" and "redo …"
     /// with its entry's, once known.
-    fn named(&self, job: &Job) -> String {
+    fn named(&self, job: &Job) -> Words {
         let direction = match &job.work {
             Work::Execute { plan, .. } => return plan.title.clone(),
             Work::Replay(direction, _) => *direction,
-        };
-        let verb = match direction {
-            Direction::Undo => "undo",
-            Direction::Redo => "redo",
         };
         let entry = job.target.and_then(|stacked| {
             let mut journal = self.journal.lock();
             let stack = journal.stack(direction);
             let entry = stack.iter().find(|e| e.stacked == stacked)?;
-            Some(entry.title.clone())
+            Some(replay_title(direction, &entry.title))
         });
-        entry.map_or_else(|| verb.to_owned(), |title| format!("{verb} {title}"))
+        entry.unwrap_or_else(|| {
+            Words::from(match direction {
+                Direction::Undo => "undo",
+                Direction::Redo => "redo",
+            })
+        })
     }
 
     /// The actions under way that touch something at or below `tree`, by
@@ -2895,7 +2926,7 @@ impl Executor {
     /// server, the disk, a slot), their footprints worked out; a plan not
     /// measured yet by the paths its steps name. One cancelled is not: what
     /// it still waits for there, it gave up on.
-    pub fn under_way_in(&self, tree: &Path) -> Vec<String> {
+    pub fn under_way_in(&self, tree: &Path) -> Vec<Words> {
         let lane = self.lane.lock();
         let running = lane
             .started
@@ -3486,11 +3517,15 @@ impl Executor {
             && let Some(why) = chain.stopped.lock().clone()
         {
             let title = entry.map(|e| e.title.clone());
+            // English, its title too, until it is a message.
             let reason = format!(
-                "“{}” was not undone: {why}",
-                title.as_deref().unwrap_or("that action")
+                "“{}” was not undone: {}",
+                title
+                    .as_ref()
+                    .map_or_else(|| "that action".to_owned(), Words::english),
+                why.english()
             );
-            return Named::Refused(title, reason);
+            return Named::Refused(title, reason.into());
         }
         let at = entry.map(|e| e.stacked);
         let before = || lane.queue.iter().take(i);
@@ -3548,23 +3583,23 @@ impl Executor {
         let Some(entry) = entry else {
             return match other.iter().find(|e| of.names(e)) {
                 Some(found) => {
+                    // English, its title too, until it is a message.
+                    let title = found.title.english();
                     let reason = match direction {
-                        Direction::Undo => format!("“{}” is undone already", found.title),
-                        Direction::Redo => {
-                            format!("“{}” is not undone: nothing to redo", found.title)
-                        }
+                        Direction::Undo => format!("“{title}” is undone already"),
+                        Direction::Redo => format!("“{title}” is not undone: nothing to redo"),
                     };
-                    Named::Refused(Some(found.title.clone()), reason)
+                    Named::Refused(Some(found.title.clone()), reason.into())
                 }
                 None => Named::Refused(
                     None,
-                    format!("that action is no longer in the history: nothing to {verb}"),
+                    format!("that action is no longer in the history: nothing to {verb}").into(),
                 ),
             };
         };
-        let refused = |reason: String| Named::Refused(Some(entry.title.clone()), reason);
+        let refused = |reason: Words| Named::Refused(Some(entry.title.clone()), reason);
         if lane.targeted.contains(&(direction, entry.stacked)) {
-            return refused(format!("“{}” is being {done} already", entry.title));
+            return refused(format!("“{}” is being {done} already", entry.title.english()).into());
         }
         // One that cannot be undone says it first: undoing the others
         // would not do.
@@ -3598,22 +3633,24 @@ impl Executor {
                 .iter()
                 .filter(|b| !b.ended && b.seq > entry.seq && b.title.is_some())
                 .find(|b| met(b.meets.as_ref()))
-                .map(|b| (b.named.as_str(), "running"))
+                .map(|b| (&b.named, "running"))
                 .or_else(|| {
                     before().find_map(|job| match &job.work {
                         Work::Execute { plan, .. }
                             if job.seq > entry.seq && met(job.meets.as_ref()) =>
                         {
-                            Some((plan.title.as_str(), "waiting"))
+                            Some((&plan.title, "waiting"))
                         }
                         _ => None,
                     })
                 });
             if let Some((title, how)) = under_way {
+                // English, its titles too, until it is a message.
                 return refused(format!(
-                    "“{}” cannot be undone alone: “{title}”, asked after it, {how}, touched what it did; undo that first",
-                    entry.title
-                ));
+                    "“{}” cannot be undone alone: “{}”, asked after it, {how}, touched what it did; undo that first",
+                    entry.title.english(),
+                    title.english()
+                ).into());
             }
             if unknown {
                 return Named::Waits;
@@ -3759,13 +3796,17 @@ impl Executor {
             ),
         };
         if let Some((chain, named)) = chain {
+            // English, its title and error too, until it is a message.
             let how = match &result {
                 None => Some("did not run".to_owned()),
                 Some(r) if r.cancelled => Some("was cancelled".to_owned()),
-                Some(r) => r.error.as_ref().map(|e| format!("stopped: {e}")),
+                Some(r) => r
+                    .error
+                    .as_ref()
+                    .map(|e| format!("stopped: {}", e.english())),
             };
             if let Some(how) = how {
-                self.stop_chain(&chain, format!("“{named}” {how}"));
+                self.stop_chain(&chain, format!("“{}” {how}", named.english()).into());
             }
         }
         if let Some(reply) = job.reply {
@@ -3776,7 +3817,7 @@ impl Executor {
     /// Stop Undo with what came after once one of its undos did not go
     /// (`why`): those still waiting are cancelled, doing nothing, and its
     /// last says why, once (ADR-079, 13).
-    fn stop_chain(&self, chain: &Arc<Chain>, why: String) {
+    fn stop_chain(&self, chain: &Arc<Chain>, why: Words) {
         {
             let mut stopped = chain.stopped.lock();
             if stopped.is_some() {
@@ -3847,7 +3888,7 @@ impl Executor {
                 },
             )
         })
-        .unwrap_or_else(|e| Settling::Refused(super::said(&e)));
+        .unwrap_or_else(|e| Settling::Refused(Words::of_error(e)));
         // A retry that applies nothing (its server not answering yet, the
         // question of a name taken cancelled) stays to be retried, under
         // the id it is told by now, with what it would go on from.
@@ -3880,9 +3921,10 @@ impl Executor {
                     .then(|| {
                         super::guarded(|| {
                             Ok(first_conflict(&plan, &companions, cancel, &shown)
-                                .or_else(|| self.short_of_room(&plan, cancel, &shown)))
+                                .or_else(|| self.short_of_room(&plan, cancel, &shown))
+                                .map(Words::from))
                         })
-                        .unwrap_or_else(|e| Some(super::said(&e)))
+                        .unwrap_or_else(|e| Some(Words::of_error(e)))
                     })
                     .flatten();
                 // Cancelled in its checks, it applies nothing, and says so.
@@ -3905,7 +3947,7 @@ impl Executor {
         &self,
         plan: &Plan,
         run: RunKind,
-        error: String,
+        error: Words,
         shown: Option<Shown<'_>>,
     ) -> ExecResult {
         if shown.is_none() {
@@ -4185,7 +4227,7 @@ impl Executor {
         &self,
         direction: Direction,
         target: Option<u64>,
-        refused: Option<(Option<String>, String)>,
+        refused: Option<(Option<Words>, Words)>,
         (seq, id): (u64, PlanId),
         (touched, kept, exact): (&Arc<Footprint>, Option<Arc<Kept>>, Option<Arc<Kept>>),
         cancel: &CancelToken,
@@ -4194,9 +4236,9 @@ impl Executor {
         /// other's, whether that one cannot be undone), holding nothing to
         /// take back, or taken back from its steps.
         enum Found {
-            Held(String, String, bool),
+            Held(Words, Words, bool),
             Never(JournalEntry),
-            Goes(Plan, String, u64),
+            Goes(Plan, Words, u64),
         }
         // A run that never begins (cancelled before its turn, one of a
         // chain stopped before it; nothing to take back at its turn) is
@@ -4213,7 +4255,7 @@ impl Executor {
                 plan: id,
                 applied: 0,
                 skipped: 0,
-                error: (!cancelled).then(|| nothing.to_owned()),
+                error: (!cancelled).then(|| Words::from(nothing)),
                 cancelled,
                 undoable: false,
                 items: None,
@@ -4227,16 +4269,16 @@ impl Executor {
         if cancel.is_cancelled() {
             return unbegun(true);
         }
-        let refuse = |title: Option<String>, reason: String| {
+        let refuse = |title: Option<Words>, reason: Words| {
             let (named, run) = match direction {
                 Direction::Undo => (
                     title
                         .as_ref()
-                        .map_or_else(|| "undo".to_owned(), |t| format!("undo {t}")),
+                        .map_or_else(|| Words::from("undo"), |t| replay_title(Direction::Undo, t)),
                     RunKind::Undo,
                 ),
                 Direction::Redo => (
-                    title.clone().unwrap_or_else(|| "redo".to_owned()),
+                    title.clone().unwrap_or_else(|| Words::from("redo")),
                     RunKind::Redo,
                 ),
             };
@@ -4295,10 +4337,11 @@ impl Executor {
                 // so in the usual way and drop the entry, so the next undo
                 // reaches what came before it.
                 let title = match direction {
-                    Direction::Undo => format!("undo {}", entry.title),
+                    Direction::Undo => replay_title(direction, &entry.title),
                     Direction::Redo => entry.title.clone(),
                 };
-                let error = format!("“{}” cannot be undone", entry.title);
+                // English, its title too, until it is a message.
+                let error = Words::from(format!("“{}” cannot be undone", entry.title.english()));
                 self.told(seq);
                 self.emit(ExecEvent::Started {
                     plan: id,
@@ -4339,7 +4382,7 @@ impl Executor {
         }
         let mut run = plan;
         run.title = match direction {
-            Direction::Undo => format!("undo {entry_title}"),
+            Direction::Undo => replay_title(direction, &entry_title),
             Direction::Redo => entry_title.clone(),
         };
         run.undoes = (direction == Direction::Undo).then(|| entry_title.clone());
@@ -4602,7 +4645,7 @@ impl Executor {
                         Came::Already
                     };
                 }
-                StepStatus::Conflict { reason } => err = Some(reason.clone()),
+                StepStatus::Conflict { reason } => err = Some(Words::from(reason.clone())),
                 StepStatus::Pending { .. } => match super::guarded(|| step.apply(&ctx)) {
                     Ok(Some(inv)) => {
                         applied += 1;
@@ -4632,17 +4675,19 @@ impl Executor {
                         // It failed partway: what it did is journaled as an
                         // applied step's, its undo the one it gave.
                         Ok(super::Partly { inverse, error }) => {
-                            tracing::warn!(plan = %plan.title, "a step failed partway: {error:#}");
+                            tracing::warn!(plan = %plan.title.english(), "a step failed partway: {error:#}");
                             applied += 1;
                             holds = true;
                             step_came = Came::Applied;
                             journal_inverse(&mut inverses, inverse);
-                            err = Some(super::said(&error));
+                            let error = Arc::new(error);
+                            err = Some(Words::of_error_from(&error, 0));
                             reason = super::reason_after(&error, &change);
                         }
                         Err(e) => {
-                            tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
-                            err = Some(super::said(&e));
+                            tracing::warn!(plan = %plan.title.english(), "a step failed: {e:#}");
+                            let e = Arc::new(e);
+                            err = Some(Words::of_error_from(&e, 0));
                             reason = super::reason_after(&e, &change);
                         }
                     },
@@ -4703,7 +4748,9 @@ impl Executor {
                         None => complete = false,
                     }
                 }
-                Err(e) => tracing::warn!(plan = %plan.title, "a step removed ahead: {e:#}"),
+                Err(e) => {
+                    tracing::warn!(plan = %plan.title.english(), "a step removed ahead: {e:#}");
+                }
             }
         }
         // Cut short, what a batch placed for steps that never ran goes:
@@ -4712,14 +4759,14 @@ impl Executor {
         // The originals of moves a batch copied from a remote, together;
         // cancelled too: their steps are done.
         if let Err(e) = super::transfer::remove_deferred(&ctx) {
-            tracing::warn!(plan = %plan.title, "{e:#}");
-            error.get_or_insert_with(|| super::said(&e));
+            tracing::warn!(plan = %plan.title.english(), "{e:#}");
+            error.get_or_insert_with(|| Words::of_error(e));
         }
         // What the plan wrote through to a drive is on it, names and all,
         // before it says it ended: cut short too, for what it did.
         if let Err(e) = ctx.write_out() {
-            tracing::warn!(plan = %plan.title, "{e:#}");
-            error.get_or_insert_with(|| super::said(&e));
+            tracing::warn!(plan = %plan.title.english(), "{e:#}");
+            error.get_or_insert_with(|| Words::of_error(e));
         }
         // What transfers changed beside a mount, no watch saw: read again
         // where it is shown.
@@ -4743,7 +4790,10 @@ impl Executor {
         let inverse = if inverses.is_empty() {
             None
         } else {
-            Some(Plan::with_steps(format!("undo {}", plan.title), inverses))
+            Some(Plan::with_steps(
+                replay_title(Direction::Undo, &plan.title),
+                inverses,
+            ))
         };
         let result = ExecResult {
             applied,
@@ -5264,7 +5314,7 @@ mod tests {
         let id = plan.id;
         let r = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!(
-            (r.applied, r.error.as_deref()),
+            (r.applied, r.error.as_ref().map(Words::english).as_deref()),
             (1, Some("the server went away"))
         );
         assert!(executor.can_retry(id) && executor.last_stopped() == Some(id));
@@ -5274,7 +5324,10 @@ mod tests {
         // and kept under the id its run was told by.
         server.blocked.store(true, Ordering::SeqCst);
         let r = executor.retry_blocking(id, &CancelToken::new()).unwrap();
-        assert_eq!((r.applied, r.error.as_deref()), (0, Some("not answering")));
+        assert_eq!(
+            (r.applied, r.error.as_ref().map(Words::english).as_deref()),
+            (0, Some("not answering"))
+        );
         assert!(!executor.can_retry(id));
         let again = executor.last_stopped().expect("still to retry");
 
@@ -5431,7 +5484,7 @@ mod tests {
         assert_eq!((transfer.done, transfer.planned), (0, Some(800)));
         let running = executor.running();
         assert_eq!(running.len(), 1);
-        assert_eq!(running[0].title, "copy 2 items to dest");
+        assert_eq!(running[0].title.english(), "copy 2 items to dest");
         assert!(!running[0].paused);
         assert_eq!(running[0].transfer.planned, Some(800));
         assert!(executor.pause(id));
@@ -5514,9 +5567,11 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         };
+        let named: Vec<String> = waiting.iter().map(|w| w.named.english()).collect();
         let said: Vec<(&str, &WaitsFor)> = waiting
             .iter()
-            .map(|w| (w.named.as_str(), &w.waits_for))
+            .zip(&named)
+            .map(|(w, named)| (named.as_str(), &w.waits_for))
             .collect();
         let copying = WaitsFor::Action("/stick/dest/photos".into());
         assert_eq!(
@@ -5800,9 +5855,11 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         };
+        let named: Vec<String> = waiting.iter().map(|w| w.named.english()).collect();
         let said: Vec<(&str, &WaitsFor)> = waiting
             .iter()
-            .map(|w| (w.named.as_str(), &w.waits_for))
+            .zip(&named)
+            .map(|(w, named)| (named.as_str(), &w.waits_for))
             .collect();
         assert_eq!(
             said,
@@ -5850,7 +5907,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         };
-        let named: Vec<&str> = waiting.iter().map(|w| w.named.as_str()).collect();
+        let named: Vec<String> = waiting.iter().map(|w| w.named.english()).collect();
         assert_eq!(
             named,
             ["/stick/photos/it's 2026", "/stick/photos/2027", "undo"]
@@ -5875,7 +5932,7 @@ mod tests {
             assert!(Instant::now() < deadline, "{:?}", executor.waiting());
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(executor.waiting()[0].named, "/stick/photos/2027");
+        assert_eq!(executor.waiting()[0].named.english(), "/stick/photos/2027");
         assert!(!log.lock().iter().any(|l| l.contains("2026")));
 
         copy.opened();
@@ -6013,7 +6070,14 @@ mod tests {
         executor.execute(up.plan(), cancel.clone());
         assert!(logged(&log, "began /servers/one/photos"));
         let one = Path::new("/servers/one");
-        assert_eq!(executor.under_way_in(one), ["/servers/one/photos"]);
+        assert_eq!(
+            executor
+                .under_way_in(one)
+                .iter()
+                .map(Words::english)
+                .collect::<Vec<_>>(),
+            ["/servers/one/photos"]
+        );
         assert_eq!(
             executor
                 .under_way_in(Path::new("/servers/one/photos"))
@@ -6041,7 +6105,7 @@ mod tests {
         executor.execute_blocking(&rename.plan(), &CancelToken::new());
         assert_eq!(
             executor.undo_target(),
-            Some(("/disk/notes/a.txt".to_owned(), false)),
+            Some(("/disk/notes/a.txt".into(), false)),
             "the last asked, ended"
         );
         let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
@@ -6052,10 +6116,7 @@ mod tests {
             "beside the copy"
         );
         // The copy is the latest now: Undo waits for it.
-        assert_eq!(
-            executor.undo_target(),
-            Some(("/stick/photos".to_owned(), true))
-        );
+        assert_eq!(executor.undo_target(), Some(("/stick/photos".into(), true)));
         assert!(executor.undo(CancelToken::new()).is_some());
         std::thread::sleep(Duration::from_millis(100));
         assert!(!log.lock().iter().any(|l| l == "undid /stick/photos"));
@@ -6084,7 +6145,7 @@ mod tests {
         let r = executor
             .undo_of_blocking(copy.id, &CancelToken::new())
             .unwrap();
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert!(error.contains("undone already"), "{error}");
 
         // The folder it renamed in, made again after it.
@@ -6093,7 +6154,7 @@ mod tests {
         let r = executor
             .undo_of_blocking(rename.id, &CancelToken::new())
             .unwrap();
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert_eq!(r.applied, 0);
         assert!(
             error.contains("“/disk/notes”, asked after it, touched what it did"),
@@ -6108,7 +6169,7 @@ mod tests {
         let r = executor
             .undo_of_blocking(folder.id, &CancelToken::new())
             .unwrap();
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert!(error.contains("asked after it, running"), "{error}");
         assert!(!log.lock().iter().any(|l| l.starts_with("undid /disk")));
         // Itself running: taken back once it ends.
@@ -6233,7 +6294,7 @@ mod tests {
         run("/disk/notes");
         let rows = |executor: &Executor| executor.history().rows;
         let h = rows(&executor);
-        let titles: Vec<&str> = h.iter().map(|r| r.title.as_str()).collect();
+        let titles: Vec<String> = h.iter().map(|r| r.title.english()).collect();
         assert_eq!(
             titles,
             ["/disk/notes", "/disk/notes/it’s a.txt", "/stick/photos"]
@@ -6253,7 +6314,7 @@ mod tests {
         let r = executor
             .undo_entry_blocking(rename, &CancelToken::new())
             .unwrap();
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert!(
             error.contains("cannot be undone alone: “/disk/notes”, asked after it"),
             "{error}"
@@ -6297,7 +6358,7 @@ mod tests {
         let r = executor
             .redo_entry_blocking(folder, &CancelToken::new())
             .unwrap();
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert!(error.contains("cannot be redone alone"), "{error}");
         for entry in [rename, folder] {
             let r = executor
@@ -6319,11 +6380,11 @@ mod tests {
         executor.execute(inside.plan(), CancelToken::new());
         assert!(logged(&log, "began /disk/notes/later"));
         let h = rows(&executor);
-        assert_eq!(h[0].title, "/disk/notes/later");
+        assert_eq!(h[0].title.english(), "/disk/notes/later");
         assert_eq!((h[0].state, &h[0].can), (Done::Running, &Can::OnceEnded));
         assert!(matches!(
             &h[1].can,
-            Can::After { since: Since::Running, title, .. } if title == "/disk/notes/later"
+            Can::After { since: Since::Running, title, .. } if title.english() == "/disk/notes/later"
         ));
         assert!(h[2].with.is_empty(), "a chain through what runs waits");
         assert_eq!(h[3].can, Can::Now, "the copy shares nothing with it");
@@ -6405,7 +6466,7 @@ mod tests {
             plan: None,
             joins: None,
             title: None,
-            named: String::new(),
+            named: Words::from(""),
             footprint: Arc::default(),
             exact: None,
             meets: None,
@@ -6443,10 +6504,13 @@ mod tests {
         let run = |plan: &Plan| {
             let r = executor.execute_blocking(plan, &CancelToken::new());
             assert_eq!(
-                (r.applied > 0, r.error.as_deref()),
+                (
+                    r.applied > 0,
+                    r.error.as_ref().map(Words::english).as_deref()
+                ),
                 (true, None),
                 "{}",
-                plan.title
+                plan.title.english()
             );
         };
         run(&Gate::new("/disk/notes/x/it’s a.txt", false, true, &log).plan());
@@ -6472,7 +6536,7 @@ mod tests {
         assert_eq!(h[0].can, Can::Going);
         assert!(matches!(
             &h[1].can,
-            Can::After { entry, since: Since::Running, title } if *entry == c && title == "undo /disk/notes"
+            Can::After { entry, since: Since::Running, title } if *entry == c && title.english() == "undo /disk/notes"
         ));
         assert!(
             h[2].with.is_empty(),
@@ -6483,7 +6547,7 @@ mod tests {
         let undoing = executor
             .running()
             .into_iter()
-            .find(|r| r.title == "undo /disk/notes")
+            .find(|r| r.title.english() == "undo /disk/notes")
             .expect("its undo runs");
         assert!(executor.cancel(undoing.plan));
         *held.0.lock() = true;
@@ -6519,7 +6583,7 @@ mod tests {
             .filter_map(|e| match e {
                 ExecEvent::Finished {
                     error: Some(error), ..
-                } => Some(error),
+                } => Some(error.english()),
                 _ => None,
             })
             .filter(|error| error.contains("was not undone"))
@@ -6561,8 +6625,11 @@ mod tests {
         assert!(logged(&log, "began /disk/photos/copied 0.jpg"));
         let free = |executor: &Executor| {
             let h = executor.history().rows;
-            ["rename", "/disk/photos/new folder"]
-                .map(|title| h.iter().find(|r| r.title == title).map(|r| r.can.clone()))
+            ["rename", "/disk/photos/new folder"].map(|title| {
+                h.iter()
+                    .find(|r| r.title.english() == title)
+                    .map(|r| r.can.clone())
+            })
         };
         // Running, compared whole: it holds neither (once worked out).
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -6580,7 +6647,11 @@ mod tests {
         {
             let journal = executor.journal.lock();
             let kept = |title: &str| {
-                let entry = journal.undo.iter().find(|e| e.title == title).unwrap();
+                let entry = journal
+                    .undo
+                    .iter()
+                    .find(|e| e.title.english() == title)
+                    .unwrap();
                 Arc::clone(&entry.touched)
             };
             assert!(kept("copy").conflicts(&kept("rename")));
@@ -6591,7 +6662,7 @@ mod tests {
                 .history()
                 .rows
                 .iter()
-                .find(|r| r.title == title)
+                .find(|r| r.title.english() == title)
                 .unwrap()
                 .entry;
             let r = executor
@@ -6638,12 +6709,12 @@ mod tests {
             let h = executor.history().rows;
             let joined = h
                 .iter()
-                .find(|r| r.title == "/disk/c" && r.state == Done::Done);
+                .find(|r| r.title.english() == "/disk/c" && r.state == Done::Done);
             if let Some(row) = joined {
                 // The entry joined after the one waiting was measured:
                 // noted on it as it joined.
                 assert!(
-                    matches!(&row.can, Can::After { title, .. } if title == "/disk/c"),
+                    matches!(&row.can, Can::After { title, .. } if title.english() == "/disk/c"),
                     "{row:?}"
                 );
                 break;
@@ -6671,7 +6742,7 @@ mod tests {
         let read = |seq: u64, blocked_by: &[u64]| Read {
             seq,
             stacked: seq,
-            title: format!("entry {seq}"),
+            title: format!("entry {seq}").into(),
             asked: Vec::new(),
             at: SystemTime::UNIX_EPOCH,
             undone: false,
@@ -6715,14 +6786,15 @@ mod tests {
         let going: HashMap<(bool, u64), bool> = [((false, 3), true)].into_iter().collect();
         let out = rows_of(&rows, &[], &going);
         assert_eq!(out[0].can, Can::Going);
-        assert_eq!(
-            out[1].can,
-            Can::After {
-                entry: 3,
-                title: "undo entry 3".into(),
-                since: Since::Running
-            }
-        );
+        let Can::After {
+            entry: 3,
+            title,
+            since: Since::Running,
+        } = &out[1].can
+        else {
+            panic!("{:?}", out[1].can)
+        };
+        assert_eq!(title.english(), "undo entry 3");
         assert!(out[1].with.is_empty() && out[2].with.is_empty());
     }
 
@@ -6786,7 +6858,7 @@ mod tests {
             .events()
             .try_iter()
             .filter_map(|e| match e {
-                ExecEvent::Started { title, counts, .. } => Some((title, counts)),
+                ExecEvent::Started { title, counts, .. } => Some((title.english(), counts)),
                 _ => None,
             })
             .collect();
@@ -6873,7 +6945,7 @@ mod tests {
             )
             .expect("a result");
         assert_eq!(r.applied, 0);
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert!(error.contains("failed unexpectedly"), "{error}");
     }
 
@@ -7093,11 +7165,14 @@ mod tests {
         }
         let j = executor.journal.lock();
         assert_eq!(j.undo.len(), JOURNAL_ENTRIES);
-        assert_eq!(j.undo.first().map(|e| e.title.as_str()), Some("plan 5"));
+        assert_eq!(
+            j.undo.first().map(|e| e.title.english()).as_deref(),
+            Some("plan 5")
+        );
         let mut big = Journal::default();
         for n in 0..3 {
             big.undo.push(JournalEntry {
-                title: n.to_string(),
+                title: n.to_string().into(),
                 applied_at: SystemTime::now(),
                 plan: Some(Plan::with_steps(
                     "x",
@@ -7116,7 +7191,7 @@ mod tests {
         }
         big.bound();
         assert_eq!(big.undo.len(), 1, "the latest stays, however much it holds");
-        assert_eq!(big.undo[0].title, "2");
+        assert_eq!(big.undo[0].title.english(), "2");
     }
 
     /// A step that panics fails its plan as an error would, after what was
@@ -7134,7 +7209,10 @@ mod tests {
         let plan = Plan::with_steps("panics", vec![probe(), Box::new(Panics), probe()]);
         let r = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!(r.applied, 1);
-        assert_eq!(r.error.as_deref(), Some("it failed unexpectedly"));
+        assert_eq!(
+            r.error.as_ref().map(Words::english).as_deref(),
+            Some("it failed unexpectedly")
+        );
         let next = Plan::with_steps("next", vec![probe()]);
         let r = executor.execute_blocking(&next, &CancelToken::new());
         assert_eq!((r.applied, r.error), (1, None));
@@ -7172,7 +7250,7 @@ mod tests {
                 } = event
                 {
                     assert_eq!(plan, id);
-                    *finished.lock().unwrap() = Some((applied, error));
+                    *finished.lock().unwrap() = Some((applied, error.map(|e| e.english())));
                 }
             }
             assert!(std::time::Instant::now() < deadline, "the plan finished");

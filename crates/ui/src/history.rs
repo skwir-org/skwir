@@ -352,7 +352,7 @@ pub(crate) fn why(row: &HistoryRow) -> Option<String> {
         Can::Never => "Cannot be undone".to_owned(),
         Can::After { title, since, .. } => {
             let (before, after) = held(*since);
-            format!("{before}“{}”{after}", capitalized(title))
+            format!("{before}“{}”{after}", capitalized(&title.say()))
         }
     })
 }
@@ -419,7 +419,7 @@ pub fn undo_control(
     let tip: SharedString = match &target {
         Some((title, running)) => {
             let once = if *running { " (once it ends)" } else { "" };
-            format!("Undo {title}{once}{}", keys(shell, "undo")).into()
+            format!("Undo {}{once}{}", title.say(), keys(shell, "undo")).into()
         }
         None => "Nothing to undo".into(),
     };
@@ -637,7 +637,7 @@ fn history_row(
         Done::Undone => Some("undone"),
         Done::Done => None,
     };
-    let title = capitalized(&row.title);
+    let title = capitalized(&row.title.say());
     let why_said = why(row);
     // What a screen reader hears of the row, built only while one listens.
     let label: Option<SharedString> = a11y.then(|| {
@@ -692,7 +692,7 @@ fn history_row(
         } => focus(Part::Blocker).map(|link| {
             let (before, after) = held(*since);
             let holder = *holder;
-            let named = capitalized(holder_title);
+            let named = capitalized(&holder_title.say());
             div()
                 .flex()
                 .flex_wrap()
@@ -865,7 +865,7 @@ mod tests {
     fn row(entry: u64, state: Done, can: Can, with: Vec<u64>) -> HistoryRow {
         HistoryRow {
             entry,
-            title: format!("rename to it's {entry}.txt"),
+            title: format!("rename to it's {entry}.txt").into(),
             plans: Vec::new(),
             at: SystemTime::UNIX_EPOCH,
             state,

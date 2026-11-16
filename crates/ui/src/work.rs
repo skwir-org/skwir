@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use skwir_core::App;
 use skwir_core::op::{Change, ExecEvent, PlanId, RunKind};
+use skwir_core::words::Words;
 use skwir_core::workspace::WindowId;
 use skwir_platform::desktop::{Asked, Desktop, Kind, Notice, Presence, Progress, State};
 
@@ -272,9 +273,6 @@ pub(crate) enum Taken {
         answer: Option<Toast>,
     },
 }
-
-/// What is said, after the plan's answer, of one its server stopped.
-pub(crate) const WAITS_FOR_SERVER: &str = ". It goes on by itself once the server answers again";
 
 impl Work {
     /// Work told to the desktop: a click on what it shows is kept for the
@@ -656,11 +654,7 @@ impl Work {
                     plan,
                     done,
                     items: made,
-                    answer: Some(Toast {
-                        text,
-                        tone,
-                        actions,
-                    }),
+                    answer: Some(Toast::new(text, tone, actions)),
                 }
             }
         }
@@ -675,8 +669,8 @@ impl Work {
         &mut self,
         app: &App,
         plan: PlanId,
-        title: &str,
-        answer: (&str, Tone, &[Action]),
+        title: &Words,
+        answer: (&Words, Tone, &[Action]),
         (stopped_by_error, carded, in_history): (bool, bool, bool),
     ) {
         let (text, tone, actions) = answer;
@@ -731,7 +725,7 @@ impl Work {
     fn tell_ended(
         &mut self,
         plan: PlanId,
-        answer: &str,
+        answer: &Words,
         stopped: bool,
         cancelled: bool,
         ran: Duration,
@@ -772,7 +766,7 @@ impl Work {
             plan.0,
             Notice {
                 title,
-                body: answer.to_owned(),
+                body: answer.say(),
                 kind,
             },
         );
@@ -791,12 +785,12 @@ impl Work {
             .earlier
             .iter()
             .find(|ended| ended.plan == Some(plan))
-            .map_or_else(String::new, |ended| ended.text.clone());
+            .map_or_else(|| Words::from(""), |ended| ended.text.clone());
         desktop.notify(
             plan.0,
             Notice {
                 title: "Waiting for the server".to_owned(),
-                body: format!("{what}{WAITS_FOR_SERVER}"),
+                body: toast::goes_on(what).say(),
                 kind: Kind::Waiting,
             },
         );
@@ -893,7 +887,7 @@ impl Work {
 /// as the desktop lists it.
 pub(crate) fn why(under: &Under) -> String {
     match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => capitalized(&running.title),
+        ([(running, _)], []) => capitalized(&running.title.say()),
         ([], [task]) => capitalized(&task.title),
         ([], []) => "Actions under way".to_owned(),
         _ => format!("{} under way", format::count(under.count(), "action")),
@@ -964,7 +958,7 @@ mod tests {
             },
             named: None,
             status: StepStatus::Pending { reversible: true },
-            error: error.map(str::to_owned),
+            error: error.map(skwir_core::words::Words::from),
             reason: None,
         })
     }
@@ -974,7 +968,7 @@ mod tests {
             plan,
             applied,
             skipped: 0,
-            error: error.map(str::to_owned),
+            error: error.map(skwir_core::words::Words::from),
             cancelled: false,
             undoable: true,
             items: None,
@@ -1383,7 +1377,7 @@ mod tests {
         };
         assert_eq!(ended, plan);
         assert!(done);
-        assert!(!answer.text.is_empty());
+        assert!(!answer.said().english().is_empty());
         assert!(work.running.is_empty());
         assert!(work.earlier.is_empty(), "the History holds it");
         assert!(work.stopped.is_none(), "it went through");
@@ -1443,7 +1437,7 @@ mod tests {
         work.take(&app, finished(shown, 1, Some("No space left")), LOOKED_AT);
         let stopped = work.stopped.as_ref().expect("a card: it stays");
         assert_eq!(stopped.plan, shown);
-        assert_eq!(stopped.title, "copy 3 items to Backup");
+        assert_eq!(stopped.title.english(), "copy 3 items to Backup");
         assert_eq!(work.earlier.len(), 2, "both answers kept, newest first");
         assert_eq!(work.earlier[0].plan, Some(shown));
     }

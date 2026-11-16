@@ -536,10 +536,11 @@ impl LocationProvider for TrashProvider {
         true
     }
 
-    fn title(&self, location: &Location) -> Option<String> {
+    fn title(&self, location: &Location) -> Option<Words> {
         Some(match folder_of(location) {
-            Some(folder) => self.name_of(&folder),
-            None => trash_title().say(),
+            // A trashed folder's name is as it was.
+            Some(folder) => Words::as_written(self.name_of(&folder)),
+            None => trash_title(),
         })
     }
 
@@ -550,20 +551,22 @@ impl LocationProvider for TrashProvider {
     fn trail(&self, location: &Location) -> Option<Trail> {
         let Some(folder) = folder_of(location) else {
             return Some(Trail {
-                crumbs: vec![Crumb::new(trash_title().say(), Location::new(SCHEME, ""))],
+                crumbs: vec![Crumb::new(trash_title(), Location::new(SCHEME, ""))],
                 holds_places: true,
                 ..Trail::default()
             });
         };
         let inside = in_trash(&folder)?;
+        // The folders by their names as they were, each an entry of the
+        // place before it.
         let mut crumbs = vec![
-            Crumb::new(trash_title().say(), Location::new(SCHEME, "")),
-            Crumb::new(self.name_of(&inside.item), folder_location(&inside.item)),
+            Crumb::new(trash_title(), Location::new(SCHEME, "")),
+            Crumb::entry(self.name_of(&inside.item), folder_location(&inside.item)),
         ];
         let mut at = inside.item.clone();
         for part in inside.inner.components() {
             at.push(part);
-            crumbs.push(Crumb::new(
+            crumbs.push(Crumb::entry(
                 part.as_os_str().to_string_lossy(),
                 folder_location(&at),
             ));
@@ -579,7 +582,8 @@ impl LocationProvider for TrashProvider {
     /// The trashed folders at its top, the folders in a trashed folder:
     /// what the trail's chevrons list.
     fn places(&self, location: &Location) -> Vec<Crumb> {
-        let mut places: Vec<Crumb> = match folder_of(location) {
+        // Each folder by its name as it was, sorted by it.
+        let mut places: Vec<(String, Location)> = match folder_of(location) {
             None => self
                 .trashes
                 .state
@@ -587,7 +591,12 @@ impl LocationProvider for TrashProvider {
                 .items
                 .iter()
                 .filter(|i| i.entry.is_dir())
-                .map(|i| Crumb::new(i.entry.name_str(), folder_location(&i.trashed.file)))
+                .map(|i| {
+                    (
+                        i.entry.name_str().into_owned(),
+                        folder_location(&i.trashed.file),
+                    )
+                })
                 .collect(),
             // As a folder's: hidden ones too, a trash holds what it was given.
             Some(folder) => skwir_core::fs::subfolders(&folder, true)
@@ -599,13 +608,17 @@ impl LocationProvider for TrashProvider {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .into_owned();
-                    Crumb::new(name, folder_location(&dir))
+                    (name, folder_location(&dir))
                 })
                 .collect(),
         };
+        places.sort_by_cached_key(|(name, _)| {
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(name))
+        });
         places
-            .sort_by_cached_key(|c| skwir_core::collate::sort_key(std::ffi::OsStr::new(&c.label)));
-        places
+            .into_iter()
+            .map(|(name, location)| Crumb::entry(name, location))
+            .collect()
     }
 
     fn icon(&self, _location: &Location) -> Option<&'static str> {
@@ -615,15 +628,14 @@ impl LocationProvider for TrashProvider {
     fn empty_state(&self, location: &Location) -> Option<EmptyState> {
         Some(match folder_of(location) {
             None => EmptyState::new(
-                words!(trash_empty = "The trash is empty").say(),
+                words!(trash_empty = "The trash is empty"),
                 words!(
                     trash_empty_detail = "Files moved to the trash wait here until it is emptied: restore them from their menu."
-                )
-                .say(),
+                ),
             ),
             Some(_) => EmptyState::new(
-                words!(trash_folder_empty = "This folder is empty").say(),
-                words!(trash_folder_empty_detail = "Nothing it held is left in the trash.").say(),
+                words!(trash_folder_empty = "This folder is empty"),
+                words!(trash_folder_empty_detail = "Nothing it held is left in the trash."),
             ),
         })
     }
@@ -640,7 +652,7 @@ impl LocationProvider for TrashProvider {
             tools: if folder_of(location).is_none() {
                 vec![Tool::new(
                     "trash",
-                    empty_trash().say(),
+                    empty_trash(),
                     Invocation::new("trash.empty"),
                     ToolPane::Shown,
                 )]

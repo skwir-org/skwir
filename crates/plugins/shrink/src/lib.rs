@@ -28,7 +28,7 @@ use skwir_core::app::NotifyLevel;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::{
-    self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Words,
+    self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Tenses,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::{AppRef, Plugin};
@@ -464,10 +464,10 @@ impl op::Effect for ShrinkCopy {
         Change::Create {
             path: self.target(),
             directory: false,
-            words: Some(Words {
-                will: format!("make “{copy}”, a smaller copy of “{what}”"),
-                did: format!("made “{copy}”, a smaller copy of “{what}”"),
-                already: format!("“{copy}” was already a smaller copy of “{what}”"),
+            words: Some(Tenses {
+                will: format!("make “{copy}”, a smaller copy of “{what}”").into(),
+                did: format!("made “{copy}”, a smaller copy of “{what}”").into(),
+                already: Some(format!("“{copy}” was already a smaller copy of “{what}”").into()),
             }),
         }
     }

@@ -359,7 +359,13 @@ fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -
         titles[0],
         titles[1],
     ];
-    texts.extend(spec.constraints.choice_labels.iter().map(String::as_str));
+    let labels: Vec<String> = spec
+        .constraints
+        .choice_labels
+        .iter()
+        .map(skwir_core::words::Words::say)
+        .collect();
+    texts.extend(labels.iter().map(String::as_str));
     words.found_in(&texts)
 }
 
@@ -1029,12 +1035,12 @@ impl SettingsView {
         let automatic = row.spec.default.as_str() == Some(row.value.as_str());
         let now = &row.spec.constraints.now;
         for (index, choice) in choices.into_iter().enumerate() {
-            let label = row.spec.choice_label(&choice).to_owned();
+            let label = row.spec.choice_label(&choice).say();
             // Said while Automatic is chosen: what it gives is the now.
             let said = automatic
                 .then(|| row.spec.now_of(&choice))
                 .flatten()
-                .map(|now| format!("{label}, now {now}"));
+                .map(|now| format!("{label}, now {}", now.say()));
             let key = key.clone();
             let focus = focus.clone();
             let segment = controls::segment(
@@ -1098,7 +1104,7 @@ impl SettingsView {
                 controls::dropdown_with(
                     format!("choice-{key}"),
                     picture,
-                    row.spec.choice_shown(&row.value).into_owned(),
+                    row.spec.choice_shown(&row.value),
                     focus,
                     theme,
                 )
@@ -1139,7 +1145,7 @@ impl SettingsView {
             let part = size_part(&key);
             for choice in row.spec.constraints.choices.clone() {
                 let selected = choice == row.value;
-                let label = row.spec.choice_shown(&choice).into_owned();
+                let label = row.spec.choice_shown(&choice);
                 // A text size's choice written at the size it gives, in its
                 // part's font, its row as tall as it needs, the labels on
                 // one edge.

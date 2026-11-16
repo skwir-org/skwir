@@ -561,7 +561,8 @@ fn kept_name(app: &App, key: &Key) -> String {
     match &key.at {
         None => suggested_name(Some(app), &key.expr),
         Some(at) => {
-            let place = app.location_title(at);
+            // Said as the window says it, as `suggested_name` says a root.
+            let place = app.location_title(at).say();
             format!("{place} · {}", suggested_name(Some(app), &key.expr))
         }
     }
@@ -2807,10 +2808,13 @@ mod tests {
         app.registry.places.add("test", place.clone());
         let expr = "ext:pdf in:/data/Documents";
         let search = location_for(expr, None);
-        assert_eq!(app.location_title(&search), "ext:pdf in Documents");
+        assert_eq!(
+            app.location_title(&search).english(),
+            "ext:pdf in Documents"
+        );
         app.registry
             .set_place_titles([((place.group.clone(), place.key()), "Papers".to_owned())].into());
-        assert_eq!(app.location_title(&search), "ext:pdf in Papers");
+        assert_eq!(app.location_title(&search).english(), "ext:pdf in Papers");
         let d = facets::describe(expr, false, Some(&app)).unwrap();
         assert!(
             d.chips

@@ -10,7 +10,7 @@ use std::sync::Weak;
 
 use skwir_core::app::App;
 use skwir_core::metadata::{TAG_COLOR_SETTING, same_tag, tag_under};
-use skwir_core::op::{Change, Operation, StepContext, StepStatus, Words};
+use skwir_core::op::{Change, Operation, StepContext, StepStatus, Tenses};
 
 use crate::Sidebar;
 use crate::sidebar::{self, PINNED};
@@ -179,7 +179,11 @@ fn change(root: &std::path::Path, will: String, did: String, already: String) ->
     Change::Metadata {
         path: root.to_path_buf(),
         field: PINNED.into(),
-        words: Some(Words { will, did, already }),
+        words: Some(Tenses {
+            will: will.into(),
+            did: did.into(),
+            already: Some(already.into()),
+        }),
     }
 }
 

@@ -2521,11 +2521,12 @@ fn files(n: usize) -> String {
 /// (`Executor::under_way_in`), named: letting go of the mount would cut
 /// them.
 fn under_way(app: &App, point: &Path) -> anyhow::Result<()> {
+    // English, their titles too, until the sentence is a message.
     let named: Vec<String> = app
         .executor
         .under_way_in(point)
         .into_iter()
-        .map(|n| format!("“{n}”"))
+        .map(|n| format!("“{}”", n.english()))
         .collect();
     match named.as_slice() {
         [] => Ok(()),

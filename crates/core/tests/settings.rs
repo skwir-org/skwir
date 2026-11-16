@@ -409,20 +409,21 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
         "first",
         &[("first", "First"), ("second", "The second")],
     );
-    assert_eq!(engine.choice_label("second"), "The second");
-    assert_eq!(engine.choice_label("unknown"), "unknown");
+    assert_eq!(engine.choice_label("second").english(), "The second");
+    assert_eq!(engine.choice_label("unknown").english(), "unknown");
     // What the default comes to, shown beside it alone: a choice by its
     // label, a name as it is, nothing when it comes to itself.
     assert_eq!(engine.choice_shown("first"), "First");
     let engine = engine.now("second");
     assert_eq!(engine.choice_shown("first"), "First (The second)");
     assert_eq!(engine.choice_shown("second"), "The second");
-    assert_eq!(engine.now_of("first"), Some("The second"));
+    let english = |words: Option<skwir_core::words::Words>| words.map(|w| w.english());
+    assert_eq!(english(engine.now_of("first")), Some("The second".into()));
     assert_eq!(
         engine.clone().now("Noto Sans").choice_shown("first"),
         "First (Noto Sans)"
     );
-    assert_eq!(engine.now("first").now_of("first"), None);
+    assert_eq!(english(engine.now("first").now_of("first")), None);
     // What Automatic tries, found by its requirements: the first there.
     let tried = SettingSpec::choice(
         "sample.engine",
@@ -433,16 +434,19 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     )
     .tries(&[("fast", "fast-helper"), ("slow", "slow-helper")]);
     assert_eq!(
-        tried.clone().with_found(|_| true).now_of("auto"),
-        Some("Fast")
+        english(tried.clone().with_found(|_| true).now_of("auto")),
+        Some("Fast".into())
     );
     let without_fast = tried.clone().with_found(|name| name == "slow-helper");
-    assert_eq!(without_fast.now_of("auto"), Some("Slow"));
-    assert_eq!(tried.clone().with_found(|_| false).now_of("auto"), None);
+    assert_eq!(english(without_fast.now_of("auto")), Some("Slow".into()));
+    assert_eq!(
+        english(tried.clone().with_found(|_| false).now_of("auto")),
+        None
+    );
     // Its owner's word stands.
     assert_eq!(
-        tried.now("slow").with_found(|_| true).now_of("auto"),
-        Some("Slow")
+        english(tried.now("slow").with_found(|_| true).now_of("auto")),
+        Some("Slow".into())
     );
     let saved = SettingSpec::data("sample.saved", "d", toml::Value::Array(vec![]));
     assert!(!saved.editable());

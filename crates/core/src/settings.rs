@@ -395,8 +395,10 @@ impl Store {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct SettingConstraints {
     pub choices: Vec<String>,
-    /// Human labels parallel to `choices` (empty: show the values).
-    pub choice_labels: Vec<String>,
+    /// Human labels parallel to `choices` (empty: show the values), said
+    /// where they are drawn; in English to agents and scripts (ADR-139,
+    /// 7).
+    pub choice_labels: Vec<Words>,
     pub integer_range: Option<(i64, i64)>,
     /// Increment of a numeric stepper, and the stops of a slider.
     pub step: i64,
@@ -526,7 +528,8 @@ impl SettingSpec {
         Self::new(key, title, description, toml::Value::Boolean(default))
     }
 
-    /// `choices` are `(stored value, label)` pairs.
+    /// `choices` are `(stored value, label)` pairs, each label as written
+    /// (a name the system or the user gave, or words not yet a message).
     pub fn choice(
         key: &str,
         title: &str,
@@ -534,10 +537,35 @@ impl SettingSpec {
         default: &str,
         choices: &[(&str, &str)],
     ) -> Self {
+        Self::choice_words(
+            key,
+            title,
+            description,
+            default,
+            choices
+                .iter()
+                .map(|(value, label)| (*value, Words::as_written((*label).to_owned())))
+                .collect(),
+        )
+    }
+
+    /// `choices` are `(stored value, label)` pairs, each label words said
+    /// where the choice is drawn (`words!`).
+    pub fn choice_words(
+        key: &str,
+        title: &str,
+        description: &str,
+        default: &str,
+        choices: Vec<(&str, Words)>,
+    ) -> Self {
         let mut spec = Self::new(key, title, description, toml::Value::String(default.into()));
         spec.kind = SettingKind::Choice;
-        spec.constraints.choices = choices.iter().map(|(v, _)| (*v).to_owned()).collect();
-        spec.constraints.choice_labels = choices.iter().map(|(_, l)| (*l).to_owned()).collect();
+        let (values, labels): (Vec<String>, Vec<Words>) = choices
+            .into_iter()
+            .map(|(value, label)| (value.to_owned(), label))
+            .unzip();
+        spec.constraints.choices = values;
+        spec.constraints.choice_labels = labels;
         spec
     }
 
@@ -971,31 +999,33 @@ impl SettingSpec {
         owner_of(&self.key)
     }
 
-    /// The label of a choice value, falling back to the value itself.
-    pub fn choice_label<'a>(&'a self, value: &'a str) -> &'a str {
+    /// The label of a choice value, falling back to the value itself (as
+    /// written).
+    pub fn choice_label(&self, value: &str) -> Words {
         self.constraints
             .choices
             .iter()
             .position(|choice| choice == value)
             .and_then(|index| self.constraints.choice_labels.get(index))
-            .map_or(value, String::as_str)
+            .map_or_else(|| Words::as_written(value.to_owned()), Clone::clone)
     }
 
-    /// The choice `value` as shown: its label, and for the default, while
-    /// its owner says what it comes to (`now`), that too: "Automatic
-    /// (Dark)", "Automatic (Noto Sans)".
-    pub fn choice_shown<'a>(&'a self, value: &'a str) -> std::borrow::Cow<'a, str> {
-        let label = self.choice_label(value);
+    /// The choice `value` as the window shows it, said in the user's
+    /// language: its label, and for the default, while its owner says what
+    /// it comes to (`now`), that too: "Automatic (Dark)", "Automatic (Noto
+    /// Sans)".
+    pub fn choice_shown(&self, value: &str) -> String {
+        let label = self.choice_label(value).say();
         match self.now_of(value) {
-            Some(now) => format!("{label} ({now})").into(),
-            None => label.into(),
+            Some(now) => format!("{label} ({})", now.say()),
+            None => label,
         }
     }
 
     /// What the choice `value` comes to now, as shown: the label of the
     /// choice it is, or its own name; `None` unless `value` is the default
     /// and its owner says, or it comes to itself.
-    pub fn now_of(&self, value: &str) -> Option<&str> {
+    pub fn now_of(&self, value: &str) -> Option<Words> {
         let now = self.constraints.now.as_str();
         let default = self.default.as_str()?;
         (value == default && !now.is_empty() && now != default).then(|| self.choice_label(now))
@@ -1407,10 +1437,12 @@ pub(crate) fn register(app: &crate::App) {
                         // Whatever an agent names: a pipe or a device is no
                         // settings file, nor is one larger than any.
                         let text = crate::fs::file::read_regular_text(path, FILE_LIMIT).map_err(|error| {
+                            // In English, as the rest of the sentence is
+                            // until it is a message (PLAN.md, step E).
                             anyhow::anyhow!(
                                 "“{}” cannot be read: {}",
                                 path.display(),
-                                crate::op::io_words(&error)
+                                crate::op::io_words(&error).english()
                             )
                         })?;
                         text.parse()
@@ -1893,10 +1925,13 @@ impl Settings {
                 return (toml::Table::new(), None, true);
             }
             Err(error) => {
+                // In English, as the rest of the sentence is until it is a
+                // message (PLAN.md, step E); read before the languages the
+                // settings choose are known.
                 let problem = format!(
                     "{whose} could not be read ({}), so skwir started {without}, and saves nothing \
                      there this time.",
-                    crate::op::io_words(&error)
+                    crate::op::io_words(&error).english()
                 );
                 return (toml::Table::new(), Some(problem), false);
             }
@@ -1922,11 +1957,12 @@ impl Settings {
                 (toml::Table::new(), Some(problem), true)
             }
             Err(error) => {
+                // In English, as the rest of the sentence is (see above).
                 let problem = format!(
                     "{whose} could not be read ({why}), so skwir started {without}, and saves \
                      nothing there until “{}” is fixed or removed ({}).",
                     path.display(),
-                    crate::op::io_words(&error)
+                    crate::op::io_words(&error).english()
                 );
                 (toml::Table::new(), Some(problem), false)
             }
@@ -2503,10 +2539,12 @@ impl Settings {
         let bytes = match crate::fs::file::read_regular(path, FILE_LIMIT) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
+            // In English, as the rest of the sentence is until it is a
+            // message (PLAN.md, step E).
             Err(e) => anyhow::bail!(
                 "“{}” could not be read: {}",
                 path.display(),
-                crate::op::io_words(&e)
+                crate::op::io_words(&e).english()
             ),
         };
         let text = std::str::from_utf8(&bytes)

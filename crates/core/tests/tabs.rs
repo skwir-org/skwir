@@ -256,7 +256,11 @@ fn folders_open_behind_the_shown_tab_in_the_order_they_were_opened() {
         serde_json::json!({ "location": dir.path().join("tröisième"), "show": false }),
     );
     // A new tab shown at once goes last.
-    let names: Vec<String> = app.tab_list().into_iter().map(|t| t.title).collect();
+    let names: Vec<String> = app
+        .tab_list()
+        .into_iter()
+        .map(|t| t.title.english())
+        .collect();
     let root_name = dir.path().file_name().unwrap().to_string_lossy();
     assert_eq!(
         names,

@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
-use skwir_core::op::{Change, Counted, PlanId, RunKind, Tally, Transfer};
+use gpui::{Animation, AnimationExt, AnyElement, Context, SharedString, div, prelude::*, px};
+use skwir_core::op::{Change, Counted, PlanId, RunKind, Tally, Tenses, Transfer};
 use skwir_core::words;
 use skwir_core::words::{Folder, Name, Size, Words};
 
@@ -23,7 +23,7 @@ use crate::controls::{self, ButtonStyle};
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::work::{Taken, WAITS_FOR_SERVER};
+use crate::work::Taken;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -42,22 +42,77 @@ pub struct Action {
 
 #[derive(Clone, Debug)]
 pub struct Toast {
-    pub text: String,
+    /// What it says first; what was said after it since is `after`.
+    pub text: Words,
     pub tone: Tone,
     /// Its buttons, in their order (a plan stopped by an error: Retry,
     /// Undo).
     pub actions: Vec<Action>,
+    /// What it says after `text`, in the order it was said: the parts it is
+    /// made of, kept as data, never read back from what it says (ADR-139).
+    after: Vec<After>,
+}
+
+/// What a toast says after what it said first.
+#[derive(Clone, Debug, PartialEq)]
+enum After {
+    /// Words said with it while it was shown (`Shell::say_with`): what a
+    /// reveal says of the answer it joins.
+    Said(Words),
+    /// Its plan, stopped by its server, goes on by itself once the server
+    /// answers again (`Taken::WaitsForServer`).
+    GoesOn,
+}
+
+impl Toast {
+    /// A toast saying `text`, with its buttons.
+    pub fn new(text: impl Into<Words>, tone: Tone, actions: Vec<Action>) -> Toast {
+        Toast {
+            text: text.into(),
+            tone,
+            actions,
+            after: Vec::new(),
+        }
+    }
+
+    /// What it says, whole: what it said first, then what was said after
+    /// it, in order. Said where it is drawn.
+    pub fn said(&self) -> Words {
+        self.after
+            .iter()
+            .fold(self.text.clone(), |said, after| match after {
+                After::Said(then) => words!(
+                    toast_joined = "{ $said }. { $then }",
+                    said = said,
+                    then = then.clone(),
+                    note = "An answer, then what was said while it was shown (Renamed “a.txt” \
+                            to “.a.txt”. Hidden files are shown, “.a.txt” among them)."
+                ),
+                After::GoesOn => goes_on(said),
+            })
+    }
+}
+
+/// `said` of an action its server stopped, then that it goes on by itself
+/// once the server answers again: its toast's and the desktop's notice.
+pub(crate) fn goes_on(said: Words) -> Words {
+    words!(
+        toast_goes_on = "{ $said }. It goes on by itself once the server answers again",
+        said = said,
+        note = "said: what the action's answer says, its server not answering (Couldn't copy \
+                “a.txt” to Docs: …)."
+    )
 }
 
 /// A plan being applied.
 #[derive(Clone, Debug)]
 pub struct Running {
     pub plan: PlanId,
-    pub title: String,
+    pub title: Words,
     pub run: RunKind,
     /// For an undo, the title of the action it takes back, which the toast
     /// says (`ExecEvent::Started::undoes`).
-    pub(crate) undoes: Option<String>,
+    pub(crate) undoes: Option<Words>,
     pub total: usize,
     /// First change that was applied, to name a single item in the result,
     /// and the name the user knows its file by where its path says another
@@ -70,7 +125,7 @@ pub struct Running {
     failed_named: Option<String>,
     /// What stopped it, said alone, where its error began with the step's
     /// own words (`Progress::reason`).
-    failed_reason: Option<String>,
+    failed_reason: Option<Words>,
     /// What the user asked for, where the steps are not its items (a
     /// merge, a replace), as `Started` said it, before the plan was
     /// checked: what the result says when `Finished` says nothing better.
@@ -90,7 +145,7 @@ impl Running {
     /// on from one its server stopped (`ExecEvent::GoesOn`).
     pub(crate) fn started(
         plan: PlanId,
-        title: String,
+        title: Words,
         run: RunKind,
         total: usize,
         items: Option<skwir_core::op::Items>,
@@ -136,7 +191,7 @@ impl Running {
     /// A plan just started, for tests elsewhere.
     #[cfg(test)]
     pub(crate) fn for_test(plan: PlanId, title: &str, run: RunKind, total: usize) -> Self {
-        Running::started(plan, title.to_owned(), run, total, None, false)
+        Running::started(plan, title.into(), run, total, None, false)
     }
 }
 
@@ -167,16 +222,14 @@ impl ToastState {
 
     /// The toast of generation `answer`, while it is the one shown, saying
     /// `said` after what it says, its actions kept (`Shell::say_with`).
-    fn joined(&self, answer: Option<u64>, said: &str) -> Option<Toast> {
+    fn joined(&self, answer: Option<u64>, said: &Words) -> Option<Toast> {
         let toast = self
             .current
             .as_ref()
             .filter(|_| answer == Some(self.generation))?;
-        let text = toast.text.trim_end_matches('.');
-        Some(Toast {
-            text: format!("{text}. {said}"),
-            ..toast.clone()
-        })
+        let mut joined = toast.clone();
+        joined.after.push(After::Said(said.clone()));
+        Some(joined)
     }
 
     /// The current one is drawn: its generation and how many seconds it
@@ -222,7 +275,7 @@ fn naming<'a>(change: Option<&'a Change>, named: Option<&'a str>) -> impl Fn(&Pa
 
 /// What the toast names a run by: an undo by the action it takes back
 /// (`Running::undoes`), any other by its title.
-fn said_title(running: &Running) -> String {
+fn said_title(running: &Running) -> Words {
     match (&running.undoes, running.run) {
         (Some(undoes), RunKind::Undo) => undoes.clone(),
         _ => running.title.clone(),
@@ -232,10 +285,11 @@ fn said_title(running: &Running) -> String {
 /// What an applied plan did, in a sentence: the item by name when there is
 /// one (by `named`, where the step said the name the user knows it by), a
 /// count otherwise. Falls back to the plan's title (`title`: an undo's,
-/// the action it takes back, `said_title`). What a plan's title or a step's
-/// own words make is said as they are, until they are words themselves.
+/// the action it takes back, `said_title`). Where a sentence is not a
+/// message yet and begins with a title or a step's own words, capitalised,
+/// they are said here (in the window's language) until it is one.
 pub fn describe(
-    title: &str,
+    title: &Words,
     run: RunKind,
     first: Option<&Change>,
     named: Option<&str>,
@@ -245,7 +299,11 @@ pub fn describe(
     let name = naming(first, named);
     let one = applied == 1;
     match first {
-        _ if run == RunKind::Undo => Words::from(format!("Undid: {title}")),
+        _ if run == RunKind::Undo => words!(
+            toast_undid = "Undid: { $title }",
+            title = title.clone(),
+            note = "title: the action an undo took back (copy 3 items to Docs)."
+        ),
         Some(Change::Trash { path }) => words!(
             toast_trashed = "{ $count ->
                 [1] Moved { $name } to Trash
@@ -327,7 +385,7 @@ pub fn describe(
         ),
         Some(Change::Create {
             words: Some(words), ..
-        }) if one => Words::from(capitalized(&words.did)),
+        }) if one => Words::from(capitalized(&words.did.say())),
         Some(Change::Create {
             path,
             directory: true,
@@ -342,11 +400,11 @@ pub fn describe(
         // A step that says what it did says it best.
         Some(Change::Metadata {
             words: Some(words), ..
-        }) if one => Words::from(capitalized(&words.did)),
-        _ if applied == 0 => Words::from(format!("{}: nothing to do", capitalized(title))),
+        }) if one => Words::from(capitalized(&words.did.say())),
+        _ if applied == 0 => Words::from(format!("{}: nothing to do", capitalized(&title.say()))),
         _ => Words::from(format!(
             "{} ({})",
-            capitalized(title),
+            capitalized(&title.say()),
             format::items(applied)
         )),
     }
@@ -356,16 +414,17 @@ pub fn describe(
 /// failed, by name (`named`, as `describe`), then why. An error that began
 /// with the step's own words naming its file ("“a.txt” could not be renamed
 /// …", "… could not all be deleted") gives its reason alone after it
-/// (`reason`, `Progress::reason`). The error is said as it was written.
+/// (`reason`, `Progress::reason`). The error is said link by link in the
+/// reader's language (`Words::of_error`).
 pub fn failure(
-    title: &str,
+    title: &Words,
     failed: Option<&Change>,
     named: Option<&str>,
-    error: &str,
-    reason: Option<&str>,
+    error: &Words,
+    reason: Option<&Words>,
 ) -> Words {
     let name = naming(failed, named);
-    let why = reason.unwrap_or(error);
+    let why = reason.unwrap_or(error).clone();
     match failed {
         Some(Change::Copy { from, to }) => words!(
             toast_copy_failed = "Couldn't copy { $name } to { $folder }: { $why }",
@@ -416,7 +475,13 @@ pub fn failure(
         // What it said it would do, it could not.
         Some(Change::Create {
             words: Some(words), ..
-        }) => Words::from(format!("Couldn't {}: {why}", words.will)),
+        }) => words!(
+            toast_could_not = "Couldn't { $what }: { $why }",
+            what = words.will.clone(),
+            why = why,
+            note = "what: what the step said it would do (extract “a.zip” to Downloads); why: \
+                    what stopped it, as the system or the step said it (permission denied)."
+        ),
         Some(Change::Create {
             path,
             directory: true,
@@ -433,7 +498,13 @@ pub fn failure(
             why = why,
             note = "why: what stopped it, as the system or the step said it (permission denied)."
         ),
-        _ => Words::from(format!("{}: {error}", capitalized(title))),
+        _ => words!(
+            toast_failed = "{ $title }: { $error }",
+            title = capitalized(&title.say()),
+            error = error.clone(),
+            note = "title: the action, capitalised (Copy 3 items to Docs); error: what stopped \
+                    it, as the system or the step said it (permission denied)."
+        ),
     }
 }
 
@@ -520,23 +591,25 @@ pub(crate) fn share(items: usize, t: &Transfer) -> f32 {
 /// title, and whether it is paused, when it has begun), and the two ways
 /// on, for it and the `waiting` ones behind it: Skwir finishes without its
 /// window, then quits; or stops now. No figures: the bar under the
-/// question goes on with them. What runs is said by its title, as it is
-/// until titles are words.
-pub fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usize) -> String {
+/// question goes on with them. What runs is said by its title, said here
+/// and capitalised until its sentences are messages.
+pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: usize) -> String {
     let what = match (running, others) {
-        (Some((title, true)), 0) => Words::from(format!("{} is paused.", capitalized(title))),
+        (Some((title, true)), 0) => {
+            Words::from(format!("{} is paused.", capitalized(&title.say())))
+        }
         (Some((title, false)), 0) => {
-            Words::from(format!("{} is still running.", capitalized(title)))
+            Words::from(format!("{} is still running.", capitalized(&title.say())))
         }
         // Plans that share nothing run at once (ADR-079).
         (Some((title, true)), others) => Words::from(format!(
             "{} is paused, and {} beside it.",
-            capitalized(title),
+            capitalized(&title.say()),
             format::count(others, "other action")
         )),
         (Some((title, false)), others) => Words::from(format!(
             "{} is still running, and {} beside it.",
-            capitalized(title),
+            capitalized(&title.say()),
             format::count(others, "other action")
         )),
         (None, _) => words!(toast_quit_about_to_begin = "A change is about to begin."),
@@ -593,7 +666,9 @@ fn shown_for(toast: &Toast) -> u64 {
         (_, false) => 8,
         _ => 4,
     };
-    let words = toast.text.split_whitespace().count() as u64;
+    // Counted as said: how long its words take to read in the reader's
+    // language, its parts joined.
+    let words = toast.said().say().split_whitespace().count() as u64;
     weight.max(words.div_ceil(WORDS_A_SECOND))
 }
 
@@ -666,14 +741,14 @@ impl Shell {
     pub(crate) fn say_with(
         &mut self,
         answer: Option<u64>,
-        said: String,
+        said: Words,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         if let Some(joined) = self.toasts.joined(answer, &said) {
             self.show_toast(joined, cx);
             Some(self.toasts.generation)
         } else {
-            self.set_status(said, false, cx);
+            self.toast(Toast::new(said, Tone::Info, Vec::new()), cx);
             None
         }
     }
@@ -700,14 +775,13 @@ impl Shell {
                 // Its toast says it goes on by itself, while it is the
                 // one shown (its Retry names the plan).
                 Taken::WaitsForServer(plan) => {
-                    let said = WAITS_FOR_SERVER;
                     if let Some(toast) = self.toasts.current.as_mut()
                         && toast.actions.iter().any(|a| {
                             a.command == "retry" && a.args["plan"] == serde_json::json!(plan)
                         })
-                        && !toast.text.ends_with(said)
+                        && !toast.after.contains(&After::GoesOn)
                     {
-                        toast.text.push_str(said);
+                        toast.after.push(After::GoesOn);
                     }
                 }
                 Taken::Ended {
@@ -739,8 +813,8 @@ impl Shell {
 /// ("“photos.zip” was already extracted to Downloads"), else after what it
 /// did ("Copied 3 items to Docs; 2 were already there"). What the steps
 /// said follows; alone when they did nothing else (a smaller copy not
-/// made). Said in the user's language, once, as the toast shows it.
-pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
+/// made). Words, said where the toast and Earlier draw them.
+pub(crate) fn ended(running: Running, end: End<'_>) -> (Words, Tone) {
     let End {
         applied,
         error,
@@ -797,7 +871,7 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
     // What the steps said follows, as they wrote it.
     let whole = match (said.is_empty(), nothing_else) {
         (true, _) => text,
-        (false, true) => return (said, Tone::Info),
+        (false, true) => return (Words::from(said), Tone::Info),
         (false, false) => words!(
             toast_done_then_said = "{ $done }. { $said }",
             done = text,
@@ -806,7 +880,7 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
                     sheet in half)."
         ),
     };
-    (whole.say(), tone)
+    (whole, tone)
 }
 
 /// From how long a plan ran its toast says what it moved in that time.
@@ -816,12 +890,16 @@ const AVERAGED_FROM: Duration = Duration::from_secs(5);
 /// (`Tally::already`): its item by name where there is one, else how
 /// many, as its change says it ("“photos.zip” was already extracted to
 /// Downloads", "3 items were already in Docs").
-pub fn found_done(title: &str, run: RunKind, found: &Counted) -> Words {
+pub fn found_done(title: &Words, run: RunKind, found: &Counted) -> Words {
     let (first, count) = (found.first.as_ref(), found.count);
     let name = naming(first, found.named.as_deref());
     let one = count == 1;
     match first {
-        _ if run == RunKind::Undo => Words::from(format!("Already undone: {title}")),
+        _ if run == RunKind::Undo => words!(
+            toast_already_undone = "Already undone: { $title }",
+            title = title.clone(),
+            note = "title: the action an undo found taken back already (copy 3 items to Docs)."
+        ),
         // In the folder, under the name it would have had there.
         Some(Change::Copy { to, .. } | Change::Move { to, .. }) => words!(
             toast_already_in = "{ $count ->
@@ -874,12 +952,22 @@ pub fn found_done(title: &str, run: RunKind, found: &Counted) -> Words {
         // A step that says what it found says it best.
         Some(
             Change::Create {
-                words: Some(words), ..
+                words:
+                    Some(Tenses {
+                        already: Some(already),
+                        ..
+                    }),
+                ..
             }
             | Change::Metadata {
-                words: Some(words), ..
+                words:
+                    Some(Tenses {
+                        already: Some(already),
+                        ..
+                    }),
+                ..
             },
-        ) if one && !words.already.is_empty() => Words::from(capitalized(&words.already)),
+        ) if one => Words::from(capitalized(&already.say())),
         Some(Change::Create {
             path,
             directory: true,
@@ -896,7 +984,7 @@ pub fn found_done(title: &str, run: RunKind, found: &Counted) -> Words {
             toast_already_as_asked = "{ $name } was already as asked",
             name = name(path)
         ),
-        _ => Words::from(format!("{}: already done", capitalized(title))),
+        _ => Words::from(format!("{}: already done", capitalized(&title.say()))),
     }
 }
 
@@ -968,12 +1056,22 @@ pub fn found_done_too(run: RunKind, found: &Counted) -> Words {
         ),
         Some(
             Change::Create {
-                words: Some(words), ..
+                words:
+                    Some(Tenses {
+                        already: Some(already),
+                        ..
+                    }),
+                ..
             }
             | Change::Metadata {
-                words: Some(words), ..
+                words:
+                    Some(Tenses {
+                        already: Some(already),
+                        ..
+                    }),
+                ..
             },
-        ) if one && !words.already.is_empty() => Words::from(words.already.clone()),
+        ) if one => already.clone(),
         Some(Change::Create { path, .. }) if one => words!(
             toast_also_made_there = "{ $name } was already there",
             name = name(path),
@@ -999,7 +1097,7 @@ pub fn found_done_too(run: RunKind, found: &Counted) -> Words {
 #[derive(Default)]
 pub(crate) struct End<'a> {
     pub applied: usize,
-    pub error: Option<String>,
+    pub error: Option<Words>,
     pub cancelled: bool,
     pub items: Option<skwir_core::op::Items>,
     /// Deleted where its server keeps a trash (ADR-086): that trash.
@@ -1019,7 +1117,7 @@ fn ended_as(
     running: Running,
     applied: usize,
     skipped: usize,
-    error: Option<String>,
+    error: Option<Words>,
     cancelled: bool,
     items: Option<skwir_core::op::Items>,
     kept_in: Option<&str>,
@@ -1060,14 +1158,14 @@ fn ended_as(
                 running.failed.as_ref(),
                 running.failed_named.as_deref(),
                 &error,
-                running.failed_reason.as_deref(),
+                running.failed_reason.as_ref(),
             ),
             Tone::Error,
         ),
         (None, true) if applied == 0 => (
             Words::from(format!(
                 "{}: cancelled before anything was done",
-                capitalized(&title)
+                capitalized(&title.say())
             )),
             Tone::Info,
         ),
@@ -1174,12 +1272,17 @@ pub(crate) fn show_action(made: &Path) -> Action {
 
 /// An action waiting its turn, as its row under the cards of what runs
 /// says it (ADR-079, 12): what it is ("Rename to b.txt"), and what it
-/// waits for ("Waits for copy to /media/stick"). What is named by an
-/// action's title is said as it is, until titles are words.
+/// waits for ("Waits for copy to /media/stick"), its title capitalised as
+/// said until the row's words are messages.
 pub(crate) fn waiting_words(waiting: &skwir_core::op::Waiting) -> (String, String) {
     use skwir_core::op::WaitsFor;
     let why = match &waiting.waits_for {
-        WaitsFor::Action(named) => Words::from(format!("Waits for {named}")),
+        WaitsFor::Action(named) => words!(
+            toast_waits_for = "Waits for { $action }",
+            action = named.clone(),
+            note = "action: the action asked before it that touches what it does, by its \
+                    title (copy to /media/stick)."
+        ),
         WaitsFor::Disk => words!(toast_waits_for_disk = "Waits for the disk"),
         WaitsFor::Server => words!(toast_waits_for_server = "Waits for the server"),
         WaitsFor::Room => words!(
@@ -1195,7 +1298,7 @@ pub(crate) fn waiting_words(waiting: &skwir_core::op::Waiting) -> (String, Strin
             note = "What an action waiting its turn waits for: nothing more, it starts."
         ),
     };
-    (capitalized(&waiting.named), why.say())
+    (capitalized(&waiting.named.say()), why.say())
 }
 
 /// What a plan copying onto a mount that sends later says while the
@@ -1296,6 +1399,8 @@ pub fn render_answer(
         return None;
     }
     let toast = shell.toasts.current.clone()?;
+    // Said as it is drawn, in the window's language.
+    let text: SharedString = toast.said().say().into();
     // Held back while the History was open, its time begins now.
     if let Some((generation, seconds)) = shell.toasts.drawn() {
         shell.time_toast(generation, seconds, cx);
@@ -1362,7 +1467,7 @@ pub fn render_answer(
         } else {
             gpui::Live::Polite
         })
-        .when(a11y, |d| d.aria_label(toast.text.clone()))
+        .when(a11y, |d| d.aria_label(text.clone()))
         .child(glyph)
         .child(
             div()
@@ -1371,7 +1476,7 @@ pub fn render_answer(
                 .py_1()
                 .flex()
                 .flex_col()
-                .child(toast.text.clone())
+                .child(text)
                 // Why an Undo is held, under what was said.
                 .children(held.iter().flatten().map(|why| {
                     div()
@@ -1440,12 +1545,54 @@ pub fn render_answer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, End, Running, Toast, ToastState, Tone, bar, describe, ended, failure,
-        finished_actions, made_alone, pace, quit_question, show_action, shown_for, waiting_words,
+        Action, After, End, Running, Toast, ToastState, Tone, bar, finished_actions, made_alone,
+        pace, show_action, shown_for, waiting_words,
     };
     use skwir_core::op::{Change, PlanId, RunKind, Transfer};
+    use skwir_core::words::Words;
     use std::path::PathBuf;
     use std::time::Duration;
+
+    /// `toast::ended`, its words in English, as a test reads them.
+    fn ended(running: Running, end: End<'_>) -> (String, Tone) {
+        let (said, tone) = super::ended(running, end);
+        (said.english(), tone)
+    }
+
+    /// `toast::describe` of a plan titled as text.
+    fn describe(
+        title: &str,
+        run: RunKind,
+        first: Option<&Change>,
+        named: Option<&str>,
+        applied: usize,
+        kept_in: Option<&str>,
+    ) -> Words {
+        super::describe(&title.into(), run, first, named, applied, kept_in)
+    }
+
+    /// `toast::failure` of a plan titled as text, its error and reason as
+    /// text.
+    fn failure(
+        title: &str,
+        failed: Option<&Change>,
+        named: Option<&str>,
+        error: &str,
+        reason: Option<&str>,
+    ) -> Words {
+        let reason = reason.map(Words::from);
+        super::failure(&title.into(), failed, named, &error.into(), reason.as_ref())
+    }
+
+    /// `toast::quit_question` of a plan titled as text.
+    fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usize) -> String {
+        let running = running.map(|(title, paused)| (Words::from(title), paused));
+        super::quit_question(
+            running.as_ref().map(|(title, paused)| (title, *paused)),
+            others,
+            waiting,
+        )
+    }
 
     /// A plan ended says what it did as it was done: one file replaced is
     /// one item, though its steps were two (put in the trash, then copied),
@@ -1577,7 +1724,7 @@ mod tests {
     /// step's words; a copy, a trash, a rename and an undo by their kind.
     #[test]
     fn a_plan_says_what_it_found_done_already() {
-        use skwir_core::op::{Counted, Plan, Tally, Words};
+        use skwir_core::op::{Counted, Plan, Tally, Tenses};
         fn end(tally: &Tally) -> End<'_> {
             End {
                 tally: Some(tally),
@@ -1589,8 +1736,8 @@ mod tests {
         let running = |title: &str, run: RunKind| {
             let mut running = Running::for_test(Plan::new(title).id, title, run, 1);
             if run == RunKind::Undo {
-                running.title = format!("undo {title}");
-                running.undoes = Some(title.to_owned());
+                running.title = format!("undo {title}").into();
+                running.undoes = Some(title.into());
             }
             running
         };
@@ -1606,10 +1753,10 @@ mod tests {
         let extracted = Change::Create {
             path: PathBuf::from("/example/Downloads/photos"),
             directory: true,
-            words: Some(Words {
+            words: Some(Tenses {
                 will: "extract “photos.zip” to Downloads".into(),
                 did: "extracted “photos.zip” to Downloads".into(),
-                already: "“photos.zip” was already extracted to Downloads".into(),
+                already: Some("“photos.zip” was already extracted to Downloads".into()),
             }),
         };
         let all = |found: Counted| Tally {
@@ -1760,10 +1907,10 @@ mod tests {
             first: Some(Change::Create {
                 path: PathBuf::from("/example/it's (booklet).pdf"),
                 directory: false,
-                words: Some(skwir_core::op::Words {
+                words: Some(skwir_core::op::Tenses {
                     will: "save “it's.md” as “it's (booklet).pdf”".into(),
                     did: "saved “it's.md” as “it's (booklet).pdf”".into(),
-                    already: "“it's (booklet).pdf” was already saved".into(),
+                    already: Some("“it's (booklet).pdf” was already saved".into()),
                 }),
             }),
             first_named: None,
@@ -1805,11 +1952,7 @@ mod tests {
     /// read.
     #[test]
     fn a_long_toast_stays_until_read() {
-        let toast = |text: &str, tone, actions: Vec<Action>| Toast {
-            text: text.to_owned(),
-            tone,
-            actions,
-        };
+        let toast = |text: &str, tone, actions: Vec<Action>| Toast::new(text, tone, actions);
         let undo = || {
             vec![Action {
                 label: "Undo".into(),
@@ -2248,11 +2391,7 @@ mod tests {
     /// it was for.
     #[test]
     fn a_toast_held_back_keeps_its_time_until_drawn() {
-        let said = |text: &str| Toast {
-            text: text.into(),
-            tone: Tone::Error,
-            actions: Vec::new(),
-        };
+        let said = |text: &str| Toast::new(text, Tone::Error, Vec::new());
         let mut toasts = ToastState::default();
         let (held, timed) = toasts.say(said("Could not undo “it's a.txt”"), true);
         assert_eq!(timed, None);
@@ -2279,27 +2418,39 @@ mod tests {
     #[test]
     fn what_joins_an_answer_is_said_again_with_it() {
         let mut toasts = ToastState::default();
-        let answer = Toast {
-            text: "Renamed “l'été.txt” to “.l'été.txt”.".into(),
-            tone: Tone::Success,
-            actions: vec![Action {
+        let answer = Toast::new(
+            "Renamed “l'été.txt” to “.l'été.txt”",
+            Tone::Success,
+            vec![Action {
                 label: "Undo".into(),
                 command: "undo".into(),
                 args: serde_json::json!({ "plan": 7 }),
             }],
-        };
+        );
         let (shown, _) = toasts.say(answer, false);
-        let note = "Hidden files are shown, “.l'été.txt” among them";
-        let joined = toasts.joined(Some(shown), note).expect("still shown");
+        let note = Words::from("Hidden files are shown, “.l'été.txt” among them");
+        let joined = toasts.joined(Some(shown), &note).expect("still shown");
         assert_eq!(
-            joined.text,
+            joined.said().english(),
             "Renamed “l'été.txt” to “.l'été.txt”. Hidden files are shown, “.l'été.txt” among them"
         );
         assert_eq!(joined.actions.len(), 1, "its Undo stays");
+        // What it is made of is data: its server stopping its plan is said
+        // after what joined it, in the order said.
+        let mut waits = joined.clone();
+        waits.after.push(After::GoesOn);
+        assert_eq!(
+            waits.said().english(),
+            "Renamed “l'été.txt” to “.l'été.txt”. Hidden files are shown, “.l'été.txt” among \
+             them. It goes on by itself once the server answers again"
+        );
         let (again, timed) = toasts.say(joined.clone(), false);
         assert_ne!(again, shown, "said again, as a toast of its own");
         assert_eq!(timed, Some(shown_for(&joined)));
-        assert!(toasts.joined(Some(shown), note).is_none(), "replaced since");
+        assert!(
+            toasts.joined(Some(shown), &note).is_none(),
+            "replaced since"
+        );
     }
 
     /// The one thing a plan made new is shown with Show: the folder it is

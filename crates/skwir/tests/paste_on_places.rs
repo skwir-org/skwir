@@ -171,9 +171,9 @@ fn files_copied_are_not_pasted_in_the_trash() {
         panic!("a plan that copies it")
     };
     assert!(
-        plan.title.starts_with("copy “notes one.txt” to "),
+        plan.title.english().starts_with("copy “notes one.txt” to "),
         "{}",
-        plan.title
+        plan.title.english()
     );
 }
 

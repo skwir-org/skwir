@@ -614,7 +614,7 @@ impl LocationProvider for RecentProvider {
         "recent"
     }
 
-    fn title(&self, _location: &Location) -> Option<String> {
+    fn title(&self, _location: &Location) -> Option<skwir_core::words::Words> {
         Some(RECENT.into())
     }
 

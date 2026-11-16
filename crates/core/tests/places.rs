@@ -103,7 +103,7 @@ impl LocationProvider for Fake {
     fn trail(&self, location: &Location) -> Option<Trail> {
         let mut crumbs = vec![Crumb::new("Fake", Location::new(SCHEME, "/"))];
         if let Some(name) = location.rest.strip_prefix('/').filter(|n| !n.is_empty()) {
-            crumbs.push(Crumb::new(name, location.clone()));
+            crumbs.push(Crumb::entry(name, location.clone()));
         }
         Some(Trail {
             base: Some(self.base.clone()),
@@ -264,6 +264,18 @@ fn a_place_leads_somewhere_and_up_walks_its_trail_back_to_its_folder() {
     let up = Invocation::new("up");
     app.dispatch(&up).unwrap();
     assert_eq!(shows(&app, pane), Some(Location::new(SCHEME, "/")));
+    // The way back down is selected there, found by its entry's name
+    // (`Crumb::name`), never by the words its crumb says.
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    let cursor = {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        p.selection
+            .cursor
+            .and_then(|id| p.entry(id))
+            .map(|e| e.name.clone())
+    };
+    assert_eq!(cursor.as_deref(), Some(std::ffi::OsStr::new("few")));
     app.dispatch(&up).unwrap();
     assert_eq!(
         shows(&app, pane),
@@ -415,7 +427,7 @@ impl LocationProvider for Flat {
         anyhow::bail!("not opened here")
     }
 
-    fn title(&self, _: &Location) -> Option<String> {
+    fn title(&self, _: &Location) -> Option<skwir_core::words::Words> {
         Some("Pile".into())
     }
 
@@ -443,7 +455,7 @@ fn a_place_that_gives_no_trail_reads_as_one_place_by_its_name() {
     assert_eq!(app.parent(&flat), None, "nothing above it");
     assert_eq!(app.location_icon(&flat), Some("shelf"));
     assert_eq!(
-        app.empty_state(&flat).map(|e| e.title),
+        app.empty_state(&flat).map(|e| e.title.english()),
         Some("The pile is empty".to_owned())
     );
     // A provider's own trail is kept; a folder and a scheme nobody

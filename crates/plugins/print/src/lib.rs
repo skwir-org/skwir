@@ -30,7 +30,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::location::Location;
 use skwir_core::op::{
-    self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Words,
+    self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Tenses,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::{AppRef, Plugin};
@@ -703,9 +703,10 @@ fn shown(app: &App, pane: PaneId) -> anyhow::Result<(Location, Option<String>)> 
 }
 
 /// What the listing of `location` is called in words: its name (a
-/// folder's own, a search's, a tag's), with what filters it.
+/// folder's own, a search's, a tag's), with what filters it, said as the
+/// window says it: the dialog, the plan and the file's name show it.
 fn listing_named(app: &App, location: &Location, filter: Option<&str>) -> String {
-    listing::filtered(app.location_title(location), filter)
+    listing::filtered(app.location_title(location).say(), filter)
 }
 
 /// Where the PDF of what `location` lists is saved unless another folder
@@ -1426,10 +1427,10 @@ impl op::Effect for MakePdf {
         Change::Create {
             path: self.target(),
             directory: false,
-            words: Some(Words {
-                will: format!("save {what} as “{pdf}” in “{folder}”"),
-                did: format!("saved {what} as “{pdf}” in “{folder}”"),
-                already: format!("{what} was already saved as “{pdf}” in “{folder}”"),
+            words: Some(Tenses {
+                will: format!("save {what} as “{pdf}” in “{folder}”").into(),
+                did: format!("saved {what} as “{pdf}” in “{folder}”").into(),
+                already: Some(format!("{what} was already saved as “{pdf}” in “{folder}”").into()),
             }),
         }
     }

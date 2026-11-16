@@ -383,7 +383,7 @@ impl BoardView {
                 0,
                 Column {
                     at: None,
-                    title: shell.app.location_title(&shown),
+                    title: shell.app.location_title(&shown).say(),
                     path: shown.path(),
                     location: shown,
                     color: None,

@@ -89,7 +89,7 @@ fn a_copy_into_a_folder_that_refuses_writes_changes_nothing() {
         vec![copy(&root.join("a.txt"), &root.join("locked"))],
     );
     let r = app.executor.execute_blocking(&plan, app.lifetime());
-    let error = r.error.expect("refused");
+    let error = r.error.expect("refused").english();
     assert!(error.contains("ermission denied"), "says why: {error}");
     assert_eq!(r.applied, 0);
     assert!(
@@ -158,7 +158,10 @@ fn a_folder_copy_that_fails_partway_leaves_no_part_of_itself() {
     let app = app(root);
     let plan = Plan::with_steps("copy", vec![copy(&src, &root.join("dest"))]);
     let r = app.executor.execute_blocking(&plan, app.lifetime());
-    let error = r.error.expect("an unreadable file stops the copy");
+    let error = r
+        .error
+        .expect("an unreadable file stops the copy")
+        .english();
     assert!(error.contains("unreadable.txt"), "names the file: {error}");
     assert!(
         names(&root.join("dest")).is_empty(),
@@ -237,7 +240,10 @@ fn move_with_unremovable_source(notes_first: bool) {
         std::fs::read(src.join("kept/data.txt")).is_ok_and(|b| b == b"data"),
         "what could not be removed is still there"
     );
-    let error = r.error.expect("the source could not all be removed");
+    let error = r
+        .error
+        .expect("the source could not all be removed")
+        .english();
     assert!(
         error.contains("copied whole"),
         "says the copy is whole: {error}"
@@ -290,7 +296,7 @@ fn a_folder_deleted_in_part_says_what_is_left() {
         })],
     );
     let r = app.executor.execute_blocking(&plan, app.lifetime());
-    let error = r.error.expect("refused");
+    let error = r.error.expect("refused").english();
     assert!(
         error.contains("“old” could not all be deleted: “old/kept/data.txt” is left"),
         "{error}"
@@ -314,7 +320,7 @@ fn a_name_too_long_is_refused_before_anything_changes() {
         })],
     );
     let r = app.executor.execute_blocking(&plan, app.lifetime());
-    let error = r.error.expect("too long for the filesystem");
+    let error = r.error.expect("too long for the filesystem").english();
     eprintln!("said: {error}");
     assert!(error.contains("too long"), "says why: {error}");
     assert_eq!(names(root), ["a.txt"]);

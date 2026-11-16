@@ -1114,12 +1114,12 @@ pub(crate) fn act(app: &skwir_core::App, work: &Work, asked: &Asked) {
 fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     let summary = summary(under);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => capitalized(&running.title),
+        ([(running, _)], []) => capitalized(&running.title.say()),
         ([], [task]) => capitalized(&task.title),
         ([], []) => String::new(),
         _ => format::count(under.count(), "action"),
     };
-    let stopped = work.stopped.as_ref().map(|s| capitalized(&s.title));
+    let stopped = work.stopped.as_ref().map(|s| capitalized(&s.title.say()));
     let (standing, about) = if asks {
         (Standing::Asks, "Open Skwir to answer".to_owned())
     } else if let Some(summary) = &summary {
@@ -1603,7 +1603,11 @@ mod tests {
             waiting: 0,
             next: None,
         };
-        work.stopped = Some(Stopped::new(PlanId(5), "copy 3 items to Backup", true));
+        work.stopped = Some(Stopped::new(
+            PlanId(5),
+            &"copy 3 items to Backup".into(),
+            true,
+        ));
         let shown = presence(&work, &nothing, false);
         assert_eq!(shown.standing, Standing::Stopped);
         assert_eq!(shown.title, "An action stopped");

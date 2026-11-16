@@ -416,7 +416,7 @@ pub fn offered(
                     continue;
                 }
             }
-            offers.push(Offer::of(&spec.name, form.args.clone(), form.title.clone()));
+            offers.push(Offer::of(&spec.name, form.args.clone(), form.title.say()));
         }
     }
     for view in views {

@@ -220,15 +220,15 @@ impl Shell {
                     return;
                 }
                 shell.notice(
-                    Toast {
-                        text: format!("Working out what {title} does…"),
-                        tone: Tone::Info,
-                        actions: vec![Action {
+                    Toast::new(
+                        format!("Working out what {title} does…"),
+                        Tone::Info,
+                        vec![Action {
                             label: "Cancel".to_owned(),
                             command: "ui.plan_cancel".to_owned(),
                             args: json!({}),
                         }],
-                    },
+                    ),
                     cx,
                 );
                 let shown = shell.toast_shown();

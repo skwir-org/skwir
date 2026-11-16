@@ -594,7 +594,8 @@ fn dispatched(
 
 /// What became of a plan, as `mode` says.
 fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) -> Answer {
-    let title = plan.title.clone();
+    // For the agent: in English.
+    let title = plan.title.english();
     let verdict = match mode {
         PlanMode::Print => {
             return Answer {

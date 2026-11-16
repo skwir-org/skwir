@@ -110,7 +110,7 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     )
     .unwrap();
     let plan = proposal(&app);
-    assert_eq!(plan.title, "rename the tag “work” to “Job”");
+    assert_eq!(plan.title.english(), "rename the tag “work” to “Job”");
     assert_eq!(
         plan.steps.len(),
         4,
@@ -160,7 +160,10 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     )
     .unwrap();
     let plan = proposal(&app);
-    assert_eq!(plan.title, "merge the tags “x” and “other” into “misc”");
+    assert_eq!(
+        plan.title.english(),
+        "merge the tags “x” and “other” into “misc”"
+    );
     assert_eq!(plan.steps.len(), 2, "a and c");
     app.executor.execute_blocking(&plan, app.lifetime());
     assert_eq!(at("a.txt"), ["Work", "misc"]);
@@ -718,7 +721,7 @@ fn a_category_carries_its_tags_and_tags_move_into_one() {
     .unwrap();
     let plan = proposal(&app);
     assert_eq!(
-        plan.title,
+        plan.title.english(),
         "move the tags “Paris” and “work” into “Lieux/France”"
     );
     app.executor.execute_blocking(&plan, app.lifetime());

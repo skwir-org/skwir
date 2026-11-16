@@ -22,6 +22,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use skwir_core::command::Topic;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::columns::{self, Block, Columns, Metrics};
@@ -55,8 +56,8 @@ struct Item {
     args: serde_json::Value,
     title: String,
     topic: Topic,
-    /// Its family, and where it stands in it.
-    family: Option<(String, usize)>,
+    /// Its family (`Form::family`), and where it stands in it.
+    family: Option<(Words, usize)>,
     /// Its place alone, which a filter's words find: not its conditions
     /// ("not in the trash" is no answer to "trash").
     place: String,
@@ -84,7 +85,9 @@ struct Row {
 impl Row {
     /// Whether what was typed finds it (`keymap::finds`).
     fn found(&self, query: &str) -> bool {
-        let mut words: Vec<&str> = vec![&self.title, self.topic.title()];
+        // Its topic as its heading says it.
+        let topic = self.topic.title().say();
+        let mut words: Vec<&str> = vec![&self.title, &topic];
         words.extend(self.words.iter().map(String::as_str));
         words.extend(self.actions.iter().map(|(title, _)| title.as_str()));
         let keys: Vec<&str> = self
@@ -148,14 +151,23 @@ enum Shown {
     },
 }
 
+/// What makes items one row: a command's family, by its words as data
+/// (the same message, or the same text as written; never what they say),
+/// else a command run with its arguments.
+#[derive(PartialEq)]
+enum RowKey {
+    Family(String, Words),
+    Action(String, String),
+}
+
 /// `items` as rows, in order: an action's keys on one row, a family's on
 /// one; a family of one action is that action's row.
 fn merge(items: Vec<Item>) -> Vec<Row> {
-    let mut keyed: Vec<(String, Row)> = Vec::new();
+    let mut keyed: Vec<(RowKey, Row)> = Vec::new();
     for item in items {
         let key = match &item.family {
-            Some((family, _)) => format!("{} {family}", item.command),
-            None => format!("{} {}", item.command, item.args),
+            Some((family, _)) => RowKey::Family(item.command.clone(), family.clone()),
+            None => RowKey::Action(item.command.clone(), item.args.to_string()),
         };
         let at = if let Some(at) = keyed.iter().position(|(known, _)| *known == key) {
             at
@@ -166,7 +178,7 @@ fn merge(items: Vec<Item>) -> Vec<Row> {
                     title: item
                         .family
                         .as_ref()
-                        .map_or_else(|| item.title.clone(), |(family, _)| family.clone()),
+                        .map_or_else(|| item.title.clone(), |(family, _)| family.say()),
                     topic: item.topic,
                     actions: Vec::new(),
                     ranks: Vec::new(),
@@ -234,7 +246,7 @@ fn by_topic(mut rows: Vec<Row>) -> Vec<Group> {
     topics
         .into_iter()
         .map(|(topic, _)| Group {
-            heading: topic.title().to_owned(),
+            heading: topic.title().say(),
             rows: rows
                 .iter()
                 .filter(|row| row.topic == topic)
@@ -426,15 +438,15 @@ impl Shell {
         );
         self.save_settings_later();
         self.toast(
-            Toast {
-                text: format!(
+            Toast::new(
+                format!(
                     "Tip: press {} for {}. F1 lists the keys for where you are.",
                     keymap::display_keys(&hint.keys),
                     keymap::title_of(&self.app, &hint).trim_end_matches('…')
                 ),
-                tone: Tone::Info,
-                actions: Vec::new(),
-            },
+                Tone::Info,
+                Vec::new(),
+            ),
             cx,
         );
     }

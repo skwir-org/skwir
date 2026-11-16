@@ -175,7 +175,7 @@ fn candidates(app: &skwir_core::App) -> Vec<Candidate> {
         let shell = &*spec.owner == crate::commands::OWNER;
         for form in &spec.forms {
             if !shell || crate::settings_keys::offered(&spec.name, &form.args) {
-                all.push((spec.clone(), Some(form.args.clone()), form.title.clone()));
+                all.push((spec.clone(), Some(form.args.clone()), form.title.say()));
             }
         }
         if shell {

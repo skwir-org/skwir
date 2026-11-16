@@ -965,7 +965,11 @@ impl skwir_core::op::Effect for SetPosition {
         Change::Metadata {
             path: self.entry.path.clone(),
             field: keys::POSITION.into(),
-            words: Some(skwir_core::op::Words { will, did, already }),
+            words: Some(skwir_core::op::Tenses {
+                will: will.into(),
+                did: did.into(),
+                already: Some(already.into()),
+            }),
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
@@ -2102,7 +2106,7 @@ mod tests {
         else {
             panic!("a plan")
         };
-        assert_eq!(plan.title, "place “Named.jpg” along “Walk.gpx”");
+        assert_eq!(plan.title.english(), "place “Named.jpg” along “Walk.gpx”");
         assert_eq!(
             plan.note.as_deref(),
             Some("1 picture already placed, left as it is")
@@ -2174,7 +2178,10 @@ mod tests {
             panic!("a plan")
         };
         assert_eq!(plan.len(), 2);
-        assert_eq!(plan.title, "place 2 pictures along “Walk (day 1).gpx”");
+        assert_eq!(
+            plan.title.english(),
+            "place 2 pictures along “Walk (day 1).gpx”"
+        );
         assert_eq!(
             plan.note.as_deref(),
             Some(
@@ -2286,9 +2293,9 @@ mod tests {
         };
         assert_eq!(plan.len(), 1);
         assert!(
-            plan.title.starts_with("place “During.jpg” along"),
+            plan.title.english().starts_with("place “During.jpg” along"),
             "{}",
-            plan.title
+            plan.title.english()
         );
         // Rebuilt from its data, as a reviewed plan may be.
         let rebuilt = Plan::from_data(&plan.to_data(), &app.ops).unwrap();
@@ -2328,7 +2335,7 @@ mod tests {
             panic!("a plan")
         };
         assert_eq!(plan.len(), 2);
-        assert_eq!(plan.title, "remove the location of 2 pictures");
+        assert_eq!(plan.title.english(), "remove the location of 2 pictures");
         assert_eq!(
             plan.note.as_deref(),
             Some("1 RAW picture left out: their sidecars are not written yet")
@@ -2342,14 +2349,14 @@ mod tests {
             panic!("{first:?}");
         };
         assert!(
-            words.will.starts_with("remove the location of “"),
+            words.will.english().starts_with("remove the location of “"),
             "{}",
-            words.will
+            words.will.english()
         );
         assert!(
-            words.did.starts_with("removed the location of “"),
+            words.did.english().starts_with("removed the location of “"),
             "{}",
-            words.did
+            words.did.english()
         );
         let result = app.executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!((result.applied, result.skipped, result.error), (1, 1, None));

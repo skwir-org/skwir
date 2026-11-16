@@ -132,7 +132,7 @@ pub fn empty_place(icon: Option<&'static str>, empty: Option<&EmptyState>) -> Pl
                 String::new(),
             )
         },
-        |empty| (empty.title.clone(), empty.detail.clone()),
+        |empty| (empty.title.say(), empty.detail.say()),
     );
     Placeholder {
         icon: icon.unwrap_or("info"),

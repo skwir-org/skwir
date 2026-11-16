@@ -206,15 +206,15 @@ impl Shell {
             // (`Shell::drawn_focus`).
         } else if self.app.terminals.provider().is_none() {
             self.toast(
-                crate::toast::Toast {
-                    text: "The terminal is a plugin, and it is off".into(),
-                    tone: crate::toast::Tone::Error,
-                    actions: vec![crate::toast::Action {
+                crate::toast::Toast::new(
+                    "The terminal is a plugin, and it is off",
+                    crate::toast::Tone::Error,
+                    vec![crate::toast::Action {
                         label: "Open plugins".into(),
                         command: "ui.settings".into(),
                         args: serde_json::json!({ "page": "plugins" }),
                     }],
-                },
+                ),
                 cx,
             );
             return;

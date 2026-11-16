@@ -19,6 +19,7 @@ use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
 use crate::settings::{STARTUP, SettingSpec};
+use crate::words::Words;
 use crate::workspace::{Pane, PaneId, Selection, StepLeft, TabId, WindowId};
 
 /// Application data: the windows shown and their tabs, as they were
@@ -210,7 +211,8 @@ pub struct TabInfo {
     pub id: TabId,
     /// The window it is in.
     pub window: WindowId,
-    pub title: String,
+    /// What it is called (`App::location_title`): English to agents.
+    pub title: Words,
     pub panes: Vec<PaneInfo>,
     pub active: PaneId,
     /// Shown in its window.
@@ -242,16 +244,17 @@ impl App {
     /// the sidebar place it is, under the name the user gave it there
     /// (`Registry::place_title`), else the folder's name, else what its
     /// provider calls it (`LocationProvider::title`), else the text after
-    /// the scheme.
-    pub fn location_title(&self, location: &Location) -> String {
+    /// the scheme. Said where it is shown, in English to agents (ADR-139,
+    /// 7); a name, a path or a location's text is as written.
+    pub fn location_title(&self, location: &Location) -> Words {
         if let Some(title) = self.registry.place_title(location) {
-            return title.say();
+            return title;
         }
         if let Some(path) = location.path() {
-            return path.file_name().map_or_else(
+            return Words::as_written(path.file_name().map_or_else(
                 || path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
-            );
+            ));
         }
         if let Some(title) = self
             .provider(&location.scheme)
@@ -260,11 +263,11 @@ impl App {
             return title;
         }
         let rest = location.rest.trim();
-        if rest.is_empty() {
+        Words::as_written(if rest.is_empty() {
             location.scheme.to_string()
         } else {
             rest.to_owned()
-        }
+        })
     }
 
     /// Show tab `tab`: the panes of the tab left let go of their listings,
@@ -537,7 +540,7 @@ impl App {
     /// Close tab `tab`; the last tab of a window stays. Returns the serial
     /// that reopens it and its title, or `None` when it was its window's
     /// last tab.
-    pub fn close_tab(&self, tab: TabId) -> anyhow::Result<Option<(u64, String)>> {
+    pub fn close_tab(&self, tab: TabId) -> anyhow::Result<Option<(u64, Words)>> {
         let (window, index, closed, panes, was_shown) = {
             let mut ws = self.workspace.write();
             let window = ws
@@ -604,7 +607,7 @@ impl App {
         index: usize,
         tab: &crate::workspace::Tab,
         panes: &std::collections::HashMap<PaneId, &crate::workspace::Pane>,
-    ) -> (Option<ClosedTab>, String) {
+    ) -> (Option<ClosedTab>, Words) {
         let in_order: Vec<&crate::workspace::Pane> = tab
             .panes
             .iter()
@@ -629,8 +632,10 @@ impl App {
             .get(active)
             .or_else(|| in_order.first())
             .and_then(|p| p.shown())
-            .map(|location| self.location_title(location))
-            .unwrap_or_default();
+            .map_or_else(
+                || Words::as_written(""),
+                |location| self.location_title(location),
+            );
         let record = (!record.is_empty()).then(|| ClosedTab {
             index,
             active: active.min(record.len() - 1),
@@ -898,9 +903,7 @@ impl App {
             .map(|(id, window, panes, active, shown, location)| TabInfo {
                 id,
                 window,
-                title: location
-                    .map(|l| self.location_title(&l))
-                    .unwrap_or_default(),
+                title: location.map_or_else(|| Words::as_written(""), |l| self.location_title(&l)),
                 panes,
                 active,
                 shown,
@@ -1440,7 +1443,8 @@ pub(crate) fn register(app: &App) {
             if let Some((serial, title)) = app.close_tab(tab)? {
                 app.notify_with_action(
                     NotifyLevel::Info,
-                    format!("Closed tab “{title}”"),
+                    // Said as the window shows it.
+                    format!("Closed tab “{}”", title.say()),
                     "Undo",
                     Invocation::with_args("tab.reopen", &serde_json::json!({ "closed": serial })),
                 );

@@ -193,7 +193,7 @@ pub fn background_button(
 ) -> Button {
     Button::new(id, "layers", "Map background", command)
         .args(serde_json::json!({ "kind": kind }))
-        .label(backgrounds.label().to_owned())
+        .label(backgrounds.label())
 }
 
 /// The rows of the popup that chooses the background, in a preview or a
@@ -208,6 +208,7 @@ pub fn background_rows(
     let mut list = div().flex().flex_col().gap_1();
     for (value, label) in &backgrounds.choices {
         let chosen = *value == backgrounds.current;
+        let label = label.say();
         list = list.child(
             Button::new(
                 format!("map-background-{value}"),
@@ -216,7 +217,7 @@ pub fn background_rows(
                 "settings.apply",
             )
             .args(serde_json::json!({ "changes": { backgrounds.setting.clone(): value } }))
-            .label(label.clone())
+            .label(label)
             .active(chosen)
             .menu()
             .render(shell, cx),

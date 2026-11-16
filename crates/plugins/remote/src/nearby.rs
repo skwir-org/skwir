@@ -146,7 +146,7 @@ impl LocationProvider for Provider {
         Ok(Open::start(location.clone(), &ctx))
     }
 
-    fn title(&self, _location: &Location) -> Option<String> {
+    fn title(&self, _location: &Location) -> Option<skwir_core::words::Words> {
         Some("Nearby".into())
     }
 

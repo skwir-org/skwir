@@ -305,7 +305,10 @@ fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
             .pane_location(pane)
             .map(|l| l.to_string())
             .unwrap_or_default();
-        format!("{location}\0{typed:?}")
+        // What the chips say is said once: read again when it would say
+        // otherwise.
+        let said = skwir_core::words::revision();
+        format!("{location}\0{typed:?}\0{said}")
     };
     if shell.ui().filters.key == key {
         return;
@@ -364,7 +367,7 @@ fn own_chip(crumb: &Crumb) -> Chip {
                 .collect(),
         ),
         Some(tag) => ("not_tag", "Not tagged", tag.name.clone(), Vec::new()),
-        None => ("own", "", crumb.label.clone(), Vec::new()),
+        None => ("own", "", crumb.label.say(), Vec::new()),
     };
     Chip {
         id: id.to_owned(),

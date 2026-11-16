@@ -2737,7 +2737,8 @@ fn an_sftp_only_server_copies_through_sftp_sessions() {
         .executor
         .execute_blocking(&copies(&entries, &into), app.lifetime());
     assert!(
-        up.error.is_some_and(|e| e.contains("already there")),
+        up.error
+            .is_some_and(|e| e.english().contains("already there")),
         "the taken name stops the plan"
     );
     assert_eq!(sshfs.rsync().made(), 0, "no rsync to run");
@@ -4294,7 +4295,7 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
         app.lifetime(),
     );
     // Told as its close said, never as a source gone.
-    let said = copied.error.unwrap_or_default();
+    let said = copied.error.map(|e| e.english()).unwrap_or_default();
     assert!(
         said.contains("refused it as it was closed") && !said.contains("not there any more"),
         "its server refused it: the copy is not done ({said})"

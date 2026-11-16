@@ -13,6 +13,7 @@
 //! kind of location needs no branch here.
 
 use skwir_core::location::{Crumb, EmptyState, Location, Trail, Verbs};
+use skwir_core::words::Words;
 
 use crate::shell::Shell;
 
@@ -23,13 +24,15 @@ pub struct Shown {
     location: String,
     /// What it is called, as its tab says it (`App::location_title`):
     /// the window's title and the name assistive technology gives the
-    /// pane's entries.
+    /// pane's entries. Said when read: read again when what words say
+    /// moves, as `names` does (`Roots`, keyed on `words::revision`).
     pub title: gpui::SharedString,
     pub trail: Option<Trail>,
     pub verbs: Verbs,
     /// The glyph that stands for it (`LocationProvider::icon`).
     pub icon: Option<&'static str>,
-    /// What it says when it lists nothing (`LocationProvider::empty_state`).
+    /// What it says when it lists nothing (`LocationProvider::empty_state`),
+    /// said where it is drawn.
     pub empty: Option<EmptyState>,
     /// It is a folder: what it lists is in it (no Folder column).
     pub folder: bool,
@@ -40,7 +43,8 @@ pub struct Shown {
     pub tags_shown: Vec<String>,
     /// The trail's places that take files dropped on them (`Verbs::drop`).
     takes_drops: Vec<Location>,
-    /// The sidebar's arrangement they were named under (`Roots::generation`).
+    /// The sidebar's arrangement they were named under, and what words
+    /// said then (`Roots::generation`).
     names: u64,
 }
 
@@ -93,7 +97,7 @@ pub fn sync(shell: &mut Shell) {
             .find(|p| p.is_its_location() && p.location.same_place(&crumb.location))
             .and_then(|place| registry.user_title(&place))
         {
-            crumb.label = title;
+            crumb.label = Words::as_written(title);
         }
     }
     let takes_drops = trail
@@ -112,7 +116,7 @@ pub fn sync(shell: &mut Shell) {
         .unwrap_or_default();
     let title = location
         .as_ref()
-        .map(|location| shell.app.location_title(location))
+        .map(|location| shell.app.location_title(location).say())
         .unwrap_or_default()
         .into();
     shell.ui_mut().place = Shown {
@@ -145,9 +149,12 @@ pub fn segments(trail: &Trail, roots: &[crate::sidebar::Root]) -> Vec<Crumb> {
         .base
         .as_deref()
         .map(|base| {
+            // The folders' names, the root's as the sidebar says it.
             crate::address::crumbs(base, roots)
                 .into_iter()
-                .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
+                .map(|(label, path)| {
+                    Crumb::new(Words::as_written(label), Location::from_path(path))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -178,7 +185,7 @@ mod tests {
         };
         let labels: Vec<String> = segments(&trail, &[home])
             .into_iter()
-            .map(|c| c.label)
+            .map(|c| c.label.english())
             .collect();
         assert_eq!(labels, ["Home", "Photos", "Tags", "Places"]);
         assert_eq!(trail.parent(), Some(Location::new("tags", "/?in=x")));

@@ -3080,7 +3080,7 @@ mod tests {
                     "{} {}: {}",
                     spec.name,
                     form.args,
-                    form.title
+                    form.title.english()
                 );
             }
         }

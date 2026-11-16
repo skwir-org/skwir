@@ -100,6 +100,9 @@ toast_already_swapped = { $first } and { $second } were already swapped
 
 toast_already_there = { $name } was already there
 
+# title: the action an undo found taken back already (copy 3 items to Docs).
+toast_already_undone = Already undone: { $title }
+
 # Said after what an action did (Copied 3 items to Docs; …).
 toast_also_as_asked = { $name } was already as asked
 
@@ -182,6 +185,9 @@ toast_copied = { $count ->
 # why: what stopped it, as the system or the step said it (permission denied).
 toast_copy_failed = Couldn't copy { $name } to { $folder }: { $why }
 
+# what: what the step said it would do (extract “a.zip” to Downloads); why: what stopped it, as the system or the step said it (permission denied).
+toast_could_not = Couldn't { $what }: { $why }
+
 # why: what stopped it, as the system or the step said it (permission denied).
 toast_create_failed = Couldn't create { $name }: { $why }
 
@@ -212,7 +218,16 @@ toast_done_and_found = { $done }; { $found }
 # done: what an action did; said: what its steps said after (Fold each sheet in half).
 toast_done_then_said = { $done }. { $said }
 
+# title: the action, capitalised (Copy 3 items to Docs); error: what stopped it, as the system or the step said it (permission denied).
+toast_failed = { $title }: { $error }
+
 toast_folder_already_there = Folder { $name } was already there
+
+# said: what the action's answer says, its server not answering (Couldn't copy “a.txt” to Docs: …).
+toast_goes_on = { $said }. It goes on by itself once the server answers again
+
+# An answer, then what was said while it was shown (Renamed “a.txt” to “.a.txt”. Hidden files are shown, “.a.txt” among them).
+toast_joined = { $said }. { $then }
 
 toast_link_already_in = { $count ->
         [1] A link to { $name } was already in { $folder }
@@ -312,8 +327,14 @@ toast_trashed = { $count ->
        *[other] Moved { $count } items to Trash
     }
 
+# title: the action an undo took back (copy 3 items to Docs).
+toast_undid = Undid: { $title }
+
 # A button on what an action did: take it back.
 toast_undo = Undo
+
+# action: the action asked before it that touches what it does, by its title (copy to /media/stick).
+toast_waits_for = Waits for { $action }
 
 toast_waits_for_disk = Waits for the disk
 

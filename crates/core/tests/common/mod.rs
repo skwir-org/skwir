@@ -67,7 +67,7 @@ pub fn apply(app: &App, plan: &Plan) -> skwir_core::op::ExecResult {
     assert!(
         r.error.is_none(),
         "plan `{}` failed: {:?}",
-        plan.title,
+        plan.title.english(),
         r.error
     );
     r

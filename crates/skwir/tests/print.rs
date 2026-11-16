@@ -225,8 +225,8 @@ fn a_booklet_saved_folds_two_pages_to_a_landscape_side() {
     let result = app.executor.execute_blocking(&plan, app.lifetime());
     if result
         .error
-        .as_deref()
-        .is_some_and(|error| error.contains("needs PDFium"))
+        .as_ref()
+        .is_some_and(|error| error.english().contains("needs PDFium"))
     {
         eprintln!("skipped: no PDF helper or PDFium to fold with");
         return;
@@ -287,8 +287,8 @@ fn a_booklet_of_four_a_side_is_saved_on_the_paper_asked() {
     let result = app.executor.execute_blocking(&plan, app.lifetime());
     if result
         .error
-        .as_deref()
-        .is_some_and(|error| error.contains("needs PDFium"))
+        .as_ref()
+        .is_some_and(|error| error.english().contains("needs PDFium"))
     {
         eprintln!("skipped: no PDF helper or PDFium to fold with");
         return;
@@ -401,8 +401,8 @@ fn several_files_are_saved_each_as_a_pdf_or_together_as_one() {
     assert_eq!(steps, 1);
     if result
         .error
-        .as_deref()
-        .is_some_and(|error| error.contains("needs PDFium"))
+        .as_ref()
+        .is_some_and(|error| error.english().contains("needs PDFium"))
     {
         eprintln!("skipped: no PDF helper or PDFium to join with");
         return;
@@ -1060,8 +1060,8 @@ fn a_step_rebuilt_from_its_data_reaches_its_app() {
     assert!(
         refused
             .error
-            .as_deref()
-            .is_some_and(|error| error.contains("print plugin on")),
+            .as_ref()
+            .is_some_and(|error| error.english().contains("print plugin on")),
         "{:?}",
         refused.error
     );

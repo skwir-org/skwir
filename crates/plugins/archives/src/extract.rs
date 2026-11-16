@@ -17,7 +17,7 @@ use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::{
     self, Cancelled, Change, EntryRef, Made, MadeItem, MadeTree, Operation, Placing, Plan,
-    StepContext, StepStatus, Unanswered, Words,
+    StepContext, StepStatus, Tenses, Unanswered,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
@@ -185,16 +185,16 @@ impl op::Effect for Extract {
         let words = if self.merge.is_some() {
             // Into the folder there, as merged.
             let into = name.to_string_lossy();
-            Words {
-                will: format!("extract “{archive}” into {into}"),
-                did: format!("extracted “{archive}” into {into}"),
-                already: format!("“{archive}” was already extracted into {into}"),
+            Tenses {
+                will: format!("extract “{archive}” into {into}").into(),
+                did: format!("extracted “{archive}” into {into}").into(),
+                already: Some(format!("“{archive}” was already extracted into {into}").into()),
             }
         } else {
-            Words {
-                will: format!("extract “{archive}” to {into}"),
-                did: format!("extracted “{archive}” to {into}"),
-                already: format!("“{archive}” was already extracted to {into}"),
+            Tenses {
+                will: format!("extract “{archive}” to {into}").into(),
+                did: format!("extracted “{archive}” to {into}").into(),
+                already: Some(format!("“{archive}” was already extracted to {into}").into()),
             }
         };
         Change::Create {

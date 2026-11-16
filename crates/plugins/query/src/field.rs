@@ -85,11 +85,14 @@ fn scope_said(app: &App, scope: &Location, ask: &Ask) -> String {
         Some(path) if Some(&path) == skwir_core::os_path::home().as_ref() => {
             "everywhere in Home".to_owned()
         }
-        Some(_) => format!("in {} and its folders", app.location_title(scope)),
+        Some(_) => format!("in {} and its folders", app.location_title(scope).say()),
         None if searched_place(app, scope, ask).is_some_and(|(_, within)| within) => {
-            format!("among every file within {}", app.location_title(scope))
+            format!(
+                "among every file within {}",
+                app.location_title(scope).say()
+            )
         }
-        None => format!("among the files in {}", app.location_title(scope)),
+        None => format!("among the files in {}", app.location_title(scope).say()),
     }
 }
 
@@ -330,7 +333,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
             seen.push(other.clone());
             let title = match other.path() {
                 Some(path) if path.parent().is_none() => "Whole disk".to_owned(),
-                _ => app.location_title(&other),
+                _ => app.location_title(&other).say(),
             };
             rows.push(
                 Suggestion::new(Section::SearchIn, title)
@@ -429,7 +432,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| recent.expr.clone());
         let mut row = Suggestion::new(Section::Recent, words.clone())
-            .detail(format!("in {}", app.location_title(&scope)))
+            .detail(format!("in {}", app.location_title(&scope).say()))
             .icon("recent")
             .rank(i32::try_from(rank).unwrap_or(0))
             .runs(search(app, &words, &scope, &as_it_was));
@@ -452,7 +455,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
                 (Location::new(crate::SCHEME, saved.expr), None, detail)
             }
             Some(at) => {
-                let detail = format!("{} in {}", saved.expr, app.location_title(&at));
+                let detail = format!("{} in {}", saved.expr, app.location_title(&at).say());
                 (at, Some(saved.expr), detail)
             }
         };

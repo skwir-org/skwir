@@ -252,22 +252,63 @@ impl Topic {
         Topic::Skwir,
     ];
 
-    /// Its heading.
-    pub fn title(self) -> &'static str {
+    /// Its heading, as F1's list of keys and the keyboard page head the
+    /// commands about it.
+    pub fn title(self) -> Words {
+        use crate::words;
         match self {
-            Topic::Go => "Going places",
-            Topic::Select => "Selecting",
-            Topic::Files => "Files",
-            Topic::Find => "Finding",
-            Topic::Notes => "Tags and notes",
-            Topic::Tabs => "Tabs and panes",
-            Topic::View => "Views and panels",
-            Topic::Preview => "Previews",
-            Topic::Player => "Playing",
-            Topic::Terminal => "Terminal",
-            Topic::Places => "Places and servers",
-            Topic::Window => "The window",
-            Topic::Skwir => "Skwir",
+            Topic::Go => words!(
+                topic_go = "Going places",
+                note = "A heading of the list of keys: going to folders and places, history, the address."
+            ),
+            Topic::Select => words!(
+                topic_select = "Selecting",
+                note = "A heading of the list of keys: the cursor and the selection."
+            ),
+            Topic::Files => words!(
+                topic_files = "Files",
+                note = "A heading of the list of keys: doing something to files (copying, renaming, trashing)."
+            ),
+            Topic::Find => words!(
+                topic_find = "Finding",
+                note = "A heading of the list of keys: searching and filtering."
+            ),
+            Topic::Notes => words!(
+                topic_notes = "Tags and notes",
+                note = "A heading of the list of keys: tags, ratings and comments."
+            ),
+            Topic::Tabs => words!(
+                topic_tabs = "Tabs and panes",
+                note = "A heading of the list of keys: windows, tabs and the split."
+            ),
+            Topic::View => words!(
+                topic_view = "Views and panels",
+                note = "A heading of the list of keys: how files are shown, and which panels are."
+            ),
+            Topic::Preview => words!(
+                topic_preview = "Previews",
+                note = "A heading of the list of keys: inside a file's preview."
+            ),
+            Topic::Player => words!(
+                topic_player = "Playing",
+                note = "A heading of the list of keys: the audio and video player."
+            ),
+            Topic::Terminal => words!(
+                topic_terminal = "Terminal",
+                note = "A heading of the list of keys: the terminal panel."
+            ),
+            Topic::Places => words!(
+                topic_places = "Places and servers",
+                note = "A heading of the list of keys: the sidebar's places, drives and servers."
+            ),
+            Topic::Window => words!(
+                topic_window = "The window",
+                note = "A heading of the list of keys: moving about the window, its menus and dialogs."
+            ),
+            Topic::Skwir => words!(
+                topic_skwir = "Skwir",
+                note = "A heading of the list of keys: the program itself (settings, plugins, help, quitting). Skwir is its name."
+            ),
         }
     }
 }
@@ -462,16 +503,18 @@ impl Serialize for ArgsSchema {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Form {
     pub args: serde_json::Value,
-    pub title: String,
+    /// What it is called, said where it is shown; in English to agents
+    /// and scripts (ADR-139, 7).
+    pub title: Words,
     /// What it shares with the forms of its command that only go
     /// elsewhere: Extend the selection up, down, to the first item are
     /// "Extend the selection". F1 lists a family's keys on one row.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub family: Option<String>,
+    pub family: Option<Words>,
 }
 
 impl Form {
-    pub fn new(args: serde_json::Value, title: impl Into<String>) -> Self {
+    pub fn new(args: serde_json::Value, title: impl Into<Words>) -> Self {
         Form {
             args,
             title: title.into(),
@@ -481,7 +524,7 @@ impl Form {
 
     /// One of `family` (see [`Form::family`]).
     #[must_use]
-    pub fn in_family(mut self, family: impl Into<String>) -> Self {
+    pub fn in_family(mut self, family: impl Into<Words>) -> Self {
         self.family = Some(family.into());
         self
     }
@@ -591,7 +634,7 @@ impl CommandSpec {
     /// said after it, so two ways to run it never read alike.
     pub fn title_for(&self, args: &serde_json::Value) -> String {
         match self.form(args) {
-            Some(form) => form.title.clone(),
+            Some(form) => form.title.say(),
             None => with_args(&self.title.say(), args),
         }
     }

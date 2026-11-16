@@ -159,7 +159,7 @@ pub enum Asker {
 pub struct ClashQuestion {
     pub id: u64,
     /// The plan's title: "copy 3 items to folder".
-    pub title: String,
+    pub title: crate::words::Words,
     pub clashes: Vec<op::clash::Clash>,
 }
 
@@ -616,11 +616,14 @@ impl App {
             // with no window up, no one is asked, and nothing is copied.
             let asking = Arc::downgrade(&app);
             app.executor.set_room_asker(Some(Arc::new(
-                move |title: &str, short: &op::room::Short| match asking.upgrade() {
+                move |title: &crate::words::Words, short: &op::room::Short| match asking.upgrade() {
                     Some(app) if app.window_shown() => {
+                        // For the window: its title said here, in a
+                        // sentence that is text until it is a message.
                         let detail = format!(
-                            "{title}: a drive, a network share above all, may say it has \
-                             less room than it has. Copy anyway, or cancel and make room."
+                            "{}: a drive, a network share above all, may say it has \
+                             less room than it has. Copy anyway, or cancel and make room.",
+                            title.say()
                         );
                         app.ask_as(Asker::Room, short.said(), detail).1
                     }
@@ -633,10 +636,10 @@ impl App {
             // of them; with no window up, no one is asked.
             let asking = Arc::downgrade(&app);
             app.executor.set_clash_asker(Some(Arc::new(
-                move |title: &str, clashes: &[op::clash::Clash]| {
+                move |title: &crate::words::Words, clashes: &[op::clash::Clash]| {
                     let app = asking.upgrade()?;
                     app.window_shown()
-                        .then(|| app.ask_clashes(title, clashes.to_vec()))
+                        .then(|| app.ask_clashes(title.clone(), clashes.to_vec()))
                 },
             )));
             // A step that needs what only the user knows (an archive's
@@ -1450,10 +1453,10 @@ impl App {
     }
 
     /// What `location` is called among the entries of its `parent`: a
-    /// folder's name, or a place's label in the place before it in its
-    /// trail (as the columns view marks the way down). `None` when its
-    /// parent is no place it is listed in (the folder a tag's trail starts
-    /// from, the folder a search looks in).
+    /// folder's name, or a place's entry name in the place before it in
+    /// its trail (`Crumb::name`, as the columns view marks the way down).
+    /// `None` when its parent is no place it is listed in (the folder a
+    /// tag's trail starts from, the place a search looks in).
     pub fn name_in_parent(&self, location: &Location) -> Option<std::ffi::OsString> {
         if let Some(path) = location.path() {
             return path.file_name().map(ToOwned::to_owned);
@@ -1462,7 +1465,7 @@ impl App {
         let [.., _, last] = trail.crumbs.as_slice() else {
             return None;
         };
-        Some(last.label.clone().into())
+        last.name.clone().map(Into::into)
     }
 
     /// The entry of `above` that the way down to `location` goes
@@ -1562,7 +1565,7 @@ impl App {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
-                crate::location::Crumb::new(name, Location::from_path(dir))
+                crate::location::Crumb::entry(name, Location::from_path(dir))
             }));
             return Ok(places);
         }
@@ -2749,7 +2752,7 @@ impl App {
     /// unanswered if the window closes.
     pub fn ask_clashes(
         &self,
-        title: impl Into<String>,
+        title: impl Into<crate::words::Words>,
         clashes: Vec<op::clash::Clash>,
     ) -> crossbeam_channel::Receiver<Option<op::clash::Answer>> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -5291,7 +5294,7 @@ mod builtin {
                     (None, None) => app.executor.undo_blocking(&cancel),
                 }
                 .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
-                Ok(replayed("undone", result.entry_title.as_deref(), &result))
+                Ok(replayed("undone", &result.entry_title, &result))
             },
         );
 
@@ -5318,7 +5321,7 @@ mod builtin {
                     None => app.executor.redo_blocking(&cancel),
                 }
                 .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
-                Ok(replayed("redone", result.entry_title.as_deref(), &result))
+                Ok(replayed("redone", &result.entry_title, &result))
             },
         );
 
@@ -5353,7 +5356,7 @@ mod builtin {
                     .executor
                     .retry_blocking(plan, &app.lifetime().child())
                     .ok_or_else(|| anyhow::anyhow!("nothing to retry"))?;
-                Ok(replayed("retried", title.as_deref(), &result))
+                Ok(replayed("retried", &title, &result))
             },
         );
 

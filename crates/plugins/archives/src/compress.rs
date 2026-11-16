@@ -15,8 +15,8 @@ use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{EntryKind, FileId};
 use skwir_core::fs::{Dir, stat, xattr};
 use skwir_core::op::{
-    self, Cancelled, Change, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Unanswered,
-    Words, clash,
+    self, Cancelled, Change, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Tenses,
+    Unanswered, clash,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
@@ -159,10 +159,10 @@ impl op::Effect for Compress {
         Change::Create {
             path: self.target(),
             directory: false,
-            words: Some(Words {
-                will: format!("compress {what} as “{archive}”"),
-                did: format!("compressed {what} as “{archive}”"),
-                already: format!("“{archive}” already held {what}"),
+            words: Some(Tenses {
+                will: format!("compress {what} as “{archive}”").into(),
+                did: format!("compressed {what} as “{archive}”").into(),
+                already: Some(format!("“{archive}” already held {what}").into()),
             }),
         }
     }

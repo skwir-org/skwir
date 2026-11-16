@@ -20,7 +20,10 @@ fn app(tmp: &Path) -> Arc<App> {
 fn run(app: &App, op: Box<dyn skwir_core::op::Operation>) -> Option<String> {
     let mut plan = Plan::new("op");
     plan.steps.push(op);
-    app.executor.execute_blocking(&plan, app.lifetime()).error
+    app.executor
+        .execute_blocking(&plan, app.lifetime())
+        .error
+        .map(|e| e.english())
 }
 
 /// A sidecar as `TagSpaces` documents it.

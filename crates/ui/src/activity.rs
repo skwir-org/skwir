@@ -30,6 +30,7 @@ use gpui::{
     AnyElement, Context, FocusHandle, ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
 use skwir_core::op::{PlanId, Transfer};
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::adaptive::Fit;
@@ -71,7 +72,8 @@ pub struct Ended {
     pub key: u64,
     /// The plan it answers; `None` for any other answer.
     pub plan: Option<PlanId>,
-    pub text: String,
+    /// What it said, whole (`Toast::said`), said where its row is drawn.
+    pub text: Words,
     pub tone: Tone,
     /// Its Undo, or Retry for one an error stopped (never Redo: what it
     /// would redo moves on); another answer's buttons as its toast had.
@@ -81,21 +83,21 @@ pub struct Ended {
 
 impl Ended {
     /// The answer of `plan`, as `text`, `tone` and `actions` say it.
-    pub(crate) fn of_plan(plan: PlanId, text: &str, tone: Tone, actions: &[Action]) -> Ended {
+    pub(crate) fn of_plan(plan: PlanId, text: &Words, tone: Tone, actions: &[Action]) -> Ended {
         let actions = actions
             .iter()
             .filter(|action| action.command != "redo")
             .cloned()
             .collect();
-        Ended::new(Some(plan), text.to_owned(), tone, actions)
+        Ended::new(Some(plan), text.clone(), tone, actions)
     }
 
     /// Any other answer, as its toast says it.
     pub(crate) fn said(toast: &Toast) -> Ended {
-        Ended::new(None, toast.text.clone(), toast.tone, toast.actions.clone())
+        Ended::new(None, toast.said(), toast.tone, toast.actions.clone())
     }
 
-    fn new(plan: Option<PlanId>, text: String, tone: Tone, actions: Vec<Action>) -> Ended {
+    fn new(plan: Option<PlanId>, text: Words, tone: Tone, actions: Vec<Action>) -> Ended {
         Ended {
             key: NEXT_ENDED.fetch_add(1, Ordering::Relaxed),
             plan,
@@ -129,17 +131,17 @@ pub(crate) fn keep(earlier: &mut VecDeque<Ended>, ended: Ended) {
 #[derive(Clone, Debug)]
 pub struct Stopped {
     pub plan: PlanId,
-    pub title: String,
+    pub title: Words,
     /// Whether it could be retried when it stopped: it is no longer said
     /// once it cannot be (retried, from any surface).
     retries: bool,
 }
 
 impl Stopped {
-    pub(crate) fn new(plan: PlanId, title: &str, retries: bool) -> Stopped {
+    pub(crate) fn new(plan: PlanId, title: &Words, retries: bool) -> Stopped {
         Stopped {
             plan,
-            title: title.to_owned(),
+            title: title.clone(),
             retries,
         }
     }
@@ -418,7 +420,7 @@ pub(crate) fn announced(
     plan: PlanId,
 ) -> Option<Announced> {
     if let Some((running, t)) = under.plans.iter().find(|(r, _)| r.plan == plan) {
-        let title = capitalized(&running.title);
+        let title = capitalized(&running.title.say());
         let doing = if getting_ready(running, t) {
             "getting ready…".to_owned()
         } else {
@@ -493,7 +495,7 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     };
     let how = how(summary, sending_files);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => Some(capitalized(&running.title)),
+        ([(running, _)], []) => Some(capitalized(&running.title.say())),
         ([], [task]) => Some(capitalized(&task.title)),
         // Only waiting: what waits first, and what for (never silent).
         ([], []) => under
@@ -1263,7 +1265,7 @@ pub fn strip(
             // Stopped by an error, nothing else under way: said until
             // seen, retried or dismissed.
             Some(stopped) => {
-                let title = capitalized(&stopped.title);
+                let title = capitalized(&stopped.title.say());
                 (
                     [
                         format!("{title}: stopped"),
@@ -2026,7 +2028,7 @@ fn earlier_row(
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_body(),
-                    ended.text.clone(),
+                    ended.text.say(),
                 ))
                 // Said whole, wrapped: the keyboard's user reads it here.
                 .children(held.clone().map(|why| {
@@ -2164,7 +2166,7 @@ fn progress_card(
         .id(("activity-card", plan.0))
         .role(gpui::Role::ProgressIndicator)
         .when(a11y, |d| {
-            d.aria_label(capitalized(&running.title))
+            d.aria_label(capitalized(&running.title.say()))
                 .aria_numeric_value(f64::from(fraction) * 100.)
                 .aria_min_numeric_value(0.)
                 .aria_max_numeric_value(100.)
@@ -2190,7 +2192,7 @@ fn progress_card(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis(),
-                    capitalized(&running.title),
+                    capitalized(&running.title.say()),
                     into,
                 ))
                 .child(
@@ -2646,17 +2648,16 @@ mod tests {
     #[test]
     fn every_answer_is_kept_in_earlier_and_a_repeat_is_one() {
         use crate::toast::{Toast, Tone};
-        let said = |text: &str| {
-            Ended::said(&Toast {
-                text: text.to_owned(),
-                tone: Tone::Error,
-                actions: Vec::new(),
-            })
-        };
+        let said = |text: &str| Ended::said(&Toast::new(text, Tone::Error, Vec::new()));
         let mut earlier = std::collections::VecDeque::new();
         keep(
             &mut earlier,
-            Ended::of_plan(PlanId(3), "Copied “it's.txt” to Stick", Tone::Success, &[]),
+            Ended::of_plan(
+                PlanId(3),
+                &"Copied “it's.txt” to Stick".into(),
+                Tone::Success,
+                &[],
+            ),
         );
         keep(&mut earlier, said("The printer refused “it's.pdf”"));
         keep(&mut earlier, said("The printer refused “it's.pdf”"));
@@ -2668,7 +2669,10 @@ mod tests {
             keep(&mut earlier, said(&format!("message {n}")));
         }
         assert_eq!(earlier.len(), EARLIER);
-        assert_eq!(earlier[0].text, format!("message {}", EARLIER - 1));
+        assert_eq!(
+            earlier[0].text.english(),
+            format!("message {}", EARLIER - 1)
+        );
     }
 
     /// The button the keyboard reaches is brought into view by the least

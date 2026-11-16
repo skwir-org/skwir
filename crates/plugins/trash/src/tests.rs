@@ -122,7 +122,7 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     // One place in the address, which holds the trashed folders: the
     // chevron after it lists them.
     let trail = app.trail(&Location::parse("trash:")).unwrap();
-    assert_eq!(trail.crumbs[0].label, "Trash");
+    assert_eq!(trail.crumbs[0].label.english(), "Trash");
     assert!(trail.holds_places);
 
     let restore = plan(
@@ -400,7 +400,7 @@ fn a_trashed_folder_is_browsed_in_the_trash_and_restored_a_file_at_a_time() {
             .expect("a trashed folder stays in the trash")
     };
     let trail = app.trail(&inside).unwrap();
-    let labels: Vec<&str> = trail.crumbs.iter().map(|c| c.label.as_str()).collect();
+    let labels: Vec<String> = trail.crumbs.iter().map(|c| c.label.english()).collect();
     assert_eq!(labels, ["Trash", "folder"]);
     assert!(trail.one_folder);
     assert!(app.verbs(&inside).restore.is_some());

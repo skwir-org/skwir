@@ -19099,3 +19099,57 @@ plugins_toggle test pass; `just words --check`.
 **Checked:** `cargo nextest run -p skwir-core` (859 passed), with a new
 test of a chain said in the pseudo-language; clippy on skwir-core;
 `cargo check --tests` of the default members.
+
+## 2026-11-16: What takes text takes words (ADR-139, step E1)
+
+Two agents made the types that still took text take `Words`, so the
+conversion of each crate can put messages there. The English is
+unchanged.
+
+- **Plans and their runs:**
+  - `Plan::title` and `undoes`;
+  - `op::Words` is now `op::Tenses`, its `already` an `Option`, an empty
+    one from an older plugin read as none;
+  - the executor's events, results, History rows and waits;
+  - errors through `Words::of_error`, and a step's reason through
+    `of_error_from`, from the link it begins at;
+  - the undo's title, `op_undo_title`, and the redo's, `op_redo_title`.
+- **The toast:**
+  - its text is `Words`, said where it is drawn;
+  - what was said after it (a joined note, "goes on once the server
+    answers") is data on the toast, so `joined` and `take_plans` no
+    longer read its text back;
+  - seven new messages place titles and errors.
+- **Locations:**
+  - `Crumb`, `EmptyState`, `Tool` and `LocationProvider::title`;
+  - `App::location_title` and the tabs' titles;
+  - `Form` titles and families;
+  - `Topic` titles, 13 messages;
+  - choice labels, with a new `SettingSpec::choice_words`.
+- **Three readings of words were made data:**
+  - going up selects the way back down by `Crumb::name`, not by the
+    crumb's label (a new test in `core/tests/places.rs`);
+  - the tags plugin completes from names;
+  - the trash sorts its places by name.
+- **Left for the conversion:**
+  - each `capitalized(&title.say())` (toast, Activity, History, the
+    desktop notices, Quit);
+  - sentences in core that embed a title, kept English and whole;
+  - F1's families and two keys pages that merge entries by their said
+    title;
+  - a search's title, which says its place inside text as written.
+
+**The trap was checked:** in a copy of the tree with `Display` and
+`Error` removed from `Words`, everything builds but the words module's
+own tests, so no title reaches the window as silent English.
+
+**Checked:**
+- the default members' tests: 3,457 + 234 passed, the one failure fixed
+  (a test compared a title's structure: it compares its English now);
+- clippy `-D warnings` on the default members;
+- `cargo fmt --check` and `just words --check`.
+
+**Disk:** the full test build no longer fits after a core change. With
+the user's leave, `target/cross`, `macos`, `windows`, `package` and
+`dist` were deleted (about 18 GB on disk); the libraries' tests and the
+binary's now run apart.

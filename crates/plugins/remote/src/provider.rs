@@ -66,10 +66,11 @@ impl LocationProvider for Provider {
         Ok(open)
     }
 
-    fn title(&self, location: &Location) -> Option<String> {
+    /// The server's label, as the user, the tool or the address names it.
+    fn title(&self, location: &Location) -> Option<skwir_core::words::Words> {
         Address::of_location(location)
             .ok()
-            .map(|a| self.remotes.label_of(&a))
+            .map(|a| skwir_core::words::Words::as_written(self.remotes.label_of(&a)))
     }
 
     /// The servers known, as the server is typed (`sftp://me@ho`): those

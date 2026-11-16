@@ -179,7 +179,7 @@ fn a_folder_made_an_archive_of_each_format_is_extracted_back_as_it_was() {
             "archive.compress",
             &json!({ "entries": [album], "dest": made_in, "format": format.name() }),
         );
-        assert_eq!(plan.title, "compress “Synthetic album l'été”");
+        assert_eq!(plan.title.english(), "compress “Synthetic album l'été”");
         applied(&app, &plan);
         let archive = made_in.join(format!("Synthetic album l'été{}", format.extension()));
         assert!(archive.is_file(), "{}", archive.display());
@@ -579,7 +579,7 @@ fn a_password_is_asked_twice_to_make_an_archive_and_once_to_extract_it() {
         ),
         headless.lifetime(),
     );
-    let error = result.error.expect("not extracted");
+    let error = result.error.expect("not extracted").english();
     assert!(error.contains("asked in Skwir's window"), "{error}");
 }
 
@@ -1060,7 +1060,7 @@ fn replace_never_puts_in_the_trash_what_it_reads() {
     let ExecEvent::Finished { error, .. } = ended else {
         panic!("{ended:?}")
     };
-    let error = error.expect("refused");
+    let error = error.expect("refused").english();
     assert!(error.contains("is among what it compresses"), "{error}");
     assert_eq!(std::fs::read(&old).unwrap(), before, "never trashed");
 
@@ -1117,7 +1117,7 @@ fn replace_never_puts_in_the_trash_what_it_reads() {
     let ExecEvent::Finished { error, .. } = ended else {
         panic!("{ended:?}")
     };
-    let error = error.expect("refused");
+    let error = error.expect("refused").english();
     assert!(error.contains("“photos.zip” is already there"), "{error}");
     assert_eq!(std::fs::read(&inside).unwrap(), before, "never trashed");
     assert_eq!(
@@ -1360,7 +1360,7 @@ fn room_is_asked_for_what_is_made_and_extracted() {
         let ExecEvent::Finished { error, .. } = ended else {
             panic!("{ended:?}")
         };
-        let error = error.expect("short of room");
+        let error = error.expect("short of room").english();
         assert!(error.contains("Not enough room"), "{error}");
     }
 }

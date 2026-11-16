@@ -990,8 +990,17 @@ fn undo_words(undo: Option<&(String, bool)>, redo: Option<&str>) -> (String, Str
 /// The More menu's Undo and Redo, each named by what it takes back and off
 /// when there is nothing to, and the History (ADR-079, 13).
 fn undo_rows(shell: &Shell) -> Vec<MenuPart> {
-    let undo = shell.app.executor.undo_target();
-    let redo = shell.app.executor.last_redo_title();
+    // Titles said here, in the window's language.
+    let undo = shell
+        .app
+        .executor
+        .undo_target()
+        .map(|(title, running)| (title.say(), running));
+    let redo = shell
+        .app
+        .executor
+        .last_redo_title()
+        .map(|title| title.say());
     let (undo_said, redo_said) = undo_words(undo.as_ref(), redo.as_deref());
     [
         menu_item(
@@ -1828,7 +1837,7 @@ fn pane_row(
             Button::new(
                 format!("location-tool-{}-{i}", shell.pane.0),
                 tool.icon,
-                tool.title.clone(),
+                tool.title.say(),
                 tool.command.name.to_string(),
             )
             .args(args)
@@ -1949,7 +1958,7 @@ pub fn search_title(
     Some(if location.is_path() {
         "Search this folder and its subfolders".to_owned()
     } else {
-        format!("Search {}", app.location_title(location))
+        format!("Search {}", app.location_title(location).say())
     })
 }
 
@@ -2154,9 +2163,9 @@ fn breadcrumbs(
                 },
                 serde_json::json!({ "location": crumb.location.arg() }),
                 gpui::SharedString::from(if crumb.location.is_path() {
-                    format!("Folders above {}", crumb.label)
+                    format!("Folders above {}", crumb.label.say())
                 } else {
-                    format!("Above {}", crumb.label)
+                    format!("Above {}", crumb.label.say())
                 }),
             )
         });
@@ -2171,7 +2180,7 @@ fn breadcrumbs(
                 "current": current.map(|crumb| crumb.location.arg()),
             }),
             // A folder's menu lists the places of it too (its tags).
-            format!("In {}", of.label).into(),
+            format!("In {}", of.label.say()).into(),
             above,
             cx,
         )
@@ -2182,13 +2191,15 @@ fn breadcrumbs(
     let mut groups = Vec::with_capacity(crumbs.len());
     let above = crumbs.first().and_then(|first| {
         let path = first.location.path()?;
-        path.parent().is_some().then(|| (first.label.clone(), path))
+        path.parent().is_some().then(|| (first.label.say(), path))
     });
     for (index, crumb) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;
         let open = serde_json::json!(crumb.location.arg());
         let in_tab = open.clone();
-        let (text, clip) = crate::elements::clip::text(crumb.label.clone());
+        // What it is called, as the window says it.
+        let said = crumb.label.say();
+        let (text, clip) = crate::elements::clip::text(said.clone());
         let ink = if index == last {
             theme.text
         } else {
@@ -2200,7 +2211,7 @@ fn breadcrumbs(
             .id(crate::elements::known_by("crumb", &crumb.location))
             .role(gpui::Role::Link)
             .when(shell.a11y, |d| {
-                d.aria_label(crumb.label.clone())
+                d.aria_label(said.clone())
                     .when(index == last, |d| d.aria_selected(true))
             })
             .optional_tooltip(clip.tooltip(None))

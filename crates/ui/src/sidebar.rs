@@ -1731,17 +1731,17 @@ impl Shell {
                 .insert(key.clone(), !hidden);
             if hidden && arranged.shown {
                 self.toast(
-                    crate::toast::Toast {
-                        text: format!("Hid “{}” from the sidebar", arranged.place.title.say()),
-                        tone: crate::toast::Tone::Info,
-                        actions: vec![crate::toast::Action {
+                    crate::toast::Toast::new(
+                        format!("Hid “{}” from the sidebar", arranged.place.title.say()),
+                        crate::toast::Tone::Info,
+                        vec![crate::toast::Action {
                             label: "Undo".into(),
                             command: PLACE_COMMAND.into(),
                             args: serde_json::json!({
                                 "group": group, "key": key, "hidden": false,
                             }),
                         }],
-                    },
+                    ),
                     cx,
                 );
             }

@@ -634,12 +634,12 @@ pub fn path_suggestions(
         .collect()
 }
 
-/// What a scope is called on its token and in the rows: the root of the
-/// file system is the whole disk.
+/// What a scope is called on its token and in the rows, as the window
+/// says it: the root of the file system is the whole disk.
 pub fn scope_name(app: &skwir_core::App, scope: &Location) -> String {
     match scope.path() {
         Some(path) if path.parent().is_none() => "Whole disk".to_owned(),
-        _ => app.location_title(scope),
+        _ => app.location_title(scope).say(),
     }
 }
 
@@ -3040,7 +3040,7 @@ impl Shell {
                 let location = Location::new(&scheme, "");
                 let provider = self.app.provider(&scheme)?;
                 (!provider.searches(&location)).then(|| Row::Offered {
-                    label: self.app.location_title(&location),
+                    label: self.app.location_title(&location).say(),
                     text: format!("{scheme}:"),
                     location,
                     rest: None,

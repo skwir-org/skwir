@@ -282,7 +282,11 @@ fn chain(shown: &Location, trail: Option<&Trail>) -> Vec<(Location, std::ffi::Os
     crumbs
         .windows(2)
         .skip(from)
-        .map(|pair| (pair[0].location.clone(), pair[1].label.clone().into()))
+        // The one on the way down by its entry's name, where it is one.
+        .map(|pair| {
+            let name = pair[1].name.clone().unwrap_or_default();
+            (pair[0].location.clone(), name.into())
+        })
         .collect()
 }
 
@@ -804,7 +808,7 @@ impl PaneView for ColumnsView {
         let title = |location: &Location| {
             shell
                 .a11y
-                .then(|| gpui::SharedString::from(shell.app.location_title(location)))
+                .then(|| gpui::SharedString::from(shell.app.location_title(location).say()))
         };
         // The columns beside it drawn this frame: what arrives in those
         // gone is let go of.
@@ -1116,7 +1120,7 @@ mod tests {
 
     #[test]
     fn a_trail_is_walked_in_columns_and_a_folder_by_its_parents() {
-        let crumb = |label: &str, rest: &str| Crumb::new(label, Location::new("tags", rest));
+        let crumb = |name: &str, rest: &str| Crumb::entry(name, Location::new("tags", rest));
         let trail = Trail {
             base: Some("/home/someone".into()),
             crumbs: vec![

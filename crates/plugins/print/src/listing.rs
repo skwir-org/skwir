@@ -106,10 +106,11 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
 }
 
 /// What a listing of `location` is titled: a folder's path, any other
-/// place's name, then what filters it.
+/// place's name (said in the user's language: the page is theirs), then
+/// what filters it.
 fn title(app: &App, location: &Location, filter: Option<&str>) -> String {
     let named = location.path().map_or_else(
-        || app.location_title(location),
+        || app.location_title(location).say(),
         |dir| dir.display().to_string(),
     );
     filtered(named, filter)
@@ -377,8 +378,8 @@ mod tests {
                 SCHEME
             }
 
-            fn title(&self, _: &Location) -> Option<String> {
-                Some("Bin of tests".to_owned())
+            fn title(&self, _: &Location) -> Option<skwir_core::words::Words> {
+                Some("Bin of tests".into())
             }
 
             fn verbs(&self, _: &Location) -> Verbs {

@@ -417,7 +417,10 @@ mod tests {
             .into_iter()
             .find(|s| s.key == SOURCE_KEY)
             .unwrap();
-        assert_eq!(spec.choice_label("server:custom"), "Custom server");
+        assert_eq!(
+            spec.choice_label("server:custom").english(),
+            "Custom server"
+        );
         // A record the server check refuses never reaches the settings.
         let servers_spec = app
             .settings

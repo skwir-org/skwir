@@ -38,7 +38,7 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use super::sys::access::{self as sys, Held, Me, Meta};
-use super::{Change, EntryRef, Operation, ResolveError, StepContext, StepStatus, Words};
+use super::{Change, EntryRef, Operation, ResolveError, StepContext, StepStatus, Tenses};
 use crate::entry::FileId;
 use crate::fs::Dir;
 
@@ -880,7 +880,11 @@ impl super::Effect for SetAccess {
         Change::Metadata {
             path: self.entry.path.clone(),
             field: "access".into(),
-            words: Some(Words { will, did, already }),
+            words: Some(Tenses {
+                will: will.into(),
+                did: did.into(),
+                already: Some(already.into()),
+            }),
         }
     }
 
@@ -1375,10 +1379,10 @@ impl super::Effect for AccessBack {
         Change::Metadata {
             path,
             field: "access".into(),
-            words: Some(Words {
-                will: format!("put back who may use “{name}”{more}"),
-                did: format!("put back who may use “{name}”{more}"),
-                already: format!("who may use “{name}”{more} was already as before"),
+            words: Some(Tenses {
+                will: format!("put back who may use “{name}”{more}").into(),
+                did: format!("put back who may use “{name}”{more}").into(),
+                already: Some(format!("who may use “{name}”{more} was already as before").into()),
             }),
         }
     }
@@ -1781,7 +1785,10 @@ mod tests {
         else {
             panic!()
         };
-        assert_eq!(words.will, "change who may use “it's a script.sh” (u+x)");
+        assert_eq!(
+            words.will.english(),
+            "change who may use “it's a script.sh” (u+x)"
+        );
     }
 
     #[test]

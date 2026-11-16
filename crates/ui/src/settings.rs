@@ -2586,12 +2586,12 @@ impl Narrowed {
         self.previews.is_some()
     }
 
-    /// The choices of `spec`, as stored values and labels.
+    /// The choices of `spec`, as stored values and labels said.
     pub(crate) fn choices_of(spec: &SettingSpec) -> std::rc::Rc<[(String, String)]> {
         spec.constraints
             .choices
             .iter()
-            .map(|value| (value.clone(), spec.choice_shown(value).into_owned()))
+            .map(|value| (value.clone(), spec.choice_shown(value)))
             .collect()
     }
 
@@ -4328,6 +4328,15 @@ mod tests {
         assert_eq!(record["choice"]["choices"][1]["disabled"], false);
     }
 
+    /// A choice setting's labels, in English.
+    fn labels(spec: &SettingSpec) -> Vec<String> {
+        spec.constraints
+            .choice_labels
+            .iter()
+            .map(skwir_core::words::Words::english)
+            .collect()
+    }
+
     #[test]
     fn a_font_is_automatic_or_a_family_the_text_system_draws() {
         let installed = crate::fonts::Installed {
@@ -4339,7 +4348,7 @@ mod tests {
             listed.constraints.choices,
             ["auto", "DejaVu Sans", "Hack", "Noto Serif"]
         );
-        assert_eq!(listed.constraints.choice_labels[0], "Automatic");
+        assert_eq!(labels(&listed)[0], "Automatic");
         assert_eq!(listed.default.as_str(), Some("auto"));
         assert!(!listed.constraints.more_choices.is_empty());
         // Code is offered the monospaced ones, reading every one.
@@ -4362,17 +4371,14 @@ mod tests {
         // Chosen, not listed yet: a choice of its own name.
         let early = font_spec(CODE_FONT_KEY, "Iosevka", None);
         assert_eq!(early.constraints.choices, ["auto", "Iosevka"]);
-        assert_eq!(early.constraints.choice_labels, ["Automatic", "Iosevka"]);
+        assert_eq!(labels(&early), ["Automatic", "Iosevka"]);
         // A proportional family chosen for code is kept, not refused.
         let kept = font_spec(CODE_FONT_KEY, "Noto Serif", Some(&installed));
-        assert_eq!(
-            kept.constraints.choice_labels.last().map(String::as_str),
-            Some("Noto Serif")
-        );
+        assert_eq!(labels(&kept).last().map(String::as_str), Some("Noto Serif"));
         // Chosen and no longer installed: said so.
         let gone = font_spec(CODE_FONT_KEY, "Iosevka", Some(&installed));
         assert_eq!(
-            gone.constraints.choice_labels.last().map(String::as_str),
+            labels(&gone).last().map(String::as_str),
             Some("Iosevka (not installed)")
         );
     }
@@ -4391,10 +4397,7 @@ mod tests {
         ];
         let listed = icon_theme_spec(ICON_THEME_AUTO, Some(&themes));
         assert_eq!(listed.constraints.choices, ["auto", "Adwaita", "breeze"]);
-        assert_eq!(
-            listed.constraints.choice_labels,
-            ["Automatic", "Adwaita", "Breeze"]
-        );
+        assert_eq!(labels(&listed), ["Automatic", "Adwaita", "Breeze"]);
         assert_eq!(listed.default.as_str(), Some("auto"));
         // Chosen and listed: no more than its name.
         let chosen = icon_theme_spec("breeze", Some(&themes));
@@ -4402,7 +4405,7 @@ mod tests {
         // Chosen, not listed yet: a choice under its folder's name.
         let early = icon_theme_spec("Papirus", None);
         assert_eq!(early.constraints.choices, ["auto", "Papirus"]);
-        assert_eq!(early.constraints.choice_labels, ["Automatic", "Papirus"]);
+        assert_eq!(labels(&early), ["Automatic", "Papirus"]);
         // Chosen and no longer installed: said so.
         let gone = icon_theme_spec("Papirus", Some(&themes));
         assert_eq!(
@@ -4410,7 +4413,7 @@ mod tests {
             Some("Papirus")
         );
         assert_eq!(
-            gone.constraints.choice_labels.last().map(String::as_str),
+            labels(&gone).last().map(String::as_str),
             Some("Papirus (not installed)")
         );
     }

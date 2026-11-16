@@ -19,6 +19,7 @@ use crate::entry::{Entry, EntryId, FileId};
 use crate::grouping::{Group, Sort, SortStamp, Span};
 use crate::os_path::PathArg;
 use crate::scheduler::{Priority, Scheduler};
+use crate::words::Words;
 
 /// The scheme used for plain filesystem paths.
 pub const PATH_SCHEME: &str = "path";
@@ -393,9 +394,10 @@ pub trait LocationProvider: Send + Sync {
 
     /// A name for `location` in words (a tab, a message), when the text
     /// after the scheme is not one: "PDF files in Projects" for a search.
-    /// Answered from the text alone, without I/O: it is asked while
-    /// drawing labels.
-    fn title(&self, _location: &Location) -> Option<String> {
+    /// What the user or the system named (a tag, a server) is
+    /// `Words::as_written`. Answered from the text alone, without I/O: it
+    /// is asked while drawing labels.
+    fn title(&self, _location: &Location) -> Option<Words> {
         None
     }
 
@@ -577,7 +579,10 @@ pub struct Completion {
 /// One place of a trail: its words, and where it leads.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Crumb {
-    pub label: String,
+    /// What it is called, said where it is drawn; in English to agents
+    /// and scripts (ADR-139, 7). What the user or the system named (a
+    /// tag, a folder) is as written.
+    pub label: Words,
     pub location: Location,
     /// The tag it stands for, by its full name as `keys::PLACE_TAG` names
     /// a place's: the address draws a place as that tag's chip, in its
@@ -585,14 +590,33 @@ pub struct Crumb {
     /// hollow for the files without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<crate::metadata::TagRef>,
+    /// Its entry's name among those of the place before it in its trail,
+    /// or of the place whose places it is (`LocationProvider::places`): a
+    /// tag's among its category's, a trashed folder's in the trash, where
+    /// it is one. What going up selects (`App::name_in_parent`) and the
+    /// columns view marks: the name as data, as its label is words, said
+    /// where drawn and never read back (ADR-139).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl Crumb {
-    pub fn new(label: impl Into<String>, location: Location) -> Self {
+    pub fn new(label: impl Into<Words>, location: Location) -> Self {
         Crumb {
             label: label.into(),
             location,
             tag: None,
+            name: None,
+        }
+    }
+
+    /// A place that is an entry named `name` of the place before it (see
+    /// `Crumb::name`), called by that name as written.
+    pub fn entry(name: impl Into<String>, location: Location) -> Self {
+        let name = name.into();
+        Crumb {
+            name: Some(name.clone()),
+            ..Crumb::new(Words::as_written(name), location)
         }
     }
 
@@ -632,18 +656,18 @@ pub struct Trail {
 }
 
 /// What a location says when it lists nothing
-/// (`LocationProvider::empty_state`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// (`LocationProvider::empty_state`), said where it is drawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmptyState {
     /// What is so: "The trash is empty".
-    pub title: String,
+    pub title: Words,
     /// What fills it, or the way out: "Files moved to the trash wait
     /// here…".
-    pub detail: String,
+    pub detail: Words,
 }
 
 impl EmptyState {
-    pub fn new(title: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<Words>, detail: impl Into<Words>) -> Self {
         EmptyState {
             title: title.into(),
             detail: detail.into(),
@@ -741,8 +765,8 @@ pub struct Verbs {
 pub struct Tool {
     /// The bundled symbolic glyph it shows (as `LocationProvider::icon`).
     pub icon: &'static str,
-    /// What it does, its tooltip: "Empty Trash…".
-    pub title: String,
+    /// What it does, its tooltip: "Empty Trash…", said where it is drawn.
+    pub title: Words,
     /// Run with `pane` added (`ToolPane`): a command that takes it, as
     /// commands refuse an argument they do not take.
     pub command: crate::command::Invocation,
@@ -764,7 +788,7 @@ pub enum ToolPane {
 impl Tool {
     pub fn new(
         icon: &'static str,
-        title: impl Into<String>,
+        title: impl Into<Words>,
         command: crate::command::Invocation,
         pane: ToolPane,
     ) -> Self {

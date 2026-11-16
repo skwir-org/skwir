@@ -1751,7 +1751,10 @@ pub fn topic_and_family(
     app: &App,
     command: &str,
     args: &serde_json::Value,
-) -> (skwir_core::command::Topic, Option<(String, usize)>) {
+) -> (
+    skwir_core::command::Topic,
+    Option<(skwir_core::words::Words, usize)>,
+) {
     let Some(spec) = app.commands.get(command) else {
         return (skwir_core::command::Topic::Skwir, None);
     };
@@ -1764,7 +1767,7 @@ pub fn topic_and_family(
                 .into_iter()
                 .find(|view| &*view.id == id)
                 .map_or(i32::MAX, |view| view.order);
-            Some(("Views".to_owned(), usize::try_from(order).unwrap_or(0)))
+            Some(("Views".into(), usize::try_from(order).unwrap_or(0)))
         }
         _ => {
             let at = spec.forms.iter().position(|form| form.args == *args);

@@ -39,10 +39,10 @@ pub struct Message {
 
 /// What Skwir says: a message with its arguments, or text as written (an
 /// agent's, the system's), shown as it is in every language.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Words(Inner);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Inner {
     Message(&'static Message, Arc<[(&'static str, Arg)]>),
     Written(Cow<'static, str>),
@@ -52,20 +52,23 @@ enum Inner {
 }
 
 /// An error held as words: its chain, said link by link where it is said
-/// (`Words::of_error`, `Arg::Error`).
+/// (`Words::of_error`, `Arg::Error`), from the link it begins at
+/// (`Words::of_error_from`).
 #[derive(Clone, Debug)]
-pub struct Failure(Arc<anyhow::Error>);
+pub struct Failure(Arc<anyhow::Error>, usize);
 
 impl PartialEq for Failure {
-    /// The same error, not two alike.
+    /// The same error from the same link, not two alike.
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.0, &other.0) && self.1 == other.1
     }
 }
 
+impl Eq for Failure {}
+
 /// An argument of a message, typed: each said as its type says it in the
 /// reader's language (ADR-139, 5).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arg {
     /// Text that is not Skwir's to translate (a path, a command, what the
     /// system said), as it is.
@@ -185,13 +188,13 @@ impl From<Words> for Arg {
 
 impl From<anyhow::Error> for Arg {
     fn from(error: anyhow::Error) -> Self {
-        Arg::Error(Failure(Arc::new(error)))
+        Arg::Error(Failure(Arc::new(error), 0))
     }
 }
 
 impl From<&Arc<anyhow::Error>> for Arg {
     fn from(error: &Arc<anyhow::Error>) -> Self {
-        Arg::Error(Failure(Arc::clone(error)))
+        Arg::Error(Failure(Arc::clone(error), 0))
     }
 }
 
@@ -222,7 +225,15 @@ impl Words {
     /// with `words!`, a system's error by its kind, `op::io_words`), else
     /// as its own text, the error's number left out.
     pub fn of_error(error: anyhow::Error) -> Self {
-        Words(Inner::Error(Failure(Arc::new(error))))
+        Words(Inner::Error(Failure(Arc::new(error), 0)))
+    }
+
+    /// An error kept elsewhere too, as words from the link `from` of its
+    /// chain on (0 for the whole), said as [`Words::of_error`] says it: what
+    /// stopped a step said alone, after the step's own words naming its
+    /// file (`op::reason_after`).
+    pub fn of_error_from(error: &Arc<anyhow::Error>, from: usize) -> Self {
+        Words(Inner::Error(Failure(Arc::clone(error), from)))
     }
 
     /// Its message, `None` for text as written or an error.
@@ -267,7 +278,7 @@ impl Words {
     fn say_into(&self, out: &mut String, languages: &[String]) {
         let (message, args) = match &self.0 {
             Inner::Written(text) => return out.push_str(text),
-            Inner::Error(failure) => return say_error(&failure.0, languages, out),
+            Inner::Error(failure) => return say_error(failure, languages, out),
             Inner::Message(message, args) => (*message, args),
         };
         if languages.first().is_some_and(|first| first == PSEUDO) {
@@ -349,7 +360,7 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Size(bytes) => out.push_str(&crate::fs::size_said(*bytes)),
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
-        Arg::Error(failure) => say_error(&failure.0, languages, out),
+        Arg::Error(failure) => say_error(failure, languages, out),
     }
 }
 
@@ -360,11 +371,12 @@ thread_local! {
     static SAYING_IN: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
 }
 
-/// `error`'s chain, outermost first, joined by `: `, in `languages`.
-fn say_error(error: &anyhow::Error, languages: &[String], out: &mut String) {
+/// `failure`'s chain, outermost first from the link it begins at, joined
+/// by `: `, in `languages`.
+fn say_error(failure: &Failure, languages: &[String], out: &mut String) {
     let before = SAYING_IN.with_borrow_mut(|saying| saying.replace(languages.to_vec()));
     let mut first = true;
-    for link in error.chain() {
+    for link in failure.0.chain().skip(failure.1) {
         if !first {
             out.push_str(": ");
         }

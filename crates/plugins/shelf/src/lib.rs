@@ -475,7 +475,7 @@ impl LocationProvider for ShelfProvider {
         SCHEME
     }
 
-    fn title(&self, _location: &Location) -> Option<String> {
+    fn title(&self, _location: &Location) -> Option<skwir_core::words::Words> {
         Some(TITLE.into())
     }
 

@@ -2845,7 +2845,7 @@ mod tests {
             anew: false,
         });
         let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
-        let error = r.error.unwrap_or_default();
+        let error = r.error.map(|e| e.english()).unwrap_or_default();
         assert!(error.contains("changed after it was copied"), "{error}");
         assert_eq!(r.applied, entries.len(), "each step did what it said");
         assert_eq!(names(&from), ["run.sh"], "the changed one stayed");
@@ -2952,7 +2952,7 @@ mod tests {
         std::fs::set_permissions(&changed, std::fs::Permissions::from_mode(0o644)).unwrap();
         file(&changed, "edited there", 0o644);
         let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
-        let error = undone.error.unwrap_or_default();
+        let error = undone.error.map(|e| e.english()).unwrap_or_default();
         assert!(error.contains("changed since it was made"), "{error}");
         assert_eq!(names(&dest), ["kept.txt"], "the changed one stays");
     }
@@ -2999,7 +2999,7 @@ mod tests {
             // An editor writes its sidecar beside a copy.
             file(&dest.join(".notes/two é.jpg.note"), "edits", 0o644);
             let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
-            let error = undone.error.unwrap_or_default();
+            let error = undone.error.map(|e| e.english()).unwrap_or_default();
             assert!(
                 error.contains("was not made with it"),
                 "{together}: {error}"
@@ -3057,7 +3057,7 @@ mod tests {
             anew: false,
         });
         let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
-        let error = r.error.expect("the changed one stops the plan");
+        let error = r.error.expect("the changed one stops the plan").english();
         assert!(error.contains("changed after it was copied"), "{error}");
         assert_eq!(r.applied, 1, "the one before it moved");
         assert_eq!(
@@ -3085,7 +3085,10 @@ mod tests {
         crate::fs::reach::pretend_remote(&dest);
         let (executor, calls) = with_fake(false, None);
         let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
-        assert!(r.error.is_some_and(|e| e.contains("already there")));
+        assert!(
+            r.error
+                .is_some_and(|e| e.english().contains("already there"))
+        );
         assert_eq!(r.applied, 0);
         assert!(!calls.lock().is_empty(), "the batch ran");
         assert_eq!(names(&dest), ["it's a.txt"]);

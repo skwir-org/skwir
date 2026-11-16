@@ -529,9 +529,11 @@ impl Shell {
                     tab: *tab,
                     names: shows
                         .iter()
+                        // Said as the window says it: the key moves with
+                        // what words say (`Roots::generation`).
                         .map(|l| {
                             l.as_ref()
-                                .map(|l| self.app.location_title(l))
+                                .map(|l| self.app.location_title(l).say())
                                 .unwrap_or_default()
                                 .into()
                         })

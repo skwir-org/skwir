@@ -1968,7 +1968,7 @@ fn copy_staged(
             return Err(error.context(format!(
                 "a part of the copy is left in “{}” ({})",
                 path.display(),
-                super::io_words(&cleanup)
+                super::io_words(&cleanup).english()
             )));
         }
     }
@@ -2043,7 +2043,7 @@ fn copy_in_place(
             return Err(error.context(format!(
                 "a part of the copy is left in “{}” ({})",
                 path.display(),
-                super::io_words(&cleanup)
+                super::io_words(&cleanup).english()
             )));
         }
     }
@@ -3062,7 +3062,7 @@ fn failed_across(error: anyhow::Error, item: &Path, info: &Path) -> anyhow::Erro
         return error.context(format!(
             "a copy of it is left in “{}” ({})",
             item.display(),
-            super::io_words(&cleanup)
+            super::io_words(&cleanup).english()
         ));
     }
     let _ = std::fs::remove_file(info);

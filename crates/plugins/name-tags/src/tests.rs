@@ -301,7 +301,10 @@ fn attribute(path: &Path) -> Option<String> {
 
 fn finished_with(event: &skwir_core::op::ExecEvent) -> (usize, Option<String>) {
     match event {
-        skwir_core::op::ExecEvent::Finished { applied, error, .. } => (*applied, error.clone()),
+        skwir_core::op::ExecEvent::Finished { applied, error, .. } => (
+            *applied,
+            error.as_ref().map(skwir_core::words::Words::english),
+        ),
         _ => unreachable!(),
     }
 }

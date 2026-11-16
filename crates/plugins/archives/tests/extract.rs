@@ -153,7 +153,7 @@ fn an_archive_is_extracted_as_a_folder_again_undone_and_redone() {
     );
 
     let plan = extract(&app, &archive, &dest);
-    assert_eq!(plan.title, "extract “Synthetic photos.zip”");
+    assert_eq!(plan.title.english(), "extract “Synthetic photos.zip”");
     let result = app.executor.execute_blocking(&plan, app.lifetime());
     assert!(result.error.is_none(), "{:?}", result.error);
     let made = dest.join("Synthetic photos");
@@ -339,7 +339,7 @@ fn nothing_is_written_outside_and_a_name_taken_is_kept() {
     let result = app
         .executor
         .execute_blocking(&extract(&app, &hostile, &dest), app.lifetime());
-    let error = result.error.expect("refused");
+    let error = result.error.expect("refused").english();
     assert!(error.contains("outside.txt"), "{error}");
     assert!(!tmp.path().join("outside.txt").exists());
     assert!(!dest.join("outside.txt").exists());
@@ -556,8 +556,11 @@ fn an_archive_extracted_again_is_found_extracted() {
     };
     assert_eq!(path, &dest.join("it's photos"));
     assert_eq!(
-        words.already,
-        "“it's photos.zip” was already extracted to it's here"
+        words
+            .already
+            .as_ref()
+            .map(skwir_core::words::Words::english),
+        Some("“it's photos.zip” was already extracted to it's here".to_owned())
     );
 }
 
@@ -854,6 +857,7 @@ fn a_merge_into_a_folder_that_cannot_be_written_is_refused_beforehand() {
     else {
         panic!("refused: {ended:?}");
     };
+    let error = error.english();
     assert!(error.contains("cannot be written in"), "{error}");
     assert_eq!(tree(&made), before, "nothing placed, top.txt included");
     assert!(staged_in(&made).is_empty() && staged_in(&dest).is_empty());

@@ -1193,7 +1193,9 @@ impl VolumeFacts {
         // Folded as Properties ships, it says which drive and how full.
         let mut rows = Vec::new();
         if let Some(mount) = &self.mount {
-            let name = app.location_title(&skwir_core::Location::from_path(&mount.path));
+            let name = app
+                .location_title(&skwir_core::Location::from_path(&mount.path))
+                .say();
             rows.push(Row::new("Volume", name).in_gist().led("On"));
             if !mount.source.is_empty() {
                 rows.push(Row::new("Device", mount.source.clone()));
@@ -2712,7 +2714,8 @@ impl Shell {
             if here {
                 self.preview.info.name = self
                     .app
-                    .location_title(&skwir_core::Location::from_path(&key.path));
+                    .location_title(&skwir_core::Location::from_path(&key.path))
+                    .say();
             }
             // Play on selection is the wish a step makes, made by the
             // selection: the track plays once shown, and the dock of what
@@ -3057,7 +3060,7 @@ impl Shell {
         let Some(location) = self.app.pane_location(self.pane) else {
             return;
         };
-        self.preview.info.name = self.app.location_title(&location);
+        self.preview.info.name = self.app.location_title(&location).say();
         let found = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane)

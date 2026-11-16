@@ -37,6 +37,7 @@ use skwir_core::metadata::{
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::scheduler::Priority;
+use skwir_core::words::Words;
 use skwir_platform::mime::Kind;
 
 use crate::index::{TagIndex, stable_hash};
@@ -149,8 +150,10 @@ impl Address {
                     prefix.push('/');
                 }
                 prefix.push_str(part);
+                // A tag's name is as the user wrote it, its entry's in the
+                // tag before it.
                 crumbs.push(
-                    Crumb::new(part, self.at(Some(prefix.clone())).location())
+                    Crumb::entry(part, self.at(Some(prefix.clone())).location())
                         .of_tag(TagRef::of(&prefix)),
                 );
             }
@@ -1133,6 +1136,34 @@ pub struct Provider {
     pub places: Arc<Places>,
 }
 
+impl Provider {
+    /// The tags within `location`'s, each by its own name (the last part
+    /// of its full name) and where it leads, in the order of their names:
+    /// what `places` lists and the address completes, the name as data.
+    fn tags_within(&self, location: &Location) -> Vec<(String, Location)> {
+        let address = Address::parse(&location.rest);
+        let Some(root) = address.root() else {
+            return Vec::new();
+        };
+        let found = self.places.index.files_under(&root, address.tag.as_deref());
+        let tagged: Vec<Tagged> = found
+            .into_iter()
+            .map(|(path, tags)| Tagged { path, tags })
+            .collect();
+        let mut places = contents(&address, &tagged, &self.places.drafts_of(&root)).places;
+        places.sort_by_cached_key(|(tag, _)| {
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(tag_leaf(tag)))
+        });
+        places
+            .into_iter()
+            .map(|(tag, _)| {
+                let leaf = tag_leaf(&tag).to_owned();
+                (leaf, address.at(Some(tag)).location())
+            })
+            .collect()
+    }
+}
+
 impl LocationProvider for Provider {
     fn scheme(&self) -> &str {
         SCHEME
@@ -1162,11 +1193,12 @@ impl LocationProvider for Provider {
         Ok(open)
     }
 
-    fn title(&self, location: &Location) -> Option<String> {
+    fn title(&self, location: &Location) -> Option<Words> {
         let address = Address::parse(&location.rest);
         Some(match &address.tag {
-            Some(tag) => tag_leaf(tag).to_owned(),
-            None => "Tags".to_owned(),
+            // A tag's name is as the user wrote it.
+            Some(tag) => Words::as_written(tag_leaf(tag).to_owned()),
+            None => "Tags".into(),
         })
     }
 
@@ -1183,22 +1215,9 @@ impl LocationProvider for Provider {
     }
 
     fn places(&self, location: &Location) -> Vec<Crumb> {
-        let address = Address::parse(&location.rest);
-        let Some(root) = address.root() else {
-            return Vec::new();
-        };
-        let found = self.places.index.files_under(&root, address.tag.as_deref());
-        let tagged: Vec<Tagged> = found
+        self.tags_within(location)
             .into_iter()
-            .map(|(path, tags)| Tagged { path, tags })
-            .collect();
-        let mut places = contents(&address, &tagged, &self.places.drafts_of(&root)).places;
-        places.sort_by_cached_key(|(tag, _)| {
-            skwir_core::collate::sort_key(std::ffi::OsStr::new(tag_leaf(tag)))
-        });
-        places
-            .into_iter()
-            .map(|(tag, _)| Crumb::new(tag_leaf(&tag), address.at(Some(tag.clone())).location()))
+            .map(|(leaf, location)| Crumb::entry(leaf, location))
             .collect()
     }
 
@@ -1266,12 +1285,12 @@ impl LocationProvider for Provider {
     fn complete(&self, rest: &str) -> Option<Completions> {
         let (range, parent) = completing(rest);
         let items = self
-            .places(&Address::parse(&parent).location())
+            .tags_within(&Address::parse(&parent).location())
             .into_iter()
-            .map(|crumb| Completion {
-                text: escape(crumb.label.as_bytes()),
-                label: crumb.label,
-                location: crumb.location,
+            .map(|(leaf, location)| Completion {
+                text: escape(leaf.as_bytes()),
+                label: leaf,
+                location,
                 inside: Some('/'),
             })
             .collect();
@@ -1469,7 +1488,7 @@ mod tests {
     /// tag how to give it; what a lens hides, the pane says.
     #[test]
     fn an_empty_tag_location_says_why() {
-        let said = |text: &str| Address::parse(text).empty_state().title;
+        let said = |text: &str| Address::parse(text).empty_state().title.english();
         assert_eq!(said("/"), "No file here has a tag");
         assert_eq!(said("/Places/France"), "No file here has this tag");
         assert_eq!(said("/Places?with=family"), "No file here has this tag");
@@ -1642,7 +1661,7 @@ mod tests {
             ..at(Some("Places/France"))
         };
         let trail = address.trail();
-        let labels: Vec<&str> = trail.crumbs.iter().map(|c| c.label.as_str()).collect();
+        let labels: Vec<String> = trail.crumbs.iter().map(|c| c.label.english()).collect();
         assert_eq!(labels, ["Tags", "Places", "France"]);
         let tags: Vec<Option<TagRef>> = trail.crumbs.iter().map(|c| c.tag.clone()).collect();
         assert_eq!(
@@ -1662,7 +1681,7 @@ mod tests {
             },
             "going up keeps how deep it is"
         );
-        let pills: Vec<&str> = trail.filters.iter().map(|c| c.label.as_str()).collect();
+        let pills: Vec<String> = trail.filters.iter().map(|c| c.label.english()).collect();
         assert_eq!(pills, ["With sub-tags"]);
         assert!(!Address::parse(&trail.filters[0].location.rest).deep);
         assert!(trail.toggles[0].on);
