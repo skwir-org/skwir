@@ -3653,7 +3653,9 @@ their budgets in every language.
     path under Wine; macOS compiled.
   - *Done when:* the tests pass and the setting changes the languages
     read, with nothing said differently yet.
-- **D. The words engine and a pilot.**
+- **D. The words engine and a pilot.** The engine is built
+  (2026-11-16, `docs/STATUS-LOG.md`); the macro, the pilot and the
+  registries follow.
   - The engine:
     - `skwir_core::words`: `Words`, its arguments, the resolver, and the
       catalogs' registry, tagged by owner;

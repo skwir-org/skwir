@@ -1368,10 +1368,7 @@ pub(crate) fn register(app: &crate::App) {
             "Language",
             "The language skwir's window speaks. Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
             crate::locale::AUTOMATIC,
-            &[
-                (crate::locale::AUTOMATIC, "Automatic"),
-                (crate::locale::ENGLISH, "English"),
-            ],
+            &language_choices(),
         )
         // English is all skwir speaks yet.
         .now(crate::locale::ENGLISH)
@@ -1507,6 +1504,20 @@ pub(crate) fn register(app: &crate::App) {
 
 /// Give every pane, and every pane made from now, the user's choice of
 /// folders before files (`location::FOLDERS_FIRST`).
+/// The languages the setting offers: Automatic, English, and, in a debug
+/// build, the pseudo-language that shows what is not yet a message
+/// (`words::PSEUDO`).
+fn language_choices() -> Vec<(&'static str, &'static str)> {
+    let mut choices = vec![
+        (crate::locale::AUTOMATIC, "Automatic"),
+        (crate::locale::ENGLISH, "English"),
+    ];
+    if cfg!(debug_assertions) {
+        choices.push((crate::words::PSEUDO, "Pseudo (for testing)"));
+    }
+    choices
+}
+
 /// Speak the language the setting chooses (`locale`, ADR-139, 6).
 fn apply_language(app: &crate::App) {
     let value = app

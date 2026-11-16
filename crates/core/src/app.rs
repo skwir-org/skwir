@@ -917,6 +917,7 @@ impl App {
     /// Withdraw everything a plugin contributed.
     pub fn unregister_owner(&self, owner: &str) {
         self.commands.unregister_owner(owner);
+        crate::words::withdraw(owner);
         self.ops.unregister_owner(owner);
         self.executor.remove_observers(owner);
         self.thumbnails.unregister_owner(owner);

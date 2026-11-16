@@ -81,6 +81,7 @@ pub mod thumbs;
 pub mod tiles;
 pub mod vcs;
 pub mod walks;
+pub mod words;
 pub mod workspace;
 pub mod xdg;
 

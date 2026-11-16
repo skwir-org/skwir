@@ -176,6 +176,10 @@ trash = "5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
+# What Skwir says (ADR-139): Fluent's parser, CLDR's plural rules.
+fluent-syntax = "0.12"
+icu_plurals = "2.4"
+icu_locale_core = "2.4"
 jiff = "0.2"
 plist = { version = "1", default-features = false }
 # Grammars match with Ferroni, a pure-Rust port of Oniguruma (ADR-060).

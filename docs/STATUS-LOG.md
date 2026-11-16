@@ -18829,3 +18829,71 @@ sparse 1.5 GB file.
 
 Not seen: a volume without a label (the machine's volumes all have
 one), a search typed in the address, Binary's size groups.
+
+## 2026-11-16: The words engine (ADR-139, step D, its first part)
+
+`skwir_core::words`: what Skwir says, as data, and Skwir's own resolver.
+Nothing says its words through it yet; the `words!` macro and the pilot
+come next.
+
+**`Words`** is a message with typed arguments, or text as written.
+- **A message** is a crate's (`Message`: its domain, the package's name;
+  its id; its English as a static tree; a note for translators).
+- **Saying it:** `say` in the languages skwir speaks
+  (`locale::languages`), `english` for agents and logs, `say_in` given
+  languages.
+- **Out of the process,** it is its English text (Serialize, a string
+  schema), and what comes in is as written.
+- **Transitional:** `From<&str>` and `From<String>`, until every crate is
+  converted (step E).
+
+**Typed arguments:**
+- a name, quoted as its language quotes, its bidirectional controls shown
+  as tags (`Hello_⟨RLO⟩gnp.js`, ADR-139, 5);
+- a count, grouped as English groups until step F, choosing the plural;
+- a size, said by the size setting;
+- a kind, which a selector chooses by;
+- text as written;
+- words in words.
+
+**A message's tree** (`Element`: text, arguments, selectors by a plural
+category, a word or an exact number) is the one shape for both. English
+is written in it as statics. A translation is read into it from
+`fluent-syntax` when first said. Terms, functions and references to
+other messages are refused.
+
+**Catalogs** (`Catalog`, one crate's messages in one language):
+- indexed the first time a message is asked, braces counted, since a
+  selector's `}` may begin a line;
+- a plain message is its own text, borrowed from an embedded source;
+- any other is parsed when first said, and kept;
+- registered by owner, and withdrawn with it (`App::unregister_owner`).
+
+A language is looked for as it is, then a subtag shorter, English (the
+code's) last, and a message is always said whole in one language.
+
+**Plurals** come from ICU4X 2.4's `icu_plurals` (CLDR 49), the rules made
+once a language on each thread that asks. ICU4X's rules are not `Send`,
+and the provider's `sync` feature would change every ICU4X user in the
+build.
+
+**The pseudo-language** `en-XA`: English accented, its vowels doubled,
+in brackets, each argument marked ‹…›. `core.language` offers it in a
+debug build.
+
+**New crates:** fluent-syntax 0.12, icu_plurals 2.4 with its data,
+fixed_decimal. `just deny` passes and the notices were made again.
+
+**Checked:**
+- Tests:
+  - French plurals and kinds (0 is `one`; a folder agrees);
+  - a message French lacks, said whole in English;
+  - a catalog withdrawn;
+  - quotes and controls;
+  - arguments of each type, JSON in English;
+  - the pseudo-language;
+  - CLDR's categories for Polish and Arabic;
+  - the catalog's index and plain messages borrowed.
+- clippy `-D warnings` on skwir-core.
+- `cargo nextest run` of skwir-core and skwir-ui (1584 passed), and the
+  binary's settings and plugins_toggle tests.
