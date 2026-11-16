@@ -1401,11 +1401,12 @@ left):
 evening):
 - `kept::Memory` knows what it placed by its row's index: an order
   changed while the view stays where it was put can give another row the
-  share meant for the first.
-- A text size changes a row's height and the view's in one frame: the
-  columns view and the board, which have no zoom anchor as the list has,
-  measure the last frame's offset in the new height, and keep what is
-  kept where the old offset puts it.
+  share meant for the first (a second review, 2026-11-16, agreed: that
+  row is where the first was, so it lands as the first would have; keying
+  it by entry would make it exact).
+- (Fixed 2026-11-16, 955daa2b: what keeps its place is judged at the
+  rows' height the last frame drew, a text size changing a row's height
+  and the view's in one frame.)
 - Not seen in a window: a window's edge dragged, the preview and
   terminal panels, a grid grouped under pinned headings, Wayland.
 
