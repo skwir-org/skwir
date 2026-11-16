@@ -19040,3 +19040,40 @@ Done by a subagent that owned the change, then reviewed.
   the binary, skwir-kmtp-worker, and the plugins archives, control,
   jump, ops-basic, places, print, query, remote, shelf, shell, tags,
   trash): 2322 passed.
+
+## 2026-11-16: The trash plugin's messages, and the pseudo-language in a window (ADR-139, step D)
+
+**The trash plugin's words** are messages (`crates/plugins/trash/l10n/en.ftl`,
+14):
+- its four commands' titles and descriptions;
+- its place's title, its tab, its trail's first crumb;
+- its empty states;
+- Empty Trash…, in its menu and on its button.
+
+Its errors stay English text until step E (errors become data with
+words), and so does its plugin's title.
+
+**Seen in a window,** the debug build on Xvfb with `core.language =
+"en-XA"`. The pseudo-language reaches every surface converted so far:
+- the sidebar's "[Tráášĥ]" and the Trash's trail;
+- the footer's count, "[‹6› íítéémš] · 1.5 GB";
+- an empty folder's placeholder, its keys argument marked
+  ‹Ctrl+Shift+N›, the longer text wrapping as it should;
+- moving a file to the Trash, its toast "[Möövééd ‹“small.txt”› töö
+  Tráášĥ]" and its button "[ÛÛñdöö]".
+
+Everything else is still English, the measure of step E: "1 selected",
+the footer's Undo, the menus' items, the settings, the address.
+
+The Trash place also lists the trashes of the machine's real volumes
+(known from earlier checks), so its screenshot was deleted and nothing of
+it was kept.
+
+**Owed:** the measurements step D asks for, idle memory and the first
+frame in English and in the pseudo-language with a full catalog. No
+language has a catalog yet, the `dist` build takes about 9 GB, and the
+disk has had 10 to 20 GB free all day. They come with the first real
+catalog (step G), on a `dist` build.
+
+**Checked:** clippy on skwir-plugin-trash; its tests and the binary's
+plugins_toggle test pass; `just words --check`.

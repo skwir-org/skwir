@@ -3656,8 +3656,10 @@ their budgets in every language.
 - **D. The words engine and a pilot.** The engine is built
   (2026-11-16, `docs/STATUS-LOG.md`), and so are the macro, `just words`
   and the window's first messages (the placeholder, `format::items`,
-  `files` and `folders`, the toast); the registries and the trash plugin
-  follow.
+  `files` and `folders`, the toast), the registries (commands, menus,
+  settings, places; agents in English), the trash plugin, and the
+  pseudo-language seen in a window. Owed: idle memory and the first frame
+  with a full catalog, with the first real one (step G).
   - The engine:
     - `skwir_core::words`: `Words`, its arguments, the resolver, and the
       catalogs' registry, tagged by owner;

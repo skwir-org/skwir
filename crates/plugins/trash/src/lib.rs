@@ -18,6 +18,8 @@
 //! for good, and files dropped or pasted there are put in the trash, as on
 //! the Trash itself.
 
+use skwir_core::words;
+use skwir_core::words::Words;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -49,7 +51,20 @@ use skwir_platform::trash::Trashed;
 const ID: &str = "trash";
 /// What emptying the trash is called, in its place's menu and on its
 /// button: it asks first.
-const EMPTY_TRASH: &str = "Empty Trash…";
+fn empty_trash() -> Words {
+    words!(
+        trash_empty_menu = "Empty Trash…",
+        note = "A button and a menu item: it asks before it empties."
+    )
+}
+
+/// What the trash is called: its place, its tab, the first of its trail.
+fn trash_title() -> Words {
+    words!(
+        trash_title = "Trash",
+        note = "The place that holds what was moved to the trash."
+    )
+}
 /// The location scheme of the trash.
 pub const SCHEME: &str = "trash";
 /// Changes this close together (a folder of files put in the trash at
@@ -465,7 +480,7 @@ fn place(full: bool) -> Place {
     let menu = if full {
         vec![MenuItem::new(
             "place",
-            EMPTY_TRASH,
+            empty_trash(),
             "trash",
             290,
             Invocation::new("trash.empty"),
@@ -482,7 +497,7 @@ fn place(full: bool) -> Place {
         menu,
         ..Place::new(
             skwir_core::registry::groups::PLACES.id,
-            "Trash",
+            trash_title(),
             icon,
             Location::new(SCHEME, ""),
         )
@@ -524,7 +539,7 @@ impl LocationProvider for TrashProvider {
     fn title(&self, location: &Location) -> Option<String> {
         Some(match folder_of(location) {
             Some(folder) => self.name_of(&folder),
-            None => "Trash".into(),
+            None => trash_title().say(),
         })
     }
 
@@ -535,14 +550,14 @@ impl LocationProvider for TrashProvider {
     fn trail(&self, location: &Location) -> Option<Trail> {
         let Some(folder) = folder_of(location) else {
             return Some(Trail {
-                crumbs: vec![Crumb::new("Trash", Location::new(SCHEME, ""))],
+                crumbs: vec![Crumb::new(trash_title().say(), Location::new(SCHEME, ""))],
                 holds_places: true,
                 ..Trail::default()
             });
         };
         let inside = in_trash(&folder)?;
         let mut crumbs = vec![
-            Crumb::new("Trash", Location::new(SCHEME, "")),
+            Crumb::new(trash_title().say(), Location::new(SCHEME, "")),
             Crumb::new(self.name_of(&inside.item), folder_location(&inside.item)),
         ];
         let mut at = inside.item.clone();
@@ -600,12 +615,15 @@ impl LocationProvider for TrashProvider {
     fn empty_state(&self, location: &Location) -> Option<EmptyState> {
         Some(match folder_of(location) {
             None => EmptyState::new(
-                "The trash is empty",
-                "Files moved to the trash wait here until it is emptied: restore them from their menu.",
+                words!(trash_empty = "The trash is empty").say(),
+                words!(
+                    trash_empty_detail = "Files moved to the trash wait here until it is emptied: restore them from their menu."
+                )
+                .say(),
             ),
             Some(_) => EmptyState::new(
-                "This folder is empty",
-                "Nothing it held is left in the trash.",
+                words!(trash_folder_empty = "This folder is empty").say(),
+                words!(trash_folder_empty_detail = "Nothing it held is left in the trash.").say(),
             ),
         })
     }
@@ -622,7 +640,7 @@ impl LocationProvider for TrashProvider {
             tools: if folder_of(location).is_none() {
                 vec![Tool::new(
                     "trash",
-                    EMPTY_TRASH,
+                    empty_trash().say(),
                     Invocation::new("trash.empty"),
                     ToolPane::Shown,
                 )]
@@ -949,8 +967,11 @@ fn register_commands(app: &App, trashes: &Trashes) {
     app.commands.register::<PutArgs, _>(
         ID, Topic::Files,
         "trash.put",
-        "Put in the trash",
-        "Move files to the trash (plan): a pane's selection, or the entries given (files dropped on the Trash)",
+        words!(trash_put = "Put in the trash"),
+        words!(
+            trash_put_description = "Move files to the trash (plan): a pane's selection, or the entries given (files dropped on the Trash)",
+            note = "Read by agents and in F1's list of actions."
+        ),
         |a, app| {
             let refs = app.targets(a.pane, a.entries)?;
             let steps: Vec<Box<dyn Operation>> = refs
@@ -967,8 +988,10 @@ fn register_commands(app: &App, trashes: &Trashes) {
     app.commands.register::<RestoreArgs, _>(
         ID, Topic::Files,
         "trash.restore",
-        "Restore from the trash",
-        "Put files of the trash back where they came from (plan): the trash pane's selection, or the entries given",
+        words!(trash_restore = "Restore from the trash"),
+        words!(
+            trash_restore_description = "Put files of the trash back where they came from (plan): the trash pane's selection, or the entries given"
+        ),
         move |a, app| {
             let named = !a.entries.is_empty();
             let steps: Vec<Box<dyn Operation>> = if named {
@@ -1004,8 +1027,11 @@ fn register_commands(app: &App, trashes: &Trashes) {
             ID,
             Topic::Files,
             "trash.empty",
-            "Empty the trash",
-            "Delete every file in the trash for good (plan, irreversible)",
+            words!(trash_empty_all = "Empty the trash"),
+            words!(
+                trash_empty_all_description =
+                    "Delete every file in the trash for good (plan, irreversible)"
+            ),
             move |_, _| {
                 // Not read yet (`skwir cmd` runs a skwir just started):
                 // read for whoever asks, never on the window's thread, as
@@ -1055,8 +1081,10 @@ fn register_commands(app: &App, trashes: &Trashes) {
     app.commands.register::<NoArgs, _>(
         ID, Topic::Files,
         "trash.list",
-        "List the trash",
-        "Return the files in the trash: each one's name, where it came from, where it is, and when it was put there",
+        words!(trash_list = "List the trash"),
+        words!(
+            trash_list_description = "Return the files in the trash: each one's name, where it came from, where it is, and when it was put there"
+        ),
         move |_, _| {
             let items: Vec<Arc<Item>> = {
                 let s = t.state.lock();
