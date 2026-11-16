@@ -5,6 +5,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::Image,
+    words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::borrow::Cow;
@@ -90,7 +91,12 @@ fn unpacked(
     bytes: Cow<'_, [u8]>,
     bounds: Bounds,
 ) -> anyhow::Result<(Cow<'_, [u8]>, Option<&'static str>)> {
-    let damaged = || anyhow::anyhow!("The web font is damaged or uses an unknown feature");
+    let damaged = || {
+        anyhow::anyhow!(words!(
+            fonts_web_font_damaged = "The web font is damaged or uses an unknown feature",
+            note = "An error in place of a WOFF or WOFF2 font that could not be unpacked."
+        ))
+    };
     match bytes.get(..4) {
         Some(b"wOFF") => {
             let mut left = bounds.binary_input();
@@ -111,10 +117,14 @@ fn unpacked(
             };
             let font = wuff::decompress_woff1_with_custom_z(&bytes, &mut inflate);
             if over {
-                return Err(bounds.refuse(format!(
-                    "Font exceeds {} preview limit",
-                    limits::describe(bounds.binary_input())
-                )));
+                return Err(bounds.refuse(
+                    words!(
+                        fonts_too_large = "Font exceeds { $size } preview limit",
+                        size = words::Size(bounds.binary_input() as u64),
+                        note = "Why a web font is not previewed: unpacked, it is larger than the preview reads. size: that bound (16 MB)."
+                    )
+                    .say(),
+                ));
             }
             Ok((font.map_err(|_| damaged())?.into(), Some("WOFF")))
         }
@@ -136,8 +146,12 @@ fn specimen(
     use skrifa::MetadataProvider;
     use skrifa::raw::TableProvider;
     use skrifa::string::StringId;
-    let font = skrifa::FontRef::from_index(bytes, 0)
-        .map_err(|_| anyhow::anyhow!("This font cannot be read"))?;
+    let font = skrifa::FontRef::from_index(bytes, 0).map_err(|_| {
+        anyhow::anyhow!(words!(
+            fonts_unreadable = "This font cannot be read",
+            note = "An error in place of a font file its reader does not understand."
+        ))
+    })?;
     check_metrics(&font)?;
     // A name has one record per platform and language: the English one,
     // else the first that decodes.
@@ -147,33 +161,123 @@ fn specimen(
             .map(|name| name.to_string())
             .filter(|name| !name.trim().is_empty())
     };
-    let name = named(StringId::FULL_NAME).unwrap_or_else(|| "Font specimen".into());
+    let name = named(StringId::FULL_NAME).map_or_else(
+        || {
+            words!(
+                fonts_unnamed = "Font specimen",
+                note = "Stands for a font's name in the preview's title when the font gives none."
+            )
+        },
+        words::Words::as_written,
+    );
     let glyphs = font.maxp().map_or(0, |maxp| maxp.num_glyphs());
     // What the name table says, for the panel's Properties, then what the
     // tables hold.
     let has = |tag: &[u8; 4]| font.table_data(skrifa::Tag::new(tag)).is_some();
     let outlines = if has(b"glyf") {
-        Some("TrueType")
+        // The outlines' formats by their names, the same in every language.
+        Some("TrueType".to_owned())
     } else if has(b"CFF ") || has(b"CFF2") {
-        Some("PostScript (CFF)")
+        Some("PostScript (CFF)".to_owned())
     } else if has(b"sbix") || has(b"CBDT") || has(b"EBDT") || has(b"bdat") {
-        Some("Bitmaps only")
+        Some(
+            words!(
+                fonts_outlines_bitmaps = "Bitmaps only",
+                note = "What a font's glyphs are drawn with, in the preview's Properties: pictures, no outlines."
+            )
+            .say(),
+        )
     } else {
         None
     };
     let mut details = inspection::details([
-        ("Family", named(StringId::FAMILY_NAME)),
-        ("Style", named(StringId::SUBFAMILY_NAME)),
-        ("Version", named(StringId::VERSION_STRING)),
-        ("Designer", named(StringId::DESIGNER)),
-        ("License", named(StringId::LICENSE_DESCRIPTION)),
-        ("Glyphs", inspection::count(usize::from(glyphs))),
-        ("Outlines", outlines.map(str::to_owned)),
         (
-            "Variable",
-            (!font.axes().is_empty()).then(|| "Yes".to_owned()),
+            words!(
+                fonts_detail_family = "Family",
+                note = "A label in the preview's Properties: the font's family name."
+            )
+            .say()
+            .as_str(),
+            named(StringId::FAMILY_NAME),
         ),
-        ("Packed as", packed.map(str::to_owned)),
+        (
+            words!(
+                fonts_detail_style = "Style",
+                note = "A label in the preview's Properties: the font's style in its family (Bold Italic)."
+            )
+            .say()
+            .as_str(),
+            named(StringId::SUBFAMILY_NAME),
+        ),
+        (
+            words!(
+                fonts_detail_version = "Version",
+                note = "A label in the preview's Properties: the font's version, as the font states it."
+            )
+            .say()
+            .as_str(),
+            named(StringId::VERSION_STRING),
+        ),
+        (
+            words!(
+                fonts_detail_designer = "Designer",
+                note = "A label in the preview's Properties: who designed the font."
+            )
+            .say()
+            .as_str(),
+            named(StringId::DESIGNER),
+        ),
+        (
+            words!(
+                fonts_detail_license = "License",
+                note = "A label in the preview's Properties: the font's licence, as the font states it."
+            )
+            .say()
+            .as_str(),
+            named(StringId::LICENSE_DESCRIPTION),
+        ),
+        (
+            words!(
+                fonts_detail_glyphs = "Glyphs",
+                note = "A label in the preview's Properties: how many glyphs the font holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(usize::from(glyphs)),
+        ),
+        (
+            words!(
+                fonts_detail_outlines = "Outlines",
+                note = "A label in the preview's Properties: what the font's glyphs are drawn with (TrueType, PostScript (CFF), Bitmaps only)."
+            )
+            .say()
+            .as_str(),
+            outlines,
+        ),
+        (
+            words!(
+                fonts_detail_variable = "Variable",
+                note = "A label in the preview's Properties: whether the font is a variable font, one whose weight or width can be varied."
+            )
+            .say()
+            .as_str(),
+            (!font.axes().is_empty()).then(|| {
+                words!(
+                    fonts_variable_yes = "Yes",
+                    note = "The Variable row's value in the preview's Properties: the font is a variable font."
+                )
+                .say()
+            }),
+        ),
+        (
+            words!(
+                fonts_detail_packed_as = "Packed as",
+                note = "A label in the preview's Properties: the web font format the font came packed in (WOFF, WOFF2)."
+            )
+            .say()
+            .as_str(),
+            packed.map(str::to_owned),
+        ),
     ]);
     // The characters the font maps to a glyph of its own.
     let mut chars: Vec<char> = font
@@ -185,13 +289,23 @@ fn specimen(
         .collect();
     chars.sort_unstable();
     chars.dedup();
-    details.extend(inspection::detail("Characters", chars.len().to_string()));
+    details.extend(inspection::detail(
+        &words!(
+            fonts_detail_characters = "Characters",
+            note = "A label in the preview's Properties: how many characters the font has a glyph for."
+        )
+        .say(),
+        chars.len().to_string(),
+    ));
     let sheet = limits::SHEET_GLYPHS;
     let offset = view.offset.min(chars.len().saturating_sub(1) as u64) as usize;
-    let sample = view
-        .query
-        .as_deref()
-        .unwrap_or("The quick brown fox jumps over the lazy dog. 0123456789");
+    let sample = view.query.clone().unwrap_or_else(|| {
+        words!(
+            fonts_sample = "The quick brown fox jumps over the lazy dog. 0123456789",
+            note = "The specimen text a font preview draws in the font, at three sizes. A pangram of your language (a sentence holding every letter it uses) is best, then the ten digits; keep it under 200 characters."
+        )
+        .say()
+    });
     let sample: String = sample.chars().take(limits::SPECIMEN_CHARS).collect();
     let mut rgba = vec![255; WIDTH * HEIGHT * 4];
     let mut skipped = 0;
@@ -210,15 +324,40 @@ fn specimen(
         .flat_map(|c| [*c, ' '])
         .collect();
     skipped += draw(&font, &glyph_text, SHEET_SIZE, y + 8., &mut rgba, cancel)?.0;
-    let mut notice =
-        String::from("Search sets the specimen text · font collections show their first face");
-    if skipped > 0 {
-        notice = format!("{skipped} oversized glyphs were not drawn · {notice}");
-    }
+    let notice = [
+        (skipped > 0).then(|| {
+            words!(
+                fonts_glyphs_skipped = "{ $count ->
+                    [one] { $count } oversized glyph was not drawn
+                   *[other] { $count } oversized glyphs were not drawn
+                }",
+                count = skipped,
+                note = "A note under a font's specimen: glyphs too large to draw were left out."
+            )
+            .say()
+        }),
+        Some(
+            words!(
+                fonts_notice = "Search sets the specimen text · font collections show their first face",
+                note = "A note under a font's specimen: what is typed in the preview's search is drawn instead of the sample text; of a file holding several fonts, the first is shown."
+            )
+            .say(),
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
     Ok(Inspection {
         details,
         kind: skwir_core::inspection::InspectionKind::Font,
-        title: format!("Font · {name}"),
+        title: words!(
+            fonts_title = "Font · { $name }",
+            name = name,
+            note =
+                "The title of a font's preview. name: the font's full name, as the font gives it."
+        )
+        .say(),
         image: Some(Image {
             width: WIDTH as u32,
             height: HEIGHT as u32,
@@ -236,14 +375,24 @@ fn specimen(
 /// because the head table's bounds are declared, not computed.
 fn check_metrics(font: &skrifa::FontRef<'_>) -> anyhow::Result<()> {
     use skrifa::raw::TableProvider;
-    let head = font
-        .head()
-        .map_err(|_| anyhow::anyhow!("This font has no readable header"))?;
+    let head = font.head().map_err(|_| {
+        anyhow::anyhow!(words!(
+            fonts_no_header = "This font has no readable header",
+            note = "An error in place of a font whose header table is missing or damaged."
+        ))
+    })?;
     let upem = head.units_per_em();
     // The OpenType range; outlines are scaled by `px / units_per_em`.
     anyhow::ensure!(
         (16..=16384).contains(&upem),
-        "Font declares {upem} units per em (expected 16–16384)"
+        words!(
+            fonts_units_per_em = "Font declares { $units ->
+                [one] { $units } unit
+               *[other] { $units } units
+            } per em (expected 16–16384)",
+            units = upem,
+            note = "An error in place of a font whose scale is out of the OpenType range. units: how many units the font divides its em square into."
+        )
     );
     let (x_min, y_min, x_max, y_max) = (
         i32::from(head.x_min()),
@@ -257,7 +406,13 @@ fn check_metrics(font: &skrifa::FontRef<'_>) -> anyhow::Result<()> {
             && (y_max - y_min) as f32 <= limit
             && x_min <= x_max
             && y_min <= y_max,
-        "Font declares outline bounds beyond {BOUNDS_EMS} ems"
+        words!(
+            fonts_outline_bounds = "Font declares outline bounds beyond { $ems ->
+               *[other] { $ems } ems
+            }",
+            ems = BOUNDS_EMS as u32,
+            note = "An error in place of a font whose glyphs claim to be larger than any font's. ems: how many times the font's size they may span (8)."
+        )
     );
     Ok(())
 }

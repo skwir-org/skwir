@@ -14,6 +14,7 @@ use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
     preview::{Held, ReadSeek},
+    words,
 };
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::mime::Types;
@@ -187,8 +188,11 @@ fn measure(held: &Arc<Held>, limit: u64, cancel: &CancelToken) -> anyhow::Result
             total += read;
             anyhow::ensure!(
                 total as u64 <= limit,
-                "Spreadsheet exceeds {} unpacked",
-                limits::describe(usize::try_from(limit).unwrap_or(usize::MAX))
+                words!(
+                    tables_spreadsheet_too_large = "Spreadsheet exceeds { $size } unpacked",
+                    size = words::Size(limit),
+                    note = "Why a spreadsheet could not be shown: its parts, once unpacked, are larger than size (128 MB)."
+                )
             );
         }
     }
@@ -265,7 +269,13 @@ pub fn table(
     bounded(held, limits::CONTAINER_EXPANSION, cancel)?;
     let mut book = Book::open(held, mime)?;
     let sheets = book.sheets();
-    anyhow::ensure!(!sheets.is_empty(), "The spreadsheet has no sheet of cells");
+    anyhow::ensure!(
+        !sheets.is_empty(),
+        words!(
+            tables_spreadsheet_empty = "The spreadsheet has no sheet of cells",
+            note = "Why a spreadsheet could not be shown as a table: it has no worksheet (only charts, say)."
+        )
+    );
     let sheet = usize::try_from(offset / SHEET)
         .unwrap_or(usize::MAX)
         .min(sheets.len() - 1);
@@ -345,26 +355,41 @@ pub fn table(
     } else {
         (sheet > 0).then(|| (sheet as u64 - 1) * SHEET)
     };
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     let notice = [
-        (columns as usize > most).then(|| format!("Only the first {most} columns shown")),
-        (cut > 0).then(|| {
-            format!(
-                "{cut} cell{} longer than {} characters shortened",
-                plural(cut),
-                limits::TABLE_CELL
-            )
-        }),
+        (columns as usize > most).then(|| crate::columns_cut(most)),
+        (cut > 0).then(|| crate::cells_cut(cut)),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
     let details = inspection::details([
-        ("Sheet", Some(sheets[sheet].clone())),
-        ("Sheets", inspection::count(sheets.len())),
-        ("Rows", inspection::count(rows as usize)),
-        ("Columns", inspection::count(columns as usize)),
+        (
+            words!(
+                tables_detail_sheet = "Sheet",
+                note = "A label in the preview's Properties: the name of the spreadsheet's sheet shown."
+            )
+            .say()
+            .as_str(),
+            Some(sheets[sheet].clone()),
+        ),
+        (
+            words!(
+                tables_detail_sheets = "Sheets",
+                note = "A label in the preview's Properties: how many sheets the spreadsheet has."
+            )
+            .say()
+            .as_str(),
+            inspection::count(sheets.len()),
+        ),
+        (
+            crate::detail_rows().as_str(),
+            inspection::count(rows as usize),
+        ),
+        (
+            crate::detail_columns().as_str(),
+            inspection::count(columns as usize),
+        ),
     ]);
     Ok(Inspection {
         details,
@@ -372,7 +397,14 @@ pub fn table(
         title: if table_rows.is_empty() {
             sheets[sheet].clone()
         } else {
-            format!("{} · rows {}–{last}", sheets[sheet], first + 1)
+            words!(
+                tables_title_sheet_rows = "{ $sheet } · rows { $first }–{ $last }",
+                sheet = sheets[sheet].as_str(),
+                first = first + 1,
+                last = last,
+                note = "The title of a spreadsheet's preview: the sheet's name as the file names it, then the rows shown, by number, from first to last."
+            )
+            .say()
         },
         columns: (0..shown as u32).map(letters).collect(),
         rows: table_rows,

@@ -10,6 +10,7 @@ use skwir_core::{
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
+    words,
 };
 use skwir_platform::mime::Types;
 use skwir_platform::{inspection, inspection::limits::Bounds, rich_preview};
@@ -32,9 +33,14 @@ impl Plugin for PreviewPlugin {
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
-            skwir_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown"),
-            skwir_platform::math::WORKER
-                .requirement("Formulas typeset in Markdown, notebooks and HTML"),
+            skwir_platform::diagram::WORKER.requirement(words!(
+                markdown_requirement_mermaid = "Mermaid diagrams drawn in Markdown",
+                note = "What stops working without the Mermaid helper, in the settings' list of what a plugin needs."
+            )),
+            skwir_platform::math::WORKER.requirement(words!(
+                markdown_requirement_math = "Formulas typeset in Markdown, notebooks and HTML",
+                note = "What stops working without the formulas' helper, in the settings' list of what a plugin needs."
+            )),
         ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
@@ -60,8 +66,24 @@ fn measured(
         .sum();
     let headings = page.blocks.iter().filter(|block| block.heading > 0).count();
     data.details = inspection::details([
-        ("Words", inspection::count(words)),
-        ("Headings", inspection::count(headings)),
+        (
+            words!(
+                markdown_detail_words = "Words",
+                note = "A label in the preview's Properties: how many words the document holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(words),
+        ),
+        (
+            words!(
+                markdown_detail_headings = "Headings",
+                note = "A label in the preview's Properties: how many headings the document holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(headings),
+        ),
     ]);
     data.notice = [
         encoding.notice(),
@@ -150,10 +172,11 @@ impl PreviewProvider for Provider {
         let path = held.path();
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
+        // A format's name is its title, the same in every language.
         let (title, page, notice) = if format == Format::Markdown {
             let mut wiki = markdown::Wiki::new(path);
             let page = markdown::parse(&source, bounds, cancel, image, wiki.as_mut())?;
-            ("Markdown", page, "")
+            ("Markdown", page, String::new())
         } else {
             let markup = if format == Format::Xhtml {
                 rich_preview::Markup::Xhtml
@@ -169,7 +192,12 @@ impl PreviewProvider for Provider {
                     cancel,
                     rich_preview::Local { base, cancel },
                 )?,
-                "Reading mode · scripts, fonts and remote content are not loaded",
+                words!(
+                    markdown_html_reading_mode =
+                        "Reading mode · scripts, fonts and remote content are not loaded",
+                    note = "A note under an HTML file's preview: it is read as a document, inert."
+                )
+                .say(),
             )
         };
         Ok(Some(measured(
@@ -177,7 +205,7 @@ impl PreviewProvider for Provider {
                 kind: InspectionKind::Markdown,
                 title: title.into(),
                 source_available: true,
-                notice: notice.into(),
+                notice,
                 ..Inspection::default()
             },
             encoding,
@@ -198,14 +226,22 @@ fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::R
     let mut data = measured(
         Inspection {
             kind: InspectionKind::Markdown,
-            title: "Notebook".into(),
+            title: words!(
+                markdown_title_notebook = "Notebook",
+                note = "The title of a Jupyter notebook's preview."
+            )
+            .say(),
             source_available: true,
             notice: if read.shortened > 0 {
-                format!(
-                    "{} output{} shortened to their first lines",
-                    read.shortened,
-                    if read.shortened == 1 { "" } else { "s" }
+                words!(
+                    markdown_outputs_shortened = "{ $count ->
+                        [one] { $count } output
+                       *[other] { $count } outputs
+                    } shortened to their first lines",
+                    count = read.shortened,
+                    note = "A note under a notebook: the results of its cells that printed too many lines are cut."
                 )
+                .say()
             } else {
                 String::new()
             },
@@ -217,9 +253,33 @@ fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::R
         bounds,
     );
     data.details.extend(inspection::details([
-        ("Cells", inspection::count(read.cells)),
-        ("Language", read.language),
-        ("Kernel", read.kernel),
+        (
+            words!(
+                markdown_detail_cells = "Cells",
+                note = "A label in the preview's Properties: how many cells a Jupyter notebook holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(read.cells),
+        ),
+        (
+            words!(
+                markdown_detail_language = "Language",
+                note = "A label in the preview's Properties: the programming language a notebook's code is in."
+            )
+            .say()
+            .as_str(),
+            read.language,
+        ),
+        (
+            words!(
+                markdown_detail_kernel = "Kernel",
+                note = "A label in the preview's Properties: the Jupyter kernel a notebook runs on."
+            )
+            .say()
+            .as_str(),
+            read.kernel,
+        ),
     ]));
     Ok(data)
 }

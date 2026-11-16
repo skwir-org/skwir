@@ -1,6 +1,7 @@
 //! CSV/TSV, JSON Lines, spreadsheet and SQLite tables streamed from the file
 //! a page at a time, every cell bounded.
 use dialect::Dialect;
+use skwir_core::words;
 use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -45,12 +46,33 @@ impl Plugin for PreviewPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
-        app.settings.declare(SettingSpec::choice(
+        app.settings.declare(SettingSpec::choice_words(
             SPREADSHEETS,
-            "Spreadsheets",
-            "Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another. Pages shows them as LibreOffice prints them, when it is installed.",
+            words!(
+                tables_spreadsheets = "Spreadsheets",
+                note = "A setting's title: how spreadsheets are shown in the preview."
+            ),
+            words!(
+                tables_spreadsheets_description = "Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another. Pages shows them as LibreOffice prints them, when it is installed.",
+                note = "Table and Pages are the setting's two choices."
+            ),
             "table",
-            &[("table", "Table"), ("pages", "Pages")],
+            vec![
+                (
+                    "table",
+                    words!(
+                        tables_spreadsheets_table = "Table",
+                        note = "A choice of the Spreadsheets setting: a workbook's cells shown as a table."
+                    ),
+                ),
+                (
+                    "pages",
+                    words!(
+                        tables_spreadsheets_pages = "Pages",
+                        note = "A choice of the Spreadsheets setting: a workbook shown as LibreOffice prints it, page by page."
+                    ),
+                ),
+            ],
         )
         .page(skwir_core::settings::page::READING)
         .section(skwir_core::settings::section::SPREADSHEETS));
@@ -189,9 +211,10 @@ impl<R: Read> Read for RecordBound<R> {
         if self.since.get() > inspection::limits::TEXT_INPUT as u64 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "a row is longer than {}",
-                    inspection::limits::describe(inspection::limits::TEXT_INPUT)
+                words!(
+                    tables_row_too_long = "a row is longer than { $size }",
+                    size = words::Size(inspection::limits::TEXT_INPUT as u64),
+                    note = "Why a table could not be shown: a row (a quote never closed, a line never ended) runs past the bound. size: that bound (2 MB)."
                 ),
             ));
         }
@@ -301,17 +324,25 @@ fn table(
     }
     let shown = offset + rows.len() as u64;
     let details = inspection::details([
-        ("Columns", inspection::count(columns.len())),
         (
-            "Rows",
+            detail_columns().as_str(),
+            inspection::count(columns.len()),
+        ),
+        (
+            detail_rows().as_str(),
             if more {
-                Some(format!("more than {shown}"))
+                Some(more_rows(shown))
             } else {
                 inspection::count(shown as usize)
             },
         ),
         (
-            "Separator",
+            words!(
+                tables_detail_separator = "Separator",
+                note = "A label in the preview's Properties: what splits a CSV's cells (Comma, Semicolon, Tab…)."
+            )
+            .say()
+            .as_str(),
             (!columns.is_empty()).then(|| dialect.separator_name()),
         ),
     ]);
@@ -324,9 +355,19 @@ fn table(
         details,
         kind: skwir_core::inspection::InspectionKind::Table,
         title: if rows.is_empty() {
-            "Table".into()
+            words!(
+                tables_title_table = "Table",
+                note = "The title of a CSV or TSV file's preview, shown as a table."
+            )
+            .say()
         } else {
-            format!("Table · rows {}–{shown}", offset + 1)
+            words!(
+                tables_title_table_rows = "Table · rows { $first }–{ $last }",
+                first = offset + 1,
+                last = shown,
+                note = "The title of a CSV or TSV file's preview: the rows shown, by number, from first to last."
+            )
+            .say()
         },
         columns,
         rows,
@@ -369,30 +410,87 @@ impl Bounds {
             .collect()
     }
     fn notice(&self) -> Option<String> {
-        let plural = |n: usize| if n == 1 { "" } else { "s" };
         let parts: Vec<String> = [
             (self.rows > 0).then(|| {
-                format!(
-                    "{} row{} cut to {} columns",
-                    self.rows,
-                    plural(self.rows),
-                    self.columns
+                words!(
+                    tables_rows_cut = "{ $count ->
+                        [one] { $count } row
+                       *[other] { $count } rows
+                    } cut to { $columns ->
+                       *[other] { $columns } columns
+                    }",
+                    count = self.rows,
+                    columns = self.columns,
+                    note = "A note under a table: rows with more cells than are shown. columns: how many are shown (64)."
                 )
+                .say()
             }),
-            (self.cells > 0).then(|| {
-                format!(
-                    "{} cell{} longer than {} characters shortened",
-                    self.cells,
-                    plural(self.cells),
-                    limits::TABLE_CELL
-                )
-            }),
+            (self.cells > 0).then(|| cells_cut(self.cells)),
         ]
         .into_iter()
         .flatten()
         .collect();
         (!parts.is_empty()).then(|| parts.join(" · "))
     }
+}
+
+/// The Properties' label for how many columns a table has.
+pub(crate) fn detail_columns() -> String {
+    words!(
+        tables_detail_columns = "Columns",
+        note = "A label in the preview's Properties: how many columns the table has."
+    )
+    .say()
+}
+
+/// The Properties' label for how many rows a table has.
+pub(crate) fn detail_rows() -> String {
+    words!(
+        tables_detail_rows = "Rows",
+        note = "A label in the preview's Properties: how many rows the table has."
+    )
+    .say()
+}
+
+/// The Properties' rows of a table read no further than its page: more
+/// than the `shown` rows read.
+pub(crate) fn more_rows(shown: u64) -> String {
+    words!(
+        tables_rows_more = "{ $count ->
+           *[other] more than { $count }
+        }",
+        count = shown,
+        note = "The value beside Rows in the preview's Properties, for a table read only as far as the page shown: more than that many rows."
+    )
+    .say()
+}
+
+/// The notice of `count` cells cut to `TABLE_CELL` characters.
+pub(crate) fn cells_cut(count: usize) -> String {
+    words!(
+        tables_cells_cut = "{ $count ->
+            [one] { $count } cell
+           *[other] { $count } cells
+        } longer than { $characters ->
+           *[other] { $characters } characters
+        } shortened",
+        count = count,
+        characters = limits::TABLE_CELL,
+        note = "A note under a table: cells whose text is cut. characters: the bound (1,024)."
+    )
+    .say()
+}
+
+/// The notice of a table showing only its first `count` columns.
+pub(crate) fn columns_cut(count: usize) -> String {
+    words!(
+        tables_columns_cut = "{ $count ->
+           *[other] Only the first { $count } columns shown
+        }",
+        count = count,
+        note = "A note under a table that has more columns than are shown."
+    )
+    .say()
 }
 
 /// Keep at most `TABLE_CELL` characters of a cell and mark the cut visibly.
@@ -409,6 +507,19 @@ pub(crate) fn bounded_cell(cell: &str, truncated: &mut usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `n` as English writes a count, its thousands grouped (`1,024`).
+    pub(crate) fn grouped(n: u64) -> String {
+        let digits = n.to_string();
+        let mut out = String::new();
+        for (at, digit) in digits.chars().enumerate() {
+            if at > 0 && (digits.len() - at).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(digit);
+        }
+        out
+    }
 
     /// What a preview holds of a file named `name` whose bytes are
     /// `bytes`.
@@ -811,7 +922,14 @@ mod tests {
         let last = read("long.csv", text.as_bytes(), last_page);
         assert_eq!(last.next, None);
         assert_eq!(rows_detail(&last), Some(rows.to_string()));
-        assert_eq!(last.title, format!("Table · rows {}–{rows}", last_page + 1));
+        assert_eq!(
+            last.title,
+            format!(
+                "Table · rows {}–{}",
+                grouped(last_page + 1),
+                grouped(rows as u64)
+            )
+        );
         let empty = read("empty.csv", b"", 0);
         assert!(empty.columns.is_empty() && empty.rows.is_empty() && empty.details.is_empty());
     }

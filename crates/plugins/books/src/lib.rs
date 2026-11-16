@@ -6,6 +6,8 @@
 //! (`book`), each format saying how its chapters and what they name are
 //! read (`epub`, `mobi`). `MuPDF`, when chosen, reads the kinds of book it
 //! reads well, told from the file before it opens.
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection},
@@ -54,8 +56,15 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         use skwir_platform::document::{Engine, worker};
         vec![
-            worker(Engine::Mupdf).requirement("Books laid out into pages by MuPDF"),
-            skwir_platform::math::WORKER.requirement("Formulas a book writes in MathML typeset"),
+            worker(Engine::Mupdf).requirement(words!(
+                books_needs_mupdf = "Books laid out into pages by MuPDF",
+                note = "What stops working without the MuPDF helper, in the plugin's requirements."
+            )),
+            skwir_platform::math::WORKER.requirement(words!(
+                books_needs_math = "Formulas a book writes in MathML typeset",
+                note =
+                    "What stops working without the formulas helper, in the plugin's requirements."
+            )),
         ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
@@ -64,15 +73,32 @@ impl Plugin for PreviewPlugin {
     }
     fn register(&self, app: &App) {
         app.settings.rename("epub.backend", BACKEND);
-        app.settings.declare(skwir_core::settings::SettingSpec::choice(
+        app.settings.declare(skwir_core::settings::SettingSpec::choice_words(
             BACKEND,
-            "Book engine",
-            "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others.",
+            words!(
+                books_engine = "Book engine",
+                note = "A setting: what reads books, the built-in engine or MuPDF."
+            ),
+            words!(
+                books_engine_description = "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others."
+            ),
             "auto",
-            &[
-                ("auto", "Automatic"),
-                ("builtin", "Built-in"),
-                ("mupdf", "MuPDF"),
+            vec![
+                (
+                    "auto",
+                    words!(
+                        books_engine_auto = "Automatic",
+                        note = "A choice of the Book engine setting."
+                    ),
+                ),
+                (
+                    "builtin",
+                    words!(
+                        books_engine_builtin = "Built-in",
+                        note = "A choice of the Book engine setting: Skwir's own engine."
+                    ),
+                ),
+                ("mupdf", Words::as_written("MuPDF")),
             ],
         )
         .now("builtin")
@@ -335,9 +361,10 @@ impl PreviewProvider for Provider {
         let source = held.path_for_program(lifetime)?.into_owned();
         let session = skwir_platform::document::open_book(source, req.text_size, lifetime.clone())?;
         let Some(session) = session else {
-            anyhow::bail!(
-                "Reading books with MuPDF needs skwir-mupdf-worker; install it, or choose the built-in book engine"
-            );
+            anyhow::bail!(words!(
+                books_mupdf_missing = "Reading books with MuPDF needs skwir-mupdf-worker; install it, or choose the built-in book engine",
+                note = "skwir-mupdf-worker is the name of a program, as it is installed."
+            ));
         };
         Ok(Some(Arc::new(Holding {
             session,

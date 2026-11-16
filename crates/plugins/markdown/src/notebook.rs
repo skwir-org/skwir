@@ -16,6 +16,7 @@ use skwir_core::{
     inspection::{Block, Picture},
     preview::Held,
     thumbs::Image,
+    words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::rich_preview;
@@ -51,7 +52,10 @@ pub fn read(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::R
     let value: Value = serde_json::from_slice(&bytes)?;
     anyhow::ensure!(
         value.get("nbformat").and_then(Value::as_u64) == Some(4),
-        "Only notebooks in format 4 (Jupyter 4 and later) are read"
+        words!(
+            markdown_notebook_format = "Only notebooks in format 4 (Jupyter 4 and later) are read",
+            note = "An error in place of a Jupyter notebook written in an older format."
+        )
     );
     Ok(value)
 }
@@ -158,10 +162,14 @@ fn attachment<'a>(attachments: &'a Value, name: &str) -> Option<(String, &'a Val
 fn spend(read: &mut usize, text: &str, bounds: Bounds) -> anyhow::Result<()> {
     *read += text.len();
     if *read > bounds.text_input() {
-        return Err(bounds.refuse(format!(
-            "Notebook text exceeds {} preview limit",
-            limits::describe(bounds.text_input())
-        )));
+        return Err(bounds.refuse(
+            words!(
+                markdown_notebook_too_large = "Notebook text exceeds { $size } preview limit",
+                size = words::Size(bounds.text_input() as u64),
+                note = "Why a notebook is not previewed: its text is longer than the preview reads. size: that bound (2 MB)."
+            )
+            .say(),
+        ));
     }
     Ok(())
 }

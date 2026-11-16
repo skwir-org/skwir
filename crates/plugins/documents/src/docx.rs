@@ -7,6 +7,7 @@ use roxmltree::Node;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{Align, Script};
 use skwir_core::preview::FileSource;
+use skwir_core::words;
 use skwir_platform::inspection::{self, Numbering, limits};
 use std::collections::{HashMap, HashSet};
 
@@ -1077,7 +1078,12 @@ pub(crate) fn read<S: FileSource + ?Sized>(
         .unwrap_or_else(|| "word/document.xml".into());
     let source = package
         .text(&main, "The document's text", cancel)?
-        .ok_or_else(|| anyhow::anyhow!("This is not a Word document: it has no text part"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                documents_docx_no_text = "This is not a Word document: it has no text part",
+                note = "An error in place of a file named as a Word document that holds no text."
+            ))
+        })?;
     let doc = package::xml(&source)?;
     let styles_xml = match related(&mut package, &main, "styles", cancel) {
         Some(name) => package.text(&name, "Styles", cancel)?,
@@ -1089,8 +1095,12 @@ pub(crate) fn read<S: FileSource + ?Sized>(
     };
     let styles = Styles::read(styles_xml.as_deref());
     let numbering = Lists::read(numbering_xml.as_deref());
-    let body = child(doc.root_element(), &W, "body")
-        .ok_or_else(|| anyhow::anyhow!("This Word document has no body"))?;
+    let body = child(doc.root_element(), &W, "body").ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            documents_docx_no_body = "This Word document has no body",
+            note = "An error in place of a Word document whose text part holds no body."
+        ))
+    })?;
     let part = Part {
         rels: rels(&mut package, &main, cancel)?,
     };

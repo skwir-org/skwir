@@ -21,6 +21,7 @@ use skwir_core::{
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
+    words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::preview::DocumentPreviews;
@@ -98,9 +99,13 @@ impl Plugin for PreviewPlugin {
         use skwir_platform::document::{Engine, worker};
         let library = Arc::clone(&self.pdfium_library);
         let pdfium = worker(Engine::Pdfium);
+        let pdf_reading = words!(
+            documents_requirement_pdfium = "PDF reading with PDFium",
+            note = "What stops working without PDFium's helper, in the settings' list of what a plugin needs."
+        );
         vec![
             // Its library is the one the settings name, else the system's.
-            Requirement::new(pdfium.executable, "PDF reading with PDFium", move || {
+            Requirement::new(pdfium.executable, pdf_reading, move || {
                 let library = library.read().clone();
                 let envs: Vec<(&str, &std::ffi::OsStr)> = library
                     .iter()
@@ -108,22 +113,39 @@ impl Plugin for PreviewPlugin {
                     .collect();
                 pdfium.works_with(&envs)
             }),
-            worker(Engine::Poppler).requirement("PDF reading with Poppler"),
-            worker(Engine::Mupdf).requirement("PDF reading with MuPDF"),
+            worker(Engine::Poppler).requirement(words!(
+                documents_requirement_poppler = "PDF reading with Poppler",
+                note = "What stops working without Poppler's helper, in the settings' list of what a plugin needs."
+            )),
+            worker(Engine::Mupdf).requirement(words!(
+                documents_requirement_mupdf = "PDF reading with MuPDF",
+                note = "What stops working without MuPDF's helper, in the settings' list of what a plugin needs."
+            )),
             // Where it installs itself too, off Linux (`process::required`).
-            Requirement::new("libreoffice", "Office documents shown as pages", || {
-                skwir_platform::process::required("libreoffice").is_ok()
-            }),
+            Requirement::new(
+                "libreoffice",
+                words!(
+                    documents_requirement_libreoffice = "Office documents shown as pages",
+                    note = "What stops working without LibreOffice, in the settings' list of what a plugin needs."
+                ),
+                || skwir_platform::process::required("libreoffice").is_ok(),
+            ),
             Requirement::program(
                 "pandoc",
-                "Text documents read by Pandoc, and RTF files read as text",
+                words!(
+                    documents_requirement_pandoc = "Text documents read by Pandoc, and RTF files read as text",
+                    note = "What stops working without Pandoc, in the settings' list of what a plugin needs."
+                ),
             ),
         ]
         .into_iter()
         .chain(skwir_platform::sandbox::PROGRAM.map(|program| {
             Requirement::program(
                 program,
-                "Isolation of LibreOffice, which needs it, and of Pandoc",
+                words!(
+                    documents_requirement_sandbox = "Isolation of LibreOffice, which needs it, and of Pandoc",
+                    note = "What stops working without the sandbox program (bubblewrap), in the settings' list of what a plugin needs: LibreOffice is not run without it, Pandoc runs in its own sandbox where it has one."
+                ),
             )
         }))
         .collect()
@@ -139,16 +161,28 @@ impl Plugin for PreviewPlugin {
         // What Automatic gives, once the settings probed each engine.
         let tries = AUTO.map(|engine| (engine.key(), worker(engine).executable));
         app.settings.declare(
-            SettingSpec::choice(
+            SettingSpec::choice_words(
                 BACKEND,
-                "Document engine",
-                "Automatic prefers PDFium and falls back to Poppler; MuPDF is used only when chosen.",
+                words!(
+                    documents_engine = "Document engine",
+                    note = "A setting's title: which program reads PDF documents."
+                ),
+                words!(
+                    documents_engine_description = "Automatic prefers PDFium and falls back to Poppler; MuPDF is used only when chosen.",
+                    note = "Automatic is the setting's first choice; PDFium, Poppler and MuPDF are the programs' names."
+                ),
                 "auto",
-                &[
-                    ("auto", "Automatic"),
-                    ("pdfium", "PDFium"),
-                    ("poppler", "Poppler"),
-                    ("mupdf", "MuPDF"),
+                vec![
+                    (
+                        "auto",
+                        words!(
+                            documents_engine_auto = "Automatic",
+                            note = "A choice of the Document engine setting: the first engine installed."
+                        ),
+                    ),
+                    ("pdfium", words::Words::as_written("PDFium")),
+                    ("poppler", words::Words::as_written("Poppler")),
+                    ("mupdf", words::Words::as_written("MuPDF")),
                 ],
             )
             .tries(&tries)
@@ -160,22 +194,45 @@ impl Plugin for PreviewPlugin {
         app.settings.declare(
             SettingSpec::path(
                 PDFIUM_LIBRARY,
-                "PDFium library",
-                "Path to the PDFium shared library. Leave empty to search the usual locations.",
+                words!(
+                    documents_pdfium_library = "PDFium library",
+                    note = "A setting's title: where the PDFium library is."
+                ),
+                words!(
+                    documents_pdfium_library_description = "Path to the PDFium shared library. Leave empty to search the usual locations."
+                ),
                 "",
             )
             .page(skwir_core::settings::page::READING)
             .section(skwir_core::settings::section::DOCUMENTS),
         );
-        app.settings.declare(SettingSpec::choice(
+        app.settings.declare(SettingSpec::choice_words(
             TEXT_DOCUMENTS,
-            "Text documents",
-            "How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
+            words!(
+                documents_text_documents = "Text documents",
+                note = "A setting's title: how Word, OpenDocument and RTF documents are shown in the preview."
+            ),
+            words!(
+                documents_text_documents_description = "How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
+                note = "Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names."
+            ),
             "reading",
-            &[
-                ("reading", "Reading"),
-                ("pages", "Pages"),
-                ("pandoc", "Pandoc"),
+            vec![
+                (
+                    "reading",
+                    words!(
+                        documents_text_documents_reading = "Reading",
+                        note = "A choice of the Text documents setting: the document's text read to fit the panel (a reading mode)."
+                    ),
+                ),
+                (
+                    "pages",
+                    words!(
+                        documents_text_documents_pages = "Pages",
+                        note = "A choice of the Text documents setting: the document laid out in pages, as LibreOffice prints it."
+                    ),
+                ),
+                ("pandoc", words::Words::as_written("Pandoc")),
             ],
         )
         .page(skwir_core::settings::page::READING)
@@ -390,10 +447,30 @@ impl Reading {
             .sum();
         let facts = about(held, cancel);
         let notice = [
-            Some("Read by Pandoc · layout, headers and comments are not shown".to_owned()),
-            cut.then(|| "Only the start is shown".to_owned()),
-            page.truncated
-                .then(|| format!("First {} blocks", bounds.blocks())),
+            Some(
+                words!(
+                    documents_read_by_pandoc = "Read by Pandoc · layout, headers and comments are not shown",
+                    note = "A note under a text document's preview read by Pandoc, a program."
+                )
+                .say(),
+            ),
+            cut.then(|| {
+                words!(
+                    documents_start_only = "Only the start is shown",
+                    note = "A note under a document's preview: Pandoc's reading of it was longer than the preview shows."
+                )
+                .say()
+            }),
+            page.truncated.then(|| {
+                words!(
+                    documents_first_blocks = "{ $count ->
+                       *[other] First { $count } blocks
+                    }",
+                    count = bounds.blocks(),
+                    note = "A note under a document's preview: only its first paragraphs, headings, tables and pictures (blocks) are shown."
+                )
+                .say()
+            }),
         ];
         Ok(Inspection {
             kind: InspectionKind::Markdown,
@@ -404,6 +481,14 @@ impl Reading {
             ..Inspection::default()
         })
     }
+}
+
+/// The error for a picture a document does not name.
+fn not_its_picture() -> words::Words {
+    words!(
+        documents_not_its_picture = "not a picture of this document",
+        note = "An error in place of a picture in a document's preview: the picture asked for is none the document holds."
+    )
 }
 
 /// The plugin's cache namespace is bounded as the document preview's is.
@@ -466,24 +551,79 @@ fn about(held: &Arc<Held>, cancel: &CancelToken) -> Vec<(&'static str, String)> 
 }
 
 /// Properties in their order: what the document states, and its words.
+/// A fact is keyed by its English label (`docx::about`, `odt::about`), an
+/// identifier: the label shown is a message.
 fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::inspection::Detail> {
-    let fact = |label: &str| {
+    let fact = |key: &str| {
         facts
             .iter()
-            .find(|(l, _)| *l == label)
+            .find(|(k, _)| *k == key)
             .map(|(_, value)| value.clone())
     };
     inspection::details([
-        ("Title", fact("Title")),
-        ("Author", fact("Author")),
-        ("Subject", fact("Subject")),
-        ("Keywords", fact("Keywords")),
-        ("Pages", fact("Pages")),
-        ("Words", inspection::count(words)),
+        (
+            words!(
+                documents_detail_title = "Title",
+                note = "A label in the preview's Properties: the title the document gives itself."
+            )
+            .say()
+            .as_str(),
+            fact("Title"),
+        ),
+        (
+            words!(
+                documents_detail_author = "Author",
+                note = "A label in the preview's Properties: who wrote the document, as it says."
+            )
+            .say()
+            .as_str(),
+            fact("Author"),
+        ),
+        (
+            words!(
+                documents_detail_subject = "Subject",
+                note = "A label in the preview's Properties: the subject the document gives itself."
+            )
+            .say()
+            .as_str(),
+            fact("Subject"),
+        ),
+        (
+            words!(
+                documents_detail_keywords = "Keywords",
+                note = "A label in the preview's Properties: the keywords the document gives itself."
+            )
+            .say()
+            .as_str(),
+            fact("Keywords"),
+        ),
+        (
+            words!(
+                documents_detail_pages = "Pages",
+                note = "A label in the preview's Properties: how many pages the document had when it was saved."
+            )
+            .say()
+            .as_str(),
+            fact("Pages"),
+        ),
+        (
+            words!(
+                documents_detail_words = "Words",
+                note = "A label in the preview's Properties: how many words the document holds."
+            )
+            .say()
+            .as_str(),
+            inspection::count(words),
+        ),
         // `LibreOffice/24.2.1.2$Linux_X86_64 LibreOffice_project/…`: the
         // application and its version.
         (
-            "Application",
+            words!(
+                documents_detail_application = "Application",
+                note = "A label in the preview's Properties: the program that saved the document, with its version."
+            )
+            .say()
+            .as_str(),
             fact("Application")
                 .map(|app| app.split('$').next().unwrap_or_default().replace('/', " ")),
         ),
@@ -495,15 +635,41 @@ fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::in
 fn shown(read: blocks::Read) -> Inspection {
     let paged = read.parts > 1;
     let notice = [
-        Some("Reading mode · layout, headers and comments are not shown".to_owned()),
-        paged.then(|| "[ and ] move through its parts".to_owned()),
-        read.truncated
-            .then(|| format!("First {} blocks of this part", limits::BLOCKS)),
+        Some(
+            words!(
+                documents_reading_mode = "Reading mode · layout, headers and comments are not shown",
+                note = "A note under a Word or OpenDocument file's preview, read by skwir as text that fits the panel."
+            )
+            .say(),
+        ),
+        paged.then(|| {
+            words!(
+                documents_parts_keys = "[ and ] move through its parts",
+                note = "A note under a long document's preview, shown a part at a time: the [ and ] keys show the part before and the part after."
+            )
+            .say()
+        }),
+        read.truncated.then(|| {
+            words!(
+                documents_first_blocks_of_part = "{ $count ->
+                   *[other] First { $count } blocks of this part
+                }",
+                count = limits::BLOCKS,
+                note = "A note under a document's preview: only the first paragraphs, headings, tables and pictures (blocks) of the part shown are shown."
+            )
+            .say()
+        }),
     ];
     Inspection {
         kind: InspectionKind::Markdown,
         title: if paged {
-            format!("Part {} of {}", read.part + 1, read.parts)
+            words!(
+                documents_part_of = "Part { $part } of { $parts }",
+                part = read.part + 1,
+                parts = read.parts,
+                note = "The title of a long document's preview, shown a part at a time: which part, of how many."
+            )
+            .say()
         } else {
             String::new()
         },
@@ -543,7 +709,12 @@ impl PreviewProvider for Reading {
         let held = req.held()?;
         let engine = self
             .engine(&held)
-            .ok_or_else(|| anyhow::anyhow!("Nothing installed reads this document as text"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    documents_no_reader = "Nothing installed reads this document as text",
+                    note = "An error in place of a text document when neither skwir nor Pandoc reads its format."
+                ))
+            })?;
         Ok(Some(match engine {
             Engine::Word => shown(docx::read(&held, view.offset, cancel)?),
             Engine::OpenDocument => shown(odt::read(&held, view.offset, cancel)?),
@@ -568,8 +739,8 @@ impl PreviewProvider for Reading {
                 package::Package::open(&held, cancel)?.read(key, "Embedded image", cancel)?
             }
             Some(Engine::Pandoc(tool, format)) => {
-                let name = pandoc::media_name(key)
-                    .ok_or_else(|| anyhow::anyhow!("not a picture of this document"))?;
+                let name =
+                    pandoc::media_name(key).ok_or_else(|| anyhow::anyhow!(not_its_picture()))?;
                 let cache_key = Self::media_key(req, &held, &tool, &name)?;
                 if let Some(bytes) = self.cache.get(&cache_key) {
                     bytes
@@ -602,7 +773,7 @@ impl PreviewProvider for Reading {
                     if kept > 0 {
                         self.cache.trim_soon(kept, CACHE_BYTES);
                     }
-                    wanted.ok_or_else(|| anyhow::anyhow!("not a picture of this document"))?
+                    wanted.ok_or_else(|| anyhow::anyhow!(not_its_picture()))?
                 }
             }
             None => return Ok(None),

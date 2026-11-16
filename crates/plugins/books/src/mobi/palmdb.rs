@@ -5,7 +5,7 @@
 //! what the book says of itself.
 use std::borrow::Cow;
 
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words, words::Words};
 use skwir_platform::inspection::limits;
 
 /// A Palm database's header: its name, its type and creator, how many
@@ -57,7 +57,7 @@ impl Database {
     ) -> anyhow::Result<Self> {
         let length = file.length()?;
         let head = file.read_range(0, HEADER, cancel)?;
-        anyhow::ensure!(head.len() == HEADER, "This book is cut short");
+        anyhow::ensure!(head.len() == HEADER, cut_short());
         let kind = Kind::of(&head);
         let name = head[..32].split(|&b| b == 0).next().unwrap_or_default();
         let name = skwir_platform::inspection::Encoding::Windows1252
@@ -65,9 +65,15 @@ impl Database {
             .trim()
             .to_owned();
         let count = usize::from(u16::from_be_bytes([head[76], head[77]]));
-        anyhow::ensure!(count > 0, "This book has no records");
+        anyhow::ensure!(
+            count > 0,
+            words!(
+                books_palm_no_records = "This book has no records",
+                note = "An error: a Palm database (a Mobipocket book's file) holds no records."
+            )
+        );
         let list = file.read_range(HEADER as u64, count * 8, cancel)?;
-        anyhow::ensure!(list.len() == count * 8, "This book is cut short");
+        anyhow::ensure!(list.len() == count * 8, cut_short());
         let mut offsets = Vec::with_capacity(count + 1);
         for entry in list.as_chunks::<8>().0 {
             let offset = u64::from(u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]));
@@ -75,7 +81,10 @@ impl Database {
                 offset >= (HEADER + count * 8) as u64
                     && offset <= length
                     && offsets.last().is_none_or(|&last| offset >= last),
-                "This book's records are out of order"
+                words!(
+                    books_palm_out_of_order = "This book's records are out of order",
+                    note = "An error: a Palm database (a Mobipocket book's file) is damaged."
+                )
             );
             offsets.push(offset);
         }
@@ -108,13 +117,16 @@ impl Database {
     ) -> anyhow::Result<Cow<'a, [u8]>> {
         let (start, length) = self
             .range(index)
-            .ok_or_else(|| anyhow::anyhow!("This book has no record {index}"))?;
+            .ok_or_else(|| anyhow::anyhow!(no_record(index)))?;
         anyhow::ensure!(
             length <= limits::BINARY_INPUT,
-            "A record of this book is too large to read"
+            words!(
+                books_palm_record_too_large = "A record of this book is too large to read",
+                note = "An error: a part of a Palm database (a Mobipocket book's file) is larger than the preview reads."
+            )
         );
         let bytes = file.read_range(start, length, cancel)?;
-        anyhow::ensure!(bytes.len() == length, "This book is cut short");
+        anyhow::ensure!(bytes.len() == length, cut_short());
         Ok(bytes)
     }
 
@@ -128,7 +140,7 @@ impl Database {
     ) -> anyhow::Result<Cow<'a, [u8]>> {
         let (start, length) = self
             .range(index)
-            .ok_or_else(|| anyhow::anyhow!("This book has no record {index}"))?;
+            .ok_or_else(|| anyhow::anyhow!(no_record(index)))?;
         Ok(file.read_range(start, length.min(limit), cancel)?)
     }
 }
@@ -192,6 +204,23 @@ const EXTH: usize = 1024 * 1024;
 /// EXTH records read at most.
 const EXTH_RECORDS: usize = 4096;
 
+/// The refusal of a book whose file ends before what it says it holds.
+fn cut_short() -> Words {
+    words!(
+        books_palm_cut_short = "This book is cut short",
+        note = "An error: a Mobipocket book's file ends before what it says it holds."
+    )
+}
+
+/// The refusal of record `index`, which the book does not have.
+fn no_record(index: usize) -> Words {
+    words!(
+        books_palm_no_record = "This book has no record { $index }",
+        index = index.to_string(),
+        note = "An error: a Mobipocket book names a part of its file it does not have. index: the part's number."
+    )
+}
+
 impl Header {
     /// The header in `record`, a book's first record.
     pub(crate) fn parse(record: &[u8]) -> anyhow::Result<Self> {
@@ -205,12 +234,22 @@ impl Header {
                 .get(at..at + 4)
                 .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
         };
-        let short = || anyhow::anyhow!("This book's first record is cut short");
+        let short = || {
+            anyhow::anyhow!(words!(
+                books_palm_first_record_short = "This book's first record is cut short",
+                note = "An error: the part of a Mobipocket book that says how it is stored is damaged."
+            ))
+        };
         let compression = match u16_at(0).ok_or_else(short)? {
             1 => Compression::None,
             2 => Compression::PalmDoc,
             17480 => Compression::HuffCdic,
-            other => anyhow::bail!("This book's text is compressed in a way not read ({other})"),
+            other => anyhow::bail!(words!(
+                books_palm_compression =
+                    "This book's text is compressed in a way not read ({ $code })",
+                code = other.to_string(),
+                note = "An error: a Mobipocket book's text is compressed in a way Skwir does not decode. code: the number the book names it by."
+            )),
         };
         let text_length = u32_at(4).ok_or_else(short)?;
         let text_records = u16_at(8).ok_or_else(short)?;

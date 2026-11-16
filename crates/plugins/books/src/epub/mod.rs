@@ -11,6 +11,8 @@ use skwir_core::{
     CancelToken,
     inspection::{Picture, PrintedPage, Row},
     preview::FileSource,
+    words,
+    words::Words,
 };
 use skwir_platform::{
     inspection::{self, limits},
@@ -81,7 +83,7 @@ impl Book for EpubBook {
         href: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<(String, Option<String>)> {
-        let bytes = self.container.read(href, "Chapter", cancel)?;
+        let bytes = self.container.read(href, Part::Chapter, cancel)?;
         let (text, encoding) = inspection::decode(&bytes);
         Ok((text.into_owned(), encoding.notice()))
     }
@@ -107,24 +109,37 @@ impl Book for EpubBook {
         printed_pages(&self.book, sections)
     }
     /// What the package says about the book.
-    fn details(&mut self) -> Vec<(&'static str, Option<String>)> {
+    fn details(&mut self) -> Vec<(Words, Option<String>)> {
         let metadata = self.book.metadata();
         let people = |names: Vec<&str>| names.join(", ");
         vec![
             (
-                "Title",
+                words!(
+                    books_detail_title = "Title",
+                    note = "A label in the preview's Properties: the book's title."
+                ),
                 metadata.title().map(|title| title.value().to_owned()),
             ),
             (
-                "Author",
+                words!(
+                    books_detail_author = "Author",
+                    note = "A label in the preview's Properties: who wrote the book."
+                ),
                 Some(people(metadata.creators().map(|c| c.value()).collect())),
             ),
             (
-                "Publisher",
+                words!(
+                    books_detail_publisher = "Publisher",
+                    note = "A label in the preview's Properties: who published the book."
+                ),
                 Some(people(metadata.publishers().map(|p| p.value()).collect())),
             ),
             (
-                "Language",
+                words!(
+                    books_detail_language = "Language",
+                    note =
+                        "A label in the preview's Properties: the language the book is written in."
+                ),
                 metadata
                     .language()
                     .map(|language| language.value().to_owned()),
@@ -140,7 +155,7 @@ pub(crate) fn picture<S: FileSource + ?Sized>(
     key: &str,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
-    Container::open(file, cancel)?.read(key, "Embedded image", cancel)
+    Container::open(file, cancel)?.read(key, Part::Picture, cancel)
 }
 
 /// The book's cover picture, as the package names it: nothing for a book
@@ -247,9 +262,94 @@ impl rich_preview::Resources for Chapter<'_> {
         }
         let bytes = self
             .container
-            .read(&resolve(self.base, href), "Stylesheet", self.cancel)
+            .read(&resolve(self.base, href), Part::Stylesheet, self.cancel)
             .ok()?;
         (bytes.len() <= limits::TEXT_INPUT).then(|| inspection::decode(&bytes).0.into_owned())
+    }
+}
+
+/// What a read of the container is for: named so by the package's reader
+/// where it fails (`Part::what`), said whole where the book encrypts it
+/// (`Part::protected`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Part {
+    Chapter,
+    Page,
+    Picture,
+    Stylesheet,
+    /// `META-INF/encryption.xml`.
+    Encryption,
+    /// What a chapter names (a font, a file).
+    Resource,
+    /// `META-INF/container.xml`.
+    Container,
+    /// The package document (the OPF).
+    Package,
+    /// A contents document (the nav, the NCX).
+    Contents,
+}
+
+impl Part {
+    /// What the package's reader names it by in its errors.
+    fn what(self) -> &'static str {
+        match self {
+            Part::Chapter => "Chapter",
+            Part::Page => "Page",
+            Part::Picture => "Embedded image",
+            Part::Stylesheet => "Stylesheet",
+            Part::Encryption => "EPUB encryption",
+            Part::Resource => "EPUB resource",
+            Part::Container => "EPUB container",
+            Part::Package => "EPUB package",
+            Part::Contents => "EPUB contents",
+        }
+    }
+
+    /// The refusal of a part the book encrypts.
+    fn protected(self) -> Words {
+        match self {
+            Part::Chapter => words!(
+                books_epub_protected_chapter = "This EPUB is protected: its chapter is encrypted"
+            ),
+            Part::Page => {
+                words!(books_epub_protected_page = "This EPUB is protected: its page is encrypted")
+            }
+            Part::Picture => words!(
+                books_epub_protected_picture =
+                    "This EPUB is protected: its embedded image is encrypted"
+            ),
+            Part::Stylesheet => words!(
+                books_epub_protected_stylesheet =
+                    "This EPUB is protected: its stylesheet is encrypted"
+            ),
+            Part::Encryption => words!(
+                books_epub_protected_encryption =
+                    "This EPUB is protected: its epub encryption is encrypted",
+                note =
+                    "Its list of what it encrypts (META-INF/encryption.xml) is itself encrypted."
+            ),
+            Part::Resource => words!(
+                books_epub_protected_resource =
+                    "This EPUB is protected: its epub resource is encrypted",
+                note = "What a chapter names (a font, a file) is encrypted."
+            ),
+            Part::Container => words!(
+                books_epub_protected_container =
+                    "This EPUB is protected: its epub container is encrypted",
+                note =
+                    "The file that names the book's package (META-INF/container.xml) is encrypted."
+            ),
+            Part::Package => words!(
+                books_epub_protected_package =
+                    "This EPUB is protected: its epub package is encrypted",
+                note = "The book's package document (the OPF), which lists its chapters, is encrypted."
+            ),
+            Part::Contents => words!(
+                books_epub_protected_contents =
+                    "This EPUB is protected: its epub contents is encrypted",
+                note = "The book's table of contents is encrypted."
+            ),
+        }
     }
 }
 
@@ -325,7 +425,7 @@ impl Container {
             encrypted: HashMap::new(),
             identifier: None,
         };
-        if let Ok(xml) = container.read("META-INF/encryption.xml", "EPUB encryption", cancel) {
+        if let Ok(xml) = container.read("META-INF/encryption.xml", Part::Encryption, cancel) {
             let text = inspection::decode(&xml).0;
             if let Ok(doc) = parse_xml(&text) {
                 for data in doc
@@ -352,7 +452,7 @@ impl Container {
     /// A resource as a reading system reads it: an obfuscated font restored,
     /// and nothing for what is encrypted.
     fn file(&mut self, href: &str, cancel: &CancelToken) -> Option<Vec<u8>> {
-        let mut bytes = self.read(href, "EPUB resource", cancel).ok()?;
+        let mut bytes = self.read(href, Part::Resource, cancel).ok()?;
         if let Some(algorithm) = member_key(href).and_then(|key| self.encrypted.get(&key).cloned())
         {
             let identifier = self.identifier(cancel)?;
@@ -381,7 +481,7 @@ impl Container {
         inspection::check(cancel)?;
         member_key(href)
             .and_then(|name| self.package.head(&name, limit))
-            .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))
+            .ok_or_else(|| anyhow::anyhow!(missing(href)))
     }
     /// Whether `encryption.xml` lists the member `name` as encrypted, not
     /// only obfuscated.
@@ -397,20 +497,26 @@ impl Container {
     pub(crate) fn read(
         &mut self,
         href: &str,
-        what: &str,
+        what: Part,
         cancel: &CancelToken,
     ) -> anyhow::Result<Vec<u8>> {
-        let name =
-            member_key(href).ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
-        anyhow::ensure!(self.package.has(&name), "Missing EPUB resource {href}");
+        let name = member_key(href).ok_or_else(|| anyhow::anyhow!(missing(href)))?;
+        anyhow::ensure!(self.package.has(&name), missing(href));
         if self.protected(&name) {
-            anyhow::bail!(
-                "This EPUB is protected: its {} is encrypted",
-                what.to_lowercase()
-            );
+            anyhow::bail!(what.protected());
         }
-        self.package.read(&name, limits::BINARY_INPUT, what, cancel)
+        self.package
+            .read(&name, limits::BINARY_INPUT, what.what(), cancel)
     }
+}
+
+/// The refusal of a resource `href` names that the book lacks.
+fn missing(href: &str) -> Words {
+    words!(
+        books_epub_missing = "Missing EPUB resource { $href }",
+        href = href,
+        note = "An error: a book names a part of itself it does not hold. href: the part's name in the book."
+    )
 }
 const CONTAINER: &str = "META-INF/container.xml";
 /// The container document, the package document's path, and the package
@@ -419,17 +525,22 @@ fn package_document(
     container: &mut Container,
     cancel: &CancelToken,
 ) -> anyhow::Result<(Vec<u8>, String, Vec<u8>)> {
-    let container_xml = container.read(CONTAINER, "EPUB container", cancel)?;
+    let container_xml = container.read(CONTAINER, Part::Container, cancel)?;
     let opf_path = {
         let text = inspection::decode(&container_xml).0;
         let doc = parse_xml(&text)?;
         doc.descendants()
             .find(|n| n.has_tag_name("rootfile"))
             .and_then(|n| n.attribute("full-path"))
-            .ok_or_else(|| anyhow::anyhow!("EPUB container names no package"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_epub_no_package = "EPUB container names no package",
+                    note = "An error: the book's META-INF/container.xml names no package document."
+                ))
+            })?
             .to_owned()
     };
-    let opf = container.read(&opf_path, "EPUB package", cancel)?;
+    let opf = container.read(&opf_path, Part::Package, cancel)?;
     Ok((container_xml, opf_path, opf))
 }
 /// The identifier obfuscated fonts are keyed by: the one the package
@@ -504,7 +615,7 @@ pub(crate) fn package(
         }
         // A contents document the container lacks is rbook's error to report;
         // one nested deeper than a parser's recursion can go is left out.
-        if let Ok(bytes) = container.read(&href, "EPUB contents", cancel)
+        if let Ok(bytes) = container.read(&href, Part::Contents, cancel)
             && inspection::xml_depth(&bytes).is_ok()
         {
             zip.start_file(&name, stored)?;

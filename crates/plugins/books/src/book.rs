@@ -14,6 +14,8 @@ use skwir_core::{
     CancelToken,
     inspection::{Inspection, InspectionKind, Picture, PrintedPage, Row},
     preview::Held,
+    words,
+    words::Words,
 };
 use skwir_platform::{
     inspection::{
@@ -79,9 +81,9 @@ pub(crate) trait Book {
     fn printed_pages(&mut self, _sections: &Sections) -> Vec<PrintedPage> {
         Vec::new()
     }
-    /// What it says about itself, for Properties: the number of chapters is
-    /// added after.
-    fn details(&mut self) -> Vec<(&'static str, Option<String>)>;
+    /// What it says about itself, for Properties, each fact by its label:
+    /// the number of chapters is added after.
+    fn details(&mut self) -> Vec<(Words, Option<String>)>;
 }
 
 /// The chapter `view` asks for, read in reading mode: the one it names
@@ -95,17 +97,25 @@ pub(crate) fn inspect<B: Book>(
     let chapters = book.chapters().to_vec();
     anyhow::ensure!(
         !chapters.is_empty(),
-        "{} has no readable chapters",
-        book.format()
+        words!(
+            books_no_chapters = "{ $format } has no readable chapters",
+            format = book.format(),
+            note = "format: the book's format, as it is named (EPUB, FB2, MOBI, AZW3, PalmDOC)."
+        )
     );
     // A chapter is found by the member it names, however a link spells
     // it (`Text/../Text/ch2.xhtml`, escaped, with a fragment).
     let sections = Sections::of(chapters.iter().map(|chapter| member_key(&chapter.href)));
     let mut index = view.offset.min(chapters.len().saturating_sub(1) as u64) as usize;
     let mut sheets = Sheets::new();
-    let mut notice = vec![String::from(
-        "Reading mode · the book's fonts, colours and page layout are not applied",
-    )];
+    let mut notice = vec![
+        words!(
+            books_reading_mode =
+                "Reading mode · the book's fonts, colours and page layout are not applied",
+            note = "The notice above a book read in reading mode."
+        )
+        .say(),
+    ];
     if let Some(query) = view.query.as_deref().filter(|q| !q.is_empty()) {
         // A search starts at the requested chapter and wraps, so a caller
         // resuming at `position + 1` reaches the next matching chapter.
@@ -140,11 +150,20 @@ pub(crate) fn inspect<B: Book>(
         if let Some(found) = found {
             index = found;
         }
-        notice = vec![if found.is_some() {
-            "Search match in this chapter".into()
-        } else {
-            "No matching chapter".into()
-        }];
+        notice = vec![
+            if found.is_some() {
+                words!(
+                    books_search_found = "Search match in this chapter",
+                    note = "The notice above a book's chapter shown because it holds what was searched for."
+                )
+            } else {
+                words!(
+                    books_search_none = "No matching chapter",
+                    note = "The notice above a book none of whose chapters holds what was searched for."
+                )
+            }
+            .say(),
+        ];
     }
     let href = view
         .target
@@ -159,7 +178,14 @@ pub(crate) fn inspect<B: Book>(
             .iter()
             .enumerate()
             .map(|(i, chapter)| Row {
-                cells: vec![format!("Chapter {}", i + 1)],
+                cells: vec![
+                    words!(
+                        books_chapter = "Chapter { $number }",
+                        number = i + 1,
+                        note = "A row of the contents of a book that has none of its own: its chapter's number, from 1."
+                    )
+                    .say(),
+                ],
                 target: Some(chapter.href.clone()),
                 ..Row::default()
             })
@@ -174,15 +200,31 @@ pub(crate) fn inspect<B: Book>(
             .map(|section| section as u64);
     }
     let mut details = book.details();
-    details.push(("Chapters", inspection::count(chapters.len())));
-    let frame = Inspection {
-        details: inspection::details(details),
-        title: format!(
-            "{} · chapter {} / {}",
-            book.format(),
-            index + 1,
-            chapters.len()
+    details.push((
+        words!(
+            books_detail_chapters = "Chapters",
+            note = "A label in the preview's Properties: how many chapters the book has."
         ),
+        inspection::count(chapters.len()),
+    ));
+    let details: Vec<(String, Option<String>)> = details
+        .into_iter()
+        .map(|(label, value)| (label.say(), value))
+        .collect();
+    let frame = Inspection {
+        details: inspection::details(
+            details
+                .iter()
+                .map(|(label, value)| (label.as_str(), value.clone())),
+        ),
+        title: words!(
+            books_title = "{ $format } · chapter { $chapter } / { $count }",
+            format = book.format(),
+            chapter = index + 1,
+            count = chapters.len(),
+            note = "The title of a book's preview: its format as it is named (EPUB, FB2, MOBI), the chapter shown, from 1, and how many there are."
+        )
+        .say(),
         previous: (index > 0).then(|| index as u64 - 1),
         next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
         position: index as u64,

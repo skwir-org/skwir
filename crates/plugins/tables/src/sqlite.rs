@@ -13,6 +13,7 @@ use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
+    words,
 };
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::mime::Types;
@@ -82,7 +83,13 @@ pub fn table(
     inspection::check(cancel)?;
     let connection = open(path, cancel)?;
     let tables = tables(&connection)?;
-    anyhow::ensure!(!tables.is_empty(), "The database has no table");
+    anyhow::ensure!(
+        !tables.is_empty(),
+        words!(
+            tables_database_empty = "The database has no table",
+            note = "Why a SQLite database could not be shown as a table."
+        )
+    );
     let index = usize::try_from(offset / TABLE)
         .unwrap_or(usize::MAX)
         .min(tables.len() - 1);
@@ -130,16 +137,12 @@ pub fn table(
         for column in 0..shown.len() {
             let kind: String = row.get(column * 2)?;
             let value = match (kind.as_str(), row.get_ref(column * 2 + 1)?) {
-                ("blob", ValueRef::Integer(length)) => {
-                    format!("{} blob", inspection::size(length.unsigned_abs()))
-                }
+                ("blob", ValueRef::Integer(length)) => blob(length.unsigned_abs()),
                 (_, ValueRef::Null) => "NULL".into(),
                 (_, ValueRef::Integer(n)) => n.to_string(),
                 (_, ValueRef::Real(n)) => n.to_string(),
                 (_, ValueRef::Text(text)) => String::from_utf8_lossy(text).into_owned(),
-                (_, ValueRef::Blob(bytes)) => {
-                    format!("{} blob", inspection::size(bytes.len() as u64))
-                }
+                (_, ValueRef::Blob(bytes)) => blob(bytes.len() as u64),
             };
             values.push(crate::bounded_cell(&value, &mut cut));
         }
@@ -159,33 +162,46 @@ pub fn table(
     } else {
         (index > 0).then(|| (index as u64 - 1) * TABLE)
     };
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     let notice = [
-        (all.len() > most).then(|| format!("Only the first {most} columns shown")),
-        (cut > 0).then(|| {
-            format!(
-                "{cut} cell{} longer than {} characters shortened",
-                plural(cut),
-                limits::TABLE_CELL
-            )
-        }),
+        (all.len() > most).then(|| crate::columns_cut(most)),
+        (cut > 0).then(|| crate::cells_cut(cut)),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
     let details = inspection::details([
-        ("Table", Some(name.clone())),
-        ("Tables", inspection::count(tables.len())),
         (
-            "Rows",
+            words!(
+                tables_detail_table = "Table",
+                note =
+                    "A label in the preview's Properties: the name of the database's table shown."
+            )
+            .say()
+            .as_str(),
+            Some(name.clone()),
+        ),
+        (
+            words!(
+                tables_detail_tables = "Tables",
+                note = "A label in the preview's Properties: how many tables the database has."
+            )
+            .say()
+            .as_str(),
+            inspection::count(tables.len()),
+        ),
+        (
+            crate::detail_rows().as_str(),
             if more {
-                Some(format!("more than {shown_to}"))
+                Some(crate::more_rows(shown_to))
             } else {
                 inspection::count(shown_to as usize)
             },
         ),
-        ("Columns", inspection::count(all.len())),
+        (
+            crate::detail_columns().as_str(),
+            inspection::count(all.len()),
+        ),
     ]);
     Ok(Inspection {
         details,
@@ -193,7 +209,14 @@ pub fn table(
         title: if rows.is_empty() {
             name.clone()
         } else {
-            format!("{name} · rows {}–{shown_to}", first + 1)
+            words!(
+                tables_title_database_rows = "{ $table } · rows { $first }–{ $last }",
+                table = name.as_str(),
+                first = first + 1,
+                last = shown_to,
+                note = "The title of a SQLite database's preview: the table's name as the database names it, then the rows shown, by number, from first to last."
+            )
+            .say()
         },
         columns: shown.to_vec(),
         rows,
@@ -204,6 +227,16 @@ pub fn table(
         whole_available: all.len() > most && bounds.cut(),
         ..Inspection::default()
     })
+}
+
+/// A blob's cell: its size, said as every size is.
+fn blob(bytes: u64) -> String {
+    words!(
+        tables_blob = "{ $size } blob",
+        size = words::Size(bytes),
+        note = "A cell of a SQLite table holding binary data (a blob), shown by its size."
+    )
+    .say()
 }
 
 #[cfg(test)]

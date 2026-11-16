@@ -4,6 +4,7 @@ use skwir_core::{
     inspection::{Block, InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
+    words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::sync::Arc;
@@ -205,7 +206,12 @@ fn laid_out(source: &str) -> anyhow::Result<String> {
         at: 0,
     }
     .value()
-    .ok_or_else(|| anyhow::anyhow!("The JSON could not be printed again"))?;
+    .ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            structured_data_unprinted = "The JSON could not be printed again",
+            note = "Why a JSON file could not be shown formatted (indented, a key a line)."
+        ))
+    })?;
     let mut out = String::with_capacity(source.len() * 2);
     print(&raw, 0, &mut out);
     Ok(out)
@@ -247,16 +253,18 @@ fn code(
             inspection::check(cancel)?;
             count += 1;
             if count > bounds.code_nodes() {
-                return Err(bounds.refuse(format!(
-                    "Code preview exceeds {} nodes",
-                    bounds.code_nodes()
-                )));
+                return Err(bounds.refuse(
+                    words!(
+                        structured_data_too_many_nodes = "{ $count ->
+                           *[other] Code preview exceeds { $count } nodes
+                        }",
+                        count = bounds.code_nodes(),
+                        note = "Why a JSON file is not shown formatted: it holds more values (objects, arrays, numbers, strings…) than count."
+                    )
+                    .say(),
+                ));
             }
-            anyhow::ensure!(
-                depth <= limits::NESTING,
-                "Code preview exceeds {} levels",
-                limits::NESTING
-            );
+            anyhow::ensure!(depth <= limits::NESTING, too_deep());
             match node {
                 serde_json::Value::Array(items) => {
                     pending.extend(items.iter().map(|v| (v, depth + 1)));
@@ -272,22 +280,37 @@ fn code(
         source.to_owned()
     };
     if text.len() > bounds.text_input() {
-        return Err(bounds.refuse(format!(
-            "Formatted preview exceeds {}",
-            limits::describe(bounds.text_input())
-        )));
+        return Err(bounds.refuse(
+            words!(
+                structured_data_formatted_too_large = "Formatted preview exceeds { $size }",
+                size = words::Size(bounds.text_input() as u64),
+                note = "Why a file is not shown formatted: the text formatted is larger than size."
+            )
+            .say(),
+        ));
     }
     let lines: Vec<_> = text.split('\n').collect();
     if lines.len() > bounds.code_lines() {
-        return Err(bounds.refuse(format!(
-            "Code preview exceeds {} lines",
-            bounds.code_lines()
-        )));
+        return Err(bounds.refuse(
+            words!(
+                structured_data_too_many_lines = "{ $count ->
+                   *[other] Code preview exceeds { $count } lines
+                }",
+                count = bounds.code_lines(),
+                note = "Why a file is not shown as structured data: it has more lines than count."
+            )
+            .say(),
+        ));
     }
     anyhow::ensure!(
         lines.iter().all(|line| line.len() <= limits::LINE_BYTES),
-        "Code preview exceeds {} bytes per line",
-        limits::LINE_BYTES
+        words!(
+            structured_data_line_too_long = "{ $count ->
+               *[other] Code preview exceeds { $count } bytes per line
+            }",
+            count = limits::LINE_BYTES,
+            note = "Why a file is not shown as structured data: a line of it is longer than count bytes."
+        )
     );
     let folds = folds::parse(&text, language, cancel)?;
     let blocks = lines
@@ -310,7 +333,12 @@ fn code(
     Ok(Inspection {
         kind: InspectionKind::Code,
         title: if printed && !original {
-            format!("{} · formatted", language.to_ascii_uppercase())
+            words!(
+                structured_data_title_formatted = "{ $format } · formatted",
+                format = language.to_ascii_uppercase(),
+                note = "The title of a JSON file's preview printed again, indented: format is the format's name (JSON)."
+            )
+            .say()
         } else {
             language.to_ascii_uppercase()
         },
@@ -319,6 +347,18 @@ fn code(
         source_available: printed,
         ..Inspection::default()
     })
+}
+
+/// Why structured data nesting deeper than `limits::NESTING` is not
+/// shown.
+fn too_deep() -> words::Words {
+    words!(
+        structured_data_too_deep = "{ $count ->
+           *[other] Code preview exceeds { $count } levels
+        }",
+        count = limits::NESTING,
+        note = "Why a file is not shown as structured data: its values nest deeper than count levels (an object in an array in an object…)."
+    )
 }
 
 #[cfg(test)]

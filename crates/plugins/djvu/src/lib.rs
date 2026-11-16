@@ -8,6 +8,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
+    words,
 };
 use skwir_platform::document::{self, Engine};
 use skwir_platform::mime;
@@ -45,8 +46,14 @@ impl Plugin for PreviewPlugin {
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
-            document::worker(Engine::Djvulibre).requirement("DjVu reading with DjVuLibre"),
-            document::worker(Engine::DjvuRs).requirement("DjVu reading with djvu-rs"),
+            document::worker(Engine::Djvulibre).requirement(words!(
+                djvu_requirement_djvulibre = "DjVu reading with DjVuLibre",
+                note = "What stops working without DjVuLibre's helper, in the settings' list of what a plugin needs."
+            )),
+            document::worker(Engine::DjvuRs).requirement(words!(
+                djvu_requirement_djvu_rs = "DjVu reading with djvu-rs",
+                note = "What stops working without djvu-rs's helper, in the settings' list of what a plugin needs."
+            )),
         ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
@@ -58,15 +65,27 @@ impl Plugin for PreviewPlugin {
         let tries =
             document::DJVU_AUTO.map(|engine| (engine.key(), document::worker(engine).executable));
         app.settings.declare(
-            skwir_core::settings::SettingSpec::choice(
+            skwir_core::settings::SettingSpec::choice_words(
                 ENGINE,
-                "DjVu engine",
-                "Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which skwir carries.",
+                words!(
+                    djvu_engine = "DjVu engine",
+                    note = "A setting's title: which program reads DjVu documents."
+                ),
+                words!(
+                    djvu_engine_description = "Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which skwir carries.",
+                    note = "Automatic is the setting's first choice; DjVuLibre and djvu-rs are the programs' names."
+                ),
                 "auto",
-                &[
-                    ("auto", "Automatic"),
-                    ("djvulibre", "DjVuLibre"),
-                    ("djvu-rs", "djvu-rs"),
+                vec![
+                    (
+                        "auto",
+                        words!(
+                            djvu_engine_auto = "Automatic",
+                            note = "A choice of the DjVu engine setting: the first engine installed."
+                        ),
+                    ),
+                    ("djvulibre", words::Words::as_written("DjVuLibre")),
+                    ("djvu-rs", words::Words::as_written("djvu-rs")),
                 ],
             )
             .tries(&tries)
@@ -130,19 +149,23 @@ impl PreviewProvider for Reader {
                 _held: held,
             })));
         }
-        // What is missing, in the words every helper's absence is said in.
-        let helpers: Vec<&str> = self
-            .engines
-            .iter()
-            .map(|engine| document::worker(*engine).executable)
-            .collect();
+        // What is missing, in the words every helper's absence is said in:
+        // one engine chosen, or the two Automatic tries (`DJVU_AUTO`).
+        let helper = |engine: &Engine| document::worker(*engine).executable;
         match self.engines {
-            [engine] => anyhow::bail!(
-                "Install {} to read DjVu documents with {}",
-                helpers[0],
-                engine.label()
-            ),
-            _ => anyhow::bail!("Install {} to read DjVu documents", helpers.join(" or ")),
+            [engine] => anyhow::bail!(words!(
+                djvu_install_helper = "Install { $helper } to read DjVu documents with { $engine }",
+                helper = helper(engine),
+                engine = engine.label(),
+                note = "An error in place of a DjVu document. helper: the helper program's name (skwir-djvulibre-worker). engine: the engine chosen in the settings (DjVuLibre)."
+            )),
+            [first, .., last] => anyhow::bail!(words!(
+                djvu_install_either = "Install { $first } or { $second } to read DjVu documents",
+                first = helper(first),
+                second = helper(last),
+                note = "An error in place of a DjVu document when no engine is installed. first, second: the helper programs' names (skwir-djvulibre-worker, skwir-djvu-worker)."
+            )),
+            [] => Ok(None),
         }
     }
 }

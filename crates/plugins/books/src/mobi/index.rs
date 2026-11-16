@@ -123,7 +123,13 @@ pub(crate) fn read<S: FileSource + ?Sized>(
     utf8: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Index> {
-    let damaged = || anyhow::anyhow!("This book's index is damaged");
+    let damaged = || {
+        anyhow::anyhow!(skwir_core::words!(
+            books_mobi_index_damaged = "This book's index is damaged",
+            note =
+                "An error: an index in a Mobipocket book (its contents, its parts) cannot be read."
+        ))
+    };
     let main = database.record(file, first, cancel)?;
     anyhow::ensure!(main.get(..4) == Some(b"INDX"), damaged());
     let header = u32_at(&main, 4).ok_or_else(damaged)? as usize;

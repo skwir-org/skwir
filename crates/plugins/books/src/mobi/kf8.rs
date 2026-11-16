@@ -90,7 +90,12 @@ pub(crate) fn build(
     ncx: Option<&Index>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Built> {
-    let damaged = || anyhow::anyhow!("This book's KF8 text is damaged");
+    let damaged = || {
+        anyhow::anyhow!(skwir_core::words!(
+            books_kf8_text_damaged = "This book's KF8 text is damaged",
+            note = "An error: the text of a Kindle (KF8) book cannot be put together."
+        ))
+    };
     let flows = flows(raw, fdst);
     let text = flows[0];
     let frags: Vec<Fragment> = fragments

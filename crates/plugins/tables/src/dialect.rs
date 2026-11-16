@@ -14,6 +14,7 @@
 //! row either way, where only `;` leaves two that look like cells, and
 //! `Doe, Ann;30`, where only `;` leaves none cut from its neighbour.
 
+use skwir_core::words;
 use std::io::Read;
 
 /// What a CSV's cells may be split by, the type's own first: it is what a
@@ -90,14 +91,30 @@ impl Dialect {
 
     /// What the separator is called, for the preview's details.
     pub(crate) fn separator_name(self) -> String {
-        match self.separator {
-            b',' => "Comma".into(),
-            b';' => "Semicolon".into(),
-            b'\t' => "Tab".into(),
-            b'|' => "Pipe".into(),
-            b' ' => "Space".into(),
-            other => char::from(other).to_string(),
-        }
+        let said = match self.separator {
+            b',' => words!(
+                tables_separator_comma = "Comma",
+                note = "What splits a CSV's cells, beside Separator in the preview's Properties."
+            ),
+            b';' => words!(
+                tables_separator_semicolon = "Semicolon",
+                note = "What splits a CSV's cells, beside Separator in the preview's Properties."
+            ),
+            b'\t' => words!(
+                tables_separator_tab = "Tab",
+                note = "What splits a CSV's cells, beside Separator in the preview's Properties: the tab character."
+            ),
+            b'|' => words!(
+                tables_separator_pipe = "Pipe",
+                note = "What splits a CSV's cells, beside Separator in the preview's Properties: the character |."
+            ),
+            b' ' => words!(
+                tables_separator_space = "Space",
+                note = "What splits a CSV's cells, beside Separator in the preview's Properties."
+            ),
+            other => return char::from(other).to_string(),
+        };
+        said.say()
     }
 }
 

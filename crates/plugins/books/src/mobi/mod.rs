@@ -13,6 +13,8 @@ use skwir_core::{
     CancelToken,
     inspection::{Picture, Row},
     preview::FileSource,
+    words,
+    words::Words,
 };
 use skwir_platform::{
     inspection::{self, limits},
@@ -109,7 +111,7 @@ pub(crate) struct Mobi {
     /// KF8's flows: its stylesheets, by number.
     flows: Vec<String>,
     contents: Vec<Row>,
-    details: Vec<(&'static str, Option<String>)>,
+    details: Vec<(Words, Option<String>)>,
     /// The first picture's record: what `recindex` and `kindle:embed`
     /// count from (in a file holding both, the MOBI 6 part's).
     pictures: Option<usize>,
@@ -126,9 +128,15 @@ impl Mobi {
         let head = file.first_bytes()?;
         match Kind::of(&head) {
             Kind::Kfx => {
-                anyhow::bail!("This is a KFX book, Amazon's own format, which is not read")
+                anyhow::bail!(words!(
+                    books_mobi_kfx = "This is a KFX book, Amazon's own format, which is not read",
+                    note = "An error: KFX is the name of a format of Amazon's Kindle books."
+                ))
             }
-            Kind::Other => anyhow::bail!("This is not a Mobipocket book"),
+            Kind::Other => anyhow::bail!(words!(
+                books_mobi_not_mobi = "This is not a Mobipocket book",
+                note = "An error: a file typed as a Mobipocket book does not hold one."
+            )),
             Kind::Mobi | Kind::Text => {}
         }
         drop(head);
@@ -136,7 +144,10 @@ impl Mobi {
         let first = Header::parse(&database.record(file, 0, cancel)?)?;
         anyhow::ensure!(
             !first.encrypted,
-            "This book is protected: its text is encrypted (DRM)"
+            words!(
+                books_mobi_protected = "This book is protected: its text is encrypted (DRM)",
+                note = "An error: a Mobipocket book whose text is encrypted (digital rights management)."
+            )
         );
         // A KF8 book, or a file holding MOBI 6 then KF8: its KF8 part.
         let version = |header: &Header| header.mobi.as_ref().map_or(0, |mobi| mobi.version);
@@ -180,10 +191,19 @@ impl Mobi {
                     .map(|first| index::read(&book.database, file, first, true, cancel))
                     .transpose()
             };
-            let skeletons = index(mobi.skeleton)?
-                .ok_or_else(|| anyhow::anyhow!("This KF8 book has no skeleton index"))?;
-            let fragments = index(mobi.fragment)?
-                .ok_or_else(|| anyhow::anyhow!("This KF8 book has no fragment index"))?;
+            let skeletons = index(mobi.skeleton)?.ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_kf8_no_skeletons = "This KF8 book has no skeleton index",
+                    note = "An error: a Kindle (KF8) book lacks the index of how its parts are laid out."
+                ))
+            })?;
+            let fragments = index(mobi.fragment)?.ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_kf8_no_fragments = "This KF8 book has no fragment index",
+                    note =
+                        "An error: a Kindle (KF8) book lacks the index of the pieces of its text."
+                ))
+            })?;
             // A book reads without its contents.
             let ncx = index(mobi.ncx).ok().flatten();
             let fdst = record(mobi.fdst)
@@ -279,7 +299,13 @@ impl Mobi {
             .ok()
             .filter(|&record| self.pictures.is_some_and(|first| record >= first))
             .filter(|&record| record < self.database.len())
-            .ok_or_else(|| anyhow::anyhow!("Missing picture {key}"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_mobi_missing_picture = "Missing picture { $key }",
+                    key = key,
+                    note = "An error: a book names a picture it does not hold. key: the picture's record in the book."
+                ))
+            })?;
         Ok(self
             .database
             .record_head(file, record, limit.min(limits::BINARY_INPUT), cancel)?
@@ -311,7 +337,13 @@ impl Mobi {
         number
             .and_then(|number| self.chapters.get(number.checked_sub(1)?))
             .map(String::as_str)
-            .ok_or_else(|| anyhow::anyhow!("Missing chapter {href}"))
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_mobi_missing_chapter = "Missing chapter { $href }",
+                    href = href,
+                    note = "An error: a chapter of a book asked for is not there. href: the chapter's name."
+                ))
+            })
     }
 }
 
@@ -365,7 +397,12 @@ fn text<S: FileSource + ?Sized>(
         Compression::HuffCdic => {
             let (first, count) = mobi
                 .and_then(|mobi| mobi.huffman)
-                .ok_or_else(|| anyhow::anyhow!("This book names no Huffman tables"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        books_mobi_no_huffman = "This book names no Huffman tables",
+                        note = "An error: a book compressed with Huffman coding does not say where its tables are."
+                    ))
+                })?;
             let first = base + first as usize;
             let huff = database.record(file, first, cancel)?;
             let cdics = (1..count as usize)
@@ -435,24 +472,63 @@ fn trailing(record: &[u8], flags: u16) -> usize {
 }
 
 /// What the book says of itself, for Properties.
-fn details(header: &Header, database: &Database) -> Vec<(&'static str, Option<String>)> {
+fn details(header: &Header, database: &Database) -> Vec<(Words, Option<String>)> {
     let title = header
         .text(exth::TITLE)
         .or_else(|| header.mobi.as_ref().and_then(|mobi| mobi.title.clone()))
         .or_else(|| (!database.name.is_empty()).then(|| database.name.clone()));
     vec![
-        ("Title", title),
-        ("Author", header.texts(exth::AUTHOR)),
-        ("Publisher", header.texts(exth::PUBLISHER)),
-        ("Subject", header.texts(exth::SUBJECT)),
         (
-            "Published",
+            words!(
+                books_detail_title = "Title",
+                note = "A label in the preview's Properties: the book's title."
+            ),
+            title,
+        ),
+        (
+            words!(
+                books_detail_author = "Author",
+                note = "A label in the preview's Properties: who wrote the book."
+            ),
+            header.texts(exth::AUTHOR),
+        ),
+        (
+            words!(
+                books_detail_publisher = "Publisher",
+                note = "A label in the preview's Properties: who published the book."
+            ),
+            header.texts(exth::PUBLISHER),
+        ),
+        (
+            words!(
+                books_detail_subject = "Subject",
+                note = "A label in the preview's Properties: what the book is about, as it says."
+            ),
+            header.texts(exth::SUBJECT),
+        ),
+        (
+            words!(
+                books_detail_published = "Published",
+                note = "A label in the preview's Properties: the date the book was published."
+            ),
             header
                 .text(exth::DATE)
                 .map(|date| date.chars().take(10).collect()),
         ),
-        ("ISBN", header.text(exth::ISBN)),
-        ("Language", header.text(exth::LANGUAGE)),
+        (
+            words!(
+                books_detail_isbn = "ISBN",
+                note = "A label in the preview's Properties: the book's International Standard Book Number."
+            ),
+            header.text(exth::ISBN),
+        ),
+        (
+            words!(
+                books_detail_language = "Language",
+                note = "A label in the preview's Properties: the language the book is written in."
+            ),
+            header.text(exth::LANGUAGE),
+        ),
     ]
 }
 
@@ -503,7 +579,7 @@ impl<S: FileSource + ?Sized> Book for Reading<'_, S> {
     fn contents(&mut self) -> Vec<Row> {
         self.book.contents.clone()
     }
-    fn details(&mut self) -> Vec<(&'static str, Option<String>)> {
+    fn details(&mut self) -> Vec<(Words, Option<String>)> {
         self.book.details.clone()
     }
 }

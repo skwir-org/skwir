@@ -3,6 +3,7 @@
 //! any other value, and a line that is not JSON, stands in `value`.
 use indexmap::IndexMap;
 use serde_json::Value;
+use skwir_core::words;
 use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
@@ -56,8 +57,12 @@ pub fn table(
         at += line.len() as u64;
         anyhow::ensure!(
             line.len() <= limits::TEXT_INPUT,
-            "A line exceeds {} preview limit",
-            limits::describe(limits::TEXT_INPUT)
+            words!(
+                tables_line_too_long = "A line exceeds { $size } preview limit",
+                size = words::Size(limits::TEXT_INPUT as u64),
+                note =
+                    "Why a JSON Lines file could not be shown. size: the bound on a line (2 MB)."
+            )
         );
         if line.trim_ascii().is_empty() {
             continue;
@@ -115,17 +120,29 @@ pub fn table(
         .iter()
         .filter(|line| matches!(line, Line::Invalid(_)))
         .count();
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     let notice = [
-        (invalid > 0).then(|| format!("{invalid} line{} not JSON", plural(invalid))),
-        wide.then(|| format!("Only the first {} keys shown", bounds.table_columns())),
-        (cut > 0).then(|| {
-            format!(
-                "{cut} cell{} longer than {} characters shortened",
-                plural(cut),
-                limits::TABLE_CELL
+        (invalid > 0).then(|| {
+            words!(
+                tables_lines_invalid = "{ $count ->
+                    [one] { $count } line not JSON
+                   *[other] { $count } lines not JSON
+                }",
+                count = invalid,
+                note = "A note under a JSON Lines table: lines that are not JSON, shown as they are."
             )
+            .say()
         }),
+        wide.then(|| {
+            words!(
+                tables_keys_cut = "{ $count ->
+                   *[other] Only the first { $count } keys shown
+                }",
+                count = bounds.table_columns(),
+                note = "A note under a JSON Lines table whose objects have more keys (its columns) than are shown."
+            )
+            .say()
+        }),
+        (cut > 0).then(|| crate::cells_cut(cut)),
     ]
     .into_iter()
     .flatten()
@@ -133,11 +150,14 @@ pub fn table(
     .join(" · ");
     let shown = offset + rows.len() as u64;
     let details = inspection::details([
-        ("Columns", inspection::count(columns.len())),
         (
-            "Rows",
+            crate::detail_columns().as_str(),
+            inspection::count(columns.len()),
+        ),
+        (
+            crate::detail_rows().as_str(),
             if more {
-                Some(format!("more than {shown}"))
+                Some(crate::more_rows(shown))
             } else {
                 inspection::count(shown as usize)
             },
@@ -147,9 +167,19 @@ pub fn table(
         details,
         kind: skwir_core::inspection::InspectionKind::Table,
         title: if rows.is_empty() {
-            "JSON Lines".into()
+            words!(
+                tables_title_json_lines = "JSON Lines",
+                note = "The title of a JSON Lines file's preview: the format's name."
+            )
+            .say()
         } else {
-            format!("JSON Lines · rows {}–{shown}", offset + 1)
+            words!(
+                tables_title_json_lines_rows = "JSON Lines · rows { $first }–{ $last }",
+                first = offset + 1,
+                last = shown,
+                note = "The title of a JSON Lines file's preview: the rows shown, by number, from first to last."
+            )
+            .say()
         },
         columns: columns.keys().map(|key| (*key).to_owned()).collect(),
         rows,
@@ -269,7 +299,7 @@ mod tests {
             data.notice,
             format!(
                 "2 cells longer than {} characters shortened",
-                limits::TABLE_CELL
+                crate::tests::grouped(limits::TABLE_CELL as u64)
             )
         );
     }

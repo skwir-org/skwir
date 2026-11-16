@@ -29,7 +29,10 @@ pub(crate) fn decompress(record: &[u8], limit: usize) -> anyhow::Result<Vec<u8>>
                 let length = (pair & 7) + 3;
                 anyhow::ensure!(
                     distance > 0 && distance <= out.len(),
-                    "This book's text is damaged"
+                    skwir_core::words!(
+                        books_mobi_text_damaged = "This book's text is damaged",
+                        note = "An error: a Mobipocket book's compressed text cannot be decoded."
+                    )
                 );
                 for _ in 0..length {
                     out.push(out[out.len() - distance]);

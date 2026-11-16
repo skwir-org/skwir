@@ -16,6 +16,7 @@ use skwir_core::{
     },
     inspection::Picture,
     preview::Held,
+    words,
 };
 use skwir_platform::{
     inspection::{self, limits},
@@ -24,7 +25,7 @@ use skwir_platform::{
 
 use crate::{
     book::{Sections, Sheets, Sizes, base, member_key},
-    epub::{Chapter, Container, package, printed_pages, table_of_contents},
+    epub::{Chapter, Container, Part, package, printed_pages, table_of_contents},
 };
 
 /// Pages read to find the size a page stating none is drawn at.
@@ -78,10 +79,19 @@ impl FixedBook {
                 }
             })
             .collect();
-        anyhow::ensure!(!pages.is_empty(), "EPUB has no pages");
+        anyhow::ensure!(
+            !pages.is_empty(),
+            words!(
+                books_epub_no_pages = "EPUB has no pages",
+                note = "An error: a book laid out in pages lists none."
+            )
+        );
         anyhow::ensure!(
             u32::try_from(pages.len()).is_ok(),
-            "EPUB has too many pages"
+            words!(
+                books_epub_too_many_pages = "EPUB has too many pages",
+                note = "An error: a book laid out in pages lists more than can be shown."
+            )
         );
         // The contents lead to the page each entry names, however its link
         // spells it.
@@ -104,7 +114,7 @@ impl FixedBook {
             .take(SIZE_PAGES)
             .find_map(|page| {
                 let markup = page.markup?;
-                let bytes = container.read(&page.href, "Page", cancel).ok()?;
+                let bytes = container.read(&page.href, Part::Page, cancel).ok()?;
                 rich_preview::stated_size(&inspection::decode(&bytes).0, markup)
             })
             .unwrap_or(PAGE_SIZE);
@@ -142,7 +152,7 @@ impl FixedBook {
     fn draw(&self, index: usize, side: u32, cancel: &CancelToken) -> anyhow::Result<Drawing> {
         let page = &self.pages[index];
         let mut container = Container::open(&self.held, cancel)?;
-        let bytes = container.read(&page.href, "Page", cancel)?;
+        let bytes = container.read(&page.href, Part::Page, cancel)?;
         let Some(markup) = page.markup else {
             return picture(&bytes, side);
         };
@@ -169,7 +179,7 @@ impl FixedBook {
         if let [only] = read.blocks.as_slice()
             && let Some(Picture::Later { key, .. }) = &only.picture
         {
-            let bytes = container.read(key, "Embedded image", cancel)?;
+            let bytes = container.read(key, Part::Picture, cancel)?;
             return picture(&bytes, side);
         }
         rich_preview::page(
@@ -180,7 +190,12 @@ impl FixedBook {
             side,
             Some(self.size),
         )?
-        .ok_or_else(|| anyhow::anyhow!("the page could not be drawn"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                books_page_not_drawn = "the page could not be drawn",
+                note = "An error: a page of a book laid out in pages could not be drawn."
+            ))
+        })
     }
 }
 
@@ -239,7 +254,13 @@ impl DocumentSession for FixedBook {
     /// the book hides is not a match. A drawn page has no text layer, so a
     /// match is a page, not a place on it.
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
-        anyhow::ensure!(query.len() <= 4096, "search query exceeds limit");
+        anyhow::ensure!(
+            query.len() <= 4096,
+            words!(
+                books_search_too_long = "search query exceeds limit",
+                note = "An error: what was searched for in a book is too long."
+            )
+        );
         let query = query.trim().to_lowercase();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -253,7 +274,7 @@ impl DocumentSession for FixedBook {
                 continue;
             };
             // A page that cannot be read is passed over, not the search.
-            let Ok(bytes) = container.read(&page.href, "Page", cancel) else {
+            let Ok(bytes) = container.read(&page.href, Part::Page, cancel) else {
                 continue;
             };
             let resources = Chapter {

@@ -4,6 +4,7 @@ use skwir_core::{
     inspection::{Block, InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
+    words,
 };
 use skwir_platform::{
     archive,
@@ -62,16 +63,22 @@ impl PreviewProvider for Provider {
         let held = req.held()?;
         let bytes = read(&held, Bounds::WHOLE, cancel)?;
         let message = parse(&bytes, cancel)?;
-        let attachment = message
-            .attachments()
-            .nth(target.parse()?)
-            .ok_or_else(|| anyhow::anyhow!("Missing attachment"))?;
+        let attachment = message.attachments().nth(target.parse()?).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                email_missing_attachment = "Missing attachment",
+                note = "An error: the message no longer holds the attachment asked for."
+            ))
+        })?;
         let bounds = Bounds::of(view);
         if attachment.decoded_len() > bounds.binary_input() {
-            return Err(bounds.refuse(format!(
-                "Attachment exceeds {} preview limit",
-                limits::describe(bounds.binary_input())
-            )));
+            return Err(bounds.refuse(
+                words!(
+                    email_attachment_too_large = "Attachment exceeds { $size } preview limit",
+                    size = words::Size(bounds.binary_input() as u64),
+                    note = "Why an attachment is not previewed. size: the largest the preview reads (16 MB)."
+                )
+                .say(),
+            ));
         }
         let name = attachment.attachment_name().unwrap_or("Attachment");
         let file = archive::member_file(into, name);
@@ -103,16 +110,30 @@ impl PreviewProvider for Provider {
             .map_or_else(String::new, |date| date.to_rfc3339());
         let mut blocks = vec![
             Block {
-                text: message.subject().unwrap_or("No subject").into(),
+                text: message.subject().map_or_else(
+                    || {
+                        words!(
+                            email_no_subject = "No subject",
+                            note = "The heading of an email that has no subject."
+                        )
+                        .say()
+                    },
+                    str::to_owned,
+                ),
                 heading: 1,
                 ..Block::default()
             },
             Block {
-                text: format!(
-                    "From: {}\nTo: {}\nDate: {sent}",
-                    addresses(message.from()),
-                    addresses(message.to()),
-                ),
+                text: words!(
+                    email_header = "From: { $from }
+                        To: { $to }
+                        Date: { $sent }",
+                    from = addresses(message.from()),
+                    to = addresses(message.to()),
+                    sent = sent.clone(),
+                    note = "The lines under an email's subject, each on its own line. from, to: the addresses as the message writes them. sent: when it was sent, as the message dates it."
+                )
+                .say(),
                 ..Block::default()
             },
         ];
@@ -152,12 +173,60 @@ impl PreviewProvider for Provider {
         }
         let attachments = message.attachments().len();
         let details = inspection::details([
-            ("Subject", message.subject().map(str::to_owned)),
-            ("From", Some(addresses(message.from()))),
-            ("To", Some(addresses(message.to()))),
-            ("Cc", Some(addresses(message.cc()))),
-            ("Sent", Some(sent)),
-            ("Attachments", inspection::count(attachments)),
+            (
+                words!(
+                    email_detail_subject = "Subject",
+                    note = "A label in the preview's Properties: the email's subject."
+                )
+                .say()
+                .as_str(),
+                message.subject().map(str::to_owned),
+            ),
+            (
+                words!(
+                    email_detail_from = "From",
+                    note = "A label in the preview's Properties: who sent the email."
+                )
+                .say()
+                .as_str(),
+                Some(addresses(message.from())),
+            ),
+            (
+                words!(
+                    email_detail_to = "To",
+                    note = "A label in the preview's Properties: who the email was sent to."
+                )
+                .say()
+                .as_str(),
+                Some(addresses(message.to())),
+            ),
+            (
+                words!(
+                    email_detail_cc = "Cc",
+                    note = "A label in the preview's Properties: who the email was copied to (carbon copy)."
+                )
+                .say()
+                .as_str(),
+                Some(addresses(message.cc())),
+            ),
+            (
+                words!(
+                    email_detail_sent = "Sent",
+                    note = "A label in the preview's Properties: when the email was sent."
+                )
+                .say()
+                .as_str(),
+                Some(sent),
+            ),
+            (
+                words!(
+                    email_detail_attachments = "Attachments",
+                    note = "A label in the preview's Properties: how many files the email carries."
+                )
+                .say()
+                .as_str(),
+                inspection::count(attachments),
+            ),
         ]);
         let rows = message
             .attachments()
@@ -167,7 +236,8 @@ impl PreviewProvider for Provider {
                 let bytes = a.decoded_len() as u64;
                 Row {
                     cells: vec![
-                        a.attachment_name().unwrap_or("Attachment").into(),
+                        a.attachment_name()
+                            .map_or_else(|| unnamed().say(), str::to_owned),
                         inspection::size(bytes),
                     ],
                     target: Some(i.to_string()),
@@ -179,9 +249,21 @@ impl PreviewProvider for Provider {
         // Only what applies to this message: a strip that always says the
         // same thing stops being read.
         let notice = [
-            remote.then(|| "Remote images are not loaded".to_owned()),
+            remote.then(|| {
+                words!(
+                    email_remote_images = "Remote images are not loaded",
+                    note = "A note under an email: pictures it names on the web are not fetched."
+                )
+                .say()
+            }),
             truncated.then(|| inspection::blocks_notice(bounds)),
-            (attachments > 0).then(|| "Select an attachment to preview it".to_owned()),
+            (attachments > 0).then(|| {
+                words!(
+                    email_select_attachment = "Select an attachment to preview it",
+                    note = "A note under an email that carries files: choosing one in the list shows it."
+                )
+                .say()
+            }),
         ]
         .into_iter()
         .flatten()
@@ -190,7 +272,11 @@ impl PreviewProvider for Provider {
         Ok(Some(Inspection {
             details,
             kind: skwir_core::inspection::InspectionKind::Mail,
-            title: "Email".into(),
+            title: words!(
+                email_title = "Email",
+                note = "The title of an email's preview."
+            )
+            .say(),
             blocks,
             rows,
             source_available: true,
@@ -212,9 +298,21 @@ fn read<'a>(
 fn parse<'x>(bytes: &'x [u8], cancel: &CancelToken) -> anyhow::Result<mail_parser::Message<'x>> {
     let message = mail_parser::MessageParser::default()
         .parse(bytes)
-        .ok_or_else(|| anyhow::anyhow!("Invalid email"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                email_invalid = "Invalid email",
+                note = "An error: the file could not be read as an email."
+            ))
+        })?;
     inspection::check(cancel)?;
     Ok(message)
+}
+/// What an attachment with no name is called in the list of attachments.
+fn unnamed() -> words::Words {
+    words!(
+        email_unnamed_attachment = "Attachment",
+        note = "An attachment the email gives no name, in its list of attachments."
+    )
 }
 /// `Name <address>`, or the bare address when there is no name.
 fn addresses(value: Option<mail_parser::AddressList<'_>>) -> String {

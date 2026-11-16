@@ -61,7 +61,13 @@ impl Huffman {
         cdics: impl IntoIterator<Item = &'a [u8]>,
         budget: usize,
     ) -> anyhow::Result<Self> {
-        let damaged = || anyhow::anyhow!("This book's Huffman tables are damaged");
+        let damaged = || {
+            anyhow::anyhow!(skwir_core::words!(
+                books_mobi_huffman_damaged = "This book's Huffman tables are damaged",
+                note =
+                    "An error: the tables a book's compressed text is decoded with cannot be read."
+            ))
+        };
         anyhow::ensure!(huff.get(..8) == Some(b"HUFF\0\0\0\x18"), damaged());
         let tables = u32_at(huff, 8).ok_or_else(damaged)? as usize;
         let ranges = u32_at(huff, 12).ok_or_else(damaged)? as usize;
@@ -142,7 +148,12 @@ impl Huffman {
         cancel: &CancelToken,
         out: &mut Vec<u8>,
     ) -> anyhow::Result<()> {
-        let damaged = || anyhow::anyhow!("This book's text is damaged");
+        let damaged = || {
+            anyhow::anyhow!(skwir_core::words!(
+                books_mobi_text_damaged = "This book's text is damaged",
+                note = "An error: a Mobipocket book's compressed text cannot be decoded."
+            ))
+        };
         anyhow::ensure!(depth < DEPTH, damaged());
         // The 64 bits from byte `at`, zeros past the end.
         let window = |at: usize| {
@@ -218,7 +229,10 @@ impl Huffman {
                 // A phrase is kept as it decodes, all of them within the
                 // text bound.
                 self.budget = self.budget.checked_sub(decoded.len()).ok_or_else(|| {
-                    anyhow::anyhow!("This book's dictionary is too large to read")
+                    anyhow::anyhow!(skwir_core::words!(
+                        books_mobi_dictionary_too_large = "This book's dictionary is too large to read",
+                        note = "An error: the phrases a book's compressed text is made of decode to more than the preview reads."
+                    ))
                 })?;
                 out.extend_from_slice(&decoded);
                 self.phrases[index].state = State::Done(decoded);

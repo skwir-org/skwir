@@ -133,11 +133,7 @@ fn json(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
         if token {
             match ch {
                 '{' | '[' => {
-                    anyhow::ensure!(
-                        stack.len() < limits::NESTING,
-                        "Code preview exceeds {} levels",
-                        limits::NESTING
-                    );
+                    anyhow::ensure!(stack.len() < limits::NESTING, crate::too_deep());
                     stack.push(line);
                 }
                 '}' | ']' => {
@@ -165,11 +161,7 @@ fn toml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
     let mut headers = Vec::new();
     while let Some((item, depth)) = items.pop() {
         check(cancel)?;
-        anyhow::ensure!(
-            depth <= limits::NESTING,
-            "Code preview exceeds {} levels",
-            limits::NESTING
-        );
+        anyhow::ensure!(depth <= limits::NESTING, crate::too_deep());
         match item {
             toml_edit::Item::Table(table) => {
                 if depth > 0
@@ -194,11 +186,7 @@ fn toml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
     }
     while let Some((value, depth)) = values.pop() {
         check(cancel)?;
-        anyhow::ensure!(
-            depth <= limits::NESTING,
-            "Code preview exceeds {} levels",
-            limits::NESTING
-        );
+        anyhow::ensure!(depth <= limits::NESTING, crate::too_deep());
         if let Some(span) = value.span() {
             folds.push(line(span.start)..line(span.end.saturating_sub(1)));
         }
@@ -230,11 +218,7 @@ fn yaml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
         match event {
             Event::StreamEnd => break,
             Event::MappingStart(..) | Event::SequenceStart(..) => {
-                anyhow::ensure!(
-                    stack.len() < limits::NESTING,
-                    "Code preview exceeds {} levels",
-                    limits::NESTING
-                );
+                anyhow::ensure!(stack.len() < limits::NESTING, crate::too_deep());
                 let start = previous_scalar
                     .take()
                     .filter(|&(row, col)| row < line && col < mark.col())

@@ -727,13 +727,17 @@ fn an_encrypted_chapter_says_so() {
     let cancel = CancelToken::new();
     let mut container = Container::open(&path, &cancel).unwrap();
     let error = container
-        .read("EPUB/one.xhtml", "Chapter", &cancel)
+        .read("EPUB/one.xhtml", Part::Chapter, &cancel)
         .unwrap_err();
     assert_eq!(
         error.to_string(),
         "This EPUB is protected: its chapter is encrypted"
     );
-    assert!(container.read("EPUB/a.otf", "Font", &cancel).is_ok());
+    assert!(
+        container
+            .read("EPUB/a.otf", Part::Resource, &cancel)
+            .is_ok()
+    );
 }
 
 /// Obfuscation is its own inverse, keyed by the package's identifier:

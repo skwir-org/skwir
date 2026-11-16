@@ -7,6 +7,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
+    words,
 };
 use skwir_platform::{archive, inspection, mime, thumb_providers};
 use std::sync::Arc;
@@ -29,7 +30,10 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
             archive::WORKER
-                .requirement("Reading the pages of a comic book")
+                .requirement(words!(
+                    comics_requirement_pages = "Reading the pages of a comic book",
+                    note = "What stops working without the archive helper, in the settings' list of what a plugin needs."
+                ))
                 .required(),
         ]
     }
@@ -59,7 +63,13 @@ fn pages(session: &archive::Session, cancel: &CancelToken) -> anyhow::Result<Vec
         .cloned()
         .collect();
     pages.sort_by_cached_key(|m| skwir_core::collate::sort_key(m.name.as_ref()));
-    anyhow::ensure!(!pages.is_empty(), "Comic contains no supported images");
+    anyhow::ensure!(
+        !pages.is_empty(),
+        words!(
+            comics_no_pages = "Comic contains no supported images",
+            note = "An error: the comic book's archive holds no picture the reader can show."
+        )
+    );
     Ok(pages)
 }
 /// A comic's cover, its first page, for the grid. A fallback: a thumbnailer
@@ -200,7 +210,10 @@ impl Comic {
         match (asked, done) {
             (Some(bytes), _) => Ok(bytes),
             (None, Err(error)) => Err(error),
-            (None, Ok(())) => anyhow::bail!("the page was not read"),
+            (None, Ok(())) => anyhow::bail!(words!(
+                comics_page_not_read = "the page was not read",
+                note = "An error in place of a comic book's page: the archive was read to its end without finding it."
+            )),
         }
     }
 }

@@ -6,6 +6,7 @@ use roxmltree::Node;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{Align, Script};
 use skwir_core::preview::FileSource;
+use skwir_core::words;
 use skwir_platform::inspection::{self, Numbering, limits};
 use std::collections::HashMap;
 
@@ -932,11 +933,19 @@ pub(crate) fn read<S: FileSource + ?Sized>(
     if let Some(manifest) = package.text("META-INF/manifest.xml", "Manifest", cancel)?
         && manifest.contains("encryption-data")
     {
-        anyhow::bail!("This document is protected by a password");
+        anyhow::bail!(words!(
+            documents_odt_password = "This document is protected by a password",
+            note = "An error in place of an OpenDocument text that is encrypted."
+        ));
     }
     let content = package
         .text("content.xml", "The document's text", cancel)?
-        .ok_or_else(|| anyhow::anyhow!("This is not an OpenDocument text: it has no content"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                documents_odt_no_content = "This is not an OpenDocument text: it has no content",
+                note = "An error in place of a file named as an OpenDocument text that holds none."
+            ))
+        })?;
     let doc = package::xml(&content)?;
     let mut styles = Styles::default();
     let styles_xml = package.text("styles.xml", "Styles", cancel)?;
@@ -952,7 +961,12 @@ pub(crate) fn read<S: FileSource + ?Sized>(
     }
     let body = child(doc.root_element(), OFFICE, "body")
         .and_then(|b| child(b, OFFICE, "text"))
-        .ok_or_else(|| anyhow::anyhow!("This OpenDocument file is not a text document"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                documents_odt_not_text = "This OpenDocument file is not a text document",
+                note = "An error in place of an OpenDocument file (a spreadsheet, a presentation) named as a text."
+            ))
+        })?;
     let details = details(&mut package, cancel);
     let mut notes = Notes::new();
     let mut walk = Walk {

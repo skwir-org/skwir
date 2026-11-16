@@ -16,6 +16,8 @@ use skwir_core::{
     CancelToken,
     inspection::{Picture, Row},
     preview::FileSource,
+    words,
+    words::Words,
 };
 use skwir_platform::{
     inspection::{self, limits},
@@ -56,7 +58,7 @@ pub(crate) struct Fb2 {
     /// The base64 text of each picture, by its id.
     binaries: HashMap<String, Range<usize>>,
     contents: Vec<Row>,
-    details: Vec<(&'static str, Option<String>)>,
+    details: Vec<(Words, Option<String>)>,
     /// The size each picture is shown at, read once.
     sizes: Sizes,
 }
@@ -84,12 +86,23 @@ fn read<S: FileSource + ?Sized>(
             .iter()
             .find(|name| name.to_lowercase().ends_with(".fb2"))
             .or_else(|| names.first().filter(|_| names.len() == 1))
-            .ok_or_else(|| anyhow::anyhow!("This zipped FB2 holds no FB2"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_fb2_zip_empty = "This zipped FB2 holds no FB2",
+                    note =
+                        "An error: a ZIP file typed as a zipped FictionBook holds no FictionBook."
+                ))
+            })?
             .clone();
         Cow::Owned(package.read(&name, limits::BINARY_INPUT, "FB2 document", cancel)?)
     } else {
         file.read_whole(limits::BINARY_INPUT as u64, cancel)?
-            .ok_or_else(|| anyhow::anyhow!("This FB2 is too large to read"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_fb2_too_large = "This FB2 is too large to read",
+                    note = "An error: a FictionBook is larger than the preview reads."
+                ))
+            })?
     };
     inspection::check(cancel)?;
     Ok(decode(&bytes))
@@ -106,7 +119,7 @@ pub(crate) fn cover<S: FileSource + ?Sized>(
     let (text, _) = read(file, zipped, cancel)?;
     let doc = inspection::xml_document(&text)?;
     let root = doc.root_element();
-    anyhow::ensure!(is(root, "FictionBook"), "This is not an FB2 document");
+    anyhow::ensure!(is(root, "FictionBook"), not_fb2());
     let Some(id) = child(root, "description").and_then(cover_id) else {
         return Ok(None);
     };
@@ -161,7 +174,7 @@ impl Fb2 {
     fn parse(text: String, decoded: Option<String>, cancel: &CancelToken) -> anyhow::Result<Self> {
         let doc = inspection::xml_document(&text)?;
         let root = doc.root_element();
-        anyhow::ensure!(is(root, "FictionBook"), "This is not an FB2 document");
+        anyhow::ensure!(is(root, "FictionBook"), not_fb2());
         let mut groups = Vec::new();
         let mut binaries = HashMap::new();
         let mut first = true;
@@ -180,11 +193,22 @@ impl Fb2 {
                 binaries.entry(id.to_owned()).or_insert(data);
             }
         }
-        anyhow::ensure!(!groups.is_empty(), "This FB2 has no body");
+        anyhow::ensure!(
+            !groups.is_empty(),
+            words!(
+                books_fb2_no_body = "This FB2 has no body",
+                note = "An error: a FictionBook holds no text (its `body` element)."
+            )
+        );
         anyhow::ensure!(
             groups.len() <= limits::BLOCKS,
-            "This FB2 has more than {} chapters",
-            limits::BLOCKS
+            words!(
+                books_fb2_too_many_chapters = "This FB2 has more than { $count ->
+                   *[other] { $count } chapters
+                }",
+                count = limits::BLOCKS,
+                note = "An error: a FictionBook has more chapters than the preview reads."
+            )
         );
         let description = child(root, "description");
         let details = description.map(describe).unwrap_or_default();
@@ -280,17 +304,42 @@ impl Fb2 {
         let range = self
             .binaries
             .get(id.strip_prefix('#').unwrap_or(id))
-            .ok_or_else(|| anyhow::anyhow!("Missing FB2 picture {id}"))?;
-        from_base64(&self.text[range.clone()], limit)
-            .map_err(|_| anyhow::anyhow!("This FB2's picture {id} is damaged"))
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_fb2_missing_picture = "Missing FB2 picture { $id }",
+                    id = id,
+                    note = "An error: a FictionBook names a picture it does not hold. id: the picture's id in the book."
+                ))
+            })?;
+        from_base64(&self.text[range.clone()], limit).map_err(|_| {
+            anyhow::anyhow!(words!(
+                books_fb2_damaged_picture = "This FB2's picture { $id } is damaged",
+                id = id,
+                note = "An error: a picture a FictionBook holds cannot be decoded. id: the picture's id in the book."
+            ))
+        })
     }
 
     fn chapter(&self, href: &str) -> anyhow::Result<&Chapter> {
         member_key(href)
             .and_then(|key| key.strip_prefix("chapter-")?.parse::<usize>().ok())
             .and_then(|number| self.chapters.get(number.checked_sub(1)?))
-            .ok_or_else(|| anyhow::anyhow!("Missing FB2 chapter {href}"))
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    books_fb2_missing_chapter = "Missing FB2 chapter { $href }",
+                    href = href,
+                    note = "An error: a chapter of a FictionBook asked for is not there. href: the chapter's name."
+                ))
+            })
     }
+}
+
+/// The refusal of a document that is no FB2.
+fn not_fb2() -> Words {
+    words!(
+        books_fb2_not_fb2 = "This is not an FB2 document",
+        note = "An error: a file typed as a FictionBook does not hold one."
+    )
 }
 
 /// The text of `bytes`: a byte order mark decides, else the encoding the
@@ -306,7 +355,14 @@ fn decode(bytes: &[u8]) -> (String, Option<String>) {
         let (text, _) = encoding.decode_without_bom_handling(bytes);
         return (
             text.into_owned(),
-            Some(format!("Read as {}", encoding.name())),
+            Some(
+                words!(
+                    books_read_as = "Read as { $encoding }",
+                    encoding = encoding.name(),
+                    note = "A notice above a book: the text encoding its file was decoded from, as it is named (windows-1251)."
+                )
+                .say(),
+            ),
         );
     }
     let (text, encoding) = inspection::decode(bytes);
@@ -717,7 +773,13 @@ impl Writer<'_> {
         let title = child(body, "title")
             .map(|title| plain(title))
             .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "Notes".into());
+            .unwrap_or_else(|| {
+                words!(
+                    books_fb2_notes = "Notes",
+                    note = "The heading of a book's notes, and its row in the contents, where the book gives them none."
+                )
+                .say()
+            });
         self.rows.push(Row {
             cells: vec![title.clone()],
             target: Some(href(self.chapter)),
@@ -854,7 +916,7 @@ fn escape(out: &mut String, text: &str) {
 }
 
 /// What the description says of the book, for Properties.
-fn describe(description: Node<'_, '_>) -> Vec<(&'static str, Option<String>)> {
+fn describe(description: Node<'_, '_>) -> Vec<(Words, Option<String>)> {
     let text = |node: Option<Node<'_, '_>>| {
         node.map(|n| {
             n.descendants()
@@ -894,19 +956,67 @@ fn describe(description: Node<'_, '_>) -> Vec<(&'static str, Option<String>)> {
         .and_then(|sequence| {
             let name = sequence.attribute("name")?.trim();
             Some(match sequence.attribute("number") {
-                Some(number) => format!("{name}, {}", number.trim()),
+                Some(number) => words!(
+                    books_series_number = "{ $series }, { $number }",
+                    series = name,
+                    number = number.trim(),
+                    note = "A book's series in its Properties, and the book's number in it, both as the book writes them (Foundation, 2)."
+                )
+                .say(),
                 None => name.to_owned(),
             })
         });
     let field = |info: Option<Node<'_, '_>>, name: &str| text(info.and_then(|i| child(i, name)));
     vec![
-        ("Title", field(title, "book-title")),
-        ("Author", (!authors.is_empty()).then(|| authors.join(", "))),
-        ("Series", series),
-        ("Genre", (!genres.is_empty()).then(|| genres.join(", "))),
-        ("Language", field(title, "lang")),
-        ("Publisher", field(publish, "publisher")),
-        ("Year", field(publish, "year")),
+        (
+            words!(
+                books_detail_title = "Title",
+                note = "A label in the preview's Properties: the book's title."
+            ),
+            field(title, "book-title"),
+        ),
+        (
+            words!(
+                books_detail_author = "Author",
+                note = "A label in the preview's Properties: who wrote the book."
+            ),
+            (!authors.is_empty()).then(|| authors.join(", ")),
+        ),
+        (
+            words!(
+                books_detail_series = "Series",
+                note = "A label in the preview's Properties: the series the book belongs to."
+            ),
+            series,
+        ),
+        (
+            words!(
+                books_detail_genre = "Genre",
+                note = "A label in the preview's Properties: the book's genres, as the book names them."
+            ),
+            (!genres.is_empty()).then(|| genres.join(", ")),
+        ),
+        (
+            words!(
+                books_detail_language = "Language",
+                note = "A label in the preview's Properties: the language the book is written in."
+            ),
+            field(title, "lang"),
+        ),
+        (
+            words!(
+                books_detail_publisher = "Publisher",
+                note = "A label in the preview's Properties: who published the book."
+            ),
+            field(publish, "publisher"),
+        ),
+        (
+            words!(
+                books_detail_year = "Year",
+                note = "A label in the preview's Properties: the year the book was published."
+            ),
+            field(publish, "year"),
+        ),
     ]
 }
 
@@ -943,9 +1053,13 @@ impl Book for Reading<'_> {
         _cancel: &CancelToken,
     ) -> anyhow::Result<(String, Option<String>)> {
         let chapter = self.0.chapter(href)?;
-        let cut = chapter
-            .cut
-            .then(|| String::from("The chapter is cut: it holds more than reading mode reads"));
+        let cut = chapter.cut.then(|| {
+            words!(
+                books_chapter_cut = "The chapter is cut: it holds more than reading mode reads",
+                note = "A notice above a chapter of a book that holds more than the preview reads."
+            )
+            .say()
+        });
         let notice: Vec<String> = self.0.decoded.clone().into_iter().chain(cut).collect();
         Ok((
             chapter.xhtml.clone(),
@@ -979,7 +1093,7 @@ impl Book for Reading<'_> {
     fn contents(&mut self) -> Vec<Row> {
         self.0.contents.clone()
     }
-    fn details(&mut self) -> Vec<(&'static str, Option<String>)> {
+    fn details(&mut self) -> Vec<(Words, Option<String>)> {
         self.0.details.clone()
     }
 }
