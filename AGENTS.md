@@ -116,6 +116,14 @@ working in an area, also read that area's rules (see
   a length; a length that holds text is written at 100 % and grows with it
   (`sizes::sized`, `sizes::Scale`), while pictures and icons keep
   their size.
+- **Words (ADR-139).** What Skwir says is data, said where it is drawn
+  or sent in the reader's language: the window's in the window, English
+  for agents. A sentence is one message, written in English beside its
+  id (`words!`) once a crate is converted, and until then one literal or
+  one `format!`, never assembled from pieces, capitalised, pluralised
+  or quoted in code. Words two owners share meet by an id core owns,
+  never by their text; no code matches or takes apart what Skwir says,
+  and no label is made from an id (`docs/invariants/words.md`).
 - **Toolkit isolation.** gpui appears only in `skwir-ui` and the binary.
   Views implement `PaneView` in `skwir-ui`; a toolkit-independent
   `ui-api` crate waits until a third-party view exists.
@@ -559,6 +567,7 @@ Binding. Read the file for the area before working in it.
 | [remote.md](docs/invariants/remote.md) | remote folders: reach and lanes, what differs on a network (thumbnails, refresh, walks, trash, references), addresses and their redirect, connectors, credentials, testing against servers on this machine |
 | [indexes.md](docs/invariants/indexes.md) | derived indexes (designed, not built): every index an accelerator, coverage never overstated, scope, one read per file, pace, freshness, formats |
 | [models.md](docs/invariants/models.md) | models (designed, not built): providers by task, the helper, what leaves the machine, answers are data, suggestions, plans from models |
+| [words.md](docs/invariants/words.md) | what Skwir says, in every language (being built): whole messages, writing one, arguments, who reads it, words two owners share, nothing read back, catalogs, tests, what stays English |
 
 ## Layout
 

@@ -18554,3 +18554,81 @@ Board side by side (folder-4 kept whole): the cursor kept wholly in view,
 and each view given back exactly as the split closed (0 pixels apart; the
 list's only difference the pointer's hover). Not seen in a window: a text
 size changed with a view (Settings), a resize during a sort, a tag board.
+
+## 2026-11-16: Words in every language, decided and measured
+
+ADR-139 was accepted on the user's answers to four questions:
+- Fluent's format;
+- English written beside an id in the code;
+- agents kept in English;
+- a size setting, Decimal (kB) by default with Binary (KiB) as the
+  other choice. This one was their own proposal.
+
+It came with `docs/invariants/words.md`, a rule in AGENTS.md and the
+plan's "Words in every language". Nothing is built.
+
+**Counted:** about 8,040 English literals read as human text, by the
+lexer behind `docs/i18n.md`: 5,351 capitalised, 2,689 lowercase, of
+which 1,549 are `format!` templates. That is up from about 7,500 on
+2026-11-12. They are occurrences, not distinct messages.
+
+**Measured:** a throwaway bench, not kept. A generated catalog of 8,000
+messages (575 KiB of FTL), in these shapes:
+
+| Share | Shape |
+|---|---|
+| 3 % | a plural with two arguments |
+| 17 % | one argument |
+| 5 % | an attribute |
+| the rest | plain text, 3 to 11 words |
+
+There is a comment every fourth message. Built with fluent-bundle
+0.16.0 and fluent-syntax 0.12.0, rustc 1.99.1, release with fat LTO.
+Heap was counted by a global allocator, on the session's loaded machine.
+
+| Measure | Result |
+|---|---|
+| Parsing into a `FluentResource` | 2.3 to 3.0 ms |
+| Adding it to a concurrent bundle | 0.9 to 1.1 ms |
+| Heap, the bundle included | 6.2 MiB, of which 575 KiB is the source's copy |
+| Peak heap | 6.6 MiB |
+| 2,000 messages | 1.5 MiB |
+
+Formatting, isolation off:
+
+| Message | Time |
+|---|---|
+| Plain | 8 ns |
+| One argument | 73 to 80 ns |
+| A plural with two arguments | 277 to 283 ns |
+| Finding a message by id | 67 to 76 ns, with the id's `format!` |
+
+Parsing each message when first asked, from the same source held as
+static data:
+
+| Measure | Result |
+|---|---|
+| The index (ids borrowed from the source, sorted) | 0.75 to 0.83 ms and 187.5 KiB |
+| 600 messages parsed | 0.46 ms, 0.8 MiB in all |
+| 2,000 messages parsed | 1.2 ms, 2.3 MiB |
+| Per message parsed | about 1.1 KB and 0.6 to 0.8 µs |
+
+So a whole bundle costs about 6 MiB a language, and a translated window
+needs English beside it: about 12 MiB, against the 17 MiB between the
+idle reading (83.2 MiB) and the budget (100 MiB). Hence Skwir's own
+resolver (ADR-139, 4).
+
+**Read:** fluent-zero 0.2.0 and fluent-static 0.6.0, from their
+crates.io sources (`fluent-zero-build` 0.2.0, `fluent-static-codegen`
+0.6.3).
+- **fluent-zero** returns a message without arguments as a
+  `&'static str`. On the first lookup of one with arguments it copies
+  the locale's whole concatenated FTL to the heap and parses it into a
+  `fluent-bundle`, which is the measurement above.
+- **fluent-static** generates a function per message and language. Its
+  build fails when a message is missing in a supported language
+  (`undefined_in_languages`). Its parameters follow the order of the
+  default language's placeables, and it uses `intl_pluralrules` (CLDR
+  37).
+
+Neither ran here.

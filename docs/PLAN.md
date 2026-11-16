@@ -40,8 +40,9 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   [released](#release-01-linux) 2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
-- **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
-  after the release (2026-10-07). [Remote folders](#remote-folders)
+- **Next:** the [words in every language](#words-in-every-language-adr-139)
+  (ADR-139, accepted 2026-11-16), then skwird's steps (ADR-050) and
+  Phase 7, which the user put after the release (2026-10-07). [Remote folders](#remote-folders)
   were built on 2026-10-21 (ADR-077): what they leave is in their
   section. [What is left](#what-is-left) gathers
   the rest. From 0.3 a release's page is its changelog section above
@@ -3597,6 +3598,149 @@ worth at a time, no slower, and shown as they arrive. Windows and macOS
 compiled only. Left: sshfs, GVfs and kio-fuse not checked throttled in
 a window (their bytes go as they are written, measured as any copy's);
 the card's line not yet said to a screen reader.
+
+## Words in every language (ADR-139)
+
+ADR-139 was accepted on 2026-11-16, on the user's answers. The research
+is `docs/i18n.md` and the binding rules are `docs/invariants/words.md`.
+Nothing is built.
+
+**Goal:** a window that says everything in the user's language, French
+first, while agents keep reading English. English stays unchanged until
+a language is added, and the idle share and the first frame stay within
+their budgets in every language.
+
+**Steps.** Each is useful alone, and each ends with its measurements in
+`docs/STATUS-LOG.md`:
+
+- **A. Words two owners share, and nothing read back.** English
+  unchanged.
+  - Core ids, each with its words, for the submenus plugins share
+    (Compress, Open With, Open Folder With, Tags) and for settings
+    sections.
+  - Data instead of parsed English (`toast.rs`, `placeholder.rs`):
+    the undo's plan, an error's kind (refused, missing, no provider,
+    not yet on this system), and whatever else a toast needs.
+  - Words of their own where a label is now made from an id: the
+    sidebar's groups, the command's fallback, Properties' keys,
+    `SettingSpec::data`.
+  - Tests: a submenu two plugins fill stays one when one plugin's title
+    changes, and `plugins_toggle` holds.
+  - *Done when:* no code matches or takes apart Skwir's words (the rules'
+    list, grepped clean), and English is byte for byte as before (the
+    tests comparing prose unchanged).
+- **B. The size setting.**
+  - `core.size_units`: Decimal by default, or Binary. One formatter for
+    every size shown (files, folders, volumes, speeds, limits) replaces
+    today's three conventions.
+  - Queries read `kB`/`MB`/`GB` and `KiB`/`MiB`/`GiB` beside `k`/`M`/`G`;
+    the size groups and the reference write the setting's units.
+  - Tests: each convention at its boundaries (999 B, 1000 B, 1023, 1024,
+    a 1 TB disk); a saved `size>10M` unchanged; `10MB` and `10MiB` read.
+  - *Done when:* every size on screen follows the setting in a window on
+    Xvfb, and `bench-check` holds.
+- **C. The locale.**
+  - `skwir_platform::locale`: the messages' languages and the formats'
+    locale on each system, as BCP 47 names. On Linux, gettext's rules;
+    on macOS, the preferred languages and the region; on Windows, the
+    display languages and the user's locale.
+  - `core.language`: Automatic, or a list. Desktop entries' names and
+    the paper size read it.
+  - Tests: `LANGUAGE` ignored under C, empty variables skipped,
+    `sr_RS@latin` read as `sr-Latn-RS`, `C.UTF-8` as English; the Windows
+    path under Wine; macOS compiled.
+  - *Done when:* the tests pass and the setting changes the languages
+    read, with nothing said differently yet.
+- **D. The words engine and a pilot.**
+  - The engine:
+    - `skwir_core::words`: `Words`, its arguments, the resolver, and the
+      catalogs' registry, tagged by owner;
+    - the `words!` macro crate, which checks the English and builds it
+      ready;
+    - the extraction tool and its checks (`just words`, run by
+      `just lint`);
+    - `icu_plurals` and a pseudo-language.
+  - Registration functions take `Words`, through a transitional
+    `From<&str>`.
+  - Who reads what: MCP, the CLI's help and JSON answers in English; the
+    window in `core.language`, changed at once.
+  - Converted as the pilot:
+    - core's `op` words, `system::not_yet` and `io_words`;
+    - the UI's `format`, `toast` and `placeholder`;
+    - the trash plugin.
+  - Tests:
+    - a plural and a kind in a test language;
+    - a missing message falling back whole;
+    - a disabled plugin's catalog gone;
+    - an agent reading English while the window shows the
+      pseudo-language.
+  - *Done when:*
+    - the pilot's surfaces show the pseudo-language in a window on Xvfb;
+    - `just idle-pss` and the first frame are measured in English and in
+      the pseudo-language with a full catalog, within budget (otherwise,
+      translations compiled to tables, ADR-139, 4);
+    - the cost of saying a frame's words is measured.
+- **E. Every crate converted.**
+  - By crate, one owner each: agents in parallel own the plugin crates,
+    the integrator owns core and the UI.
+  - Every literal becomes a message, every `format!` sentence one
+    message with typed arguments, and the 673 quoted names become
+    `Name`s.
+  - The transitional `From<&str>` is removed, so an English literal no
+    longer compiles.
+  - *Done when:* the pseudo-language leaves no English on the window's
+    surfaces (screenshots in the pseudo-language), every test is green
+    and English is unchanged.
+- **F. Formats.**
+  - ICU4X's decimal, list and datetime, with data for English and the
+    languages shipped. `Count`, `Size`, `Instant` and `Span` are
+    formatted by them: `format.rs`'s dates, the timeline's months, the
+    groups' and facets' headings.
+  - On Linux, a type's name from shared-mime-info's translated comment
+    (ADR-037).
+  - Tests: boundary instants with an explicit calendar in `fr`, `de` and
+    `en-US`; French sizes ("1,5 Mo") and numbers grouped with U+202F.
+  - *Done when:* the tests pass and `just idle-pss` holds with the data.
+- **G. French.**
+  - A glossary settled with the user first: Skwir's terms, and French
+    typography (« », U+202F before `; : ! ?`).
+  - Every crate's `fr.ftl`, drafted by a model crate by crate as each is
+    converted, kept marked as drafts, then reviewed by the user in the
+    window running in French, with the list of messages that have plurals
+    and kinds (ADR-139, 13).
+  - The desktop file and the AppStream metainfo through PO (`msgfmt`
+    when packaged); macOS's `CFBundleLocalizations` and `.lproj`
+    folders.
+  - Offered by Automatic at 90 % translated and reviewed, with everything
+    on by default complete; chosen by hand below that, marked
+    incomplete; back to incomplete under 75 % for a release.
+  - Hosted Weblate (its Libre plan), opened once step E is done: the
+    components, the GitHub app with one squashed pull request per
+    language, model suggestions marked as needing edits. The account is
+    the user's.
+  - *Done when:* a release speaks French.
+- **H. Plugins from outside: protocol 2** (ADR-139, 14), with the
+  template and the hex view's module translated.
+
+**Settled with the user** (2026-11-16, ADR-139): a name's controls
+drawn as tags, never obeyed (5); French drafted by a model and reviewed
+by the user, Weblate after step E, and when a language is offered (13);
+name order by the locale (15); user folders named as their system shows
+them, with `core.folder_names` for the names on disk (16).
+
+**Later tracks**, each its own step once A to G are done:
+- **Name order by the locale** (ADR-139, 15): ICU4X's numeric sort keys
+  behind `collate`'s seam, with a bench case on `flat100k`.
+- **User folders' shown names** on Windows and macOS (ADR-139, 16), and
+  `core.folder_names`, unavailable on Linux.
+- **The screen reader's language:** AccessKit, and a gpui patch.
+- **gpui patches:**
+  - DirectWrite's bidirectional text;
+  - line breaking in Greek and other scripts;
+  - the CJK fallback's language;
+  - macOS's Window menu found by a flag rather than by its English
+    title.
+- **Right-to-left windows.**
 
 ---
 
