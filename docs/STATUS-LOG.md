@@ -18447,3 +18447,63 @@ last green run: a race in the core, not in the test.
   asked"), with it passes. The arriving and executor tests (51), the
   workspace's tests of arrivals (32), the CI's test 200 times 16 at
   once, `just ci-check` (852 tests): all passed.
+
+## 2026-11-16: What the keys keep in place, reviewed; where the next review starts
+
+On the evening of 2026-11-15 the user asked for a review of the commit
+another session made after the afternoon's round, df0b456a (what the
+keys are on keeps its place as a view changes size), with what it found
+fixed. One reader, the code against views.md's "Scrolling"; recorded
+the next day, for the next review to know where to start.
+
+- **Found and fixed** (4a435b3b, low): the columns view's own column
+  found what keeps its place among the rows the last frame drew, but
+  read them in the pane's order as it is now (`list.sorted`): an order
+  changed in the same frame as the size (a sort come back, files
+  arrived) named other entries for those rows, so another row, or none,
+  kept its place. It keeps the order it drew beside its rows
+  (`drawn_order`), as the list and the grid do.
+- **Read and sound**: `elements::kept`'s arithmetic (the share of the
+  room under a pinned heading, wholly in view within half a pixel, the
+  start clamped to the content); the grid's `offset_keeping`, from the
+  last frame's lines and viewport; each canvas drawn before what it
+  scrolls (`kept::rows` before a `uniform_list`: the list, the tree, the
+  columns' column, a board's columns; `kept::across` before a board's
+  row) over the same bounds, so a frame of one size never moves it; a
+  scroll asked in the same frame (a key's, a rename's reveal) carried
+  out after it, and winning; what is kept asked only on a frame whose
+  size changed, among the rows drawn, the selection looked up through a
+  set (`views::kept`): nothing per frame, nothing linear in a selection
+  of 100,000; a board's memories made before its columns and dropped
+  with them; nothing kept across a navigation; views.md as the code has
+  it.
+- **Left** (PLAN, low): `kept::Memory` knows what it placed by its row's
+  index: an order changed while the view stays where it was put can
+  give another row the share meant for the first, still wholly in view.
+  Where a row's height and the view's change in one frame (a text size,
+  which resizes the bars around the view too), the columns view and the
+  board measure the last frame's offset in the new height: the list
+  first moves its offset into the new heights (its zoom anchor), these
+  two have no such anchor, so what they keep stays where the old offset
+  puts it, as before df0b456a. Not seen in a window (the commit's own
+  list): a window's edge dragged, the preview and terminal panels, a
+  grid grouped under pinned headings, Wayland.
+- **Checks** (4a435b3b): rustfmt, `cargo clippy -p skwir-ui` with
+  `-D warnings`, the UI crate's list, grid, columns and `kept` tests (70
+  passed); the whole suite ran over it in 0.5.1's third run (above,
+  3,704 passed). Not run: a window.
+- **Where the next review starts**: every commit after 8c82a1bf (the
+  review since 0.5.0, recorded) up to 4a435b3b was read by a reviewer
+  other than its author, or is a review's fix: reviewed
+  8c82a1bf..3092b502 (ADR-137, the morning of 2026-11-15),
+  2cd9ebaa..558d049e (the afternoon), df0b456a (here); the fixes
+  (2abd14eb..2cd9ebaa, a65c293c..38759e34, 4a435b3b) had no second
+  review. Not reviewed: what came after 4a435b3b, the release's work:
+  d4ffdc07 (a test skipped where no user namespace is made,
+  `testing::as_root_in_a_namespace`, the kmtp helper's test too),
+  80c11990 (startup-order reads perf's events with `--itrace=e`),
+  a356893f (the startup order, generated), f130dc74 and 361c0b91 (the
+  release: versions, changelog, packages), 5de67171 (a lens test's
+  wait), dac2aa76 (what a plan brings, read as its run begins,
+  `op/arriving.rs`: the only one that changes what the program does),
+  and the records (31a17bd5, this entry).

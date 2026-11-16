@@ -1397,6 +1397,18 @@ left):
   otherwise there (its encoder's `：`) and the plugin looks for it so is
   not known: rclone's queue on Windows, untried.
 
+**From the review of what the keys keep in place** (2026-11-15,
+evening):
+- `kept::Memory` knows what it placed by its row's index: an order
+  changed while the view stays where it was put can give another row the
+  share meant for the first.
+- A text size changes a row's height and the view's in one frame: the
+  columns view and the board, which have no zoom anchor as the list has,
+  measure the last frame's offset in the new height, and keep what is
+  kept where the old offset puts it.
+- Not seen in a window: a window's edge dragged, the preview and
+  terminal panels, a grid grouped under pinned headings, Wayland.
+
 **From the review since 0.5.0** (2026-11-14):
 - Not seen in a window: the pin's two words told in either order, another
   program's rename of a hard link beside the pin, a volume dragged over a
