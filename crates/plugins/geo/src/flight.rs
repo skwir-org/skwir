@@ -28,7 +28,13 @@ pub fn stop_name(ident: &str, name: &str) -> String {
     {
         ident.to_owned()
     } else {
-        format!("{ident} ({name})")
+        skwir_core::words!(
+            geo_stop_named = "{ $ident } ({ $name })",
+            ident = ident,
+            name = name,
+            note = "How a stop of a flight plan is labelled on the map: its identifier (an airport's or a beacon's code, XAAA) with its name as the plan gives it (Example Field), both as written."
+        )
+        .say()
     }
 }
 

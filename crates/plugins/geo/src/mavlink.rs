@@ -16,6 +16,7 @@ use std::io::BufRead;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::{Area, Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::words;
 
 use crate::collect::{self, Collector, Plan, PlanKind};
 use crate::mission::{Item, Position, Route, circle, fence_name, frame_datum};
@@ -120,7 +121,7 @@ impl Fence {
     fn finish(&mut self, into: &mut Collector) {
         if !self.ring.is_empty() {
             into.area(Area {
-                name: fence_name(self.command == FENCE_VERTEX_INCLUSION).into(),
+                name: fence_name(self.command == FENCE_VERTEX_INCLUSION),
                 rings: vec![std::mem::take(&mut self.ring)],
             });
         }
@@ -140,7 +141,11 @@ pub fn read<R: BufRead>(
         if number == 0 {
             anyhow::ensure!(
                 is_header(line),
-                "Not a MAVLink mission: its first line is not “QGC WPL 110”"
+                words!(
+                    geo_mavlink_no_header =
+                        "Not a MAVLink mission: its first line is not “QGC WPL 110”",
+                    note = "Why a drone mission file is not shown on a map. “QGC WPL 110” is the line such a file begins with, as written in the file: keep it as it is."
+                )
             );
             header = true;
             return Ok(());
@@ -158,7 +163,7 @@ pub fn read<R: BufRead>(
                 if let Some(center) = row.at(into) {
                     match circle(center, row.param1) {
                         Some(ring) => into.area(Area {
-                            name: fence_name(row.command == FENCE_CIRCLE_INCLUSION).into(),
+                            name: fence_name(row.command == FENCE_CIRCLE_INCLUSION),
                             rings: vec![ring],
                         }),
                         None => into.invalid(),
@@ -170,7 +175,12 @@ pub fn read<R: BufRead>(
                     rally += 1;
                     let datum = frame_datum(row.frame).unwrap_or(Datum::Takeoff);
                     into.waypoint(Waypoint {
-                        name: format!("R{rally}"),
+                        name: words!(
+                            geo_rally_point = "R{ $number }",
+                            number = rally.to_string(),
+                            note = "The label on the map of a drone mission's rally point (a safe place to land instead of home), numbered from 1: R1, R2…"
+                        )
+                        .say(),
                         at,
                         kind: WaypointKind::Rally,
                         altitude: row.altitude.map(|metres| (metres, datum)),
@@ -199,7 +209,13 @@ pub fn read<R: BufRead>(
         }
         Ok(())
     })?;
-    anyhow::ensure!(header, "Not a MAVLink mission: the file is empty");
+    anyhow::ensure!(
+        header,
+        words!(
+            geo_mavlink_empty = "Not a MAVLink mission: the file is empty",
+            note = "Why a drone mission file is not shown on a map."
+        )
+    );
     fence.finish(into);
     let destination = route.finish(into);
     into.plan = Some(Plan {

@@ -78,10 +78,12 @@ impl FieldProvider for Positions {
         keys.iter()
             .map(|&key| {
                 Ok(match key {
+                    // Said once, where it is read: a field's value is text,
+                    // kept by the file's identity.
                     PLACE => taken
                         .at
                         .and_then(crate::places::describe)
-                        .map(|words| Value::Text(words.into())),
+                        .map(|words| Value::Text(words.say().into())),
                     keys::TAKEN => taken.clock.map(Value::UInt),
                     _ => taken.at.map(skwir_core::geo::LatLon::to_value),
                 })

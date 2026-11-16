@@ -17,6 +17,8 @@ use std::io::BufRead;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::WaypointKind;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::collect::{self, Collector};
 use crate::flight::{self, Ends, Route, Stop};
@@ -31,21 +33,33 @@ enum Version {
     Eleven,
 }
 
+/// Why a file named `.fms` is not read: it is not an X-Plane plan.
+fn not_a_plan() -> Words {
+    words!(
+        geo_fms_not_plan = "not an X-Plane flight plan",
+        note = "Why a .fms file is not shown on a map: its first lines are not an X-Plane flight plan's."
+    )
+}
+
 /// The version the first two lines state, or why they are not a plan.
 fn version(first: &str, second: &str) -> anyhow::Result<Version> {
     let first = first.trim().trim_start_matches('\u{feff}');
     let mut words = second.split_whitespace();
     let (Some(number), Some(word), None) = (words.next(), words.next(), words.next()) else {
-        anyhow::bail!("not an X-Plane flight plan");
+        anyhow::bail!(not_a_plan());
     };
     anyhow::ensure!(
         (first == "I" || first == "A") && word.eq_ignore_ascii_case("version"),
-        "not an X-Plane flight plan"
+        not_a_plan()
     );
     match number.parse::<u32>() {
         Ok(3) => Ok(Version::Three),
         Ok(n) if n >= 1100 => Ok(Version::Eleven),
-        _ => anyhow::bail!("an X-Plane flight plan of version {number}, which is not read"),
+        _ => anyhow::bail!(words!(
+            geo_fms_version = "an X-Plane flight plan of version { $version }, which is not read",
+            version = number,
+            note = "Why a .fms file is not shown on a map. version: the version its second line states, as written."
+        )),
     }
 }
 
@@ -167,14 +181,18 @@ pub fn read<R: BufRead>(
         Ok(())
     })?;
     // A file that ended before its header said what it is.
-    anyhow::ensure!(stated.is_some(), "not an X-Plane flight plan");
+    anyhow::ensure!(stated.is_some(), not_a_plan());
     if damaged.is_none()
         && let Some(expected) = keys.expected
         && keys.read < expected
     {
-        damaged = Some(Damaged(format!(
-            "the plan lists {expected} waypoints and holds {}",
-            keys.read
+        damaged = Some(Damaged(words!(
+            geo_fms_fewer_waypoints = "the plan lists { $expected ->
+               *[other] { $expected } waypoints
+            } and holds { $read }",
+            expected = expected,
+            read = keys.read,
+            note = "Why an X-Plane plan reads as damaged, inside the notice that says so: it holds fewer waypoints than its header counts. expected: that count; read: how many it holds."
         )));
     }
     route.finish(

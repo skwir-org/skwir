@@ -36,10 +36,13 @@ pub fn header(text: &str) -> Vec<(String, String)> {
             _ => {}
         }
     }
-    [("Made with", program), ("Format", format)]
-        .into_iter()
-        .filter_map(|(label, value)| Some((label.to_owned(), value?)))
-        .collect()
+    [
+        (crate::made_with(), program),
+        (crate::format_label(), format),
+    ]
+    .into_iter()
+    .filter_map(|(label, value)| Some((label, value?)))
+    .collect()
 }
 
 /// The application protocol a schema's name says.

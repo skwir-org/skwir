@@ -5,6 +5,7 @@
 //! paths (`G00`, `M15`, `G01`, `M16`). Holes are drawn at their size, on
 //! the board's dark background.
 use crate::svg::{self, Bounds};
+use skwir_core::words;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -109,9 +110,18 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
             let comment = comment.trim().trim_start_matches("#@!").trim();
             if let Some(function) = comment.strip_prefix("TF.FileFunction,") {
                 plating = Some(match function.split(',').next().unwrap_or_default() {
-                    "Plated" => "Plated",
-                    "NonPlated" => "Not plated",
-                    _ => "Plated and not",
+                    "Plated" => words!(
+                        circuits_holes_plated = "Plated",
+                        note = "Beside Holes in a drill file's Properties: its holes are plated (their walls coated with copper)."
+                    ),
+                    "NonPlated" => words!(
+                        circuits_holes_not_plated = "Not plated",
+                        note = "Beside Holes in a drill file's Properties: its holes are bare, not plated with copper."
+                    ),
+                    _ => words!(
+                        circuits_holes_mixed = "Plated and not",
+                        note = "Beside Holes in a drill file's Properties: some of its holes are plated with copper, some bare."
+                    ),
                 });
             } else if let Some(generator) = comment.strip_prefix("TF.GenerationSoftware,") {
                 software = Some(generator.replace(',', " "));
@@ -231,14 +241,35 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
     }
     let mut details = Vec::new();
     if let Some(plating) = plating {
-        details.push(("Holes".to_owned(), plating.to_owned()));
+        details.push((
+            words!(
+                circuits_detail_holes = "Holes",
+                note = "A label in a drill file's Properties: whether its holes are plated (Plated, Not plated, Plated and not)."
+            )
+            .say(),
+            plating.say(),
+        ));
     }
     if let Some(software) = software {
-        details.push(("Made with".into(), software));
+        details.push((crate::made_with(), software));
     }
-    details.push(("Drilled".into(), holes.len().to_string()));
+    details.push((
+        words!(
+            circuits_detail_drilled = "Drilled",
+            note = "A label in a drill file's Properties: how many round holes it drills."
+        )
+        .say(),
+        holes.len().to_string(),
+    ));
     if !paths.is_empty() {
-        details.push(("Slots and routes".into(), paths.len().to_string()));
+        details.push((
+            words!(
+                circuits_detail_slots = "Slots and routes",
+                note = "A label in a drill file's Properties: how many slots and routed paths it cuts, beside its round holes."
+            )
+            .say(),
+            paths.len().to_string(),
+        ));
     }
     if !tools.is_empty() {
         let sizes: Vec<f64> = tools.values().copied().collect();
@@ -246,13 +277,30 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
             (lo.min(*d), hi.max(*d))
         });
         let round = |v: f64| (v * 1000.).round() / 1000.;
-        details.push(("Tools".into(), tools.len().to_string()));
         details.push((
-            "Sizes".into(),
+            words!(
+                circuits_detail_tools = "Tools",
+                note = "A label in a drill file's Properties: how many drill bits (tools) it uses."
+            )
+            .say(),
+            tools.len().to_string(),
+        ));
+        details.push((
+            words!(
+                circuits_detail_sizes = "Sizes",
+                note = "A label in a drill file's Properties: the diameters of its drill bits, the smallest to the largest."
+            )
+            .say(),
             if (largest - smallest).abs() < 1e-9 {
-                format!("{} mm", round(smallest))
+                crate::millimetres(round(smallest))
             } else {
-                format!("{} to {} mm", round(smallest), round(largest))
+                words!(
+                    circuits_millimetres_range = "{ $smallest } to { $largest } mm",
+                    smallest = round(smallest).to_string(),
+                    largest = round(largest).to_string(),
+                    note = "Beside Sizes in a drill file's Properties: its smallest and largest drill bits. smallest, largest: numbers of millimetres."
+                )
+                .say()
             },
         ));
     }

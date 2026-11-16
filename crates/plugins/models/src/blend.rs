@@ -4,7 +4,7 @@
 //! Blender 3.0, Zstandard since) is decoded as a stream, and only as far as
 //! that picture: the blocks before it are a few scenes' names.
 use crate::Found;
-use skwir_core::{CancelToken, preview::FileSource, thumbs::Image};
+use skwir_core::{CancelToken, preview::FileSource, thumbs::Image, words};
 use skwir_platform::inspection;
 use std::io::Read;
 
@@ -168,12 +168,21 @@ pub fn read<S: FileSource + ?Sized>(
     let mut content = content(source)?.take(BEFORE_PICTURE + u64::from(PICTURE_SIDE).pow(2) * 4);
     let mut header = [0u8; 17];
     read_exact(&mut content, &mut header[..12])?;
-    anyhow::ensure!(&header[..7] == b"BLENDER", "Not a Blender file");
+    anyhow::ensure!(
+        &header[..7] == b"BLENDER",
+        words!(
+            models_not_blend = "Not a Blender file",
+            note = "An error in place of a .blend file that is not Blender's."
+        )
+    );
     let digits = |bytes: &[u8]| -> anyhow::Result<u32> {
         let text = std::str::from_utf8(bytes)?;
         anyhow::ensure!(
             text.bytes().all(|b| b.is_ascii_digit()),
-            "Unknown Blender header"
+            words!(
+                models_blend_unknown_header = "Unknown Blender header",
+                note = "An error in place of a Blender file whose header does not say its version as Blender writes it."
+            )
         );
         Ok(text.parse()?)
     };
@@ -192,21 +201,20 @@ pub fn read<S: FileSource + ?Sized>(
             digits(&header[9..12])?,
         ),
         _ => {
-            anyhow::ensure!(
-                &header[7..9] == b"17",
-                "Saved by a Blender newer than this reader"
-            );
+            anyhow::ensure!(&header[7..9] == b"17", newer());
             read_exact(&mut content, &mut header[12..17])?;
-            anyhow::ensure!(
-                &header[9..13] == b"-01v",
-                "Saved by a Blender newer than this reader"
-            );
+            anyhow::ensure!(&header[9..13] == b"-01v", newer());
             (Heads::LargeEight, true, digits(&header[13..17])?)
         }
     };
     let mut found = Found {
-        title: "Blender file".into(),
-        details: vec![("Saved by".into(), format!("Blender {}", version(number)))],
+        title: words!(
+            models_blend_title = "Blender file",
+            note = "The title of a Blender file's preview."
+        )
+        .say(),
+        // The program's name and version, as Blender writes them.
+        details: vec![(crate::saved_by(), format!("Blender {}", version(number)))],
         ..Found::default()
     };
     // Blender refuses these too: no picture before 2.50, and none it can
@@ -251,23 +259,54 @@ pub fn read<S: FileSource + ?Sized>(
         }
     }
     if let Some(first) = scenes.first() {
+        // Transitional: a list argument (ADR-139).
         let names: Vec<&str> = scenes.iter().map(|s| s.name.as_str()).collect();
         found.details.push((
-            if scenes.len() == 1 { "Scene" } else { "Scenes" }.into(),
+            words!(
+                models_detail_scenes_named = "{ $count ->
+                    [1] Scene
+                   *[other] Scenes
+                }",
+                count = scenes.len(),
+                note = "A label in the preview's Properties: the names of the scenes a Blender file holds. count: how many."
+            )
+            .say(),
             names.join(", "),
         ));
         found.details.push((
-            "Frames".into(),
-            format!("{}–{}", first.frames.0, first.frames.1),
+            words!(
+                models_detail_frames = "Frames",
+                note = "A label in the preview's Properties: the first and last frame of a Blender file's first scene."
+            )
+            .say(),
+            words!(
+                models_frames = "{ $first }–{ $last }",
+                first = first.frames.0.to_string(),
+                last = first.frames.1.to_string(),
+                note = "The range of frames of a Blender scene, in the preview's Properties (1–250). first, last: frame numbers."
+            )
+            .say(),
         ));
     }
     Ok(found)
 }
 
+/// Why a file is not read: a version of Blender newer than this reader
+/// knows saved it.
+fn newer() -> words::Words {
+    words!(
+        models_blend_newer = "Saved by a Blender newer than this reader",
+        note = "An error in place of a Blender file whose header is laid out as no version of Blender known here writes it."
+    )
+}
+
 fn read_exact(reader: &mut impl Read, buf: &mut [u8]) -> anyhow::Result<()> {
     anyhow::ensure!(
         read_up_to(reader, buf)? == buf.len(),
-        "The Blender file ends early"
+        words!(
+            models_blend_ends_early = "The Blender file ends early",
+            note = "An error in place of a Blender file cut short."
+        )
     );
     Ok(())
 }
@@ -293,7 +332,12 @@ fn picture(content: &mut impl Read, len: u64, side: u32) -> anyhow::Result<Optio
     let row = width as usize * 4;
     let rows: Vec<u8> = rgba.chunks_exact(row).rev().flatten().copied().collect();
     let image = image::RgbaImage::from_raw(width, height, rows)
-        .ok_or_else(|| anyhow::anyhow!("The Blender file's picture is damaged"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                models_blend_picture_damaged = "The Blender file's picture is damaged",
+                note = "An error in place of the picture Blender stored in a file, when it cannot be read."
+            ))
+        })?;
     Ok(Some(crate::fit(image, side)))
 }
 

@@ -15,6 +15,7 @@ use std::io::BufRead;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::{Datum, Waypoint, WaypointKind};
+use skwir_core::words;
 
 use crate::collect::{self, Collector};
 use crate::flight::{self, Ends, Route, Stop};
@@ -62,7 +63,10 @@ pub fn read<R: BufRead>(
         match tag {
             Tag::Start { name, attributes } => {
                 if path.is_empty() && name != "LittleNavmap" {
-                    anyhow::bail!("not a Little Navmap plan");
+                    anyhow::bail!(words!(
+                        geo_lnmpln_not_plan = "not a Little Navmap plan",
+                        note = "Why a .lnmpln file is not shown on a map: it is not a plan of Little Navmap, a flight planning program."
+                    ));
                 }
                 let parent = path.last().map_or("", String::as_str);
                 match (name, parent) {

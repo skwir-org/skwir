@@ -35,6 +35,8 @@ use skwir_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepContex
 use skwir_core::plugin::Requirement;
 use skwir_core::registry::MenuItem;
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_core::{CancelToken, os_path};
 use skwir_platform::calendar::Calendar;
@@ -45,7 +47,14 @@ use crate::{Format, ID};
 /// The operation kind, as plans name it.
 pub(crate) const KIND: &str = "set_position";
 const PROGRAM: &str = "exiftool";
-const MISSING: &str = "Install ExifTool to write pictures' locations";
+
+/// What to do when `ExifTool` is not there.
+fn missing() -> Words {
+    words!(
+        geo_exiftool_missing = "Install ExifTool to write pictures' locations",
+        note = "Why pictures cannot be geotagged or their location removed: ExifTool, the program that writes it, is not installed."
+    )
+}
 
 /// The operation kind, the commands and their menu items (owner `geo`).
 pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
@@ -53,16 +62,24 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
     app.commands.register::<GeotagArgs, _>(
         ID, Topic::Notes,
         "geo.geotag",
-        "Geotag pictures from a track",
-        "Place the selected pictures along the one selected track (GPX, FIT, any track read): each picture taken while it was recorded gets its position at that moment; proposed for review. Works on a worker: the result arrives as a proposal or a notification",
+        words!(
+            geo_geotag = "Geotag pictures from a track",
+            note = "An action: write into pictures where they were taken, read from a GPS track recorded at the same time."
+        ),
+        words!(
+            geo_geotag_description = "Place the selected pictures along the one selected track (GPX, FIT, any track read): each picture taken while it was recorded gets its position at that moment; proposed for review. Works on a worker: the result arrives as a proposal or a notification",
+            note = "Read by agents and in F1's list of actions."
+        ),
         move |args, app| geotag(app, args, &lifetime),
     )
         .plans();
     app.commands.register::<RemoveArgs, _>(
         ID, Topic::Notes,
         "geo.remove_location",
-        "Remove pictures' GPS locations",
-        "Take the location out of the selected pictures (plan); those without one are left as they are",
+        words!(geo_remove_location = "Remove pictures' GPS locations"),
+        words!(
+            geo_remove_location_description = "Take the location out of the selected pictures (plan); those without one are left as they are"
+        ),
         |args, app| remove_location(app, args),
     )
         .plans();
@@ -74,14 +91,20 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
         .collect();
     for (title, command, when, order, icon) in [
         (
-            "Geotag from Track",
+            words!(
+                geo_geotag_menu = "Geotag from Track",
+                note = "A context menu item on pictures beside a GPS track: write into the pictures where they were taken, from the track."
+            ),
             "geo.geotag",
             format!("has:image {}", tracks.join("|")),
             560,
             "map",
         ),
         (
-            "Remove GPS Location",
+            words!(
+                geo_remove_location_menu = "Remove GPS Location",
+                note = "A context menu item on pictures: take out of them where they were taken."
+            ),
             "geo.remove_location",
             "kind:image".to_owned(),
             561,
@@ -92,7 +115,7 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
             ID,
             MenuItem {
                 menu: "context".into(),
-                title: title.into(),
+                title,
                 command: Invocation::new(command),
                 when: Some(when),
                 order,
@@ -108,7 +131,13 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
 
 /// `ExifTool`, for `Plugin::requirements`.
 pub(crate) fn requirement() -> Requirement {
-    Requirement::program(PROGRAM, "Writing and removing pictures' locations")
+    Requirement::program(
+        PROGRAM,
+        words!(
+            geo_requirement = "Writing and removing pictures' locations",
+            note = "What ExifTool, a program the Maps plugin uses, is needed for, in the plugin's requirements."
+        ),
+    )
 }
 
 // ---------------------------------------------------------------- matching
@@ -377,7 +406,7 @@ fn selector_args<'a>(
 }
 
 fn program() -> anyhow::Result<PathBuf> {
-    os_path::find_program(PROGRAM).ok_or_else(|| anyhow::anyhow!(MISSING))
+    os_path::find_program(PROGRAM).ok_or_else(|| anyhow::anyhow!(missing()))
 }
 
 /// `ExifTool` with the arguments every run shares: no user configuration
@@ -406,8 +435,8 @@ pub(crate) fn read_many(
     program: &Path,
     paths: &[PathBuf],
     cancel: &CancelToken,
-) -> Vec<Result<Read, String>> {
-    let mut out: Vec<Option<Result<Read, String>>> = vec![None; paths.len()];
+) -> Vec<Result<Read, Words>> {
+    let mut out: Vec<Option<Result<Read, Words>>> = vec![None; paths.len()];
     for (chunk_index, chunk) in paths.chunks(CHUNK).enumerate() {
         if cancel.is_cancelled() {
             break;
@@ -470,15 +499,19 @@ fn read_args() -> impl Iterator<Item = String> {
 }
 
 /// One file, when the batch did not say.
-fn read_one(program: &Path, path: &Path, cancel: &CancelToken) -> Result<Read, String> {
+fn read_one(program: &Path, path: &Path, cancel: &CancelToken) -> Result<Read, Words> {
     let mut command = exiftool(program);
     command.args(read_args()).arg("--").arg(path);
     let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, READ_TIMEOUT)
-        .map_err(|e| format!("{e:#}"))?;
+        .map_err(Words::of_error)?;
     match parse(&finished.stdout).first() {
         Some(object) => found(object),
-        None if finished.stderr.is_empty() => Err("ExifTool could not read it".into()),
-        None => Err(finished.stderr),
+        None if finished.stderr.is_empty() => Err(words!(
+            geo_exiftool_unreadable = "ExifTool could not read it",
+            note = "Why a picture's location could not be read, after its name (“a.jpg” could not be read: …): ExifTool, the program that reads it, said nothing."
+        )),
+        // What ExifTool said, as it said it.
+        None => Err(Words::as_written(finished.stderr)),
     }
 }
 
@@ -495,9 +528,9 @@ fn parse(stdout: &[u8]) -> Vec<serde_json::Map<String, serde_json::Value>> {
         .collect()
 }
 
-fn found(object: &serde_json::Map<String, serde_json::Value>) -> Result<Read, String> {
+fn found(object: &serde_json::Map<String, serde_json::Value>) -> Result<Read, Words> {
     if let Some(error) = object.get("ExifTool:Error").and_then(|e| e.as_str()) {
-        return Err(error.to_owned());
+        return Err(Words::as_written(error.to_owned()));
     }
     let tags = object
         .iter()
@@ -533,7 +566,7 @@ fn read_tags(program: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Resul
     if let Some(tags) = seen.as_ref().and_then(recall) {
         return Ok(tags);
     }
-    let read = read_one(program, path, cancel).map_err(|e| anyhow::anyhow!(e))?;
+    let read = read_one(program, path, cancel).map_err(anyhow::Error::from)?;
     if let Some(seen) = seen
         && seen_now(path).as_ref() == Some(&seen)
     {
@@ -630,11 +663,12 @@ fn write(program: &Path, path: &Path, to: &Location, cancel: &CancelToken) -> an
                 .is_some_and(|n| n > 0)
         });
         if !finished.status.success() {
-            anyhow::bail!(
-                "ExifTool could not write “{}”: {}",
-                display_name(path),
-                finished.stderr
-            );
+            anyhow::bail!(words!(
+                geo_exiftool_could_not_write = "ExifTool could not write { $name }: { $why }",
+                name = Name::of(path),
+                why = finished.stderr,
+                note = "Why a picture's location could not be written. name: the picture's name; why: what ExifTool, the program that writes it, said, in English."
+            ));
         }
         Ok(updated)
     };
@@ -652,10 +686,11 @@ fn write(program: &Path, path: &Path, to: &Location, cancel: &CancelToken) -> an
             {
                 Ok(())
             } else {
-                Err(anyhow::anyhow!(
-                    "ExifTool cannot write a location into “{}”",
-                    display_name(path)
-                ))
+                Err(anyhow::anyhow!(words!(
+                    geo_exiftool_cannot_write = "ExifTool cannot write a location into { $name }",
+                    name = Name::of(path),
+                    note = "Why a picture's location could not be written: ExifTool, the program that writes it, cannot write one into a file of its format. name: the picture's name."
+                )))
             }
         }
     };
@@ -844,13 +879,6 @@ fn has_location(tags: &Tags) -> bool {
         })
 }
 
-fn display_name(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or(path.as_os_str())
-        .to_string_lossy()
-        .into_owned()
-}
-
 // ---------------------------------------------------------------- operation
 
 /// What a file's location becomes.
@@ -944,31 +972,76 @@ impl skwir_core::op::Effect for SetPosition {
         Some(self.entry.id)
     }
     fn describe(&self) -> Change {
-        let name = display_name(&self.entry.path);
+        let name = || Name::of(&self.entry.path);
         let (will, did, already) = match &self.to {
-            Location::At(p) => (
-                format!("place “{name}” at {:.5}, {:.5}", p.lat, p.lon),
-                format!("placed “{name}” at {:.5}, {:.5}", p.lat, p.lon),
-                format!("“{name}” was already at {:.5}, {:.5}", p.lat, p.lon),
-            ),
+            Location::At(p) => {
+                let (lat, lon) = (|| format!("{:.5}", p.lat), || format!("{:.5}", p.lon));
+                (
+                    words!(
+                        geo_place_at = "place { $name } at { $lat }, { $lon }",
+                        name = name(),
+                        lat = lat(),
+                        lon = lon(),
+                        note = "A step of a plan, in its review: a picture is given where it was taken. lat, lon: its latitude and longitude in degrees. Begins in lower case."
+                    ),
+                    words!(
+                        geo_placed_at = "placed { $name } at { $lat }, { $lon }",
+                        name = name(),
+                        lat = lat(),
+                        lon = lon(),
+                        note = "What a step did, said once its plan ran: a picture was given where it was taken. lat, lon: its latitude and longitude in degrees. Begins in lower case."
+                    ),
+                    words!(
+                        geo_already_at = "{ $name } was already at { $lat }, { $lon }",
+                        name = name(),
+                        lat = lat(),
+                        lon = lon(),
+                        note = "What a step found done already, said once its plan ran: the picture already said it was taken there. lat, lon: its latitude and longitude in degrees."
+                    ),
+                )
+            }
             Location::None => (
-                format!("remove the location of “{name}”"),
-                format!("removed the location of “{name}”"),
-                format!("“{name}” already had no location"),
+                words!(
+                    geo_remove_location_of = "remove the location of { $name }",
+                    name = name(),
+                    note = "A step of a plan, in its review: where a picture was taken is taken out of it. Begins in lower case."
+                ),
+                words!(
+                    geo_removed_location_of = "removed the location of { $name }",
+                    name = name(),
+                    note = "What a step did, said once its plan ran: where a picture was taken was taken out of it. Begins in lower case."
+                ),
+                words!(
+                    geo_already_no_location = "{ $name } already had no location",
+                    name = name(),
+                    note = "What a step found done already, said once its plan ran: the picture did not say where it was taken."
+                ),
             ),
             Location::Tags(_) => (
-                format!("restore the location of “{name}”"),
-                format!("restored the location of “{name}”"),
-                format!("the location of “{name}” was already back"),
+                words!(
+                    geo_restore_location_of = "restore the location of { $name }",
+                    name = name(),
+                    note = "A step of a plan undoing another, in its review: where a picture was taken is written back as it was. Begins in lower case."
+                ),
+                words!(
+                    geo_restored_location_of = "restored the location of { $name }",
+                    name = name(),
+                    note = "What a step did, said once its plan ran: where a picture was taken was written back as it was. Begins in lower case."
+                ),
+                words!(
+                    geo_location_already_back = "the location of { $name } was already back",
+                    name = name(),
+                    note = "What a step found done already, said once its plan ran: the picture already said where it was taken, as it did before. Begins in lower case."
+                ),
             ),
         };
         Change::Metadata {
             path: self.entry.path.clone(),
             field: keys::POSITION.into(),
             words: Some(skwir_core::op::Tenses {
-                will: will.into(),
-                did: did.into(),
-                already: Some(already.into()),
+                will,
+                did,
+                already: Some(already),
             }),
         }
     }
@@ -977,7 +1050,12 @@ impl skwir_core::op::Effect for SetPosition {
             Ok(path) => path,
             Err(ResolveError::Gone(p)) => {
                 return StepStatus::Conflict {
-                    reason: format!("“{}” no longer exists", display_name(&p)),
+                    reason: words!(
+                        geo_gone = "{ $name } no longer exists",
+                        name = Name::of(&p),
+                        note = "Why a step of a plan that writes a picture's location cannot run: the picture is gone."
+                    )
+                    .say(),
                 };
             }
             Err(e) => {
@@ -988,14 +1066,20 @@ impl skwir_core::op::Effect for SetPosition {
         };
         let Ok(program) = program() else {
             return StepStatus::Conflict {
-                reason: MISSING.into(),
+                reason: missing().say(),
             };
         };
         let tags = match read_tags(&program, &path, ctx.cancel_token()) {
             Ok(tags) => tags,
             Err(e) => {
                 return StepStatus::Conflict {
-                    reason: format!("“{}” could not be read: {e:#}", display_name(&path)),
+                    reason: words!(
+                        geo_unreadable = "{ $name } could not be read: { $error }",
+                        name = Name::of(&path),
+                        error = e,
+                        note = "Why a step of a plan that writes a picture's location cannot run: what the picture says of its location cannot be read. error: why."
+                    )
+                    .say(),
                 };
             }
         };
@@ -1003,7 +1087,12 @@ impl skwir_core::op::Effect for SetPosition {
             StepStatus::AlreadyDone
         } else if self.changed(&path, &tags) {
             StepStatus::Conflict {
-                reason: format!("“{}” changed since the plan was made", display_name(&path)),
+                reason: words!(
+                    geo_changed_since = "{ $name } changed since the plan was made",
+                    name = Name::of(&path),
+                    note = "Why a step of a plan that writes a picture's location does not run: the picture was written since the plan was reviewed."
+                )
+                .say(),
             }
         } else {
             StepStatus::Pending { reversible: true }
@@ -1083,7 +1172,7 @@ fn geotag(
             .iter()
             .filter_map(|(_, name)| name.as_deref())
             .any(|name| Format::of(Path::new(name)).is_some()),
-        "Select a track and the pictures to place along it"
+        select_track()
     );
     let refs: Vec<EntryRef> = typed.into_iter().map(|(r, _)| r).collect();
     let offset_seconds = args.offset_seconds;
@@ -1102,7 +1191,7 @@ fn geotag(
             match result {
                 Ok(Geotag::Plan(plan)) => app.propose(plan),
                 Ok(Geotag::Nothing(why)) => app.notify(NotifyLevel::Warning, why),
-                Err(e) => app.notify(NotifyLevel::Error, format!("{e:#}")),
+                Err(e) => app.notify(NotifyLevel::Error, Words::of_error(e)),
             }
         });
     Ok(Outcome::Done)
@@ -1113,21 +1202,22 @@ fn geotag(
 pub(crate) enum Geotag {
     /// One step per picture placed; its title names what was left out.
     Plan(Plan),
-    /// No picture could be placed, and why, in the user's words.
-    Nothing(String),
+    /// No picture could be placed, and why.
+    Nothing(Words),
 }
 
-/// `1 picture`, `3 pictures`.
-fn count(n: usize, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
-    }
+/// What to select for a geotag.
+fn select_track() -> Words {
+    words!(
+        geo_select_track = "Select a track and the pictures to place along it",
+        note = "Why pictures cannot be geotagged: the selection holds no GPS track."
+    )
 }
 
-fn pictures(n: usize) -> String {
-    count(n, "picture", "pictures")
+/// Notes said one after the other, under a plan's title or after why
+/// nothing was planned.
+fn joined(notes: &[Words]) -> String {
+    notes.iter().map(Words::say).collect::<Vec<_>>().join(" · ")
 }
 
 fn is_raw(mime: &mime::Mime) -> bool {
@@ -1149,55 +1239,79 @@ struct LeftOut {
 }
 
 impl LeftOut {
-    fn notes(&self) -> Vec<String> {
+    fn notes(&self) -> Vec<Words> {
         let mut notes = Vec::new();
-        let mut note = |n: usize, text: String| {
-            if n > 0 {
-                notes.push(text);
-            }
-        };
-        note(
-            self.outside,
-            format!("{} outside the track's times", pictures(self.outside)),
-        );
-        note(
-            self.placed,
-            format!(
-                "{} already placed, left as {}",
-                pictures(self.placed),
-                if self.placed == 1 {
-                    "it is"
-                } else {
-                    "they are"
-                }
-            ),
-        );
-        note(
-            self.undated,
-            format!("{} without the time taken", pictures(self.undated)),
-        );
-        note(
-            self.raw,
-            format!(
-                "{} left out: their sidecars are not written yet",
-                count(self.raw, "RAW picture", "RAW pictures")
-            ),
-        );
-        note(
-            self.unwritable,
-            format!("{} ExifTool cannot write", pictures(self.unwritable)),
-        );
-        note(
-            self.unreadable,
-            format!("{} that could not be read", pictures(self.unreadable)),
-        );
-        note(
-            self.others,
-            format!(
-                "{} left out",
-                count(self.others, "other file", "other files")
-            ),
-        );
+        if self.outside > 0 {
+            notes.push(words!(
+                geo_left_outside = "{ $count ->
+                    [one] { $count } picture outside the track's times
+                   *[other] { $count } pictures outside the track's times
+                }",
+                count = self.outside,
+                note = "Under a geotag's plan, what was left out: pictures taken before the track began or after it ended."
+            ));
+        }
+        if self.placed > 0 {
+            notes.push(words!(
+                geo_left_placed = "{ $count ->
+                    [one] { $count } picture already placed, left as it is
+                   *[other] { $count } pictures already placed, left as they are
+                }",
+                count = self.placed,
+                note = "Under a geotag's plan, what was left out: pictures that already say where they were taken."
+            ));
+        }
+        if self.undated > 0 {
+            notes.push(words!(
+                geo_left_undated = "{ $count ->
+                    [one] { $count } picture without the time taken
+                   *[other] { $count } pictures without the time taken
+                }",
+                count = self.undated,
+                note = "Under a geotag's plan, what was left out: pictures that do not say when they were taken."
+            ));
+        }
+        if self.raw > 0 {
+            notes.push(words!(
+                geo_left_raw = "{ $count ->
+                    [one] { $count } RAW picture left out: their sidecars are not written yet
+                   *[other] { $count } RAW pictures left out: their sidecars are not written yet
+                }",
+                count = self.raw,
+                note = "Under a geotag's plan, what was left out: a camera's RAW pictures, whose location would be written in a file beside them (a sidecar), which is not done yet."
+            ));
+        }
+        if self.unwritable > 0 {
+            notes.push(words!(
+                geo_left_unwritable = "{ $count ->
+                    [one] { $count } picture ExifTool cannot write
+                   *[other] { $count } pictures ExifTool cannot write
+                }",
+                count = self.unwritable,
+                note = "Under a geotag's plan, what was left out: pictures of a format ExifTool, the program that writes the location, cannot write."
+            ));
+        }
+        if self.unreadable > 0 {
+            notes.push(words!(
+                geo_left_unreadable = "{ $count ->
+                    [one] { $count } picture that could not be read
+                   *[other] { $count } pictures that could not be read
+                }",
+                count = self.unreadable,
+                note =
+                    "Under a geotag's plan, what was left out: pictures ExifTool could not read."
+            ));
+        }
+        if self.others > 0 {
+            notes.push(words!(
+                geo_left_others = "{ $count ->
+                    [one] { $count } other file left out
+                   *[other] { $count } other files left out
+                }",
+                count = self.others,
+                note = "Under a plan that writes pictures' locations, what was left out: selected files that are not pictures."
+            ));
+        }
         notes
     }
 }
@@ -1235,21 +1349,37 @@ pub(crate) fn plan_geotag(
     }
     let track = match tracks.as_slice() {
         [track] => track,
-        [] => anyhow::bail!("Select a track and the pictures to place along it"),
-        more => anyhow::bail!("Select one track: {} are selected", more.len()),
+        [] => anyhow::bail!(select_track()),
+        more => anyhow::bail!(words!(
+            geo_select_one_track = "Select one track: { $count ->
+               *[other] { $count } are selected
+            }",
+            count = more.len(),
+            note = "Why pictures cannot be geotagged: the selection holds several GPS tracks. count: how many."
+        )),
     };
-    let track_name = display_name(track);
+    let track_name = || Name::of(track);
     let doc = crate::inspect_file(
         track,
         skwir_platform::inspection::limits::Bounds::QUICK,
         cancel,
     )?
     .geo
-    .ok_or_else(|| anyhow::anyhow!("“{track_name}” holds no track"))?;
+    .ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            geo_holds_no_track = "{ $name } holds no track",
+            name = track_name(),
+            note = "Why pictures cannot be geotagged: the file selected as their track holds none."
+        ))
+    })?;
     let fixes = fixes(&doc);
     anyhow::ensure!(
         !fixes.is_empty(),
-        "“{track_name}” has no times: only a recorded track can place pictures"
+        words!(
+            geo_track_no_times = "{ $name } has no times: only a recorded track can place pictures",
+            name = track_name(),
+            note = "Why pictures cannot be geotagged: the track selected does not say when it passed each point (a route planned, not recorded)."
+        )
     );
     let writable = writable_extensions(&program, cancel)?;
     candidates.retain(|r| {
@@ -1294,29 +1424,45 @@ pub(crate) fn plan_geotag(
     }
     let mut notes = left.notes();
     if offset_seconds != 0 {
-        notes.push(format!("cameras' clocks corrected by {offset_seconds:+} s"));
+        notes.push(words!(
+            geo_clocks_corrected = "cameras' clocks corrected by { $seconds } s",
+            seconds = format!("{offset_seconds:+}"),
+            note = "Under a geotag's plan: the time each picture says it was taken was moved by this many seconds to match the track. seconds: a number with its sign (+120). Begins in lower case."
+        ));
     }
     if steps.is_empty() {
-        let mut why = format!("No picture to place along “{track_name}”");
-        if !notes.is_empty() {
-            why = format!("{why}: {}", notes.join(" · "));
-        }
+        let why = if notes.is_empty() {
+            words!(
+                geo_nothing_along = "No picture to place along { $track }",
+                track = track_name(),
+                note = "Why a geotag planned nothing. track: the name of the GPS track."
+            )
+        } else {
+            words!(
+                geo_nothing_along_because = "No picture to place along { $track }: { $why }",
+                track = track_name(),
+                // Transitional: a list argument (ADR-139)
+                why = joined(&notes),
+                note = "Why a geotag planned nothing. track: the name of the GPS track; why: what was left out, each said after the other (3 pictures outside the track's times · 1 other file left out)."
+            )
+        };
         return Ok(Geotag::Nothing(why));
     }
-    let title = format!("place {} along “{track_name}”", what(&steps));
+    let title = words!(
+        geo_place_along = "{ $count ->
+            [1] place { $name } along { $track }
+           *[other] place { $count } pictures along { $track }
+        }",
+        count = steps.len(),
+        name = Name::of(&steps[0].entry.path),
+        track = track_name(),
+        note = "A plan's title, in its review and in what is said after it (Undid: …): pictures are given where they were taken, from a GPS track. name: the picture's name when there is one; track: the track's name. Begins in lower case."
+    );
     Ok(Geotag::Plan(plan(title, &notes, steps)))
 }
 
-/// The picture by name when there is one, a count otherwise.
-fn what(steps: &[SetPosition]) -> String {
-    match steps {
-        [one] => format!("“{}”", display_name(&one.entry.path)),
-        _ => pictures(steps.len()),
-    }
-}
-
 /// The plan of `steps`, what was left out said under its title.
-fn plan(title: String, notes: &[String], steps: Vec<SetPosition>) -> Plan {
+fn plan(title: Words, notes: &[Words], steps: Vec<SetPosition>) -> Plan {
     let plan = Plan::with_steps(
         title,
         steps
@@ -1327,7 +1473,7 @@ fn plan(title: String, notes: &[String], steps: Vec<SetPosition>) -> Plan {
     if notes.is_empty() {
         plan
     } else {
-        plan.with_note(notes.join(" · "))
+        plan.with_note(joined(notes))
     }
 }
 
@@ -1341,7 +1487,10 @@ fn remove_location(app: &App, args: RemoveArgs) -> anyhow::Result<Outcome> {
     let typed = typed(app, args.pane, args.entries)?;
     anyhow::ensure!(
         !typed.is_empty(),
-        "Select the pictures whose location to remove"
+        words!(
+            geo_select_pictures = "Select the pictures whose location to remove",
+            note = "Why no location was removed: nothing is selected."
+        )
     );
     let mut left = LeftOut::default();
     let mut steps = Vec::new();
@@ -1358,16 +1507,28 @@ fn remove_location(app: &App, args: RemoveArgs) -> anyhow::Result<Outcome> {
     }
     let notes = left.notes();
     if steps.is_empty() {
-        anyhow::bail!(
-            "No picture selected{}",
-            if notes.is_empty() {
-                String::new()
-            } else {
-                format!(": {}", notes.join(" · "))
-            }
-        );
+        if notes.is_empty() {
+            anyhow::bail!(words!(
+                geo_no_picture_selected = "No picture selected",
+                note = "Why no location was removed: the selection holds no picture."
+            ));
+        }
+        anyhow::bail!(words!(
+            geo_no_picture_selected_because = "No picture selected: { $why }",
+            // Transitional: a list argument (ADR-139)
+            why = joined(&notes),
+            note = "Why no location was removed: the selection holds no picture. why: what it holds instead, each said after the other (1 RAW picture left out: their sidecars are not written yet · 2 other files left out)."
+        ));
     }
-    let title = format!("remove the location of {}", what(&steps));
+    let title = words!(
+        geo_remove_locations = "{ $count ->
+            [1] remove the location of { $name }
+           *[other] remove the location of { $count } pictures
+        }",
+        count = steps.len(),
+        name = Name::of(&steps[0].entry.path),
+        note = "A plan's title, in its review and in what is said after it (Undid: …): where pictures were taken is taken out of them. name: the picture's name when there is one. Begins in lower case."
+    );
     Ok(Outcome::Plan(plan(title, &notes, steps)))
 }
 
@@ -2214,6 +2375,7 @@ mod tests {
         else {
             panic!("nothing to place")
         };
+        let why = why.english();
         assert!(
             why.starts_with("No picture to place along “Walk (day 1).gpx”: 3 pictures outside"),
             "{why}"

@@ -27,6 +27,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use skwir_core::geo::{EARTH_RADIUS, LatLon};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 static EMBEDDED: &[u8] = include_bytes!("../data/places.bin");
 const MAGIC: &[u8] = b"BPL1";
@@ -75,7 +77,7 @@ pub(crate) enum Source {
 /// before the city. Beyond every place's reach, nothing. The distance has
 /// a decimal under 10 km and none above; the direction is one of eight,
 /// from the place to the position.
-pub(crate) fn describe(at: LatLon) -> Option<String> {
+pub(crate) fn describe(at: LatLon) -> Option<Words> {
     index().describe(at)
 }
 
@@ -171,23 +173,56 @@ fn reach(rank: u8) -> f64 {
 }
 
 /// "5.6 km" under 10 km, "16 km" from there.
-fn distance_words(metres: f64) -> String {
+fn distance_words(metres: f64) -> Words {
     let tenths = (metres / 100.).round();
     if tenths < 100. {
-        format!("{:.1} km", tenths / 10.)
+        crate::in_kilometres(format!("{:.1}", tenths / 10.))
     } else {
-        format!("{} km", (metres / 1000.).round())
+        crate::in_kilometres((metres / 1000.).round().to_string())
     }
 }
 
 /// The direction of `to` seen from `from`, as one of eight.
-fn compass(from: LatLon, to: LatLon) -> &'static str {
+fn compass(from: LatLon, to: LatLon) -> Words {
     let (a, b) = (from.lat.to_radians(), to.lat.to_radians());
     let dlon = (to.lon - from.lon).to_radians();
     let y = dlon.sin() * b.cos();
     let x = a.cos() * b.sin() - a.sin() * b.cos() * dlon.cos();
     let degrees = y.atan2(x).to_degrees().rem_euclid(360.);
-    ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][(degrees / 45.).round() as usize % 8]
+    match (degrees / 45.).round() as usize % 8 {
+        0 => words!(
+            geo_compass_n = "N",
+            note = "North, abbreviated, as a picture's place says it (5.6 km N of Example Town)."
+        ),
+        1 => words!(
+            geo_compass_ne = "NE",
+            note = "North-east, abbreviated, as a picture's place says it (5.6 km NE of Example Town)."
+        ),
+        2 => words!(
+            geo_compass_e = "E",
+            note = "East, abbreviated, as a picture's place says it (5.6 km E of Example Town)."
+        ),
+        3 => words!(
+            geo_compass_se = "SE",
+            note = "South-east, abbreviated, as a picture's place says it (5.6 km SE of Example Town)."
+        ),
+        4 => words!(
+            geo_compass_s = "S",
+            note = "South, abbreviated, as a picture's place says it (5.6 km S of Example Town)."
+        ),
+        5 => words!(
+            geo_compass_sw = "SW",
+            note = "South-west, abbreviated, as a picture's place says it (5.6 km SW of Example Town)."
+        ),
+        6 => words!(
+            geo_compass_w = "W",
+            note = "West, abbreviated, as a picture's place says it (5.6 km W of Example Town)."
+        ),
+        _ => words!(
+            geo_compass_nw = "NW",
+            note = "North-west, abbreviated, as a picture's place says it (5.6 km NW of Example Town)."
+        ),
+    }
 }
 
 /// A name folded for comparison into `out`: lowercase, Latin accents
@@ -444,7 +479,7 @@ impl Index {
         self.cells(rows, cols, visit);
     }
 
-    fn describe(&self, at: LatLon) -> Option<String> {
+    fn describe(&self, at: LatLon) -> Option<Words> {
         // (share of the extent, place) of the place the position is in,
         // (share of the reach, distance, place) of the one it is near.
         let mut inside: Option<(f64, &Place)> = None;
@@ -461,14 +496,15 @@ impl Index {
             }
         });
         if let Some((_, place)) = inside {
-            return Some(self.name(place).to_owned());
+            return Some(Words::as_written(self.name(place).to_owned()));
         }
         let (_, distance, place) = near?;
-        Some(format!(
-            "{} {} of {}",
-            distance_words(distance),
-            compass(place.at(), at),
-            self.name(place)
+        Some(words!(
+            geo_place_near = "{ $distance } { $direction } of { $place }",
+            distance = distance_words(distance),
+            direction = compass(place.at(), at),
+            place = self.name(place),
+            note = "Where a picture was taken, in its Properties beside Place, when it is near a town rather than in it: 5.6 km NE of Example Town. distance: how far, with its unit; direction: one of the eight abbreviated directions, from the town; place: the town's name, as the place names' data writes it."
         ))
     }
 
@@ -652,7 +688,7 @@ mod tests {
     }
 
     fn describe(lat: f64, lon: f64) -> Option<String> {
-        index().describe(at(lat, lon))
+        index().describe(at(lat, lon)).map(|words| words.english())
     }
 
     #[test]
@@ -691,12 +727,12 @@ mod tests {
 
     #[test]
     fn distances_round_to_a_decimal_under_ten_km() {
-        assert_eq!(distance_words(2_040.), "2.0 km");
-        assert_eq!(distance_words(9_940.), "9.9 km");
+        assert_eq!(distance_words(2_040.).english(), "2.0 km");
+        assert_eq!(distance_words(9_940.).english(), "9.9 km");
         // Rounds up to ten: no "10.0 km".
-        assert_eq!(distance_words(9_960.), "10 km");
-        assert_eq!(distance_words(16_430.), "16 km");
-        assert_eq!(distance_words(99_600.), "100 km");
+        assert_eq!(distance_words(9_960.).english(), "10 km");
+        assert_eq!(distance_words(16_430.).english(), "16 km");
+        assert_eq!(distance_words(99_600.).english(), "100 km");
     }
 
     #[test]
@@ -861,7 +897,10 @@ mod tests {
         assert!(index.places.len() > 7_000, "{}", index.places.len());
         // A capital's own coordinates are that capital.
         assert_eq!(
-            index.describe(at(48.8566, 2.3522)).as_deref(),
+            index
+                .describe(at(48.8566, 2.3522))
+                .map(|w| w.english())
+                .as_deref(),
             Some("Paris")
         );
     }

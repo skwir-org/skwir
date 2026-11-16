@@ -18,6 +18,8 @@ use std::time::{Duration, SystemTime};
 
 use skwir_core::CancelToken;
 use skwir_core::geo::{Datum, LatLon, LineKind, Point};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::collect::Collector;
 use crate::xml::Damaged;
@@ -48,22 +50,25 @@ struct Definition {
 
 /// Why reading stopped early.
 enum Stop {
-    Damaged(String),
+    Damaged(Words),
     Error(anyhow::Error),
 }
 
 impl From<io::Error> for Stop {
     fn from(error: io::Error) -> Self {
         Stop::Damaged(if error.kind() == io::ErrorKind::UnexpectedEof {
-            "the file ends inside a record".into()
+            words!(
+                geo_fit_ends_in_record = "the file ends inside a record",
+                note = "Why a FIT file (a sports watch's recording) reads as damaged, inside the notice that says so: it is cut short."
+            )
         } else {
-            error.to_string()
+            Words::of_error(error.into())
         })
     }
 }
 
-fn damaged(why: &str) -> Stop {
-    Stop::Damaged(why.to_owned())
+fn damaged(why: Words) -> Stop {
+    Stop::Damaged(why)
 }
 
 /// The input, with the CRC of what was read and how much.
@@ -158,9 +163,15 @@ fn file<R: BufRead>(
     source.bytes(&mut header)?;
     if header_size < 12 || &header[7..11] != b".FIT" {
         return Err(damaged(if first {
-            "this is not a FIT file"
+            words!(
+                geo_fit_not_fit = "this is not a FIT file",
+                note = "Why a .fit file reads as damaged, inside the notice that says so: its header is not a FIT file's."
+            )
         } else {
-            "something other than a FIT file follows the data"
+            words!(
+                geo_fit_trailing = "something other than a FIT file follows the data",
+                note = "Why a FIT file reads as damaged, inside the notice that says so: after its recordings comes something else."
+            )
         }));
     }
     let data_size = u32::from_le_bytes([header[3], header[4], header[5], header[6]]);
@@ -173,7 +184,10 @@ fn file<R: BufRead>(
     // run to the end of the input, and it has no CRC.
     while data_size == 0 || source.read < end {
         if data_size == 0 && source.at_end()? {
-            return Err(damaged("the recording was not finished"));
+            return Err(damaged(words!(
+                geo_fit_unfinished = "the recording was not finished",
+                note = "Why a FIT file reads as damaged, inside the notice that says so: the device stopped before it closed the recording."
+            )));
         }
         state.records = state.records.wrapping_add(1);
         if state.records.is_multiple_of(4096) {
@@ -182,17 +196,26 @@ fn file<R: BufRead>(
         record(source, &mut definitions, state, into)?;
     }
     if source.read > end {
-        return Err(damaged("a record runs past the end of the data"));
+        return Err(damaged(words!(
+            geo_fit_record_past_end = "a record runs past the end of the data",
+            note = "Why a FIT file reads as damaged, inside the notice that says so."
+        )));
     }
     let computed = source.crc;
     let mut crc = [0; 2];
-    source
-        .bytes(&mut crc)
-        .map_err(|_| damaged("the file ends before its checksum"))?;
+    source.bytes(&mut crc).map_err(|_| {
+        damaged(words!(
+            geo_fit_no_checksum = "the file ends before its checksum",
+            note = "Why a FIT file reads as damaged, inside the notice that says so."
+        ))
+    })?;
     let stored = u16::from_le_bytes(crc);
     // Zero: the writer did not compute one.
     if stored != 0 && stored != computed {
-        return Err(damaged("the file's checksum does not match its content"));
+        return Err(damaged(words!(
+            geo_fit_checksum_mismatch = "the file's checksum does not match its content",
+            note = "Why a FIT file reads as damaged, inside the notice that says so."
+        )));
     }
     Ok(true)
 }
@@ -235,7 +258,12 @@ fn definition<R: BufRead>(source: &mut Source<R>, developer: bool) -> Result<Def
     let big_endian = match architecture {
         0 => false,
         1 => true,
-        _ => return Err(damaged("a message has an unknown byte order")),
+        _ => {
+            return Err(damaged(words!(
+                geo_fit_byte_order = "a message has an unknown byte order",
+                note = "Why a FIT file reads as damaged, inside the notice that says so: a message's numbers are written neither little- nor big-endian."
+            )));
+        }
     };
     let global = if big_endian {
         u16::from_be_bytes([g0, g1])
@@ -281,7 +309,12 @@ fn data<R: BufRead>(
     state: &mut State,
     into: &mut Collector,
 ) -> Result<(), Stop> {
-    let definition = definition.ok_or_else(|| damaged("a message's type was never defined"))?;
+    let definition = definition.ok_or_else(|| {
+        damaged(words!(
+            geo_fit_undefined_message = "a message's type was never defined",
+            note = "Why a FIT file reads as damaged, inside the notice that says so: a message comes before the definition of its layout."
+        ))
+    })?;
     state.buf.resize(definition.size, 0);
     source.bytes(&mut state.buf)?;
     let big = definition.big_endian;

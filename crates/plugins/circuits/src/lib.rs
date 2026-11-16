@@ -18,6 +18,8 @@ use skwir_core::{
     plugin::Plugin,
     preview::{FileSource, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
+    words,
+    words::Words,
 };
 use skwir_platform::inspection::{self, limits::Bounds};
 use std::path::Path;
@@ -100,14 +102,32 @@ impl Format {
     }
 
     /// What it is, for the toolbar.
-    fn title(self) -> &'static str {
+    fn title(self) -> Words {
         match self {
-            Format::Board => "KiCad board",
-            Format::Footprint => "KiCad footprint",
-            Format::Schematic => "KiCad schematic",
-            Format::Symbols => "KiCad symbol library",
-            Format::Gerber => "Gerber layer",
-            Format::Drill => "Drill file",
+            Format::Board => words!(
+                circuits_title_board = "KiCad board",
+                note = "The title of the preview of a printed circuit board made with KiCad."
+            ),
+            Format::Footprint => words!(
+                circuits_title_footprint = "KiCad footprint",
+                note = "The title of the preview of a KiCad footprint: the copper pads and outline of one component, as placed on a board."
+            ),
+            Format::Schematic => words!(
+                circuits_title_schematic = "KiCad schematic",
+                note = "The title of the preview of a circuit's schematic drawn with KiCad."
+            ),
+            Format::Symbols => words!(
+                circuits_title_symbols = "KiCad symbol library",
+                note = "The title of the preview of a KiCad library of schematic symbols."
+            ),
+            Format::Gerber => words!(
+                circuits_title_gerber = "Gerber layer",
+                note = "The title of the preview of a Gerber file: one layer of a circuit board (copper, solder mask…), as sent to the board maker."
+            ),
+            Format::Drill => words!(
+                circuits_title_drill = "Drill file",
+                note = "The title of the preview of an Excellon file: where a circuit board is drilled."
+            ),
         }
     }
 
@@ -160,7 +180,11 @@ impl Format {
                     svg: drawn.svg,
                     details: drawn.details,
                     notice: drawn.left_out.then(|| {
-                        "Drawn in part: the layer holds more than is drawn here".to_owned()
+                        words!(
+                            circuits_gerber_drawn_in_part = "Drawn in part: the layer holds more than is drawn here",
+                            note = "A notice under a Gerber layer's picture: some of its shapes were left out."
+                        )
+                        .say()
                     }),
                 })
             }
@@ -179,6 +203,76 @@ impl Format {
 /// Whether the file is larger than what is drawn within `bounds`.
 fn too_large<S: FileSource + ?Sized>(source: &S, bounds: Bounds) -> anyhow::Result<bool> {
     Ok(source.length()? > bounds.choose(INPUT, WHOLE_INPUT) as u64)
+}
+
+/// Properties' label for the program a file was made with.
+fn made_with() -> String {
+    words!(
+        circuits_detail_made_with = "Made with",
+        note = "A label in the preview's Properties: the program, and its version, that wrote the file (KiCad 9.0)."
+    )
+    .say()
+}
+
+/// A title block's fields, by their keys in the file, each with its label
+/// in Properties.
+fn title_block() -> [(&'static str, String); 4] {
+    [
+        (
+            "title",
+            words!(
+                circuits_detail_title = "Title",
+                note = "A label in the preview's Properties: the title the board or schematic gives itself in its title block."
+            )
+            .say(),
+        ),
+        (
+            "rev",
+            words!(
+                circuits_detail_revision = "Revision",
+                note = "A label in the preview's Properties: the revision of the design, from its title block."
+            )
+            .say(),
+        ),
+        (
+            "company",
+            words!(
+                circuits_detail_company = "Company",
+                note = "A label in the preview's Properties: the company the design is from, in its title block."
+            )
+            .say(),
+        ),
+        (
+            "date",
+            words!(
+                circuits_detail_date = "Date",
+                note = "A label in the preview's Properties: the date in the design's title block, as written there."
+            )
+            .say(),
+        ),
+    ]
+}
+
+/// A length in millimetres, as Properties says it (`value` rounded by the
+/// caller).
+fn millimetres(value: f64) -> String {
+    words!(
+        circuits_millimetres = "{ $mm } mm",
+        mm = value.to_string(),
+        note = "A length in Properties (a board's thickness, a drill's size). mm: the number of millimetres."
+    )
+    .say()
+}
+
+/// A width by a height in millimetres, as Properties says it.
+fn millimetres_by(width: f64, height: f64) -> String {
+    words!(
+        circuits_millimetres_by = "{ $width } × { $height } mm",
+        width = width.to_string(),
+        height = height.to_string(),
+        note = "A size in Properties: a board's or a layer's width by its height. width, height: numbers of millimetres."
+    )
+    .say()
 }
 
 /// What a file holds: its drawing, and facts in the order shown.
@@ -237,10 +331,14 @@ impl PreviewProvider for Provider {
         // bound is the quick one.
         let bounds = Bounds::of(view);
         if too_large(&held, bounds)? {
-            return Err(bounds.refuse(format!(
-                "Too large to draw (more than {})",
-                inspection::limits::describe(bounds.choose(INPUT, WHOLE_INPUT))
-            )));
+            return Err(bounds.refuse(
+                words!(
+                    circuits_too_large = "Too large to draw (more than { $size })",
+                    size = words::Size(bounds.choose(INPUT, WHOLE_INPUT) as u64),
+                    note = "Why a board or schematic is shown as its text rather than drawn. size: the largest file drawn."
+                )
+                .say(),
+            ));
         }
         let found = format.read(&held, bounds, cancel)?;
         let image = match &found.svg {
@@ -248,12 +346,16 @@ impl PreviewProvider for Provider {
             None => None,
         };
         let notice = match (&image, found.notice) {
-            (None, _) => "Nothing is drawn in this file".to_owned(),
+            (None, _) => words!(
+                circuits_nothing_drawn = "Nothing is drawn in this file",
+                note = "A notice in the preview of a board, schematic or layer that holds nothing to draw."
+            )
+            .say(),
             (Some(_), notice) => notice.unwrap_or_default(),
         };
         Ok(Some(Inspection {
             kind: InspectionKind::Text,
-            title: format.title().into(),
+            title: format.title().say(),
             image,
             details: found
                 .details

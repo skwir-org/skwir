@@ -101,7 +101,7 @@ impl Mission {
         for (i, mark) in marks.into_iter().enumerate() {
             for ring in mark.rings.into_iter().filter(|ring| !ring.is_empty()) {
                 into.area(Area {
-                    name: "Survey".into(),
+                    name: crate::mission::survey(),
                     rings: vec![ring],
                 });
             }
@@ -182,8 +182,14 @@ fn end(name: &str, parent: &str, text: &str, mission: &mut Mission, into: &mut C
         }
         ("finishAction", "missionConfig") => {
             mission.destination = match text.trim() {
-                "goHome" => Some("Home".into()),
-                "backToFirstWaypoint" => Some("First waypoint".into()),
+                "goHome" => Some(crate::mission::home()),
+                "backToFirstWaypoint" => Some(
+                    skwir_core::words!(
+                        geo_wpml_first_waypoint = "First waypoint",
+                        note = "Where a DJI drone mission ends, beside Destination in the preview's Properties: it flies back to its first waypoint."
+                    )
+                    .say(),
+                ),
                 _ => None,
             };
         }
@@ -195,7 +201,11 @@ fn end(name: &str, parent: &str, text: &str, mission: &mut Mission, into: &mut C
                 .and_then(|(lat, lon)| collect::position(lat, lon));
             match at {
                 Some(at) => into.waypoint(Waypoint {
-                    name: "Takeoff".into(),
+                    name: skwir_core::words!(
+                        geo_wpml_takeoff = "Takeoff",
+                        note = "The name of a DJI drone mission's takeoff point on the map."
+                    )
+                    .say(),
                     at,
                     kind: WaypointKind::Takeoff,
                     altitude: parts

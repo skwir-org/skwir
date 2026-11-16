@@ -169,18 +169,25 @@ fn simple(item: &Value, i: usize, labelled: bool, route: &mut Route, into: &mut 
 }
 
 fn complex(item: &Value, i: usize, route: &mut Route, into: &mut Collector) {
-    let area = |into: &mut Collector, name: &str| {
+    let area = |into: &mut Collector, name: String| {
         let ring = ring(item.get("polygon"), into);
         if !ring.is_empty() {
             into.area(Area {
-                name: name.into(),
+                name,
                 rings: vec![ring],
             });
         }
     };
     match item.get("complexItemType").and_then(Value::as_str) {
-        Some("survey") => area(into, "Survey"),
-        Some("StructureScan") => area(into, "Structure scan"),
+        Some("survey") => area(into, mission::survey()),
+        Some("StructureScan") => area(
+            into,
+            skwir_core::words!(
+                geo_qgc_structure_scan = "Structure scan",
+                note = "The name of an area on the map around a building or a structure that a drone mission circles to photograph it."
+            )
+            .say(),
+        ),
         Some("fwLandingPattern" | "vtolLandingPattern") => {
             return landing(item, i, route, into);
         }
@@ -246,7 +253,7 @@ fn geofence(fence: &Value, into: &mut Collector) {
         let ring = ring(polygon.get("polygon"), into);
         if !ring.is_empty() {
             into.area(Area {
-                name: mission::fence_name(inclusion(polygon)).into(),
+                name: mission::fence_name(inclusion(polygon)),
                 rings: vec![ring],
             });
         }
@@ -259,7 +266,7 @@ fn geofence(fence: &Value, into: &mut Collector) {
             (Some((Position::At(center), _)), Some(radius)) => {
                 match mission::circle(center, radius) {
                     Some(ring) => into.area(Area {
-                        name: mission::fence_name(inclusion(circle)).into(),
+                        name: mission::fence_name(inclusion(circle)),
                         rings: vec![ring],
                     }),
                     None => into.invalid(),

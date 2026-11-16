@@ -6,6 +6,7 @@
 use crate::Found;
 use crate::sexpr::{Node, Reader};
 use crate::svg::{self, Canvas, Placement, Slot};
+use skwir_core::words;
 use std::borrow::Cow;
 use std::collections::HashSet;
 
@@ -519,14 +520,9 @@ fn item(canvas: &mut Canvas, facts: &mut Facts, node: &Node<'_>) {
                 .count();
         }
         "title_block" => {
-            for (key, label) in [
-                ("title", "Title"),
-                ("rev", "Revision"),
-                ("company", "Company"),
-                ("date", "Date"),
-            ] {
+            for (key, label) in crate::title_block() {
                 if let Some(value) = node.string(key).filter(|value| !value.trim().is_empty()) {
-                    facts.title.push((label.into(), value.trim().to_owned()));
+                    facts.title.push((label, value.trim().to_owned()));
                 }
             }
         }
@@ -595,26 +591,42 @@ fn release(generator: Option<&str>, version: Option<u64>) -> Option<String> {
         return Some(format!("KiCad {generator}"));
     }
     let version = version?;
-    Some(
-        match version {
-            20_221_018.. => "KiCad 7",
-            20_211_014.. => "KiCad 6",
-            _ => "KiCad 5 or earlier",
-        }
-        .to_owned(),
-    )
+    Some(match version {
+        // Releases by their names, the same in every language.
+        20_221_018.. => "KiCad 7".to_owned(),
+        20_211_014.. => "KiCad 6".to_owned(),
+        _ => words!(
+            circuits_kicad_5_or_earlier = "KiCad 5 or earlier",
+            note = "What a board was made with, in Properties, when its format is older than KiCad 6's and it does not say which release wrote it."
+        )
+        .say(),
+    })
 }
 
-/// A millimetre length as Properties says it.
-fn mm(value: f64) -> String {
-    let rounded = (value * 100.).round() / 100.;
-    format!("{rounded}")
+/// A millimetre length, rounded as Properties says it.
+fn mm(value: f64) -> f64 {
+    (value * 100.).round() / 100.
+}
+
+/// Properties' label for how many pads a board or footprint has.
+fn pads() -> String {
+    words!(
+        circuits_detail_pads = "Pads",
+        note = "A label in the preview's Properties: how many copper pads (where components are soldered) the board or footprint has."
+    )
+    .say()
 }
 
 /// A board: its picture and what it holds.
 pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Found> {
     let (mut reader, head) = Reader::open(text)?;
-    anyhow::ensure!(head == "kicad_pcb", "Not a KiCad board");
+    anyhow::ensure!(
+        head == "kicad_pcb",
+        words!(
+            circuits_not_a_board = "Not a KiCad board",
+            note = "An error in place of a .kicad_pcb file that does not hold a board."
+        )
+    );
     let mut canvas = Canvas::new(Some(EDGES));
     let mut facts = Facts::default();
     let mut read = 0usize;
@@ -628,30 +640,77 @@ pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Fou
     let outline = (!canvas.framed.empty).then_some(canvas.framed);
     let mut details = Vec::new();
     if let Some(made) = release(facts.generator_version.as_deref(), facts.version) {
-        details.push(("Made with".to_owned(), made));
+        details.push((crate::made_with(), made));
     }
     details.append(&mut facts.title);
     if let Some(outline) = outline {
         details.push((
-            "Board size".into(),
-            format!("{} × {} mm", mm(outline.width()), mm(outline.height())),
+            words!(
+                circuits_detail_board_size = "Board size",
+                note = "A label in the preview's Properties: the width and height of the board's outline."
+            )
+            .say(),
+            crate::millimetres_by(mm(outline.width()), mm(outline.height())),
         ));
     }
     if facts.copper_layers > 0 {
-        details.push(("Copper layers".into(), facts.copper_layers.to_string()));
+        details.push((
+            words!(
+                circuits_detail_copper_layers = "Copper layers",
+                note =
+                    "A label in the preview's Properties: how many layers of copper the board has."
+            )
+            .say(),
+            facts.copper_layers.to_string(),
+        ));
     }
     if let Some(thickness) = facts.thickness {
-        details.push(("Thickness".into(), format!("{} mm", mm(thickness))));
+        details.push((
+            words!(
+                circuits_detail_thickness = "Thickness",
+                note = "A label in the preview's Properties: how thick the board is."
+            )
+            .say(),
+            crate::millimetres(mm(thickness)),
+        ));
     }
     for (label, count) in [
-        ("Footprints", facts.footprints),
-        ("Pads", facts.pads),
-        ("Nets", facts.nets.len()),
-        ("Tracks", facts.tracks),
-        ("Vias", facts.vias),
+        (
+            words!(
+                circuits_detail_footprints = "Footprints",
+                note = "A label in the preview's Properties: how many components' footprints are placed on the board."
+            )
+            .say(),
+            facts.footprints,
+        ),
+        (pads(), facts.pads),
+        (
+            words!(
+                circuits_detail_nets = "Nets",
+                note = "A label in the preview's Properties: how many nets (sets of connected pins) the board has."
+            )
+            .say(),
+            facts.nets.len(),
+        ),
+        (
+            words!(
+                circuits_detail_tracks = "Tracks",
+                note = "A label in the preview's Properties: how many copper tracks (straight or curved) the board has."
+            )
+            .say(),
+            facts.tracks,
+        ),
+        (
+            words!(
+                circuits_detail_vias = "Vias",
+                note = "A label in the preview's Properties: how many vias (plated holes joining layers) the board has."
+            )
+            .say(),
+            facts.vias,
+        ),
     ] {
         if count > 0 {
-            details.push((label.into(), count.to_string()));
+            details.push((label, count.to_string()));
         }
     }
     Ok(Found {
@@ -666,7 +725,10 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
     let (head, items) = crate::sexpr::parse(text)?;
     anyhow::ensure!(
         matches!(head.as_str(), "footprint" | "module"),
-        "Not a KiCad footprint"
+        words!(
+            circuits_not_a_footprint = "Not a KiCad footprint",
+            note = "An error in place of a .kicad_mod file that does not hold a footprint."
+        )
     );
     let mut all = vec![Node::Atom("footprint")];
     all.extend(items);
@@ -687,11 +749,22 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
     );
     let mut details = Vec::new();
     if let Some(name) = node.text(1) {
-        details.push(("Footprint".to_owned(), name.into_owned()));
+        details.push((
+            words!(
+                circuits_detail_footprint = "Footprint",
+                note = "A label in the preview's Properties: the footprint's name, as its library gives it."
+            )
+            .say(),
+            name.into_owned(),
+        ));
     }
     if let Some(description) = node.string("descr").filter(|d| !d.trim().is_empty()) {
         details.push((
-            "Description".into(),
+            words!(
+                circuits_detail_description = "Description",
+                note = "A label in the preview's Properties: the footprint's description, as its library gives it."
+            )
+            .say(),
             description
                 .chars()
                 .take(skwir_platform::inspection::limits::DETAIL_CHARS)
@@ -700,13 +773,29 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
     }
     if let Some(attr) = node.child("attr").and_then(|attr| attr.atom(1)) {
         let kind = match attr {
-            "smd" => "Surface mount",
-            "through_hole" => "Through hole",
-            other => other,
+            "smd" => words!(
+                circuits_mounting_smd = "Surface mount",
+                note = "How a footprint's component is fixed to the board, beside Mounting in Properties: soldered on the surface."
+            )
+            .say(),
+            "through_hole" => words!(
+                circuits_mounting_through_hole = "Through hole",
+                note = "How a footprint's component is fixed to the board, beside Mounting in Properties: its leads go through holes."
+            )
+            .say(),
+            // What the file calls it, as written.
+            other => other.to_owned(),
         };
-        details.push(("Mounting".into(), kind.to_owned()));
+        details.push((
+            words!(
+                circuits_detail_mounting = "Mounting",
+                note = "A label in the preview's Properties: how the footprint's component is fixed to the board (Surface mount, Through hole)."
+            )
+            .say(),
+            kind,
+        ));
     }
-    details.push(("Pads".into(), facts.pads.to_string()));
+    details.push((pads(), facts.pads.to_string()));
     Ok(Found {
         svg: canvas.finish(BACKGROUND, translucent),
         details,

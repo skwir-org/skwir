@@ -14,6 +14,8 @@ use std::io::BufRead;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::{LatLon, WaypointKind};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::collect::Collector;
 use crate::flight::{self, Ends, Route, Stop};
@@ -70,6 +72,14 @@ fn angle(text: &str, positive: char, negative: char) -> Option<f64> {
     Some(sign * (degrees + minutes / 60. + seconds / 3600.))
 }
 
+/// Why a file named `.pln` is not read: it is not a simulator's plan.
+fn not_a_plan() -> Words {
+    words!(
+        geo_pln_not_plan = "not a flight simulator plan",
+        note = "Why a .pln file is not shown on a map: it is not a flight plan of Microsoft Flight Simulator."
+    )
+}
+
 /// A `WorldPosition` (or a `DepartureLLA`): latitude, longitude and an
 /// altitude in feet, separated by commas. The altitude, in metres, is
 /// `None` when it is missing or unreadable.
@@ -97,7 +107,7 @@ pub fn read<R: BufRead>(
         match tag {
             Tag::Start { name, attributes } => {
                 if path.is_empty() && name != "SimBase.Document" && name != PLAN {
-                    anyhow::bail!("not a flight simulator plan");
+                    anyhow::bail!(not_a_plan());
                 }
                 match name {
                     PLAN => seen = true,
@@ -162,7 +172,7 @@ pub fn read<R: BufRead>(
         Ok(())
     })?;
     if !seen && damaged.is_none() {
-        anyhow::bail!("not a flight simulator plan");
+        anyhow::bail!(not_a_plan());
     }
     route.finish(
         into,

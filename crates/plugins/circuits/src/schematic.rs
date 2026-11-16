@@ -7,6 +7,7 @@
 use crate::Found;
 use crate::sexpr::{Node, Reader};
 use crate::svg::{Canvas, Placement, Slot};
+use skwir_core::words;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -603,14 +604,9 @@ fn item(canvas: &mut Canvas, facts: &mut Facts, node: &Node<'_>, library: &Symbo
         "generator_version" => facts.generator_version = node.text(1).map(Cow::into_owned),
         "paper" => facts.paper = node.text(1).map(Cow::into_owned),
         "title_block" => {
-            for (key, label) in [
-                ("title", "Title"),
-                ("rev", "Revision"),
-                ("company", "Company"),
-                ("date", "Date"),
-            ] {
+            for (key, label) in crate::title_block() {
                 if let Some(value) = node.string(key).filter(|value| !value.trim().is_empty()) {
-                    facts.title.push((label.into(), value.trim().to_owned()));
+                    facts.title.push((label, value.trim().to_owned()));
                 }
             }
         }
@@ -812,7 +808,15 @@ fn item(canvas: &mut Canvas, facts: &mut Facts, node: &Node<'_>, library: &Symbo
                 };
                 let (slot, text) = match key {
                     "Sheetname" | "Sheet name" => (FIELDS, value.into_owned()),
-                    "Sheetfile" | "Sheet file" => (SHEET_LABELS, format!("File: {value}")),
+                    "Sheetfile" | "Sheet file" => (
+                        SHEET_LABELS,
+                        words!(
+                            circuits_sheet_file = "File: { $file }",
+                            file = value.into_owned(),
+                            note = "Drawn in a schematic under a sheet's box, as KiCad draws it: the file that holds the sheet. file: its name, as the schematic writes it."
+                        )
+                        .say(),
+                    ),
                     _ => (OTHER_FIELDS, value.into_owned()),
                 };
                 canvas.text(slot, &text, &placed);
@@ -859,20 +863,37 @@ fn release(generator: Option<&str>, version: Option<u64>) -> Option<String> {
     if let Some(generator) = generator {
         return Some(format!("KiCad {generator}"));
     }
-    Some(
-        match version? {
-            20_230_121.. => "KiCad 7",
-            20_211_123.. => "KiCad 6",
-            _ => "KiCad 6 (development)",
-        }
-        .to_owned(),
+    Some(match version? {
+        // Releases by their names, the same in every language.
+        20_230_121.. => "KiCad 7".to_owned(),
+        20_211_123.. => "KiCad 6".to_owned(),
+        _ => words!(
+            circuits_kicad_6_development = "KiCad 6 (development)",
+            note = "What a schematic was made with, in Properties, when its format is one of KiCad 6's development versions and it does not say which release wrote it."
+        )
+        .say(),
+    })
+}
+
+/// Properties' label for how many symbols a schematic or library holds.
+fn symbols_label() -> String {
+    words!(
+        circuits_detail_symbols = "Symbols",
+        note = "A label in the preview's Properties: how many symbols (components drawn in a schematic) the sheet or library holds."
     )
+    .say()
 }
 
 /// A schematic sheet: its picture and what it holds.
 pub fn schematic(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Found> {
     let (mut reader, head) = Reader::open(text)?;
-    anyhow::ensure!(head == "kicad_sch", "Not a KiCad schematic");
+    anyhow::ensure!(
+        head == "kicad_sch",
+        words!(
+            circuits_not_a_schematic = "Not a KiCad schematic",
+            note = "An error in place of a .kicad_sch file that does not hold a schematic."
+        )
+    );
     let mut canvas = Canvas::new(None);
     let mut facts = Facts::default();
     // The library comes first, before anything placed: what precedes it
@@ -901,15 +922,32 @@ pub fn schematic(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result
     }
     let mut details = Vec::new();
     if let Some(made) = release(facts.generator_version.as_deref(), facts.version) {
-        details.push(("Made with".to_owned(), made));
+        details.push((crate::made_with(), made));
     }
     details.append(&mut facts.title);
     if let Some(paper) = facts.paper {
-        details.push(("Paper".into(), paper));
+        details.push((
+            words!(
+                circuits_detail_paper = "Paper",
+                note = "A label in the preview's Properties: the paper size the schematic is drawn on (A4), as the file names it."
+            )
+            .say(),
+            paper,
+        ));
     }
-    for (label, count) in [("Symbols", facts.symbols), ("Sheets", facts.sheets)] {
+    for (label, count) in [
+        (symbols_label(), facts.symbols),
+        (
+            words!(
+                circuits_detail_sheets = "Sheets",
+                note = "A label in the preview's Properties: how many sub-sheets the schematic places."
+            )
+            .say(),
+            facts.sheets,
+        ),
+    ] {
         if count > 0 {
-            details.push((label.into(), count.to_string()));
+            details.push((label, count.to_string()));
         }
     }
     Ok(Found {
@@ -923,7 +961,14 @@ pub fn schematic(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result
 /// it holds.
 pub fn library(text: &str) -> anyhow::Result<Found> {
     let (head, items) = crate::sexpr::parse(text)?;
-    anyhow::ensure!(head == "kicad_symbol_lib", "Not a KiCad symbol library");
+    anyhow::ensure!(
+        head == "kicad_symbol_lib",
+        words!(
+            circuits_not_a_library = "Not a KiCad symbol library",
+            note =
+                "An error in place of a .kicad_sym file that does not hold a library of symbols."
+        )
+    );
     let symbols = Symbols::new(items.iter().filter(|item| item.head() == Some("symbol")));
     let first = items.iter().find(|item| item.head() == Some("symbol"));
     let mut canvas = Canvas::new(None);
@@ -947,10 +992,17 @@ pub fn library(text: &str) -> anyhow::Result<Found> {
                 canvas.text(FIELDS, &plain(&value), &placed);
             }
         }
-        details.push(("First symbol".to_owned(), name.into_owned()));
+        details.push((
+            words!(
+                circuits_detail_first_symbol = "First symbol",
+                note = "A label in the preview's Properties: the name of the library's first symbol, the one drawn."
+            )
+            .say(),
+            name.into_owned(),
+        ));
     }
     details.push((
-        "Symbols".into(),
+        symbols_label(),
         items
             .iter()
             .filter(|item| item.head() == Some("symbol"))

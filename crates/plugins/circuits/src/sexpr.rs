@@ -3,6 +3,7 @@
 //! board is read one top-level item at a time (`Reader`), so what is held
 //! at once is the largest item (a filled zone), never the whole tree.
 //! Points, the bulk of a zone, are kept as numbers (`Node::Xy`).
+use skwir_core::{words, words::Words};
 use std::borrow::Cow;
 
 /// How deep lists may nest; `KiCad`'s go about ten deep.
@@ -145,6 +146,14 @@ pub fn unescape(raw: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// The error of text that is no `KiCad` file.
+fn not_kicad() -> Words {
+    words!(
+        circuits_not_kicad = "Not a KiCad file",
+        note = "An error in place of a file named as a KiCad board, schematic or library that does not hold one."
+    )
+}
+
 /// The items of one list at a time, from text.
 pub struct Reader<'a> {
     text: &'a str,
@@ -155,10 +164,10 @@ impl<'a> Reader<'a> {
     /// Enter the file's list and say its keyword: `kicad_pcb`.
     pub fn open(text: &'a str) -> anyhow::Result<(Reader<'a>, &'a str)> {
         let mut reader = Reader { text, at: 0 };
-        anyhow::ensure!(reader.token() == Some(Token::Open), "Not a KiCad file");
+        anyhow::ensure!(reader.token() == Some(Token::Open), not_kicad());
         match reader.token() {
             Some(Token::Atom(head)) => Ok((reader, head)),
-            _ => anyhow::bail!("Not a KiCad file"),
+            _ => Err(not_kicad().into()),
         }
     }
 
@@ -167,12 +176,24 @@ impl<'a> Reader<'a> {
         let mut stack: Vec<Vec<Node<'a>>> = Vec::new();
         loop {
             let Some(token) = self.token() else {
-                anyhow::ensure!(stack.is_empty(), "The file ends inside a list");
+                anyhow::ensure!(
+                    stack.is_empty(),
+                    words!(
+                        circuits_ends_inside_list = "The file ends inside a list",
+                        note = "An error in place of a KiCad file cut short: a parenthesis it opened is never closed."
+                    )
+                );
                 return Ok(None);
             };
             let node = match token {
                 Token::Open => {
-                    anyhow::ensure!(stack.len() < DEPTH, "Lists nest too deep");
+                    anyhow::ensure!(
+                        stack.len() < DEPTH,
+                        words!(
+                            circuits_nest_too_deep = "Lists nest too deep",
+                            note = "An error in place of a KiCad file whose parenthesised lists nest deeper than is read."
+                        )
+                    );
                     stack.push(Vec::new());
                     continue;
                 }

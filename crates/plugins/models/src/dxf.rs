@@ -1310,22 +1310,37 @@ pub fn draw(text: &str, cancel: &CancelToken) -> anyhow::Result<Drawing> {
         let size = crate::gcode::short;
         let (w, h) = (scene.max.0 - scene.min.0, scene.max.1 - scene.min.1);
         details.push((
-            "Size".to_owned(),
-            match units {
-                Some(unit) => format!("{} × {} {unit}", size(w), size(h)),
-                None => format!("{} × {}", size(w), size(h)),
-            },
+            crate::size_label(),
+            crate::size_2d([size(w), size(h)], units),
         ));
     }
     if entities > 0 {
-        details.push(("Entities".into(), entities.to_string()));
+        details.push((
+            skwir_core::words!(
+                models_detail_entities = "Entities",
+                note = "A label in the preview's Properties: how many entities (lines, arcs, texts…) a DXF drawing holds."
+            )
+            .say(),
+            entities.to_string(),
+        ));
     }
     if block_count > 0 {
-        details.push(("Blocks".into(), block_count.to_string()));
+        details.push((
+            skwir_core::words!(
+                models_detail_blocks = "Blocks",
+                note = "A label in the preview's Properties: how many blocks (named groups of entities, placed again and again) a DXF drawing defines."
+            )
+            .say(),
+            block_count.to_string(),
+        ));
     }
-    let notice = scene
-        .left_out
-        .then(|| "Drawn in part: the drawing holds more than is drawn here".to_owned());
+    let notice = scene.left_out.then(|| {
+        skwir_core::words!(
+            models_dxf_drawn_in_part = "Drawn in part: the drawing holds more than is drawn here",
+            note = "Said under a DXF drawing too large to draw whole: what is past the preview's bounds is left out."
+        )
+        .say()
+    });
     Ok(Drawing {
         svg: write(&scene),
         details,

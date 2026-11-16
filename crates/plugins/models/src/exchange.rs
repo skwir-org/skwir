@@ -5,7 +5,7 @@
 //! file's (`Bounds::binary_input`): past it, Full preview draws it.
 use crate::Found;
 use skwir_core::{CancelToken, preview::FileSource};
-use skwir_platform::inspection::{self, limits, limits::Bounds};
+use skwir_platform::inspection::{self, limits::Bounds};
 use skwir_platform::model::{Asked, MeshFormat};
 
 /// The header read at most: a few hundred bytes in practice, more when a
@@ -24,10 +24,7 @@ pub fn read<S: FileSource + ?Sized>(
 ) -> anyhow::Result<Found> {
     let most = bounds.binary_input();
     if source.length()? > most as u64 {
-        return Err(bounds.refuse(format!(
-            "Too large to draw (more than {})",
-            limits::describe(most)
-        )));
+        return Err(bounds.refuse(crate::too_large(most)));
     }
     let head = inspection::read(source, 0, HEADER, cancel)?;
     let head = String::from_utf8_lossy(&head);

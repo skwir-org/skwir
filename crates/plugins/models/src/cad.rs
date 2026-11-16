@@ -6,7 +6,7 @@
 //! its entities (`dxf`); when nothing is, the `THUMBNAILIMAGE` section at
 //! its end may hold a bitmap in hexadecimal.
 use crate::Found;
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words};
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::io::{Read, Seek, SeekFrom};
 
@@ -66,12 +66,19 @@ pub fn dwg<S: FileSource + ?Sized>(
     let len = source.length()?;
     let mut header = [0u8; 17];
     file.read_exact(&mut header)?;
-    anyhow::ensure!(&header[..2] == b"AC", "Not a DWG drawing");
+    anyhow::ensure!(
+        &header[..2] == b"AC",
+        words!(
+            models_not_dwg = "Not a DWG drawing",
+            note = "An error in place of a .dwg file that is not an AutoCAD drawing."
+        )
+    );
     let version = String::from_utf8_lossy(&header[..6]).into_owned();
     let mut found = Found {
-        title: "DWG drawing".into(),
+        title: crate::drawing_title("DWG"),
+        // The format's name and release, as AutoCAD names them.
         details: vec![(
-            "Format".into(),
+            crate::format_label(),
             release(&version).map_or_else(|| version.clone(), |r| format!("DWG {r}")),
         )],
         ..Found::default()
@@ -139,7 +146,7 @@ pub fn dxf<S: FileSource + ?Sized>(
             .collect()
     };
     let mut found = Found {
-        title: "DXF drawing".into(),
+        title: crate::drawing_title("DXF"),
         ..Found::default()
     };
     // `9 $ACADVER 1 AC1032` in the header section.
@@ -148,7 +155,7 @@ pub fn dxf<S: FileSource + ?Sized>(
         && let Some((_, version)) = head_pairs.get(at + 1)
     {
         found.details.push((
-            "Format".into(),
+            crate::format_label(),
             release(version).map_or_else(|| version.clone(), |r| format!("DXF {r}")),
         ));
     }
@@ -157,10 +164,7 @@ pub fn dxf<S: FileSource + ?Sized>(
     // stored, saying why.
     let drawn = bounds.choose(DXF_DRAWN, WHOLE_DXF_DRAWN);
     if len > drawn as u64 {
-        found.notice = Some(format!(
-            "Too large to draw (more than {})",
-            limits::describe(drawn)
-        ));
+        found.notice = Some(crate::too_large(drawn));
         found.whole_available = bounds.cut();
     } else {
         let text = inspection::read_bounded(source, drawn, "The drawing", cancel)?;

@@ -5,7 +5,7 @@
 //! found by its signature. A `LayOut` document is a plain zip with
 //! `doc_thumbnail.png` and its properties.
 use crate::Found;
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words};
 use skwir_platform::inspection::{self, limits};
 use std::io::Read;
 
@@ -54,14 +54,14 @@ pub fn model<S: FileSource + ?Sized>(
     inspection::open(source)?
         .take(OLD_HEAD)
         .read_to_end(&mut head)?;
-    let (name, rest) = string(&head).ok_or_else(|| anyhow::anyhow!("Not a SketchUp model"))?;
-    anyhow::ensure!(name == "SketchUp Model", "Not a SketchUp model");
+    let (name, rest) = string(&head).ok_or_else(|| anyhow::anyhow!(not_sketchup()))?;
+    anyhow::ensure!(name == "SketchUp Model", not_sketchup());
     let mut found = Found {
-        title: "SketchUp model".into(),
+        title: crate::model_title("SketchUp"),
         ..Found::default()
     };
     if let Some(made) = string(rest).and_then(|(version, _)| release(&version)) {
-        found.details.push(("Made with".into(), made));
+        found.details.push((crate::made_with(), made));
     }
     inspection::check(cancel)?;
     // Since 2021: a zip after the header.
@@ -74,7 +74,14 @@ pub fn model<S: FileSource + ?Sized>(
             .filter(|name| name.starts_with("scene_thumbnails/"))
             .count();
         if scenes > 0 {
-            found.details.push(("Scenes".into(), scenes.to_string()));
+            found.details.push((
+                words!(
+                    models_detail_scenes = "Scenes",
+                    note = "A label in the preview's Properties: how many scenes (saved views) a SketchUp model holds."
+                )
+                .say(),
+                scenes.to_string(),
+            ));
         }
         return Ok(found);
     }
@@ -84,6 +91,14 @@ pub fn model<S: FileSource + ?Sized>(
         .position(|window| window == PNG)
         .and_then(|at| crate::decoded(&head[at..], side));
     Ok(found)
+}
+
+/// Why a file is not read: it is not a `SketchUp` model.
+fn not_sketchup() -> words::Words {
+    words!(
+        models_not_sketchup = "Not a SketchUp model",
+        note = "An error in place of a .skp file that is not a SketchUp model."
+    )
 }
 
 /// A `LayOut` document: its first page's picture and its page count.
@@ -96,7 +111,7 @@ pub fn layout<S: FileSource + ?Sized>(
     inspection::check(cancel)?;
     let bound = limits::BINARY_INPUT as u64;
     let mut found = Found {
-        title: "LayOut document".into(),
+        title: crate::document_title("LayOut"),
         picture: crate::package::member(&mut archive, "doc_thumbnail.png", bound)
             .and_then(|bytes| crate::decoded(&bytes, side)),
         ..Found::default()
@@ -117,14 +132,22 @@ pub fn layout<S: FileSource + ?Sized>(
                     if let Some(version) = crate::package::attribute(&e, "version")
                         && let Some(made) = release(&version)
                     {
+                        // The program's name, as its makers write it.
                         found
                             .details
-                            .insert(0, ("Made with".into(), made.replace("SketchUp", "LayOut")));
+                            .insert(0, (crate::made_with(), made.replace("SketchUp", "LayOut")));
                     }
                 }
                 "documentStatistic" => {
                     if let Some(pages) = crate::package::attribute(&e, "pageCount") {
-                        found.details.push(("Pages".into(), pages));
+                        found.details.push((
+                            words!(
+                                models_detail_pages = "Pages",
+                                note = "A label in the preview's Properties: how many pages a LayOut document has."
+                            )
+                            .say(),
+                            pages,
+                        ));
                     }
                 }
                 _ => {}

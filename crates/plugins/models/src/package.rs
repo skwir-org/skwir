@@ -5,7 +5,7 @@
 //! meshes are left alone.
 use crate::Found;
 use quick_xml::events::Event;
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words};
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::model::Asked;
 
@@ -103,22 +103,53 @@ pub fn three_mf<S: FileSource + ?Sized>(
     .and_then(|bytes| crate::decoded(&bytes, side));
     inspection::check(cancel)?;
     let mut details = Vec::new();
+    // The unit the model states, shown after its metadata unless the
+    // helper's measures say it with the size.
+    let mut unit = None;
     if let Some(head) = member_head(&mut archive, "3D/3dmodel.model", MODEL_HEAD) {
-        details.extend(model_metadata(&head));
+        let metadata = model_metadata(&head);
+        details.extend(metadata.facts);
+        unit = metadata.unit;
     }
+    let unit_at = details.len();
+    let with_unit = |mut details: Vec<(String, String)>| {
+        if let Some(unit) = unit {
+            details.insert(
+                unit_at,
+                (
+                    words!(
+                        models_detail_unit = "Unit",
+                        note = "A label in the preview's Properties: the length unit a 3MF model states, as the file writes it (millimeter, inch)."
+                    )
+                    .say(),
+                    unit,
+                ),
+            );
+        }
+        details
+    };
     if plates > 1 {
-        details.push(("Plates".into(), plates.to_string()));
+        details.push((
+            words!(
+                models_detail_plates = "Plates",
+                note = "A label in the preview's Properties: how many build plates a 3D print's project holds."
+            )
+            .say(),
+            plates.to_string(),
+        ));
     }
     if let Some(info) = member(&mut archive, "Metadata/slice_info.config", bound) {
         details.extend(slice_info(&info));
     }
+    // The format's name, the same in every language.
+    let title = || "3MF".to_owned();
     let worker = skwir_platform::model::worker_path().is_some();
     let turned = matches!(asked, Asked::Turned { .. }) && !picture_first;
     if picture.is_some() && !turned {
         return Ok(Found {
-            title: "3MF".into(),
+            title: title(),
             picture,
-            details,
+            details: with_unit(details),
             mesh_available: worker,
             ..Found::default()
         });
@@ -129,20 +160,23 @@ pub fn three_mf<S: FileSource + ?Sized>(
     let format = skwir_platform::model::MeshFormat::ThreeMf;
     if !worker {
         return Ok(Found {
-            title: "3MF".into(),
+            title: title(),
             picture: None,
-            details,
-            notice: Some(format!(
-                "Install {} to draw models that store no picture",
-                skwir_platform::model::WORKER.executable
-            )),
+            details: with_unit(details),
+            notice: Some(
+                words!(
+                    models_install_worker = "Install { $program } to draw models that store no picture",
+                    program = skwir_platform::model::WORKER.executable,
+                    note = "Said in the preview of a 3MF model that stores no picture of itself. program: the helper program's name (skwir-model-worker)."
+                )
+                .say(),
+            ),
             ..Found::default()
         });
     }
     match crate::mesh::read(source, format, side, asked, cancel) {
         Ok(mut drawn) => {
             // The size says the unit.
-            details.retain(|(label, _)| label != "Unit");
             details.append(&mut drawn.details);
             drawn.details = details;
             Ok(drawn)
@@ -151,18 +185,26 @@ pub fn three_mf<S: FileSource + ?Sized>(
         Err(error) if error.is::<skwir_core::thumbs::Busy>() => Err(error),
         // What the package says is still worth reading.
         Err(error) => Ok(Found {
-            title: "3MF".into(),
+            title: title(),
             picture: None,
-            details,
-            notice: Some(format!("{error:#}")),
+            details: with_unit(details),
+            notice: Some(words::Words::of_error(error).say()),
             ..Found::default()
         }),
     }
 }
 
+/// What a model's XML says of itself.
+struct Metadata {
+    /// The facts its application wrote, labelled, in the order shown.
+    facts: Vec<(String, String)>,
+    /// The length unit it states, as it writes it (`millimeter`).
+    unit: Option<String>,
+}
+
 /// What the model's XML says before its resources: its unit, and the
 /// metadata its application wrote (`Application`, `Title`).
-fn model_metadata(head: &[u8]) -> Vec<(String, String)> {
+fn model_metadata(head: &[u8]) -> Metadata {
     let mut reader = quick_xml::Reader::from_reader(head);
     let mut buf = Vec::new();
     let mut found = Vec::new();
@@ -195,13 +237,19 @@ fn model_metadata(head: &[u8]) -> Vec<(String, String)> {
             }
             Event::End(_) => {
                 let label = match open.take().as_deref() {
-                    Some("Title") => Some("Title"),
-                    Some("Application") => Some("Made with"),
+                    Some("Title") => Some(
+                        words!(
+                            models_detail_title = "Title",
+                            note = "A label in the preview's Properties: the model's title, as its 3MF package states it."
+                        )
+                        .say(),
+                    ),
+                    Some("Application") => Some(crate::made_with()),
                     _ => None,
                 };
                 let value = std::mem::take(&mut text).trim().to_owned();
                 if let Some(label) = label.filter(|_| !value.is_empty()) {
-                    found.push((label.to_owned(), value));
+                    found.push((label, value));
                 }
             }
             Event::Start(e) if e.local_name().as_ref() == "resources" => break,
@@ -210,10 +258,7 @@ fn model_metadata(head: &[u8]) -> Vec<(String, String)> {
         }
         buf.clear();
     }
-    if let Some(unit) = unit {
-        found.push(("Unit".into(), unit));
-    }
-    found
+    Metadata { facts: found, unit }
 }
 
 /// Bambu Studio's and Orca's `slice_info.config`: each sliced plate's
@@ -239,14 +284,14 @@ fn slice_info(xml: &[u8]) -> Vec<(String, String)> {
         buf.clear();
     }
     [
-        ("Print time", seconds.map(crate::gcode::duration)),
+        (crate::print_time(), seconds.map(crate::gcode::duration)),
         (
-            "Filament",
-            grams.map(|g| format!("{} g", crate::gcode::short(g))),
+            crate::filament(),
+            grams.map(|g| crate::grams(crate::gcode::short(g))),
         ),
     ]
     .into_iter()
-    .filter_map(|(label, value)| Some((label.to_owned(), value?)))
+    .filter_map(|(label, value)| Some((label, value?)))
     .collect()
 }
 
@@ -275,7 +320,8 @@ pub fn freecad<S: FileSource + ?Sized>(
                     if e.local_name().as_ref() == "Document"
                         && let Some(version) = attribute(&e, "ProgramVersion")
                     {
-                        details.push(("Saved by".into(), format!("FreeCAD {version}")));
+                        // The program's name and version, as it writes them.
+                        details.push((crate::saved_by(), format!("FreeCAD {version}")));
                     }
                     break;
                 }
@@ -286,7 +332,7 @@ pub fn freecad<S: FileSource + ?Sized>(
         }
     }
     Ok(Found {
-        title: "FreeCAD document".into(),
+        title: crate::document_title("FreeCAD"),
         picture,
         details,
         ..Found::default()

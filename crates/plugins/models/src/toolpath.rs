@@ -523,7 +523,12 @@ pub fn draw<S: FileSource + ?Sized>(
         (h * scale + 2. * margin).ceil().min(side),
     );
     let mut pixmap = Pixmap::new(pw.max(1.) as u32, ph.max(1.) as u32)
-        .ok_or_else(|| anyhow::anyhow!("The picture has no size"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(skwir_core::words!(
+                models_toolpath_no_size = "The picture has no size",
+                note = "An error: a G-code program's moves could not be drawn, as the picture they make would be empty."
+            ))
+        })?;
     if kind == Kind::Machining {
         let [r, g, b] = BACKGROUND;
         pixmap.fill(Color::from_rgba8(r, g, b, 255));
@@ -598,8 +603,8 @@ pub fn draw<S: FileSource + ?Sized>(
     };
     let length = |axis: usize| crate::gcode::short(bounds[1][axis] - bounds[0][axis]);
     let details = vec![(
-        "Size".to_owned(),
-        format!("{} × {} × {} mm", length(0), length(1), length(2)),
+        crate::size_label(),
+        crate::size_3d([length(0), length(1), length(2)], Some("mm")),
     )];
     Ok(Some(Drawn { picture, details }))
 }

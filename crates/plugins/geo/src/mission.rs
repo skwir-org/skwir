@@ -3,6 +3,7 @@
 //! (`MAV_CMD`, `MAV_FRAME`), and [`Route`], which turns a mission's items
 //! into its path and its places.
 use skwir_core::geo::{Datum, EARTH_RADIUS, LatLon, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::words;
 
 use crate::collect::Collector;
 
@@ -113,7 +114,7 @@ impl Route {
         into: &mut Collector,
     ) {
         into.waypoint(Waypoint {
-            name: "Home".into(),
+            name: home(),
             at,
             kind: WaypointKind::Home,
             altitude,
@@ -202,7 +203,7 @@ impl Route {
             into.end_segment();
             into.line_datum(self.datum());
         }
-        self.returns.then(|| "Home".to_owned())
+        self.returns.then(home)
     }
 
     /// The datum most stops use; above the takeoff, a drone's usual, when
@@ -220,12 +221,40 @@ impl Route {
 
 /// What a fence is called on the map: the area the vehicle must stay in,
 /// or one it must keep out of.
-pub(crate) fn fence_name(inclusion: bool) -> &'static str {
+pub(crate) fn fence_name(inclusion: bool) -> String {
     if inclusion {
-        "Geofence"
+        words!(
+            geo_mission_geofence = "Geofence",
+            note = "The name a drone mission's area is given on the map: the area the drone must stay inside."
+        )
+        .say()
     } else {
-        "Exclusion zone"
+        words!(
+            geo_mission_exclusion_zone = "Exclusion zone",
+            note = "The name a drone mission's area is given on the map: an area the drone must keep out of."
+        )
+        .say()
     }
+}
+
+/// What the place a drone returns to is called: its waypoint on the map,
+/// and where a mission that returns there ends.
+pub(crate) fn home() -> String {
+    words!(
+        geo_mission_home = "Home",
+        note = "The name of a drone mission's home on the map, where the drone takes off and returns to; also what Destination says of a mission that returns there."
+    )
+    .say()
+}
+
+/// What the area a drone mission surveys (flies over in rows, taking
+/// pictures) is called on the map.
+pub(crate) fn survey() -> String {
+    words!(
+        geo_mission_survey = "Survey",
+        note = "The name of an area on the map that a drone mission flies over in rows to photograph it."
+    )
+    .say()
 }
 
 /// A circle of `radius` metres as a ring of [`CIRCLE_POINTS`], on the

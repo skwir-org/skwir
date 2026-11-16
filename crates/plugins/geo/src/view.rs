@@ -391,7 +391,13 @@ impl Scanner {
             let ws = app.workspace.read();
             let pane_ref = ws
                 .pane(pane)
-                .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(skwir_core::words!(
+                        geo_no_pane = "no pane { $pane }",
+                        pane = pane.0.to_string(),
+                        note = "An error to a script or an agent that asked the Map view of a pane that is not there. pane: the pane's number, as they name it."
+                    ))
+                })?;
             let location = pane_ref
                 .location()
                 .map(ToString::to_string)

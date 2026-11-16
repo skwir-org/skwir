@@ -8,6 +8,7 @@ use std::io::BufRead;
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
 use skwir_core::CancelToken;
+use skwir_core::words::{self, Words};
 
 /// Text an element may hold (a KML line's coordinates are one text).
 pub const MAX_TEXT: usize = 64 * 1024 * 1024;
@@ -25,8 +26,10 @@ pub enum Tag<'a> {
 
 /// Why a walk stopped before the end of the document. What was read before
 /// is kept by the caller: a GPS logger that lost power leaves a file cut
-/// short, and its track up to there is still worth showing.
-pub struct Damaged(pub String);
+/// short, and its track up to there is still worth showing. Its words
+/// begin in lower case: they are said inside the preview's notice that
+/// the file is damaged.
+pub struct Damaged(pub Words);
 
 /// Elements open at once at most: GPX, KML and their like nest a handful.
 const DEPTH: usize = 256;
@@ -61,9 +64,11 @@ pub fn walk<R: BufRead>(
         let event = match reader.read_event_into(&mut buf) {
             Ok(event) => event,
             Err(error) => {
-                return Ok(Some(Damaged(format!(
-                    "{error} (at byte {})",
-                    reader.error_position()
+                return Ok(Some(Damaged(skwir_core::words!(
+                    geo_xml_error_at = "{ $error } (at byte { $byte })",
+                    error = error.to_string(),
+                    byte = reader.error_position().to_string(),
+                    note = "Why an XML file reads as damaged, inside the notice that says so. error: the XML reader's own words (English); byte: where in the file, a number."
                 ))));
             }
         };
@@ -93,14 +98,21 @@ pub fn walk<R: BufRead>(
                     // Elements in elements past any real file: the names
                     // held, and each reader's own path, would grow with
                     // the file.
-                    return Ok(Some(Damaged(format!("elements nest deeper than {DEPTH}"))));
+                    return Ok(Some(Damaged(skwir_core::words!(
+                        geo_xml_too_deep = "elements nest deeper than { $depth }",
+                        depth = DEPTH,
+                        note = "Why an XML file reads as damaged, inside the notice that says so. depth: how many elements may be open inside one another (256)."
+                    ))));
                 } else {
                     names.push(name);
                 }
             }
             Event::End(_) => {
                 let Some(name) = names.pop() else {
-                    return Ok(Some(Damaged("an end tag closes nothing".into())));
+                    return Ok(Some(Damaged(skwir_core::words!(
+                        geo_xml_end_closes_nothing = "an end tag closes nothing",
+                        note = "Why an XML file reads as damaged, inside the notice that says so: an element is closed that was never opened."
+                    ))));
                 };
                 on(Tag::End {
                     name: &name,
@@ -138,8 +150,11 @@ pub fn walk<R: BufRead>(
 fn push(text: &mut String, more: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         text.len() + more.len() <= MAX_TEXT,
-        "an element holds more than {} of text",
-        skwir_platform::inspection::limits::describe(MAX_TEXT)
+        skwir_core::words!(
+            geo_xml_text_too_long = "an element holds more than { $size } of text",
+            size = words::Size(MAX_TEXT as u64),
+            note = "An error reading an XML file (a track, a plan): one element's text is larger than is read. size: that bound (64 MB)."
+        )
     );
     text.push_str(more);
     Ok(())

@@ -30,6 +30,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{FileSource, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
+    words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::model::{Asked, MeshFormat};
@@ -57,8 +58,10 @@ impl Plugin for PreviewPlugin {
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
-            skwir_platform::model::WORKER
-                .requirement("3D models without a stored picture drawn and measured"),
+            skwir_platform::model::WORKER.requirement(words!(
+                models_worker_purpose = "3D models without a stored picture drawn and measured",
+                note = "What the 3D model helper program is for, in the plugin's requirements in Settings."
+            )),
         ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
@@ -203,6 +206,175 @@ struct Found {
     whole_available: bool,
 }
 
+/// What Properties calls the program that wrote a file.
+fn made_with() -> String {
+    words!(
+        models_detail_made_with = "Made with",
+        note = "A label in the preview's Properties: the program that wrote the file."
+    )
+    .say()
+}
+
+/// What Properties calls a file's format and its version.
+fn format_label() -> String {
+    words!(
+        models_detail_format = "Format",
+        note = "A label in the preview's Properties: the file's format and its version (DWG 2018, STEP AP214)."
+    )
+    .say()
+}
+
+/// What Properties calls the version of the program that saved a file.
+fn saved_by() -> String {
+    words!(
+        models_detail_saved_by = "Saved by",
+        note = "A label in the preview's Properties: the program and its version that saved the file (Blender 4.2)."
+    )
+    .say()
+}
+
+/// What Properties calls a model's or a drawing's size.
+fn size_label() -> String {
+    words!(
+        models_detail_size = "Size",
+        note = "A label in the preview's Properties: the model's or the drawing's dimensions, not its size in bytes."
+    )
+    .say()
+}
+
+/// What Properties calls a print's predicted time.
+fn print_time() -> String {
+    words!(
+        models_detail_print_time = "Print time",
+        note = "A label in the preview's Properties: how long a 3D print takes, as its slicer predicted."
+    )
+    .say()
+}
+
+/// What Properties calls the filament a print uses, by weight.
+fn filament() -> String {
+    words!(
+        models_detail_filament = "Filament",
+        note = "A label in the preview's Properties: how much plastic filament a 3D print uses, in grams."
+    )
+    .say()
+}
+
+/// A weight of filament, `grams` written as a number.
+fn grams(grams: String) -> String {
+    words!(
+        models_grams = "{ $grams } g",
+        grams = grams,
+        note = "A weight in grams, in the preview's Properties. grams: the number."
+    )
+    .say()
+}
+
+/// Why a file is not drawn: larger than `most` bytes.
+fn too_large(most: usize) -> String {
+    words!(
+        models_too_large = "Too large to draw (more than { $size })",
+        size = words::Size(most as u64),
+        note = "Why a model or a drawing is not drawn. size: the largest file drawn (16 MB)."
+    )
+    .say()
+}
+
+/// A model's size, its three lengths written as numbers, in the unit the
+/// file states (`mm`, `in`, `µm`), if it states one.
+fn size_3d([x, y, z]: [String; 3], unit: Option<&str>) -> String {
+    match unit {
+        Some(unit) => words!(
+            models_size = "{ $unit ->
+                [mm] { $x } × { $y } × { $z } mm
+                [cm] { $x } × { $y } × { $z } cm
+                [m] { $x } × { $y } × { $z } m
+                [in] { $x } × { $y } × { $z } in
+                [ft] { $x } × { $y } × { $z } ft
+               *[other] { $x } × { $y } × { $z } { $unit }
+            }",
+            unit = unit,
+            x = x,
+            y = y,
+            z = z,
+            note = "A 3D model's width, depth and height in the preview's Properties. unit: the length unit the file states (mm, cm, m, in, ft, or µm, which the last variant writes as the file's unit)."
+        ),
+        None => words!(
+            models_size_unitless = "{ $x } × { $y } × { $z }",
+            x = x,
+            y = y,
+            z = z,
+            note = "A 3D model's width, depth and height in the preview's Properties, in a file that states no unit."
+        ),
+    }
+    .say()
+}
+
+/// A drawing's size, its two lengths written as numbers, in the unit the
+/// file states, if it states one.
+fn size_2d([width, height]: [String; 2], unit: Option<&str>) -> String {
+    match unit {
+        Some(unit) => words!(
+            models_size_2d = "{ $unit ->
+                [in] { $width } × { $height } in
+                [ft] { $width } × { $height } ft
+                [mi] { $width } × { $height } mi
+                [mm] { $width } × { $height } mm
+                [cm] { $width } × { $height } cm
+                [m] { $width } × { $height } m
+                [km] { $width } × { $height } km
+                [mil] { $width } × { $height } mil
+                [yd] { $width } × { $height } yd
+                [dm] { $width } × { $height } dm
+               *[other] { $width } × { $height } { $unit }
+            }",
+            unit = unit,
+            width = width,
+            height = height,
+            note = "A drawing's width and height in the preview's Properties. unit: the length unit the drawing states (in, ft, mi, mm, cm, m, km, mil, yd, dm, or µm, which the last variant writes as the drawing's unit)."
+        ),
+        None => words!(
+            models_size_2d_unitless = "{ $width } × { $height }",
+            width = width,
+            height = height,
+            note = "A drawing's width and height in the preview's Properties, in a drawing that states no unit."
+        ),
+    }
+    .say()
+}
+
+/// What a model is, for the toolbar: `format` names its format or its
+/// program (`STL`, `Rhino`, `SketchUp`).
+fn model_title(format: &str) -> String {
+    words!(
+        models_model_title = "{ $format } model",
+        format = format,
+        note = "The title of a 3D model's preview. format: the format's or the program's name (STL, glTF, STEP, Rhino, SketchUp)."
+    )
+    .say()
+}
+
+/// What a drawing is, for the toolbar: `format` names its format (`DWG`).
+fn drawing_title(format: &str) -> String {
+    words!(
+        models_drawing_title = "{ $format } drawing",
+        format = format,
+        note = "The title of an AutoCAD drawing's preview. format: the format's name (DWG, DXF)."
+    )
+    .say()
+}
+
+/// What a document is, for the toolbar: `program` names the program that
+/// makes it (`FreeCAD`).
+fn document_title(program: &str) -> String {
+    words!(
+        models_document_title = "{ $program } document",
+        program = program,
+        note = "The title of a document's preview. program: the program that makes it (FreeCAD, LayOut)."
+    )
+    .say()
+}
+
 /// `image` at most `side` pixels on its longer side, never enlarged.
 fn fit(image: image::RgbaImage, side: u32) -> Image {
     let image = if image.width().max(image.height()) > side {
@@ -262,8 +434,16 @@ impl PreviewProvider for Provider {
         if format == Format::Mesh(MeshFormat::Obj) && !is_text(&held)? {
             return Ok(Some(Inspection {
                 kind: InspectionKind::Text,
-                title: "Object file".into(),
-                notice: "Not a Wavefront OBJ model".into(),
+                title: words!(
+                    models_object_file = "Object file",
+                    note = "The preview's title for a .obj file that is a compiled program's object, not a 3D model."
+                )
+                .say(),
+                notice: words!(
+                    models_not_obj = "Not a Wavefront OBJ model",
+                    note = "Said in the preview of a .obj file that is not a 3D model (Wavefront OBJ is the format's name)."
+                )
+                .say(),
                 ..Inspection::default()
             }));
         }
@@ -335,7 +515,11 @@ impl PreviewProvider for Provider {
                 title: found.title,
                 details,
                 notice: if notice.is_empty() {
-                    "No picture is stored in this file".into()
+                    words!(
+                        models_no_picture = "No picture is stored in this file",
+                        note = "Said in the preview of a model or drawing whose program stored no picture of it."
+                    )
+                    .say()
                 } else {
                     notice
                 },

@@ -14,6 +14,7 @@ use std::io::BufRead;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::{Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::words;
 
 use crate::collect::{self, Collector};
 use crate::flight::{Ends, Route, Stop, stop_name};
@@ -135,7 +136,10 @@ pub fn read<R: BufRead>(
             Tag::Start { name, .. } => {
                 match name {
                     "flight-plan" => {}
-                    _ if path.is_empty() => anyhow::bail!("not a Garmin flight plan"),
+                    _ if path.is_empty() => anyhow::bail!(words!(
+                        geo_fpl_not_plan = "not a Garmin flight plan",
+                        note = "Why a .fpl file is not shown on a map: it is not a flight plan of Garmin's."
+                    )),
                     "waypoint" => entry = Some(Entry::default()),
                     "route-point" => reference = Some(Reference::default()),
                     _ => {}

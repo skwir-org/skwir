@@ -5,6 +5,7 @@
 use std::io::{BufRead, Read};
 
 use skwir_core::CancelToken;
+use skwir_core::words::{self, Words};
 
 use crate::xml::Damaged;
 
@@ -53,7 +54,7 @@ pub fn lines<R: BufRead>(
         buf.clear();
         let read = match Read::take(&mut input, longest as u64 + 1).read_until(b'\n', &mut buf) {
             Ok(read) => read,
-            Err(error) => return Ok(Some(Damaged(error.to_string()))),
+            Err(error) => return Ok(Some(Damaged(Words::of_error(error.into())))),
         };
         if read == 0 {
             return Ok(None);
@@ -63,16 +64,17 @@ pub fn lines<R: BufRead>(
                 Kind::Log => {
                     // The rest of it, without holding it.
                     if let Err(error) = input.skip_until(b'\n') {
-                        return Ok(Some(Damaged(error.to_string())));
+                        return Ok(Some(Damaged(Words::of_error(error.into()))));
                     }
                     number += 1;
                     continue;
                 }
                 Kind::Plan => {
-                    return Ok(Some(Damaged(format!(
-                        "line {} is longer than {}",
-                        number + 1,
-                        skwir_platform::inspection::limits::describe(longest)
+                    return Ok(Some(Damaged(skwir_core::words!(
+                        geo_text_line_too_long = "line { $line } is longer than { $size }",
+                        line = (number + 1).to_string(),
+                        size = words::Size(longest as u64),
+                        note = "Why a plan's text reads as damaged, inside the notice that says so. line: the line's number, from 1; size: the longest line read (64 KB)."
                     ))));
                 }
             }
@@ -81,7 +83,11 @@ pub fn lines<R: BufRead>(
             (_, Ok(text)) => std::borrow::Cow::Borrowed(text),
             (Kind::Log, Err(_)) => String::from_utf8_lossy(&buf),
             (Kind::Plan, Err(_)) => {
-                return Ok(Some(Damaged(format!("line {} is not text", number + 1))));
+                return Ok(Some(Damaged(skwir_core::words!(
+                    geo_text_line_not_text = "line { $line } is not text",
+                    line = (number + 1).to_string(),
+                    note = "Why a plan's text reads as damaged, inside the notice that says so: the line holds bytes that are not UTF-8 text. line: the line's number, from 1."
+                ))));
             }
         };
         let text = if number == 0 {

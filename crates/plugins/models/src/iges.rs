@@ -41,10 +41,10 @@ pub fn header(text: &str) -> Vec<(String, String)> {
     };
     let mut out = Vec::new();
     if let Some(program) = program {
-        out.push(("Made with".to_owned(), program));
+        out.push((crate::made_with(), program));
     }
     if !global.is_empty() {
-        out.push(("Format".to_owned(), format));
+        out.push((crate::format_label(), format));
     }
     out
 }

@@ -9,6 +9,7 @@
 //! or clear (`%LPC*%`, drawn here in the background's colour, over what
 //! came before).
 use crate::svg::{self, Bounds};
+use skwir_core::words;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 use std::fmt::Write as _;
@@ -45,36 +46,189 @@ pub struct Function {
     pub color: [u8; 3],
 }
 
+/// The layers a board is made of, named as Properties says them.
+#[derive(Clone, Copy)]
+enum Layer {
+    TopCopper,
+    BottomCopper,
+    InnerCopper,
+    TopMask,
+    BottomMask,
+    TopSilk,
+    BottomSilk,
+    TopPaste,
+    BottomPaste,
+    Outline,
+    TopGlue,
+    BottomGlue,
+    TopAssembly,
+    BottomAssembly,
+}
+
+impl Layer {
+    /// Its name and colour.
+    fn function(self) -> Function {
+        let (name, color) = match self {
+            Layer::TopCopper => (
+                words!(
+                    circuits_layer_top_copper = "Top copper",
+                    note = "Beside Layer in a Gerber file's Properties: the copper on the board's top side."
+                ),
+                TOP_COPPER,
+            ),
+            Layer::BottomCopper => (
+                words!(
+                    circuits_layer_bottom_copper = "Bottom copper",
+                    note = "Beside Layer in a Gerber file's Properties: the copper on the board's bottom side."
+                ),
+                BOTTOM_COPPER,
+            ),
+            Layer::InnerCopper => (
+                words!(
+                    circuits_layer_inner_copper = "Inner copper",
+                    note = "Beside Layer in a Gerber file's Properties: a layer of copper inside the board, between its sides."
+                ),
+                INNER_COPPER,
+            ),
+            Layer::TopMask => (
+                words!(
+                    circuits_layer_top_mask = "Top solder mask",
+                    note = "Beside Layer in a Gerber file's Properties: the coating on the board's top side that keeps solder off all but the pads."
+                ),
+                TOP_MASK,
+            ),
+            Layer::BottomMask => (
+                words!(
+                    circuits_layer_bottom_mask = "Bottom solder mask",
+                    note = "Beside Layer in a Gerber file's Properties: the coating on the board's bottom side that keeps solder off all but the pads."
+                ),
+                BOTTOM_MASK,
+            ),
+            Layer::TopSilk => (
+                words!(
+                    circuits_layer_top_silk = "Top silkscreen",
+                    note = "Beside Layer in a Gerber file's Properties: the printed markings (references, outlines) on the board's top side."
+                ),
+                TOP_SILK,
+            ),
+            Layer::BottomSilk => (
+                words!(
+                    circuits_layer_bottom_silk = "Bottom silkscreen",
+                    note = "Beside Layer in a Gerber file's Properties: the printed markings (references, outlines) on the board's bottom side."
+                ),
+                BOTTOM_SILK,
+            ),
+            Layer::TopPaste => (
+                words!(
+                    circuits_layer_top_paste = "Top paste",
+                    note = "Beside Layer in a Gerber file's Properties: where solder paste goes on the board's top side."
+                ),
+                TOP_PASTE,
+            ),
+            Layer::BottomPaste => (
+                words!(
+                    circuits_layer_bottom_paste = "Bottom paste",
+                    note = "Beside Layer in a Gerber file's Properties: where solder paste goes on the board's bottom side."
+                ),
+                BOTTOM_PASTE,
+            ),
+            Layer::Outline => (
+                words!(
+                    circuits_layer_outline = "Board outline",
+                    note = "Beside Layer in a Gerber file's Properties: the board's edges, where it is cut out."
+                ),
+                OUTLINE,
+            ),
+            Layer::TopGlue => (
+                words!(
+                    circuits_layer_top_glue = "Top adhesive",
+                    note = "Beside Layer in a Gerber file's Properties: where glue holds components on the board's top side."
+                ),
+                OTHER,
+            ),
+            Layer::BottomGlue => (
+                words!(
+                    circuits_layer_bottom_glue = "Bottom adhesive",
+                    note = "Beside Layer in a Gerber file's Properties: where glue holds components on the board's bottom side."
+                ),
+                OTHER,
+            ),
+            Layer::TopAssembly => (
+                words!(
+                    circuits_layer_top_assembly = "Top assembly drawing",
+                    note = "Beside Layer in a Gerber file's Properties: the drawing that shows where components go on the board's top side."
+                ),
+                OTHER,
+            ),
+            Layer::BottomAssembly => (
+                words!(
+                    circuits_layer_bottom_assembly = "Bottom assembly drawing",
+                    note = "Beside Layer in a Gerber file's Properties: the drawing that shows where components go on the board's bottom side."
+                ),
+                OTHER,
+            ),
+        };
+        Function {
+            name: name.say(),
+            color,
+        }
+    }
+}
+
 /// From `%TF.FileFunction,…*%`: `Copper,L1,Top`.
 fn function(value: &str) -> Function {
     let parts: Vec<&str> = value.split(',').map(str::trim).collect();
     let side = |at: usize| parts.get(at).copied().unwrap_or_default();
     let top = |at: usize| side(at).eq_ignore_ascii_case("top");
-    let named = |name: &str, color| Function {
-        name: name.to_owned(),
-        color,
+    let either = |top: bool, then: Layer, otherwise: Layer| {
+        if top { then } else { otherwise }
     };
     match parts.first().copied().unwrap_or_default() {
         "Copper" => {
-            let layer = side(1).trim_start_matches('L');
-            match side(2) {
-                "Top" => named(&format!("Top copper (layer {layer})"), TOP_COPPER),
-                "Bot" => named(&format!("Bottom copper (layer {layer})"), BOTTOM_COPPER),
-                _ => named(&format!("Inner copper (layer {layer})"), INNER_COPPER),
+            // Its number, as the file writes it: `L1`.
+            let layer = side(1).trim_start_matches('L').to_owned();
+            let (name, color) = match side(2) {
+                "Top" => (
+                    words!(
+                        circuits_layer_top_copper_numbered = "Top copper (layer { $layer })",
+                        layer = layer,
+                        note = "Beside Layer in a Gerber file's Properties: the copper on the board's top side. layer: its number among the board's copper layers, from 1."
+                    ),
+                    TOP_COPPER,
+                ),
+                "Bot" => (
+                    words!(
+                        circuits_layer_bottom_copper_numbered = "Bottom copper (layer { $layer })",
+                        layer = layer,
+                        note = "Beside Layer in a Gerber file's Properties: the copper on the board's bottom side. layer: its number among the board's copper layers, from 1."
+                    ),
+                    BOTTOM_COPPER,
+                ),
+                _ => (
+                    words!(
+                        circuits_layer_inner_copper_numbered = "Inner copper (layer { $layer })",
+                        layer = layer,
+                        note = "Beside Layer in a Gerber file's Properties: a layer of copper inside the board. layer: its number among the board's copper layers, from 1."
+                    ),
+                    INNER_COPPER,
+                ),
+            };
+            Function {
+                name: name.say(),
+                color,
             }
         }
-        "Soldermask" if top(1) => named("Top solder mask", TOP_MASK),
-        "Soldermask" => named("Bottom solder mask", BOTTOM_MASK),
-        "Legend" if top(1) => named("Top silkscreen", TOP_SILK),
-        "Legend" => named("Bottom silkscreen", BOTTOM_SILK),
-        "Paste" if top(1) => named("Top paste", TOP_PASTE),
-        "Paste" => named("Bottom paste", BOTTOM_PASTE),
-        "Profile" => named("Board outline", OUTLINE),
-        "Glue" if top(1) => named("Top adhesive", OTHER),
-        "Glue" => named("Bottom adhesive", OTHER),
-        "AssemblyDrawing" if top(1) => named("Top assembly drawing", OTHER),
-        "AssemblyDrawing" => named("Bottom assembly drawing", OTHER),
-        other => named(other, OTHER),
+        "Soldermask" => either(top(1), Layer::TopMask, Layer::BottomMask).function(),
+        "Legend" => either(top(1), Layer::TopSilk, Layer::BottomSilk).function(),
+        "Paste" => either(top(1), Layer::TopPaste, Layer::BottomPaste).function(),
+        "Profile" => Layer::Outline.function(),
+        "Glue" => either(top(1), Layer::TopGlue, Layer::BottomGlue).function(),
+        "AssemblyDrawing" => either(top(1), Layer::TopAssembly, Layer::BottomAssembly).function(),
+        // What the file calls it, as written.
+        other => Function {
+            name: other.to_owned(),
+            color: OTHER,
+        },
     }
 }
 
@@ -83,39 +237,34 @@ fn function(value: &str) -> Function {
 pub fn function_by_name(name: &str) -> Option<Function> {
     let lower = name.to_ascii_lowercase();
     let extension = lower.rsplit('.').next().unwrap_or_default();
-    let named = |name: &str, color| {
-        Some(Function {
-            name: name.to_owned(),
-            color,
-        })
-    };
     let has = |part: &str| lower.contains(part);
-    match extension {
-        "gtl" => named("Top copper", TOP_COPPER),
-        "gbl" => named("Bottom copper", BOTTOM_COPPER),
-        "gts" => named("Top solder mask", TOP_MASK),
-        "gbs" => named("Bottom solder mask", BOTTOM_MASK),
-        "gto" => named("Top silkscreen", TOP_SILK),
-        "gbo" => named("Bottom silkscreen", BOTTOM_SILK),
-        "gtp" => named("Top paste", TOP_PASTE),
-        "gbp" => named("Bottom paste", BOTTOM_PASTE),
-        "gko" | "gml" => named("Board outline", OUTLINE),
-        e if e.starts_with("gm") => named("Board outline", OUTLINE),
+    let layer = match extension {
+        "gtl" => Layer::TopCopper,
+        "gbl" => Layer::BottomCopper,
+        "gts" => Layer::TopMask,
+        "gbs" => Layer::BottomMask,
+        "gto" => Layer::TopSilk,
+        "gbo" => Layer::BottomSilk,
+        "gtp" => Layer::TopPaste,
+        "gbp" => Layer::BottomPaste,
+        "gko" | "gml" => Layer::Outline,
+        e if e.starts_with("gm") => Layer::Outline,
         e if e.starts_with('g') && e[1..].bytes().all(|b| b.is_ascii_digit()) && e.len() > 1 => {
-            named("Inner copper", INNER_COPPER)
+            Layer::InnerCopper
         }
-        _ if has("edge_cuts") || has("outline") => named("Board outline", OUTLINE),
-        _ if has("f_cu") || has("-top.") => named("Top copper", TOP_COPPER),
-        _ if has("b_cu") || has("-bottom.") => named("Bottom copper", BOTTOM_COPPER),
-        _ if has("_cu") => named("Inner copper", INNER_COPPER),
-        _ if has("f_mask") => named("Top solder mask", TOP_MASK),
-        _ if has("b_mask") => named("Bottom solder mask", BOTTOM_MASK),
-        _ if has("f_silk") => named("Top silkscreen", TOP_SILK),
-        _ if has("b_silk") => named("Bottom silkscreen", BOTTOM_SILK),
-        _ if has("f_paste") => named("Top paste", TOP_PASTE),
-        _ if has("b_paste") => named("Bottom paste", BOTTOM_PASTE),
-        _ => None,
-    }
+        _ if has("edge_cuts") || has("outline") => Layer::Outline,
+        _ if has("f_cu") || has("-top.") => Layer::TopCopper,
+        _ if has("b_cu") || has("-bottom.") => Layer::BottomCopper,
+        _ if has("_cu") => Layer::InnerCopper,
+        _ if has("f_mask") => Layer::TopMask,
+        _ if has("b_mask") => Layer::BottomMask,
+        _ if has("f_silk") => Layer::TopSilk,
+        _ if has("b_silk") => Layer::BottomSilk,
+        _ if has("f_paste") => Layer::TopPaste,
+        _ if has("b_paste") => Layer::BottomPaste,
+        _ => return None,
+    };
+    Some(layer.function())
 }
 
 /// Whether text is a Gerber file: its start says so.
@@ -1010,25 +1159,49 @@ pub fn draw(text: &str, name: &str, cancel: &skwir_core::CancelToken) -> anyhow:
     let layer = layer.or_else(|| function_by_name(name));
     let mut details = Vec::new();
     if let Some(layer) = &layer {
-        details.push(("Layer".to_owned(), layer.name.clone()));
+        details.push((
+            words!(
+                circuits_detail_layer = "Layer",
+                note = "A label in a Gerber file's Properties: which of the board's layers it is (Top copper, Board outline)."
+            )
+            .say(),
+            layer.name.clone(),
+        ));
     }
     if let Some(software) = software {
-        details.push(("Made with".into(), software));
+        details.push((crate::made_with(), software));
     }
     if let Some(created) = created {
-        details.push(("Created".into(), created));
+        details.push((
+            words!(
+                circuits_detail_created = "Created",
+                note = "A label in a Gerber file's Properties: when it was made, as the file says."
+            )
+            .say(),
+            created,
+        ));
     }
     if !image.bounds.empty {
         details.push((
-            "Size".into(),
-            format!(
-                "{} × {} mm",
+            words!(
+                circuits_detail_size = "Size",
+                note = "A label in a Gerber file's Properties: the width and height of what the layer draws."
+            )
+            .say(),
+            crate::millimetres_by(
                 (image.bounds.width() * 100.).round() / 100.,
-                (image.bounds.height() * 100.).round() / 100.
+                (image.bounds.height() * 100.).round() / 100.,
             ),
         ));
     }
-    details.push(("Apertures".into(), apertures.len().to_string()));
+    details.push((
+        words!(
+            circuits_detail_apertures = "Apertures",
+            note = "A label in a Gerber file's Properties: how many apertures (the shapes its lines are drawn and its pads flashed with) it defines."
+        )
+        .say(),
+        apertures.len().to_string(),
+    ));
     // An outline is thin lines only: at least a quarter of a percent of
     // the board wide, so a thumbnail still shows it.
     if layer.as_ref().is_some_and(|layer| layer.color == OUTLINE) && !image.bounds.empty {

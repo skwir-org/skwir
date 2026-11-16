@@ -5,22 +5,48 @@
 //! window that draws and turns them (ADR-067). Properties says what a print
 //! needs: its size, whether it is watertight and what it holds.
 use crate::Found;
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words};
 use skwir_platform::model::{self, Asked, Measures, MeshFormat, Shown};
 use std::sync::Arc;
 
 /// The unit's volume as it is usually said, from a length unit cubed.
 fn volume(value: f64, unit: &str) -> Option<String> {
-    let (value, unit) = match unit {
-        "µm" => (value / 1e9, "mm³"),
-        "mm" => (value / 1e3, "cm³"),
-        "cm" => (value, "cm³"),
-        "m" => (value, "m³"),
-        "in" => (value, "in³"),
-        "ft" => (value, "ft³"),
+    let short = crate::gcode::short;
+    let said = match unit {
+        "µm" => words!(
+            models_volume_mm3 = "{ $volume } mm³",
+            volume = short(value / 1e9),
+            note = "A model's volume in cubic millimetres, in the preview's Properties. volume: the number."
+        ),
+        "mm" => words!(
+            models_volume_cm3 = "{ $volume } cm³",
+            volume = short(value / 1e3),
+            note = "A model's volume in cubic centimetres, in the preview's Properties. volume: the number."
+        ),
+        "cm" => words!(
+            models_volume_cm3 = "{ $volume } cm³",
+            volume = short(value),
+            note = "A model's volume in cubic centimetres, in the preview's Properties. volume: the number."
+        ),
+        "m" => words!(
+            models_volume_m3 = "{ $volume } m³",
+            volume = short(value),
+            note = "A model's volume in cubic metres, in the preview's Properties. volume: the number."
+        ),
+        "in" => words!(
+            models_volume_in3 = "{ $volume } in³",
+            volume = short(value),
+            note = "A model's volume in cubic inches, in the preview's Properties. volume: the number."
+        ),
+        "ft" => words!(
+            models_volume_ft3 = "{ $volume } ft³",
+            volume = short(value),
+            note =
+                "A model's volume in cubic feet, in the preview's Properties. volume: the number."
+        ),
         _ => return None,
     };
-    Some(format!("{} {unit}", crate::gcode::short(value)))
+    Some(said.say())
 }
 
 /// What the measures say, in the order Properties shows them.
@@ -30,44 +56,85 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
         .unit
         .clone()
         .or_else(|| (format == MeshFormat::Stl).then(|| "mm".to_owned()));
-    let [x, y, z] = measures.size.map(crate::gcode::short);
-    let size = match &unit {
-        Some(unit) => format!("{x} × {y} × {z} {unit}"),
-        None => format!("{x} × {y} × {z}"),
-    };
-    let mut out = vec![("Size".to_owned(), size)];
+    let size = crate::size_3d(measures.size.map(crate::gcode::short), unit.as_deref());
+    let mut out = vec![(crate::size_label(), size)];
     if let (Some(value), Some(unit)) = (measures.volume, &unit)
         && let Some(said) = volume(value, unit)
     {
-        out.push(("Volume".into(), said));
+        out.push((
+            words!(
+                models_detail_volume = "Volume",
+                note = "A label in the preview's Properties: how much space the 3D model encloses."
+            )
+            .say(),
+            said,
+        ));
     }
+    let closed = if measures.closed {
+        words!(
+            models_watertight_yes = "Yes",
+            note = "The Watertight row's value in the preview's Properties: the model's mesh is closed."
+        )
+    } else {
+        words!(
+            models_watertight_no = "No",
+            note = "The Watertight row's value in the preview's Properties: the model's mesh has holes."
+        )
+    };
     out.push((
-        "Watertight".into(),
-        if measures.closed { "Yes" } else { "No" }.into(),
+        words!(
+            models_detail_watertight = "Watertight",
+            note = "A label in the preview's Properties: whether the model's mesh is closed, with no holes, as a 3D print needs."
+        )
+        .say(),
+        closed.say(),
     ));
     if measures.faces > 0 {
-        out.push(("Faces".into(), measures.faces.to_string()));
+        out.push((
+            words!(
+                models_detail_faces = "Faces",
+                note = "A label in the preview's Properties: how many surfaces a CAD model (STEP, IGES) is made of."
+            )
+            .say(),
+            measures.faces.to_string(),
+        ));
     }
-    out.push(("Triangles".into(), measures.triangles.to_string()));
+    out.push((
+        words!(
+            models_detail_triangles = "Triangles",
+            note = "A label in the preview's Properties: how many triangles the model's mesh has."
+        )
+        .say(),
+        measures.triangles.to_string(),
+    ));
     if measures.objects > 1 {
-        out.push(("Objects".into(), measures.objects.to_string()));
+        out.push((
+            words!(
+                models_detail_objects = "Objects",
+                note = "A label in the preview's Properties: how many separate objects the model holds."
+            )
+            .say(),
+            measures.objects.to_string(),
+        ));
     }
     out
 }
 
-/// The format's name, for the toolbar.
-fn title(format: MeshFormat) -> &'static str {
-    match format {
-        MeshFormat::Stl => "STL model",
-        MeshFormat::Obj => "OBJ model",
-        MeshFormat::Ply => "PLY model",
-        MeshFormat::Off => "OFF model",
-        MeshFormat::Gltf => "glTF model",
-        MeshFormat::ThreeMf => "3MF",
-        MeshFormat::Step => "STEP model",
-        MeshFormat::Iges => "IGES model",
-        MeshFormat::Rhino => "Rhino model",
-    }
+/// What the model is, by its format's name, for the toolbar.
+fn title(format: MeshFormat) -> String {
+    // The formats' names, the same in every language.
+    let name = match format {
+        MeshFormat::Stl => "STL",
+        MeshFormat::Obj => "OBJ",
+        MeshFormat::Ply => "PLY",
+        MeshFormat::Off => "OFF",
+        MeshFormat::Gltf => "glTF",
+        MeshFormat::ThreeMf => return "3MF".to_owned(),
+        MeshFormat::Step => "STEP",
+        MeshFormat::Iges => "IGES",
+        MeshFormat::Rhino => "Rhino",
+    };
+    crate::model_title(name)
 }
 
 /// The mesh `source` holds drawn at most `side` pixels on its longer
@@ -93,22 +160,35 @@ pub fn read<S: FileSource + ?Sized>(
     let missing = drawn.measures.faces_missing;
     let unmeshed = drawn.measures.objects_missing;
     let holes = if missing > 0 {
-        Some(format!(
-            "{missing} of {} faces could not be drawn",
-            drawn.measures.faces
-        ))
-    } else if unmeshed == 1 {
-        Some("1 object stores no mesh and is not drawn".to_owned())
-    } else if unmeshed > 1 {
-        Some(format!(
-            "{unmeshed} objects store no mesh and are not drawn"
-        ))
+        Some(
+            words!(
+                models_faces_missing = "{ $missing } of { $count ->
+                   *[other] { $count } faces
+                } could not be drawn",
+                missing = missing,
+                count = drawn.measures.faces,
+                note = "Said under a CAD model drawn with holes: some of its surfaces could not be turned into triangles. missing: how many; count: how many surfaces the model has."
+            )
+            .say(),
+        )
+    } else if unmeshed > 0 {
+        Some(
+            words!(
+                models_objects_unmeshed = "{ $count ->
+                    [one] { $count } object stores no mesh and is not drawn
+                   *[other] { $count } objects store no mesh and are not drawn
+                }",
+                count = unmeshed,
+                note = "Said under a Rhino model drawn from the meshes it keeps: objects that keep none are left out."
+            )
+            .say(),
+        )
     } else {
         None
     };
     Ok(match drawn.shown {
         Shown::Mesh(mesh) => Found {
-            title: title(format).into(),
+            title: title(format),
             mesh: Some(Arc::new(mesh)),
             details,
             mesh_available: true,
@@ -118,14 +198,16 @@ pub fn read<S: FileSource + ?Sized>(
         Shown::Picture(picture) => {
             // Asked to be turned, and too large to be unasked.
             let large = matches!(asked, Asked::Turned { whole: false }).then(|| {
-                format!(
-                    "Shown as a picture: it has {:.1} million triangles. 3D turns it all the same",
-                    drawn.measures.triangles as f64 / 1e6
+                words!(
+                    models_shown_as_picture = "Shown as a picture: it has { $millions } million triangles. 3D turns it all the same",
+                    millions = format!("{:.1}", drawn.measures.triangles as f64 / 1e6),
+                    note = "Said under a model too large to turn at once: a still picture is shown, and the 3D button turns it anyway. millions: the number of triangles in millions (2.4)."
                 )
+                .say()
             });
             let notice: Vec<String> = holes.into_iter().chain(large).collect();
             Found {
-                title: title(format).into(),
+                title: title(format),
                 picture: Some(picture),
                 details,
                 mesh_available: true,

@@ -20,6 +20,7 @@ use std::io::BufRead;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::{Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::words;
 
 use crate::collect::{self, Collector, Plan, PlanKind};
 use crate::mission::Route;
@@ -104,7 +105,11 @@ pub fn read<R: BufRead>(
             columns = header(line);
             anyhow::ensure!(
                 columns.is_some(),
-                "Not a Litchi mission: the CSV's columns are not a mission's"
+                words!(
+                    geo_litchi_columns =
+                        "Not a Litchi mission: the CSV's columns are not a mission's",
+                    note = "Why a .csv file is not read as a drone mission of Litchi, a drone app: its header names other columns."
+                )
             );
             return Ok(());
         }
@@ -135,7 +140,13 @@ pub fn read<R: BufRead>(
         }
         Ok(())
     })?;
-    anyhow::ensure!(columns.is_some(), "Not a Litchi mission: the file is empty");
+    anyhow::ensure!(
+        columns.is_some(),
+        words!(
+            geo_litchi_empty = "Not a Litchi mission: the file is empty",
+            note = "Why a .csv file is not read as a drone mission of Litchi, a drone app."
+        )
+    );
     route.finish(into);
     into.plan = Some(Plan {
         kind: PlanKind::Mission,
@@ -157,7 +168,11 @@ fn interest(fields: &[&str], columns: &Columns) -> Option<Waypoint> {
             .map(|value| (value * scale, datum(fields, columns.poi_mode)))
     });
     Some(Waypoint {
-        name: "Point of interest".into(),
+        name: words!(
+            geo_litchi_point_of_interest = "Point of interest",
+            note = "The name on the map of a point a Litchi drone mission's camera turns towards."
+        )
+        .say(),
         at,
         kind: WaypointKind::Point,
         altitude,

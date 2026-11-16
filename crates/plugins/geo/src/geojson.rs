@@ -5,6 +5,7 @@ use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 use skwir_core::CancelToken;
 use skwir_core::geo::{Area, Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::words;
 
 use crate::collect::{self, Collector};
 
@@ -80,7 +81,11 @@ pub fn read(bytes: &[u8], into: &mut Collector, cancel: &CancelToken) -> anyhow:
             skwir_platform::inspection::check(cancel)?;
             anyhow::bail!("preview cancelled")
         }
-        Err(error) => anyhow::bail!("Not valid GeoJSON: {error}"),
+        Err(error) => anyhow::bail!(words!(
+            geo_geojson_invalid = "Not valid GeoJSON: { $error }",
+            error = error.to_string(),
+            note = "Why a GeoJSON file is not shown on a map. error: what the JSON reader says is wrong, in English."
+        )),
     };
     let rest = Value::Object(rest);
     match rest.get("type").and_then(Value::as_str) {

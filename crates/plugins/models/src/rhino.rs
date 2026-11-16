@@ -6,7 +6,7 @@
 //! before version 5, 8 since); the properties table near the start holds
 //! the preview, a Windows bitmap whose pixels are zlib-compressed.
 use crate::Found;
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words};
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::model::{Asked, MeshFormat};
 use std::io::{Read, Seek, SeekFrom};
@@ -84,7 +84,7 @@ pub fn read<S: FileSource + ?Sized>(
         // turn (3D is offered where it turns something: it toggles from
         // what is shown).
         Err(error) => Ok(Found {
-            notice: Some(format!("{error:#}")),
+            notice: Some(words::Words::of_error(error).say()),
             ..found
         }),
     }
@@ -99,14 +99,28 @@ fn properties<S: FileSource + ?Sized>(
     let mut file = inspection::open(source)?;
     let mut header = [0u8; 32];
     file.read_exact(&mut header)?;
-    anyhow::ensure!(header.starts_with(HEADER), "Not a Rhino model");
+    anyhow::ensure!(
+        header.starts_with(HEADER),
+        words!(
+            models_not_rhino = "Not a Rhino model",
+            note = "An error in place of a .3dm file that is not a Rhino model."
+        )
+    );
     let version: u32 = std::str::from_utf8(&header[24..])?.trim().parse()?;
     // Version 5 onwards is written 50, 60…
     let major = if version >= 10 { version / 10 } else { version };
     let wide = version >= 50;
     let mut found = Found {
-        title: "Rhino model".into(),
-        details: vec![("Format".into(), format!("3dm version {major}"))],
+        title: crate::model_title("Rhino"),
+        details: vec![(
+            crate::format_label(),
+            words!(
+                models_rhino_format = "3dm version { $version }",
+                version = major.to_string(),
+                note = "A Rhino model's format in the preview's Properties: 3dm is the format's name. version: its version's number (5, 6, 7, 8)."
+            )
+            .say(),
+        )],
         ..Found::default()
     };
     let width: u64 = if wide { 8 } else { 4 };
@@ -117,7 +131,12 @@ fn properties<S: FileSource + ?Sized>(
             break;
         }
         let code = u32::from_le_bytes(head[..4].try_into()?);
-        let bytes = length(&head[4..]).ok_or_else(|| anyhow::anyhow!("Damaged Rhino model"))?;
+        let bytes = length(&head[4..]).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                models_rhino_damaged = "Damaged Rhino model",
+                note = "An error in place of a Rhino model whose structure cannot be read."
+            ))
+        })?;
         if code == END_OF_FILE {
             break;
         }
@@ -130,8 +149,12 @@ fn properties<S: FileSource + ?Sized>(
         }
         anyhow::ensure!(
             bytes <= limits::BINARY_INPUT,
-            "The model's properties are larger than {}",
-            skwir_core::fs::size_said(limits::BINARY_INPUT as u64)
+            words!(
+                models_rhino_properties_too_large =
+                    "The model's properties are larger than { $size }",
+                size = words::Size(limits::BINARY_INPUT as u64),
+                note = "An error in place of a Rhino model whose table of properties (where its picture is) is larger than the preview reads. size: that bound."
+            )
         );
         let mut table = vec![0u8; bytes];
         file.read_exact(&mut table)?;
@@ -143,7 +166,7 @@ fn properties<S: FileSource + ?Sized>(
             match code {
                 APPLICATION => {
                     if let Some(name) = application(body) {
-                        found.details.insert(0, ("Made with".into(), name));
+                        found.details.insert(0, (crate::made_with(), name));
                     }
                 }
                 COMPRESSED_PREVIEW => found.picture = preview(body, wide, side),

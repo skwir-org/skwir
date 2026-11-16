@@ -48,6 +48,8 @@ use skwir_core::command::Outcome;
 use skwir_core::command::Topic;
 use skwir_core::geo::{Datum, LineKind};
 use skwir_core::registry::{KeyBinding, ViewSpec};
+use skwir_core::words;
+use skwir_core::words::{Size, Words};
 use skwir_core::workspace::PaneId;
 use skwir_core::{
     App, CancelToken,
@@ -148,7 +150,17 @@ impl Plugin for GeoPlugin {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();
         geotag::register(app, lifetime);
-        let mut spec = ViewSpec::named(VIEW, "Map", "map", Arc::clone(&self.revision)).lens();
+        let mut spec = ViewSpec::named(
+            VIEW,
+            &words!(
+                geo_view = "Map",
+                note = "The view that places a folder's pictures, videos and tracks on a map, among the views (List, Grid…)."
+            )
+            .say(),
+            "map",
+            Arc::clone(&self.revision),
+        )
+        .lens();
         // After Usage, the other lens.
         spec.order = 110;
         app.registry.views.add(ID, spec);
@@ -172,8 +184,11 @@ impl Plugin for GeoPlugin {
         app.commands.register::<PaneArgs, _>(
             ID, Topic::View,
             "geo.scan",
-            "Find where the files are",
-            "Find the pictures and tracks of what a pane lists that say where they are, for the Map view",
+            words!(geo_scan = "Find where the files are"),
+            words!(
+                geo_scan_description = "Find the pictures and tracks of what a pane lists that say where they are, for the Map view",
+                note = "Read by agents and in F1's list of actions."
+            ),
             move |args, app| {
                 scan.scan(app, app.pane_or_active(args.pane))?;
                 Ok(Outcome::Done)
@@ -190,8 +205,11 @@ impl Plugin for GeoPlugin {
         app.commands.register::<PointsArgs, _>(
             ID, Topic::View,
             "geo.points",
-            "Where the files are",
-            "The pictures and tracks of what a pane lists that were placed on the map, after the first `since`",
+            words!(geo_points = "Where the files are"),
+            words!(
+                geo_points_description = "The pictures and tracks of what a pane lists that were placed on the map, after the first `since`",
+                note = "Read by agents and in F1's list of actions. `since` is the name of the command's argument: keep it as it is."
+            ),
             move |args, app| {
                 let pane = app.pane_or_active(args.pane);
                 let found = points.batch(pane, args.since, &app.withheld(pane));
@@ -205,8 +223,11 @@ impl Plugin for GeoPlugin {
                 ID,
                 Topic::View,
                 "geo.release",
-                "Forget where the files are",
-                "Stop finding where a pane's files are: its Map view closed",
+                words!(geo_release = "Forget where the files are"),
+                words!(
+                    geo_release_description =
+                        "Stop finding where a pane's files are: its Map view closed"
+                ),
                 move |args, app| {
                     release.release(app.pane_or_active(args.pane));
                     Ok(Outcome::Done)
@@ -216,8 +237,10 @@ impl Plugin for GeoPlugin {
         app.commands.register::<LocateArgs, _>(
             ID, Topic::View,
             "geo.locate",
-            "Where is a place",
-            "The places of that name skwir knows offline, biggest first, with their positions: for scripts and agents",
+            words!(geo_locate = "Where is a place"),
+            words!(
+                geo_locate_description = "The places of that name skwir knows offline, biggest first, with their positions: for scripts and agents"
+            ),
             |args, _| {
                 let places: Vec<serde_json::Value> = places::find(&args.name)
                     .into_iter()
@@ -241,8 +264,13 @@ impl Plugin for GeoPlugin {
         app.commands.register::<AreaArgs, _>(
             ID, Topic::Find,
             "geo.search_area",
-            "Search this area",
-            "Show the pictures and videos of the folder and its subfolders that were made inside an area",
+            words!(
+                geo_search_area = "Search this area",
+                note = "An action of the Map view: find the pictures and videos made inside the area the map shows."
+            ),
+            words!(
+                geo_search_area_description = "Show the pictures and videos of the folder and its subfolders that were made inside an area"
+            ),
             |args, app| {
                 let edge = |value: f64| {
                     let text = format!("{value:.5}");
@@ -269,8 +297,13 @@ impl Plugin for GeoPlugin {
                 ID,
                 Topic::Find,
                 "geo.search_subfolders",
-                "Search subfolders for places",
-                "Show the pictures and tracks of the folder and all its subfolders",
+                words!(
+                    geo_search_subfolders = "Search subfolders for places",
+                    note = "An action of the Map view: put on the map the pictures and tracks of the folder's subfolders too."
+                ),
+                words!(
+                    geo_search_subfolders_description = "Show the pictures and tracks of the folder and all its subfolders"
+                ),
                 |args, app| {
                     app.dispatch(&skwir_core::command::Invocation::with_args(
                         "query.search",
@@ -447,23 +480,47 @@ impl Format {
         }
     }
 
-    fn name(self) -> &'static str {
+    /// What the format is called, in a map's title: its own name, or
+    /// what it is made with.
+    fn name(self) -> Words {
         match self {
-            Format::Gpx => "GPX",
-            Format::Kml => "KML",
-            Format::Kmz => "KMZ",
-            Format::GeoJson => "GeoJSON",
-            Format::Tcx => "TCX",
-            Format::Fit => "FIT",
-            Format::Igc => "IGC",
-            Format::Nmea => "NMEA",
-            Format::GarminPlan => "Garmin flight plan",
-            Format::SimPlan => "Flight Simulator plan",
-            Format::XPlanePlan => "X-Plane plan",
-            Format::LittleNavmap => "Little Navmap plan",
-            Format::QgcPlan => "QGroundControl plan",
-            Format::Mavlink => "MAVLink mission",
-            Format::Litchi => "Litchi mission",
+            // Formats' names, the same in every language.
+            Format::Gpx => Words::as_written("GPX"),
+            Format::Kml => Words::as_written("KML"),
+            Format::Kmz => Words::as_written("KMZ"),
+            Format::GeoJson => Words::as_written("GeoJSON"),
+            Format::Tcx => Words::as_written("TCX"),
+            Format::Fit => Words::as_written("FIT"),
+            Format::Igc => Words::as_written("IGC"),
+            Format::Nmea => Words::as_written("NMEA"),
+            Format::GarminPlan => words!(
+                geo_format_garmin_plan = "Garmin flight plan",
+                note = "A file format, in a map's title: a flight plan of Garmin's (.fpl)."
+            ),
+            Format::SimPlan => words!(
+                geo_format_sim_plan = "Flight Simulator plan",
+                note = "A file format, in a map's title: a flight plan of Microsoft Flight Simulator (.pln)."
+            ),
+            Format::XPlanePlan => words!(
+                geo_format_xplane_plan = "X-Plane plan",
+                note = "A file format, in a map's title: a flight plan of X-Plane, a flight simulator (.fms)."
+            ),
+            Format::LittleNavmap => words!(
+                geo_format_little_navmap_plan = "Little Navmap plan",
+                note = "A file format, in a map's title: a flight plan of Little Navmap, a flight planning program (.lnmpln)."
+            ),
+            Format::QgcPlan => words!(
+                geo_format_qgc_plan = "QGroundControl plan",
+                note = "A file format, in a map's title: a drone mission of QGroundControl, a mission planner (.plan)."
+            ),
+            Format::Mavlink => words!(
+                geo_format_mavlink_mission = "MAVLink mission",
+                note = "A file format, in a map's title: a drone mission in MAVLink's text (.waypoints, .mission)."
+            ),
+            Format::Litchi => words!(
+                geo_format_litchi_mission = "Litchi mission",
+                note = "A file format, in a map's title: a drone mission of Litchi, a drone app (.csv)."
+            ),
         }
     }
 
@@ -481,13 +538,14 @@ fn read<S: FileSource + ?Sized>(
     into: &mut Collector,
     bounds: Bounds,
     cancel: &CancelToken,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<Words>> {
     let mut notes = Vec::new();
     let file = inspection::open(source)?;
     if source.length().is_ok_and(|len| len > MAX_INPUT) {
-        notes.push(format!(
-            "Only the first {} were read",
-            inspection::size(MAX_INPUT)
+        notes.push(words!(
+            geo_read_first = "Only the first { $size } were read",
+            size = Size(MAX_INPUT),
+            note = "A notice under the map of a file larger than is read. size: how much of it was read (256 MB)."
         ));
     }
     let damaged = match format {
@@ -509,23 +567,38 @@ fn read<S: FileSource + ?Sized>(
                 skwir_platform::package::Package::open(source, "This KMZ", false, cancel)?;
             // A DJI mission (WPML) is a KMZ of its own kind.
             if let Some(name) = wpml::MEMBERS.iter().find(|name| package.has(name)) {
-                let member = package
-                    .reader(name)
-                    .ok_or_else(|| anyhow::anyhow!("This mission cannot be read"))?;
+                let member = package.reader(name).ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        geo_wpml_unreadable = "This mission cannot be read",
+                        note = "Why a DJI drone mission (a KMZ file) is not shown on a map: the mission it holds cannot be unpacked."
+                    ))
+                })?;
                 wpml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
             } else {
-                let name = kmz_document(package.names())
-                    .ok_or_else(|| anyhow::anyhow!("This KMZ holds no KML document"))?;
-                let member = package
-                    .reader(&name)
-                    .ok_or_else(|| anyhow::anyhow!("This KMZ's document cannot be read"))?;
+                let name = kmz_document(package.names()).ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        geo_kmz_no_kml = "This KMZ holds no KML document",
+                        note = "Why a KMZ file (a zipped Google Earth file) is not shown on a map: it holds no .kml file."
+                    ))
+                })?;
+                let member = package.reader(&name).ok_or_else(|| {
+                    anyhow::anyhow!(words!(
+                        geo_kmz_unreadable = "This KMZ's document cannot be read",
+                        note = "Why a KMZ file (a zipped Google Earth file) is not shown on a map: the .kml file it holds cannot be unpacked."
+                    ))
+                })?;
                 kml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
             }
         }
         Format::QgcPlan => {
             let bytes = inspection::read_file(source, bounds, "This plan", cancel)?;
-            let document: serde_json::Value = serde_json::from_slice(&bytes)
-                .map_err(|error| anyhow::anyhow!("Not a valid QGroundControl plan: {error}"))?;
+            let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+                anyhow::anyhow!(words!(
+                    geo_qgc_invalid = "Not a valid QGroundControl plan: { $error }",
+                    error = error.to_string(),
+                    note = "Why a .plan file of QGroundControl (a drone mission planner) is not shown on a map. error: what the JSON reader says is wrong, in English."
+                ))
+            })?;
             inspection::check(cancel)?;
             qgc::read(&document, into);
             None
@@ -537,8 +610,10 @@ fn read<S: FileSource + ?Sized>(
         }
     };
     if let Some(xml::Damaged(why)) = damaged {
-        notes.push(format!(
-            "The file is damaged ({why}); what came before is shown"
+        notes.push(words!(
+            geo_damaged = "The file is damaged ({ $why }); what came before is shown",
+            why = why,
+            note = "A notice under a map: the file stops making sense part way, and what was read before is drawn. why: what is wrong, in lower case (the file ends inside a record)."
         ));
     }
     Ok(notes)
@@ -562,13 +637,31 @@ fn kmz_document<'a>(names: impl Iterator<Item = &'a str>) -> Option<String> {
         .map(|name| (*name).to_owned())
 }
 
-pub fn distance(metres: f64) -> String {
+/// A length or a height in metres, `value` the number already written.
+fn in_metres(value: String) -> Words {
+    words!(
+        geo_metres = "{ $metres } m",
+        metres = value,
+        note = "A length or a height in metres, in a map's Properties (Climb: 120 m). metres: the number."
+    )
+}
+
+/// A distance in kilometres, `value` the number already written.
+pub(crate) fn in_kilometres(value: String) -> Words {
+    words!(
+        geo_kilometres = "{ $km } km",
+        km = value,
+        note = "A distance in kilometres, in a map's Properties (Distance: 42.2 km) and in where a picture was taken (5.6 km NE of Example Town). km: the number."
+    )
+}
+
+pub fn distance(metres: f64) -> Words {
     if metres < 1000. {
-        format!("{metres:.0} m")
+        in_metres(format!("{metres:.0}"))
     } else if metres < 100_000. {
-        format!("{:.1} km", metres / 1000.)
+        in_kilometres(format!("{:.1}", metres / 1000.))
     } else {
-        format!("{:.0} km", metres / 1000.)
+        in_kilometres(format!("{:.0}", metres / 1000.))
     }
 }
 
@@ -591,17 +684,60 @@ fn local(time: SystemTime, zone: &jiff::tz::TimeZone, day: Option<jiff::civil::D
     }
 }
 
-fn plural(n: usize, one: &str, many: &str) -> Option<String> {
-    match n {
-        0 => None,
-        1 => Some(format!("1 {one}")),
-        n => Some(format!("{n} {many}")),
-    }
+/// The labels two lists of facts share: a track's and a plan's.
+fn distance_label() -> Words {
+    words!(
+        geo_fact_distance = "Distance",
+        note = "A label in a map's Properties: how long the track, the route or the plan is."
+    )
+}
+
+fn waypoints_label() -> Words {
+    words!(
+        geo_fact_waypoints = "Waypoints",
+        note = "A label in a map's Properties: how many waypoints (places marked by name) the file holds."
+    )
+}
+
+fn highest_point_label() -> Words {
+    words!(
+        geo_fact_highest_point = "Highest point",
+        note =
+            "A label in a map's Properties: the highest altitude the track or the mission reaches."
+    )
+}
+
+fn areas_label() -> Words {
+    words!(
+        geo_fact_areas = "Areas",
+        note = "A label in a map's Properties: how many areas (outlined shapes) the file holds."
+    )
+}
+
+fn name_label() -> Words {
+    words!(
+        geo_fact_name = "Name",
+        note = "A label in a map's Properties: the name the file gives itself."
+    )
+}
+
+fn description_label() -> Words {
+    words!(
+        geo_fact_description = "Description",
+        note = "A label in a map's Properties: what the file says of itself."
+    )
+}
+
+fn created_by_label() -> Words {
+    words!(
+        geo_fact_created_by = "Created by",
+        note = "A label in a map's Properties: the device or the program that wrote the file."
+    )
 }
 
 /// The facts of the lines of one kind: those of the tracks when there are
 /// any, else the routes' (a route has no times).
-fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(&'static str, Option<String>)> {
+fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(Words, Option<String>)> {
     let span = totals
         .first
         .zip(totals.last)
@@ -612,30 +748,80 @@ fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(&'static str, 
             .map(|stamp| stamp.to_zoned(zone.clone()).date())
     });
     let moving = (!totals.moving.is_zero()).then_some(totals.moving);
-    let metres = |value: f64| format!("{value:.0} m");
+    let metres = |value: f64| in_metres(format!("{value:.0}")).say();
     vec![
         (
-            "Distance",
-            (totals.distance > 0.).then(|| distance(totals.distance)),
+            distance_label(),
+            (totals.distance > 0.).then(|| distance(totals.distance).say()),
         ),
-        ("Duration", span.filter(|s| !s.is_zero()).map(duration)),
-        ("Moving time", moving.map(duration)),
         (
-            "Moving speed",
-            moving.map(|m| format!("{:.1} km/h", totals.distance / m.as_secs_f64() * 3.6)),
+            words!(
+                geo_fact_duration = "Duration",
+                note = "A label in a map's Properties: how long the track took, from its first point to its last."
+            ),
+            span.filter(|s| !s.is_zero()).map(duration),
         ),
-        ("Climb", (totals.climb > 0.).then(|| metres(totals.climb))),
         (
-            "Descent",
+            words!(
+                geo_fact_moving_time = "Moving time",
+                note = "A label in a map's Properties: how long the track was on the move, its stops left out."
+            ),
+            moving.map(duration),
+        ),
+        (
+            words!(
+                geo_fact_moving_speed = "Moving speed",
+                note = "A label in a map's Properties: the track's average speed while it was on the move."
+            ),
+            moving.map(|m| {
+                words!(
+                    geo_speed = "{ $speed } km/h",
+                    speed = format!("{:.1}", totals.distance / m.as_secs_f64() * 3.6),
+                    note =
+                        "A speed in kilometres per hour, in a map's Properties. speed: the number."
+                )
+                .say()
+            }),
+        ),
+        (
+            words!(
+                geo_fact_climb = "Climb",
+                note = "A label in a map's Properties: how much the track climbed, every rise added up."
+            ),
+            (totals.climb > 0.).then(|| metres(totals.climb)),
+        ),
+        (
+            words!(
+                geo_fact_descent = "Descent",
+                note = "A label in a map's Properties: how much the track went down, every descent added up."
+            ),
             (totals.descent > 0.).then(|| metres(totals.descent)),
         ),
         (
-            "Highest point",
+            highest_point_label(),
             totals.highest.map(|h| metres(f64::from(h))),
         ),
-        ("Lowest point", totals.lowest.map(|l| metres(f64::from(l)))),
-        ("Started", totals.first.map(|t| local(t, zone, None))),
-        ("Ended", totals.last.map(|t| local(t, zone, start_day))),
+        (
+            words!(
+                geo_fact_lowest_point = "Lowest point",
+                note = "A label in a map's Properties: the lowest altitude the track reaches."
+            ),
+            totals.lowest.map(|l| metres(f64::from(l))),
+        ),
+        (
+            words!(
+                geo_fact_started = "Started",
+                note = "A label in a map's Properties: when the track's first point was recorded."
+            ),
+            totals.first.map(|t| local(t, zone, None)),
+        ),
+        (
+            words!(
+                geo_fact_ended = "Ended",
+                note = "A label in a map's Properties: when the track's last point was recorded."
+            ),
+            totals.last.map(|t| local(t, zone, start_day)),
+        ),
     ]
 }
 
@@ -646,18 +832,45 @@ const NAUTICAL_MILE: f64 = 1852.;
 
 /// An altitude as a plan's reader thinks of it: feet for a flight
 /// (`35 000 ft · 10 668 m`), metres from its datum for a mission.
-fn plan_altitude(kind: PlanKind, metres: f32, datum: Datum) -> String {
-    let from = match datum {
-        Datum::Sea => "",
-        Datum::Ground => " above ground",
-        Datum::Takeoff => " above takeoff",
-    };
+fn plan_altitude(kind: PlanKind, metres: f32, datum: Datum) -> Words {
+    let written = format!("{metres:.0}");
     match kind {
         PlanKind::Flight => {
-            let feet = (metres / FOOT / 100.).round() * 100.;
-            format!("{} ft · {metres:.0} m{from}", group_thousands(feet))
+            let feet = group_thousands((metres / FOOT / 100.).round() * 100.);
+            match datum {
+                Datum::Sea => words!(
+                    geo_altitude_flight = "{ $feet } ft · { $metres } m",
+                    feet = feet,
+                    metres = written,
+                    note = "A flight plan's altitude above the sea, in feet then metres, in a map's Properties. feet, metres: the numbers."
+                ),
+                Datum::Ground => words!(
+                    geo_altitude_flight_ground = "{ $feet } ft · { $metres } m above ground",
+                    feet = feet,
+                    metres = written,
+                    note = "A flight plan's altitude above the ground below, in feet then metres, in a map's Properties. feet, metres: the numbers."
+                ),
+                Datum::Takeoff => words!(
+                    geo_altitude_flight_takeoff = "{ $feet } ft · { $metres } m above takeoff",
+                    feet = feet,
+                    metres = written,
+                    note = "A flight plan's altitude above where it took off, in feet then metres, in a map's Properties. feet, metres: the numbers."
+                ),
+            }
         }
-        PlanKind::Mission => format!("{metres:.0} m{from}"),
+        PlanKind::Mission => match datum {
+            Datum::Sea => in_metres(written),
+            Datum::Ground => words!(
+                geo_altitude_ground = "{ $metres } m above ground",
+                metres = written,
+                note = "A drone mission's height above the ground below, in a map's Properties. metres: the number."
+            ),
+            Datum::Takeoff => words!(
+                geo_altitude_takeoff = "{ $metres } m above takeoff",
+                metres = written,
+                note = "A drone mission's height above where the drone took off, in a map's Properties. metres: the number."
+            ),
+        },
     }
 }
 
@@ -679,7 +892,7 @@ fn group_thousands(value: f32) -> String {
 
 /// What a flight plan or a mission says: where from and to, its legs and
 /// its distance, how high.
-fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(&'static str, Option<String>)> {
+fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(Words, Option<String>)> {
     let legs = c.routes.points.saturating_sub(c.routes.lines);
     let datum = doc
         .lines
@@ -689,53 +902,102 @@ fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(&'static str, Op
     let flight = plan.kind == PlanKind::Flight;
     let distance = (c.routes.distance > 0.).then(|| {
         if flight {
-            format!(
-                "{} · {:.0} NM",
-                distance(c.routes.distance),
-                c.routes.distance / NAUTICAL_MILE
+            words!(
+                geo_flight_distance = "{ $distance } · { $nautical } NM",
+                distance = distance(c.routes.distance),
+                nautical = format!("{:.0}", c.routes.distance / NAUTICAL_MILE),
+                note = "A flight plan's distance in a map's Properties: in metres or kilometres, then in nautical miles. distance: the first, with its unit; nautical: the number of nautical miles."
             )
+            .say()
         } else {
-            distance(c.routes.distance)
+            distance(c.routes.distance).say()
         }
     });
     let highest = c
         .routes
         .highest
-        .map(|metres| plan_altitude(plan.kind, metres, datum));
+        .map(|metres| plan_altitude(plan.kind, metres, datum).say());
     vec![
-        ("Departure", plan.departure.clone()),
-        ("Destination", plan.destination.clone()),
         (
-            if flight { "Legs" } else { "Waypoints" },
-            inspection::count(if flight { legs } else { doc.waypoints.len() }),
+            words!(
+                geo_fact_departure = "Departure",
+                note =
+                    "A label in a map's Properties: where a flight plan or a drone mission starts."
+            ),
+            plan.departure.clone(),
         ),
-        ("Distance", distance),
         (
-            if flight { "Cruise" } else { "Flight height" },
-            plan.cruise
-                .map(|(metres, datum)| plan_altitude(plan.kind, metres, datum)),
+            words!(
+                geo_fact_destination = "Destination",
+                note =
+                    "A label in a map's Properties: where a flight plan or a drone mission ends."
+            ),
+            plan.destination.clone(),
         ),
         (
             if flight {
-                "Highest waypoint"
+                words!(
+                    geo_fact_legs = "Legs",
+                    note = "A label in a map's Properties: how many legs (stretches from one waypoint to the next) a flight plan has."
+                )
             } else {
-                "Highest point"
+                waypoints_label()
+            },
+            inspection::count(if flight { legs } else { doc.waypoints.len() }),
+        ),
+        (distance_label(), distance),
+        (
+            if flight {
+                words!(
+                    geo_fact_cruise = "Cruise",
+                    note = "A label in a map's Properties: the altitude a flight plan cruises at."
+                )
+            } else {
+                words!(
+                    geo_fact_flight_height = "Flight height",
+                    note = "A label in a map's Properties: the height a drone mission flies at."
+                )
+            },
+            plan.cruise
+                .map(|(metres, datum)| plan_altitude(plan.kind, metres, datum).say()),
+        ),
+        (
+            if flight {
+                words!(
+                    geo_fact_highest_waypoint = "Highest waypoint",
+                    note = "A label in a map's Properties: the altitude of a flight plan's highest waypoint."
+                )
+            } else {
+                highest_point_label()
             },
             highest.filter(|_| plan.cruise.is_none()),
         ),
     ]
 }
 
+/// Facts with their labels said, in the order given, those without a
+/// value left out.
+fn details(facts: Vec<(Words, Option<String>)>) -> Vec<Detail> {
+    let said: Vec<(String, Option<String>)> = facts
+        .into_iter()
+        .map(|(label, value)| (label.say(), value))
+        .collect();
+    inspection::details(
+        said.iter()
+            .map(|(label, value)| (label.as_str(), value.clone())),
+    )
+}
+
 fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
     if let Some(plan) = &c.plan {
         let mut facts = plan_facts(plan, doc, c);
         facts.extend([
-            ("Areas", inspection::count(doc.areas.len())),
-            ("Name", c.name.clone()),
-            ("Description", c.description.clone()),
-            ("Created by", c.creator.clone()),
+            (areas_label(), inspection::count(doc.areas.len())),
+            (name_label(), c.name.clone()),
+            (description_label(), c.description.clone()),
+            (created_by_label(), c.creator.clone()),
         ]);
-        return inspection::details(facts);
+        return details(facts);
     }
     let zone = skwir_platform::calendar::Calendar::system()
         .time_zone()
@@ -747,7 +1009,13 @@ fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
     };
     let mut facts = line_facts(main, &zone);
     if c.tracks.lines > 0 && c.routes.distance > 0. {
-        facts.push(("Route distance", Some(distance(c.routes.distance))));
+        facts.push((
+            words!(
+                geo_fact_route_distance = "Route distance",
+                note = "A label in a map's Properties: how long the file's routes (the ways planned) are, beside its tracks (the ways recorded)."
+            ),
+            Some(distance(c.routes.distance).say()),
+        ));
     }
     let start = doc
         .lines
@@ -757,56 +1025,128 @@ fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
         .map(|p| p.at)
         .or_else(|| doc.waypoints.first().map(|w| w.at));
     facts.extend([
-        ("Tracks", inspection::count(c.tracks.lines)),
-        ("Routes", inspection::count(c.routes.lines)),
-        ("Waypoints", inspection::count(doc.waypoints.len())),
-        ("Areas", inspection::count(doc.areas.len())),
         (
-            "Points",
+            words!(
+                geo_fact_tracks = "Tracks",
+                note = "A label in a map's Properties: how many tracks (ways recorded) the file holds."
+            ),
+            inspection::count(c.tracks.lines),
+        ),
+        (
+            words!(
+                geo_fact_routes = "Routes",
+                note = "A label in a map's Properties: how many routes (ways planned) the file holds."
+            ),
+            inspection::count(c.routes.lines),
+        ),
+        (waypoints_label(), inspection::count(doc.waypoints.len())),
+        (areas_label(), inspection::count(doc.areas.len())),
+        (
+            words!(
+                geo_fact_points = "Points",
+                note = "A label in a map's Properties: how many points the file's tracks and routes have."
+            ),
             inspection::count(c.tracks.points + c.routes.points),
         ),
         (
-            "Start",
+            words!(
+                geo_fact_start = "Start",
+                note = "A label in a map's Properties: the latitude and longitude of the file's first point."
+            ),
             start.map(|at| format!("{:.5}, {:.5}", at.lat, at.lon)),
         ),
-        ("Name", c.name.clone()),
-        ("Description", c.description.clone()),
-        ("Created by", c.creator.clone()),
+        (name_label(), c.name.clone()),
+        (description_label(), c.description.clone()),
+        (created_by_label(), c.creator.clone()),
     ]);
-    inspection::details(facts)
+    details(facts)
 }
 
-/// What the file holds, in a few words: `1 track, 12 waypoints`.
-fn summary(doc: &GeoDoc, c: &Collector) -> String {
-    match &c.plan {
-        Some(plan) if plan.kind == PlanKind::Flight => {
-            return match (&plan.departure, &plan.destination) {
-                (Some(from), Some(to)) => format!("Flight plan · {from} → {to}"),
-                _ => "Flight plan".into(),
-            };
-        }
-        Some(_) => {
-            return [
-                Some("Drone mission".to_owned()),
-                plural(doc.waypoints.len(), "waypoint", "waypoints"),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
-        }
-        None => {}
+/// What a plan is, in a few words: `Flight plan · XAAA → XBBB`.
+fn plan_summary(plan: &Plan, doc: &GeoDoc) -> Words {
+    if plan.kind == PlanKind::Flight {
+        return match (&plan.departure, &plan.destination) {
+            (Some(from), Some(to)) => words!(
+                geo_summary_flight_route = "Flight plan · { $from } → { $to }",
+                from = from.as_str(),
+                to = to.as_str(),
+                note = "The title of a flight plan's preview. from, to: where it departs and where it lands, as the plan names them (an airport's code, XAAA)."
+            ),
+            _ => words!(
+                geo_summary_flight = "Flight plan",
+                note =
+                    "The title of a flight plan's preview, when it does not say where from and to."
+            ),
+        };
     }
-    [
-        plural(c.tracks.lines, "track", "tracks"),
-        plural(c.routes.lines, "route", "routes"),
-        plural(doc.waypoints.len(), "waypoint", "waypoints"),
-        plural(doc.areas.len(), "area", "areas"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(", ")
+    match doc.waypoints.len() {
+        0 => words!(
+            geo_summary_mission = "Drone mission",
+            note = "The title of a drone mission's preview, when it has no waypoint."
+        ),
+        count => words!(
+            geo_summary_mission_waypoints = "Drone mission · { $count ->
+                [one] { $count } waypoint
+               *[other] { $count } waypoints
+            }",
+            count = count,
+            note = "The title of a drone mission's preview. count: how many waypoints it has."
+        ),
+    }
+}
+
+/// What the file holds, a few words each: `1 track`, `12 waypoints`.
+fn contents(doc: &GeoDoc, c: &Collector) -> Vec<Words> {
+    let mut contents = Vec::new();
+    if c.tracks.lines > 0 {
+        contents.push(words!(
+            geo_contents_tracks = "{ $count ->
+                [one] { $count } track
+               *[other] { $count } tracks
+            }",
+            count = c.tracks.lines,
+            note = "Part of a map's title, after its format (GPX · 1 track, 2 waypoints): how many tracks (ways recorded) the file holds."
+        ));
+    }
+    if c.routes.lines > 0 {
+        contents.push(words!(
+            geo_contents_routes = "{ $count ->
+                [one] { $count } route
+               *[other] { $count } routes
+            }",
+            count = c.routes.lines,
+            note = "Part of a map's title, after its format (GPX · 1 route, 2 waypoints): how many routes (ways planned) the file holds."
+        ));
+    }
+    if !doc.waypoints.is_empty() {
+        contents.push(words!(
+            geo_contents_waypoints = "{ $count ->
+                [one] { $count } waypoint
+               *[other] { $count } waypoints
+            }",
+            count = doc.waypoints.len(),
+            note = "Part of a map's title, after its format (GPX · 1 track, 2 waypoints): how many waypoints (places marked by name) the file holds."
+        ));
+    }
+    if !doc.areas.is_empty() {
+        contents.push(words!(
+            geo_contents_areas = "{ $count ->
+                [one] { $count } area
+               *[other] { $count } areas
+            }",
+            count = doc.areas.len(),
+            note = "Part of a map's title, after its format (KML · 3 areas): how many areas (outlined shapes) the file holds."
+        ));
+    }
+    contents
+}
+
+/// What is not a map file: refused.
+fn not_a_map() -> Words {
+    words!(
+        geo_not_a_map = "Not a map file",
+        note = "Why a file is not shown on a map: its name says a format of tracks or plans, and it holds none."
+    )
 }
 
 /// Read a file into what the map shows and what Properties says, within
@@ -816,7 +1156,7 @@ pub(crate) fn inspect_file(
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
-    let format = Format::detect(path).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
+    let format = Format::detect(path).ok_or_else(|| anyhow::anyhow!(not_a_map()))?;
     inspect_as(path, format, bounds, cancel)
 }
 
@@ -832,34 +1172,69 @@ pub(crate) fn inspect_as<S: FileSource + ?Sized>(
     let mut notes = read(source, format, &mut collector, bounds, cancel)?;
     let (doc, c) = collector.finish();
     if doc.bounds.is_none() {
-        notes.insert(0, "Nothing in this file has a position".into());
+        notes.insert(
+            0,
+            words!(
+                geo_no_position = "Nothing in this file has a position",
+                note = "A notice in place of a map: the file holds no point with a latitude and a longitude."
+            ),
+        );
     }
     if c.stride() > 1 {
-        notes.push(format!("The map shows one point in {}", c.stride()));
+        notes.push(words!(
+            geo_thinned = "The map shows one point in { $stride }",
+            stride = c.stride(),
+            note = "A notice under a map of a track with more points than are drawn: one point of every few is drawn. stride: how many points each drawn point stands for."
+        ));
     }
     if c.invalid > 0 {
-        notes.push(format!(
-            "{} left out: not a position",
-            plural(c.invalid, "point", "points").unwrap_or_default()
+        notes.push(words!(
+            geo_invalid_points = "{ $count ->
+                [one] { $count } point left out: not a position
+               *[other] { $count } points left out: not a position
+            }",
+            count = c.invalid,
+            note = "A notice under a map: points of the file whose latitude or longitude is not one are not drawn."
         ));
     }
     let dropped = c.dropped_waypoints + c.dropped_areas;
     if dropped > 0 {
-        notes.push(format!("{dropped} more places than the map shows"));
+        notes.push(words!(
+            geo_dropped_places = "{ $count ->
+               *[other] { $count } more places than the map shows
+            }",
+            count = dropped,
+            note = "A notice under a map of a file with more waypoints and areas than are drawn. count: how many are not drawn."
+        ));
     }
-    let summary = summary(&doc, &c);
+    let title = match &c.plan {
+        // "Flight plan · XAAA → XBBB": the format says less than that.
+        Some(plan) => plan_summary(plan, &doc),
+        None => {
+            let contents = contents(&doc, &c);
+            if contents.is_empty() {
+                format.name()
+            } else {
+                // Transitional: a list argument (ADR-139)
+                let contents = contents
+                    .iter()
+                    .map(Words::say)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                words!(
+                    geo_title = "{ $format } · { $contents }",
+                    format = format.name(),
+                    contents = contents,
+                    note = "The title of a map's preview: the file's format, then what it holds (GPX · 1 track, 1 route, 2 waypoints). contents: a list of counts."
+                )
+            }
+        }
+    };
     Ok(Inspection {
         kind: InspectionKind::Map,
-        title: if summary.is_empty() {
-            format.name().to_owned()
-        } else if c.plan.is_some() {
-            // "Flight plan · XAAA → XBBB": the format says less than that.
-            summary
-        } else {
-            format!("{} · {summary}", format.name())
-        },
+        title: title.say(),
         details: facts(&doc, &c),
-        notice: notes.join(" · "),
+        notice: notes.iter().map(Words::say).collect::<Vec<_>>().join(" · "),
         // A KMZ is compressed and a FIT file binary: no source to read.
         source_available: format.has_source(),
         geo: Some(Arc::new(doc)),
@@ -902,7 +1277,7 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let held = req.held()?;
-        let format = Format::of_held(&held).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
+        let format = Format::of_held(&held).ok_or_else(|| anyhow::anyhow!(not_a_map()))?;
         inspect_as(&held, format, Bounds::of(view), cancel).map(Some)
     }
 }
@@ -1031,9 +1406,9 @@ mod tests {
 
     #[test]
     fn distances_and_durations_read_as_people_say_them() {
-        assert_eq!(distance(850.4), "850 m");
-        assert_eq!(distance(42_195.), "42.2 km");
-        assert_eq!(distance(1_234_567.), "1235 km");
+        assert_eq!(distance(850.4).english(), "850 m");
+        assert_eq!(distance(42_195.).english(), "42.2 km");
+        assert_eq!(distance(1_234_567.).english(), "1235 km");
         assert_eq!(
             duration(Duration::from_secs(3 * 3600 + 42 * 60 + 10)),
             "3:42:10"

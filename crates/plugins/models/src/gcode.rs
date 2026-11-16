@@ -7,7 +7,7 @@
 //! blocks before the first block of G-code.
 use crate::Found;
 use base64::Engine as _;
-use skwir_core::{CancelToken, preview::FileSource};
+use skwir_core::{CancelToken, preview::FileSource, words};
 use skwir_platform::inspection::{self, limits};
 use std::io::{Read, Seek, SeekFrom};
 
@@ -41,10 +41,26 @@ pub(crate) fn duration(seconds: f64) -> String {
     let seconds = seconds.max(0.).round() as u64;
     let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     match (h, m) {
-        (0, 0) => format!("{s}s"),
-        (0, _) => format!("{m}m {s}s"),
-        _ => format!("{h}h {m}m {s}s"),
+        (0, 0) => words!(
+            models_duration_seconds = "{ $s }s",
+            s = s,
+            note = "A print's time under a minute, in the preview's Properties, as slicers write it: s for seconds."
+        ),
+        (0, _) => words!(
+            models_duration_minutes = "{ $m }m { $s }s",
+            m = m,
+            s = s,
+            note = "A print's time under an hour, in the preview's Properties, as slicers write it: m for minutes, s for seconds."
+        ),
+        _ => words!(
+            models_duration_hours = "{ $h }h { $m }m { $s }s",
+            h = h,
+            m = m,
+            s = s,
+            note = "A print's time, in the preview's Properties, as slicers write it: h for hours, m for minutes, s for seconds."
+        ),
     }
+    .say()
 }
 
 /// A number written with as few decimals as it needs, at most two.
@@ -75,26 +91,24 @@ impl Facts {
             // Cura: seconds.
             "time" => keep(&mut self.time, value.parse::<f64>().ok().map(duration)),
             "total filament used [g]" | "filament used [g]" | "total filament weight [g]" => {
-                keep(
-                    &mut self.grams,
-                    sum(value).map(|g| format!("{} g", short(g))),
-                );
+                keep(&mut self.grams, sum(value).map(|g| crate::grams(short(g))));
             }
             "filament used [mm]" | "total filament length [mm]" => keep(
                 &mut self.length,
-                sum(value).map(|mm| format!("{} m", short(mm / 1000.))),
+                sum(value).map(|mm| metres(short(mm / 1000.))),
             ),
             // Cura: metres, with their unit.
-            "filament used" => keep(
-                &mut self.length,
-                sum(value).map(|m| format!("{} m", short(m))),
-            ),
+            "filament used" => keep(&mut self.length, sum(value).map(|m| metres(short(m)))),
             "layer_height" | "layer height" => keep(
                 &mut self.layer_height,
-                value
-                    .parse::<f64>()
-                    .ok()
-                    .map(|mm| format!("{} mm", short(mm))),
+                value.parse::<f64>().ok().map(|mm| {
+                    words!(
+                        models_layer_height_mm = "{ $mm } mm",
+                        mm = short(mm),
+                        note = "A print's layer height in millimetres, in the preview's Properties. mm: the number."
+                    )
+                    .say()
+                }),
             ),
             "total layer number" | "total layers count" | "layer_count" => {
                 keep(&mut self.layers, Some(value.to_owned()));
@@ -140,19 +154,71 @@ impl Facts {
 
     fn into_details(self) -> Vec<(String, String)> {
         [
-            ("Print time", self.time),
-            ("Filament", self.grams),
-            ("Filament length", self.length),
-            ("Material", self.material),
-            ("Layer height", self.layer_height),
-            ("Layers", self.layers),
-            ("Printer", self.printer),
-            ("Sliced with", self.slicer),
+            (crate::print_time(), self.time),
+            (crate::filament(), self.grams),
+            (
+                words!(
+                    models_detail_filament_length = "Filament length",
+                    note = "A label in the preview's Properties: how much plastic filament a 3D print uses, in metres."
+                )
+                .say(),
+                self.length,
+            ),
+            (
+                words!(
+                    models_detail_material = "Material",
+                    note = "A label in the preview's Properties: the filament's material a 3D print is sliced for (PLA, PETG)."
+                )
+                .say(),
+                self.material,
+            ),
+            (
+                words!(
+                    models_detail_layer_height = "Layer height",
+                    note = "A label in the preview's Properties: how thick each layer of a 3D print is."
+                )
+                .say(),
+                self.layer_height,
+            ),
+            (
+                words!(
+                    models_detail_layers = "Layers",
+                    note = "A label in the preview's Properties: how many layers a 3D print has."
+                )
+                .say(),
+                self.layers,
+            ),
+            (
+                words!(
+                    models_detail_printer = "Printer",
+                    note = "A label in the preview's Properties: the 3D printer the print was sliced for."
+                )
+                .say(),
+                self.printer,
+            ),
+            (
+                words!(
+                    models_detail_sliced_with = "Sliced with",
+                    note = "A label in the preview's Properties: the program (a slicer) that turned the model into this print's G-code."
+                )
+                .say(),
+                self.slicer,
+            ),
         ]
         .into_iter()
-        .filter_map(|(label, value)| Some((label.to_owned(), value?)))
+        .filter_map(|(label, value)| Some((label, value?)))
         .collect()
     }
+}
+
+/// A length of filament, `metres` written as a number.
+fn metres(metres: String) -> String {
+    words!(
+        models_filament_metres = "{ $metres } m",
+        metres = metres,
+        note = "A length of filament in metres, in the preview's Properties. metres: the number."
+    )
+    .say()
 }
 
 /// A picture a comment block holds, and its size as the block says.
@@ -259,6 +325,7 @@ pub fn text<S: FileSource + ?Sized>(
         details.extend(drawn.details);
     }
     Ok(Found {
+        // The format's name, the same in every language.
         title: "G-code".into(),
         picture,
         details,
@@ -281,7 +348,13 @@ pub fn binary<S: FileSource + ?Sized>(
     let mut file = std::io::BufReader::new(inspection::open(source)?);
     let mut header = [0u8; 10];
     file.read_exact(&mut header)?;
-    anyhow::ensure!(&header[..4] == b"GCDE", "Not a binary G-code file");
+    anyhow::ensure!(
+        &header[..4] == b"GCDE",
+        words!(
+            models_not_bgcode = "Not a binary G-code file",
+            note = "An error in place of a .bgcode file that is not Prusa's binary G-code."
+        )
+    );
     let u16_at = |bytes: &[u8], at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
     let u32_at = |bytes: &[u8], at: usize| {
         u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
@@ -338,7 +411,11 @@ pub fn binary<S: FileSource + ?Sized>(
         }
     }
     Ok(Found {
-        title: "Binary G-code".into(),
+        title: words!(
+            models_bgcode_title = "Binary G-code",
+            note = "The title of the preview of Prusa's binary G-code (.bgcode), a 3D print's instructions."
+        )
+        .say(),
         picture: best.and_then(|(_, bytes)| crate::decoded(&bytes, side)),
         details: facts.into_details(),
         ..Found::default()
