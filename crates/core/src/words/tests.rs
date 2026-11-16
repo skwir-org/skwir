@@ -238,3 +238,31 @@ fn a_folder_is_named_bare_its_controls_shown() {
     super::said_arg(&Arg::Folder("x\u{202e}y".into()), "en", &[], &mut out);
     assert_eq!(out, "x⟨RLO⟩y");
 }
+
+/// An error's chain is said link by link in the reader's language: a link
+/// written with `words!` and a system's error by its kind; any other as it
+/// is; English to logs and agents.
+#[test]
+fn an_error_is_said_link_by_link_in_the_reader_s_language() {
+    let error = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        .context(crate::words!(
+            test_unreadable = "“{ $what }” could not be read",
+            what = "notes"
+        ))
+        .context("the plan stopped");
+    let said = Words::of_error(error);
+    assert_eq!(
+        said.english(),
+        "the plan stopped: “notes” could not be read: permission denied"
+    );
+    // Text that is no message is as written; a message and the system's
+    // words are said, here in the pseudo-language.
+    assert_eq!(
+        said.say_in(&langs(&[PSEUDO, "en"])),
+        "the plan stopped: [“‹notes›” çööüüļd ñööt béé rééáád]: [péérmííššííööñ dééñííééd]"
+    );
+    // As an error, words are its message, said where it is said.
+    let failed: anyhow::Error = crate::words!(test_failed = "It failed").into();
+    assert_eq!(failed.to_string(), "It failed");
+    assert!(failed.downcast_ref::<Words>().is_some());
+}

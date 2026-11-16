@@ -46,6 +46,21 @@ pub struct Words(Inner);
 enum Inner {
     Message(&'static Message, Arc<[(&'static str, Arg)]>),
     Written(Cow<'static, str>),
+    /// An error, each link of its chain said in the reader's language
+    /// where it is words (`Words::of_error`).
+    Error(Failure),
+}
+
+/// An error held as words: its chain, said link by link where it is said
+/// (`Words::of_error`, `Arg::Error`).
+#[derive(Clone, Debug)]
+pub struct Failure(Arc<anyhow::Error>);
+
+impl PartialEq for Failure {
+    /// The same error, not two alike.
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// An argument of a message, typed: each said as its type says it in the
@@ -70,6 +85,9 @@ pub enum Arg {
     Kind(&'static str),
     /// Words in words: a plan's title in a toast.
     Words(Box<Words>),
+    /// An error, said link by link in the reader's language (what a step
+    /// could not do, then why).
+    Error(Failure),
 }
 
 /// A name, for `Arg::Name`.
@@ -165,6 +183,18 @@ impl From<Words> for Arg {
     }
 }
 
+impl From<anyhow::Error> for Arg {
+    fn from(error: anyhow::Error) -> Self {
+        Arg::Error(Failure(Arc::new(error)))
+    }
+}
+
+impl From<&Arc<anyhow::Error>> for Arg {
+    fn from(error: &Arc<anyhow::Error>) -> Self {
+        Arg::Error(Failure(Arc::clone(error)))
+    }
+}
+
 macro_rules! count_from {
     ($($t:ty),*) => {$(
         impl From<$t> for Arg {
@@ -187,11 +217,19 @@ impl Words {
         Words(Inner::Written(text.into()))
     }
 
-    /// Its message, `None` for text as written.
+    /// An error as words: its chain, outermost first, joined by `: `, each
+    /// link in the reader's language where it is words (a context written
+    /// with `words!`, a system's error by its kind, `op::io_words`), else
+    /// as its own text, the error's number left out.
+    pub fn of_error(error: anyhow::Error) -> Self {
+        Words(Inner::Error(Failure(Arc::new(error))))
+    }
+
+    /// Its message, `None` for text as written or an error.
     pub fn message_of(&self) -> Option<&'static Message> {
         match &self.0 {
             Inner::Message(message, _) => Some(message),
-            Inner::Written(_) => None,
+            Inner::Written(_) | Inner::Error(_) => None,
         }
     }
 
@@ -229,6 +267,7 @@ impl Words {
     fn say_into(&self, out: &mut String, languages: &[String]) {
         let (message, args) = match &self.0 {
             Inner::Written(text) => return out.push_str(text),
+            Inner::Error(failure) => return say_error(&failure.0, languages, out),
             Inner::Message(message, args) => (*message, args),
         };
         if languages.first().is_some_and(|first| first == PSEUDO) {
@@ -310,7 +349,32 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Size(bytes) => out.push_str(&crate::fs::size_said(*bytes)),
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
+        Arg::Error(failure) => say_error(&failure.0, languages, out),
     }
+}
+
+thread_local! {
+    /// The languages words are said in while an error's chain is written
+    /// out (`say_error`): a link that is words says itself in them through
+    /// `Display`. Outside, `Display` is English.
+    static SAYING_IN: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `error`'s chain, outermost first, joined by `: `, in `languages`.
+fn say_error(error: &anyhow::Error, languages: &[String], out: &mut String) {
+    let before = SAYING_IN.with_borrow_mut(|saying| saying.replace(languages.to_vec()));
+    let mut first = true;
+    for link in error.chain() {
+        if !first {
+            out.push_str(": ");
+        }
+        first = false;
+        match link.downcast_ref::<std::io::Error>() {
+            Some(io) => crate::op::io_words(io).say_into(out, languages),
+            None => out.push_str(&link.to_string()),
+        }
+    }
+    SAYING_IN.with_borrow_mut(|saying| *saying = before);
 }
 
 /// `name` quoted as `language` quotes: “…” in English, « … » in French
@@ -434,11 +498,19 @@ fn pseudo(english: &str) -> String {
 }
 
 impl fmt::Display for Words {
-    /// In English: what a log, an error's chain and `{}` read.
+    /// In English: what a log and `{}` read. While an error's chain is said
+    /// (`Words::of_error`, `Arg::Error`), in the languages it is said in:
+    /// words that are a link of it say themselves there.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.english())
+        let said =
+            SAYING_IN.with_borrow(|saying| saying.as_ref().map(|languages| self.say_in(languages)));
+        f.write_str(&said.unwrap_or_else(|| self.english()))
     }
 }
+
+/// Words are an error: written with `words!`, a step's failure is said in
+/// the reader's language (`Err(words!(…).into())`, `.context(words!(…))`).
+impl std::error::Error for Words {}
 
 impl From<&str> for Words {
     /// Transitional (PLAN.md, step E): text not yet a message, shown as it

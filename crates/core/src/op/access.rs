@@ -911,7 +911,7 @@ impl super::Effect for SetAccess {
         };
         let top = match sys::stat(&path, true) {
             Ok(top) => top,
-            Err(e) => return conflict(super::io_words(&e)),
+            Err(e) => return conflict(super::io_words(&e).english()),
         };
         let me = sys::me();
         if let Some(why) = refused(

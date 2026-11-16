@@ -123,11 +123,11 @@ pub fn said(error: &anyhow::Error) -> String {
     said_of(error.chain())
 }
 
-/// The links of an error's chain, said as [`said`] says them.
+/// The links of an error's chain, said as [`said`] says them, in English.
 fn said_of<'a>(links: impl Iterator<Item = &'a (dyn std::error::Error + 'static)>) -> String {
     links
         .map(|cause| match cause.downcast_ref::<std::io::Error>() {
-            Some(io) => io_words(io),
+            Some(io) => io_words(io).english(),
             None => cause.to_string(),
         })
         .collect::<Vec<_>>()
@@ -182,33 +182,34 @@ pub fn reason_after(error: &anyhow::Error, change: &Change) -> Option<String> {
 }
 
 /// A system's error in words: by its kind where the kind says it (the
-/// same words on every system), else its own message, its number left out.
-pub fn io_words(error: &std::io::Error) -> String {
+/// same words on every system, said in the reader's language), else its
+/// own message, as the system wrote it, its number left out.
+pub fn io_words(error: &std::io::Error) -> crate::words::Words {
+    use crate::words;
     use std::io::ErrorKind as K;
-    let words = match error.kind() {
-        K::PermissionDenied => "permission denied",
-        K::NotFound => "it is not there any more",
-        K::AlreadyExists => "something of that name is already there",
-        K::StorageFull => "the drive is full",
-        K::QuotaExceeded => "the disk quota is used up",
-        K::FileTooLarge => "the file is too large for that drive",
-        K::ReadOnlyFilesystem => "the drive is read-only",
-        K::InvalidFilename => "the name is too long, or not allowed there",
-        K::DirectoryNotEmpty => "the folder is not empty",
-        K::ResourceBusy | K::ExecutableFileBusy => "it is in use",
-        K::NotADirectory => "a part of its path is not a folder",
-        K::IsADirectory => "it is a folder",
-        K::StaleNetworkFileHandle => "the network share went away",
-        K::TimedOut => "the drive did not answer in time",
+    match error.kind() {
+        K::PermissionDenied => words!(io_denied = "permission denied"),
+        K::NotFound => words!(io_gone = "it is not there any more"),
+        K::AlreadyExists => words!(io_taken = "something of that name is already there"),
+        K::StorageFull => words!(io_full = "the drive is full"),
+        K::QuotaExceeded => words!(io_quota = "the disk quota is used up"),
+        K::FileTooLarge => words!(io_too_large = "the file is too large for that drive"),
+        K::ReadOnlyFilesystem => words!(io_read_only = "the drive is read-only"),
+        K::InvalidFilename => words!(io_bad_name = "the name is too long, or not allowed there"),
+        K::DirectoryNotEmpty => words!(io_not_empty = "the folder is not empty"),
+        K::ResourceBusy | K::ExecutableFileBusy => words!(io_busy = "it is in use"),
+        K::NotADirectory => words!(io_not_folder = "a part of its path is not a folder"),
+        K::IsADirectory => words!(io_is_folder = "it is a folder"),
+        K::StaleNetworkFileHandle => words!(io_share_gone = "the network share went away"),
+        K::TimedOut => words!(io_timed_out = "the drive did not answer in time"),
         _ => {
             let text = error.to_string();
-            return match text.rfind(" (os error ") {
+            words::Words::as_written(match text.rfind(" (os error ") {
                 Some(at) if text.ends_with(')') => text[..at].to_owned(),
                 _ => text,
-            };
+            })
         }
-    };
-    words.to_owned()
+    }
 }
 
 /// Whether `name` can name an entry inside a directory: not empty, not `.`
@@ -1575,12 +1576,12 @@ mod tests {
             "“b.txt” could not be moved to “locked”: permission denied"
         );
         let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
-        assert_eq!(io_words(&full), "the drive is full");
+        assert_eq!(io_words(&full).english(), "the drive is full");
         let other = std::io::Error::other("the helper stopped");
-        assert_eq!(io_words(&other), "the helper stopped");
+        assert_eq!(io_words(&other).english(), "the helper stopped");
         #[cfg(target_os = "linux")]
         assert_eq!(
-            io_words(&std::io::Error::from_raw_os_error(71)),
+            io_words(&std::io::Error::from_raw_os_error(71)).english(),
             "Protocol error",
             "its number left out"
         );

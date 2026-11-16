@@ -19077,3 +19077,25 @@ catalog (step G), on a `dist` build.
 
 **Checked:** clippy on skwir-plugin-trash; its tests and the binary's
 plugins_toggle test pass; `just words --check`.
+
+## 2026-11-16: An error said in the reader's language (ADR-139, step E's first part)
+
+- **`Words` is an error type.** `Err(words!(…).into())` and
+  `.context(words!(…))` make errors whose words are messages, and a
+  downcast still finds what is inside.
+- **`Words::of_error` and `Arg::Error`** hold an error and say its
+  chain, outermost first, joined by `: `, each link in the reader's
+  language:
+  - a link written with `words!`;
+  - a system's error by its kind, through `op::io_words`, now 14
+    messages (`crates/core/l10n/en.ftl`);
+  - any other link as it is, its error's number left out.
+- **How a link reaches the reader's language:** while a chain is said,
+  the reader's languages are set for the thread, and a `Words` link's
+  `Display` says itself in them. Outside, `Display` is English, for logs
+  and agents.
+- **`op::said`** still gives English, the same as before.
+
+**Checked:** `cargo nextest run -p skwir-core` (859 passed), with a new
+test of a chain said in the pseudo-language; clippy on skwir-core;
+`cargo check --tests` of the default members.

@@ -110,6 +110,14 @@ sentence, never a sentence assembled from pieces.
   error's kind, a plan's undo, a provider's absence).
 - **An error is data with words**, not words: what the caller needs to
   act on (refused, missing, busy, not yet on this system) is its kind.
+- **An error's words are `Words`**: `Err(words!(…).into())`, or
+  `.context(words!(…))`, a downcast still finding what is inside. What
+  shows an error says it with `Words::of_error` or as an `Arg::Error`:
+  its chain, link by link, in the reader's language (a link written with
+  `words!`, a system's error by its kind, `op::io_words`), any other link
+  as it is. Its `Display` is English, for logs, but while a chain is said,
+  each link that is words says itself in the reader's language. Never
+  format an error with `{:#}` into what the window shows.
 
 ## Catalogs
 
