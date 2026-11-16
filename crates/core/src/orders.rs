@@ -397,7 +397,11 @@ impl Orders {
 pub(crate) fn register(app: &App) {
     app.settings.declare(SettingSpec::data(
         ORDERS,
-        "The orders places remember (ADR-132), each { at, key, ascending, group, group_ascending }: shown so in every pane",
+        crate::words!(
+            orders_kept = "The orders places remember (ADR-132), each { $fields }: shown so in every pane",
+            fields = "{ at, key, ascending, group, group_ascending }",
+            note = "What a setting holds, read in the settings file and by agents: the fields of each record, as written."
+        ),
         toml::Value::Array(Vec::new()),
     ));
     apply(app);
@@ -522,7 +526,11 @@ pub(crate) fn save(app: &App) {
         if let Err(error) = app.settings.save() {
             app.notify(
                 NotifyLevel::Error,
-                format!("The order was not remembered: {error:#}"),
+                crate::words!(
+                    orders_not_saved = "The order was not remembered: { $error }",
+                    error = error,
+                    note = "A folder's order was chosen to be remembered, but the settings could not be written: why follows."
+                ),
             );
         }
     };

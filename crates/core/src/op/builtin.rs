@@ -21,15 +21,261 @@ use super::{
 };
 use crate::fs::stat::{id_of, named};
 use crate::os_path::PathArg;
+use crate::words;
+use crate::words::{Name, Words};
 
 fn pending(reversible: bool) -> StepStatus {
     StepStatus::Pending { reversible }
 }
 
-fn conflict(reason: impl Into<String>) -> StepStatus {
+/// A step's conflict, said here: its reason is text (`StepStatus`).
+fn conflict(reason: impl Into<Words>) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.into(),
+        reason: reason.into().say(),
     }
+}
+
+/// A step's conflict that is an error: said link by link.
+fn conflict_of(error: impl Into<anyhow::Error>) -> StepStatus {
+    conflict(Words::of_error(error.into()))
+}
+
+/// `path` by its name, for a message (`display_name`).
+fn name_of(path: &Path) -> Name {
+    Name(display_name(path))
+}
+
+/// Why a step does not go on: its name is taken where it goes.
+fn already_there(path: &Path) -> Words {
+    words!(
+        op_already_there = "{ $name } is already there",
+        name = name_of(path),
+        note = "Why a step of an action does not go on: a file of that name is where it goes."
+    )
+}
+
+/// Why a step does not go on: what it goes into is no folder.
+fn not_a_folder(path: &Path) -> Words {
+    words!(
+        op_not_a_folder = "{ $name } is not a folder",
+        name = name_of(path),
+        note = "Why a step of an action does not go on: what it goes into, or acts on as a folder, is a file."
+    )
+}
+
+/// Why a restore does not go on: another file took the place it goes back
+/// to.
+fn there_again(path: &Path) -> Words {
+    words!(
+        op_there_again = "{ $name } is there again: rename or move it first",
+        name = name_of(path),
+        note = "Why a file is not put back from the trash: a file of its name is where it came from now."
+    )
+}
+
+/// Why a step on the trash does not go on: the file is not there.
+fn not_in_trash(path: &Path) -> Words {
+    words!(
+        op_not_in_trash = "{ $name } is not in the trash",
+        name = name_of(path),
+        note =
+            "Why a step on a file of the trash does not go on: it is not in the trash (any more)."
+    )
+}
+
+/// What a copy of `src` could not do, its why after it (`Couldnt`).
+fn not_copied(src: &Path) -> Couldnt {
+    Couldnt::new(
+        src,
+        words!(
+            op_not_copied = "{ $name } could not be copied",
+            name = name_of(src),
+            note = "What a step could not do; why follows."
+        ),
+    )
+}
+
+/// What a restore of `path` could not do, its why after it (`Couldnt`).
+fn not_restored(path: &Path) -> Couldnt {
+    Couldnt::new(
+        path,
+        words!(
+            op_not_restored = "{ $name } could not be restored",
+            name = name_of(path),
+            note = "What a step putting a file back from the trash could not do; why follows."
+        ),
+    )
+}
+
+/// Why a step on a trash's record does not go on: the file is none.
+fn no_record(info: &Path) -> Words {
+    words!(
+        op_no_record = "{ $name } is no trash's record",
+        name = name_of(info),
+        note = "Why a step on the trash does not go on: the file named as what the trash keeps of an item (its .trashinfo) is not one."
+    )
+}
+
+/// What could not be read of a trash's record, its why after it.
+fn record_unread(info: &Path) -> Words {
+    words!(
+        op_record_unread = "the trash's record { $name } could not be read",
+        name = name_of(info),
+        note = "What a step on the trash could not do: read what the trash keeps of an item (its .trashinfo); why follows."
+    )
+}
+
+/// What could not be written of a trash's record, its why after it.
+fn record_unwritten(info: &Path) -> Words {
+    words!(
+        op_record_unwritten = "the trash's record { $name } could not be written",
+        name = name_of(info),
+        note = "What a step on the trash could not do: write what the trash keeps of an item (its .trashinfo); why follows."
+    )
+}
+
+/// What a folder a step makes could not be, its why after it.
+fn folder_not_made(path: &Path) -> Words {
+    words!(
+        op_folder_not_made = "the folder { $name } could not be made",
+        name = name_of(path),
+        note = "What a step could not do; why follows."
+    )
+}
+
+/// What a folder a step makes, at `path`, could not be, its why after it.
+fn folder_path_not_made(path: &Path) -> Words {
+    words!(
+        op_folder_path_not_made = "the folder “{ $path }” could not be made",
+        path = path.display().to_string(),
+        note = "What a step could not do: make a folder, by its path; why follows."
+    )
+}
+
+/// Why a folder is not made, or put back: something else has its name.
+fn there_not_a_folder(path: &Path) -> Words {
+    words!(
+        op_there_not_a_folder = "{ $name } is there, and is not a folder",
+        name = name_of(path),
+        note = "Why a folder is not made, or put back: a file has its name."
+    )
+}
+
+/// Why a step does not go on: the folder it puts something in is gone.
+fn no_folder_to_go_in() -> Words {
+    words!(
+        op_no_folder_to_go_in = "the folder it goes in is not there",
+        note = "Why a step of an action does not go on: the folder it makes or puts something in is gone."
+    )
+}
+
+/// Why a step does not go on: what it acts on is gone.
+fn no_longer_there(path: &Path) -> Words {
+    words!(
+        op_no_longer_there = "{ $name } is no longer there",
+        name = name_of(path),
+        note = "Why a step of an action does not go on: the file it acts on is gone."
+    )
+}
+
+/// What removing `path` could not do, its why after it (`Couldnt`).
+fn not_removed(path: &Path) -> Couldnt {
+    Couldnt::new(
+        path,
+        words!(
+            op_not_removed = "{ $name } could not be removed",
+            name = name_of(path),
+            note = "What a step could not do; why follows."
+        ),
+    )
+}
+
+/// Why a folder is not removed, or taken back: Undo could not put back
+/// what it holds.
+fn foreign_folder() -> Words {
+    words!(
+        op_foreign_folder = "this folder belongs to another user and its permissions would prevent Undo from restoring its contents",
+        note = "Why a step does not remove a folder: it is another user's, and Undo could not put back what it holds."
+    )
+}
+
+/// Why a folder is not moved or copied: it would go inside itself.
+fn into_itself(moved: bool) -> Words {
+    if moved {
+        words!(
+            op_moved_into_itself = "a folder cannot be moved into itself",
+            note = "Why a move does not go on: the folder it goes to is inside the one moved."
+        )
+    } else {
+        words!(
+            op_copied_into_itself = "a folder cannot be copied into itself",
+            note = "Why a copy does not go on: the folder it goes to is inside the one copied."
+        )
+    }
+}
+
+/// Why a copy does not go on: it would be made onto what it copies.
+fn onto_itself() -> Words {
+    words!(
+        op_copied_onto_itself = "it would be copied onto itself",
+        note = "Why a copy does not go on: where it goes is the file copied."
+    )
+}
+
+/// Why a step does not go on: an earlier step of its plan puts something
+/// where it goes.
+fn there_by_earlier_step(path: &Path) -> Words {
+    words!(
+        op_there_by_earlier_step = "{ $name } is already there, by an earlier step",
+        name = name_of(path),
+        note = "Why a step of an action does not go on: a step before it in the same action puts a file of that name where it goes."
+    )
+}
+
+/// Why a step on the trash does not go on: the trash could not be read
+/// (`error`, as its library says it).
+fn trash_unread(error: &trash::Error) -> Words {
+    words!(
+        op_trash_unread = "the trash could not be read: { $error }",
+        error = error.to_string(),
+        note = "Why a step on the trash does not go on. error: why, as the system's trash said it."
+    )
+}
+
+/// What could not be read of the trash, its why after it.
+fn trash_unread_here() -> Words {
+    words!(
+        op_trash_unread_context = "the trash could not be read",
+        note = "What a step on the trash could not do; why follows."
+    )
+}
+
+/// Why a restore failed: what it put back was gone as soon as it was.
+fn went_missing_restored(path: &Path) -> Words {
+    words!(
+        op_went_missing_restored = "{ $name } went missing as it was restored",
+        name = name_of(path),
+        note = "Why a restore failed: the file put back was gone as soon as it was."
+    )
+}
+
+/// Why a file is not put in the trash: it is there already.
+fn in_trash_already(path: &Path) -> Words {
+    words!(
+        op_in_trash_already = "{ $name } is in the trash already",
+        name = name_of(path),
+        note = "Why a file is not put in the trash: it is in the trash."
+    )
+}
+
+/// Why a step does not go on: the file is in the trash, where a step that
+/// is no restore does not reach.
+fn in_the_trash_first(path: &Path) -> Words {
+    words!(
+        op_in_trash_restore_first = "{ $name } is in the trash: restore it first",
+        name = name_of(path),
+        note = "Why a step does not act on a file: it is in the trash."
+    )
 }
 
 fn exists(p: &Path) -> bool {
@@ -41,7 +287,7 @@ fn file_name(p: &Path) -> OsString {
 }
 
 fn invalid_name(name: &OsStr) -> Option<StepStatus> {
-    valid_file_name(name).err().map(|e| conflict(e.to_string()))
+    valid_file_name(name).err().map(conflict_of)
 }
 
 /// How the destination relates to the entry being transferred. A file's
@@ -80,7 +326,12 @@ fn canonical_entry(path: &Path) -> std::io::Result<PathBuf> {
 fn entry_identity(path: &Path) -> std::io::Result<crate::entry::FileId> {
     let meta = std::fs::symlink_metadata(path)?;
     crate::fs::stat::identity(path, &meta)
-        .ok_or_else(|| std::io::Error::other("the entry's identity could not be read"))
+        .ok_or_else(|| {
+            std::io::Error::other(words!(
+                op_identity_unread = "the entry's identity could not be read",
+                note = "Why a step does not go on: what tells a file apart from others (its device and inode) could not be read."
+            ))
+        })
 }
 
 /// Whether two spellings in one directory name one entry, given that both
@@ -98,9 +349,11 @@ fn same_spelling(source: &OsStr, target: &OsStr, names: &[OsString]) -> std::io:
     if names.len() == 1 {
         return Ok(true);
     }
-    Err(std::io::Error::other(
-        "the spellings of this file's hard links could not be distinguished",
-    ))
+    Err(std::io::Error::other(words!(
+        op_spellings_undistinguished =
+            "the spellings of this file's hard links could not be distinguished",
+        note = "Why a step does not go on: on a drive that ignores case, two names of one file could not be told apart."
+    )))
 }
 
 fn same_entry(source: &Path, destination: &Path) -> std::io::Result<bool> {
@@ -231,16 +484,29 @@ fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
 /// move to another.
 fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
     sys::rename_noreplace(from, to).with_context(|| {
-        let name = display_name(from);
-        let folder = to.parent().map(display_name).unwrap_or_default();
+        let name = name_of(from);
+        let folder = || Name(to.parent().map(display_name).unwrap_or_default());
         let words = if from.parent() == to.parent() {
-            format!("“{name}” could not be renamed “{}”", display_name(to))
+            words!(
+                op_not_renamed = "{ $name } could not be renamed { $new }",
+                name = name,
+                new = name_of(to),
+                note = "What a step could not do: a file's name and the new name it was to take; why follows."
+            )
         } else if from.file_name() == to.file_name() {
-            format!("“{name}” could not be moved to “{folder}”")
+            words!(
+                op_not_moved = "{ $name } could not be moved to { $folder }",
+                name = name,
+                folder = folder(),
+                note = "What a step could not do: a file and the folder it was to go to, by their names; why follows."
+            )
         } else {
-            format!(
-                "“{name}” could not be moved to “{folder}” as “{}”",
-                display_name(to)
+            words!(
+                op_not_moved_as = "{ $name } could not be moved to { $folder } as { $new }",
+                name = name,
+                folder = folder(),
+                new = name_of(to),
+                note = "What a step could not do: a file, the folder it was to go to and the name it was to take there; why follows."
             )
         };
         Couldnt::new(from, words)
@@ -287,7 +553,7 @@ fn along_conflict(ctx: &StepContext, along: &[Along]) -> Option<StepStatus> {
     along
         .iter()
         .find(|a| ctx.exists(&a.to))
-        .map(|a| conflict(format!("“{}” is already there", display_name(&a.to))))
+        .map(|a| conflict(already_there(&a.to)))
 }
 
 /// Rename each companion to its place (making a companions' folder, `.ts`,
@@ -415,20 +681,16 @@ impl super::Effect for Rename {
             Ok(src) if src == target => StepStatus::AlreadyDone,
             // An earlier step of the plan puts something there (two files
             // given one name).
-            Ok(_) if ctx.made(&target) => {
-                conflict(format!("“{}” is already there", display_name(&target)))
-            }
+            Ok(_) if ctx.made(&target) => conflict(already_there(&target)),
             Ok(src) => match self.classify(&src, &target, ctx) {
                 RenameTarget::Free | RenameTarget::Respelled => {
                     along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
                 }
                 RenameTarget::Spelled => StepStatus::AlreadyDone,
-                RenameTarget::Taken => {
-                    conflict(format!("“{}” is already there", display_name(&target)))
-                }
+                RenameTarget::Taken => conflict(already_there(&target)),
             },
             Err(_) if id_of(&target) == Some(self.entry.id) => StepStatus::AlreadyDone,
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -445,20 +707,22 @@ impl super::Effect for Rename {
                 let respelled = || {
                     Couldnt::new(
                         &src,
-                        format!(
-                            "“{}” could not be renamed “{}”",
-                            display_name(&src),
-                            display_name(&target)
+                        words!(
+                            op_not_renamed = "{ $name } could not be renamed { $new }",
+                            name = name_of(&src),
+                            new = name_of(&target),
+                            note = "What a step could not do: a file's name and the new name it was to take; why follows."
                         ),
                     )
                 };
                 sys::rename_noreplace(&src, &parked).with_context(respelled)?;
                 if let Err(e) = sys::rename_noreplace(&parked, &target) {
                     sys::rename_noreplace(&parked, &src).with_context(|| {
-                        format!(
-                            "“{}” was left named “{}”",
-                            display_name(&src),
-                            display_name(&parked)
+                        words!(
+                            op_left_parked = "{ $name } was left named { $parked }",
+                            name = name_of(&src),
+                            parked = name_of(&parked),
+                            note = "What a rename that changes only the case of a name left behind when it failed halfway: the file under a name of its own making; why follows."
                         )
                     })?;
                     ctx.forget_listed(dir);
@@ -574,10 +838,7 @@ impl super::Effect for Move {
             return invalid;
         }
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
-            ));
+            return conflict(not_a_folder(&self.dest_dir));
         }
         // A file of the trash leaves it as a restore does; within the
         // trash, only a trashed folder's files move.
@@ -595,9 +856,9 @@ impl super::Effect for Move {
                 match transfer_target(&src, &target) {
                     Ok(TransferTarget::SameEntry) => return StepStatus::AlreadyDone,
                     Ok(TransferTarget::InsideSource) => {
-                        return conflict("a folder cannot be moved into itself");
+                        return conflict(into_itself(true));
                     }
-                    Err(error) => return conflict(error.to_string()),
+                    Err(error) => return conflict_of(error),
                     Ok(TransferTarget::Separate) => {}
                 }
                 // A batch placed its copy (ADR-078): apply removes the original.
@@ -605,7 +866,7 @@ impl super::Effect for Move {
                     return pending(true);
                 }
                 if ctx.exists(&target) {
-                    return conflict(format!("“{}” is already there", display_name(&target)));
+                    return conflict(already_there(&target));
                 }
                 along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
             }
@@ -621,7 +882,7 @@ impl super::Effect for Move {
             {
                 StepStatus::AlreadyDone
             }
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -635,7 +896,7 @@ impl super::Effect for Move {
         let target = self.target(&src);
         match transfer_target(&src, &target)? {
             TransferTarget::SameEntry => return Ok(None),
-            TransferTarget::InsideSource => anyhow::bail!("a folder cannot be moved into itself"),
+            TransferTarget::InsideSource => anyhow::bail!(into_itself(true)),
             TransferTarget::Separate => {}
         }
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
@@ -776,10 +1037,11 @@ fn move_entry(
                 // whole, so that nothing looks lost.
                 remove_original(src).with_context(|| OriginalStays {
                     whole: state_of(src) == *before,
-                    said: format!(
-                        "“{}” was copied whole to “{}”, but its original could not all be removed",
-                        display_name(src),
-                        dest_dir.display()
+                    said: words!(
+                        op_original_stays = "{ $name } was copied whole to “{ $folder }”, but its original could not all be removed",
+                        name = name_of(src),
+                        folder = dest_dir.display().to_string(),
+                        note = "Why a move across drives ended with its original still there: the copy is whole. folder: the path of the folder it was moved to."
                     ),
                 })?;
                 for (companion, _) in companions {
@@ -812,12 +1074,12 @@ pub(super) struct OriginalStays {
     // Linux's trash makes (`failed_across`).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(super) whole: bool,
-    said: String,
+    said: Words,
 }
 
 impl std::fmt::Display for OriginalStays {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.said)
+        std::fmt::Display::fmt(&self.said, f)
     }
 }
 
@@ -835,10 +1097,11 @@ impl OriginalStays {
 pub(super) fn changed_since(path: &Path, dest_dir: &Path) -> anyhow::Error {
     anyhow::Error::msg(OriginalStays {
         whole: true,
-        said: format!(
-            "“{}” changed after it was copied to “{}”: its original stays where it was",
-            display_name(path),
-            dest_dir.display()
+        said: words!(
+            op_changed_after_copy = "{ $name } changed after it was copied to “{ $folder }”: its original stays where it was",
+            name = name_of(path),
+            folder = dest_dir.display().to_string(),
+            note = "Why a move across drives ended with its original still there: it was changed while it was copied. folder: the path of the folder it was moved to."
         ),
     })
 }
@@ -1003,22 +1266,19 @@ impl super::Effect for Copy {
             return invalid;
         }
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
-            ));
+            return conflict(not_a_folder(&self.dest_dir));
         }
         let src = match ctx.resolve(&self.entry) {
             Ok(s) => s,
-            Err(e) => return conflict(e.to_string()),
+            Err(e) => return conflict_of(e),
         };
         let target = self.target(&src);
         match transfer_target(&src, &target) {
-            Ok(TransferTarget::SameEntry) => return conflict("it would be copied onto itself"),
+            Ok(TransferTarget::SameEntry) => return conflict(onto_itself()),
             Ok(TransferTarget::InsideSource) => {
-                return conflict("a folder cannot be copied into itself");
+                return conflict(into_itself(false));
             }
-            Err(error) => return conflict(error.to_string()),
+            Err(error) => return conflict_of(error),
             Ok(TransferTarget::Separate) => {}
         }
         // A batch placed it there, a moment ago, verified (ADR-078).
@@ -1026,18 +1286,15 @@ impl super::Effect for Copy {
             return pending(true);
         }
         if ctx.made(&target) {
-            return conflict(format!(
-                "“{}” is already there, by an earlier step",
-                display_name(&target)
-            ));
+            return conflict(there_by_earlier_step(&target));
         }
         if ctx.exists(&target) {
             // Only a finished copy of this very source is "already done": an
             // unrelated folder that happens to share the name is a conflict.
             return match same_tree(&src, &target, self.preserve_attributes, false, ctx) {
                 Ok(true) => StepStatus::AlreadyDone,
-                Ok(false) => conflict(format!("“{}” is already there", display_name(&target))),
-                Err(e) => conflict(format!("{e:#}")),
+                Ok(false) => conflict(already_there(&target)),
+                Err(e) => conflict_of(e),
             };
         }
         along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
@@ -1058,10 +1315,11 @@ impl super::Effect for Copy {
             ctx,
         )?;
         let r = EntryRef::from_path(&target).ok_or_else(|| {
-            anyhow::anyhow!(
-                "the copy “{}” went missing as it was made",
-                display_name(&target)
-            )
+            anyhow::Error::new(words!(
+                op_copy_went_missing = "the copy { $name } went missing as it was made",
+                name = name_of(&target),
+                note = "Why a copy failed: what it made was gone as soon as it was made."
+            ))
         })?;
         // Where its volume keeps no trash, Undo removes the copy itself,
         // and what it placed beside it, only while all is as it was made;
@@ -1160,14 +1418,26 @@ pub fn made_stays(
     beside: &[MadeBeside],
     ctx: &StepContext,
 ) -> Option<String> {
+    made_stays_words(path, was_at, made_as, beside, ctx).map(|why| why.say())
+}
+
+/// [`made_stays`] in words.
+pub fn made_stays_words(
+    path: &Path,
+    was_at: &Path,
+    made_as: Option<&str>,
+    beside: &[MadeBeside],
+    ctx: &StepContext,
+) -> Option<Words> {
     if let Some(why) = mounted_there(path) {
         return Some(why);
     }
     let now = made_state(path);
     if made_as.is_none() || now.as_deref() != made_as {
-        return Some(format!(
-            "“{}” changed since it was made: Undo leaves it",
-            display_name(path)
+        return Some(words!(
+            op_made_changed = "{ $name } changed since it was made: Undo leaves it",
+            name = name_of(path),
+            note = "Why Undo does not remove what an action made (where no trash is kept): it was changed since."
         ));
     }
     let rules = ctx.companions();
@@ -1177,17 +1447,19 @@ pub fn made_stays(
         .into_iter()
         .find_map(|found| {
             let Some((at, b)) = made.iter().find(|(at, _)| *at == found.path) else {
-                return Some(format!(
-                    "“{}” is beside “{}” and was not made with it: Undo leaves them",
-                    display_name(&found.path),
-                    display_name(path)
+                return Some(words!(
+                    op_made_beside_other = "{ $companion } is beside { $name } and was not made with it: Undo leaves them",
+                    companion = name_of(&found.path),
+                    name = name_of(path),
+                    note = "Why Undo does not remove what an action made (where no trash is kept): a file that goes with it (its tags, its sidecar) is there and was not made by the action."
                 ));
             };
             (b.made_as.is_none() || made_state(at) != b.made_as).then(|| {
-                format!(
-                    "“{}” changed since it was made: Undo leaves it and “{}”",
-                    display_name(at),
-                    display_name(path)
+                words!(
+                    op_made_companion_changed = "{ $companion } changed since it was made: Undo leaves it and { $name }",
+                    companion = name_of(at),
+                    name = name_of(path),
+                    note = "Why Undo does not remove what an action made (where no trash is kept): a file made with it (its tags, its sidecar) was changed since."
                 )
             })
         })
@@ -1210,7 +1482,11 @@ pub fn remove_made(
     remove_recursive(path).with_context(|| {
         Couldnt::new(
             path,
-            format!("“{}” could not all be removed", display_name(path)),
+            words!(
+                op_not_all_removed = "{ $name } could not all be removed",
+                name = name_of(path),
+                note = "What a step could not do: remove a folder with all it holds; why follows."
+            ),
         )
     })?;
     for (companion, _) in companions {
@@ -1248,8 +1524,8 @@ pub struct Uncopy {
 
 impl Uncopy {
     /// Why the copy, now at `path`, stays ([`made_stays`]).
-    pub(super) fn stays(&self, path: &Path, ctx: &StepContext) -> Option<String> {
-        made_stays(
+    pub(super) fn stays(&self, path: &Path, ctx: &StepContext) -> Option<Words> {
+        made_stays_words(
             path,
             &self.entry.path,
             self.made_as.as_deref(),
@@ -1299,14 +1575,14 @@ impl super::Effect for Uncopy {
                 .stays(&path, ctx)
                 .map_or_else(|| pending(true), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let path = ctx.resolve(&self.entry)?;
         if !ctx.take_removed_ahead(&path) {
             if let Some(why) = self.stays(&path, ctx) {
-                anyhow::bail!("{why}");
+                anyhow::bail!(why);
             }
             remove_made(&path, &self.entry.path, &self.beside, ctx)?;
         }
@@ -1364,7 +1640,7 @@ impl Unmove {
     /// where the copy would go for good, it must be whole as it was
     /// copied too. Moved back by a batch already (ADR-078), what is there
     /// is the move back's.
-    fn step(&self, ctx: &StepContext) -> Result<&dyn Operation, String> {
+    fn step(&self, ctx: &StepContext) -> Result<&dyn Operation, Words> {
         if let Ok(src) = ctx.resolve(&self.back.entry)
             && ctx.placed_by_batch(&src, &self.back.target(&src))
         {
@@ -1378,9 +1654,10 @@ impl Unmove {
         match &self.copy_undo {
             CopyUndo::Trash(trash) => Ok(trash),
             CopyUndo::Uncopy(uncopy) if whole() => Ok(uncopy),
-            CopyUndo::Uncopy(_) => Err(format!(
-                "“{}” stayed where it was, changed since it was moved: Undo leaves it and its copy",
-                display_name(at)
+            CopyUndo::Uncopy(_) => Err(words!(
+                op_move_original_changed = "{ $name } stayed where it was, changed since it was moved: Undo leaves it and its copy",
+                name = name_of(at),
+                note = "Why Undo does not take back a move across drives whose original could not be removed: the original was changed since."
             )),
         }
     }
@@ -1428,7 +1705,7 @@ impl super::Effect for Unmove {
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        self.step(ctx).map_err(anyhow::Error::msg)?.apply(ctx)
+        self.step(ctx).map_err(anyhow::Error::new)?.apply(ctx)
     }
 }
 
@@ -1798,8 +2075,8 @@ fn copy_entry(
     ctx: &StepContext,
 ) -> anyhow::Result<CopyMade> {
     match transfer_target(src, target)? {
-        TransferTarget::SameEntry => anyhow::bail!("it would be copied onto itself"),
-        TransferTarget::InsideSource => anyhow::bail!("a folder cannot be copied into itself"),
+        TransferTarget::SameEntry => anyhow::bail!(onto_itself()),
+        TransferTarget::InsideSource => anyhow::bail!(into_itself(false)),
         TransferTarget::Separate => {}
     }
     let removable = crate::fs::volume::is_removable(dest_dir);
@@ -1928,16 +2205,7 @@ fn copy_staged(
                 attributes: false,
             });
         }
-        sys::rename_noreplace(&staged, target).with_context(|| {
-            Couldnt::new(
-                target,
-                format!(
-                    "“{}” could not be placed in “{}”",
-                    display_name(target),
-                    display_name(dest_dir)
-                ),
-            )
-        })?;
+        sys::rename_noreplace(&staged, target).with_context(|| not_placed(target, dest_dir))?;
         ctx.placed(&staged, target, mark);
         // The companions placed, or the copy taken back to be removed
         // from the staging folder.
@@ -1965,14 +2233,35 @@ fn copy_staged(
             continue;
         }
         if let Err(cleanup) = super::staging::remove_tree(&path) {
-            return Err(error.context(format!(
-                "a part of the copy is left in “{}” ({})",
-                path.display(),
-                super::io_words(&cleanup).english()
-            )));
+            return Err(error.context(part_left(&path, &cleanup)));
         }
     }
     Err(error)
+}
+
+/// What a copy could not place at `target` in `dest_dir`, its why after
+/// it (`Couldnt`).
+fn not_placed(target: &Path, dest_dir: &Path) -> Couldnt {
+    Couldnt::new(
+        target,
+        words!(
+            op_not_placed = "{ $name } could not be placed in { $folder }",
+            name = name_of(target),
+            folder = name_of(dest_dir),
+            note = "What a step could not do: put a copy made in its place; why follows."
+        ),
+    )
+}
+
+/// What a copy that failed left at `path`, which could not be removed
+/// (`cleanup`).
+fn part_left(path: &Path, cleanup: &std::io::Error) -> Words {
+    words!(
+        op_part_left = "a part of the copy is left in “{ $path }” ({ $why })",
+        path = path.display().to_string(),
+        why = super::io_words(cleanup),
+        note = "Said after why a copy failed: what it had made could not all be removed. path: where it is; why: why it stayed."
+    )
 }
 
 /// [`copy_staged`] where `dest_dir` moves nothing between its folders (a
@@ -1989,16 +2278,7 @@ fn copy_in_place(
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let placed_in = || {
-        Couldnt::new(
-            target,
-            format!(
-                "“{}” could not be placed in “{}”",
-                display_name(target),
-                display_name(dest_dir)
-            ),
-        )
-    };
+    let placed_in = || not_placed(target, dest_dir);
     if std::fs::symlink_metadata(target).is_ok() {
         return Err(
             anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
@@ -2022,8 +2302,7 @@ fn copy_in_place(
             for a in along_src.iter().filter(|a| !a.attributes) {
                 anyhow::ensure!(
                     std::fs::symlink_metadata(&a.to).is_err(),
-                    "“{}” is already there",
-                    display_name(&a.to)
+                    already_there(&a.to)
                 );
                 made.push(a.to.clone());
                 copy_recursive_with_attributes(&a.from, &a.to, true, pace, ctx)?;
@@ -2040,11 +2319,7 @@ fn copy_in_place(
             continue;
         }
         if let Err(cleanup) = super::staging::remove_tree(&path) {
-            return Err(error.context(format!(
-                "a part of the copy is left in “{}” ({})",
-                path.display(),
-                super::io_words(&cleanup).english()
-            )));
+            return Err(error.context(part_left(&path, &cleanup)));
         }
     }
     Err(error)
@@ -2146,9 +2421,7 @@ fn copy_file(
         if copied.is_err() {
             ctx.check_cancelled()?;
         }
-        let made = copied.with_context(|| {
-            Couldnt::new(src, format!("“{}” could not be copied", display_name(src)))
-        })?;
+        let made = copied.with_context(|| not_copied(src))?;
         // Counted whole, whatever the system said as it went: Wine's copy
         // says nothing, and its bytes were never counted, nor the plan
         // paused between its files. A clone's moved none (ADR-113).
@@ -2169,7 +2442,13 @@ fn copy_file(
     // Non-blocking, then checked: a file swapped for a FIFO since it was
     // listed must not block the executor in open(2).
     let sf = crate::fs::file::open_regular(src)
-        .with_context(|| format!("“{}” is no longer a file", display_name(src)))?;
+        .with_context(|| {
+            words!(
+                op_no_longer_a_file = "{ $name } is no longer a file",
+                name = name_of(src),
+                note = "Why a copy failed: what was listed as a file is something else now (a pipe, a folder)."
+            )
+        })?;
     let m = sf.metadata()?;
     // Cut short by the run this one retries: gone on from where its last
     // part reads as the source's, when the source is as it was then.
@@ -2233,9 +2512,8 @@ fn copy_file(
         // Should it fail partway, what it wrote may be gone on from.
         ctx.copying(dst, &m);
         let began = std::time::Instant::now();
-        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx).with_context(|| {
-            Couldnt::new(src, format!("“{}” could not be copied", display_name(src)))
-        })?;
+        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
+            .with_context(|| not_copied(src))?;
         // From a server, how fast it reads (its thumbnails' Automatic).
         crate::fs::reach::note_read(src, dst, end.saturating_sub(from), began.elapsed());
         // A mount may answer the end of a file its server stopped serving,
@@ -2243,11 +2521,13 @@ fn copy_file(
         // was, the copy was cut (or the source changed), not done. Retry
         // goes on, or starts again on a source changed.
         if end < m.len() {
-            return Err(
-                anyhow::anyhow!("{end} of its {} bytes could be read", m.len()).context(
-                    Couldnt::new(src, format!("“{}” could not be copied", display_name(src))),
-                ),
-            );
+            return Err(anyhow::Error::new(words!(
+                op_read_short = "{ $read } of its { $bytes } bytes could be read",
+                read = end,
+                bytes = m.len(),
+                note = "Why a copy failed: its source ended early (a server stopped serving it). read, bytes: how many bytes were read, how many it holds."
+            ))
+            .context(not_copied(src)));
         }
     }
     // Whole once closing it says so: a FUSE remote sends there what it
@@ -2275,16 +2555,18 @@ fn copy_file(
 /// refusal "no such file", which is no source gone.
 pub(super) fn finish(df: std::fs::File, src: &Path) -> anyhow::Result<()> {
     sys::close(df).map_err(|error| {
-        let refused = "its drive or server refused it as it was closed";
-        let refused = if error.kind() == std::io::ErrorKind::NotFound {
-            anyhow::anyhow!(refused)
-        } else {
-            anyhow::Error::new(error).context(refused)
+        let refused = || {
+            words!(
+                op_refused_on_close = "its drive or server refused it as it was closed",
+                note = "Why a copy failed: the drive or the server it was written to refused it whole once written."
+            )
         };
-        refused.context(Couldnt::new(
-            src,
-            format!("“{}” could not be copied", display_name(src)),
-        ))
+        let refused = if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow::Error::new(refused())
+        } else {
+            anyhow::Error::new(error).context(refused())
+        };
+        refused.context(not_copied(src))
     })
 }
 
@@ -2473,7 +2755,10 @@ fn copy_sparse(
                 }
                 #[cfg(not(unix))]
                 {
-                    anyhow::bail!("a file with holes is copied on Unix alone")
+                    anyhow::bail!(words!(
+                        op_holes_unix_only = "a file with holes is copied on Unix alone",
+                        note = "Why a copy failed: a file whose parts were never written (a sparse file) is copied as such on Unix only."
+                    ))
                 }
             };
             from += n as u64;
@@ -2581,15 +2866,25 @@ fn copy_recursive_with_attributes(
     } else if sys::is_fifo(kind) {
         // A named pipe has no content to copy; reading one would wait for a
         // writer forever. Make a new pipe, as `cp -R` does.
-        sys::make_fifo(dst, &m)
-            .with_context(|| format!("the pipe “{}” could not be made", display_name(dst)))?;
+        sys::make_fifo(dst, &m).with_context(|| {
+            words!(
+                op_pipe_not_made = "the pipe { $name } could not be made",
+                name = name_of(dst),
+                note = "What a copy of a named pipe could not do: make a new pipe in its place; why follows."
+            )
+        })?;
+    } else if sys::is_socket(kind) {
+        anyhow::bail!(words!(
+            op_socket_not_copied = "{ $name } is a socket, which cannot be copied",
+            name = name_of(src),
+            note = "Why a copy failed: a socket is a door to a running program, not a file."
+        ));
     } else {
-        let what = if sys::is_socket(kind) {
-            "a socket"
-        } else {
-            "a device"
-        };
-        anyhow::bail!("“{}” is {what}, which cannot be copied", display_name(src));
+        anyhow::bail!(words!(
+            op_device_not_copied = "{ $name } is a device, which cannot be copied",
+            name = name_of(src),
+            note = "Why a copy failed: a device file is a door to hardware, not a file."
+        ));
     }
     Ok(())
 }
@@ -2633,9 +2928,11 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
                 break;
             }
             Err(e) => {
-                return Err(e).context(
-                    "keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “Keep tags and attributes when copying” in Settings",
-                );
+                return Err(e).context(words!(
+                    op_attributes_refused = "keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “{ $setting }” in Settings",
+                    setting = crate::settings::keep_attributes_title(),
+                    note = "What a copy could not do, its why after it: write a file's tags and other extended attributes where it goes. setting: the setting's title. Begins in lower case."
+                ));
             }
         }
     }
@@ -2650,10 +2947,12 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
         crate::fs::hidden::made(&a.to);
     }
     if (aside.is_empty() || !own.is_empty()) && !rules.keep_attributes(dst, &own)? {
-        anyhow::bail!(
-            "keep tags and other attributes while copying: {} keeps no attributes, and nothing is set to keep them beside it; turn off “Keep tags and attributes when copying” in Settings to copy without them",
-            dst.parent().unwrap_or(dst).display()
-        );
+        anyhow::bail!(words!(
+            op_attributes_not_kept = "keep tags and other attributes while copying: { $folder } keeps no attributes, and nothing is set to keep them beside it; turn off “{ $setting }” in Settings to copy without them",
+            folder = dst.parent().unwrap_or(dst).display().to_string(),
+            setting = crate::settings::keep_attributes_title(),
+            note = "Why a copy failed: the drive it goes to keeps no tags or attributes, and no companion file is set to keep them. folder: the path copied into; setting: the setting's title. Begins in lower case."
+        ));
     }
     Ok(())
 }
@@ -2679,11 +2978,21 @@ fn merge_attributes<N: PartialEq>(
 /// tags and info among those kept.
 pub(super) fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
     kept_attributes(path)?.into_iter().map(|(name, value)| {
-        name.into_string().map(|name| (name, value)).map_err(|_| anyhow::anyhow!(
-            "an attribute of “{}” has a non-UTF-8 name, which the copy's attribute interface cannot preserve",
-            display_name(path)
-        ))
+        name.into_string().map(|name| (name, value)).map_err(|_| anyhow::Error::new(words!(
+            op_attribute_name_not_utf8 = "an attribute of { $name } has a non-UTF-8 name, which the copy's attribute interface cannot preserve",
+            name = name_of(path),
+            note = "Why a copy failed: an extended attribute of the file has a name that is not text."
+        )))
     }).collect()
+}
+
+/// What could not be read of `path`'s attributes, its why after it.
+fn attributes_unread(path: &Path) -> Words {
+    words!(
+        op_attributes_unread = "the tags and attributes of { $name } could not be read",
+        name = name_of(path),
+        note = "What a step could not do: read a file's extended attributes (its tags among them); why follows."
+    )
 }
 
 /// Kept attribute names are bytes. A directory removal's inverse retains
@@ -2693,23 +3002,14 @@ fn kept_attributes(path: &Path) -> anyhow::Result<Vec<(OsString, Vec<u8>)>> {
         Ok(names) => names,
         Err(error) if crate::fs::xattr::refused(&error) => return Ok(Vec::new()),
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "the tags and attributes of “{}” could not be read",
-                    display_name(path)
-                )
-            });
+            return Err(error).with_context(|| attributes_unread(path));
         }
     };
     let mut out = Vec::new();
     for name in names.into_iter().filter(|n| crate::fs::xattr::kept(n)) {
         // One removed since it was listed is not there to keep.
-        let Some(value) = crate::fs::xattr::get(path, &name).with_context(|| {
-            format!(
-                "the tags and attributes of “{}” could not be read",
-                display_name(path)
-            )
-        })?
+        let Some(value) =
+            crate::fs::xattr::get(path, &name).with_context(|| attributes_unread(path))?
         else {
             continue;
         };
@@ -2725,7 +3025,7 @@ fn remove_recursive(p: &Path) -> anyhow::Result<()> {
     if m.is_dir() {
         // Never into what is mounted there: a drive's files, a server's.
         if let Some(why) = mounted_there(p) {
-            anyhow::bail!("{why}");
+            anyhow::bail!(why);
         }
         std::fs::remove_dir_all(p).map_err(|e| {
             let error = anyhow::Error::new(e);
@@ -2735,11 +3035,18 @@ fn remove_recursive(p: &Path) -> anyhow::Result<()> {
             let shown = first
                 .strip_prefix(p.parent().unwrap_or(Path::new("")))
                 .unwrap_or(&first)
-                .display();
-            error.context(match count {
-                1 => format!("“{shown}” is left"),
-                n => format!("“{shown}” and {} more are left", n - 1),
-            })
+                .display()
+                .to_string();
+            error.context(words!(
+                op_left_after_removal = "{ $count ->
+                    [1] “{ $path }” is left
+                   *[other] “{ $path }” and { $more } more are left
+                }",
+                count = count,
+                path = shown,
+                more = count.saturating_sub(1),
+                note = "What a folder removed in part left: the first file still there (its path from the folder above) and how many more."
+            ))
         })?;
     } else {
         std::fs::remove_file(p)?;
@@ -2750,19 +3057,26 @@ fn remove_recursive(p: &Path) -> anyhow::Result<()> {
 /// Why `path` may not be removed or trashed whole: it is, or holds, the
 /// folder where a drive or a remote is mounted (ADR-077). A removal would
 /// reach into it, deleting a drive's files or a server's.
-fn mounted_there(path: &Path) -> Option<String> {
+fn mounted_there(path: &Path) -> Option<Words> {
     let points = crate::fs::volume::mounted_within(path);
     let point = points.first()?;
     Some(if point == path {
-        format!(
-            "“{}” is where a drive or a remote is mounted: eject it rather than delete it",
-            display_name(path)
+        words!(
+            op_mount_point =
+                "{ $name } is where a drive or a remote is mounted: eject it rather than delete it",
+            name = name_of(path),
+            note = "Why a folder is not deleted or put in the trash: a drive or a server's files are shown there."
         )
     } else {
-        format!(
-            "“{}” holds “{}”, where a drive or a remote is mounted: eject it first",
-            display_name(path),
-            point.strip_prefix(path).unwrap_or(point).display()
+        words!(
+            op_holds_mount_point = "{ $name } holds “{ $point }”, where a drive or a remote is mounted: eject it first",
+            name = name_of(path),
+            point = point
+                .strip_prefix(path)
+                .unwrap_or(point)
+                .display()
+                .to_string(),
+            note = "Why a folder is not deleted or put in the trash: a drive or a server's files are shown in a folder inside it. point: that folder's path from it."
         )
     })
 }
@@ -2811,6 +3125,16 @@ fn display_name(path: &Path) -> String {
 
 // ------------------------------------------------------------------ swap
 
+/// What a swap of `a` and `b` could not do, its why after it.
+fn not_swapped(a: &Path, b: &Path) -> Words {
+    words!(
+        op_not_swapped = "{ $a } and { $b } could not swap names",
+        a = name_of(a),
+        b = name_of(b),
+        note = "What a step could not do: exchange two files' names; why follows."
+    )
+}
+
 /// Atomically exchange two entries (bulk rename cycles).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Swap {
@@ -2842,14 +3166,17 @@ impl super::Effect for Swap {
             return StepStatus::AlreadyDone;
         }
         if cfg!(windows) {
-            return conflict("Windows cannot swap two names in one step");
+            return conflict(words!(
+                op_swap_windows = "Windows cannot swap two names in one step",
+                note = "Why a step that exchanges two files' names does not go on, on Windows."
+            ));
         }
         if let Some(trashed) = trashed(&self.a.path).or_else(|| trashed(&self.b.path)) {
             return trashed;
         }
         match (self.a.resolve(), self.b.resolve()) {
             (Ok(_), Ok(_)) => pending(true),
-            (Err(e), _) | (_, Err(e)) => conflict(e.to_string()),
+            (Err(e), _) | (_, Err(e)) => conflict_of(e),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -2864,22 +3191,10 @@ impl super::Effect for Swap {
                 pairs.push((a.from, a.to));
             }
         }
-        sys::exchange(&pa, &pb).with_context(|| {
-            format!(
-                "“{}” and “{}” could not swap names",
-                display_name(&pa),
-                display_name(&pb)
-            )
-        })?;
+        sys::exchange(&pa, &pb).with_context(|| not_swapped(&pa, &pb))?;
         for (from, to) in pairs {
             if exists(&to) {
-                sys::exchange(&from, &to).with_context(|| {
-                    format!(
-                        "“{}” and “{}” could not swap names",
-                        display_name(&from),
-                        display_name(&to)
-                    )
-                })?;
+                sys::exchange(&from, &to).with_context(|| not_swapped(&from, &to))?;
             } else {
                 rename_noreplace(&from, &to)?;
             }
@@ -2923,33 +3238,28 @@ impl super::Effect for Trash {
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if in_trash(&self.entry.path).is_some() {
-            return conflict(format!(
-                "“{}” is in the trash already",
-                display_name(&self.entry.path)
-            ));
+            return conflict(in_trash_already(&self.entry.path));
         }
         if keeps_no_trash(&self.entry.path) {
-            return conflict(format!(
-                "“{}” is in a network folder a program mounts, which keeps no trash",
-                display_name(&self.entry.path)
+            return conflict(words!(
+                op_no_trash_there =
+                    "{ $name } is in a network folder a program mounts, which keeps no trash",
+                name = name_of(&self.entry.path),
+                note = "Why a file is not put in the trash: its folder is a server's, mounted by a program (sshfs, rclone, GVfs), where no trash is kept."
             ));
         }
         match ctx.resolve(&self.entry) {
             Ok(path) => mounted_there(&path).map_or_else(|| pending(true), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = ctx.resolve(&self.entry)?;
         if let Some(why) = mounted_there(&src) {
-            anyhow::bail!("{why}");
+            anyhow::bail!(why);
         }
-        anyhow::ensure!(
-            in_trash(&src).is_none(),
-            "“{}” is in the trash already",
-            display_name(&src)
-        );
+        anyhow::ensure!(in_trash(&src).is_none(), in_trash_already(&src));
         ctx.forget_trash();
         let companions: Vec<PathBuf> = ctx
             .companions()
@@ -2960,7 +3270,11 @@ impl super::Effect for Trash {
         let put = trash_item(ctx, &src).with_context(|| {
             Couldnt::new(
                 &src,
-                format!("“{}” could not be moved to the trash", display_name(&src)),
+                words!(
+                    op_not_trashed = "{ $name } could not be moved to the trash",
+                    name = name_of(&src),
+                    note = "What a step could not do; why follows."
+                ),
             )
         })?;
         // Each an item of the trash of its own, restored with the file:
@@ -3054,15 +3368,19 @@ fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<TrashedAt> {
 #[cfg(target_os = "linux")]
 fn failed_across(error: anyhow::Error, item: &Path, info: &Path) -> anyhow::Error {
     if exists(item) && OriginalStays::in_part(&error) {
-        return error.context("all of it is in the trash");
+        return error.context(words!(
+            op_all_in_trash = "all of it is in the trash",
+            note = "Said after why a move into the trash on another drive stopped: part of the original went, and the trash holds all of it."
+        ));
     }
     if exists(item)
         && let Err(cleanup) = super::staging::remove_tree(item)
     {
-        return error.context(format!(
-            "a copy of it is left in “{}” ({})",
-            item.display(),
-            super::io_words(&cleanup).english()
+        return error.context(words!(
+            op_trash_copy_left = "a copy of it is left in “{ $path }” ({ $why })",
+            path = item.display().to_string(),
+            why = super::io_words(&cleanup),
+            note = "Said after why a move into the trash on another drive failed: its copy in the trash could not be removed. path: where it is; why: why it stayed."
         ));
     }
     let _ = std::fs::remove_file(info);
@@ -3079,15 +3397,10 @@ fn restore_listed(ctx: &StepContext, item: trash::TrashItem) -> anyhow::Result<(
     #[cfg(target_os = "linux")]
     {
         let info = PathBuf::from(&item.id);
-        let file = item_of_info(&info)
-            .ok_or_else(|| anyhow::anyhow!("“{}” is no trash's record", display_name(&info)))?;
+        let file = item_of_info(&info).ok_or_else(|| anyhow::Error::new(no_record(&info)))?;
         let to = item.original_path();
         std::fs::create_dir_all(&item.original_parent)?;
-        anyhow::ensure!(
-            !exists(&to),
-            "“{}” is there again: rename or move it first",
-            display_name(&to)
-        );
+        anyhow::ensure!(!exists(&to), there_again(&to));
         let moved = move_entry(ctx, &file, &to, &[])?;
         record_goes(ctx, &moved, &file, &info)?;
         Ok(())
@@ -3353,14 +3666,8 @@ impl Untrashed {
     /// (into a companions' folder made where needed, `.ts`), what the
     /// trash said of it with it.
     fn take(ctx: &StepContext, info: &Path, to: &Path) -> anyhow::Result<Self> {
-        let item = item_of_info(info)
-            .ok_or_else(|| anyhow::anyhow!("“{}” is no trash's record", display_name(info)))?;
-        let info_text = read_record(info).with_context(|| {
-            format!(
-                "the trash's record “{}” could not be read",
-                display_name(info)
-            )
-        })?;
+        let item = item_of_info(info).ok_or_else(|| anyhow::Error::new(no_record(info)))?;
+        let info_text = read_record(info).with_context(|| record_unread(info))?;
         if let Some(dir) = to.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -3389,9 +3696,8 @@ impl Untrashed {
     /// Back in the trash where it was, as the trash said; gone since it
     /// came back, there is nothing to put back, nor a record of nothing.
     fn put_back(&self, ctx: &StepContext) -> anyhow::Result<()> {
-        let item = item_of_info(&self.info).ok_or_else(|| {
-            anyhow::anyhow!("“{}” is no trash's record", display_name(&self.info))
-        })?;
+        let item =
+            item_of_info(&self.info).ok_or_else(|| anyhow::Error::new(no_record(&self.info)))?;
         if !exists(&item) {
             if !exists(&self.path) {
                 return Ok(());
@@ -3399,12 +3705,8 @@ impl Untrashed {
             move_entry(ctx, &self.path, &item, &[])?;
         }
         if !self.info.exists() {
-            std::fs::write(&self.info, &self.info_text).with_context(|| {
-                format!(
-                    "the trash's record “{}” could not be written",
-                    display_name(&self.info)
-                )
-            })?;
+            std::fs::write(&self.info, &self.info_text)
+                .with_context(|| record_unwritten(&self.info))?;
         }
         Ok(())
     }
@@ -3528,8 +3830,7 @@ fn merge(
         if exists(&dest) {
             anyhow::ensure!(
                 entry.file_type()?.is_dir() && dest.is_dir(),
-                "“{}” is there again: rename or move it first",
-                display_name(&dest)
+                there_again(&dest)
             );
             merge(ctx, &entry.path(), &dest, &inner, merged)?;
         } else {
@@ -3570,15 +3871,9 @@ impl super::Effect for Restore {
         if let Some(item) = self.landed_item() {
             return match (exists(&self.path), exists(item)) {
                 (true, false) => StepStatus::AlreadyDone,
-                (true, true) => conflict(format!(
-                    "“{}” is there again: rename or move it first",
-                    display_name(&self.path)
-                )),
+                (true, true) => conflict(there_again(&self.path)),
                 (false, true) => pending(true),
-                (false, false) => conflict(format!(
-                    "“{}” is not in the trash",
-                    display_name(&self.path)
-                )),
+                (false, false) => conflict(not_in_trash(&self.path)),
             };
         }
         if exists(&self.path) {
@@ -3587,51 +3882,38 @@ impl super::Effect for Restore {
             if let Some(item) = self.merging() {
                 return match clash(&item, &self.path) {
                     Ok(None) => pending(true),
-                    Ok(Some(taken)) => conflict(format!(
-                        "“{}” is there again: rename or move it first",
-                        display_name(&taken)
+                    Ok(Some(taken)) => conflict(there_again(&taken)),
+                    Err(e) => conflict(words!(
+                        op_unreadable = "{ $name } could not be read: { $error }",
+                        name = name_of(&item),
+                        error = anyhow::Error::new(e),
+                        note = "Why a step does not go on: what it acts on could not be read. error: why."
                     )),
-                    Err(e) => conflict(format!("“{}” could not be read: {e}", display_name(&item))),
                 };
             }
             // The item named still in the trash: another file took its
             // place since, which restoring it would not overwrite.
             if self.item.as_deref().is_some_and(Path::exists) {
-                return conflict(format!(
-                    "“{}” is there again: rename or move it first",
-                    display_name(&self.path)
-                ));
+                return conflict(there_again(&self.path));
             }
             return StepStatus::AlreadyDone;
         }
         match ctx.with_trash_near(&self.near(), |listing| self.find(listing)) {
             Ok(Some(_)) => pending(true),
-            Ok(None) => conflict(format!(
-                "“{}” is not in the trash",
-                display_name(&self.path)
-            )),
-            Err(e) => conflict(format!("the trash could not be read: {e}")),
+            Ok(None) => conflict(not_in_trash(&self.path)),
+            Err(e) => conflict(trash_unread(&e)),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let Some(item) = self.landed_item() {
-            rename_noreplace(item, &self.path).with_context(|| {
-                Couldnt::new(
-                    &self.path,
-                    format!("“{}” could not be restored", display_name(&self.path)),
-                )
-            })?;
+            rename_noreplace(item, &self.path).with_context(|| not_restored(&self.path))?;
             for companion in &self.landed {
                 if !exists(&companion.from) {
                     let _ = rename_noreplace(&companion.at, &companion.from);
                 }
             }
-            let r = EntryRef::from_path(&self.path).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "“{}” went missing as it was restored",
-                    display_name(&self.path)
-                )
-            })?;
+            let r = EntryRef::from_path(&self.path)
+                .ok_or_else(|| anyhow::Error::new(went_missing_restored(&self.path)))?;
             return Ok(Some(Box::new(Trash { entry: r })));
         }
         if let (Some(item), Some(info)) = (self.merging(), self.item.as_deref()) {
@@ -3660,22 +3942,13 @@ impl super::Effect for Restore {
             .with_trash_near(&self.near(), |listing| {
                 self.find(listing).and_then(|n| listing.take(n))
             })
-            .context("the trash could not be read")?
-            .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.path)))?;
+            .with_context(trash_unread_here)?
+            .ok_or_else(|| anyhow::Error::new(not_in_trash(&self.path)))?;
         let when = item.time_deleted;
-        restore_listed(ctx, item).with_context(|| {
-            Couldnt::new(
-                &self.path,
-                format!("“{}” could not be restored", display_name(&self.path)),
-            )
-        })?;
+        restore_listed(ctx, item).with_context(|| not_restored(&self.path))?;
         restore_trashed_with(ctx, &self.path, when);
-        let r = EntryRef::from_path(&self.path).ok_or_else(|| {
-            anyhow::anyhow!(
-                "“{}” went missing as it was restored",
-                display_name(&self.path)
-            )
-        })?;
+        let r = EntryRef::from_path(&self.path)
+            .ok_or_else(|| anyhow::Error::new(went_missing_restored(&self.path)))?;
         Ok(Some(Box::new(Trash { entry: r })))
     }
 }
@@ -3798,9 +4071,10 @@ impl super::Effect for Untrash {
         let when = trashed_from(ctx, &info).map(|(_, when)| when);
         if exists(&item) && self.takes(&item) {
             remove_recursive(&item).with_context(|| {
-                format!(
-                    "the copy of “{}” in the trash could not all be removed",
-                    display_name(&self.original.path)
+                words!(
+                    op_trash_copy_not_removed = "the copy of { $name } in the trash could not all be removed",
+                    name = name_of(&self.original.path),
+                    note = "What the undo of a move into the trash on another drive could not do: remove the copy the trash held; why follows."
                 )
             })?;
             ctx.trash_taken(&info);
@@ -3836,10 +4110,7 @@ fn merge_restore(
         for inner in merged.moved.iter().rev() {
             let _ = move_entry(ctx, &path.join(inner), &item.join(inner), &[]);
         }
-        return Err(e.context(Couldnt::new(
-            path,
-            format!("“{}” could not be restored", display_name(path)),
-        )));
+        return Err(e.context(not_restored(path)));
     }
     let info_text = read_record(info).unwrap_or_default();
     let mut folders = Vec::new();
@@ -3899,7 +4170,11 @@ impl super::Effect for Unmerge {
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         let Some(item) = item_of_info(&self.info) else {
-            return conflict(format!("“{}” is no trash's", display_name(&self.info)));
+            return conflict(words!(
+                op_no_trash_s = "{ $name } is no trash's",
+                name = name_of(&self.info),
+                note = "Why the undo of a folder restored into one there does not go on: the trash's record of it names no item of a trash."
+            ));
         };
         let back = |inner: &PathArg| exists(&item.join(inner));
         if self.info.exists()
@@ -3913,25 +4188,17 @@ impl super::Effect for Unmerge {
             .iter()
             .find(|inner| !back(inner) && !exists(&self.path.join(inner)))
         {
-            return conflict(format!(
-                "“{}” is no longer there",
-                display_name(&self.path.join(gone))
-            ));
+            return conflict(no_longer_there(&self.path.join(gone)));
         }
         pending(true)
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let item = item_of_info(&self.info).ok_or_else(|| {
-            anyhow::anyhow!("“{}” is no trash's record", display_name(&self.info))
-        })?;
+        let item =
+            item_of_info(&self.info).ok_or_else(|| anyhow::Error::new(no_record(&self.info)))?;
         ctx.forget_trash();
         for inner in self.folders.iter().rev() {
-            std::fs::create_dir_all(item.join(inner)).with_context(|| {
-                format!(
-                    "the folder “{}” could not be made",
-                    item.join(inner).display()
-                )
-            })?;
+            std::fs::create_dir_all(item.join(inner))
+                .with_context(|| folder_path_not_made(&item.join(inner)))?;
         }
         for inner in &self.moved {
             let (now, back) = (self.path.join(inner), item.join(inner));
@@ -3943,12 +4210,8 @@ impl super::Effect for Unmerge {
             }
         }
         if !self.info.exists() {
-            std::fs::write(&self.info, &self.info_text).with_context(|| {
-                format!(
-                    "the trash's record “{}” could not be written",
-                    display_name(&self.info)
-                )
-            })?;
+            std::fs::write(&self.info, &self.info_text)
+                .with_context(|| record_unwritten(&self.info))?;
         }
         for companion in &self.companions {
             companion.put_back(ctx)?;
@@ -4051,27 +4314,26 @@ impl super::Effect for RestorePart {
             Ok(src) => src,
             Err(ResolveError::Gone(_)) if exists(&self.path) => return StepStatus::AlreadyDone,
             Err(ResolveError::Gone(_)) => {
-                return conflict(format!(
-                    "“{}” is no longer in the trash",
-                    display_name(&self.entry.path)
+                return conflict(words!(
+                    op_no_longer_in_trash = "{ $name } is no longer in the trash",
+                    name = name_of(&self.entry.path),
+                    note = "Why a file of a trashed folder is not restored: it left the trash."
                 ));
             }
-            Err(e) => return conflict(e.to_string()),
+            Err(e) => return conflict_of(e),
         };
         let Some(inside) = in_trash(&src) else {
-            return conflict(format!("“{}” is not in the trash", display_name(&src)));
+            return conflict(not_in_trash(&src));
         };
         if self.path.starts_with(&inside.item) {
-            return conflict(format!(
-                "“{}” would stay in the trash",
-                display_name(&self.path)
+            return conflict(words!(
+                op_would_stay_in_trash = "{ $name } would stay in the trash",
+                name = name_of(&self.path),
+                note = "Why a file of a trashed folder is not restored: where it would go is in the trash."
             ));
         }
         if exists(&self.path) {
-            return conflict(format!(
-                "“{}” is there again: rename or move it first",
-                display_name(&self.path)
-            ));
+            return conflict(there_again(&self.path));
         }
         // An item's companions are items of their own, which go only where
         // their places are free.
@@ -4084,14 +4346,13 @@ impl super::Effect for RestorePart {
         if let Some(there) = self.path.ancestors().skip(1).find(|dir| exists(dir))
             && !there.is_dir()
         {
-            return conflict(format!("“{}” is not a folder", display_name(there)));
+            return conflict(not_a_folder(there));
         }
         pending(true)
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
-        let inside = in_trash(&src)
-            .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&src)))?;
+        let inside = in_trash(&src).ok_or_else(|| anyhow::Error::new(not_in_trash(&src)))?;
         let item = inside.inner.as_os_str().is_empty();
         // An item of the trash: the companions trashed with it, found
         // while the trash still says where it came from and when.
@@ -4106,12 +4367,7 @@ impl super::Effect for RestorePart {
             Vec::new()
         };
         let info_text = if item {
-            Some(read_record(&inside.info).with_context(|| {
-                format!(
-                    "the trash's record “{}” could not be read",
-                    display_name(&inside.info)
-                )
-            })?)
+            Some(read_record(&inside.info).with_context(|| record_unread(&inside.info))?)
         } else {
             None
         };
@@ -4124,8 +4380,7 @@ impl super::Effect for RestorePart {
         for (n, (dir, _)) in folders.iter().enumerate() {
             if let Err(e) = std::fs::create_dir(dir) {
                 undo_folders(&folders[..n]);
-                return Err(e)
-                    .with_context(|| format!("the folder “{}” could not be made", dir.display()));
+                return Err(e).with_context(|| folder_path_not_made(dir));
             }
         }
         let companions = if item {
@@ -4137,10 +4392,7 @@ impl super::Effect for RestorePart {
             Ok(moved) => moved,
             Err(e) => {
                 undo_folders(&folders);
-                return Err(e.context(Couldnt::new(
-                    &self.path,
-                    format!("“{}” could not be restored", display_name(&self.path)),
-                )));
+                return Err(e.context(not_restored(&self.path)));
             }
         };
         if item {
@@ -4233,12 +4485,7 @@ impl ReturnPart {
         if let (Some(text), Some(info)) = (&self.info_text, trash_info_of(&self.to))
             && !exists(&info)
         {
-            std::fs::write(&info, text).with_context(|| {
-                format!(
-                    "the trash's record “{}” could not be written",
-                    display_name(&info)
-                )
-            })?;
+            std::fs::write(&info, text).with_context(|| record_unwritten(&info))?;
         }
         for companion in &self.companions {
             companion.put_back(ctx)?;
@@ -4258,19 +4505,21 @@ impl super::Effect for ReturnPart {
             return if exists(&self.to) {
                 StepStatus::AlreadyDone
             } else {
-                conflict(format!("“{}” is no longer there", display_name(&self.path)))
+                conflict(no_longer_there(&self.path))
             };
         }
         if exists(&self.to) {
-            return conflict(format!(
-                "“{}” is in its place in the trash",
-                display_name(&self.to)
+            return conflict(words!(
+                op_place_taken_in_trash = "{ $name } is in its place in the trash",
+                name = name_of(&self.to),
+                note = "Why a file restored from a trashed folder is not put back in it: another file took its place there."
             ));
         }
         if !self.to.parent().is_some_and(Path::is_dir) {
-            return conflict(format!(
-                "the folder of the trash “{}” was in is gone",
-                display_name(&self.path)
+            return conflict(words!(
+                op_trash_folder_gone = "the folder of the trash { $name } was in is gone",
+                name = name_of(&self.path),
+                note = "Why a file restored from a trashed folder is not put back in it: that folder left the trash."
             ));
         }
         if self.info_text.is_some() {
@@ -4294,7 +4543,7 @@ impl super::Effect for ReturnPart {
         }
         result?;
         let entry = EntryRef::from_path(&self.to)
-            .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.to)))?;
+            .ok_or_else(|| anyhow::Error::new(not_in_trash(&self.to)))?;
         Ok(Some(Box::new(RestorePart {
             entry,
             path: self.path.clone(),
@@ -4337,7 +4586,7 @@ impl super::Effect for Delete {
             Ok(path) if ctx.was_removed_ahead(&path) => pending(false),
             Ok(path) => mounted_there(&path).map_or_else(|| pending(false), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -4351,7 +4600,11 @@ impl super::Effect for Delete {
         remove_recursive(&src).with_context(|| {
             Couldnt::new(
                 &src,
-                format!("“{}” could not all be deleted", display_name(&src)),
+                words!(
+                    op_not_all_deleted = "{ $name } could not all be deleted",
+                    name = name_of(&src),
+                    note = "What a step deleting for good could not do: remove a folder with all it holds; why follows."
+                ),
             )
         })?;
         forget_trashed(&src);
@@ -4373,12 +4626,7 @@ impl super::Effect for Delete {
 /// Moved out of the trash, it takes the `.trashinfo` along
 /// (`Move::restoring`).
 fn trashed(path: &Path) -> Option<StepStatus> {
-    trash_info_of(path).map(|_| {
-        conflict(format!(
-            "“{}” is in the trash: restore it first",
-            path.file_name().unwrap_or(path.as_os_str()).display()
-        ))
-    })
+    trash_info_of(path).map(|_| conflict(in_the_trash_first(path)))
 }
 
 /// A file deleted from the trash takes what the trash said of it along:
@@ -4407,10 +4655,18 @@ impl super::Kind for Mkdir {
 /// a name climbing out of its folder, none, or one not valid.
 fn refuse_new(path: &Path) -> Option<StepStatus> {
     if path.components().any(|c| c == Component::ParentDir) {
-        return Some(conflict(format!("“{}” contains “..”", path.display())));
+        return Some(conflict(words!(
+            op_path_climbs = "“{ $path }” contains “..”",
+            path = path.display().to_string(),
+            note = "Why a new folder or file is not made: its path climbs out of the folder it is made in."
+        )));
     }
     match path.file_name().map(invalid_name) {
-        None => Some(conflict(format!("“{}” has no name", path.display()))),
+        None => Some(conflict(words!(
+            op_path_no_name = "“{ $path }” has no name",
+            path = path.display().to_string(),
+            note = "Why a new folder or file is not made: its path ends without a name."
+        ))),
         Some(invalid) => invalid,
     }
 }
@@ -4432,21 +4688,13 @@ impl super::Effect for Mkdir {
         }
         match std::fs::symlink_metadata(&self.path) {
             Ok(m) if m.is_dir() => StepStatus::AlreadyDone,
-            Ok(_) => conflict(format!(
-                "“{}” is there, and is not a folder",
-                display_name(&self.path)
-            )),
+            Ok(_) => conflict(there_not_a_folder(&self.path)),
             Err(_) if self.path.parent().is_some_and(|p| ctx.is_folder(p)) => pending(true),
-            Err(_) => conflict("the folder it goes in is not there"),
+            Err(_) => conflict(no_folder_to_go_in()),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        std::fs::create_dir(&self.path).with_context(|| {
-            format!(
-                "the folder “{}” could not be made",
-                display_name(&self.path)
-            )
-        })?;
+        std::fs::create_dir(&self.path).with_context(|| folder_not_made(&self.path))?;
         Ok(Some(Box::new(Rmdir {
             path: self.path.clone(),
         })))
@@ -4479,41 +4727,37 @@ impl super::Effect for Rmdir {
             && meta.is_dir()
             && !sys::directory_can_be_recreated(&meta)
         {
-            return conflict(
-                "this folder belongs to another user and its permissions would prevent Undo from restoring its contents",
-            );
+            return conflict(foreign_folder());
         }
         // Emptied by the plan's earlier steps (a folder a merge moved
         // everything out of, ADR-054) is empty.
         match ctx.empty_after(&self.path) {
             Ok(true) => pending(true),
-            Ok(false) => conflict(format!("“{}” is not empty", display_name(&self.path))),
+            Ok(false) => conflict(words!(
+                op_not_empty = "{ $name } is not empty",
+                name = name_of(&self.path),
+                note = "Why a folder is not removed: it holds something (a step removes only an empty one)."
+            )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StepStatus::AlreadyDone,
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         // Snapshot before removal: an unreadable attribute is not an absent
         // attribute, and must leave the original available for Undo/retry.
         let meta = std::fs::symlink_metadata(&self.path)?;
-        anyhow::ensure!(
-            meta.is_dir(),
-            "“{}” is not a folder",
-            display_name(&self.path)
-        );
-        anyhow::ensure!(
-            sys::directory_can_be_recreated(&meta),
-            "this folder belongs to another user and its permissions would prevent Undo from restoring its contents"
-        );
+        anyhow::ensure!(meta.is_dir(), not_a_folder(&self.path));
+        anyhow::ensure!(sys::directory_can_be_recreated(&meta), foreign_folder());
         let inverse = RestoreDirectory {
             path: self.path.clone(),
             permissions: sys::DirectoryPermissions::read(&meta.permissions()),
             attributes: DirectoryAttribute::read(&self.path)?,
         };
         std::fs::remove_dir(&self.path).with_context(|| {
-            format!(
-                "the folder “{}” could not be removed",
-                display_name(&self.path)
+            words!(
+                op_folder_not_removed = "the folder { $name } could not be removed",
+                name = name_of(&self.path),
+                note = "What a step could not do: remove an empty folder; why follows."
             )
         })?;
         Ok(Some(Box::new(inverse)))
@@ -4569,9 +4813,10 @@ impl RestoreDirectory {
         }
         for attribute in &self.attributes {
             crate::fs::xattr::set(path, &attribute.name, &attribute.value).with_context(|| {
-                format!(
-                    "the folder's attribute “{}” could not be restored",
-                    attribute.name.display()
+                words!(
+                    op_folder_attribute_not_restored = "the folder's attribute “{ $attribute }” could not be restored",
+                    attribute = attribute.name.display().to_string(),
+                    note = "What the undo of a folder's removal could not do: give it back an extended attribute it had. attribute: the attribute's name (user.xdg.tags); why follows."
                 )
             })?;
         }
@@ -4616,16 +4861,15 @@ impl super::Effect for RestoreDirectory {
         match std::fs::symlink_metadata(&self.path) {
             Ok(meta) if meta.is_dir() => match self.matches(&meta) {
                 Ok(true) => StepStatus::AlreadyDone,
-                Ok(false) => conflict(format!(
-                    "“{}” is there with different folder attributes",
-                    display_name(&self.path)
+                Ok(false) => conflict(words!(
+                    op_folder_attributes_differ =
+                        "{ $name } is there with different folder attributes",
+                    name = name_of(&self.path),
+                    note = "Why the undo of a folder's removal does not go on: a folder of its name is there again, with other permissions or attributes."
                 )),
-                Err(error) => conflict(error.to_string()),
+                Err(error) => conflict_of(error),
             },
-            Ok(_) => conflict(format!(
-                "“{}” is there, and is not a folder",
-                display_name(&self.path)
-            )),
+            Ok(_) => conflict(there_not_a_folder(&self.path)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if self
                     .path
@@ -4634,17 +4878,14 @@ impl super::Effect for RestoreDirectory {
                 {
                     pending(true)
                 } else {
-                    conflict("the folder it goes in is not there")
+                    conflict(no_folder_to_go_in())
                 }
             }
-            Err(error) => conflict(error.to_string()),
+            Err(error) => conflict_of(error),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let parent = self
-            .path
-            .parent()
-            .context("the folder it goes in is not there")?;
+        let parent = self.path.parent().with_context(no_folder_to_go_in)?;
         if crate::fs::reach::writes_in_place(parent) {
             // Cameras cannot rename a staged directory. As with in-place
             // copies, roll back only what this step created, while empty.
@@ -4657,9 +4898,10 @@ impl super::Effect for RestoreDirectory {
                 return Err(if removed {
                     error
                 } else {
-                    error.context(format!(
-                        "the partially restored folder remains at “{}”",
-                        self.path.display()
+                    error.context(words!(
+                        op_partly_restored_folder = "the partially restored folder remains at “{ $path }”",
+                        path = self.path.display().to_string(),
+                        note = "Said after why the undo of a folder's removal failed: the folder it began to make could not be removed. path: where it is."
                     ))
                 });
             }
@@ -4720,9 +4962,9 @@ impl super::Effect for NewFile {
         match std::fs::symlink_metadata(&self.path) {
             // What this step makes: applied already.
             Ok(m) if m.is_file() && m.len() == 0 => StepStatus::AlreadyDone,
-            Ok(_) => conflict(format!("“{}” is already there", display_name(&self.path))),
+            Ok(_) => conflict(already_there(&self.path)),
             Err(_) if self.path.parent().is_some_and(|p| ctx.is_folder(p)) => pending(true),
-            Err(_) => conflict("the folder it goes in is not there"),
+            Err(_) => conflict(no_folder_to_go_in()),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -4733,7 +4975,11 @@ impl super::Effect for NewFile {
             .with_context(|| {
                 Couldnt::new(
                     &self.path,
-                    format!("“{}” could not be made", display_name(&self.path)),
+                    words!(
+                        op_not_made = "{ $name } could not be made",
+                        name = name_of(&self.path),
+                        note = "What a step could not do: make a new empty file; why follows."
+                    ),
                 )
             })?;
         Ok(Some(Box::new(RemoveEmptyFile {
@@ -4767,21 +5013,23 @@ impl super::Effect for RemoveEmptyFile {
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         match std::fs::symlink_metadata(&self.path) {
             Ok(m) if m.is_file() && m.len() == 0 => pending(true),
-            Ok(m) if m.is_file() => {
-                conflict(format!("“{}” is no longer empty", display_name(&self.path)))
-            }
-            Ok(_) => conflict(format!("“{}” is not a file", display_name(&self.path))),
+            Ok(m) if m.is_file() => conflict(words!(
+                op_no_longer_empty = "{ $name } is no longer empty",
+                name = name_of(&self.path),
+                note = "Why the undo of a new file does not remove it: something was written in it since."
+            )),
+            Ok(_) => conflict(words!(
+                op_not_a_file = "{ $name } is not a file",
+                name = name_of(&self.path),
+                note =
+                    "Why the undo of a new file does not go on: something else has its name now."
+            )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StepStatus::AlreadyDone,
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict_of(e),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        std::fs::remove_file(&self.path).with_context(|| {
-            Couldnt::new(
-                &self.path,
-                format!("“{}” could not be removed", display_name(&self.path)),
-            )
-        })?;
+        std::fs::remove_file(&self.path).with_context(|| not_removed(&self.path))?;
         Ok(Some(Box::new(NewFile {
             path: self.path.clone(),
         })))
@@ -4845,21 +5093,15 @@ impl super::Effect for Link {
             return invalid;
         }
         if !ctx.is_folder(&self.dest_dir) {
-            return conflict(format!(
-                "“{}” is not a folder",
-                display_name(&self.dest_dir)
-            ));
+            return conflict(not_a_folder(&self.dest_dir));
         }
         let src = match self.entry.resolve() {
             Ok(s) => s,
-            Err(e) => return conflict(e.to_string()),
+            Err(e) => return conflict_of(e),
         };
         let link = self.target(&src);
         if ctx.made(&link) {
-            return conflict(format!(
-                "“{}” is already there, by an earlier step",
-                display_name(&link)
-            ));
+            return conflict(there_by_earlier_step(&link));
         }
         if !ctx.exists(&link) {
             return pending(true);
@@ -4867,7 +5109,7 @@ impl super::Effect for Link {
         match std::fs::read_link(&link) {
             // What this step makes: applied already.
             Ok(says) if says == src => StepStatus::AlreadyDone,
-            _ => conflict(format!("“{}” is already there", display_name(&link))),
+            _ => conflict(already_there(&link)),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -4879,10 +5121,11 @@ impl super::Effect for Link {
         sys::symlink_to(&src, &link, src.is_dir()).with_context(|| {
             Couldnt::new(
                 &src,
-                format!(
-                    "“{}” could not be linked in “{}”",
-                    display_name(&src),
-                    display_name(&self.dest_dir)
+                words!(
+                    op_not_linked = "{ $name } could not be linked in { $folder }",
+                    name = name_of(&src),
+                    folder = name_of(&self.dest_dir),
+                    note = "What a step could not do: make a link to a file in a folder, by their names; why follows."
                 ),
             )
         })?;
@@ -4921,24 +5164,21 @@ impl super::Effect for Unlink {
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         match std::fs::read_link(&self.path) {
             Ok(says) if says == self.entry.path => pending(true),
-            Ok(_) => conflict(format!(
-                "“{}” leads elsewhere now",
-                display_name(&self.path)
+            Ok(_) => conflict(words!(
+                op_link_elsewhere = "{ $name } leads elsewhere now",
+                name = name_of(&self.path),
+                note = "Why the undo of a link does not remove it: it was changed to lead elsewhere since."
             )),
             Err(_) if !exists(&self.path) => StepStatus::AlreadyDone,
-            Err(_) => conflict(format!(
-                "“{}” is no longer a link",
-                display_name(&self.path)
+            Err(_) => conflict(words!(
+                op_no_longer_a_link = "{ $name } is no longer a link",
+                name = name_of(&self.path),
+                note = "Why the undo of a link does not go on: something else has its name now."
             )),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        sys::remove_link(&self.path).with_context(|| {
-            Couldnt::new(
-                &self.path,
-                format!("“{}” could not be removed", display_name(&self.path)),
-            )
-        })?;
+        sys::remove_link(&self.path).with_context(|| not_removed(&self.path))?;
         let name = file_name(&self.path);
         Ok(Some(Box::new(Link {
             entry: self.entry.clone(),
@@ -5727,7 +5967,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_mount_point_is_never_removed_whole() {
-        let proc = mounted_there(Path::new("/proc")).expect("/proc is mounted");
+        let proc = mounted_there(Path::new("/proc"))
+            .expect("/proc is mounted")
+            .english();
         assert!(
             proc.contains("is where a drive or a remote is mounted"),
             "{proc}"
@@ -5743,7 +5985,7 @@ mod tests {
             .filter_map(|p| p.parent())
             .find(|q| !points.iter().any(|p| p == q))
             .expect("a mount below a plain folder");
-        let above = mounted_there(holder).expect("it holds a mount");
+        let above = mounted_there(holder).expect("it holds a mount").english();
         assert!(above.contains("holds"), "{above}");
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(mounted_there(tmp.path()), None, "a plain folder");

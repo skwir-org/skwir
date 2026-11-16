@@ -51,7 +51,14 @@ const VOLUME_STEP: Duration = Duration::from_secs(1);
 /// holds a descriptor open.
 const FILES: usize = 64;
 
-const NOT_WRITTEN_OUT: &str = "the copy could not be written out to the drive";
+/// What a copy written through to its drive could not do, its why after
+/// it.
+fn not_written_out() -> crate::words::Words {
+    crate::words!(
+        op_not_written_out = "the copy could not be written out to the drive",
+        note = "What a copy to a removable drive could not do: hand the drive what it wrote; why follows."
+    )
+}
 
 /// How a copy counts what it wrote: at once, or written through.
 pub(super) struct Pace {
@@ -210,7 +217,7 @@ impl Pace {
         };
         handed
             .and_then(|()| drive.sync_volume())
-            .context(NOT_WRITTEN_OUT)
+            .with_context(not_written_out)
     }
 }
 
@@ -233,13 +240,15 @@ impl Writing<'_> {
             Handed::Ranges(ranges) => {
                 if self.written - self.given >= window.bytes {
                     self.hand(ranges, ctx)?;
-                    ranges.wait(window, false).context(NOT_WRITTEN_OUT)?;
+                    ranges.wait(window, false).with_context(not_written_out)?;
                 }
             }
             Handed::Volume(volume) => {
                 // The program has them.
                 ctx.advance(n);
-                volume.wrote(n, drive, window).context(NOT_WRITTEN_OUT)?;
+                volume
+                    .wrote(n, drive, window)
+                    .with_context(not_written_out)?;
             }
         }
         Ok(())
@@ -255,7 +264,7 @@ impl Writing<'_> {
         let Through { handed, window, .. } = &mut *through;
         if let Handed::Ranges(ranges) = handed {
             self.hand(ranges, ctx)?;
-            ranges.wait(window, false).context(NOT_WRITTEN_OUT)?;
+            ranges.wait(window, false).with_context(not_written_out)?;
         }
         Ok(())
     }
@@ -276,7 +285,7 @@ impl Writing<'_> {
                     len,
                 });
             })
-            .context(NOT_WRITTEN_OUT)?;
+            .with_context(not_written_out)?;
         ranges.queued += len;
         self.given = self.written;
         ctx.advance(len);
@@ -338,7 +347,12 @@ impl Volume {
         if let Some((n, running)) = self.running.take() {
             running
                 .join()
-                .unwrap_or_else(|_| Err(io::Error::other("the write-out stopped")))?;
+                .unwrap_or_else(|_| {
+                    Err(io::Error::other(crate::words!(
+                        op_write_out_stopped = "the write-out stopped",
+                        note = "Why a copy to a removable drive failed: handing the drive what was written stopped unexpectedly."
+                    )))
+                })?;
             window.written(n);
         }
         Ok(())

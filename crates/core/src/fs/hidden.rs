@@ -178,7 +178,11 @@ pub(crate) fn worn_by(target: &Path, staged: &std::fs::File) -> bool {
 fn none() -> io::Error {
     io::Error::new(
         io::ErrorKind::Unsupported,
-        format!("{} keeps no hidden mark", crate::system::NAME),
+        crate::words!(
+            fs_system_no_hidden = "{ $system } keeps no hidden mark",
+            system = crate::system::named(),
+            note = "Why a file could not be marked hidden (as Windows and FAT drives mark it): the system's name. Begins with it."
+        ),
     )
 }
 
@@ -227,7 +231,10 @@ mod fat {
         ) {
             io::Error::new(
                 io::ErrorKind::Unsupported,
-                "its volume keeps no hidden mark",
+                crate::words!(
+                    fs_volume_no_hidden = "its volume keeps no hidden mark",
+                    note = "Why a file could not be marked hidden: its drive's filesystem has no such mark. Begins in lower case: said after other words."
+                ),
             )
         } else {
             error.into()

@@ -148,12 +148,26 @@ pub(crate) fn register(app: &crate::App) {
     app.commands.register::<RequestArgs, _>(
         "core", Topic::Player,
         "player.request",
-        "Steer the player",
-        "Ask whatever is playing to play, pause, stop, step to the next or previous track, seek, change its volume or its speed, choose a film's audio or subtitles or show it on the whole screen; it is carried out when the player next wakes",
+        crate::words!(playing_request = "Steer the player"),
+        crate::words!(
+            playing_request_description = "Ask whatever is playing to play, pause, stop, step to the next or previous track, seek, change its volume or its speed, choose a film's audio or subtitles or show it on the whole screen; it is carried out when the player next wakes"
+        ),
         |args, app| {
-            anyhow::ensure!(args.request.valid(), "this request makes no sense");
-            anyhow::ensure!(app.player.get().is_some(), "nothing is playing");
-            anyhow::ensure!(app.player.request(args.request), "the player is not answering");
+            anyhow::ensure!(
+                args.request.valid(),
+                crate::words!(
+                    playing_senseless = "this request makes no sense",
+                    note = "Said to an agent or a script: what it asked of the player contradicts itself."
+                )
+            );
+            anyhow::ensure!(
+                app.player.get().is_some(),
+                crate::words!(playing_nothing = "nothing is playing")
+            );
+            anyhow::ensure!(
+                app.player.request(args.request),
+                crate::words!(playing_not_answering = "the player is not answering")
+            );
             app.wake();
             Ok(crate::command::Outcome::Done)
         },
@@ -164,8 +178,12 @@ pub(crate) fn register(app: &crate::App) {
             "core",
             Topic::Player,
             "player.now",
-            "What is playing",
-            "The track that plays, its state and where it stands, or null",
+            crate::words!(playing_now = "What is playing"),
+            crate::words!(
+                playing_now_description =
+                    "The track that plays, its state and where it stands, or null",
+                note = "Read by agents: null is the JSON value."
+            ),
             |_, app| {
                 Ok(crate::command::Outcome::Value(app.player.get().map_or(
                     serde_json::Value::Null,

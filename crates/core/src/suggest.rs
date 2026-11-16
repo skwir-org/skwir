@@ -159,6 +159,64 @@ impl Section {
         })
     }
 
+    /// Its title over its rows, as words; `None` for the first row
+    /// (`title` until every caller says words).
+    pub fn words(self) -> Option<crate::words::Words> {
+        use crate::words;
+        Some(match self {
+            Section::Run => return None,
+            Section::Help => words!(
+                suggest_help = "What the field takes",
+                note = "A heading in the list under the address field: what may be typed there, with examples."
+            ),
+            Section::Syntax => words!(
+                suggest_syntax = "Terms of a search",
+                note = "A heading in the list under the address field: the terms a search takes (type:, size:), with examples."
+            ),
+            Section::Scopes | Section::SearchIn => words!(
+                suggest_search_in = "Search in",
+                note = "A heading in the list under the address field: places to search in."
+            ),
+            Section::Complete => words!(
+                suggest_complete = "Complete",
+                note = "A heading in the list under the address field: ways to finish what is being typed."
+            ),
+            Section::Reading => words!(
+                suggest_reading = "Did you mean",
+                note = "A heading in the list under the address field: the words typed read as a search's terms."
+            ),
+            Section::Terms => words!(
+                suggest_terms = "Add a term",
+                note = "A heading in the list under the address field: a row of buttons adding a search term."
+            ),
+            Section::Recent => words!(
+                suggest_recent = "Recent searches",
+                note = "A heading in the list under the address field."
+            ),
+            Section::Saved => words!(
+                suggest_saved = "Saved searches",
+                note =
+                    "A heading in the list under the address field: searches kept in the sidebar."
+            ),
+            Section::Tabs => words!(
+                suggest_tabs = "Open tabs",
+                note = "A heading in the list under the address field: the window's other tabs."
+            ),
+            Section::History => words!(
+                suggest_history = "Back",
+                note = "A heading in the list under the address field: where the pane was before, as Back goes."
+            ),
+            Section::Go => words!(
+                suggest_go = "Go to",
+                note = "A heading in the list under the address field: folders, tags and places to go to."
+            ),
+            Section::Actions => words!(
+                suggest_actions = "Actions",
+                note = "A heading in the list under the address field: actions whose names hold the words typed."
+            ),
+        })
+    }
+
     /// Whether its rows are drawn as a row of buttons.
     pub fn is_strip(self) -> bool {
         matches!(self, Section::Terms | Section::SearchIn)

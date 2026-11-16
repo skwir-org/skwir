@@ -69,61 +69,231 @@ pub mod page {
 /// sections by, and said by its words (ADR-139, 8). By subject, as pages
 /// are, so they are core's ([`section`]); a section made for what a plugin
 /// registers is named where it is made (`SettingSpec::section_of`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Section {
     pub id: &'static str,
-    pub title: &'static str,
+    /// Its heading's words, made where they are said.
+    pub title: fn() -> Words,
 }
 
 impl Section {
-    pub const fn new(id: &'static str, title: &'static str) -> Self {
+    pub const fn new(id: &'static str, title: fn() -> Words) -> Self {
         Section { id, title }
     }
 }
+
+/// Sections meet by their id (ADR-139, 8).
+impl PartialEq for Section {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Section {}
 
 /// The dialog's sections, by page.
 pub mod section {
     use super::Section;
 
     // General.
-    pub const LANGUAGE: Section = Section::new("language", "Language");
-    pub const STARTUP: Section = Section::new("startup", "Startup");
-    pub const TABS: Section = Section::new("tabs", "Tabs");
-    pub const SPLIT: Section = Section::new("split", "Split");
-    pub const ADDRESS: Section = Section::new("address", "Address");
-    pub const DRAG_AND_DROP: Section = Section::new("drag_and_drop", "Drag and drop");
-    pub const ACTIONS: Section = Section::new("actions", "Actions");
+    pub const LANGUAGE: Section = Section::new("language", || {
+        crate::words!(
+            settings_section_language = "Language",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const STARTUP: Section = Section::new("startup", || {
+        crate::words!(
+            settings_section_startup = "Startup",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const TABS: Section = Section::new("tabs", || {
+        crate::words!(
+            settings_section_tabs = "Tabs",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const SPLIT: Section = Section::new("split", || {
+        crate::words!(
+            settings_section_split = "Split",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const ADDRESS: Section = Section::new("address", || {
+        crate::words!(
+            settings_section_address = "Address",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const DRAG_AND_DROP: Section = Section::new("drag_and_drop", || {
+        crate::words!(
+            settings_section_drag_and_drop = "Drag and drop",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const ACTIONS: Section = Section::new("actions", || {
+        crate::words!(
+            settings_section_actions = "Actions",
+            note = "A heading of a section of the settings."
+        )
+    });
     // Folders and views.
-    pub const SORTING: Section = Section::new("sorting", "Sorting");
-    pub const SIZES: Section = Section::new("sizes", "Sizes");
-    pub const GRID: Section = Section::new("grid", "Grid");
-    pub const LIST_COLUMNS: Section = Section::new("list_columns", "List columns");
-    pub const THUMBNAILS: Section = Section::new("thumbnails", "Thumbnails");
-    pub const PREVIEWS: Section = Section::new("previews", "Previews");
-    pub const GIT: Section = Section::new("git", "Git");
+    pub const SORTING: Section = Section::new("sorting", || {
+        crate::words!(
+            settings_section_sorting = "Sorting",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const SIZES: Section = Section::new("sizes", || {
+        crate::words!(
+            settings_section_sizes = "Sizes",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const GRID: Section = Section::new("grid", || {
+        crate::words!(
+            settings_section_grid = "Grid",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const LIST_COLUMNS: Section = Section::new("list_columns", || {
+        crate::words!(
+            settings_section_list_columns = "List columns",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const THUMBNAILS: Section = Section::new("thumbnails", || {
+        crate::words!(
+            settings_section_thumbnails = "Thumbnails",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const PREVIEWS: Section = Section::new("previews", || {
+        crate::words!(
+            settings_section_previews = "Previews",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const GIT: Section = Section::new("git", || {
+        crate::words!(
+            settings_section_git = "Git",
+            note = "A heading of a section of the settings."
+        )
+    });
     // Tags and notes.
-    pub const TAGS: Section = Section::new("tags", "Tags");
+    pub const TAGS: Section = Section::new("tags", || {
+        crate::words!(
+            settings_section_tags = "Tags",
+            note = "A heading of a section of the settings."
+        )
+    });
     // Reading.
-    pub const PAGES: Section = Section::new("pages", "Pages");
-    pub const DOCUMENTS: Section = Section::new("documents", "Documents");
-    pub const BOOKS: Section = Section::new("books", "Books");
-    pub const TEXT: Section = Section::new("text", "Text");
-    pub const CODE: Section = Section::new("code", "Code");
-    pub const GRAMMARS: Section = Section::new("grammars", "Grammars");
-    pub const SPREADSHEETS: Section = Section::new("spreadsheets", "Spreadsheets");
+    pub const PAGES: Section = Section::new("pages", || {
+        crate::words!(
+            settings_section_pages = "Pages",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const DOCUMENTS: Section = Section::new("documents", || {
+        crate::words!(
+            settings_section_documents = "Documents",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const BOOKS: Section = Section::new("books", || {
+        crate::words!(
+            settings_section_books = "Books",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const TEXT: Section = Section::new("text", || {
+        crate::words!(
+            settings_section_text = "Text",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const CODE: Section = Section::new("code", || {
+        crate::words!(
+            settings_section_code = "Code",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const GRAMMARS: Section = Section::new("grammars", || {
+        crate::words!(
+            settings_section_grammars = "Grammars",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const SPREADSHEETS: Section = Section::new("spreadsheets", || {
+        crate::words!(
+            settings_section_spreadsheets = "Spreadsheets",
+            note = "A heading of a section of the settings."
+        )
+    });
     // Pictures and media.
-    pub const PICTURES: Section = Section::new("pictures", "Pictures");
-    pub const PLAYBACK: Section = Section::new("playback", "Playback");
-    pub const AUDIO: Section = Section::new("audio", "Audio");
-    pub const VIDEO: Section = Section::new("video", "Video");
-    pub const MODELS: Section = Section::new("models_3d", "3D models");
-    pub const MAPS: Section = Section::new("maps", "Maps");
+    pub const PICTURES: Section = Section::new("pictures", || {
+        crate::words!(
+            settings_section_pictures = "Pictures",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const PLAYBACK: Section = Section::new("playback", || {
+        crate::words!(
+            settings_section_playback = "Playback",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const AUDIO: Section = Section::new("audio", || {
+        crate::words!(
+            settings_section_audio = "Audio",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const VIDEO: Section = Section::new("video", || {
+        crate::words!(
+            settings_section_video = "Video",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const MODELS: Section = Section::new("models_3d", || {
+        crate::words!(
+            settings_section_models_3d = "3D models",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const MAPS: Section = Section::new("maps", || {
+        crate::words!(
+            settings_section_maps = "Maps",
+            note = "A heading of a section of the settings."
+        )
+    });
     // Terminal.
-    pub const TERMINAL: Section = Section::new("terminal", "Terminal");
-    pub const COMMANDS: Section = Section::new("commands", "Commands");
+    pub const TERMINAL: Section = Section::new("terminal", || {
+        crate::words!(
+            settings_section_terminal = "Terminal",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const COMMANDS: Section = Section::new("commands", || {
+        crate::words!(
+            settings_section_commands = "Commands",
+            note = "A heading of a section of the settings."
+        )
+    });
     // Network.
-    pub const SERVERS: Section = Section::new("servers", "Servers");
-    pub const OPENING_ADDRESSES: Section = Section::new("opening_addresses", "Opening addresses");
+    pub const SERVERS: Section = Section::new("servers", || {
+        crate::words!(
+            settings_section_servers = "Servers",
+            note = "A heading of a section of the settings."
+        )
+    });
+    pub const OPENING_ADDRESSES: Section = Section::new("opening_addresses", || {
+        crate::words!(
+            settings_section_opening_addresses = "Opening addresses",
+            note = "A heading of a section of the settings."
+        )
+    });
 }
 
 /// The namespace of a dotted setting key: the owning plugin's id (or
@@ -400,12 +570,12 @@ pub enum Store {
 }
 
 impl Store {
-    /// What its file is called in a sentence.
-    fn file_words(self) -> &'static str {
+    /// Its file, for a message's selector (`{ $file -> [state] … }`).
+    fn file_key(self) -> &'static str {
         match self {
-            Store::Settings => "settings file",
-            Store::State => "state file",
-            Store::Data => "data file",
+            Store::Settings => "settings",
+            Store::State => "state",
+            Store::Data => "data",
         }
     }
 }
@@ -673,7 +843,10 @@ impl SettingSpec {
             anyhow::ensure!(
                 !program.contains(char::is_whitespace)
                     || std::path::Path::new(program).is_absolute(),
-                "Give the program alone, without arguments: “bash”, not “bash -l”"
+                crate::words!(
+                    settings_program_alone = "Give the program alone, without arguments: “bash”, not “bash -l”",
+                    note = "Refused where a setting names a program to run: the examples are commands, as typed."
+                )
             );
             Ok(())
         });
@@ -958,7 +1131,7 @@ impl SettingSpec {
     /// Under `section`'s heading on its page.
     #[must_use]
     pub fn section(self, section: Section) -> Self {
-        self.section_of(section.id, section.title)
+        self.section_of(section.id, (section.title)())
     }
 
     /// Under the heading of a section made for what a plugin registers
@@ -1094,10 +1267,16 @@ impl SettingSpec {
     /// it comes to (`now`), that too: "Automatic (Dark)", "Automatic (Noto
     /// Sans)".
     pub fn choice_shown(&self, value: &str) -> String {
-        let label = self.choice_label(value).say();
+        let label = self.choice_label(value);
         match self.now_of(value) {
-            Some(now) => format!("{label} ({})", now.say()),
-            None => label,
+            Some(now) => crate::words!(
+                settings_choice_now = "{ $choice } ({ $now })",
+                choice = label,
+                now = now,
+                note = "A setting's default choice and what it comes to here and now: Automatic (Dark)."
+            )
+            .say(),
+            None => label.say(),
         }
     }
 
@@ -1135,7 +1314,13 @@ impl SettingSpec {
     fn parse_records(&self, text: &str, beside: Beside<'_>) -> anyhow::Result<toml::Value> {
         let records: Vec<serde_json::Map<String, serde_json::Value>> =
             serde_json::from_str(if text.trim().is_empty() { "[]" } else { text })
-                .map_err(|error| anyhow::anyhow!("expected a list of records: {error}"))?;
+                .map_err(|error| {
+                    anyhow::Error::new(crate::words!(
+                        settings_expected_records = "expected a list of records: { $error }",
+                        error = error.to_string(),
+                        note = "A list of records given as JSON could not be read; the reader's own words follow."
+                    ))
+                })?;
         let mut ids = std::collections::BTreeSet::new();
         let mut out = Vec::with_capacity(records.len());
         for record in records {
@@ -1145,18 +1330,23 @@ impl SettingSpec {
                 .filter(|id| !id.is_empty());
             anyhow::ensure!(
                 id.is_some() || matches!(beside, Beside::File),
-                "every record needs an id"
+                crate::words!(settings_record_needs_id = "every record needs an id")
             );
             let mut table = toml::Table::new();
             if let Some(id) = id {
-                anyhow::ensure!(ids.insert(id.to_owned()), "two records share the id {id}");
+                anyhow::ensure!(
+                    ids.insert(id.to_owned()),
+                    crate::words!(
+                        settings_records_share_id = "two records share the id { $id }",
+                        id = id,
+                        note = "The id is an identifier, as written."
+                    )
+                );
                 table.insert("id".into(), toml::Value::String(id.into()));
             }
             for field in &self.constraints.fields {
-                // In English, as the rest of each sentence is until it is a
-                // message (PLAN.md, step E): an agent reads it, and the
-                // dialog shows the error as it is.
-                let title = field.title.english();
+                // The field's words, said where the error is.
+                let title = || field.title.clone();
                 let value = record.get(&field.key).filter(|v| !v.is_null());
                 let empty = match value {
                     None => true,
@@ -1164,7 +1354,14 @@ impl SettingSpec {
                     Some(serde_json::Value::Array(a)) => a.is_empty(),
                     Some(_) => false,
                 };
-                anyhow::ensure!(!(field.required && empty), "{title} is needed");
+                anyhow::ensure!(
+                    !(field.required && empty),
+                    crate::words!(
+                        settings_field_needed = "{ $title } is needed",
+                        title = title(),
+                        note = "A record's field left empty: its title."
+                    )
+                );
                 let Some(value) = value.filter(|_| !empty) else {
                     continue;
                 };
@@ -1172,7 +1369,12 @@ impl SettingSpec {
                     FieldKind::Text { .. } => toml::Value::String(
                         value
                             .as_str()
-                            .ok_or_else(|| anyhow::anyhow!("{title} is text"))?
+                            .ok_or_else(|| {
+                                anyhow::Error::new(crate::words!(
+                                    settings_field_text = "{ $title } is text",
+                                    title = title()
+                                ))
+                            })?
                             .trim()
                             .to_owned(),
                     ),
@@ -1180,33 +1382,60 @@ impl SettingSpec {
                         let n = value
                             .as_i64()
                             .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-                            .ok_or_else(|| anyhow::anyhow!("{title} is a whole number"))?;
+                            .ok_or_else(|| {
+                                anyhow::Error::new(crate::words!(
+                                    settings_field_whole_number = "{ $title } is a whole number",
+                                    title = title()
+                                ))
+                            })?;
                         anyhow::ensure!(
                             (*min..=*max).contains(&n),
-                            "{title}: enter a whole number from {min} to {max}"
+                            crate::words!(
+                                settings_field_range =
+                                    "{ $title }: enter a whole number from { $min } to { $max }",
+                                title = title(),
+                                min = min.to_string(),
+                                max = max.to_string(),
+                                note = "A record's field that takes a whole number: its title, the least and the most it takes."
+                            )
                         );
                         toml::Value::Integer(n)
                     }
                     FieldKind::Pairs => {
-                        let pairs = value
-                            .as_array()
-                            .ok_or_else(|| anyhow::anyhow!("{title} is a list of pairs"))?;
+                        let pairs = value.as_array().ok_or_else(|| {
+                            anyhow::Error::new(crate::words!(
+                                settings_field_pairs = "{ $title } is a list of pairs",
+                                title = title()
+                            ))
+                        })?;
                         let mut list = Vec::with_capacity(pairs.len());
                         for pair in pairs {
                             let [name, value] =
                                 pair.as_array().map(Vec::as_slice).unwrap_or_default()
                             else {
-                                anyhow::bail!("{title} is a list of name and value pairs");
+                                anyhow::bail!(crate::words!(
+                                    settings_field_name_value_pairs =
+                                        "{ $title } is a list of name and value pairs",
+                                    title = title()
+                                ));
                             };
                             let (Some(name), Some(value)) = (name.as_str(), value.as_str()) else {
-                                anyhow::bail!("{title}: names and values are text");
+                                anyhow::bail!(crate::words!(
+                                    settings_field_pairs_text =
+                                        "{ $title }: names and values are text",
+                                    title = title()
+                                ));
                             };
                             if name.trim().is_empty() && value.trim().is_empty() {
                                 continue;
                             }
                             anyhow::ensure!(
                                 !name.trim().is_empty(),
-                                "{title}: a value needs a name"
+                                crate::words!(
+                                    settings_field_value_needs_name =
+                                        "{ $title }: a value needs a name",
+                                    title = title()
+                                )
                             );
                             list.push(toml::Value::Array(vec![
                                 toml::Value::String(name.trim().into()),
@@ -1223,7 +1452,11 @@ impl SettingSpec {
                         // file only says that it is there.
                         anyhow::ensure!(
                             value.as_str() == Some(SECRET_STORED),
-                            "{title} is kept in the keyring, not in the settings"
+                            crate::words!(
+                                settings_field_secret =
+                                    "{ $title } is kept in the keyring, not in the settings",
+                                title = title()
+                            )
                         );
                         toml::Value::String(SECRET_STORED.into())
                     }
@@ -1244,13 +1477,13 @@ impl SettingSpec {
     /// What is wrong, in the words the dialog uses.
     pub fn check(&self, value: &toml::Value) -> anyhow::Result<()> {
         let kind = |value: &toml::Value| match value {
-            toml::Value::String(_) => "text",
-            toml::Value::Integer(_) => "a whole number",
-            toml::Value::Float(_) => "a number",
-            toml::Value::Boolean(_) => "true or false",
-            toml::Value::Datetime(_) => "a date",
-            toml::Value::Array(_) => "a list",
-            toml::Value::Table(_) => "a table",
+            toml::Value::String(_) => "string",
+            toml::Value::Integer(_) => "integer",
+            toml::Value::Float(_) => "float",
+            toml::Value::Boolean(_) => "boolean",
+            toml::Value::Datetime(_) => "datetime",
+            toml::Value::Array(_) => "array",
+            toml::Value::Table(_) => "table",
         };
         let fits = std::mem::discriminant(value) == std::mem::discriminant(&self.default)
             || matches!(
@@ -1259,9 +1492,28 @@ impl SettingSpec {
             );
         anyhow::ensure!(
             fits,
-            "expected {}, not {}",
-            kind(&self.default),
-            kind(value)
+            crate::words!(
+                settings_expected_kind = "expected { $want ->
+                    [integer] a whole number
+                    [float] a number
+                    [boolean] true or false
+                    [datetime] a date
+                    [array] a list
+                    [table] a table
+                   *[string] text
+                }, not { $got ->
+                    [integer] a whole number
+                    [float] a number
+                    [boolean] true or false
+                    [datetime] a date
+                    [array] a list
+                    [table] a table
+                   *[string] text
+                }",
+                want = kind(&self.default),
+                got = kind(value),
+                note = "A settings file's value of the wrong kind: what the setting takes, then what the file holds."
+            )
         );
         if !self.editable() && !self.page_drawn {
             return Ok(());
@@ -1291,45 +1543,73 @@ impl SettingSpec {
         self.parse_beside(text, Beside::Stored(stored))
     }
 
+    /// Why `key` is not changed as a preference.
+    fn managed(key: &str) -> Words {
+        crate::words!(
+            settings_managed = "{ $key } is managed by its owning commands",
+            key = key,
+            note = "The key is a setting's, as a file writes it."
+        )
+    }
+
+    /// What a switch's value is to be.
+    fn expected_boolean() -> Words {
+        crate::words!(
+            settings_expected_boolean = "expected true or false",
+            note = "As a settings file writes a switch's value: true and false are its words."
+        )
+    }
+
     fn parse_beside(&self, text: &str, beside: Beside<'_>) -> anyhow::Result<toml::Value> {
-        anyhow::ensure!(
-            self.editable() || self.page_drawn,
-            "{} is managed by its owning commands",
-            self.key
-        );
+        anyhow::ensure!(self.editable() || self.page_drawn, Self::managed(&self.key));
         let value = match self.default {
             _ if self.kind == SettingKind::Records => self.parse_records(text, beside)?,
             // A table or a list its page draws, as JSON (`format_value`).
             toml::Value::Table(_) | toml::Value::Array(_) if self.page_drawn => {
                 let json: serde_json::Value =
                     serde_json::from_str(if text.trim().is_empty() { "null" } else { text })
-                        .map_err(|error| anyhow::anyhow!("expected JSON: {error}"))?;
+                        .map_err(|error| {
+                            anyhow::Error::new(crate::words!(
+                                settings_expected_json = "expected JSON: { $error }",
+                                error = error.to_string(),
+                                note = "A value given as JSON could not be read; the reader's own words follow."
+                            ))
+                        })?;
                 match json {
                     serde_json::Value::Null => self.default.clone(),
-                    json => toml::Value::try_from(json)
-                        .map_err(|error| anyhow::anyhow!("not a value a file holds: {error}"))?,
+                    json => toml::Value::try_from(json).map_err(|error| {
+                        anyhow::Error::new(crate::words!(
+                            settings_not_file_value = "not a value a file holds: { $error }",
+                            error = error.to_string(),
+                            note = "A JSON value a settings file cannot hold; the writer's own words follow."
+                        ))
+                    })?,
                 }
             }
             toml::Value::String(_) => toml::Value::String(text.into()),
             toml::Value::Boolean(_) => toml::Value::Boolean(
                 text.trim()
                     .parse()
-                    .map_err(|_| anyhow::anyhow!("expected true or false"))?,
+                    .map_err(|_| anyhow::Error::new(Self::expected_boolean()))?,
             ),
-            toml::Value::Integer(_) => toml::Value::Integer(
-                text.trim()
-                    .parse()
-                    .map_err(|_| anyhow::anyhow!("expected a whole number"))?,
-            ),
+            toml::Value::Integer(_) => toml::Value::Integer(text.trim().parse().map_err(|_| {
+                anyhow::Error::new(crate::words!(
+                    settings_expected_whole_number = "expected a whole number"
+                ))
+            })?),
             toml::Value::Float(_) => {
-                let number: f64 = text
-                    .trim()
-                    .parse()
-                    .map_err(|_| anyhow::anyhow!("expected a number"))?;
-                anyhow::ensure!(number.is_finite(), "expected a finite number");
+                let number: f64 = text.trim().parse().map_err(|_| {
+                    anyhow::Error::new(crate::words!(
+                        settings_expected_number = "expected a number"
+                    ))
+                })?;
+                anyhow::ensure!(
+                    number.is_finite(),
+                    crate::words!(settings_expected_finite = "expected a finite number")
+                );
                 toml::Value::Float(number)
             }
-            _ => anyhow::bail!("{} is managed by its owning commands", self.key),
+            _ => anyhow::bail!(Self::managed(&self.key)),
         };
         anyhow::ensure!(
             self.constraints.choices.is_empty()
@@ -1338,13 +1618,22 @@ impl SettingSpec {
                     .choices
                     .iter()
                     .any(|s| Some(s.as_str()) == value.as_str()),
-            "choose one of {}",
-            self.constraints.choices.join(", ")
+            crate::words!(
+                settings_choose_one = "choose one of { $choices }",
+                // Transitional: a list argument (ADR-139)
+                choices = self.constraints.choices.join(", "),
+                note = "The values a setting takes, as a file writes them."
+            )
         );
         if let Some((min, max)) = self.constraints.integer_range {
             anyhow::ensure!(
                 value.as_integer().is_some_and(|n| (min..=max).contains(&n)),
-                "enter a whole number from {min} to {max}"
+                crate::words!(
+                    settings_range = "enter a whole number from { $min } to { $max }",
+                    min = min.to_string(),
+                    max = max.to_string(),
+                    note = "A setting that takes a whole number: the least and the most it takes."
+                )
             );
         }
         if let Some(Validator(check)) = &self.validator {
@@ -1391,14 +1680,23 @@ struct ApplyArgs {
 /// worker in case a plugin was disabled after the command was queued.
 pub(crate) fn register(app: &crate::App) {
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             STARTUP,
-            "Open at startup",
-            "What Skwir opens when it starts with no folder given on the command line.",
+            crate::words!(settings_startup = "Open at startup"),
+            crate::words!(
+                settings_startup_description =
+                    "What Skwir opens when it starts with no folder given on the command line."
+            ),
             "folder",
-            &[
-                ("folder", "A chosen folder"),
-                ("last", "The windows and tabs left open"),
+            vec![
+                (
+                    "folder",
+                    crate::words!(settings_startup_folder_choice = "A chosen folder"),
+                ),
+                (
+                    "last",
+                    crate::words!(settings_startup_last = "The windows and tabs left open"),
+                ),
             ],
         )
         .section(section::STARTUP)
@@ -1407,8 +1705,11 @@ pub(crate) fn register(app: &crate::App) {
     app.settings.declare(
         SettingSpec::path(
             STARTUP_FOLDER,
-            "Startup folder",
-            "Used when a chosen folder opens at startup. Leave empty for your home folder.",
+            crate::words!(settings_startup_folder = "Startup folder"),
+            crate::words!(
+                settings_startup_folder_description =
+                    "Used when a chosen folder opens at startup. Leave empty for your home folder."
+            ),
             "",
         )
         .section(section::STARTUP)
@@ -1417,8 +1718,10 @@ pub(crate) fn register(app: &crate::App) {
     app.settings.declare(
         SettingSpec::toggle(
             PRESERVE_ATTRIBUTES_ON_COPY,
-            "Keep tags and attributes when copying",
-            "Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.",
+            keep_attributes_title(),
+            crate::words!(
+                settings_keep_attributes_description = "Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them."
+            ),
             true,
         )
         .page(page::NOTES)
@@ -1427,8 +1730,11 @@ pub(crate) fn register(app: &crate::App) {
     app.settings.declare(
         SettingSpec::toggle(
             DROP_ASKS,
-            "Ask what dropped files do",
-            "Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
+            crate::words!(settings_drop_asks = "Ask what dropped files do"),
+            crate::words!(
+                settings_drop_asks_description = "Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
+                note = "Shift, Ctrl and Ctrl+Shift are keys, as the keyboard names them."
+            ),
             true,
         )
         .section(section::DRAG_AND_DROP)
@@ -1437,8 +1743,11 @@ pub(crate) fn register(app: &crate::App) {
     app.settings.declare(
         SettingSpec::toggle(
             crate::companions::SHOW,
-            "Show companion files",
-            "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Properties lists a file's companions either way.",
+            crate::words!(settings_show_companions = "Show companion files"),
+            crate::words!(
+                settings_show_companions_description = "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Properties lists a file's companions either way.",
+                note = "._ is how a Mac's companion files begin their names; Properties is a dialog."
+            ),
             false,
         )
         .page(page::NOTES)
@@ -1449,8 +1758,10 @@ pub(crate) fn register(app: &crate::App) {
     app.settings.declare(
         SettingSpec::toggle(
             crate::location::FOLDERS_FIRST,
-            "Folders first",
-            "List folders before files, each sorted among themselves. Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none.",
+            crate::words!(settings_folders_first = "Folders first"),
+            crate::words!(
+                settings_folders_first_description = "List folders before files, each sorted among themselves. Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none."
+            ),
             true,
         )
         .page(page::VIEWS)
@@ -1459,14 +1770,23 @@ pub(crate) fn register(app: &crate::App) {
     );
     apply_folders_first(app);
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             crate::fs::SIZE_UNITS_KEY,
-            "Units",
-            "How sizes are counted. Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.",
+            crate::words!(settings_size_units = "Units", note = "How sizes are counted: the setting's title."),
+            crate::words!(
+                settings_size_units_description = "How sizes are counted. Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.",
+                note = "kB, MB, KiB… are units' symbols; 10M, 10MB and 10MiB are as a search is typed, never translated."
+            ),
             crate::fs::SizeUnits::Decimal.key(),
-            &[
-                (crate::fs::SizeUnits::Decimal.key(), "Decimal"),
-                (crate::fs::SizeUnits::Binary.key(), "Binary"),
+            vec![
+                (
+                    crate::fs::SizeUnits::Decimal.key(),
+                    crate::words!(settings_size_units_decimal = "Decimal"),
+                ),
+                (
+                    crate::fs::SizeUnits::Binary.key(),
+                    crate::words!(settings_size_units_binary = "Binary"),
+                ),
             ],
         )
         .page(page::VIEWS)
@@ -1475,12 +1795,15 @@ pub(crate) fn register(app: &crate::App) {
     );
     apply_size_units(app);
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             crate::locale::LANGUAGE_KEY,
-            "Language",
-            "The language skwir's window speaks. Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
+            crate::words!(settings_language = "Language"),
+            crate::words!(
+                settings_language_description = "The language skwir's window speaks. Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
+                note = "Automatic is a choice of the setting (settings_language_automatic)."
+            ),
             crate::locale::AUTOMATIC,
-            &language_choices(),
+            language_choices(),
         )
         // English is all skwir speaks yet.
         .now(crate::locale::ENGLISH)
@@ -1490,26 +1813,48 @@ pub(crate) fn register(app: &crate::App) {
     );
     apply_language(app);
     app.settings.declare(
-        SettingSpec::choice(
+        SettingSpec::choice_words(
             CLOSE_SPLIT,
-            "Pane that closes",
-            "Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
+            crate::words!(settings_close_split = "Pane that closes"),
+            crate::words!(
+                settings_close_split_description = "Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
+                note = "Split is a command's name; Other, Active and Right are the setting's choices."
+            ),
             "other",
-            &[("other", "Other"), ("active", "Active"), ("right", "Right")],
+            vec![
+                (
+                    "other",
+                    crate::words!(settings_close_split_other = "Other", note = "Which pane closes: the other one."),
+                ),
+                (
+                    "active",
+                    crate::words!(settings_close_split_active = "Active", note = "Which pane closes: the one you are in."),
+                ),
+                (
+                    "right",
+                    crate::words!(settings_close_split_right = "Right", note = "Which pane closes: the right one."),
+                ),
+            ],
         )
         .section(section::SPLIT),
     );
     app.settings.declare(SettingSpec::state(
         LAST_LOCATION,
-        "The folder shown when the window was last closed",
+        crate::words!(
+            settings_last_location = "The folder shown when the window was last closed",
+            note = "What a key of the state file holds, for whoever reads it."
+        ),
         toml::Value::String(String::new()),
     ));
     app.commands
         .register::<CheckArgs, _>(
             "core", Topic::Skwir,
             "settings.check",
-            "Check settings",
-            "Check a settings file, or settings given as a table, against the settings this skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know",
+            crate::words!(settings_check = "Check settings"),
+            crate::words!(
+                settings_check_description = "Check a settings file, or settings given as a table, against the settings this skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know",
+                note = "Read by agents and in F1's list of actions."
+            ),
             |args, app| {
                 let table: toml::Table = match (&args.file, &args.settings) {
                     (Some(file), None) => {
@@ -1517,22 +1862,34 @@ pub(crate) fn register(app: &crate::App) {
                         // Whatever an agent names: a pipe or a device is no
                         // settings file, nor is one larger than any.
                         let text = crate::fs::file::read_regular_text(path, FILE_LIMIT).map_err(|error| {
-                            // In English, as the rest of the sentence is
-                            // until it is a message (PLAN.md, step E).
-                            anyhow::anyhow!(
-                                "“{}” cannot be read: {}",
-                                path.display(),
-                                crate::op::io_words(&error).english()
-                            )
+                            anyhow::Error::new(crate::words!(
+                                settings_check_unreadable = "“{ $path }” cannot be read: { $why }",
+                                path = path.display().to_string(),
+                                why = crate::op::io_words(&error),
+                                note = "A settings file to check: its path, then why it cannot be read."
+                            ))
                         })?;
                         text.parse()
                             .map_err(|error: toml::de::Error| {
-                                anyhow::anyhow!("“{}” is not valid: {}", path.display(), toml_problem(&text, &error))
+                                anyhow::Error::new(crate::words!(
+                                    settings_check_invalid = "“{ $path }” is not valid: { $problem }",
+                                    path = path.display().to_string(),
+                                    problem = toml_problem(&text, &error),
+                                    note = "A settings file to check that is no TOML: its path, then what is wrong and where."
+                                ))
                             })?
                     }
-                    (None, Some(settings)) => toml::Table::try_from(settings)
-                        .map_err(|error| anyhow::anyhow!("not settings: {error}"))?,
-                    _ => anyhow::bail!("give a file or settings, one of them"),
+                    (None, Some(settings)) => toml::Table::try_from(settings).map_err(|error| {
+                        anyhow::Error::new(crate::words!(
+                            settings_check_not_settings = "not settings: { $error }",
+                            error = error.to_string(),
+                            note = "Settings given as a table that a settings file cannot hold; the writer's own words follow."
+                        ))
+                    })?,
+                    _ => anyhow::bail!(crate::words!(
+                        settings_check_one = "give a file or settings, one of them",
+                        note = "Said to an agent that gave both a file and settings, or neither."
+                    )),
                 };
                 let plugins: Vec<String> =
                     app.plugins.list().into_iter().map(|plugin| plugin.id.to_owned()).collect();
@@ -1552,15 +1909,18 @@ pub(crate) fn register(app: &crate::App) {
     app.commands.register::<ApplyArgs, _>(
         "core", Topic::Skwir,
         "settings.apply",
-        "Save settings",
-        "Change preferences, each key with the text its row in Settings takes; all of them are saved, or none",
+        crate::words!(settings_apply = "Save settings"),
+        crate::words!(
+            settings_apply_description = "Change preferences, each key with the text its row in Settings takes; all of them are saved, or none",
+            note = "Read by agents and in F1's list of actions."
+        ),
         |args, app| {
             if !crate::scheduler::has_window()
                 && let Some(reason) = &app.settings.saving_unavailable
             {
                 // An interactive session can warn and keep temporary values.
                 // A headless command cannot claim it saved those values.
-                anyhow::bail!("{reason}");
+                anyhow::bail!(reason.clone());
             }
             let read = app.settings.validate(&args.changes)?;
             // Only the user lowers privacy (ADR-125).
@@ -1568,7 +1928,7 @@ pub(crate) fn register(app: &crate::App) {
             let mut status = app.settings.status.lock();
             anyhow::ensure!(
                 status.1 != SaveState::Saving,
-                "settings are already being saved"
+                crate::words!(settings_saving_already = "settings are already being saved")
             );
             status.0 += 1;
             status.1 = SaveState::Saving;
@@ -1584,7 +1944,7 @@ pub(crate) fn register(app: &crate::App) {
             };
             let save = move || -> anyhow::Result<()> {
                 let app = guard.weak.upgrade()
-                    .ok_or_else(|| anyhow::anyhow!("settings save did not run"))?;
+                    .ok_or_else(|| anyhow::Error::new(save_did_not_run()))?;
                 let result = app.settings.apply(&args.changes).map(|keys| {
                     changed(&app, &keys);
                 });
@@ -1621,15 +1981,39 @@ pub(crate) fn register(app: &crate::App) {
 /// The languages the setting offers: Automatic, English, and, in a debug
 /// build, the pseudo-language that shows what is not yet a message
 /// (`words::PSEUDO`).
-fn language_choices() -> Vec<(&'static str, &'static str)> {
+fn language_choices() -> Vec<(&'static str, Words)> {
     let mut choices = vec![
-        (crate::locale::AUTOMATIC, "Automatic"),
-        (crate::locale::ENGLISH, "English"),
+        (
+            crate::locale::AUTOMATIC,
+            crate::words!(
+                settings_language_automatic = "Automatic",
+                note = "The language chosen by the system's languages."
+            ),
+        ),
+        // A language by its own name, in every language.
+        (crate::locale::ENGLISH, Words::as_written("English")),
     ];
     if cfg!(debug_assertions) {
-        choices.push((crate::words::PSEUDO, "Pseudo (for testing)"));
+        choices.push((
+            crate::words::PSEUDO,
+            crate::words!(
+                settings_language_pseudo = "Pseudo (for testing)",
+                note = "The pseudo-language, English accented and longer, offered in builds for testing."
+            ),
+        ));
     }
     choices
+}
+
+/// A settings file's key no setting has, in English: what `check` finds
+/// is read by agents and scripts (ADR-139, 7).
+fn no_such_setting() -> String {
+    crate::words!(settings_no_such = "no such setting").english()
+}
+
+/// Why a save of the settings says nothing of how it went.
+fn save_did_not_run() -> Words {
+    crate::words!(settings_save_did_not_run = "settings save did not run")
 }
 
 /// Speak the language the setting chooses (`locale`, ADR-139, 6).
@@ -1798,7 +2182,7 @@ impl Drop for SaveGuard {
         let state = self
             .state
             .take()
-            .unwrap_or_else(|| SaveState::Failed("settings save did not run".into()));
+            .unwrap_or_else(|| SaveState::Failed(save_did_not_run().say()));
         let mut status = app.settings.status.lock();
         if status.0 == self.id {
             status.1 = state;
@@ -1891,24 +2275,29 @@ pub struct Settings {
     revision: std::sync::atomic::AtomicU64,
     /// Why the file could not be read, until the app says it
     /// (`take_problem`).
-    problem: Mutex<Option<String>>,
+    problem: Mutex<Option<Words>>,
     /// A file-backed instance fell back to memory after a load failure.
     /// Kept even after the startup warning is consumed; unlike an explicit
     /// in-memory instance, headless preference changes cannot claim a save.
-    saving_unavailable: Option<String>,
+    saving_unavailable: Option<Words>,
 }
 
 /// A TOML error in a few words, with its line: "expected `=` on line 3".
-fn toml_problem(text: &str, error: &toml::de::Error) -> String {
+fn toml_problem(text: &str, error: &toml::de::Error) -> Words {
     let message = error.message().trim_end_matches('.');
     match error.span() {
         Some(span) => {
             let line = text
                 .get(..span.start)
                 .map_or(1, |before| before.matches('\n').count() + 1);
-            format!("{message} on line {line}")
+            crate::words!(
+                settings_toml_on_line = "{ $problem } on line { $line }",
+                problem = message,
+                line = line.to_string(),
+                note = "What the TOML reader found wrong in a settings file, in its own words, and the line it is on."
+            )
         }
-        None => message.to_owned(),
+        None => Words::as_written(message.to_owned()),
     }
 }
 
@@ -1968,8 +2357,7 @@ impl Settings {
     /// memory, saved nowhere. `take_problem` says which.
     pub fn load(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let (values, problem, saves) =
-            Self::read_or_set_aside(&path, "Your settings", "with its defaults");
+        let (values, problem, saves) = Self::read_or_set_aside(&path, Store::Settings);
         Settings {
             path: saves.then_some(path),
             apart: BTreeMap::new(),
@@ -1991,33 +2379,37 @@ impl Settings {
     /// The table in the file at `path` (empty when there is none), and
     /// what to tell the user when it could not be read: one that is no TOML
     /// set aside beside itself, never written over. False when nothing may
-    /// be saved there: it could neither be read nor set aside. `whose` and
-    /// `without` word the problem: "Your settings could not be read (…), so
-    /// skwir started with its defaults."
-    fn read_or_set_aside(
-        path: &Path,
-        whose: &str,
-        without: &str,
-    ) -> (toml::Table, Option<String>, bool) {
+    /// be saved there: it could neither be read nor set aside. `whose`
+    /// file it is words the problem: "Your settings could not be read (…),
+    /// so skwir started with its defaults."
+    fn read_or_set_aside(path: &Path, whose: Store) -> (toml::Table, Option<Words>, bool) {
+        let whose = whose.file_key();
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return (toml::Table::new(), None, true);
             }
             Err(error) => {
-                // In English, as the rest of the sentence is until it is a
-                // message (PLAN.md, step E); read before the languages the
-                // settings choose are known.
-                let problem = format!(
-                    "{whose} could not be read ({}), so skwir started {without}, and saves nothing \
-                     there this time.",
-                    crate::op::io_words(&error).english()
+                // Words, said once the settings chose the language.
+                let problem = crate::words!(
+                    settings_unreadable_unsaved = "{ $file ->
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them, and saves nothing there this time.
+                       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults, and saves nothing there this time.
+                    }",
+                    file = whose,
+                    why = crate::op::io_words(&error),
+                    note = "Told at startup: a file of skwir's could not be read; why, in a few words."
                 );
                 return (toml::Table::new(), Some(problem), false);
             }
         };
         let parsed = std::str::from_utf8(&bytes)
-            .map_err(|_| "it is not text".to_owned())
+            .map_err(|_| {
+                crate::words!(
+                    settings_not_text = "it is not text",
+                    note = "Why a settings file could not be read: its bytes are no text."
+                )
+            })
             .and_then(|text| {
                 text.parse::<toml::Table>()
                     .map_err(|e| toml_problem(text, &e))
@@ -2029,20 +2421,29 @@ impl Settings {
         tracing::warn!(path = %path.display(), "unreadable: {why}");
         match set_aside(path) {
             Ok(aside) => {
-                let problem = format!(
-                    "{whose} could not be read ({why}), so skwir started {without}. The file was \
-                     set aside as “{}”.",
-                    aside.file_name().unwrap_or_default().display()
+                let problem = crate::words!(
+                    settings_unreadable_set_aside = "{ $file ->
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them. The file was set aside as { $aside }.
+                       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults. The file was set aside as { $aside }.
+                    }",
+                    file = whose,
+                    why = why,
+                    aside = crate::words::Name::of(&aside),
+                    note = "Told at startup: a file of skwir's could not be read (why, in a few words) and was renamed (its new name)."
                 );
                 (toml::Table::new(), Some(problem), true)
             }
             Err(error) => {
-                // In English, as the rest of the sentence is (see above).
-                let problem = format!(
-                    "{whose} could not be read ({why}), so skwir started {without}, and saves \
-                     nothing there until “{}” is fixed or removed ({}).",
-                    path.display(),
-                    crate::op::io_words(&error).english()
+                let problem = crate::words!(
+                    settings_unreadable_kept = "{ $file ->
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+                       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+                    }",
+                    file = whose,
+                    why = why,
+                    path = path.display().to_string(),
+                    error = crate::op::io_words(&error),
+                    note = "Told at startup: a file of skwir's could not be read (why) nor renamed (its path, and why not)."
                 );
                 (toml::Table::new(), Some(problem), false)
             }
@@ -2081,17 +2482,18 @@ impl Settings {
     #[must_use]
     pub fn with_data(mut self, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let (data, problem, saves) = Self::read_or_set_aside(
-            &path,
-            "Your saved searches, pinned tags and tags’ colours",
-            "without them",
-        );
+        let (data, problem, saves) = Self::read_or_set_aside(&path, Store::Data);
         self.apart_read.get_mut().insert(Store::Data, data.clone());
         Self::merge_into(&mut self.values.write(), data);
         if let Some(problem) = problem {
             let mut said = self.problem.lock();
             *said = Some(match said.take() {
-                Some(before) => format!("{before} {problem}"),
+                Some(before) => crate::words!(
+                    settings_problems = "{ $first } { $then }",
+                    first = before,
+                    then = problem,
+                    note = "Two problems told at startup, each a sentence or more: the settings', then the saved searches'."
+                ),
                 None => problem,
             });
         }
@@ -2155,7 +2557,7 @@ impl Settings {
     }
 
     /// Why the file was not read, once: the app says it to the user.
-    pub fn take_problem(&self) -> Option<String> {
+    pub fn take_problem(&self) -> Option<Words> {
         self.problem.lock().take()
     }
 
@@ -2319,14 +2721,26 @@ impl Settings {
 
     fn insert(table: &mut toml::Table, key: &str, value: toml::Value) -> anyhow::Result<()> {
         let parts: Vec<_> = key.split('.').collect();
-        anyhow::ensure!(parts.iter().all(|p| !p.is_empty()), "invalid setting key");
+        anyhow::ensure!(
+            parts.iter().all(|p| !p.is_empty()),
+            crate::words!(
+                settings_invalid_key = "invalid setting key",
+                note = "A setting's key with an empty part (a.b..c)."
+            )
+        );
         let mut table = table;
         for part in &parts[..parts.len() - 1] {
             table = table
                 .entry((*part).to_owned())
                 .or_insert_with(|| toml::Value::Table(toml::Table::new()))
                 .as_table_mut()
-                .ok_or_else(|| anyhow::anyhow!("{key}: parent is not a table"))?;
+                .ok_or_else(|| {
+                    anyhow::Error::new(crate::words!(
+                        settings_parent_not_table = "{ $key }: parent is not a table",
+                        key = key,
+                        note = "A setting's key whose part before it holds a value, not a table of settings."
+                    ))
+                })?;
         }
         table.insert(parts[parts.len() - 1].to_owned(), value);
         Ok(())
@@ -2378,12 +2792,24 @@ impl Settings {
     /// where the file says the new one too, as not read.
     pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
         let renamed = self.renamed.lock().clone();
+        // Said in English: what `check` finds is read by agents and
+        // scripts (ADR-139, 7).
         let moved = |key: &str| {
             renamed.get(key).map(|new| {
                 if Self::lookup(table, new).is_some() {
-                    format!("not read: “{new}” is set, which skwir reads")
+                    crate::words!(
+                        settings_renamed_both = "not read: “{ $new }” is set, which skwir reads",
+                        new = new.as_str(),
+                        note = "A settings file's key that has a new name, set too: the new key."
+                    )
+                    .english()
                 } else {
-                    format!("now “{new}”: skwir moves it there")
+                    crate::words!(
+                        settings_renamed = "now “{ $new }”: skwir moves it there",
+                        new = new.as_str(),
+                        note = "A settings file's key that has a new name: the new key."
+                    )
+                    .english()
                 }
             })
         };
@@ -2406,32 +2832,33 @@ impl Settings {
                     // Kept apart, it is read from the settings only until
                     // skwir keeps its own, which then replaces it whole: a
                     // note, never a problem the file would carry forever.
-                    let apart = match spec.store {
-                        Store::Settings => None,
-                        Store::State => Some(("the window's state", "state file")),
-                        Store::Data => Some((
-                            "what you make in skwir (saved searches, pinned tags, tags' colours)",
-                            "data file",
-                        )),
-                    };
-                    if let Some((what, file)) = apart {
+                    if spec.store != Store::Settings {
+                        let file = spec.store.file_key();
                         let own = self
                             .apart_read
                             .lock()
                             .get(&spec.store)
                             .is_some_and(|kept| Self::lookup(kept, &key).is_some());
                         let note = if own {
-                            format!(
-                                "{what}, not a setting: skwir reads its own, in its {file}, \
-                                 never this one"
+                            crate::words!(
+                                settings_apart_own = "{ $file ->
+                                    [state] the window's state, not a setting: skwir reads its own, in its state file, never this one
+                                   *[data] what you make in skwir (saved searches, pinned tags, tags' colours), not a setting: skwir reads its own, in its data file, never this one
+                                }",
+                                file = file,
+                                note = "A settings file's key that skwir keeps in a file of its own, which holds it already."
                             )
                         } else {
-                            format!(
-                                "{what}, not a setting: read from here only until skwir keeps \
-                                 its own, in its {file}"
+                            crate::words!(
+                                settings_apart_until = "{ $file ->
+                                    [state] the window's state, not a setting: read from here only until skwir keeps its own, in its state file
+                                   *[data] what you make in skwir (saved searches, pinned tags, tags' colours), not a setting: read from here only until skwir keeps its own, in its data file
+                                }",
+                                file = file,
+                                note = "A settings file's key that skwir keeps in a file of its own, which does not hold it yet."
                             )
                         };
-                        checked.notes.push((key, note));
+                        checked.notes.push((key, note.english()));
                         continue;
                     }
                     let other = !spec.constraints.more_choices.is_empty()
@@ -2445,10 +2872,12 @@ impl Settings {
                     if other {
                         checked.notes.push((
                             key,
-                            format!(
-                                "not one skwir knows here: it may be among {}",
-                                spec.constraints.more_choices
-                            ),
+                            crate::words!(
+                                settings_other_choice = "not one skwir knows here: it may be among { $which }",
+                                which = spec.constraints.more_choices.as_str(),
+                                note = "A settings file's choice skwir does not know, which may be one found where it runs: which those are (themes you added to bat)."
+                            )
+                            .english(),
                         ));
                     } else if let Err(error) = spec.check(value) {
                         checked.problems.push((key, error.to_string()));
@@ -2467,11 +2896,11 @@ impl Settings {
                                     ("enabled", toml::Value::Boolean(_)) => {}
                                     ("enabled", _) => checked.problems.push((
                                         format!("{key}.enabled"),
-                                        "expected true or false".into(),
+                                        SettingSpec::expected_boolean().english(),
                                     )),
                                     _ => checked
                                         .problems
-                                        .push((format!("{key}.{field}"), "no such setting".into())),
+                                        .push((format!("{key}.{field}"), no_such_setting())),
                                 }
                             }
                         }
@@ -2481,13 +2910,23 @@ impl Settings {
                                 Some(note) => (enabled, note),
                                 None => (
                                     key,
-                                    format!("no plugin “{id}” here: one from outside, or not built in, may take it"),
+                                    crate::words!(
+                                        settings_no_plugin = "no plugin “{ $id }” here: one from outside, or not built in, may take it",
+                                        id = id.as_str(),
+                                        note = "A settings file names a plugin skwir does not have: its id."
+                                    )
+                                    .english(),
                                 ),
                             });
                         }
-                        None => checked
-                            .problems
-                            .push((key, "expected a table: enabled = true or false".into())),
+                        None => checked.problems.push((
+                            key,
+                            crate::words!(
+                                settings_plugin_table = "expected a table: enabled = true or false",
+                                note = "A plugin's entry in a settings file; enabled, true and false are as the file writes them."
+                            )
+                            .english(),
+                        )),
                     }
                     continue;
                 }
@@ -2501,14 +2940,16 @@ impl Settings {
                     continue;
                 }
                 if owners.contains(owner_of(&key)) {
-                    checked.problems.push((key, "no such setting".into()));
+                    checked.problems.push((key, no_such_setting()));
                 } else {
                     checked.notes.push((
                         key.clone(),
-                        format!(
-                            "nothing here declares “{}”: a plugin turned off, or from outside, may",
-                            owner_of(&key)
-                        ),
+                        crate::words!(
+                            settings_owner_unknown = "nothing here declares “{ $owner }”: a plugin turned off, or from outside, may",
+                            owner = owner_of(&key),
+                            note = "A settings file's key under an owner nothing here declares: the owner's id."
+                        )
+                        .english(),
                     ));
                 }
             }
@@ -2560,8 +3001,9 @@ impl Settings {
             let text = whole.remove(&key).unwrap_or_default();
             let id = &key[table.len() + 1..];
             let mut held: serde_json::Map<String, serde_json::Value> = match whole.get(&table) {
-                Some(given) => serde_json::from_str(given)
-                    .map_err(|error| anyhow::anyhow!("{table}: expected JSON: {error}"))?,
+                Some(given) => {
+                    serde_json::from_str(given).map_err(|error| Self::not_json(&table, &error))?
+                }
                 None => match Self::lookup(&self.values.read(), &table) {
                     Some(value) => serde_json::to_value(value)?
                         .as_object()
@@ -2573,13 +3015,23 @@ impl Settings {
             if text.trim().is_empty() {
                 held.remove(id);
             } else {
-                let value = serde_json::from_str(&text)
-                    .map_err(|error| anyhow::anyhow!("{key}: expected JSON: {error}"))?;
+                let value =
+                    serde_json::from_str(&text).map_err(|error| Self::not_json(&key, &error))?;
                 held.insert(id.to_owned(), value);
             }
             whole.insert(table, serde_json::Value::Object(held).to_string());
         }
         Ok(whole)
+    }
+
+    /// Why `key`'s value, given as JSON, could not be read.
+    fn not_json(key: &str, error: &serde_json::Error) -> anyhow::Error {
+        anyhow::Error::new(crate::words!(
+            settings_key_not_json = "{ $key }: expected JSON: { $error }",
+            key = key,
+            error = error.to_string(),
+            note = "A setting's key, then the JSON reader's own words."
+        ))
     }
 
     pub fn validate(
@@ -2600,9 +3052,13 @@ impl Settings {
         changes
             .iter()
             .map(|(key, text)| {
-                let spec = schema
-                    .get(key)
-                    .ok_or_else(|| anyhow::anyhow!("unknown setting: {key}"))?;
+                let spec = schema.get(key).ok_or_else(|| {
+                    anyhow::Error::new(crate::words!(
+                        settings_unknown = "unknown setting: { $key }",
+                        key = key.as_str(),
+                        note = "A setting's key no setting has."
+                    ))
+                })?;
                 let value = spec
                     .parse_over(text, stored.get(key).and_then(Option::as_ref))
                     .with_context(|| key.clone())?;
@@ -2619,22 +3075,26 @@ impl Settings {
         let bytes = match crate::fs::file::read_regular(path, FILE_LIMIT) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
-            // In English, as the rest of the sentence is until it is a
-            // message (PLAN.md, step E).
-            Err(e) => anyhow::bail!(
-                "“{}” could not be read: {}",
-                path.display(),
-                crate::op::io_words(&e).english()
-            ),
+            Err(e) => anyhow::bail!(crate::words!(
+                settings_file_unreadable = "“{ $path }” could not be read: { $why }",
+                path = path.display().to_string(),
+                why = crate::op::io_words(&e),
+                note = "A file of the settings: its path, then why it could not be read."
+            )),
         };
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| anyhow::anyhow!("“{}” is not text", path.display()))?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| {
+            anyhow::Error::new(crate::words!(
+                settings_file_not_text = "“{ $path }” is not text",
+                path = path.display().to_string()
+            ))
+        })?;
         text.parse::<toml::Table>().map_err(|e| {
-            anyhow::anyhow!(
-                "“{}” is not valid ({}): nothing is saved over it until it is fixed",
-                path.display(),
-                toml_problem(text, &e)
-            )
+            anyhow::Error::new(crate::words!(
+                settings_file_invalid = "“{ $path }” is not valid ({ $problem }): nothing is saved over it until it is fixed",
+                path = path.display().to_string(),
+                problem = toml_problem(text, &e),
+                note = "A file of the settings that is no TOML (a hand edit under way): its path, and what is wrong where."
+            ))
         })
     }
 
@@ -2700,16 +3160,30 @@ impl Settings {
         std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly())
     }
 
-    fn read_only_words(store: Store, path: &Path, target: &Path) -> String {
-        let file = store.file_words();
+    fn read_only_words(store: Store, path: &Path, target: &Path) -> Words {
+        let file = store.file_key();
         if target == path {
-            format!("the {file} is read-only, so the change is not kept")
+            crate::words!(
+                settings_read_only = "the { $file ->
+                    [state] state file
+                    [data] data file
+                   *[settings] settings file
+                } is read-only, so the change is not kept",
+                file = file
+            )
         } else if store == Store::Settings {
-            "the settings file is a link to one that cannot be written (Home Manager's, say), \
-             so the change is not kept: change it where it is declared"
-                .to_owned()
+            crate::words!(
+                settings_read_only_link = "the settings file is a link to one that cannot be written (Home Manager's, say), so the change is not kept: change it where it is declared",
+                note = "Home Manager is a program that declares a user's configuration."
+            )
         } else {
-            format!("the {file} is a link to one that cannot be written, so the change is not kept")
+            crate::words!(
+                settings_read_only_link_apart = "the { $file ->
+                    [state] state file
+                   *[data] data file
+                } is a link to one that cannot be written, so the change is not kept",
+                file = file
+            )
         }
     }
 
@@ -2950,4 +3424,13 @@ impl Settings {
         }
         Ok(())
     }
+}
+
+/// The title of `core.preserve_attributes`, which a copy's refusal names
+/// as the setting to turn off: one message, said in both (ADR-139, 8).
+pub(crate) fn keep_attributes_title() -> Words {
+    crate::words!(
+        settings_keep_attributes = "Keep tags and attributes when copying",
+        note = "A setting on the Tags and notes page; a copy that cannot keep them names it too."
+    )
 }

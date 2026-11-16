@@ -122,7 +122,11 @@ pub fn private(folder: &Path) -> std::io::Result<()> {
         if !metadata.is_dir() || metadata.uid() != rustix::process::getuid().as_raw() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                format!("{} is not the user's alone", folder.display()),
+                crate::words!(
+                    folders_not_private = "{ $path } is not the user's alone",
+                    path = folder.display().to_string(),
+                    note = "Why Skwir will not keep its session's files (its sockets, its mounts) in a folder: someone else owns it. The folder's path."
+                ),
             ));
         }
         if metadata.mode() & 0o077 != 0 {

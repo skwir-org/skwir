@@ -14,11 +14,45 @@ use crate::metadata::same_tag;
 use crate::op::{
     Change, EntryRef, Operation, Rename, ResolveError, StepContext, StepStatus, Tenses,
 };
+use crate::words;
+use crate::words::{Name, Words};
 
 fn name_of(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// Why notes cannot be written: no stores were given.
+fn no_stores() -> Words {
+    words!(notes_no_stores = "no notes stores to write with")
+}
+
+/// A rating out of its range.
+fn rating_range() -> Words {
+    words!(
+        notes_rating_range = "a rating is from 1 to { $max }",
+        max = super::RATING_MAX,
+        note = "The most a rating is, counted in half stars."
+    )
+}
+
+/// A file not there any more, by its name.
+fn gone(path: &Path) -> Words {
+    words!(
+        notes_gone = "{ $name } is not there any more",
+        name = Name::of(path)
+    )
+}
+
+/// A file's notes changed by another since an edit: where it is (its name
+/// or its path), as written.
+fn changed_since(what: String) -> Words {
+    words!(
+        notes_changed_since = "the notes of { $what } changed since, elsewhere",
+        what = what,
+        note = "Undo of an edit of notes refused: another program changed them since. The file's name or path."
     )
 }
 
@@ -175,7 +209,19 @@ impl SetNotes {
     /// what its fields say.
     #[must_use]
     pub fn saying(mut self, will: String, did: String, already: String) -> Self {
-        self.words = Some(Said { will, did, already }.into());
+        self.words = Some(Tenses {
+            will: will.into(),
+            did: did.into(),
+            already: (!already.is_empty()).then(|| already.into()),
+        });
+        self
+    }
+
+    /// What it says it will do, did, and found done already, as words, in
+    /// place of what its fields say.
+    #[must_use]
+    pub fn saying_tenses(mut self, tenses: Tenses) -> Self {
+        self.words = Some(tenses);
         self
     }
 
@@ -231,7 +277,7 @@ impl SetNotes {
     fn stores(&self) -> anyhow::Result<&Arc<NoteStores>> {
         self.stores
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("no notes stores to write with"))
+            .ok_or_else(|| anyhow::Error::new(no_stores()))
     }
 
     fn rating_to(&self) -> Field<u64> {
@@ -294,21 +340,36 @@ impl SetNotes {
             };
             return (words.clone(), field);
         }
-        let (said, field) = self.said();
-        (said.into(), field)
+        self.said()
     }
 
     /// What its fields say it will do, did, and found done already, and
-    /// the field it is about: text until its sentences are messages.
-    fn said(&self) -> (Said, &'static str) {
-        let name = name_of(&self.entry.path);
-        let said = |will: String, did: String, already: String| Said { will, did, already };
+    /// the field it is about.
+    fn said(&self) -> (Tenses, &'static str) {
+        let name = || Name::of(&self.entry.path);
+        let said = |will: Words, did: Words, already: Words| Tenses {
+            will,
+            did,
+            already: Some(already),
+        };
         if self.sync {
             return (
                 said(
-                    format!("make the notes of “{name}” agree"),
-                    format!("made the notes of “{name}” agree"),
-                    format!("the notes of “{name}” already agreed"),
+                    words!(
+                        notes_agree = "make the notes of { $name } agree",
+                        name = name(),
+                        note = "A step of a plan: write a file's notes alike to every place that keeps them. Begins in lower case."
+                    ),
+                    words!(
+                        notes_agreed = "made the notes of { $name } agree",
+                        name = name(),
+                        note = "A step of a plan, done. Begins in lower case."
+                    ),
+                    words!(
+                        notes_agreed_already = "the notes of { $name } already agreed",
+                        name = name(),
+                        note = "A step of a plan found done already. Begins in lower case."
+                    ),
                 ),
                 keys::TAGS,
             );
@@ -316,27 +377,70 @@ impl SetNotes {
         if let Some(change) = &self.change_tags {
             // Each part said every way at once: a name or a tag may hold
             // any word.
-            let mut parts: Vec<Said> = Vec::new();
+            let mut parts: Vec<Tenses> = Vec::new();
             for r in &change.rename {
                 parts.push(match &r.to {
                     Some(to) => said(
-                        format!("rename the tag “{}” to “{to}” on “{name}”", r.from),
-                        format!("renamed the tag “{}” to “{to}” on “{name}”", r.from),
-                        format!("the tag “{}” was already “{to}” on “{name}”", r.from),
+                        words!(
+                            notes_rename_tag = "rename the tag { $tag } to { $to } on { $name }",
+                            tag = Name(r.from.clone()),
+                            to = Name(to.clone()),
+                            name = name(),
+                            note = "A step of a plan: a tag's name, its new name, the file. Begins in lower case."
+                        ),
+                        words!(
+                            notes_renamed_tag = "renamed the tag { $tag } to { $to } on { $name }",
+                            tag = Name(r.from.clone()),
+                            to = Name(to.clone()),
+                            name = name()
+                        ),
+                        words!(
+                            notes_renamed_tag_already = "the tag { $tag } was already { $to } on { $name }",
+                            tag = Name(r.from.clone()),
+                            to = Name(to.clone()),
+                            name = name()
+                        ),
                     ),
                     None => said(
-                        format!("take {} off “{name}”", r.from),
-                        format!("took {} off “{name}”", r.from),
-                        format!("{} was already off “{name}”", r.from),
+                        words!(
+                            notes_take_tag = "take { $tag } off { $name }",
+                            tag = r.from.as_str(),
+                            name = name(),
+                            note = "A step of a plan: take a tag (its name) off a file. Begins in lower case."
+                        ),
+                        words!(
+                            notes_took_tag = "took { $tag } off { $name }",
+                            tag = r.from.as_str(),
+                            name = name()
+                        ),
+                        words!(
+                            notes_took_tag_already = "{ $tag } was already off { $name }",
+                            tag = r.from.as_str(),
+                            name = name()
+                        ),
                     ),
                 });
             }
             if !change.add.is_empty() {
+                // Transitional: a list argument (ADR-139)
                 let added = change.add.join(", ");
                 parts.push(said(
-                    format!("tag “{name}” {added}"),
-                    format!("tagged “{name}” {added}"),
-                    format!("“{name}” was already tagged {added}"),
+                    words!(
+                        notes_tag = "tag { $name } { $tags }",
+                        name = name(),
+                        tags = added.clone(),
+                        note = "A step of a plan: give a file tags (their names, by commas). Begins in lower case."
+                    ),
+                    words!(
+                        notes_tagged = "tagged { $name } { $tags }",
+                        name = name(),
+                        tags = added.clone()
+                    ),
+                    words!(
+                        notes_tagged_already = "{ $name } was already tagged { $tags }",
+                        name = name(),
+                        tags = added
+                    ),
                 ));
             }
             let taken: Vec<&str> = change
@@ -346,27 +450,54 @@ impl SetNotes {
                 .map(String::as_str)
                 .collect();
             if !taken.is_empty() {
-                let were = if taken.len() == 1 { "was" } else { "were" };
+                let count = taken.len();
+                // Transitional: a list argument (ADR-139)
                 let taken = taken.join(", ");
                 parts.push(said(
-                    format!("take {taken} off “{name}”"),
-                    format!("took {taken} off “{name}”"),
-                    format!("{taken} {were} already off “{name}”"),
+                    words!(
+                        notes_take_tags = "take { $tags } off { $name }",
+                        tags = taken.clone(),
+                        name = name(),
+                        note = "A step of a plan: take tags (their names, by commas) off a file. Begins in lower case."
+                    ),
+                    words!(
+                        notes_took_tags = "took { $tags } off { $name }",
+                        tags = taken.clone(),
+                        name = name()
+                    ),
+                    words!(
+                        notes_took_tags_already = "{ $count ->
+                            [one] { $tags } was already off { $name }
+                           *[other] { $tags } were already off { $name }
+                        }",
+                        count = count,
+                        tags = taken,
+                        name = name(),
+                        note = "Tags (their names, by commas, as many as the count) found already off a file."
+                    ),
                 ));
             }
-            let joined = |part: fn(&Said) -> &String| {
+            // Each part after the one before, as English joins them by
+            // "and".
+            let joined = |part: fn(&Tenses) -> Words| {
                 parts
                     .iter()
                     .map(part)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(" and ")
+                    .reduce(|first, then| {
+                        words!(
+                            notes_and = "{ $first } and { $then }",
+                            first = first,
+                            then = then,
+                            note = "Two changes of a file's tags, each a step's words (rename the tag “a” to “b” on “x.txt”), one after the other."
+                        )
+                    })
+                    .unwrap_or_default()
             };
             return (
                 said(
-                    joined(|w| &w.will),
-                    joined(|w| &w.did),
-                    joined(|w| &w.already),
+                    joined(|w| w.will.clone()),
+                    joined(|w| w.did.clone()),
+                    joined(|w| w.already.clone().unwrap_or_default()),
                 ),
                 keys::TAGS,
             );
@@ -375,19 +506,43 @@ impl SetNotes {
             return if tags.is_empty() {
                 (
                     said(
-                        format!("remove the tags of “{name}”"),
-                        format!("removed the tags of “{name}”"),
-                        format!("“{name}” already had no tags"),
+                        words!(
+                            notes_untag = "remove the tags of { $name }",
+                            name = name(),
+                            note = "A step of a plan. Begins in lower case."
+                        ),
+                        words!(
+                            notes_untagged = "removed the tags of { $name }",
+                            name = name()
+                        ),
+                        words!(
+                            notes_untagged_already = "{ $name } already had no tags",
+                            name = name()
+                        ),
                     ),
                     keys::TAGS,
                 )
             } else {
+                // Transitional: a list argument (ADR-139)
                 let tags = tags.join(", ");
                 (
                     said(
-                        format!("tag “{name}” {tags}"),
-                        format!("tagged “{name}” {tags}"),
-                        format!("“{name}” was already tagged {tags}"),
+                        words!(
+                            notes_tag = "tag { $name } { $tags }",
+                            name = name(),
+                            tags = tags.clone(),
+                            note = "A step of a plan: give a file tags (their names, by commas). Begins in lower case."
+                        ),
+                        words!(
+                            notes_tagged = "tagged { $name } { $tags }",
+                            name = name(),
+                            tags = tags.clone()
+                        ),
+                        words!(
+                            notes_tagged_already = "{ $name } was already tagged { $tags }",
+                            name = name(),
+                            tags = tags
+                        ),
                     ),
                     keys::TAGS,
                 )
@@ -397,17 +552,40 @@ impl SetNotes {
             return match rating {
                 Some(r) => (
                     said(
-                        format!("rate “{name}” {}", stars(r)),
-                        format!("rated “{name}” {}", stars(r)),
-                        format!("“{name}” was already rated {}", stars(r)),
+                        words!(
+                            notes_rate = "rate { $name } { $stars }",
+                            name = name(),
+                            stars = stars(r),
+                            note = "A step of a plan: rate a file, in stars (4 stars). Begins in lower case."
+                        ),
+                        words!(
+                            notes_rated = "rated { $name } { $stars }",
+                            name = name(),
+                            stars = stars(r)
+                        ),
+                        words!(
+                            notes_rated_already = "{ $name } was already rated { $stars }",
+                            name = name(),
+                            stars = stars(r)
+                        ),
                     ),
                     keys::RATING,
                 ),
                 None => (
                     said(
-                        format!("remove the rating of “{name}”"),
-                        format!("removed the rating of “{name}”"),
-                        format!("“{name}” already had no rating"),
+                        words!(
+                            notes_unrate = "remove the rating of { $name }",
+                            name = name(),
+                            note = "A step of a plan. Begins in lower case."
+                        ),
+                        words!(
+                            notes_unrated = "removed the rating of { $name }",
+                            name = name()
+                        ),
+                        words!(
+                            notes_unrated_already = "{ $name } already had no rating",
+                            name = name()
+                        ),
                     ),
                     keys::RATING,
                 ),
@@ -416,38 +594,41 @@ impl SetNotes {
         match self.comment_to() {
             Field::Set(Some(_)) | Field::Left => (
                 said(
-                    format!("set the comment of “{name}”"),
-                    format!("set the comment of “{name}”"),
-                    format!("“{name}” already had that comment"),
+                    words!(
+                        notes_set_comment = "set the comment of { $name }",
+                        name = name(),
+                        note = "A step of a plan. Begins in lower case."
+                    ),
+                    words!(
+                        notes_comment_set = "set the comment of { $name }",
+                        name = name(),
+                        note = "A step of a plan, done: the past of “set”. Begins in lower case."
+                    ),
+                    words!(
+                        notes_comment_set_already = "{ $name } already had that comment",
+                        name = name()
+                    ),
                 ),
                 keys::COMMENT,
             ),
             Field::Set(None) => (
                 said(
-                    format!("remove the comment of “{name}”"),
-                    format!("removed the comment of “{name}”"),
-                    format!("“{name}” already had no comment"),
+                    words!(
+                        notes_uncomment = "remove the comment of { $name }",
+                        name = name(),
+                        note = "A step of a plan. Begins in lower case."
+                    ),
+                    words!(
+                        notes_uncommented = "removed the comment of { $name }",
+                        name = name()
+                    ),
+                    words!(
+                        notes_uncommented_already = "{ $name } already had no comment",
+                        name = name()
+                    ),
                 ),
                 keys::COMMENT,
             ),
-        }
-    }
-}
-
-/// A step's words in three tenses, as text (`op::Tenses`).
-struct Said {
-    will: String,
-    did: String,
-    already: String,
-}
-
-impl From<Said> for Tenses {
-    /// As written; what it found done already, unless it says nothing.
-    fn from(said: Said) -> Self {
-        Tenses {
-            will: said.will.into(),
-            did: said.did.into(),
-            already: (!said.already.is_empty()).then(|| said.already.into()),
         }
     }
 }
@@ -531,12 +712,12 @@ impl Operation for SetNotes {
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if self.rating.is_some_and(|r| r > super::RATING_MAX) {
             return StepStatus::Conflict {
-                reason: format!("a rating is from 1 to {}", super::RATING_MAX),
+                reason: rating_range().say(),
             };
         }
         let Ok(stores) = self.stores() else {
             return StepStatus::Conflict {
-                reason: "no notes stores to write with".into(),
+                reason: no_stores().say(),
             };
         };
         match self.entry.resolve() {
@@ -553,10 +734,7 @@ impl Operation for SetNotes {
                 }
             }
             Err(ResolveError::Gone(p)) => StepStatus::Conflict {
-                reason: format!(
-                    "“{}” is not there any more",
-                    p.file_name().unwrap_or(p.as_os_str()).display()
-                ),
+                reason: gone(&p).say(),
             },
             Err(e) => StepStatus::Conflict {
                 reason: e.to_string(),
@@ -566,13 +744,16 @@ impl Operation for SetNotes {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         anyhow::ensure!(
             self.rating.is_none_or(|r| r <= super::RATING_MAX),
-            "a rating is from 1 to {}",
-            super::RATING_MAX
+            rating_range()
         );
         let stores = Arc::clone(self.stores()?);
         let path = self.entry.resolve()?;
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            anyhow::bail!("{} has no folder", path.display());
+            anyhow::bail!(words!(
+                notes_no_folder = "{ $path } has no folder",
+                path = path.display().to_string(),
+                note = "A file's notes cannot be written: its path names no folder it is in."
+            ));
         };
         // What the check read just before, else read now.
         let read = ctx
@@ -615,10 +796,14 @@ impl Operation for SetNotes {
             keys.extend(store.keys(&probe, i == 0));
         }
         let before = raw::snapshot(&path, &keys)?;
-        let failed = |error: std::io::Error, what: &str| {
+        let failed = |error: std::io::Error| {
             // Nothing is left half written.
             let _ = raw::restore(&path, &before);
-            anyhow::anyhow!("{what} {}: {error}", path.display())
+            anyhow::Error::new(error).context(words!(
+                notes_write_failed = "write the notes of { $path }",
+                path = path.display().to_string(),
+                note = "What could not be done, the reason after it: write the notes of /a/b.txt: permission denied."
+            ))
         };
         let mut held = false;
         // The stores that wrote: what the others say is what was read.
@@ -634,7 +819,7 @@ impl Operation for SetNotes {
                 Ok(Wrote::Unchanged) => held = true,
                 Ok(Wrote::NotHere) => {}
                 Ok(Wrote::Refused(why)) => refused.push(why),
-                Err(e) => return Err(failed(e, "write the notes of")),
+                Err(e) => return Err(failed(e)),
             }
         }
         for (i, store) in fallback.iter().enumerate() {
@@ -647,18 +832,24 @@ impl Operation for SetNotes {
                 Ok(Wrote::Unchanged) => held = true,
                 Ok(Wrote::NotHere) => {}
                 Ok(Wrote::Refused(why)) => refused.push(why),
-                Err(e) => return Err(failed(e, "write the notes of")),
+                Err(e) => return Err(failed(e)),
             }
         }
         if !held {
             let _ = raw::restore(&path, &before);
             if refused.is_empty() {
-                anyhow::bail!(
-                    "{}: its volume keeps no notes, and no store is set to keep them beside it",
-                    path.display()
-                );
+                anyhow::bail!(words!(
+                    notes_kept_nowhere = "{ $path }: its volume keeps no notes, and no store is set to keep them beside it",
+                    path = path.display().to_string()
+                ));
             }
-            anyhow::bail!("{}: {}", path.display(), refused.join("; "));
+            anyhow::bail!(words!(
+                notes_refused = "{ $path }: { $why }",
+                path = path.display().to_string(),
+                // Transitional: a list argument (ADR-139)
+                why = refused.join("; "),
+                note = "A file whose notes no store would keep: its path, then each store's reason, by semicolons."
+            ));
         }
         let after = raw::snapshot(&path, &keys)?;
         // What each store says now, as skwir left it: the next read tells
@@ -803,14 +994,25 @@ impl Operation for RestoreNotes {
         Some(self.entry.id)
     }
     fn describe(&self) -> Change {
-        let name = name_of(&self.entry.path);
+        let name = || Name::of(&self.entry.path);
         Change::Metadata {
             path: self.entry.path.clone(),
             field: self.field.clone(),
             words: Some(Tenses {
-                will: format!("put back the notes of “{name}”").into(),
-                did: format!("put back the notes of “{name}”").into(),
-                already: Some(format!("the notes of “{name}” were already back").into()),
+                will: words!(
+                    notes_put_back = "put back the notes of { $name }",
+                    name = name(),
+                    note = "A step of a plan that undoes an edit of a file's notes. Begins in lower case."
+                ),
+                did: words!(
+                    notes_put_back_done = "put back the notes of { $name }",
+                    name = name(),
+                    note = "The same step, done: the past of “put back”. Begins in lower case."
+                ),
+                already: Some(words!(
+                    notes_put_back_already = "the notes of { $name } were already back",
+                    name = name()
+                )),
             }),
         }
     }
@@ -819,10 +1021,7 @@ impl Operation for RestoreNotes {
             Ok(p) => p,
             Err(ResolveError::Gone(p)) => {
                 return StepStatus::Conflict {
-                    reason: format!(
-                        "“{}” is not there any more",
-                        p.file_name().unwrap_or(p.as_os_str()).display()
-                    ),
+                    reason: gone(&p).say(),
                 };
             }
             Err(e) => {
@@ -835,10 +1034,7 @@ impl Operation for RestoreNotes {
             Ok(now) if now == self.before => StepStatus::AlreadyDone,
             Ok(now) if now == self.after => StepStatus::Pending { reversible: true },
             Ok(_) => StepStatus::Conflict {
-                reason: format!(
-                    "the notes of {} changed since, elsewhere",
-                    name_of(&self.entry.path)
-                ),
+                reason: changed_since(name_of(&self.entry.path)).say(),
             },
             Err(e) => StepStatus::Conflict {
                 reason: e.to_string(),
@@ -850,11 +1046,15 @@ impl Operation for RestoreNotes {
         let now = raw::snapshot(&path, &self.keys())?;
         anyhow::ensure!(
             now == self.after || now == self.before,
-            "the notes of {} changed since, elsewhere",
-            path.display()
+            changed_since(path.display().to_string())
         );
-        raw::restore(&path, &self.before)
-            .map_err(|e| anyhow::anyhow!("put back the notes of {}: {e}", path.display()))?;
+        raw::restore(&path, &self.before).map_err(|e| {
+            anyhow::Error::new(e).context(words!(
+                notes_put_back_failed = "put back the notes of { $path }",
+                path = path.display().to_string(),
+                note = "What could not be done, the reason after it: put back the notes of /a/b.txt: permission denied."
+            ))
+        })?;
         if let Some(stores) = &self.stores {
             stores.forget(self.entry.id, &path);
         }

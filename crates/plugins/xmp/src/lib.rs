@@ -393,7 +393,7 @@ pub fn summary(notes: &Notes) -> Option<String> {
         parts.push(format!("Keywords {}", notes.tag_names().join(", ")));
     }
     if let Some(r) = notes.rating {
-        parts.push(skwir_core::notes::stars(r));
+        parts.push(skwir_core::notes::stars(r).say());
     }
     if let Some(c) = &notes.comment {
         parts.push(format!("“{c}”"));

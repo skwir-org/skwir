@@ -82,6 +82,33 @@ impl Capability {
         }
     }
 
+    /// What it lets a plugin do, as the Plugins page says it, said where
+    /// it is drawn.
+    pub fn said(self) -> crate::words::Words {
+        match self {
+            Capability::Read => crate::words!(
+                permissions_read = "reads what files hold",
+                note =
+                    "What a plugin may do, on the Plugins page after “May:”. Begins in lower case."
+            ),
+            Capability::Write => crate::words!(
+                permissions_write = "changes files",
+                note =
+                    "What a plugin may do, on the Plugins page after “May:”. Begins in lower case."
+            ),
+            Capability::Network => crate::words!(
+                permissions_network = "uses the network",
+                note =
+                    "What a plugin may do, on the Plugins page after “May:”. Begins in lower case."
+            ),
+            Capability::Programs => crate::words!(
+                permissions_programs = "starts programs",
+                note =
+                    "What a plugin may do, on the Plugins page after “May:”. Begins in lower case."
+            ),
+        }
+    }
+
     const fn bit(self) -> u8 {
         1 << self as u8
     }
@@ -283,16 +310,22 @@ fn path_named(text: &str) -> Option<PathBuf> {
 }
 
 /// What an agent is told of a path that would reach another machine.
-fn reaches_another_machine(path: &Path) -> String {
-    format!(
-        "looking up {} would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
-        path.display()
+fn reaches_another_machine(path: &Path) -> crate::words::Words {
+    crate::words!(
+        permissions_reaches_machine = "looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
+        path = path.display().to_string(),
+        note = "Told to an agent that named a path on a server: the path."
     )
 }
 
 /// What an agent is told of a private path it named or would open.
-const NAMES_PRIVATE: &str =
-    "this names a private folder, which skwir keeps from agents (Settings, Privacy)";
+fn names_private() -> crate::words::Words {
+    crate::words!(
+        permissions_names_private =
+            "this names a private folder, which skwir keeps from agents (Settings, Privacy)",
+        note = "Told to an agent that named a private folder; Settings and Privacy name the page where folders are made private."
+    )
+}
 
 /// At most so many paths are looked for written in one text.
 const WRITTEN_PATHS: usize = 64;
@@ -512,7 +545,7 @@ impl Checker<'_> {
         if self.reaches_elsewhere(path) {
             anyhow::bail!(reaches_another_machine(path));
         }
-        anyhow::ensure!(!self.holds(path), NAMES_PRIVATE);
+        anyhow::ensure!(!self.holds(path), names_private());
         Ok(())
     }
 

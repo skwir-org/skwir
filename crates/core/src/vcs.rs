@@ -81,6 +81,62 @@ impl State {
         }
     }
 
+    /// What a column, a caption or a group calls it, as words (`title`
+    /// until every caller says words).
+    pub fn words(self) -> crate::words::Words {
+        use crate::words;
+        match self {
+            State::Conflict => words!(
+                vcs_conflict = "In conflict",
+                note = "A file's state in Git, in a column, a caption or a group's heading: a merge left it with both sides."
+            ),
+            State::Changed => words!(
+                vcs_changed = "Changed",
+                note = "A file's state in Git: changed since the last commit."
+            ),
+            State::Staged => words!(
+                vcs_staged = "Staged",
+                note = "A file's state in Git: its changes are added for the next commit."
+            ),
+            State::New => words!(
+                vcs_new = "New",
+                note = "A file's state in Git: not yet in any commit."
+            ),
+            State::Ignored => words!(
+                vcs_ignored = "Ignored",
+                note = "A file's state in Git: Git is told to leave it out."
+            ),
+        }
+    }
+
+    /// What a folder holding it below is called, as words (`below` until
+    /// every caller says words).
+    pub fn below_words(self) -> crate::words::Words {
+        use crate::words;
+        match self {
+            State::Conflict => words!(
+                vcs_holds_conflict = "Holds a conflict",
+                note = "A folder's state in Git: a file below it is in conflict."
+            ),
+            State::Changed => words!(
+                vcs_holds_changes = "Holds changes",
+                note = "A folder's state in Git: files below it changed since the last commit."
+            ),
+            State::Staged => words!(
+                vcs_holds_staged = "Holds staged changes",
+                note = "A folder's state in Git: files below it have changes added for the next commit."
+            ),
+            State::New => words!(
+                vcs_holds_new = "Holds new files",
+                note = "A folder's state in Git: files below it are in no commit yet."
+            ),
+            State::Ignored => words!(
+                vcs_folder_ignored = "Ignored",
+                note = "A folder's state in Git: Git is told to leave it out."
+            ),
+        }
+    }
+
     /// An entry's state, as its listing keeps it; `None` for one as the
     /// last commit has it, or not known (`known` tells them apart): what
     /// is marked.

@@ -278,9 +278,7 @@ impl App {
         let sleep = self.tabs_sleep();
         {
             let mut ws = self.workspace.write();
-            let window = ws
-                .window_of_tab(tab)
-                .ok_or_else(|| anyhow::anyhow!("no such tab"))?;
+            let window = ws.window_of_tab(tab).ok_or_else(no_tab)?;
             let left = ws
                 .window(window)
                 .map(crate::workspace::WindowTabs::shown)
@@ -504,10 +502,11 @@ impl App {
             let lens = source.and_then(|p| p.lens().cloned());
             let location = match location {
                 Some(location) => location,
-                None => source
-                    .and_then(|p| p.shown())
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to open in a tab"))?,
+                None => source.and_then(|p| p.shown()).cloned().ok_or_else(|| {
+                    anyhow::Error::new(crate::words!(
+                        tabs_nothing_for_tab = "the pane shows nothing to open in a tab"
+                    ))
+                })?,
             };
             let at = if show {
                 ws.window(window).map_or(0, |w| w.tabs().len())
@@ -543,9 +542,7 @@ impl App {
     pub fn close_tab(&self, tab: TabId) -> anyhow::Result<Option<(u64, Words)>> {
         let (window, index, closed, panes, was_shown) = {
             let mut ws = self.workspace.write();
-            let window = ws
-                .window_of_tab(tab)
-                .ok_or_else(|| anyhow::anyhow!("no such tab"))?;
+            let window = ws.window_of_tab(tab).ok_or_else(no_tab)?;
             let was_shown = ws.window(window).is_some_and(|w| w.shown().id == tab);
             let Some((index, closed, panes)) = ws.close_tab(tab) else {
                 return Ok(None);
@@ -570,7 +567,7 @@ impl App {
     pub fn close_window(&self, window: WindowId) -> anyhow::Result<Option<u64>> {
         let (closed, panes) = {
             let mut ws = self.workspace.write();
-            anyhow::ensure!(ws.window(window).is_some(), "no such window");
+            anyhow::ensure!(ws.window(window).is_some(), no_window());
             let Some((_, closed, panes)) = ws.close_window(window) else {
                 return Ok(None);
             };
@@ -764,10 +761,11 @@ impl App {
             let lens = source.and_then(|p| p.lens().cloned());
             let location = match location {
                 Some(location) => location,
-                None => source
-                    .and_then(|p| p.shown())
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to open in a window"))?,
+                None => source.and_then(|p| p.shown()).cloned().ok_or_else(|| {
+                    anyhow::Error::new(crate::words!(
+                        tabs_nothing_for_window = "the pane shows nothing to open in a window"
+                    ))
+                })?,
             };
             let (window, tab, panes) = ws.add_window(made_from, vec![(location, sort)]);
             if let Some(p) = ws.pane_mut(panes[0]) {
@@ -832,7 +830,7 @@ impl App {
         let (asked, folders): (bool, Vec<Location>) = {
             let ws = self.workspace.read();
             let Some(p) = ws.pane(pane) else {
-                anyhow::bail!("no such pane");
+                anyhow::bail!(crate::words!(tabs_no_pane = "no such pane"));
             };
             // In the order the pane shows them, so the tabs line up the
             // same.
@@ -851,7 +849,12 @@ impl App {
             )
         };
         if folders.is_empty() {
-            anyhow::ensure!(!asked, "Only folders and places open in a tab or a window");
+            anyhow::ensure!(
+                !asked,
+                crate::words!(
+                    tabs_only_folders = "Only folders and places open in a tab or a window"
+                )
+            );
             return Err(crate::command::NothingSelected.into());
         }
         Ok(folders)
@@ -1101,6 +1104,30 @@ fn restore_window(
 }
 
 /// `panes` by their id.
+/// Why a tab asked for is not acted on: it is not there (any more).
+fn no_tab() -> anyhow::Error {
+    anyhow::Error::new(crate::words!(
+        tabs_no_tab = "no such tab",
+        note = "A tab asked for by id (by an agent, a script, a key) is not open."
+    ))
+}
+
+/// The row of the list of keys the keys that move a tab are in.
+fn move_family() -> Words {
+    crate::words!(
+        tabs_move_family = "Move the tab",
+        note = "One row in the list of keys for the keys that move a tab left or right."
+    )
+}
+
+/// Why a window asked for is not acted on.
+fn no_window() -> Words {
+    crate::words!(
+        tabs_no_window = "no such window",
+        note = "A window asked for by id (by an agent, a script) is not open."
+    )
+}
+
 fn by_id(
     panes: &[crate::workspace::Pane],
 ) -> std::collections::HashMap<PaneId, &crate::workspace::Pane> {
@@ -1358,20 +1385,25 @@ pub(crate) fn register(app: &App) {
     let c = &app.commands;
     app.settings.declare(SettingSpec::state(
         LAST_WINDOWS,
-        "The windows shown last and their tabs",
+        crate::words!(tabs_last_windows = "The windows shown last and their tabs"),
         toml::Value::Table(toml::map::Map::new()),
     ));
     app.settings.declare(SettingSpec::state(
         LAST_TABS,
-        "The tabs shown when the window was last closed, before there were windows",
+        crate::words!(
+            tabs_last_tabs =
+                "The tabs shown when the window was last closed, before there were windows"
+        ),
         toml::Value::Table(toml::map::Map::new()),
     ));
 
     app.settings.declare(
         SettingSpec::toggle(
             SLEEP_KEY,
-            "Free the memory of hidden tabs",
-            "A tab you are not looking at lets go of its list of files and lists it again when shown. Turn this off to keep every tab listed and up to date, which uses more memory and background work.",
+            crate::words!(tabs_sleep = "Free the memory of hidden tabs"),
+            crate::words!(
+                tabs_sleep_description = "A tab you are not looking at lets go of its list of files and lists it again when shown. Turn this off to keep every tab listed and up to date, which uses more memory and background work."
+            ),
             true,
         )
         .section(crate::settings::section::TABS),
@@ -1380,8 +1412,11 @@ pub(crate) fn register(app: &App) {
     c.register::<NewTabArgs, _>(
         "core", Topic::Tabs,
         "tab.new",
-        "New tab",
-        "Open a tab showing a location, or what the pane shows; shown at once unless `show` is false",
+        crate::words!(tabs_new = "New tab"),
+        crate::words!(
+            tabs_new_description = "Open a tab showing a location, or what the pane shows; shown at once unless `show` is false",
+            note = "Read by agents and in F1's list of actions; `show` is an argument's name."
+        ),
         |a, app| {
             let location = a.location.map(|l| Location::parse_os(l.as_os_str()));
             let (tab, pane) = match (a.as_kept, location) {
@@ -1398,8 +1433,10 @@ pub(crate) fn register(app: &App) {
     c.register::<OpenTabsArgs, _>(
         "core", Topic::Tabs,
         "tab.open",
-        "Open in new tab",
-        "Open each selected folder in a tab of its own, behind the tab shown; files do not open in tabs",
+        crate::words!(tabs_open = "Open in new tab"),
+        crate::words!(
+            tabs_open_description = "Open each selected folder in a tab of its own, behind the tab shown; files do not open in tabs"
+        ),
         |a, app| {
             let pane = app.pane_or_active(a.pane);
             let folders = app.selected_folders(pane, a.ids)?;
@@ -1416,8 +1453,10 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "window.open",
-        "Open in new window",
-        "Open each selected folder in a window of its own, shaped as the pane's; files do not open in windows",
+        crate::words!(tabs_open_window = "Open in new window"),
+        crate::words!(
+            tabs_open_window_description = "Open each selected folder in a window of its own, shaped as the pane's; files do not open in windows"
+        ),
         |a, app| {
             let pane = app.pane_or_active(a.pane);
             let folders = app.selected_folders(pane, a.ids)?;
@@ -1434,8 +1473,10 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "tab.close",
-        "Close tab",
-        "Close a tab (the one shown by default); the notification offers Undo. A window's last tab closes the window while another is open; the last tab of the last window stays (its window's own Ctrl+W closes the window)",
+        crate::words!(tabs_close = "Close tab"),
+        crate::words!(
+            tabs_close_description = "Close a tab (the one shown by default); the notification offers Undo. A window's last tab closes the window while another is open; the last tab of the last window stays (its window's own Ctrl+W closes the window)"
+        ),
         |a, app| {
             let tab = a
                 .tab
@@ -1443,9 +1484,15 @@ pub(crate) fn register(app: &App) {
             if let Some((serial, title)) = app.close_tab(tab)? {
                 app.notify_with_action(
                     NotifyLevel::Info,
-                    // Said as the window shows it.
-                    format!("Closed tab “{}”", title.say()),
-                    "Undo",
+                    crate::words!(
+                        tabs_closed = "Closed tab “{ $title }”",
+                        title = title,
+                        note = "A notification once a tab is closed, with an Undo button: the tab's title."
+                    ),
+                    crate::words!(
+                        tabs_closed_undo = "Undo",
+                        note = "The button of the notification a closed tab shows: opens it again."
+                    ),
                     Invocation::with_args("tab.reopen", &serde_json::json!({ "closed": serial })),
                 );
             } else {
@@ -1466,8 +1513,10 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "tab.reopen",
-        "Reopen closed tab",
-        "Open again the tab or window closed last, or the one a close reported, with its history",
+        crate::words!(tabs_reopen = "Reopen closed tab"),
+        crate::words!(
+            tabs_reopen_description = "Open again the tab or window closed last, or the one a close reported, with its history"
+        ),
         |a, app| match app.reopen_tab(a.closed)? {
             Some(Reopened::Tab(tab)) => Ok(Outcome::Value(serde_json::json!({ "tab": tab }))),
             Some(Reopened::Window(window)) => {
@@ -1482,8 +1531,10 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "tab.select",
-        "Show tab",
-        "Show a tab: by id, or among the active window's tabs by position (negative from the right) or by steps from the one shown",
+        crate::words!(tabs_select = "Show tab"),
+        crate::words!(
+            tabs_select_description = "Show a tab: by id, or among the active window's tabs by position (negative from the right) or by steps from the one shown"
+        ),
         |a, app| {
             let tab = if let Some(tab) = a.tab {
                 tab
@@ -1499,25 +1550,32 @@ pub(crate) fn register(app: &App) {
     );
     select.forms(
         [
-            (serde_json::json!({ "delta": 1 }), "Next tab".to_owned()),
+            (serde_json::json!({ "delta": 1 }), crate::words!(tabs_next = "Next tab")),
             (
                 serde_json::json!({ "delta": -1 }),
-                "Previous tab".to_owned(),
+                crate::words!(tabs_previous = "Previous tab"),
             ),
         ]
         .into_iter()
         .chain((0..9).map(|index| {
             (
                 serde_json::json!({ "index": index }),
-                format!("Tab {}", index + 1),
+                crate::words!(
+                    tabs_nth = "Tab { $number }",
+                    number = index + 1,
+                    note = "A key's action: show the window's tab of this number, counted from 1 on the left."
+                ),
             )
         }))
-        .chain([(serde_json::json!({ "index": -1 }), "Last tab".to_owned())])
+        .chain([(serde_json::json!({ "index": -1 }), crate::words!(tabs_last = "Last tab"))])
         .map(|(args, title)| {
             // A tab by its number, the last included, is one row of keys.
             let form = Form::new(args, title);
             if form.args.get("index").is_some() {
-                form.in_family("Go to a tab")
+                form.in_family(crate::words!(
+                    tabs_go_to_family = "Go to a tab",
+                    note = "One row in the list of keys for the keys that show a tab by its number."
+                ))
             } else {
                 form
             }
@@ -1531,8 +1589,10 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "tab.move",
-        "Move tab",
-        "Put a tab at another position, or move it by steps; or move it to another window, or a new one",
+        crate::words!(tabs_move = "Move tab"),
+        crate::words!(
+            tabs_move_description = "Put a tab at another position, or move it by steps; or move it to another window, or a new one"
+        ),
         |a, app| {
             if a.window.is_some() || a.new_window {
                 let tab = a
@@ -1545,7 +1605,7 @@ pub(crate) fn register(app: &App) {
             let tab = a.tab.unwrap_or_else(|| ws.active_tab().id);
             let from = ws
                 .tab_index(tab)
-                .ok_or_else(|| anyhow::anyhow!("no such tab"))?;
+                .ok_or_else(no_tab)?;
             let len = ws.tabs().len();
             let to = match (a.to, a.delta) {
                 (Some(to), _) => to,
@@ -1563,13 +1623,19 @@ pub(crate) fn register(app: &App) {
         },
     );
     moving.forms([
-        Form::new(serde_json::json!({ "delta": -1 }), "Move the tab left")
-            .in_family("Move the tab"),
-        Form::new(serde_json::json!({ "delta": 1 }), "Move the tab right")
-            .in_family("Move the tab"),
+        Form::new(
+            serde_json::json!({ "delta": -1 }),
+            crate::words!(tabs_move_left = "Move the tab left"),
+        )
+        .in_family(move_family()),
+        Form::new(
+            serde_json::json!({ "delta": 1 }),
+            crate::words!(tabs_move_right = "Move the tab right"),
+        )
+        .in_family(move_family()),
         Form::new(
             serde_json::json!({ "new_window": true }),
-            "Move the tab to a new window",
+            crate::words!(tabs_move_to_window = "Move the tab to a new window"),
         ),
     ]);
     moving.repeats(|args| args.get("delta").is_some());
@@ -1578,8 +1644,10 @@ pub(crate) fn register(app: &App) {
     c.register::<crate::command::NoArgs, _>(
         "core", Topic::Tabs,
         "tab.list",
-        "List tabs",
-        "The tabs in order, window after window: each one's window, panes, their locations, which pane is active and whether its window shows it",
+        crate::words!(tabs_list = "List tabs"),
+        crate::words!(
+            tabs_list_description = "The tabs in order, window after window: each one's window, panes, their locations, which pane is active and whether its window shows it"
+        ),
         |_, app| Ok(Outcome::Value(serde_json::to_value(app.tab_list())?)),
     )
         .data();
@@ -1588,8 +1656,10 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "window.new",
-        "New window",
-        "Open a window showing a location, or what the pane shows, shaped as the pane's window; it becomes the active window",
+        crate::words!(tabs_new_window = "New window"),
+        crate::words!(
+            tabs_new_window_description = "Open a window showing a location, or what the pane shows, shaped as the pane's window; it becomes the active window"
+        ),
         |a, app| {
             let location = a.location.map(|l| Location::parse_os(l.as_os_str()));
             let (window, tab, pane) = app.new_window(a.pane, location)?;
@@ -1604,15 +1674,21 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "window.close",
-        "Close window",
-        "Close a window (the active one by default) and its tabs, which Reopen closed tab brings back; the last window closes only by its own close button or Quit",
+        crate::words!(tabs_close_window = "Close window"),
+        crate::words!(
+            tabs_close_window_description = "Close a window (the active one by default) and its tabs, which Reopen closed tab brings back; the last window closes only by its own close button or Quit",
+            note = "Reopen closed tab and Quit are the names of two actions."
+        ),
         |a, app| {
             let window = a
                 .window
                 .unwrap_or_else(|| app.workspace.read().active_window_id());
             match app.close_window(window)? {
                 Some(serial) => Ok(Outcome::Value(serde_json::json!({ "closed": serial }))),
-                None => anyhow::bail!("The last window closes with its close button or Quit"),
+                None => anyhow::bail!(crate::words!(
+                    tabs_last_window = "The last window closes with its close button or Quit",
+                    note = "Why Close window did nothing: Quit is the name of an action."
+                )),
             }
         },
     )
@@ -1622,16 +1698,18 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "window.select",
-        "Go to window",
-        "Make a window the active one, brought forward",
+        crate::words!(tabs_select_window = "Go to window"),
+        crate::words!(
+            tabs_select_window_description = "Make a window the active one, brought forward"
+        ),
         |a, app| {
-            let window = a
-                .window
-                .ok_or_else(|| anyhow::anyhow!("which window: `window` is needed"))?;
-            anyhow::ensure!(
-                app.workspace.write().set_active_window(window),
-                "no such window"
-            );
+            let window = a.window.ok_or_else(|| {
+                anyhow::Error::new(crate::words!(
+                    tabs_which_window = "which window: `window` is needed",
+                    note = "Said to an agent or a script: `window` is the argument's name."
+                ))
+            })?;
+            anyhow::ensure!(app.workspace.write().set_active_window(window), no_window());
             app.wake();
             Ok(Outcome::Done)
         },
@@ -1642,8 +1720,11 @@ pub(crate) fn register(app: &App) {
         "core",
         Topic::Tabs,
         "window.list",
-        "List windows",
-        "The windows: each one's tabs, the tab it shows, and which is active",
+        crate::words!(tabs_list_windows = "List windows"),
+        crate::words!(
+            tabs_list_windows_description =
+                "The windows: each one's tabs, the tab it shows, and which is active"
+        ),
         |_, app| Ok(Outcome::Value(serde_json::to_value(app.window_list())?)),
     )
     .data();

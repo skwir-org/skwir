@@ -375,40 +375,65 @@ impl Item {
 /// what a group's match is for where something reads it after (a
 /// replacement's `$1`).
 pub fn regex_pattern() -> Group {
-    Group::new("Pattern")
-        .item(Item::new(".", "Any character"))
-        .item(Item::new(r"\d", "A digit"))
-        .item(Item::new(r"\w", "A letter, a digit or _"))
-        .item(Item::new(
-            r"\s",
-            "Any space: a space, a tab, a line's end, any other",
-        ))
-        .item(Item::new("[abc]", "One of these").inserting("[]"))
-        .item(Item::new("[^abc]", "One of anything but these").inserting("[^]"))
-        .item(Item::new("[a-z]", "One in this range"))
-        .item(Item::new(
-            "*",
-            "What is before it, any number of times, or none",
-        ))
-        .item(Item::new("+", "What is before it, once or more"))
-        .item(Item::new("?", "What is before it, or nothing"))
-        .item(Item::new("{2,4}", "What is before it, 2 to 4 times"))
-        .item(Item::new("+?", "As few times as it can (*? too)"))
-        .item(Item::new("^", "The start"))
-        .item(Item::new("$", "The end"))
-        .item(Item::new(r"\b", "Where a word starts or ends"))
-        .item(Item::new("a|b", "Either"))
-        .item(Item::new("(…)", "A group, which a sign after it takes whole: (ab)+").inserting("()"))
-        .item(Item::new(r"(?<year>\d{4})", "A group with a name: year"))
-        .item(Item::new(
-            r"\.",
-            r"A sign itself: \. \( \[ \* \+ \? \$ \^ \|",
-        ))
-        .item(Item::new(
-            "(?i)",
-            "From here on, capitals and small letters alike",
-        ))
-        .note("No look-around and no back-references: (?=…) and \\1 are not read.")
+    use crate::words;
+    Group::new(words!(
+        reference_pattern = "Pattern",
+        note = "A heading of the signs a regular expression reads, in the list under a field (a rename's pattern, a search's content)."
+    ))
+    .item(Item::new(".", words!(reference_any = "Any character", note = "What a sign of a regular expression matches: . (a dot).")))
+    .item(Item::new(r"\d", words!(reference_digit = "A digit", note = "What a sign of a regular expression matches: \\d.")))
+    .item(Item::new(
+        r"\w",
+        words!(reference_word_char = "A letter, a digit or _", note = "What a sign of a regular expression matches: \\w. _ is the underscore."),
+    ))
+    .item(Item::new(
+        r"\s",
+        words!(reference_space = "Any space: a space, a tab, a line's end, any other", note = "What a sign of a regular expression matches: \\s."),
+    ))
+    .item(Item::new("[abc]", words!(reference_one_of = "One of these", note = "What a sign of a regular expression matches: [abc], one of the letters in brackets.")).inserting("[]"))
+    .item(
+        Item::new("[^abc]", words!(reference_none_of = "One of anything but these", note = "What a sign of a regular expression matches: [^abc], anything but the letters in brackets."))
+            .inserting("[^]"),
+    )
+    .item(Item::new("[a-z]", words!(reference_range = "One in this range", note = "What a sign of a regular expression matches: [a-z], one letter from a to z.")))
+    .item(Item::new(
+        "*",
+        words!(reference_any_times = "What is before it, any number of times, or none", note = "What a sign of a regular expression matches: *, after something."),
+    ))
+    .item(Item::new("+", words!(reference_once_or_more = "What is before it, once or more", note = "What a sign of a regular expression matches: +, after something.")))
+    .item(Item::new("?", words!(reference_maybe = "What is before it, or nothing", note = "What a sign of a regular expression matches: ?, after something.")))
+    .item(Item::new(
+        "{2,4}",
+        words!(reference_times = "What is before it, 2 to 4 times", note = "What a sign of a regular expression matches: {2,4}, after something. The numbers are the sign's."),
+    ))
+    .item(Item::new("+?", words!(reference_lazy = "As few times as it can (*? too)", note = "What a sign of a regular expression does: +? (and *?) match as little as they can.")))
+    .item(Item::new("^", words!(reference_start = "The start", note = "What a sign of a regular expression matches: ^, the start of what is matched (a name, a line).")))
+    .item(Item::new("$", words!(reference_end = "The end", note = "What a sign of a regular expression matches: $, the end of what is matched.")))
+    .item(Item::new(r"\b", words!(reference_boundary = "Where a word starts or ends", note = "What a sign of a regular expression matches: \\b.")))
+    .item(Item::new("a|b", words!(reference_either = "Either", note = "What a sign of a regular expression matches: a|b, what is on either side.")))
+    .item(
+        Item::new(
+            "(…)",
+            words!(reference_group = "A group, which a sign after it takes whole: (ab)+", note = "What brackets do in a regular expression. (ab)+ is an example, as written."),
+        )
+        .inserting("()"),
+    )
+    .item(Item::new(
+        r"(?<year>\d{4})",
+        words!(reference_named_group = "A group with a name: year", note = "What (?<year>…) does in a regular expression: year is the example's name, as written in the sign."),
+    ))
+    .item(Item::new(
+        r"\.",
+        words!(reference_escaped = r"A sign itself: \. \( \[ \* \+ \? \$ \^ \|", note = "A backslash before a sign of a regular expression matches the sign itself. The signs are as written."),
+    ))
+    .item(Item::new(
+        "(?i)",
+        words!(reference_case = "From here on, capitals and small letters alike", note = "What (?i) does in a regular expression: case is ignored after it."),
+    ))
+    .note(words!(
+        reference_pattern_note = "No look-around and no back-references: (?=…) and \\1 are not read.",
+        note = "Under the signs of a regular expression: what it does not read. The signs are as written."
+    ))
 }
 
 #[cfg(test)]
@@ -546,12 +571,11 @@ mod tests {
         assert_eq!(reference.items().count(), 1 + regex_pattern().items.len());
         assert!(!reference.is_empty());
         assert!(Reference::new("Nothing").is_empty());
-        // Said as data, as a question passes it.
+        // Said as data, as a question passes it: in English, which comes
+        // back as written (words in JSON are English, ADR-139, 4).
         let json = serde_json::to_value(&reference).unwrap();
-        assert_eq!(
-            serde_json::from_value::<Reference>(json).unwrap(),
-            reference
-        );
+        let back = serde_json::from_value::<Reference>(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&back).unwrap(), json);
     }
 
     /// As data, an item puts what is written unless it says otherwise:

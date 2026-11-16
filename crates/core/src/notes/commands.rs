@@ -14,6 +14,8 @@ use crate::app::TargetsArgs as Targets;
 use crate::command::Outcome;
 use crate::command::Topic;
 use crate::op::{EntryRef, Plan};
+use crate::words;
+use crate::words::Words;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct RateArgs {
@@ -37,7 +39,7 @@ struct CommentArgs {
 fn per_entry(
     app: &App,
     targets: Targets,
-    title: String,
+    title: Words,
     step: impl Fn(EntryRef) -> super::SetNotes,
 ) -> anyhow::Result<Outcome> {
     let refs = app.targets(targets.pane, targets.entries)?;
@@ -53,14 +55,31 @@ pub(crate) fn register(app: &App) {
     c.register::<RateArgs, _>(
         "core", Topic::Notes,
         "notes.rate",
-        "Rate",
-        "Rate the entries given, or the selection, from 1 to 5 stars, or remove their rating with 0 (plan)",
+        words!(notes_rate_command = "Rate"),
+        words!(
+            notes_rate_description = "Rate the entries given, or the selection, from 1 to 5 stars, or remove their rating with 0 (plan)",
+            note = "Read by agents and in F1's list of actions."
+        ),
         |a, app| {
-            anyhow::ensure!(a.stars <= 5, "a rating is from 1 to 5 stars");
+            anyhow::ensure!(
+                a.stars <= 5,
+                words!(notes_rating_stars = "a rating is from 1 to 5 stars")
+            );
             let rating = (a.stars > 0).then_some(u64::from(a.stars) * 2);
             let title = rating.map_or_else(
-                || "remove the rating".to_owned(),
-                |r| format!("rate {}", super::stars(r)),
+                || {
+                    words!(
+                        notes_rate_none_title = "remove the rating",
+                        note = "A plan's title: the rating of the files is removed. Begins in lower case."
+                    )
+                },
+                |r| {
+                    words!(
+                        notes_rate_title = "rate { $stars }",
+                        stars = super::stars(r),
+                        note = "A plan's title: the files are rated, in stars (rate 4 stars). Begins in lower case."
+                    )
+                },
             );
             per_entry(app, a.targets, title, |r| app.notes.edit(r).rating(rating))
         },
@@ -69,17 +88,26 @@ pub(crate) fn register(app: &App) {
     c.register::<CommentArgs, _>(
         "core", Topic::Notes,
         "notes.comment",
-        "Comment",
-        "Set the comment of the entries given, or the selection's, or remove it with an empty text (plan)",
+        words!(notes_comment_command = "Comment"),
+        words!(
+            notes_comment_description = "Set the comment of the entries given, or the selection's, or remove it with an empty text (plan)",
+            note = "Read by agents and in F1's list of actions."
+        ),
         |a, app| {
             let text = a.text.trim();
             let comment = (!text.is_empty()).then(|| text.to_owned());
             let title = if comment.is_some() {
-                "set the comment"
+                words!(
+                    notes_comment_title = "set the comment",
+                    note = "A plan's title: the files' comment is set. Begins in lower case."
+                )
             } else {
-                "remove the comment"
+                words!(
+                    notes_uncomment_title = "remove the comment",
+                    note = "A plan's title: the files' comment is removed. Begins in lower case."
+                )
             };
-            per_entry(app, a.targets, title.to_owned(), |r| {
+            per_entry(app, a.targets, title, |r| {
                 app.notes.edit(r).comment(comment.clone())
             })
         },
@@ -88,12 +116,19 @@ pub(crate) fn register(app: &App) {
     c.register::<Targets, _>(
         "core", Topic::Notes,
         "notes.agree",
-        "Make notes agree",
-        "Write the notes of the entries given, or the selection's, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
+        words!(notes_agree_command = "Make notes agree"),
+        words!(
+            notes_agree_description = "Write the notes of the entries given, or the selection's, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
+            note = "Read by agents and in F1's list of actions."
+        ),
         |a, app| {
             // What the stores say together is written to each when the
             // plan is applied, as it is read then (`SetNotes::applied_to`).
-            per_entry(app, a, "make the notes agree".to_owned(), |r| {
+            let title = words!(
+                notes_agree_title = "make the notes agree",
+                note = "A plan's title: the notes of the files are written alike to every place that keeps them. Begins in lower case."
+            );
+            per_entry(app, a, title, |r| {
                 app.notes.edit(r).sync()
             })
         },

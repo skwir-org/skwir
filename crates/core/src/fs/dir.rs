@@ -183,7 +183,12 @@ mod unix {
             }
             #[cfg(not(target_os = "linux"))]
             {
-                Err(crate::system::not_yet("Writing through to a drive"))
+                Err(crate::system::not_yet_words(crate::words!(
+                    fs_sync_not_yet =
+                        "Writing through to a drive is not available on { $system } yet",
+                    system = crate::system::named(),
+                    note = "Why a copy could not wait for the drive to write what it holds (before a drive is ejected): the system's name."
+                )))
             }
         }
 
@@ -346,7 +351,11 @@ mod windows {
         /// Always, for now.
         #[allow(clippy::unused_self)]
         pub fn sync_volume(&self) -> io::Result<()> {
-            Err(crate::system::not_yet("Writing through to a drive"))
+            Err(crate::system::not_yet_words(crate::words!(
+                fs_sync_not_yet = "Writing through to a drive is not available on { $system } yet",
+                system = crate::system::named(),
+                note = "Why a copy could not wait for the drive to write what it holds (before a drive is ejected): the system's name."
+            )))
         }
 
         /// Whether the folder was removed while we hold it open.

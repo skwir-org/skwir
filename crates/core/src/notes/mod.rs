@@ -145,11 +145,27 @@ pub fn parse_tags(s: &str) -> Vec<String> {
 }
 
 /// A rating in stars, in words: "4 stars", "3½ stars".
-pub fn stars(rating: u64) -> String {
+pub fn stars(rating: u64) -> crate::words::Words {
     let whole = rating / 2;
-    let half = if rating % 2 == 1 { "½" } else { "" };
-    let plural = if rating <= 2 { "" } else { "s" };
-    format!("{whole}{half} star{plural}").replacen("0½", "½", 1)
+    if rating % 2 == 1 {
+        crate::words!(
+            notes_stars_half = "{ $whole ->
+                [0] ½ star
+               *[other] { $whole }½ stars
+            }",
+            whole = whole,
+            note = "A rating in stars with a half star: the whole stars before it (3½ stars)."
+        )
+    } else {
+        crate::words!(
+            notes_stars = "{ $whole ->
+                [one] { $whole } star
+               *[other] { $whole } stars
+            }",
+            whole = whole,
+            note = "A rating in whole stars (4 stars)."
+        )
+    }
 }
 
 /// Where a store keeps notes.
@@ -209,6 +225,28 @@ impl Write {
             Write::Update => "Update existing",
             Write::Fallback => "Where attributes are missing",
             Write::Create => "Create",
+        }
+    }
+
+    /// The words the settings show, said where they are drawn.
+    pub fn words(self) -> crate::words::Words {
+        match self {
+            Write::Off => crate::words!(
+                notes_write_off = "Off",
+                note = "How a place that keeps notes is written: never."
+            ),
+            Write::Update => crate::words!(
+                notes_write_update = "Update existing",
+                note = "How a place that keeps notes is written: only where a file already has notes there."
+            ),
+            Write::Fallback => crate::words!(
+                notes_write_fallback = "Where attributes are missing",
+                note = "How a place that keeps notes is written: also where a file's volume keeps no attributes."
+            ),
+            Write::Create => crate::words!(
+                notes_write_create = "Create",
+                note = "How a place that keeps notes is written: for every file edited."
+            ),
         }
     }
 }
@@ -865,9 +903,9 @@ mod tests {
     fn tags_and_ratings_read_as_the_desktop_writes_them() {
         assert_eq!(parse_tags(" a, b ,a,,c "), ["a", "b", "c"]);
         assert_eq!(parse_tags("Work, work,WORK, Été, été"), ["Work", "Été"]);
-        assert_eq!(stars(10), "5 stars");
-        assert_eq!(stars(2), "1 star");
-        assert_eq!(stars(7), "3½ stars");
-        assert_eq!(stars(1), "½ star");
+        assert_eq!(stars(10).english(), "5 stars");
+        assert_eq!(stars(2).english(), "1 star");
+        assert_eq!(stars(7).english(), "3½ stars");
+        assert_eq!(stars(1).english(), "½ star");
     }
 }

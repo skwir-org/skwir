@@ -159,7 +159,13 @@ pub(super) fn copy(
             }
             // Cut short: cancelled, or the readers gone without a word.
             ctx.check_cancelled()?;
-            anyhow::ensure!(next == ranges, "the file stopped being read");
+            anyhow::ensure!(
+                next == ranges,
+                crate::words!(
+                    op_stopped_being_read = "the file stopped being read",
+                    note = "Why a copy failed: reading its source stopped before its end."
+                )
+            );
             anyhow::Ok(copied)
         })();
         // Whatever ended the writing, the readers stop at their piece.
@@ -188,7 +194,10 @@ fn read_at(
     let mut filled = 0;
     while filled < want {
         if stopped() {
-            return Err(std::io::Error::other("the copy stopped"));
+            return Err(std::io::Error::other(crate::words!(
+                op_copy_stopped = "the copy stopped",
+                note = "Why reading a copy's source stopped: the copy ended (cancelled, or failed elsewhere)."
+            )));
         }
         let end = (filled + piece.size).min(want);
         let began = std::time::Instant::now();

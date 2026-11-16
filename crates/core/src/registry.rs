@@ -637,6 +637,45 @@ pub mod groups {
             .find(|group| group.id == id)
             .map_or("", |group| group.title)
     }
+
+    /// The words the heading of the section `id` says, as words: `None`
+    /// for a section core does not own (`title_of` until every caller
+    /// says words).
+    pub fn words_of(id: &str) -> Option<crate::words::Words> {
+        use crate::words;
+        Some(match id {
+            "places" => words!(
+                registry_group_places = "Places",
+                note = "A heading of the sidebar: the home folder, the desktop, the trash and other places."
+            ),
+            "bookmarks" => words!(
+                registry_group_bookmarks = "Bookmarks",
+                note = "A heading of the sidebar: folders the user keeps there."
+            ),
+            "searches" => words!(
+                registry_group_saved = "Saved",
+                note =
+                    "A heading of the sidebar: saved searches and places kept with their filters."
+            ),
+            "tags" => words!(
+                registry_group_tags = "Tags",
+                note = "A heading of the sidebar: the tags given to files."
+            ),
+            "devices" => words!(
+                registry_group_devices = "Devices",
+                note = "A heading of the sidebar: drives, phones and other volumes."
+            ),
+            "network" => words!(
+                registry_group_network = "Network",
+                note = "A heading of the sidebar: servers and shares."
+            ),
+            "tabs" => words!(
+                registry_group_tabs = "Tabs",
+                note = "A heading of the sidebar: the window's open tabs."
+            ),
+            _ => return None,
+        })
+    }
 }
 
 /// The submenus several plugins fill (ADR-099's groups, ADR-139, 8).
@@ -653,6 +692,32 @@ pub mod submenus {
     /// The selection's tags: the editor, each tag as a check, the tags
     /// written into names.
     pub const TAGS: Submenu = Submenu::new("tags", "Tags");
+
+    /// The words the row of the submenu `id` says, as words: `None` for a
+    /// submenu core does not own (its `title` until every caller says
+    /// words).
+    pub fn words_of(id: &str) -> Option<crate::words::Words> {
+        use crate::words;
+        Some(match id {
+            "compress" => words!(
+                registry_compress = "Compress",
+                note = "A submenu of a file's menu: the ways to compress it (archives' formats, a smaller copy)."
+            ),
+            "open_with" => words!(
+                registry_open_with = "Open With",
+                note = "A submenu of a file's menu: the applications that open it."
+            ),
+            "open_folder_with" => words!(
+                registry_open_folder_with = "Open Folder With",
+                note = "A submenu of a folder's background menu: the applications that open the folder."
+            ),
+            "tags" => words!(
+                registry_tags = "Tags",
+                note = "A submenu of a file's menu: its tags, each a check, and the tags editor."
+            ),
+            _ => return None,
+        })
+    }
 }
 
 /// Whether a [`MenuItem`] is on.

@@ -147,7 +147,13 @@ pub fn read_regular(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     // What it says it holds is a hint: a file can grow while it is read.
     file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "file too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            crate::words!(
+                fs_too_large = "file too large",
+                note = "Why a file kept beside another (a sidecar, a note) was not read: it is larger than such a file is. Begins in lower case: said after other words."
+            ),
+        ));
     }
     Ok(bytes)
 }
@@ -218,7 +224,13 @@ fn ensure_regular(file: &File) -> io::Result<()> {
 }
 
 fn not_regular() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, "not a regular file")
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        crate::words!(
+            fs_not_regular = "not a regular file",
+            note = "Why a file was not opened: it is a folder, a pipe, a device. Begins in lower case: said after other words."
+        ),
+    )
 }
 
 #[cfg(test)]

@@ -23,15 +23,57 @@ pub struct RenameRequest {
 }
 
 /// Why a batch of renames cannot be ordered. `item` indexes the requests.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenameOrderError {
-    #[error("{reason}")]
-    InvalidName { item: usize, reason: String },
-    #[error("several items would be named {}", target.display())]
-    Duplicate { items: Vec<usize>, target: PathBuf },
-    #[error("“{}” is already there", target.file_name().unwrap_or(target.as_os_str()).display())]
-    Conflict { item: usize, target: PathBuf },
+    /// `reason`: why the name is refused, said where it was found.
+    InvalidName {
+        item: usize,
+        reason: String,
+    },
+    Duplicate {
+        items: Vec<usize>,
+        target: PathBuf,
+    },
+    Conflict {
+        item: usize,
+        target: PathBuf,
+    },
 }
+
+impl RenameOrderError {
+    /// Why the renames cannot be ordered, in words.
+    pub fn words(&self) -> crate::words::Words {
+        match self {
+            RenameOrderError::InvalidName { reason, .. } => {
+                crate::words::Words::as_written(reason.clone())
+            }
+            RenameOrderError::Duplicate { target, .. } => crate::words!(
+                op_renames_duplicate = "several items would be named { $path }",
+                path = target.display().to_string(),
+                note = "Why a batch of renames is refused: two of them or more give the same name. path: that name's path."
+            ),
+            RenameOrderError::Conflict { target, .. } => crate::words!(
+                op_rename_taken = "{ $name } is already there",
+                name = crate::words::Name(
+                    target
+                        .file_name()
+                        .unwrap_or(target.as_os_str())
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+                note = "Why a batch of renames is refused: a new name is taken by a file the batch does not rename."
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for RenameOrderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.words(), f)
+    }
+}
+
+impl std::error::Error for RenameOrderError {}
 
 type Key<'a> = (&'a Path, &'a OsStr);
 
@@ -93,7 +135,7 @@ pub fn order_renames(
     for (i, r) in requests.iter().enumerate() {
         valid_file_name(&r.new_name).map_err(|e| RenameOrderError::InvalidName {
             item: i,
-            reason: e.to_string(),
+            reason: crate::words::Words::of_error(e).say(),
         })?;
         claimed.entry(key(&targets[i])).or_default().push(i);
     }

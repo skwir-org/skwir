@@ -94,8 +94,9 @@ pub(crate) fn dry_run_in(
 ) -> impl Iterator<Item = (Change, StepStatus)> + '_ {
     steps.iter().map(move |step| {
         let change = step.describe();
-        let status = guarded(|| Ok(step.check(&ctx)))
-            .unwrap_or_else(|e| StepStatus::Conflict { reason: said(&e) });
+        let status = guarded(|| Ok(step.check(&ctx))).unwrap_or_else(|e| StepStatus::Conflict {
+            reason: Words::of_error(e).say(),
+        });
         if matches!(status, StepStatus::Pending { .. }) {
             ctx.foresee(&change);
         }
@@ -113,7 +114,11 @@ pub(crate) fn guarded<T>(step: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Re
             .or_else(|| panic.downcast_ref::<String>().cloned())
             .unwrap_or_default();
         tracing::error!("a step panicked: {what}");
-        Err(anyhow::anyhow!("it failed unexpectedly"))
+        Err(crate::words!(
+            op_panicked = "it failed unexpectedly",
+            note = "Why a step of an action stopped: it failed in a way Skwir did not foresee. Begins in lower case: said after the step's own words."
+        )
+        .into())
     })
 }
 
@@ -148,22 +153,24 @@ fn said_of<'a>(links: impl Iterator<Item = &'a (dyn std::error::Error + 'static)
 pub struct Couldnt {
     /// The file its words name.
     pub subject: PathBuf,
-    words: String,
+    words: Words,
 }
 
 impl Couldnt {
     /// `subject`'s step could not do what `words` say.
-    pub fn new(subject: &Path, words: String) -> Self {
+    pub fn new(subject: &Path, words: impl Into<Words>) -> Self {
         Couldnt {
             subject: subject.to_owned(),
-            words,
+            words: words.into(),
         }
     }
 }
 
 impl fmt::Display for Couldnt {
+    /// Its words: English, or the reader's language while an error's chain
+    /// is said (`Words`' `Display`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.words)
+        fmt::Display::fmt(&self.words, f)
     }
 }
 
@@ -177,7 +184,7 @@ pub fn reason_after(error: &Arc<anyhow::Error>, change: &Change) -> Option<Words
     // the same value said twice (which link, not what it says).
     let own = error
         .downcast_ref::<Couldnt>()
-        .filter(|own| own.words == error.to_string())?;
+        .filter(|own| own.to_string() == error.to_string())?;
     // By name: a copy's words name it where it lands, an item of a trash
     // by the trash's name, the same as the step's.
     let named = change.subject().and_then(Path::file_name);
@@ -190,6 +197,14 @@ pub fn reason_after(error: &Arc<anyhow::Error>, change: &Change) -> Option<Words
 pub fn io_words(error: &std::io::Error) -> Words {
     use crate::words;
     use std::io::ErrorKind as K;
+    // Words of Skwir's own inside (`system::not_yet_words`): said as they
+    // are, whatever the kind.
+    if let Some(words) = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<Words>())
+    {
+        return words.clone();
+    }
     match error.kind() {
         K::PermissionDenied => words!(io_denied = "permission denied"),
         K::NotFound => words!(io_gone = "it is not there any more"),
@@ -224,18 +239,32 @@ pub fn io_words(error: &std::io::Error) -> Words {
 /// # Errors
 /// Why the name is not usable, in the user's words.
 pub fn valid_file_name(name: &OsStr) -> anyhow::Result<()> {
+    use crate::words;
     let bytes = name.as_encoded_bytes();
     if bytes.is_empty() {
-        anyhow::bail!("a name cannot be empty");
+        anyhow::bail!(words!(
+            op_name_empty = "a name cannot be empty",
+            note = "Why a name typed for a file is refused. Begins in lower case: said after other words too."
+        ));
     }
     if bytes == b"." || bytes == b".." {
-        anyhow::bail!("“{}” cannot be used as a name", name.display());
+        anyhow::bail!(words!(
+            op_name_dots = "{ $name } cannot be used as a name",
+            name = words::Name(name.display().to_string()),
+            note = "Why a name typed for a file is refused: it is . or .., which name folders themselves."
+        ));
     }
     if bytes.contains(&b'/') {
-        anyhow::bail!("a name cannot contain “/”");
+        anyhow::bail!(words!(
+            op_name_slash = "a name cannot contain “/”",
+            note = "Why a name typed for a file is refused: / separates folders."
+        ));
     }
     if bytes.contains(&0) {
-        anyhow::bail!("a name cannot contain a NUL character");
+        anyhow::bail!(words!(
+            op_name_nul = "a name cannot contain a NUL character",
+            note = "Why a name typed for a file is refused: it holds the character of code 0."
+        ));
     }
     #[cfg(windows)]
     if let Some(problem) = windows_name_problem(&name.to_string_lossy()) {
@@ -250,18 +279,29 @@ pub fn valid_file_name(name: &OsStr) -> anyhow::Result<()> {
 /// or without. `None` for a name Windows takes. Tested everywhere, asked
 /// on Windows.
 #[cfg(any(windows, test))]
-pub(crate) fn windows_name_problem(name: &str) -> Option<String> {
+pub(crate) fn windows_name_problem(name: &str) -> Option<Words> {
+    use crate::words;
     if let Some(c) = name
         .chars()
         .find(|c| matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
     {
-        return Some(format!("a name cannot contain “{c}”"));
+        return Some(words!(
+            op_name_character = "a name cannot contain “{ $character }”",
+            character = c.to_string(),
+            note = "Why a name typed for a file is refused on Windows: it holds a character Windows keeps for itself (\\ : * ? \" < > |)."
+        ));
     }
     if name.chars().any(char::is_control) {
-        return Some("a name cannot contain a control character".into());
+        return Some(words!(
+            op_name_control = "a name cannot contain a control character",
+            note = "Why a name typed for a file is refused on Windows: it holds an invisible control character."
+        ));
     }
     if name.ends_with(['.', ' ']) {
-        return Some("a name cannot end with a dot or a space".into());
+        return Some(words!(
+            op_name_end = "a name cannot end with a dot or a space",
+            note = "Why a name typed for a file is refused on Windows."
+        ));
     }
     // A device is its name before the first dot, spaces at its end aside.
     let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
@@ -275,7 +315,13 @@ pub(crate) fn windows_name_problem(name: &str) -> Option<String> {
                     Some("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
                 )
         });
-    device.then(|| format!("“{stem}” is a device's name on Windows"))
+    device.then(|| {
+        words!(
+            op_name_device = "{ $name } is a device's name on Windows",
+            name = words::Name(stem.to_owned()),
+            note = "Why a name typed for a file is refused on Windows: CON, NUL, COM1… name devices there, with an extension or without."
+        )
+    })
 }
 
 /// What a step will do, for the diff shown before apply.
@@ -453,41 +499,100 @@ impl Change {
     }
 
     fn said(&self, f: &mut fmt::Formatter<'_>, folder: Option<&Path>) -> fmt::Result {
-        let p = |path| shown(path, folder);
+        fmt::Display::fmt(&self.words(folder), f)
+    }
+
+    /// What it does, as a review lists it, each path under `folder`
+    /// written from there (paths as they are, in every language): what its
+    /// `Display` says in English, said in the reader's language where it is
+    /// shown.
+    pub fn words(&self, folder: Option<&Path>) -> Words {
+        use crate::words;
+        let p = |path| shown(path, folder).to_string();
         match self {
-            Change::Rename { from, to } => {
-                write!(f, "rename {} -> {}", p(from), p(to))
-            }
-            Change::Move { from, to } => write!(f, "move {} -> {}", p(from), p(to)),
-            Change::Copy { from, to } => write!(f, "copy {} -> {}", p(from), p(to)),
+            Change::Rename { from, to } => words!(
+                op_change_rename = "rename { $from } -> { $to }",
+                from = p(from),
+                to = p(to),
+                note = "A line of a plan's review, terse as a listing: a file renamed, its path then its new path. Begins in lower case."
+            ),
+            Change::Move { from, to } => words!(
+                op_change_move = "move { $from } -> { $to }",
+                from = p(from),
+                to = p(to),
+                note = "A line of a plan's review, terse as a listing: a file moved, its path then where it goes. Begins in lower case."
+            ),
+            Change::Copy { from, to } => words!(
+                op_change_copy = "copy { $from } -> { $to }",
+                from = p(from),
+                to = p(to),
+                note = "A line of a plan's review, terse as a listing: a file copied, its path then its copy's. Begins in lower case."
+            ),
             // As `ls -l` shows a link: where it is, then where it leads.
-            Change::Link { from, to } => write!(f, "link {} -> {}", p(to), p(from)),
-            Change::Swap { a, b } => write!(f, "swap {} <-> {}", p(a), p(b)),
-            Change::Trash { path } => write!(f, "trash {}", p(path)),
-            Change::Restore { path } => write!(f, "restore {}", p(path)),
-            Change::Delete { path } => write!(f, "delete {}", p(path)),
+            Change::Link { from, to } => words!(
+                op_change_link = "link { $link } -> { $target }",
+                link = p(to),
+                target = p(from),
+                note = "A line of a plan's review, terse as a listing: a link made, where it is then where it leads, as ls -l shows it. Begins in lower case."
+            ),
+            Change::Swap { a, b } => words!(
+                op_change_swap = "swap { $a } <-> { $b }",
+                a = p(a),
+                b = p(b),
+                note = "A line of a plan's review, terse as a listing: two files' names swapped. Begins in lower case."
+            ),
+            Change::Trash { path } => words!(
+                op_change_trash = "trash { $path }",
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: a file put in the trash. Begins in lower case."
+            ),
+            Change::Restore { path } => words!(
+                op_change_restore = "restore { $path }",
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: a file put back from the trash. Begins in lower case."
+            ),
+            Change::Delete { path } => words!(
+                op_change_delete = "delete { $path }",
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: a file deleted for good. Begins in lower case."
+            ),
             // A step that says what it does says it best.
             Change::Create {
                 words: Some(words), ..
             }
             | Change::Metadata {
                 words: Some(words), ..
-            } => f.write_str(&words.will.english()),
+            } => words.will.clone(),
             Change::Create {
                 path,
                 directory: true,
                 ..
-            } => write!(f, "mkdir {}", p(path)),
+            } => words!(
+                op_change_mkdir = "mkdir { $path }",
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: a folder made, as the command that makes one is named. Begins in lower case."
+            ),
             Change::Create {
                 path,
                 directory: false,
                 ..
-            } => write!(f, "create {}", p(path)),
+            } => words!(
+                op_change_create = "create { $path }",
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: an empty file made. Begins in lower case."
+            ),
             // An empty folder, or a file made empty and left so.
-            Change::Remove { path } => write!(f, "remove {}", p(path)),
-            Change::Metadata { path, field, .. } => {
-                write!(f, "set {field} on {}", p(path))
-            }
+            Change::Remove { path } => words!(
+                op_change_remove = "remove { $path }",
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: an empty folder, or a file made empty, removed. Begins in lower case."
+            ),
+            Change::Metadata { path, field, .. } => words!(
+                op_change_metadata = "set { $field } on { $path }",
+                field = field.clone(),
+                path = p(path),
+                note = "A line of a plan's review, terse as a listing: a field of a file written; field is its key (position, tags). Begins in lower case."
+            ),
         }
     }
 }
@@ -1064,15 +1169,24 @@ impl OpRegistry {
     pub fn build(&self, data: &OpData) -> anyhow::Result<Box<dyn Operation>> {
         anyhow::ensure!(
             data.kind != steps::KIND,
-            "a plan lists each of its steps: `{}` is none",
-            steps::KIND
+            crate::words!(
+                op_plan_steps_kind = "a plan lists each of its steps: `{ $kind }` is none",
+                kind = steps::KIND,
+                note = "Why a plan given as data is refused: one of its steps is of a kind that holds several. kind: that kind's identifier."
+            )
         );
         let d = self
             .kinds
             .read()
             .get(data.kind.as_str())
             .map(|(_, d)| Arc::clone(d));
-        let d = d.ok_or_else(|| anyhow::anyhow!("unknown operation kind `{}`", data.kind))?;
+        let d = d.ok_or_else(|| {
+            anyhow::Error::new(crate::words!(
+                op_unknown_kind = "unknown operation kind `{ $kind }`",
+                kind = data.kind.clone(),
+                note = "Why a plan given as data is refused: no step of that kind is known (its plugin is off, or it is misspelt). kind: the identifier given."
+            ))
+        })?;
         d(data.args.clone())
     }
 }
@@ -1132,20 +1246,61 @@ pub fn folder_said(folder: &Path) -> String {
     )
 }
 
-/// A transfer's title (ADR-135): `verb`, what it takes (one by its name,
-/// "“a.txt”"; several by their count, "3 items"), then `into` and the
-/// folder it goes to by its name ([`folder_said`]): "copy 3 items to
-/// Projects", "link “a.txt” in Projects".
-pub fn transfer_title(verb: &str, taken: &[&Path], into: &str, dest: &Path) -> String {
-    let what = match taken {
-        [one] => format!(
-            "“{}”",
-            one.file_name()
-                .map_or_else(|| one.to_string_lossy(), |name| name.to_string_lossy())
+/// What a transfer does to what it takes, for its title
+/// ([`transfer_words`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Carried {
+    Move,
+    Copy,
+    Link,
+}
+
+/// A transfer's title (ADR-135) in words: what it does, what it takes
+/// (one by its name, several by their count), then the folder it goes to
+/// by its name ([`folder_said`]): "copy 3 items to Projects", "link “a.txt”
+/// in Projects".
+pub fn transfer_words(carried: Carried, taken: &[&Path], dest: &Path) -> Words {
+    use crate::words;
+    use crate::words::{Folder, Name};
+    let count = taken.len();
+    let name = Name(taken.first().map_or_else(String::new, |one| {
+        one.file_name()
+            .map_or_else(|| one.to_string_lossy(), |name| name.to_string_lossy())
+            .into_owned()
+    }));
+    let folder = Folder(folder_said(dest));
+    match carried {
+        Carried::Move => words!(
+            op_move_title = "{ $count ->
+                [1] move { $name } to { $folder }
+               *[other] move { $count } items to { $folder }
+            }",
+            count = count,
+            name = name,
+            folder = folder,
+            note = "An action's title, in its review, the list of actions and Undo: the file moved (or how many), then the folder it goes to, by its name. Begins in lower case: said inside other words too."
         ),
-        many => format!("{} items", many.len()),
-    };
-    format!("{verb} {what} {into} {}", folder_said(dest))
+        Carried::Copy => words!(
+            op_copy_title = "{ $count ->
+                [1] copy { $name } to { $folder }
+               *[other] copy { $count } items to { $folder }
+            }",
+            count = count,
+            name = name,
+            folder = folder,
+            note = "An action's title: the file copied (or how many), then the folder it goes to, by its name. Begins in lower case: said inside other words too."
+        ),
+        Carried::Link => words!(
+            op_link_title = "{ $count ->
+                [1] link { $name } in { $folder }
+               *[other] link { $count } items in { $folder }
+            }",
+            count = count,
+            name = name,
+            folder = folder,
+            note = "An action's title: the file a link is made to (or how many), then the folder the links are made in, by its name. Begins in lower case: said inside other words too."
+        ),
+    }
 }
 
 /// A plan's items as the user asked for them: the first one's change and
@@ -1537,12 +1692,12 @@ mod tests {
         let dest = Path::new("/home/someone/l'été 2026");
         let one = [Path::new("/elsewhere/it's a.txt")];
         assert_eq!(
-            super::transfer_title("copy", &one, "to", dest),
+            super::transfer_words(super::Carried::Copy, &one, dest).english(),
             "copy “it's a.txt” to l'été 2026"
         );
         let two = [Path::new("/a/one"), Path::new("/a/two")];
         assert_eq!(
-            super::transfer_title("link", &two, "in", dest),
+            super::transfer_words(super::Carried::Link, &two, dest).english(),
             "link 2 items in l'été 2026"
         );
         assert_eq!(super::folder_said(Path::new("/")), "/");
@@ -1771,7 +1926,9 @@ mod tests {
             ("lpt9.log", "device"),
             ("COM¹", "device"),
         ] {
-            let said = problem(name).unwrap_or_else(|| panic!("{name} taken"));
+            let said = problem(name)
+                .unwrap_or_else(|| panic!("{name} taken"))
+                .english();
             assert!(said.contains(says), "{name}: {said}");
         }
     }

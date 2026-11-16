@@ -35,6 +35,8 @@ use globset::{GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use regex::bytes::{RegexSet, RegexSetBuilder};
 
 use crate::settings::{Beside, SettingSpec, Settings};
+use crate::words;
+use crate::words::Words;
 
 #[cfg(test)]
 mod tests;
@@ -172,24 +174,6 @@ impl Names {
     fn files(self) -> bool {
         self != Names::Folders
     }
-
-    /// "any file named x", "any file or folder named x".
-    fn any(self) -> &'static str {
-        match self {
-            Names::Files => "any file",
-            Names::Folders => "any folder",
-            Names::Both => "any file or folder",
-        }
-    }
-
-    /// "the files like x", "the files and folders like x".
-    fn the(self) -> &'static str {
-        match self {
-            Names::Files => "the files",
-            Names::Folders => "the folders",
-            Names::Both => "the files and folders",
-        }
-    }
 }
 
 /// What an exclusion names.
@@ -208,6 +192,16 @@ pub enum Matcher {
     Holding(String),
 }
 
+/// What stops the rules reading a matcher ([`Matcher::check_words`]):
+/// why, and whether it is what it says of `beside` that is wrong, the
+/// field a window points at (told by where it is found, never by its
+/// words).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unreadable {
+    pub why: Words,
+    pub of_beside: bool,
+}
+
 impl Matcher {
     /// Whether the rules can read it, or what stops them: a glob or a
     /// regex that does not parse, a path that starts nowhere, a sibling
@@ -215,40 +209,64 @@ impl Matcher {
     /// name is beside its tool's file, not a path).
     ///
     /// # Errors
-    /// What is wrong, in words for the user.
-    pub fn check(&self) -> Result<(), String> {
+    /// What is wrong, and of which field.
+    pub fn check_words(&self) -> Result<(), Unreadable> {
+        let of_pattern = |why: Words| Unreadable {
+            why,
+            of_beside: false,
+        };
+        let of_beside = |why: Words| Unreadable {
+            why,
+            of_beside: true,
+        };
         match self {
             Matcher::Pattern {
                 text,
                 beside,
                 names,
             } => {
-                let pattern = Pattern::of(text)?;
+                let pattern = Pattern::of(text).map_err(of_pattern)?;
                 if let Some(sibling) = beside {
                     if !names.folders() {
-                        return Err(format!(
-                            "{}: beside a file goes with folders, not files",
-                            text.trim()
-                        ));
+                        return Err(of_beside(words!(
+                            exclusions_beside_files =
+                                "{ $pattern }: beside a file goes with folders, not files",
+                            pattern = text.trim().to_owned(),
+                            note = "An exclusion refused: it names files, but only a folder is excluded where a file is beside it. The pattern as written; beside is the field's name."
+                        )));
                     }
                     if !matches!(pattern, Pattern::Name(_) | Pattern::NameGlob(_)) {
-                        return Err(format!(
-                            "{}: beside a file, the folder is a name (target), not a path",
-                            text.trim()
-                        ));
+                        return Err(of_beside(words!(
+                            exclusions_beside_path = "{ $pattern }: beside a file, the folder is a name (target), not a path",
+                            pattern = text.trim().to_owned(),
+                            note = "An exclusion refused: a folder excluded where a file is beside it is written as a name (target is an example), not a path. The pattern as written."
+                        )));
                     }
-                    NameMatch::of(sibling)?;
+                    NameMatch::of(sibling).map_err(of_beside)?;
                 }
                 Ok(())
             }
             Matcher::Holding(file) => {
                 if file.trim().is_empty() || file.contains(['/', '\\']) {
-                    Err("holding is the name of a file a folder holds".into())
+                    Err(of_pattern(words!(
+                        exclusions_holding_name = "holding is the name of a file a folder holds",
+                        note = "An exclusion refused: holding is the field's name, which takes a file's name, not a path."
+                    )))
                 } else {
                     Ok(())
                 }
             }
         }
+    }
+
+    /// [`Matcher::check_words`], what is wrong said in the window's
+    /// language (until its callers take words).
+    ///
+    /// # Errors
+    /// What is wrong, in words for the user.
+    pub fn check(&self) -> Result<(), String> {
+        self.check_words()
+            .map_err(|unreadable| unreadable.why.say())
     }
 
     /// The one folder it names, as written: a path, never a name, a glob,
@@ -279,41 +297,127 @@ impl Matcher {
 
     /// What it means, in a few words: "any folder named target beside a
     /// Cargo.toml", "~/.cargo/registry".
-    pub fn said(&self) -> String {
-        match self {
-            Matcher::Holding(file) => format!("any folder holding a {file}"),
+    pub fn words(&self) -> Words {
+        let (text, beside, names) = match self {
+            Matcher::Holding(file) => {
+                return words!(
+                    exclusions_said_holding = "any folder holding a { $file }",
+                    file = file.clone(),
+                    note = "What an exclusion means, on the Exclusions page: the file's name as written (a .nosearch, a CACHEDIR.TAG)."
+                );
+            }
             Matcher::Pattern {
                 text,
                 beside,
                 names,
-            } => {
-                // Told by how it is written, nothing compiled: the page
-                // says it of every row.
-                let what = match Written::of(text) {
-                    Written::Name => format!("{} named {text}", names.any()),
-                    Written::NameGlob => format!("{} whose name is like {text}", names.any()),
-                    Written::PathGlob => format!("{} like {text}", names.the()),
-                    Written::Regex => {
-                        format!("{} matching {}", names.the(), &text.trim()[REGEX.len()..])
-                    }
-                    // Where a variable puts it now.
-                    Written::Path if !variables_in(text).is_empty() => {
-                        match expand(text, crate::os_path::home().as_deref()) {
-                            Some(path) => format!("{text}, now {}", tilde(&path)),
-                            None => format!(
-                                "{text}, while {} is not set: none",
-                                variables_in(text).join(", ")
-                            ),
-                        }
-                    }
-                    Written::Path => unescaped(text),
-                };
-                match beside {
-                    Some(sibling) => format!("{what} beside a {sibling}"),
-                    None => what,
+            } => (text, beside, names.key()),
+        };
+        // Told by how it is written, nothing compiled: the page says it
+        // of every row.
+        let what = match (Written::of(text), beside) {
+            (Written::Name, Some(sibling)) => {
+                return words!(
+                    exclusions_said_name_beside = "{ $names ->
+                        [files] any file
+                        [folders] any folder
+                       *[both] any file or folder
+                    } named { $pattern } beside a { $sibling }",
+                    names = names,
+                    pattern = text.clone(),
+                    sibling = sibling.clone(),
+                    note = "What an exclusion means, on the Exclusions page: what it names (files, folders or both), its name, and the file beside it (target beside a Cargo.toml), both as written."
+                );
+            }
+            (Written::Name, None) => words!(
+                exclusions_said_name = "{ $names ->
+                    [files] any file
+                    [folders] any folder
+                   *[both] any file or folder
+                } named { $pattern }",
+                names = names,
+                pattern = text.clone(),
+                note = "What an exclusion means, on the Exclusions page: what it names (files, folders or both) and its name as written (node_modules)."
+            ),
+            (Written::NameGlob, Some(sibling)) => {
+                return words!(
+                    exclusions_said_like_beside = "{ $names ->
+                        [files] any file
+                        [folders] any folder
+                       *[both] any file or folder
+                    } whose name is like { $pattern } beside a { $sibling }",
+                    names = names,
+                    pattern = text.clone(),
+                    sibling = sibling.clone(),
+                    note = "What an exclusion means, on the Exclusions page: what it names, the pattern of its name (*-build), and the file beside it (a *.pro), both as written."
+                );
+            }
+            (Written::NameGlob, None) => words!(
+                exclusions_said_like = "{ $names ->
+                    [files] any file
+                    [folders] any folder
+                   *[both] any file or folder
+                } whose name is like { $pattern }",
+                names = names,
+                pattern = text.clone(),
+                note = "What an exclusion means, on the Exclusions page: what it names and the pattern of its name as written (*.kdbx)."
+            ),
+            (Written::PathGlob, _) => words!(
+                exclusions_said_path_like = "{ $names ->
+                    [files] the files
+                    [folders] the folders
+                   *[both] the files and folders
+                } like { $pattern }",
+                names = names,
+                pattern = text.clone(),
+                note = "What an exclusion means, on the Exclusions page: what it names and the pattern of their paths as written (~/.var/app/*/cache)."
+            ),
+            (Written::Regex, _) => words!(
+                exclusions_said_matching = "{ $names ->
+                    [files] the files
+                    [folders] the folders
+                   *[both] the files and folders
+                } matching { $pattern }",
+                names = names,
+                pattern = text.trim()[REGEX.len()..].to_owned(),
+                note = "What an exclusion means, on the Exclusions page: what it names and the regular expression their paths match, as written."
+            ),
+            // Where a variable puts it now.
+            (Written::Path, _) if !variables_in(text).is_empty() => {
+                match expand(text, crate::os_path::home().as_deref()) {
+                    Some(path) => words!(
+                        exclusions_said_now = "{ $pattern }, now { $path }",
+                        pattern = text.clone(),
+                        path = tilde(&path),
+                        note = "What an exclusion means, on the Exclusions page: a path from a variable as written ($CARGO_HOME/registry), then the folder it is on this computer."
+                    ),
+                    None => words!(
+                        exclusions_said_unset =
+                            "{ $pattern }, while { $variables } is not set: none",
+                        pattern = text.clone(),
+                        // Transitional: a list argument (ADR-139)
+                        variables = variables_in(text).join(", "),
+                        note = "What an exclusion means, on the Exclusions page: a path from a variable as written, and the variables it needs (their names) that are not set here, so it names no folder."
+                    ),
                 }
             }
+            (Written::Path, _) => Words::as_written(unescaped(text)),
+        };
+        match beside {
+            // Refused by `check`, said still.
+            Some(sibling) => words!(
+                exclusions_said_beside = "{ $what } beside a { $sibling }",
+                what = what,
+                sibling = sibling.clone(),
+                note = "What an exclusion means that is written wrong (a path where a name goes), then the file beside it as written."
+            ),
+            None => what,
         }
+    }
+
+    /// [`Matcher::words`] said in the window's language (until its callers
+    /// take words).
+    pub fn said(&self) -> String {
+        self.words().say()
     }
 }
 
@@ -363,9 +467,52 @@ pub struct Catalog {
     pub entries: Vec<Entry>,
     /// What the settings said that could not be taken, said as the
     /// settings' check says a problem.
-    pub problems: Vec<String>,
+    pub problems: Vec<Problem>,
     /// What they hold that this list has no place for.
     aside: Aside,
+}
+
+/// What the settings said of the exclusions that could not be taken:
+/// where (the setting's key and the record's id,
+/// `exclusions.entries.x`), and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub at: String,
+    pub why: Words,
+}
+
+impl Problem {
+    fn new(key: &str, id: &str, why: Words) -> Self {
+        Problem {
+            at: format!("{key}.{id}"),
+            why,
+        }
+    }
+
+    /// It said whole: where, then why.
+    pub fn words(&self) -> Words {
+        refused(&self.at, self.why.clone())
+    }
+
+    /// What tells it apart from another, as data: where, and which
+    /// message says why (never its words).
+    fn key(&self) -> (String, &'static str) {
+        (
+            self.at.clone(),
+            self.why.message_of().map_or("", |message| message.id),
+        )
+    }
+}
+
+/// `why` a record of the settings (`at`: its id, or its key and id) is
+/// refused, said after it.
+fn refused(at: &str, why: Words) -> Words {
+    words!(
+        exclusions_refused = "{ $at }: { $why }",
+        at = at.to_owned(),
+        why = why,
+        note = "An exclusion or a category in the settings that cannot be read: where (its id, as written), then why."
+    )
 }
 
 /// What the settings hold that a list read here could not take in, written
@@ -441,10 +588,12 @@ fn shipped_table() -> &'static Shipped {
 
 /// skwir's list for this system, its bases where the environment puts
 /// them: made again only once what the login shell said changed
-/// (`environment::generation`).
+/// (`environment::generation`), or the language its entries are said in
+/// (`words::revision`).
 fn builtin() -> Arc<Catalog> {
-    static BUILTIN: parking_lot::Mutex<Option<(u64, Arc<Catalog>)>> = parking_lot::Mutex::new(None);
-    let generation = crate::environment::generation();
+    type Made = Option<((u64, u64), Arc<Catalog>)>;
+    static BUILTIN: parking_lot::Mutex<Made> = parking_lot::Mutex::new(None);
+    let generation = (crate::environment::generation(), words::revision());
     let mut kept = BUILTIN.lock();
     if let Some((at, catalog)) = kept.as_ref()
         && *at == generation
@@ -587,7 +736,15 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
         for (n, text) in also.into_iter().enumerate() {
             entries.push(entry(
                 format!("{BUILTIN}{}.also-{}", e.id, n + 2),
-                format!("{} (another of its list)", e.what),
+                // Said as the window shows it (the list is made again
+                // when the language moves), until an entry's `what` is
+                // words.
+                words!(
+                    exclusions_what_also = "{ $what } (another of its list)",
+                    what = e.what.clone(),
+                    note = "What one of Skwir's exclusions is, where it names several folders: what the first says it is, then this."
+                )
+                .say(),
                 Matcher::Pattern {
                     text,
                     beside: None,
@@ -598,7 +755,12 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
         if let Some(text) = left_behind {
             entries.push(entry(
                 format!("{BUILTIN}{}.before-it-moved", e.id),
-                format!("{} (where it was before it moved)", e.what),
+                words!(
+                    exclusions_what_before = "{ $what } (where it was before it moved)",
+                    what = e.what.clone(),
+                    note = "What one of Skwir's exclusions is, for the folder a program used before it moved it: what the exclusion says it is, then this."
+                )
+                .say(),
                 Matcher::Pattern {
                     text,
                     beside: None,
@@ -620,7 +782,11 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             builtin: true,
             category: format!("{BUILTIN}caches"),
             shipped_category: Some(format!("{BUILTIN}caches")),
-            what: "Your cache folder (XDG_CACHE_HOME)".into(),
+            what: words!(
+                exclusions_what_cache_home = "Your cache folder (XDG_CACHE_HOME)",
+                note = "What one of Skwir's exclusions is: the folder programs keep caches in, moved from ~/.cache by the variable named."
+            )
+            .say(),
             group: None,
             matcher: Matcher::Pattern {
                 text: literally(&tilde(cache)),
@@ -733,14 +899,14 @@ impl Catalog {
             .map(|(at, c)| (c.id.clone(), at))
             .collect();
         for (id, value) in categories {
-            let aside = |problem: Option<String>, catalog: &mut Catalog| {
+            let aside = |problem: Option<Words>, catalog: &mut Catalog| {
                 catalog.aside.categories.insert(id.clone(), value.clone());
                 catalog
                     .problems
-                    .extend(problem.map(|p| format!("{CATEGORIES_KEY}.{id}: {p}")));
+                    .extend(problem.map(|why| Problem::new(CATEGORIES_KEY, id, why)));
             };
             let Some(table) = value.as_table() else {
-                aside(Some("a category is a table".into()), &mut catalog);
+                aside(Some(category_not_table()), &mut catalog);
                 continue;
             };
             if let Err(problem) = category_problem(id, table) {
@@ -771,16 +937,19 @@ impl Catalog {
             });
         }
         let known: HashSet<String> = catalog.categories.iter().map(|c| c.id.clone()).collect();
-        let category_of =
-            |table: &toml::Table, fallback: &str, catalog: &mut Catalog, id: &str| match table
-                .get("category")
-                .and_then(toml::Value::as_str)
-            {
+        let category_of = |table: &toml::Table, fallback: &str, catalog: &mut Catalog, id: &str| {
+            match table.get("category").and_then(toml::Value::as_str) {
                 Some(category) if known.contains(category) => category.to_owned(),
                 Some(category) => {
-                    catalog
-                        .problems
-                        .push(format!("{ENTRIES_KEY}.{id}: no category {category}"));
+                    catalog.problems.push(Problem::new(
+                        ENTRIES_KEY,
+                        id,
+                        words!(
+                            exclusions_no_category = "no category { $category }",
+                            category = category.to_owned(),
+                            note = "An exclusion in the settings names a category that is not there: its id, as written."
+                        ),
+                    ));
                     catalog
                         .aside
                         .wanted
@@ -788,7 +957,8 @@ impl Catalog {
                     fallback.to_owned()
                 }
                 None => fallback.to_owned(),
-            };
+            }
+        };
         let entry_at: HashMap<String, usize> = catalog
             .entries
             .iter()
@@ -796,14 +966,14 @@ impl Catalog {
             .map(|(at, e)| (e.id.clone(), at))
             .collect();
         for (id, value) in entries {
-            let aside = |problem: Option<String>, catalog: &mut Catalog| {
+            let aside = |problem: Option<Words>, catalog: &mut Catalog| {
                 catalog.aside.entries.insert(id.clone(), value.clone());
                 catalog
                     .problems
-                    .extend(problem.map(|p| format!("{ENTRIES_KEY}.{id}: {p}")));
+                    .extend(problem.map(|why| Problem::new(ENTRIES_KEY, id, why)));
             };
             let Some(table) = value.as_table() else {
-                aside(Some("an entry is a table".into()), &mut catalog);
+                aside(Some(entry_not_table()), &mut catalog);
                 continue;
             };
             if id.starts_with(BUILTIN) {
@@ -964,25 +1134,70 @@ impl Catalog {
     }
 }
 
+/// Why a record's field is refused: it takes `true` or `false`.
+fn not_switch(key: &str) -> Words {
+    words!(
+        exclusions_not_switch = "{ $key }: true or false",
+        key = key.to_owned(),
+        note = "An exclusion or a category in the settings refused: the field's name (searches, agents, index), which takes true or false, as written."
+    )
+}
+
+/// Why a record is refused: it holds a field no record has.
+fn no_field(key: &str) -> Words {
+    words!(
+        exclusions_no_field = "no field { $key }",
+        key = key.to_owned(),
+        note = "An exclusion or a category in the settings refused: it holds a field of this name (as written), which none has."
+    )
+}
+
+/// Why a category in the settings is refused: it is not a table.
+fn category_not_table() -> Words {
+    words!(
+        exclusions_category_not_table = "a category is a table",
+        note = "A category in the settings refused: it is written as a TOML table."
+    )
+}
+
+/// Why an exclusion in the settings is refused: it is not a table.
+fn entry_not_table() -> Words {
+    words!(
+        exclusions_entry_not_table = "an entry is a table",
+        note = "An exclusion in the settings refused: it is written as a TOML table."
+    )
+}
+
 /// Whether `id` may be the user's: no dot (an owner's), not empty.
-fn user_id(id: &str) -> Result<(), String> {
+fn user_id(id: &str) -> Result<(), Words> {
     if id.is_empty() {
-        return Err("an id is needed".into());
+        return Err(words!(
+            exclusions_no_id = "an id is needed",
+            note = "An exclusion or a category in the settings refused: it has no id."
+        ));
     }
     if id.contains('.') {
-        return Err("an id of yours has no dot: those are skwir's and its plugins'".into());
+        return Err(words!(
+            exclusions_id_dot = "an id of yours has no dot: those are skwir's and its plugins'",
+            note = "An exclusion or a category of the user's in the settings refused: an id with a dot is Skwir's (skwir is the program's name)."
+        ));
     }
     Ok(())
 }
 
 /// A user's entry from its table.
-fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, String> {
+fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, Words> {
     user_id(id)?;
     let text = |key: &str| table.get(key).and_then(toml::Value::as_str).map(str::trim);
     let names = match text("names") {
         None => Names::Both,
-        Some(names) => Names::of_key(names)
-            .ok_or_else(|| format!("names is files, folders or both, not {names}"))?,
+        Some(names) => Names::of_key(names).ok_or_else(|| {
+            words!(
+                exclusions_bad_names = "names is files, folders or both, not { $names }",
+                names = names.to_owned(),
+                note = "An exclusion refused: names is the field's name, files, folders and both what it takes, all as written; then what it holds."
+            )
+        })?,
     };
     let matcher = match (text("pattern"), text("holding")) {
         (Some(pattern), None) => Matcher::Pattern {
@@ -991,21 +1206,34 @@ fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, String> {
             names,
         },
         (None, Some(_)) if table.contains_key("beside") || table.contains_key("names") => {
-            return Err("beside and names go with a pattern, not with holding".into());
+            return Err(words!(
+                exclusions_holding_alone = "beside and names go with a pattern, not with holding",
+                note = "An exclusion refused: beside, names, pattern and holding are the fields' names, as written."
+            ));
         }
         (None, Some(file)) => Matcher::Holding(file.to_owned()),
-        (Some(_), Some(_)) => return Err("a pattern or a file it holds, not both".into()),
-        (None, None) => return Err("pattern or holding says what it names".into()),
+        (Some(_), Some(_)) => {
+            return Err(words!(
+                exclusions_pattern_or_holding = "a pattern or a file it holds, not both",
+                note = "An exclusion refused: it says both a pattern and a file a folder holds."
+            ));
+        }
+        (None, None) => {
+            return Err(words!(
+                exclusions_names_nothing = "pattern or holding says what it names",
+                note = "An exclusion refused: it says neither. pattern and holding are the fields' names, as written."
+            ));
+        }
     };
-    matcher.check()?;
+    matcher.check_words().map_err(|unreadable| unreadable.why)?;
     for (key, field) in table {
         match key.as_str() {
             "searches" | "agents" | "index" if !field.is_bool() => {
-                return Err(format!("{key}: true or false"));
+                return Err(not_switch(key));
             }
             "pattern" | "names" | "holding" | "beside" | "what" | "category" | "searches"
             | "agents" | "index" => {}
-            _ => return Err(format!("no field {key}")),
+            _ => return Err(no_field(key)),
         }
     }
     Ok(Entry {
@@ -1027,7 +1255,7 @@ const OVERRIDES: &[&str] = &["searches", "agents", "index", "category"];
 
 /// What stops a category's table being read: a built-in's holds switches,
 /// the user's a name, under an id of no dot.
-fn category_problem(id: &str, category: &toml::Table) -> Result<(), String> {
+fn category_problem(id: &str, category: &toml::Table) -> Result<(), Words> {
     let builtin = id.starts_with(BUILTIN);
     if !builtin {
         user_id(id)?;
@@ -1036,15 +1264,18 @@ fn category_problem(id: &str, category: &toml::Table) -> Result<(), String> {
             .and_then(toml::Value::as_str)
             .is_none_or(|n| n.trim().is_empty())
         {
-            return Err("a category of yours needs a name".into());
+            return Err(words!(
+                exclusions_category_name = "a category of yours needs a name",
+                note = "A category of the user's in the settings refused: it has no name."
+            ));
         }
     }
     for (key, field) in category {
         match key.as_str() {
             "name" if !builtin => {}
             "searches" | "agents" | "index" if field.is_bool() => {}
-            "searches" | "agents" | "index" => return Err(format!("{key}: true or false")),
-            _ => return Err(format!("no field {key}")),
+            "searches" | "agents" | "index" => return Err(not_switch(key)),
+            _ => return Err(no_field(key)),
         }
     }
     Ok(())
@@ -1052,16 +1283,20 @@ fn category_problem(id: &str, category: &toml::Table) -> Result<(), String> {
 
 /// What stops an override of one of skwir's being read: it holds switches
 /// and a category, never a folder.
-fn override_problem(entry: &toml::Table) -> Result<(), String> {
+fn override_problem(entry: &toml::Table) -> Result<(), Words> {
     for (key, field) in entry {
         if key == "folder" || key == "holding" {
-            return Err("skwir. names skwir's own folders; give yours a name without a dot".into());
+            return Err(words!(
+                exclusions_builtin_id =
+                    "skwir. names skwir's own folders; give yours a name without a dot",
+                note = "An exclusion in the settings refused: its id begins with skwir. (as written), which only Skwir's own have, yet it names a folder."
+            ));
         }
         if !OVERRIDES.contains(&key.as_str()) {
-            return Err(format!("no field {key}"));
+            return Err(no_field(key));
         }
         if key != "category" && !field.is_bool() {
-            return Err(format!("{key}: true or false"));
+            return Err(not_switch(key));
         }
     }
     Ok(())
@@ -1082,7 +1317,10 @@ fn stored_table(beside: Beside<'_>) -> Option<&toml::Table> {
 /// the page, and kept.
 fn check_categories(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<()> {
     let Some(table) = value.as_table() else {
-        anyhow::bail!("folder categories are a table, by id");
+        anyhow::bail!(words!(
+            exclusions_categories_table = "folder categories are a table, by id",
+            note = "The categories of exclusions in the settings refused: they are written as a TOML table, each under its id."
+        ));
     };
     let stored = stored_table(beside);
     for (id, category) in table {
@@ -1090,9 +1328,9 @@ fn check_categories(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<(
             continue;
         }
         let Some(category) = category.as_table() else {
-            anyhow::bail!("{id}: a category is a table");
+            anyhow::bail!(refused(id, category_not_table()));
         };
-        category_problem(id, category).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+        category_problem(id, category).map_err(|why| anyhow::Error::new(refused(id, why)))?;
     }
     Ok(())
 }
@@ -1101,7 +1339,10 @@ fn check_categories(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<(
 /// spared as [`check_categories`] spares it.
 fn check_entries(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<()> {
     let Some(table) = value.as_table() else {
-        anyhow::bail!("exclusions are a table, by id");
+        anyhow::bail!(words!(
+            exclusions_entries_table = "exclusions are a table, by id",
+            note = "The exclusions in the settings refused: they are written as a TOML table, each under its id."
+        ));
     };
     let stored = stored_table(beside);
     for (id, entry) in table {
@@ -1109,12 +1350,12 @@ fn check_entries(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<()> 
             continue;
         }
         let Some(entry) = entry.as_table() else {
-            anyhow::bail!("{id}: an entry is a table");
+            anyhow::bail!(refused(id, entry_not_table()));
         };
         if id.starts_with(BUILTIN) {
-            override_problem(entry).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+            override_problem(entry).map_err(|why| anyhow::Error::new(refused(id, why)))?;
         } else {
-            user_entry(id, entry).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+            user_entry(id, entry).map_err(|why| anyhow::Error::new(refused(id, why)))?;
         }
     }
     Ok(())
@@ -1125,23 +1366,38 @@ fn check_entries(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<()> 
 /// wrong keeps nothing private, and says so at the start and when the file
 /// changes. On a worker: it reads the catalog.
 pub(crate) fn tell_problems(app: &crate::App) {
-    static TOLD: parking_lot::Mutex<BTreeSet<String>> = parking_lot::Mutex::new(BTreeSet::new());
-    let problems: BTreeSet<String> = Catalog::of(&app.settings).problems.into_iter().collect();
+    // Each told by where it is and which message says why, never by its
+    // words.
+    type Told = BTreeSet<(String, &'static str)>;
+    static TOLD: parking_lot::Mutex<Told> = parking_lot::Mutex::new(BTreeSet::new());
+    let mut problems = Catalog::of(&app.settings).problems;
+    problems.sort_by_key(Problem::key);
+    let keys: Told = problems.iter().map(Problem::key).collect();
     let mut told = TOLD.lock();
-    let new = problems.difference(&told).count();
-    if let Some(first) = problems.difference(&told).next() {
-        let more = if new > 1 {
-            format!(" (and {} more)", new - 1)
-        } else {
-            String::new()
-        };
+    let mut seen = HashSet::new();
+    let new: Vec<&Problem> = problems
+        .iter()
+        .filter(|problem| {
+            let key = problem.key();
+            !told.contains(&key) && seen.insert(key)
+        })
+        .collect();
+    if let Some(first) = new.first() {
         app.notify_about_setting(
             crate::app::NotifyLevel::Warning,
-            format!("An exclusion cannot be read, so it does not apply{more}: {first}"),
+            words!(
+                exclusions_unreadable = "{ $more ->
+                    [0] An exclusion cannot be read, so it does not apply: { $first }
+                   *[other] An exclusion cannot be read, so it does not apply (and { $more } more): { $first }
+                }",
+                more = new.len() - 1,
+                first = first.words(),
+                note = "A notice leading to the Exclusions page: exclusions in the settings that cannot be read, so they keep nothing private. How many more besides the first, then the first: where it is and why."
+            ),
             ENTRIES_KEY,
         );
     }
-    *told = problems;
+    *told = keys;
 }
 
 /// Whether the settings hold any exclusions of the user's: what there is to
@@ -1162,8 +1418,14 @@ pub fn declare(settings: &Settings) {
     settings.declare(
         SettingSpec::drawn_by_page(
             CATEGORIES_KEY,
-            "Exclusion categories",
-            "What changed of skwir's categories of exclusions (a role switched: searches, agents, index), and yours (a name)",
+            words!(
+                exclusions_categories = "Exclusion categories",
+                note = "A setting drawn by the Exclusions page, read in the settings file and by agents."
+            ),
+            words!(
+                exclusions_categories_description = "What changed of skwir's categories of exclusions (a role switched: searches, agents, index), and yours (a name)",
+                note = "skwir is the program's name; searches, agents and index are the roles' keys, as written."
+            ),
             table(),
         )
         .page(crate::settings::page::EXCLUSIONS)
@@ -1172,8 +1434,14 @@ pub fn declare(settings: &Settings) {
     settings.declare(
         SettingSpec::drawn_by_page(
             ENTRIES_KEY,
-            "Exclusions",
-            "What changed of skwir's exclusions (a role unticked, a category), and yours: a pattern (a name, a path, a glob or regex:…, of files, folders or both, with beside), or holding (a file a folder holds), what it is, its category, and the roles it is excluded from",
+            words!(
+                exclusions_entries = "Exclusions",
+                note = "A setting drawn by the Exclusions page: the files and folders left out of searches, kept from agents."
+            ),
+            words!(
+                exclusions_entries_description = "What changed of skwir's exclusions (a role unticked, a category), and yours: a pattern (a name, a path, a glob or regex:…, of files, folders or both, with beside), or holding (a file a folder holds), what it is, its category, and the roles it is excluded from",
+                note = "Read in the settings file and by agents. regex:, beside and holding are written so."
+            ),
             table(),
         )
         .page(crate::settings::page::EXCLUSIONS)
@@ -1182,8 +1450,14 @@ pub fn declare(settings: &Settings) {
     settings.declare(
         SettingSpec::toggle(
             SHELL_VARIABLES_KEY,
-            "Read your shell's variables",
-            "Read variables such as CARGO_HOME from your login shell too, where a path starts at one. A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.",
+            words!(
+                exclusions_shell_variables = "Read your shell's variables",
+                note = "A switch on the Privacy page: whether the login shell is asked for variables a path of the exclusions starts at."
+            ),
+            words!(
+                exclusions_shell_variables_description = "Read variables such as CARGO_HOME from your login shell too, where a path starts at one. A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.",
+                note = "CARGO_HOME, .zshrc and config.fish are names, as written."
+            ),
             true,
         )
         .page(crate::settings::page::PRIVACY),
@@ -1192,8 +1466,15 @@ pub fn declare(settings: &Settings) {
     settings.declare(
         SettingSpec::drawn_by_page(
             LEGACY_FOLDERS_KEY,
-            "Private folders (before exclusions)",
-            "0.3.1's private folders, read as exclusions kept from agents",
+            words!(
+                exclusions_legacy_folders = "Private folders (before exclusions)",
+                note = "A setting of an older version (0.3.1) still read, in the settings file."
+            ),
+            words!(
+                exclusions_legacy_folders_description =
+                    "0.3.1's private folders, read as exclusions kept from agents",
+                note = "0.3.1 is the version of Skwir that had them."
+            ),
             toml::Value::Array(Vec::new()),
         )
         .page(crate::settings::page::EXCLUSIONS),
@@ -1201,8 +1482,15 @@ pub fn declare(settings: &Settings) {
     settings.declare(
         SettingSpec::drawn_by_page(
             LEGACY_MARKER_KEY,
-            "Folders marked private (before exclusions)",
-            "0.3.1's switch for .private, read as the exclusion holding a .private",
+            words!(
+                exclusions_legacy_marker = "Folders marked private (before exclusions)",
+                note = "A setting of an older version (0.3.1) still read, in the settings file."
+            ),
+            words!(
+                exclusions_legacy_marker_description =
+                    "0.3.1's switch for .private, read as the exclusion holding a .private",
+                note = ".private is a file's name, as written."
+            ),
             toml::Value::Boolean(true),
         )
         .page(crate::settings::page::EXCLUSIONS),
@@ -1342,7 +1630,11 @@ impl Legacy {
                 builtin: false,
                 category: format!("{BUILTIN}secrets"),
                 shipped_category: None,
-                what: "Private (from 0.3.1's list)".into(),
+                what: words!(
+                    exclusions_what_legacy = "Private (from 0.3.1's list)",
+                    note = "What an exclusion is that the user's list of private folders of an older version (0.3.1) held."
+                )
+                .say(),
                 group: None,
                 matcher: Matcher::Pattern {
                     text: text.trim().to_owned(),
@@ -1408,61 +1700,205 @@ pub fn reference(field: &str) -> Option<crate::reference::Reference> {
     use crate::reference::{Group, Item, Reference};
     // An example is a whole value, written in place of what the field
     // holds; a sign is a part, put where the caret is.
-    let whole = |written: &str, says: &str| Item::new(written, says).whole_in(field);
+    let whole = |written: &str, says: Words| Item::new(written, says).whole_in(field);
     Some(match field {
-        "pattern" => Reference::new("Name or path")
-            .group(
-                Group::new("By name, anywhere")
-                    .item(whole("node_modules", "Any so named"))
-                    .item(whole("*.egg-info", "Any named like it"))
-                    .item(whole("cmake-build-*", "Any whose name starts so")),
-            )
-            .group(
-                Group::new("By path")
-                    .item(whole("~/VMs", "One, from your home"))
-                    .item(whole(WHOLE_PATH, "One, from the root"))
-                    .item(whole("$CARGO_HOME/registry", "From a variable"))
-                    .item(whole(
-                        "${XDG_CACHE_HOME:-~/.cache}/thumbnails",
-                        "From a variable, or what stands for it unset",
-                    ))
-                    .item(whole("~/.var/app/*/cache", "Those whose path is like it"))
-                    .item(whole("~/Projects/**/target", "At any depth below"))
-                    .note(format!(
-                        "A path starts at ~, a variable or a root ({WHOLE_PATH}); anything else \
-                         is a name."
-                    )),
-            )
-            .group(
-                Group::new("Signs of a name or a path")
-                    .item(Item::new("*", "Any characters, within one name"))
-                    .item(Item::new("**", "Any folders, in a path"))
-                    .item(Item::new("?", "One character"))
-                    .item(Item::new("[ab]", "One of these"))
-                    .item(Item::new("{a,b}", "Either")),
-            )
-            .group(Group::new("Over the whole path").item(whole(
+        "pattern" => Reference::new(words!(
+            exclusions_ref_pattern = "Name or path",
+            note = "The title of the list under an exclusion's field: what it takes."
+        ))
+        .group(
+            Group::new(words!(
+                exclusions_ref_by_name = "By name, anywhere",
+                note = "A heading of the examples an exclusion's field takes: a name excludes what is so named in any folder."
+            ))
+            .item(whole(
+                "node_modules",
+                words!(
+                    exclusions_ref_so_named = "Any so named",
+                    note = "What an example of an exclusion names: any folder or file named node_modules."
+                ),
+            ))
+            .item(whole(
+                "*.egg-info",
+                words!(
+                    exclusions_ref_named_like = "Any named like it",
+                    note = "What an example of an exclusion names: what is named like *.egg-info."
+                ),
+            ))
+            .item(whole(
+                "cmake-build-*",
+                words!(
+                    exclusions_ref_starts_so = "Any whose name starts so",
+                    note = "What an example of an exclusion names: what is named cmake-build-, then anything."
+                ),
+            )),
+        )
+        .group(
+            Group::new(words!(
+                exclusions_ref_by_path = "By path",
+                note = "A heading of the examples an exclusion's field takes: a path names one folder, or those like it."
+            ))
+            .item(whole(
+                "~/VMs",
+                words!(
+                    exclusions_ref_from_home = "One, from your home",
+                    note = "What an example of an exclusion names: one folder, its path from the home folder (~)."
+                ),
+            ))
+            .item(whole(
+                WHOLE_PATH,
+                words!(
+                    exclusions_ref_from_root = "One, from the root",
+                    note = "What an example of an exclusion names: one folder, its whole path."
+                ),
+            ))
+            .item(whole(
+                "$CARGO_HOME/registry",
+                words!(
+                    exclusions_ref_from_variable = "From a variable",
+                    note = "What an example of an exclusion names: a folder whose path starts at a variable."
+                ),
+            ))
+            .item(whole(
+                "${XDG_CACHE_HOME:-~/.cache}/thumbnails",
+                words!(
+                    exclusions_ref_variable_unset = "From a variable, or what stands for it unset",
+                    note = "What an example of an exclusion names: a path from a variable, and the path used where the variable is not set."
+                ),
+            ))
+            .item(whole(
+                "~/.var/app/*/cache",
+                words!(
+                    exclusions_ref_path_like = "Those whose path is like it",
+                    note = "What an example of an exclusion names: the folders whose paths are like it (* for any name)."
+                ),
+            ))
+            .item(whole(
+                "~/Projects/**/target",
+                words!(
+                    exclusions_ref_any_depth = "At any depth below",
+                    note = "What an example of an exclusion names: the folders named target at any depth below ~/Projects."
+                ),
+            ))
+            .note(words!(
+                exclusions_ref_path_note = "A path starts at ~, a variable or a root ({ $whole }); anything else is a name.",
+                whole = WHOLE_PATH,
+                note = "Under the examples of paths an exclusion takes: how a path is told from a name. The root is given as an example path."
+            )),
+        )
+        .group(
+            Group::new(words!(
+                exclusions_ref_signs = "Signs of a name or a path",
+                note = "A heading of the signs a pattern of an exclusion reads."
+            ))
+            .item(Item::new(
+                "*",
+                words!(
+                    exclusions_ref_star = "Any characters, within one name",
+                    note = "What * matches in an exclusion's pattern."
+                ),
+            ))
+            .item(Item::new(
+                "**",
+                words!(
+                    exclusions_ref_stars = "Any folders, in a path",
+                    note = "What ** matches in an exclusion's pattern."
+                ),
+            ))
+            .item(Item::new(
+                "?",
+                words!(
+                    exclusions_ref_one = "One character",
+                    note = "What ? matches in an exclusion's pattern."
+                ),
+            ))
+            .item(Item::new(
+                "[ab]",
+                words!(
+                    exclusions_ref_one_of = "One of these",
+                    note = "What [ab] matches in an exclusion's pattern: one of the letters in brackets."
+                ),
+            ))
+            .item(Item::new(
+                "{a,b}",
+                words!(
+                    exclusions_ref_either = "Either",
+                    note = "What {a,b} matches in an exclusion's pattern: what is on either side of the comma."
+                ),
+            )),
+        )
+        .group(
+            Group::new(words!(
+                exclusions_ref_whole_path = "Over the whole path",
+                note = "A heading of the example of a regular expression an exclusion takes, matched over the folder's path."
+            ))
+            .item(whole(
                 r"regex:^~/Archive/\d{4}$",
-                "A regular expression, ~ for home",
-            )))
-            .group(
-                crate::reference::regex_pattern()
-                    .note("After regex:, over the path written with ~ for your home."),
-            ),
-        "beside" => Reference::new("Only beside").group(
-            Group::new("A name beside it")
-                .item(whole(
-                    "Cargo.toml",
-                    "Only where a file or folder so named is beside it",
-                ))
-                .item(whole("*.csproj", "Only beside one named like it"))
-                .note("A name or a name's pattern, never a path."),
+                words!(
+                    exclusions_ref_regex = "A regular expression, ~ for home",
+                    note = "What an example of an exclusion is: regex: then a regular expression, matched over the path written with ~ for the home folder."
+                ),
+            )),
+        )
+        .group(crate::reference::regex_pattern().note(words!(
+            exclusions_ref_regex_note = "After regex:, over the path written with ~ for your home.",
+            note = "Under the signs of a regular expression, in an exclusion's field: where it is read. regex: is written so."
+        ))),
+        "beside" => Reference::new(words!(
+            exclusions_ref_beside = "Only beside",
+            note = "The title of the list under an exclusion's beside field: a folder is excluded only where this is beside it."
+        ))
+        .group(
+            Group::new(words!(
+                exclusions_ref_name_beside = "A name beside it",
+                note = "A heading of the examples an exclusion's beside field takes."
+            ))
+            .item(whole(
+                "Cargo.toml",
+                words!(
+                    exclusions_ref_so_named_beside = "Only where a file or folder so named is beside it",
+                    note = "What an example of the beside field asks: a file or folder named Cargo.toml beside the folder."
+                ),
+            ))
+            .item(whole(
+                "*.csproj",
+                words!(
+                    exclusions_ref_like_beside = "Only beside one named like it",
+                    note = "What an example of the beside field asks: a file named like *.csproj beside the folder."
+                ),
+            ))
+            .note(words!(
+                exclusions_ref_beside_note = "A name or a name's pattern, never a path.",
+                note = "Under the examples of an exclusion's beside field: what it takes."
+            )),
         ),
-        "holding" => Reference::new("Holding").group(
-            Group::new("A file it holds")
-                .item(whole(".nosearch", "Any folder holding a file so named"))
-                .item(whole("CACHEDIR.TAG", "A cache's own mark (signed)"))
-                .note("A file's name: the folder holding it is excluded, wherever it is."),
+        "holding" => Reference::new(words!(
+            exclusions_ref_holding = "Holding",
+            note = "The title of the list under an exclusion's holding field: a folder is excluded where it holds this file."
+        ))
+        .group(
+            Group::new(words!(
+                exclusions_ref_file_held = "A file it holds",
+                note = "A heading of the examples an exclusion's holding field takes."
+            ))
+            .item(whole(
+                ".nosearch",
+                words!(
+                    exclusions_ref_holding_named = "Any folder holding a file so named",
+                    note = "What an example of the holding field names: any folder holding a file named .nosearch."
+                ),
+            ))
+            .item(whole(
+                "CACHEDIR.TAG",
+                words!(
+                    exclusions_ref_cache_mark = "A cache's own mark (signed)",
+                    note = "What an example of the holding field names: CACHEDIR.TAG, the file a program leaves in its cache folders, which begins with a signature."
+                ),
+            ))
+            .note(words!(
+                exclusions_ref_holding_note = "A file's name: the folder holding it is excluded, wherever it is.",
+                note = "Under the examples of an exclusion's holding field: what it takes."
+            )),
         ),
         _ => return None,
     })
@@ -1592,16 +2028,25 @@ pub fn shown(text: &str) -> String {
 }
 
 impl Pattern {
-    fn of(text: &str) -> Result<Pattern, String> {
+    fn of(text: &str) -> Result<Pattern, Words> {
         let text = text.trim();
         if text.is_empty() {
-            return Err("a folder needs a name or a path".into());
+            return Err(words!(
+                exclusions_empty = "a folder needs a name or a path",
+                note = "An exclusion refused: what it names is empty."
+            ));
         }
         let written = Written::of(text);
         match written {
             Written::Regex => {
                 let re = &text[REGEX.len()..];
-                regex::bytes::Regex::new(re).map_err(|e| format!("regex: {e}"))?;
+                regex::bytes::Regex::new(re).map_err(|e| {
+                    words!(
+                        exclusions_bad_regex = "regex: { $error }",
+                        error = e.to_string(),
+                        note = "An exclusion refused: its regular expression does not read. regex: is written so; then what the regular expression's reader said (English)."
+                    )
+                })?;
                 return Ok(Pattern::Regex(re.to_owned()));
             }
             Written::NameGlob => return Ok(Pattern::NameGlob(glob_of(text)?)),
@@ -1611,14 +2056,18 @@ impl Pattern {
         let home = crate::os_path::home();
         let Some(full) = expand(text, home.as_deref()) else {
             return match Start::of(text).0 {
-                Start::Unreadable => Err(format!(
-                    "{text}: a variable is $NAME, ${{NAME}} or ${{NAME:-what stands for it unset}}"
+                Start::Unreadable => Err(words!(
+                    exclusions_bad_variable = "{ $pattern }: a variable is $NAME, ${\"{\"}NAME{\"}\"} or ${\"{\"}NAME:-what stands for it unset{\"}\"}",
+                    pattern = text.to_owned(),
+                    note = "An exclusion refused: the path as written, then how a variable is written in it. NAME stands for a variable's name; the signs are written so."
                 )),
                 // Set on another computer, or later.
                 Start::Variable { .. } => Ok(Pattern::Unset),
-                Start::Home | Start::Nothing => Err(format!(
-                    "{text}: a path starts with ~, a variable ($CARGO_HOME) or is whole \
-                     ({WHOLE_PATH})"
+                Start::Home | Start::Nothing => Err(words!(
+                    exclusions_path_starts = "{ $pattern }: a path starts with ~, a variable ($CARGO_HOME) or is whole ({ $whole })",
+                    pattern = text.to_owned(),
+                    whole = WHOLE_PATH,
+                    note = "An exclusion refused: the path as written, then how a path begins: ~ (home), a variable, or the root, a whole path given as an example."
                 )),
             };
         };
@@ -1636,14 +2085,21 @@ impl Pattern {
 
 /// A glob as names and paths are compared here: `*` within one name,
 /// `**` across them; case folded on a Mac and on Windows.
-fn glob_of(text: &str) -> Result<GlobMatcher, String> {
+fn glob_of(text: &str) -> Result<GlobMatcher, Words> {
     GlobBuilder::new(text)
         .literal_separator(true)
         .case_insensitive(cfg!(any(target_os = "macos", windows)))
         .backslash_escape(!cfg!(windows))
         .build()
         .map(|glob| glob.compile_matcher())
-        .map_err(|e| format!("{text}: {e}"))
+        .map_err(|e| {
+            words!(
+                exclusions_bad_glob = "{ $pattern }: { $error }",
+                pattern = text.to_owned(),
+                error = e.to_string(),
+                note = "An exclusion refused: its pattern as written, then what the pattern's reader said of it (English)."
+            )
+        })
 }
 
 /// A sibling a beside rule asks for: a name, or a glob of names.
@@ -1654,10 +2110,13 @@ pub enum NameMatch {
 }
 
 impl NameMatch {
-    fn of(text: &str) -> Result<NameMatch, String> {
+    fn of(text: &str) -> Result<NameMatch, Words> {
         if text.contains(['/', '\\']) {
-            return Err(format!(
-                "{text}: beside names a file or a folder, not a path"
+            return Err(words!(
+                exclusions_beside_name =
+                    "{ $sibling }: beside names a file or a folder, not a path",
+                sibling = text.to_owned(),
+                note = "An exclusion refused: what its beside field holds, as written, is a path, where it takes a name. beside is the field's name."
             ));
         }
         Ok(if is_glob(text) {
@@ -2370,9 +2829,10 @@ pub fn refuse_exposure(
     if let Some(value) = changes.get(SHELL_VARIABLES_KEY)
         && settings.get::<toml::Value>(SHELL_VARIABLES_KEY).as_ref() != Some(value)
     {
-        anyhow::bail!(
-            "an agent may not change whether the login shell's variables are read: a private folder only they name would stop being private. Only you can, in Settings, Privacy"
-        );
+        anyhow::bail!(words!(
+            exclusions_agent_shell = "an agent may not change whether the login shell's variables are read: a private folder only they name would stop being private. Only you can, in Settings, Privacy",
+            note = "Said to an agent that asked to change the setting. Settings and Privacy are a dialog's and its page's names."
+        ));
     }
     let before = Catalog::of(settings);
     let now = |key: &str| {
@@ -2390,11 +2850,19 @@ pub fn refuse_exposure(
         now(ENTRIES_KEY).as_ref(),
         &legacy,
     );
-    let exposed = exposed(&before, &after);
+    let exposed = exposed_words(&before, &after);
     anyhow::ensure!(
         exposed.is_empty(),
-        "an agent may not make private folders readable ({}): only you can, in Settings, Exclusions",
-        exposed.join(", ")
+        words!(
+            exclusions_agent_exposes = "an agent may not make private folders readable ({ $folders }): only you can, in Settings, Exclusions",
+            // Transitional: a list argument (ADR-139); an agent reads it.
+            folders = exposed
+                .iter()
+                .map(Words::english)
+                .collect::<Vec<_>>()
+                .join(", "),
+            note = "Said to an agent that asked to change the exclusions: what it would have let agents read, each as the Exclusions page says it. Settings and Exclusions are a dialog's and its page's names."
+        )
     );
     Ok(())
 }
@@ -2406,6 +2874,16 @@ pub fn refuse_exposure(
 /// skwir's, made the user's) is not one. An agent may not ask for any
 /// (`settings.apply`): only the user lowers privacy.
 pub fn exposed(before: &Catalog, after: &Catalog) -> Vec<String> {
+    exposed_words(before, after)
+        .iter()
+        .map(Words::say)
+        .collect()
+}
+
+/// [`exposed`] as words: each folder said once, told by what it names
+/// (its pattern, and what of it where its words say so: never for one
+/// path), never by its words.
+pub fn exposed_words(before: &Catalog, after: &Catalog) -> Vec<Words> {
     let now: Vec<&Matcher> = after.kept_from(Role::Agents).map(|e| &e.matcher).collect();
     let mut kept: HashMap<Same<'_>, Vec<Names>> = HashMap::new();
     for matcher in &now {
@@ -2420,9 +2898,9 @@ pub fn exposed(before: &Catalog, after: &Catalog) -> Vec<String> {
             !kept
                 .get(&same)
                 .is_some_and(|all| all.iter().any(|now| *now == names || *now == Names::Both))
+                && said.insert((same, e.matcher.one_path().is_none().then_some(names)))
         })
-        .map(|e| e.matcher.said())
-        .filter(|words| said.insert(words.clone()))
+        .map(|e| e.matcher.words())
         .collect()
 }
 

@@ -222,19 +222,25 @@ pub(crate) fn register(app: &App) {
     app.commands.register::<SetEnabledArgs, _>(
         "core", Topic::Skwir,
         "plugins.set_enabled",
-        "Enable or disable a plugin",
-        "Toggle a plugin at runtime and remember the choice; with the window open, completion is signalled by a wake and `plugins.list`",
+        crate::words!(plugins_set_enabled = "Enable or disable a plugin"),
+        crate::words!(
+            plugins_set_enabled_description = "Toggle a plugin at runtime and remember the choice; with the window open, completion is signalled by a wake and `plugins.list`",
+            note = "Read by agents and in F1's list of actions; `plugins.list` is an action's name."
+        ),
         |args, app| {
             anyhow::ensure!(
                 app.plugins.list().iter().any(|p| p.id == args.id),
-                "unknown plugin: {}",
-                args.id
+                crate::words!(
+                    plugins_unknown = "unknown plugin: { $id }",
+                    id = args.id.clone(),
+                    note = "Said to an agent or a script: no plugin has this id (as written)."
+                )
             );
             if !crate::scheduler::has_window() {
                 app.plugins.set_enabled(&args.id, args.enabled, app);
                 app.settings
                     .save()
-                    .map_err(|error| anyhow::anyhow!("The plugin choice was not saved: {error:#}"))?;
+                    .map_err(|error| anyhow::Error::new(not_saved(error)))?;
                 return Ok(crate::command::Outcome::Done);
             }
             let weak = app.weak();
@@ -246,10 +252,7 @@ pub(crate) fn register(app: &App) {
                     let Some(app) = weak.upgrade() else { return };
                     app.plugins.set_enabled(&args.id, args.enabled, &app);
                     if let Err(error) = app.settings.save() {
-                        app.notify(
-                            crate::app::NotifyLevel::Error,
-                            format!("The plugin choice was not saved: {error:#}"),
-                        );
+                        app.notify(crate::app::NotifyLevel::Error, not_saved(error));
                     }
                     app.wake();
                 },
@@ -262,8 +265,11 @@ pub(crate) fn register(app: &App) {
             "core",
             Topic::Skwir,
             "plugins.list",
-            "List plugins",
-            "Every plugin with its title, description and enabled state",
+            crate::words!(plugins_list = "List plugins"),
+            crate::words!(
+                plugins_list_description =
+                    "Every plugin with its title, description and enabled state"
+            ),
             |_, app| {
                 Ok(crate::command::Outcome::Value(serde_json::to_value(
                     app.plugins.list(),
@@ -271,6 +277,16 @@ pub(crate) fn register(app: &App) {
             },
         )
         .data();
+}
+
+/// Why a plugin turned on or off is not remembered: the settings could
+/// not be saved, why after.
+fn not_saved(error: anyhow::Error) -> crate::words::Words {
+    crate::words!(
+        plugins_not_saved = "The plugin choice was not saved: { $error }",
+        error = error,
+        note = "A plugin was turned on or off, but the settings could not be written: why follows."
+    )
 }
 
 /// Summary of a plugin for settings UIs.

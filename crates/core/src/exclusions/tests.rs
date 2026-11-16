@@ -158,17 +158,13 @@ fn what_the_list_cannot_hold_is_written_back_as_it_stood() {
     assert!(!list.values().1.as_table().unwrap().contains_key("waiting"));
 
     // Said; ids set aside are not given to a new one.
+    let problems: Vec<String> = list.problems.iter().map(|p| p.words().english()).collect();
     assert!(
-        list.problems.iter().any(|p| p.contains("broken")),
-        "{:?}",
-        list.problems
+        problems.iter().any(|p| p.contains("broken")),
+        "{problems:?}"
     );
-    assert!(list.problems.iter().any(|p| p.contains("a.b")));
-    assert!(
-        list.problems
-            .iter()
-            .any(|p| p.contains("no category not-here"))
-    );
+    assert!(problems.iter().any(|p| p.contains("a.b")));
+    assert!(problems.iter().any(|p| p.contains("no category not-here")));
     assert!(list.entry_ids().contains("broken"));
     assert!(list.category_ids().contains("a.b"));
 
@@ -741,7 +737,8 @@ fn a_path_starts_at_a_variable_as_the_shell_writes_one() {
         here("$SKWIR_TEST_TOOL_HOME/store", Some(&home)),
         Some(false)
     );
-    assert!(unset.said().contains("is not set"), "{}", unset.said());
+    let said = unset.words().english();
+    assert!(said.contains("is not set"), "{said}");
     for wrong in ["${SKWIR_TEST/x", "$1/x", "${}/x", "${A B}/x"] {
         assert!(folder(wrong).check().is_err(), "{wrong}");
     }
@@ -775,7 +772,8 @@ fn a_path_starts_at_a_variable_as_the_shell_writes_one() {
         "the rule follows the variable"
     );
     assert!(after.names(&first.join("store")));
-    assert!(unset.said().contains("now"), "{}", unset.said());
+    let said = unset.words().english();
+    assert!(said.contains("now"), "{said}");
     // A value that is no whole path is none.
     crate::environment::learn(
         BTreeSet::from(["SKWIR_TEST_TOOL_HOME".to_owned()]),
@@ -1097,7 +1095,8 @@ fn a_name_is_of_files_or_of_folders_and_they_are_told_apart() {
             beside: None,
             names,
         }
-        .said()
+        .words()
+        .english()
     };
     assert_eq!(
         said("*.kdbx", Names::Files),
@@ -1143,7 +1142,7 @@ fn the_fields_reference_is_what_the_rules_read() {
         assert!(
             Pattern::of(text).is_ok(),
             "{text}: {:?}",
-            Pattern::of(text).err()
+            Pattern::of(text).err().map(|e| e.english())
         );
         read += 1;
     }
@@ -1172,7 +1171,10 @@ fn the_fields_reference_is_what_the_rules_read() {
 #[test]
 fn the_whole_path_said_is_whole_here() {
     assert!(matches!(Pattern::of(WHOLE_PATH), Ok(Pattern::Path(_))));
-    let refused = Pattern::of("rel/x").err().unwrap_or_default();
+    let refused = Pattern::of("rel/x")
+        .err()
+        .map(|e| e.english())
+        .unwrap_or_default();
     assert!(refused.contains(WHOLE_PATH), "{refused}");
     let said = reference("pattern").unwrap();
     assert!(said.items().any(|(_, _, item)| item.written == WHOLE_PATH));

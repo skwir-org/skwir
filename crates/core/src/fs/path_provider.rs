@@ -33,7 +33,13 @@ impl LocationProvider for PathProvider {
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let path = location
             .path()
-            .ok_or_else(|| anyhow::anyhow!("not a path: {location}"))?;
+            .ok_or_else(|| {
+                anyhow::Error::new(crate::words!(
+                    fs_not_a_path = "not a path: { $location }",
+                    location = location.to_string(),
+                    note = "Said to an agent or a script: what was given to open as a folder is no path (an address, as written)."
+                ))
+            })?;
         // Never the process's working folder: a relative path is its
         // caller's to read from the folder it was typed in
         // (`App::navigate`).
@@ -700,8 +706,14 @@ impl Shared {
         if !ids.is_empty() {
             self.send_as_now(ListingEvent::Removed(ids));
         }
+        // Said once, as the window shows it (until a listing's error
+        // holds words).
         self.tx.send(ListingEvent::Error(crate::ListingError::new(
-            "This folder was deleted or is no longer available.",
+            crate::words!(
+                fs_folder_gone = "This folder was deleted or is no longer available.",
+                note = "Shown in place of a folder's files: the folder shown went away (deleted, or its drive or server let go)."
+            )
+            .say(),
         )));
     }
 

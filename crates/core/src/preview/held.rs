@@ -270,15 +270,22 @@ impl Held {
         whole + head + tail + blocks
     }
 
+    /// Why a read is refused: the file is another version than the one
+    /// held, said in the reader's language (`op::io_words`).
+    fn changed(&self) -> io::Error {
+        io::Error::other(crate::words!(
+            preview_changed = "{ $path } changed while it was shown",
+            path = self.path.display().to_string(),
+            note = "A file previewed was changed by another program as it was read: its path."
+        ))
+    }
+
     /// The file opened again for a read: refused when it is another
     /// version than the one held.
     fn reopen(&self) -> io::Result<File> {
         let file = crate::fs::file::open_regular(&self.path)?;
         if Stamp::of(&file)? != self.stamp {
-            return Err(io::Error::other(format!(
-                "{} changed while it was shown",
-                self.path.display()
-            )));
+            return Err(self.changed());
         }
         Ok(file)
     }
@@ -316,10 +323,7 @@ impl Held {
             bytes.extend_from_slice(&chunk[..n]);
             if bytes.len() as u64 > limit {
                 // It grew since it was opened: another version.
-                return Err(io::Error::other(format!(
-                    "{} changed while it was shown",
-                    self.path.display()
-                )));
+                return Err(self.changed());
             }
         }
         let bytes: Arc<[u8]> = bytes.into();

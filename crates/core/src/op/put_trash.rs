@@ -62,7 +62,10 @@ impl Trashes {
         let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "the top of a filesystem cannot be put in the trash",
+                crate::words!(
+                    trash_op_top = "the top of a filesystem cannot be put in the trash",
+                    note = "Why a folder is not put in the trash: it is the top of a drive (/)."
+                ),
             ));
         };
         let folder = if let Some(resolved) = known.folders.get(folder) {
@@ -85,7 +88,10 @@ impl Trashes {
                     .ok_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::NotFound,
-                            "there is no home folder for its trash",
+                            crate::words!(
+                                trash_op_no_home = "there is no home folder for its trash",
+                                note = "Why a file is not put in the trash: the user's home folder, which holds the trash, is not found."
+                            ),
                         )
                     })
             };
@@ -97,7 +103,11 @@ impl Trashes {
             } else if remote.as_ref().is_some_and(|remote| !remote.by_kernel()) {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "a network folder a program mounts keeps no trash: delete it instead",
+                    crate::words!(
+                        trash_op_mounted_remote =
+                            "a network folder a program mounts keeps no trash: delete it instead",
+                        note = "Why a file is not put in the trash: its folder is a server's, mounted by a program (sshfs, rclone, GVfs)."
+                    ),
                 ));
             } else {
                 match volume_trash(&top) {
@@ -107,7 +117,10 @@ impl Trashes {
                     {
                         return Err(io::Error::new(
                             io::ErrorKind::PermissionDenied,
-                            "the network share keeps no trash you may use: delete it instead",
+                            crate::words!(
+                                trash_op_share_refused = "the network share keeps no trash you may use: delete it instead",
+                                note = "Why a file is not put in the trash: its network share refuses a trash folder to the user."
+                            ),
                         ));
                     }
                     // Refused a trash folder of its own: the home trash, as

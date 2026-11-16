@@ -79,7 +79,12 @@ pub(crate) fn unreadable(catalog: &Catalog) -> Option<String> {
     if catalog.problems.is_empty() {
         return None;
     }
-    let shown = catalog.problems[..catalog.problems.len().min(SHOWN)].join("; ");
+    // Transitional: the window's batch makes this sentence a message.
+    let shown = catalog.problems[..catalog.problems.len().min(SHOWN)]
+        .iter()
+        .map(|problem| problem.words().say())
+        .collect::<Vec<_>>()
+        .join("; ");
     let more = catalog.problems.len().saturating_sub(SHOWN);
     let tail = if more > 0 {
         format!(" (and {more} more)")

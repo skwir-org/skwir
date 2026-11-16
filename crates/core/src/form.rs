@@ -353,21 +353,34 @@ impl Field {
         matches!(self.kind, Kind::Secret { .. })
     }
 
-    /// Why `text`, typed in it, is no answer, as the window shows it (its
-    /// title said in the window's language: the sentence becomes a message
-    /// when this crate's words are converted, PLAN.md, step E); `None`
-    /// when it is one.
+    /// Why `text`, typed in it, is no answer, said in the window's
+    /// language ([`Field::refusal_words`]); `None` when it is one.
     pub fn refusal(&self, text: &str) -> Option<String> {
+        self.refusal_words(text).map(|words| words.say())
+    }
+
+    /// Why `text`, typed in it, is no answer, as words; `None` when it is
+    /// one.
+    pub fn refusal_words(&self, text: &str) -> Option<Words> {
         if text.is_empty() {
             let kept = matches!(self.kind, Kind::Secret { kept: true });
-            return (self.required && !kept).then(|| format!("{} is needed", self.title.say()));
+            return (self.required && !kept).then(|| {
+                crate::words!(
+                    form_needed = "{ $field } is needed",
+                    field = self.title.clone(),
+                    note = "A field of a form left empty: its title."
+                )
+            });
         }
         match &self.kind {
             Kind::Integer { min, max } => match text.trim().parse::<i64>() {
                 Ok(n) if (*min..=*max).contains(&n) => None,
-                _ => Some(format!(
-                    "{} is a whole number from {min} to {max}",
-                    self.title.say()
+                _ => Some(crate::words!(
+                    form_whole_number = "{ $field } is a whole number from { $min } to { $max }",
+                    field = self.title.clone(),
+                    min = min.to_string(),
+                    max = max.to_string(),
+                    note = "A field of a form that takes a whole number: its title, then the least and the most it takes."
                 )),
             },
             Kind::Choice {
@@ -375,8 +388,13 @@ impl Field {
                 open: false,
             }
             | Kind::Pick { choices }
-            | Kind::Row { choices } => (!choices.iter().any(|c| c.value == text))
-                .then(|| format!("{} is one of its choices", self.title.say())),
+            | Kind::Row { choices } => (!choices.iter().any(|c| c.value == text)).then(|| {
+                crate::words!(
+                    form_one_of_choices = "{ $field } is one of its choices",
+                    field = self.title.clone(),
+                    note = "A field of a form given a value none of its choices has: its title."
+                )
+            }),
             _ => None,
         }
     }
@@ -423,12 +441,19 @@ impl Form {
     }
 
     /// Why `values` are no answer to it, the first field's that is not
-    /// among those shown; `None` when they are one.
+    /// among those shown, said in the window's language
+    /// ([`Form::refusal_words`]); `None` when they are one.
     pub fn refusal(&self, values: &Values) -> Option<String> {
+        self.refusal_words(values).map(|words| words.say())
+    }
+
+    /// Why `values` are no answer to it, as words, the first field's that
+    /// is not among those shown; `None` when they are one.
+    pub fn refusal_words(&self, values: &Values) -> Option<Words> {
         self.fields
             .iter()
             .filter(|field| field.shown_with(values))
-            .find_map(|field| field.refusal(values.get(&field.key)))
+            .find_map(|field| field.refusal_words(values.get(&field.key)))
     }
 
     /// The verb on its answer while its fields hold `values`: a shown

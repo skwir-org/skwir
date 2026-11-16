@@ -399,7 +399,13 @@ pub struct NotServed;
 
 impl std::fmt::Display for NotServed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the transfer does not serve these folders")
+        std::fmt::Display::fmt(
+            &crate::words!(
+                op_not_served = "the transfer does not serve these folders",
+                note = "Why a plugin's transfer (rsync) did not copy: it cannot between these folders, and Skwir copies them itself."
+            ),
+            f,
+        )
     }
 }
 
@@ -1624,10 +1630,11 @@ pub(super) fn remove_deferred(ctx: &StepContext) -> anyhow::Result<()> {
             };
             match super::builtin::remove_original(&src) {
                 Err(error) if !gone(&error) => {
-                    failed.get_or_insert(error.context(format!(
-                        "“{}” was copied whole to “{}”, but its original could not all be removed",
-                        src.display(),
-                        dest_dir.display()
+                    failed.get_or_insert(error.context(crate::words!(
+                        op_original_stays_path = "“{ $path }” was copied whole to “{ $folder }”, but its original could not all be removed",
+                        path = src.display().to_string(),
+                        folder = dest_dir.display().to_string(),
+                        note = "Why a move across drives ended with its original still there: the copy is whole. path, folder: the original's path and the folder it was moved to."
                     )));
                 }
                 _ => {}
@@ -1722,9 +1729,7 @@ fn run(
                 if temp.is_some() && crate::fs::reach::of(into).is_some() {
                     ctx.changed_beside(into);
                 }
-                return read(ran).with_context(|| {
-                    format!("{} copying {} entries", transfer.name(), names.len())
-                });
+                return read(ran).with_context(|| batch_copying(transfer.name(), names.len()));
             }
         }
     }
@@ -1737,7 +1742,21 @@ fn run(
     // Skwir's own tells nothing of each.
     ctx.batch_tells(taken.iter().map(|t| t.step), false);
     read(copy_at_once(from, &names, into, &aside, told, &control))
-        .with_context(|| format!("skwir copying {} entries", names.len()))
+        .with_context(|| batch_copying("skwir", names.len()))
+}
+
+/// What a batch of `count` copies by `transfer` (its name: rsync, skwir)
+/// was doing when it failed, its why after it.
+fn batch_copying(transfer: &str, count: usize) -> crate::words::Words {
+    crate::words!(
+        op_batch_copying = "{ $transfer } copying { $count ->
+            [one] { $count } entry
+           *[other] { $count } entries
+        }",
+        transfer = transfer.to_owned(),
+        count = count,
+        note = "What a batch of copies was doing when it failed, terse; why follows. transfer: the program's name (rsync, skwir)."
+    )
 }
 
 /// Skwir's own batch copy (the [`Transfer::copy`] it does where no
@@ -1871,7 +1890,13 @@ pub(super) fn copy_at_once(
     if let Some(error) = failed.lock().take() {
         return Err(error);
     }
-    anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+    anyhow::ensure!(
+        !cancel.is_cancelled(),
+        crate::words!(
+            op_batch_cancelled = "cancelled",
+            note = "Why a batch of copies stopped: it was cancelled."
+        )
+    );
     layout.finish()
 }
 
@@ -2013,7 +2038,11 @@ pub fn give_times(pairs: &[(PathBuf, PathBuf)]) -> anyhow::Result<()> {
                             super::sys::set_modified(dst, meta.modified()?)
                         })
                         .with_context(|| {
-                            format!("“{}” could not be given its time", dst.display())
+                            crate::words!(
+                                op_time_not_given = "“{ $path }” could not be given its time",
+                                path = dst.display().to_string(),
+                                note = "What a batch of copies could not do: give a copy its original's modification time; why follows. path: the copy's path."
+                            )
                         });
                     if let Err(error) = given {
                         failed.lock().get_or_insert(error);
@@ -2078,7 +2107,11 @@ fn copy_one(
             return Ok(());
         }
         #[cfg(not(unix))]
-        anyhow::bail!("“{}” is a link", src.display());
+        anyhow::bail!(crate::words!(
+            op_batch_link = "“{ $path }” is a link",
+            path = src.display().to_string(),
+            note = "Why a batch of copies failed on Windows: it met a link, which it does not copy. path: the link's path."
+        ));
     }
     let mut sf = crate::fs::file::open_regular(src)?;
     let (mut df, mut copied) = match from {
@@ -2101,7 +2134,13 @@ fn copy_one(
     let mut chunk = super::builtin::Chunk::new(buf.len());
     loop {
         control.wait_while_paused();
-        anyhow::ensure!(!control.is_cancelled(), "cancelled");
+        anyhow::ensure!(
+            !control.is_cancelled(),
+            crate::words!(
+                op_batch_cancelled = "cancelled",
+                note = "Why a batch of copies stopped: it was cancelled."
+            )
+        );
         let began = Instant::now();
         let n = match sf.read(&mut buf[..chunk.size]) {
             Ok(0) => break,
@@ -2119,9 +2158,13 @@ fn copy_one(
     // short of the source as it was, the copy was cut, not done.
     anyhow::ensure!(
         copied >= meta.len(),
-        "“{}”: {copied} of its {} bytes could be read",
-        src.display(),
-        meta.len()
+        crate::words!(
+            op_batch_read_short = "“{ $path }”: { $read } of its { $bytes } bytes could be read",
+            path = src.display().to_string(),
+            read = copied,
+            bytes = meta.len(),
+            note = "Why a batch of copies failed: a source ended early (a server stopped serving it). path: its path; read, bytes: how many bytes were read, how many it holds."
+        )
     );
     // Whole once closing it says so (`sys::close`); its time and mode
     // given after, by its name, the time first (Windows opens the file

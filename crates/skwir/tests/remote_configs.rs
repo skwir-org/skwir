@@ -296,8 +296,9 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
         refused
             .form
             .error
-            .as_deref()
+            .as_ref()
             .unwrap()
+            .english()
             .contains("letters, digits, spaces and _ - . + @ only")
     );
     assert_eq!(

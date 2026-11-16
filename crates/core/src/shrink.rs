@@ -6,6 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::words::Words;
+
 /// How small a copy is made, from the copy that loses nothing to the
 /// smallest. Each says what it does to a picture ([`Quality::picture`])
 /// and to a PDF's images ([`Quality::pdf`]).
@@ -128,21 +130,57 @@ impl Quality {
         }
     }
 
+    /// Its name, said where it is drawn.
+    pub fn words(self) -> Words {
+        match self {
+            Quality::Lossless => crate::words!(
+                shrink_lossless = "Lossless",
+                note = "A quality of a smaller copy: nothing lost."
+            ),
+            Quality::Print => crate::words!(
+                shrink_print = "Print",
+                note = "A quality of a smaller copy: good enough to print."
+            ),
+            Quality::Screen => crate::words!(
+                shrink_screen = "Screen",
+                note = "A quality of a smaller copy: good enough for a screen."
+            ),
+            Quality::Small => crate::words!(
+                shrink_small = "Small",
+                note = "A quality of a smaller copy: the smallest."
+            ),
+        }
+    }
+
     /// What it does to a picture, said under its name in a dialog.
-    pub fn picture_said(self) -> String {
+    pub fn picture_said(self) -> Words {
         let rule = self.picture();
         match rule.longest {
-            Some(longest) => format!("At most {longest} pixels across"),
-            None => "Same pixels, nothing lost".to_owned(),
+            Some(longest) => crate::words!(
+                shrink_picture_at_most = "At most { $longest } pixels across",
+                longest = longest.to_string(),
+                note = "What a quality does to a picture: the most pixels of its longer side."
+            ),
+            None => crate::words!(
+                shrink_picture_same = "Same pixels, nothing lost",
+                note = "What the lossless quality does to a picture."
+            ),
         }
     }
 
     /// What it does to a PDF, said under its name in a dialog.
-    pub fn pdf_said(self) -> String {
+    pub fn pdf_said(self) -> Words {
         let rule = self.pdf();
         match rule.dpi {
-            Some(dpi) => format!("Images at most {dpi} dpi"),
-            None => "Nothing re-encoded".to_owned(),
+            Some(dpi) => crate::words!(
+                shrink_pdf_at_most = "Images at most { $dpi } dpi",
+                dpi = dpi.to_string(),
+                note = "What a quality does to a PDF's images: the most dots per inch."
+            ),
+            None => crate::words!(
+                shrink_pdf_same = "Nothing re-encoded",
+                note = "What the lossless quality does to a PDF's images."
+            ),
         }
     }
 

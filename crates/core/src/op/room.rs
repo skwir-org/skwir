@@ -27,12 +27,14 @@ pub struct Short {
 impl Short {
     /// What a refusal says: "Not enough room in “Stick”: 12.0 GB needed,
     /// 8.0 GB free".
-    pub fn said(&self) -> String {
-        format!(
-            "Not enough room in “{}”: {} needed, {} free",
-            name(&self.dest),
-            crate::fs::size_said(self.needs),
-            crate::fs::size_said(self.free)
+    pub fn said(&self) -> crate::words::Words {
+        use crate::words::{Name, Size};
+        crate::words!(
+            op_no_room = "Not enough room in { $folder }: { $needs } needed, { $free } free",
+            folder = Name(name(&self.dest)),
+            needs = Size(self.needs),
+            free = Size(self.free),
+            note = "Why an action does not go on: the drive it writes to has too little free. folder: the folder written into, by its name; needs, free: sizes."
         )
     }
 }
@@ -242,7 +244,7 @@ mod tests {
             "a volume that does not say is not refused"
         );
         assert_eq!(
-            with(1000).unwrap().said(),
+            with(1000).unwrap().said().english(),
             "Not enough room in “dest”: 1.1 kB needed, 1.0 kB free"
         );
     }

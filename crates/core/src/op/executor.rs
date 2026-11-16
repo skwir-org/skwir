@@ -1294,22 +1294,35 @@ fn chains_of(rows: &[Read], free: impl Fn(&Read) -> bool) -> HashMap<u64, Vec<u6
 /// Why the entry `title` cannot be undone (`direction`'s verb) alone:
 /// `other`, after it on its stack, touched what it did, and cannot be
 /// undone itself (`for_good`) or is to be taken back first.
-/// English, its titles too, until it is a message.
 fn held_back(direction: Direction, title: &Words, other: &Words, for_good: bool) -> Words {
-    let (verb, done, after) = match direction {
-        Direction::Undo => ("undo", "undone", "asked after it"),
-        Direction::Redo => ("redo", "redone", "undone after it"),
-    };
-    let (title, other) = (title.english(), other.english());
-    Words::from(if for_good {
-        format!(
-            "“{title}” cannot be {done}: “{other}”, {after}, touched what it did and cannot be undone"
-        )
-    } else {
-        format!(
-            "“{title}” cannot be {done} alone: “{other}”, {after}, touched what it did; {verb} that first"
-        )
-    })
+    use crate::words;
+    let (title, other) = (title.clone(), other.clone());
+    match (direction, for_good) {
+        (Direction::Undo, true) => words!(
+            exec_undo_held_for_good = "“{ $title }” cannot be undone: “{ $other }”, asked after it, touched what it did and cannot be undone",
+            title = title,
+            other = other,
+            note = "Why an action cannot be undone: another action, asked after it, changed the same files and cannot be undone itself. title, other: the two actions' titles."
+        ),
+        (Direction::Undo, false) => words!(
+            exec_undo_held = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it, touched what it did; undo that first",
+            title = title,
+            other = other,
+            note = "Why an action cannot be undone by itself: another action, asked after it, changed the same files. title, other: the two actions' titles."
+        ),
+        (Direction::Redo, true) => words!(
+            exec_redo_held_for_good = "“{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be undone",
+            title = title,
+            other = other,
+            note = "Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be undone. title, other: the two actions' titles."
+        ),
+        (Direction::Redo, false) => words!(
+            exec_redo_held = "“{ $title }” cannot be redone alone: “{ $other }”, undone after it, touched what it did; redo that first",
+            title = title,
+            other = other,
+            note = "Why an undone action cannot be redone by itself: another action, undone after it, changed the same files. title, other: the two actions' titles."
+        ),
+    }
 }
 
 /// What an undo or a redo of the action titled `title` is called while it
@@ -1330,6 +1343,20 @@ fn replay_title(direction: Direction, title: &Words) -> Words {
             note = "What a redo is called while it waits or runs: redo, then the action it \
                     applies again (redo copy 3 items to Docs). Begins in lower case: said \
                     inside other words too."
+        ),
+    }
+}
+
+/// What an undo or a redo is called before its action is known.
+fn replay_unnamed(direction: Direction) -> Words {
+    match direction {
+        Direction::Undo => crate::words!(
+            exec_undo = "undo",
+            note = "What an undo is called while the action it takes back is not known yet. Begins in lower case: said inside other words too."
+        ),
+        Direction::Redo => crate::words!(
+            exec_redo = "redo",
+            note = "What a redo is called while the action it applies again is not known yet. Begins in lower case: said inside other words too."
         ),
     }
 }
@@ -1783,7 +1810,7 @@ impl Executor {
         } else {
             let asker = self.clash_asker.lock().clone();
             let Some(answer) = asker.and_then(|asker| asker(&plan.title, &first.clashes)) else {
-                return Settling::Refused(first.clashes[0].said().into());
+                return Settling::Refused(first.clashes[0].said());
             };
             let answer = loop {
                 match answer.recv_timeout(Duration::from_millis(100)) {
@@ -1810,12 +1837,7 @@ impl Executor {
     /// Why `plan`, asked for as one action, does not go on for want of
     /// room: `None` when it has room, or the user said to go on. Waits for
     /// the answer, Cancel answering no.
-    fn short_of_room(
-        &self,
-        plan: &Plan,
-        cancel: &CancelToken,
-        shown: &Shown<'_>,
-    ) -> Option<String> {
+    fn short_of_room(&self, plan: &Plan, cancel: &CancelToken, shown: &Shown<'_>) -> Option<Words> {
         let free = Arc::clone(&self.free.lock());
         let ctx = dry_context(&plan.steps, &Arc::default(), cancel, shown);
         let sized = super::room::sized(&plan.steps, &ctx, cancel, &|_| true)?;
@@ -2912,12 +2934,7 @@ impl Executor {
             let entry = stack.iter().find(|e| e.stacked == stacked)?;
             Some(replay_title(direction, &entry.title))
         });
-        entry.unwrap_or_else(|| {
-            Words::from(match direction {
-                Direction::Undo => "undo",
-                Direction::Redo => "redo",
-            })
-        })
+        entry.unwrap_or_else(|| replay_unnamed(direction))
     }
 
     /// The actions under way that touch something at or below `tree`, by
@@ -3517,15 +3534,20 @@ impl Executor {
             && let Some(why) = chain.stopped.lock().clone()
         {
             let title = entry.map(|e| e.title.clone());
-            // English, its title too, until it is a message.
-            let reason = format!(
-                "“{}” was not undone: {}",
-                title
-                    .as_ref()
-                    .map_or_else(|| "that action".to_owned(), Words::english),
-                why.english()
-            );
-            return Named::Refused(title, reason.into());
+            let reason = match &title {
+                Some(title) => crate::words!(
+                    exec_not_undone = "“{ $title }” was not undone: { $why }",
+                    title = title.clone(),
+                    why = why,
+                    note = "Why an action of a chain of undos was left: an undo before it stopped. title: the action's title; why: what stopped."
+                ),
+                None => crate::words!(
+                    exec_that_not_undone = "that action was not undone: { $why }",
+                    why = why,
+                    note = "Why an action of a chain of undos was left (its title is not known any more): an undo before it stopped. why: what stopped. Begins in lower case."
+                ),
+            };
+            return Named::Refused(title, reason);
         }
         let at = entry.map(|e| e.stacked);
         let before = || lane.queue.iter().take(i);
@@ -3576,30 +3598,55 @@ impl Executor {
         if waits || unmeasured || going {
             return Named::Waits;
         }
-        let (verb, done) = match direction {
-            Direction::Undo => ("undo", "undone"),
-            Direction::Redo => ("redo", "redone"),
-        };
         let Some(entry) = entry else {
             return match other.iter().find(|e| of.names(e)) {
                 Some(found) => {
-                    // English, its title too, until it is a message.
-                    let title = found.title.english();
+                    let title = found.title.clone();
                     let reason = match direction {
-                        Direction::Undo => format!("“{title}” is undone already"),
-                        Direction::Redo => format!("“{title}” is not undone: nothing to redo"),
+                        Direction::Undo => crate::words!(
+                            exec_undone_already = "“{ $title }” is undone already",
+                            title = title,
+                            note = "Why an undo asked of an action does nothing: it was undone before. title: the action's title."
+                        ),
+                        Direction::Redo => crate::words!(
+                            exec_not_undone_nothing = "“{ $title }” is not undone: nothing to redo",
+                            title = title,
+                            note = "Why a redo asked of an action does nothing: it is not undone. title: the action's title."
+                        ),
                     };
-                    Named::Refused(Some(found.title.clone()), reason.into())
+                    Named::Refused(Some(found.title.clone()), reason)
                 }
                 None => Named::Refused(
                     None,
-                    format!("that action is no longer in the history: nothing to {verb}").into(),
+                    match direction {
+                        Direction::Undo => crate::words!(
+                            exec_gone_from_history_undo =
+                                "that action is no longer in the history: nothing to undo",
+                            note = "Why an undo asked of an action does nothing: the history keeps it no more. Begins in lower case."
+                        ),
+                        Direction::Redo => crate::words!(
+                            exec_gone_from_history_redo =
+                                "that action is no longer in the history: nothing to redo",
+                            note = "Why a redo asked of an action does nothing: the history keeps it no more. Begins in lower case."
+                        ),
+                    },
                 ),
             };
         };
         let refused = |reason: Words| Named::Refused(Some(entry.title.clone()), reason);
         if lane.targeted.contains(&(direction, entry.stacked)) {
-            return refused(format!("“{}” is being {done} already", entry.title.english()).into());
+            return refused(match direction {
+                Direction::Undo => crate::words!(
+                    exec_being_undone = "“{ $title }” is being undone already",
+                    title = entry.title.clone(),
+                    note = "Why an undo asked of an action waits for nothing: an undo of it already runs or waits. title: the action's title."
+                ),
+                Direction::Redo => crate::words!(
+                    exec_being_redone = "“{ $title }” is being redone already",
+                    title = entry.title.clone(),
+                    note = "Why a redo asked of an action waits for nothing: a redo of it already runs or waits. title: the action's title."
+                ),
+            });
         }
         // One that cannot be undone says it first: undoing the others
         // would not do.
@@ -3633,24 +3680,33 @@ impl Executor {
                 .iter()
                 .filter(|b| !b.ended && b.seq > entry.seq && b.title.is_some())
                 .find(|b| met(b.meets.as_ref()))
-                .map(|b| (&b.named, "running"))
+                .map(|b| (&b.named, true))
                 .or_else(|| {
                     before().find_map(|job| match &job.work {
                         Work::Execute { plan, .. }
                             if job.seq > entry.seq && met(job.meets.as_ref()) =>
                         {
-                            Some((&plan.title, "waiting"))
+                            Some((&plan.title, false))
                         }
                         _ => None,
                     })
                 });
-            if let Some((title, how)) = under_way {
-                // English, its titles too, until it is a message.
-                return refused(format!(
-                    "“{}” cannot be undone alone: “{}”, asked after it, {how}, touched what it did; undo that first",
-                    entry.title.english(),
-                    title.english()
-                ).into());
+            if let Some((other, running)) = under_way {
+                return refused(if running {
+                    crate::words!(
+                        exec_undo_held_running = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it, running, touched what it did; undo that first",
+                        title = entry.title.clone(),
+                        other = other.clone(),
+                        note = "Why an action cannot be undone by itself: another action, asked after it and running now, changed the same files. title, other: the two actions' titles."
+                    )
+                } else {
+                    crate::words!(
+                        exec_undo_held_waiting = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it, waiting, touched what it did; undo that first",
+                        title = entry.title.clone(),
+                        other = other.clone(),
+                        note = "Why an action cannot be undone by itself: another action, asked after it and waiting to run, will change the same files. title, other: the two actions' titles."
+                    )
+                });
             }
             if unknown {
                 return Named::Waits;
@@ -3796,17 +3852,28 @@ impl Executor {
             ),
         };
         if let Some((chain, named)) = chain {
-            // English, its title and error too, until it is a message.
-            let how = match &result {
-                None => Some("did not run".to_owned()),
-                Some(r) if r.cancelled => Some("was cancelled".to_owned()),
-                Some(r) => r
-                    .error
-                    .as_ref()
-                    .map(|e| format!("stopped: {}", e.english())),
+            let why = match &result {
+                None => Some(crate::words!(
+                    exec_chain_did_not_run = "“{ $title }” did not run",
+                    title = named,
+                    note = "Why Undo with what came after it stopped: one of its undos did not run. title: what that undo is called (undo, then the action)."
+                )),
+                Some(r) if r.cancelled => Some(crate::words!(
+                    exec_chain_cancelled = "“{ $title }” was cancelled",
+                    title = named,
+                    note = "Why Undo with what came after it stopped: one of its undos was cancelled. title: what that undo is called (undo, then the action)."
+                )),
+                Some(r) => r.error.as_ref().map(|error| {
+                    crate::words!(
+                        exec_chain_stopped = "“{ $title }” stopped: { $error }",
+                        title = named,
+                        error = error.clone(),
+                        note = "Why Undo with what came after it stopped: one of its undos stopped. title: what that undo is called (undo, then the action); error: why it stopped."
+                    )
+                }),
             };
-            if let Some(how) = how {
-                self.stop_chain(&chain, format!("“{}” {how}", named.english()).into());
+            if let Some(why) = why {
+                self.stop_chain(&chain, why);
             }
         }
         if let Some(reply) = job.reply {
@@ -3921,8 +3988,8 @@ impl Executor {
                     .then(|| {
                         super::guarded(|| {
                             Ok(first_conflict(&plan, &companions, cancel, &shown)
-                                .or_else(|| self.short_of_room(&plan, cancel, &shown))
-                                .map(Words::from))
+                                .map(Words::from)
+                                .or_else(|| self.short_of_room(&plan, cancel, &shown)))
                         })
                         .unwrap_or_else(|e| Some(Words::of_error(e)))
                     })
@@ -4247,15 +4314,21 @@ impl Executor {
         // follows it) lets it go.
         let unbegun = |cancelled: bool| {
             self.told(seq);
-            let nothing = match direction {
-                Direction::Undo => "nothing to undo",
-                Direction::Redo => "nothing to redo",
+            let nothing = || match direction {
+                Direction::Undo => crate::words!(
+                    exec_nothing_to_undo = "nothing to undo",
+                    note = "Why an undo did nothing: when its turn came, nothing was left to take back. Begins in lower case."
+                ),
+                Direction::Redo => crate::words!(
+                    exec_nothing_to_redo = "nothing to redo",
+                    note = "Why a redo did nothing: when its turn came, nothing was left to apply again. Begins in lower case."
+                ),
             };
             self.emit(ExecEvent::Finished {
                 plan: id,
                 applied: 0,
                 skipped: 0,
-                error: (!cancelled).then(|| Words::from(nothing)),
+                error: (!cancelled).then(nothing),
                 cancelled,
                 undoable: false,
                 items: None,
@@ -4274,11 +4347,11 @@ impl Executor {
                 Direction::Undo => (
                     title
                         .as_ref()
-                        .map_or_else(|| Words::from("undo"), |t| replay_title(Direction::Undo, t)),
+                        .map_or_else(|| replay_unnamed(direction), |t| replay_title(direction, t)),
                     RunKind::Undo,
                 ),
                 Direction::Redo => (
-                    title.clone().unwrap_or_else(|| Words::from("redo")),
+                    title.clone().unwrap_or_else(|| replay_unnamed(direction)),
                     RunKind::Redo,
                 ),
             };
@@ -4340,8 +4413,11 @@ impl Executor {
                     Direction::Undo => replay_title(direction, &entry.title),
                     Direction::Redo => entry.title.clone(),
                 };
-                // English, its title too, until it is a message.
-                let error = Words::from(format!("“{}” cannot be undone", entry.title.english()));
+                let error = crate::words!(
+                    exec_cannot_be_undone = "“{ $title }” cannot be undone",
+                    title = entry.title.clone(),
+                    note = "Why an undo did nothing: nothing the action did can be taken back (a file deleted for good). title: the action's title."
+                );
                 self.told(seq);
                 self.emit(ExecEvent::Started {
                     plan: id,
@@ -4621,7 +4697,7 @@ impl Executor {
             // Unwound, it would take the plans' thread with it.
             let status =
                 super::guarded(|| Ok(step.check(&ctx))).unwrap_or_else(|e| StepStatus::Conflict {
-                    reason: super::said(&e),
+                    reason: Words::of_error(e).say(),
                 });
             let mut err = None;
             let mut reason = None;

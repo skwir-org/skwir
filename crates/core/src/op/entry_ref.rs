@@ -44,11 +44,9 @@ impl std::hash::Hash for EntryRef {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ResolveError {
-    #[error("“{}” is not there any more", name_of(.0))]
     Gone(PathBuf),
-    #[error("“{}” is now another file", name_of(path))]
     Replaced {
         path: PathBuf,
         expected: FileId,
@@ -56,10 +54,41 @@ pub enum ResolveError {
     },
 }
 
+impl ResolveError {
+    /// Why the entry is not found, in words.
+    pub fn words(&self) -> crate::words::Words {
+        match self {
+            ResolveError::Gone(path) => crate::words!(
+                op_entry_gone = "{ $name } is not there any more",
+                name = name_of(path),
+                note = "Why a step does not go on: the file it acts on is gone."
+            ),
+            ResolveError::Replaced { path, .. } => crate::words!(
+                op_entry_replaced = "{ $name } is now another file",
+                name = name_of(path),
+                note =
+                    "Why a step does not go on: another file took the name of the one it acts on."
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for ResolveError {
+    /// Its words: English, or the reader's language while an error's chain
+    /// is said.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.words(), f)
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
 /// An entry's own name, for a message.
-fn name_of(path: &Path) -> std::path::Display<'_> {
-    path.file_name()
-        .map_or(path.display(), |name| Path::new(name).display())
+fn name_of(path: &Path) -> crate::words::Name {
+    crate::words::Name(path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    ))
 }
 
 /// Whether `path` is on a remote whose program makes its inode numbers up
@@ -271,8 +300,13 @@ impl EntryArg {
             // What it knew of the file's names is not said: it resolves
             // at its path alone.
             Some(id) => Ok(EntryRef::new(id, path)),
-            None => EntryRef::from_path(&path)
-                .ok_or_else(|| anyhow::anyhow!("{} does not exist", path.display())),
+            None => EntryRef::from_path(&path).ok_or_else(|| {
+                anyhow::Error::new(crate::words!(
+                    op_path_missing = "{ $path } does not exist",
+                    path = path.display().to_string(),
+                    note = "Why an entry given to a command (by an agent or a script) is refused: nothing is at its path. path: the path given."
+                ))
+            }),
         }
     }
 

@@ -342,8 +342,11 @@ impl schemars::JsonSchema for PathArg {
 pub fn absolute(path: &Path) -> anyhow::Result<&Path> {
     anyhow::ensure!(
         path.is_absolute(),
-        "{} is not an absolute path",
-        path.display()
+        crate::words!(
+            os_path_not_absolute = "{ $path } is not an absolute path",
+            path = path.display().to_string(),
+            note = "Said to an agent or a script that gave a path relative to its own folder: the path as given."
+        )
     );
     Ok(path)
 }

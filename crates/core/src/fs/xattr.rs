@@ -82,7 +82,11 @@ mod imp {
     fn none() -> io::Error {
         io::Error::new(
             io::ErrorKind::Unsupported,
-            format!("{} keeps no extended attributes", crate::system::NAME),
+            crate::words!(
+                fs_system_no_xattrs = "{ $system } keeps no extended attributes",
+                system = crate::system::named(),
+                note = "Why tags or notes kept in a file's attributes are not read or written: the system's name. Begins with it."
+            ),
         )
     }
 
@@ -119,7 +123,10 @@ fn read<T>(path: &Path, ask: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     if crate::fs::reach::refuses_attributes(path) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "this server keeps no extended attributes",
+            crate::words!(
+                fs_server_no_xattrs = "this server keeps no extended attributes",
+                note = "Why tags or notes kept in a file's attributes are not read or written on a network folder. Begins in lower case: said after other words."
+            ),
         ));
     }
     let answer = ask();

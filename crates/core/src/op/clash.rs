@@ -227,14 +227,18 @@ impl Clash {
     }
 
     /// What it says where no one is asked: the dry run's words.
-    pub fn said(&self) -> String {
-        format!(
-            "“{}” is already there",
-            self.there
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
+    pub fn said(&self) -> crate::words::Words {
+        crate::words!(
+            clash_taken = "{ $name } is already there",
+            name = crate::words::Name(
+                self.there
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            ),
+            note = "Why a copy, a move or a link does not go on, where no one is asked: its name is taken in the folder it goes to."
         )
     }
 }

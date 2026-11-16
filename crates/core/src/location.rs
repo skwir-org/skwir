@@ -1083,6 +1083,317 @@ impl SortKey {
         }
     }
 
+    /// What a menu or a column calls it, as words: `Modified` (`title`
+    /// for what reads it as an identifier until every caller says words).
+    pub fn title_words(self) -> Words {
+        use crate::words;
+        match self {
+            SortKey::Name => words!(
+                sort_title_name = "Name",
+                note = "A column's header and a sort's name in menus: the file's name."
+            ),
+            SortKey::Kind => words!(
+                sort_title_kind = "Kind",
+                note =
+                    "A column's header and a sort's name: what a file is (a picture, a document)."
+            ),
+            SortKey::Type => words!(
+                sort_title_type = "Type",
+                note = "A column's header and a sort's name: the file's type by name (PNG image)."
+            ),
+            SortKey::Extension => words!(
+                sort_title_extension = "Extension",
+                note = "A column's header and a sort's name: what the name ends with (.png)."
+            ),
+            SortKey::Size => words!(
+                sort_title_size = "Size",
+                note = "A column's header and a sort's name."
+            ),
+            SortKey::Modified => words!(
+                sort_title_modified = "Modified",
+                note = "A column's header and a sort's name: when the file last changed."
+            ),
+            SortKey::Created => words!(
+                sort_title_created = "Created",
+                note = "A column's header and a sort's name: when the file was made."
+            ),
+            SortKey::Accessed => words!(
+                sort_title_accessed = "Accessed",
+                note = "A column's header and a sort's name: when the file was last read."
+            ),
+            SortKey::Deleted => words!(
+                sort_title_deleted = "Deleted",
+                note = "A column's header and a sort's name in the Trash: when the file was put there."
+            ),
+            SortKey::Rating => words!(
+                sort_title_rating = "Rating",
+                note = "A column's header and a sort's name: the stars a file was given."
+            ),
+            SortKey::Tags => words!(
+                sort_title_tags = "Tags",
+                note = "A column's header and a sort's name."
+            ),
+            SortKey::Owner => words!(
+                sort_title_owner = "Owner",
+                note = "A column's header and a sort's name: who owns the file."
+            ),
+            SortKey::Folder => words!(
+                sort_title_folder = "Folder",
+                note =
+                    "A column's header and a sort's name: the folder a file is in (in a search)."
+            ),
+            SortKey::Taken => words!(
+                sort_title_taken = "Taken",
+                note = "A column's header and a sort's name: when a picture or a film was taken."
+            ),
+            SortKey::Dimensions => words!(
+                sort_title_dimensions = "Dimensions",
+                note = "A column's header and a sort's name: a picture's width and height."
+            ),
+            SortKey::Duration => words!(
+                sort_title_duration = "Duration",
+                note = "A column's header and a sort's name: how long a song or a film plays."
+            ),
+            SortKey::Vcs => words!(
+                sort_title_vcs = "Git",
+                note = "A column's header and a sort's name: the file's state in Git (changed, new). Git is a program's name."
+            ),
+        }
+    }
+
+    /// What a sentence calls it ("Sort by date modified"), as words:
+    /// `date modified` (`words` for what reads it as an identifier).
+    pub fn phrase_words(self) -> Words {
+        use crate::words;
+        match self {
+            SortKey::Name => words!(
+                sort_phrase_name = "name",
+                note = "A sort's name inside a sentence: Sort by name, Group by name."
+            ),
+            SortKey::Kind => words!(
+                sort_phrase_kind = "kind",
+                note = "Inside a sentence: Sort by kind."
+            ),
+            SortKey::Type => words!(
+                sort_phrase_type = "type",
+                note = "Inside a sentence: Sort by type."
+            ),
+            SortKey::Extension => words!(
+                sort_phrase_extension = "extension",
+                note = "Inside a sentence: Sort by extension."
+            ),
+            SortKey::Size => words!(
+                sort_phrase_size = "size",
+                note = "Inside a sentence: Sort by size."
+            ),
+            SortKey::Modified => words!(
+                sort_phrase_modified = "date modified",
+                note = "Inside a sentence: Sort by date modified."
+            ),
+            SortKey::Created => words!(
+                sort_phrase_created = "date created",
+                note = "Inside a sentence: Sort by date created."
+            ),
+            SortKey::Accessed => words!(
+                sort_phrase_accessed = "date accessed",
+                note = "Inside a sentence: Sort by date accessed."
+            ),
+            SortKey::Deleted => words!(
+                sort_phrase_deleted = "date deleted",
+                note = "Inside a sentence: Sort by date deleted (in the Trash)."
+            ),
+            SortKey::Rating => words!(
+                sort_phrase_rating = "rating",
+                note = "Inside a sentence: Sort by rating."
+            ),
+            SortKey::Tags => words!(
+                sort_phrase_tags = "tags",
+                note = "Inside a sentence: Sort by tags."
+            ),
+            SortKey::Owner => words!(
+                sort_phrase_owner = "owner",
+                note = "Inside a sentence: Sort by owner."
+            ),
+            SortKey::Folder => words!(
+                sort_phrase_folder = "folder",
+                note = "Inside a sentence: Sort by folder."
+            ),
+            SortKey::Taken => words!(
+                sort_phrase_taken = "date taken",
+                note = "Inside a sentence: Sort by date taken (a picture's)."
+            ),
+            SortKey::Dimensions => words!(
+                sort_phrase_dimensions = "dimensions",
+                note = "Inside a sentence: Sort by dimensions (a picture's)."
+            ),
+            SortKey::Duration => words!(
+                sort_phrase_duration = "duration",
+                note = "Inside a sentence: Sort by duration (a song's, a film's)."
+            ),
+            SortKey::Vcs => words!(
+                sort_phrase_vcs = "Git state",
+                note =
+                    "Inside a sentence: Sort by Git state (changed, new). Git is a program's name."
+            ),
+        }
+    }
+
+    /// Its directions in its own words, going up then going down, short
+    /// (a menu's buttons: `Oldest`, `Newest`) and whole (`oldest first`),
+    /// as words (`directions` for what reads them as identifiers).
+    pub fn direction_words(self) -> [(Words, Words); 2] {
+        use crate::words;
+        match self {
+            SortKey::Size | SortKey::Dimensions => [
+                (
+                    words!(
+                        sort_smallest = "Smallest",
+                        note = "A sort's direction, on a button: smallest first."
+                    ),
+                    words!(
+                        sort_smallest_first = "smallest first",
+                        note =
+                            "A sort's direction inside a sentence: Sort by size, smallest first."
+                    ),
+                ),
+                (
+                    words!(
+                        sort_largest = "Largest",
+                        note = "A sort's direction, on a button: largest first."
+                    ),
+                    words!(
+                        sort_largest_first = "largest first",
+                        note = "A sort's direction inside a sentence: Sort by size, largest first."
+                    ),
+                ),
+            ],
+            SortKey::Duration => [
+                (
+                    words!(
+                        sort_shortest = "Shortest",
+                        note = "A sort's direction, on a button: shortest first."
+                    ),
+                    words!(
+                        sort_shortest_first = "shortest first",
+                        note = "A sort's direction inside a sentence: Sort by duration, shortest first."
+                    ),
+                ),
+                (
+                    words!(
+                        sort_longest = "Longest",
+                        note = "A sort's direction, on a button: longest first."
+                    ),
+                    words!(
+                        sort_longest_first = "longest first",
+                        note = "A sort's direction inside a sentence: Sort by duration, longest first."
+                    ),
+                ),
+            ],
+            SortKey::Modified
+            | SortKey::Created
+            | SortKey::Accessed
+            | SortKey::Deleted
+            | SortKey::Taken => [
+                (
+                    words!(
+                        sort_oldest = "Oldest",
+                        note = "A sort's direction, on a button: oldest first."
+                    ),
+                    words!(
+                        sort_oldest_first = "oldest first",
+                        note = "A sort's direction inside a sentence: Sort by date modified, oldest first."
+                    ),
+                ),
+                (
+                    words!(
+                        sort_newest = "Newest",
+                        note = "A sort's direction, on a button: newest first."
+                    ),
+                    words!(
+                        sort_newest_first = "newest first",
+                        note = "A sort's direction inside a sentence: Sort by date modified, newest first."
+                    ),
+                ),
+            ],
+            SortKey::Rating => {
+                [
+                    (
+                        words!(
+                            sort_lowest = "Lowest",
+                            note = "A sort's direction, on a button: lowest rating first."
+                        ),
+                        words!(
+                            sort_lowest_first = "lowest first",
+                            note = "A sort's direction inside a sentence: Sort by rating, lowest first."
+                        ),
+                    ),
+                    (
+                        words!(
+                            sort_highest = "Highest",
+                            note = "A sort's direction, on a button: highest rating first."
+                        ),
+                        words!(
+                            sort_highest_first = "highest first",
+                            note = "A sort's direction inside a sentence: Sort by rating, highest first."
+                        ),
+                    ),
+                ]
+            }
+            SortKey::Vcs => [
+                (
+                    words!(
+                        sort_changes_first = "Changes first",
+                        note = "A sort's direction by Git state, on a button: changed files first."
+                    ),
+                    words!(
+                        sort_changes_first_phrase = "changes first",
+                        note = "A sort's direction inside a sentence: Sort by Git state, changes first."
+                    ),
+                ),
+                (
+                    words!(
+                        sort_changes_last = "Changes last",
+                        note = "A sort's direction by Git state, on a button: changed files last."
+                    ),
+                    words!(
+                        sort_changes_last_phrase = "changes last",
+                        note = "A sort's direction inside a sentence: Sort by Git state, changes last."
+                    ),
+                ),
+            ],
+            SortKey::Name
+            | SortKey::Kind
+            | SortKey::Type
+            | SortKey::Extension
+            | SortKey::Tags
+            | SortKey::Owner
+            | SortKey::Folder => [
+                (
+                    words!(
+                        sort_a_to_z = "A to Z",
+                        note = "A sort's direction by words, on a button: alphabetical."
+                    ),
+                    words!(
+                        sort_a_to_z_phrase = "A to Z",
+                        note =
+                            "A sort's direction by words inside a sentence: Sort by name, A to Z."
+                    ),
+                ),
+                (
+                    words!(
+                        sort_z_to_a = "Z to A",
+                        note = "A sort's direction by words, on a button: reverse alphabetical."
+                    ),
+                    words!(
+                        sort_z_to_a_phrase = "Z to A",
+                        note =
+                            "A sort's direction by words inside a sentence: Sort by name, Z to A."
+                    ),
+                ),
+            ],
+        }
+    }
+
     /// Whether `old` becoming `new` moves an entry ordered by it: what
     /// `delta` says for the facts every listing's versions follow, the
     /// others compared here, only for an order by them.

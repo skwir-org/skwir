@@ -666,6 +666,14 @@ impl Kept {
 
 /// Where `path` is once the folder `from` moved to `to`: itself, or what
 /// is under it, moved with it; `None` when it is elsewhere.
+/// Why a tab asked for is not acted on: it is not open.
+fn no_tab() -> crate::words::Words {
+    crate::words!(
+        workspace_no_tab = "no such tab",
+        note = "A tab asked for by id (by an agent, a script, a key) is not open."
+    )
+}
+
 fn moved_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
     let rest = path.strip_prefix(from).ok()?;
     Some(if rest.as_os_str().is_empty() {
@@ -6012,11 +6020,19 @@ impl Workspace {
         id: TabId,
         window: WindowId,
         to: Option<usize>,
-    ) -> Result<Option<WindowId>, &'static str> {
-        let (w, t) = self.tab_place(id).ok_or("no such tab")?;
-        let dest = self.window_index(window).ok_or("no such window")?;
+    ) -> Result<Option<WindowId>, crate::words::Words> {
+        let (w, t) = self.tab_place(id).ok_or_else(no_tab)?;
+        let dest = self.window_index(window).ok_or_else(|| {
+            crate::words!(
+                workspace_no_window = "no such window",
+                note = "A window asked for by id (by an agent, a script) is not open."
+            )
+        })?;
         if dest == w {
-            return Err("the tab is in that window already");
+            return Err(crate::words!(
+                workspace_tab_there = "the tab is in that window already",
+                note = "Why a tab was not moved to the window asked for."
+            ));
         }
         let source = &mut self.windows[w];
         let emptied = (source.tabs.len() == 1).then_some(source.id);
@@ -6047,11 +6063,14 @@ impl Workspace {
 
     /// Take tab `id` out of its window into a new one, made from it, shown
     /// there and active. Refused for a tab alone in its window.
-    pub(crate) fn tab_to_new_window(&mut self, id: TabId) -> Result<WindowId, &'static str> {
-        let (w, t) = self.tab_place(id).ok_or("no such tab")?;
+    pub(crate) fn tab_to_new_window(&mut self, id: TabId) -> Result<WindowId, crate::words::Words> {
+        let (w, t) = self.tab_place(id).ok_or_else(no_tab)?;
         let source = &mut self.windows[w];
         if source.tabs.len() == 1 {
-            return Err("the tab is alone in its window");
+            return Err(crate::words!(
+                workspace_tab_alone = "the tab is alone in its window",
+                note = "Why a tab was not moved to a new window of its own."
+            ));
         }
         let tab = source.remove_tab_at(t);
         source.leaving.retain(|p| !tab.panes.contains(p));

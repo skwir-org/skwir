@@ -940,7 +940,7 @@ fn a_settings_file_that_cannot_be_read_is_kept_aside_and_skwir_starts() {
     let path = dir.path().join("settings.toml");
     std::fs::write(&path, "[ui]\nview = \"grid\"\nzoom = = 2\n").unwrap();
     let settings = Settings::load(&path);
-    let problem = settings.take_problem().expect("said");
+    let problem = settings.take_problem().expect("said").english();
     assert!(problem.contains("on line 3"), "{problem}");
     assert!(problem.contains("started with its defaults"), "{problem}");
     assert!(settings.take_problem().is_none(), "said once");
@@ -972,7 +972,7 @@ fn a_settings_file_that_is_no_text_is_kept_aside_too() {
     assert!(
         settings
             .take_problem()
-            .is_some_and(|p| p.contains("it is not text"))
+            .is_some_and(|p| p.english().contains("it is not text"))
     );
     assert!(!path.exists());
 }
@@ -1377,7 +1377,7 @@ fn an_unreadable_data_file_is_set_aside_and_said() {
     std::fs::write(&data, "saved = [unclosed\n").unwrap();
     let settings = Settings::load(&path).with_data(&data);
     settings.declare(data_spec("sample.saved"));
-    let problem = settings.take_problem().expect("said");
+    let problem = settings.take_problem().expect("said").english();
     assert!(problem.contains("saved searches"), "{problem}");
     assert!(problem.contains("data.toml.unreadable-"), "{problem}");
     let aside: Vec<_> = std::fs::read_dir(dir.path())

@@ -41,6 +41,8 @@ use super::sys::access::{self as sys, Held, Me, Meta};
 use super::{Change, EntryRef, Operation, ResolveError, StepContext, StepStatus, Tenses};
 use crate::entry::FileId;
 use crate::fs::Dir;
+use crate::words;
+use crate::words::{Name, Words};
 
 // ------------------------------------------------------------------ modes
 
@@ -116,7 +118,12 @@ impl Mode {
     pub fn parse_with(text: &str, umask: Option<u32>) -> anyhow::Result<Mode> {
         let text = text.trim();
         let wrong = || {
-            anyhow::anyhow!("“{text}” is not a mode: write it as chmod does, as 644, u+x or go-w")
+            anyhow::Error::from(words!(
+                access_not_a_mode =
+                    "“{ $text }” is not a mode: write it as chmod does, as 644, u+x or go-w",
+                text = text,
+                note = "Why what was typed in Properties' Access field is refused. text: what was typed."
+            ))
         };
         if text.is_empty() {
             return Err(wrong());
@@ -183,11 +190,11 @@ impl Mode {
                 .iter()
                 .any(|(op, perms)| *op != '-' && perms.gives_rwx())
             {
-                anyhow::bail!(
-                    "“{part}” names no class, and this system does not say what its umask leaves \
-                     out, as chmod would: name the classes, as u{part} for the owner or a{part} \
-                     for everyone"
-                );
+                anyhow::bail!(words!(
+                    access_no_class = "“{ $part }” names no class, and this system does not say what its umask leaves out, as chmod would: name the classes, as u{ $part } for the owner or a{ $part } for everyone",
+                    part = part,
+                    note = "Why a clause of a mode is refused where the system does not say its umask (macOS). part: the clause as typed (+x); u and a before it name the owner and everyone, as chmod writes them."
+                ));
             } else {
                 0
             };
@@ -337,6 +344,15 @@ impl Kinds {
     }
 }
 
+/// What `text` makes of the items asked about, in English, for agents and
+/// scripts: [`said_words`] said.
+///
+/// # Errors
+/// What is not a mode, as [`Mode::parse`] says it.
+pub fn said(text: &str, current: Option<u32>, kinds: Kinds) -> anyhow::Result<String> {
+    said_words(text, current, kinds).map(|said| said.english())
+}
+
 /// What `text` makes of the items asked about, in words, as the field is
 /// typed (Properties' Access, through `ui.ask`'s `describe`): the bits it
 /// comes to and who may do what, for items whose mode is `current` (all
@@ -346,7 +362,7 @@ impl Kinds {
 ///
 /// # Errors
 /// What is not a mode, as [`Mode::parse`] says it.
-pub fn said(text: &str, current: Option<u32>, kinds: Kinds) -> anyhow::Result<String> {
+pub fn said_words(text: &str, current: Option<u32>, kinds: Kinds) -> anyhow::Result<Words> {
     let mode = Mode::parse(text)?;
     if cfg!(windows) {
         return Ok(said_on_windows(&mode, current, kinds == Kinds::Folders));
@@ -355,13 +371,23 @@ pub fn said(text: &str, current: Option<u32>, kinds: Kinds) -> anyhow::Result<St
         (Mode::Octal { .. }, _) | (Mode::Symbolic(_), Some(_)) => {
             let of = |folder: bool| mode.apply(current.unwrap_or(0), folder) & 0o7777;
             let said = |folder: bool| {
-                format!("{}: {}", mode_text(of(folder)), who_may(of(folder), folder))
+                words!(
+                    access_mode_comes_to = "{ $mode }: { $who }",
+                    mode = mode_text(of(folder)),
+                    who = who_may(of(folder), folder),
+                    note = "What a mode typed in Properties' Access field comes to. mode: its bits, as ls writes them (rw-r--r-- (644)); who: who may do what (the owner may read and write, the group and others may read)."
+                )
             };
             let mut said = match kinds {
                 Kinds::Files => said(false),
                 Kinds::Folders => said(true),
                 Kinds::Both if of(false) == of(true) => said(false),
-                Kinds::Both => format!("files {}; folders {}", said(false), said(true)),
+                Kinds::Both => words!(
+                    access_files_and_folders = "files { $files }; folders { $folders }",
+                    files = said(false),
+                    folders = said(true),
+                    note = "What a mode typed in Properties' Access field comes to, for files and folders apart where they differ. files, folders: each one's bits and who may do what (rw-r--r-- (644): the owner may read and write…)."
+                ),
             };
             // A folder keeps the set-ID bits it has unless a fifth digit
             // says otherwise: unknown here, where they differ.
@@ -375,19 +401,33 @@ pub fn said(text: &str, current: Option<u32>, kinds: Kinds) -> anyhow::Result<St
                 && kinds != Kinds::Files
                 && bits & (SETUID | SETGID) != SETUID | SETGID
             {
-                said = format!(
-                    "{said}; a folder keeps the set-ID bits it has (0{:04o} clears them)",
-                    bits & 0o7777
+                said = words!(
+                    access_folder_keeps_set_id = "{ $said }; a folder keeps the set-ID bits it has ({ $clears } clears them)",
+                    said = said,
+                    clears = format!("0{:04o}", bits & 0o7777),
+                    note = "What a mode in digits does, then that a folder keeps its set-ID bits. said: what the mode does; clears: the same mode written with five digits (00750), which clears them."
                 );
             }
             said
         }
-        (Mode::Symbolic(clauses), None) => clauses
-            .iter()
-            .map(|clause| clause.said(kinds))
-            .collect::<Vec<_>>()
-            .join("; "),
+        (Mode::Symbolic(clauses), None) => then(clauses.iter().map(|clause| clause.said(kinds))),
     })
+}
+
+/// What a mode does, one thing after another, each in the reader's
+/// language.
+// Transitional: a list argument (ADR-139)
+fn then(said: impl IntoIterator<Item = Words>) -> Words {
+    said.into_iter()
+        .reduce(|said, then| {
+            words!(
+                access_then = "{ $said }; { $then }",
+                said = said,
+                then = then,
+                note = "Two things a mode does, said one after the other (the owner may also run it; others may no longer write)."
+            )
+        })
+        .unwrap_or_default()
 }
 
 /// `rwxr-xr-x (755)` for the permission bits of a mode, as `ls` writes
@@ -411,7 +451,7 @@ pub fn mode_text(mode: u32) -> String {
 }
 
 /// Windows keeps the owner's write bit alone, as the read-only attribute.
-fn said_on_windows(mode: &Mode, current: Option<u32>, folders: bool) -> String {
+fn said_on_windows(mode: &Mode, current: Option<u32>, folders: bool) -> Words {
     let writes = |bits: u32| bits & 0o200 != 0;
     match (mode, current) {
         (Mode::Octal { bits, .. }, _) => read_only(!writes(*bits)),
@@ -421,90 +461,193 @@ fn said_on_windows(mode: &Mode, current: Option<u32>, folders: bool) -> String {
             match (writes(kept), writes(unwritten)) {
                 (true, true) => read_only(false),
                 (false, false) => read_only(true),
-                _ => "Each stays as it is: only the owner's w is kept here".to_owned(),
+                _ => words!(
+                    access_windows_each_stays =
+                        "Each stays as it is: only the owner's w is kept here",
+                    note = "What a mode typed in Properties' Access field does on Windows, which keeps only the owner's write bit (w, as chmod writes it), where the mode leaves it as each item has it."
+                ),
             }
         }
     }
 }
 
-fn read_only(read_only: bool) -> String {
+fn read_only(read_only: bool) -> Words {
     if read_only {
-        "Read-only".to_owned()
+        words!(
+            access_read_only = "Read-only",
+            note = "What a mode typed in Properties' Access field comes to on Windows."
+        )
     } else {
-        "Not read-only".to_owned()
+        words!(
+            access_not_read_only = "Not read-only",
+            note = "What a mode typed in Properties' Access field comes to on Windows."
+        )
     }
 }
 
 /// Who may do what with `bits`: classes that may do the same said
 /// together, then what the special bits do.
-fn who_may(bits: u32, folders: bool) -> String {
+fn who_may(bits: u32, folders: bool) -> Words {
     let rwx = |shift: u32| (bits >> shift) & 0o7;
     let (owner, group, others) = (rwx(6), rwx(3), rwx(0));
-    let may = |perms: u32| match verbs(perms, folders) {
-        verbs if verbs.is_empty() => "may not use it".to_owned(),
-        verbs => format!("may {verbs}"),
-    };
-    let mut said = if owner == group && group == others {
-        format!("everyone {}", may(owner))
+    // Whether a class may do anything, for its sentence to choose by; and
+    // what it may do.
+    let may = |perms: u32| if perms == 0 { "none" } else { "some" };
+    let doing = |perms: u32| verbs(perms, folders).unwrap_or_default();
+    let main = if owner == group && group == others {
+        words!(
+            access_everyone_may = "everyone { $all ->
+                    [none] may not use it
+                   *[some] may { $all_does }
+                }",
+            all = may(owner),
+            all_does = doing(owner),
+            note = "Who may do what with a mode's bits, the same for all. all: none where they may not use it; all_does: what they may do (read and write; for a folder: list it and open it)."
+        )
     } else if group == others {
-        format!(
-            "the owner {}, the group and others {}",
-            may(owner),
-            may(group)
+        words!(
+            access_owner_then_rest = "the owner { $owner ->
+                    [none] may not use it
+                   *[some] may { $owner_does }
+                }, the group and others { $rest ->
+                    [none] may not use it
+                   *[some] may { $rest_does }
+                }",
+            owner = may(owner),
+            owner_does = doing(owner),
+            rest = may(group),
+            rest_does = doing(group),
+            note = "Who may do what with a mode's bits. owner, rest: none where they may not use it; owner_does, rest_does: what they may do (read and write; for a folder: list it and open it)."
         )
     } else if owner == group {
-        format!(
-            "the owner and the group {}, others {}",
-            may(owner),
-            may(others)
+        words!(
+            access_owner_group_then_others = "the owner and the group { $both ->
+                    [none] may not use it
+                   *[some] may { $both_does }
+                }, others { $others ->
+                    [none] may not use it
+                   *[some] may { $others_does }
+                }",
+            both = may(owner),
+            both_does = doing(owner),
+            others = may(others),
+            others_does = doing(others),
+            note = "Who may do what with a mode's bits. both, others: none where they may not use it; both_does, others_does: what they may do (read and write; for a folder: list it and open it)."
         )
     } else {
-        format!(
-            "the owner {}, the group {}, others {}",
-            may(owner),
-            may(group),
-            may(others)
+        words!(
+            access_each_class = "the owner { $owner ->
+                    [none] may not use it
+                   *[some] may { $owner_does }
+                }, the group { $group ->
+                    [none] may not use it
+                   *[some] may { $group_does }
+                }, others { $others ->
+                    [none] may not use it
+                   *[some] may { $others_does }
+                }",
+            owner = may(owner),
+            owner_does = doing(owner),
+            group = may(group),
+            group_does = doing(group),
+            others = may(others),
+            others_does = doing(others),
+            note = "Who may do what with a mode's bits. owner, group, others: none where they may not use it; owner_does, group_does, others_does: what they may do (read and write; for a folder: list it and open it)."
         )
     };
+    let kind = if folders {
+        Kinds::Folders
+    } else {
+        Kinds::Files
+    };
+    let mut said = vec![main];
     if bits & SETUID != 0 && !folders {
-        said.push_str("; it runs as its owner");
+        said.extend(special_said(SETUID, kind, false));
     }
     if bits & SETGID != 0 {
-        said.push_str(if folders {
-            "; what is made in it takes its group"
-        } else {
-            "; it runs as its group"
-        });
+        said.extend(special_said(SETGID, kind, false));
     }
     if bits & STICKY != 0 && folders {
-        said.push_str("; only their owners may remove what it holds");
+        said.extend(special_said(STICKY, kind, false));
     }
-    said
+    then(said)
 }
 
-/// `perms` (a class's three bits) as what one may do: "read and write".
-fn verbs(perms: u32, folders: bool) -> String {
-    let words = if folders {
-        ["list it", "change what it holds", "open it"]
-    } else {
-        ["read", "write", "run it"]
-    };
-    let done: Vec<&str> = [4, 2, 1]
-        .iter()
-        .zip(words)
-        .filter(|(bit, _)| perms & *bit != 0)
-        .map(|(_, word)| word)
-        .collect();
-    and(&done)
+/// `perms` (a class's three bits) as what one may do: "read and write";
+/// `None` for nothing.
+fn verbs(perms: u32, folders: bool) -> Option<Words> {
+    let mut letters = String::with_capacity(3);
+    for (bit, letter) in [(4, 'r'), (2, 'w'), (1, 'x')] {
+        if perms & bit != 0 {
+            letters.push(letter);
+        }
+    }
+    does(
+        &letters,
+        if folders {
+            Kinds::Folders
+        } else {
+            Kinds::Files
+        },
+    )
 }
 
-/// `words` joined as a sentence lists them: "a, b and c".
-fn and(words: &[&str]) -> String {
-    match words {
-        [] => String::new(),
-        [one] => (*one).to_owned(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+/// What `letters` (`r`, `w`, then `x` or `X`, in that order) let one do
+/// with `kinds`; `None` for none.
+fn does(letters: &str, kinds: Kinds) -> Option<Words> {
+    if letters.is_empty() {
+        return None;
     }
+    let letters = letters.to_owned();
+    Some(match kinds {
+        Kinds::Files => words!(
+            access_does_file = "{ $letters ->
+                    [r] read
+                    [w] write
+                    [x] run it
+                    [rw] read and write
+                    [rx] read and run it
+                    [wx] write and run it
+                    [X] run it where someone may already
+                    [rX] read and run it where someone may already
+                    [wX] write and run it where someone may already
+                    [rwX] read, write and run it where someone may already
+                   *[rwx] read, write and run it
+                }",
+            letters = letters,
+            note = "What one may do with a file, said after may (the owner may read and write). letters: what is given, as chmod writes it: r read, w write, x run, X run where someone may already."
+        ),
+        Kinds::Folders => words!(
+            access_does_folder = "{ $letters ->
+                    [r] list it
+                    [w] change what it holds
+                    [x] open it
+                    [rw] list it and change what it holds
+                    [rx] list it and open it
+                    [wx] change what it holds and open it
+                   *[rwx] list it, change what it holds and open it
+                }",
+            letters = letters,
+            note = "What one may do with a folder, said after may (the owner may list it and open it). letters: what is given, as chmod writes it: r list, w change what it holds, x open."
+        ),
+        Kinds::Both => words!(
+            access_does_both = "{ $letters ->
+                    [r] read
+                    [w] write
+                    [x] run it
+                    [rw] read and write
+                    [rx] read and run it
+                    [wx] write and run it
+                    [X] open it, a file where someone may already run it
+                    [rX] read and open it, a file where someone may already run it
+                    [wX] write and open it, a file where someone may already run it
+                    [rwX] read, write and open it, a file where someone may already run it
+                   *[rwx] read, write and run it
+                }",
+            letters = letters,
+            note = "What one may do with files and folders alike, said after may (everyone may read). letters: what is given, as chmod writes it: r read, w write, x run, X open a folder or run a file where someone may already."
+        ),
+    })
 }
 
 impl Clause {
@@ -512,41 +655,103 @@ impl Clause {
     /// may do then, and what its set-ID and sticky letters do, as
     /// [`Clause::given`] gives them (none where its classes take none:
     /// `o+s`, `u+t`).
-    fn said(&self, kinds: Kinds) -> String {
+    fn said(&self, kinds: Kinds) -> Words {
+        // Whom it is about, for its sentences to choose by.
         let who = match self.who {
-            0 if self.umask != 0 => format!(
-                "everyone but what the umask ({:03o}) leaves out",
-                self.umask
-            ),
-            0 => "everyone".to_owned(),
-            USER => "the owner".to_owned(),
-            GROUP => "the group".to_owned(),
-            OTHERS => "others".to_owned(),
-            w if w == USER | GROUP => "the owner and the group".to_owned(),
-            w if w == USER | OTHERS => "the owner and others".to_owned(),
-            w if w == GROUP | OTHERS => "the group and others".to_owned(),
-            _ => "everyone".to_owned(),
+            0 if self.umask != 0 => "umask",
+            USER => "u",
+            GROUP => "g",
+            OTHERS => "o",
+            w if w == USER | GROUP => "ug",
+            w if w == USER | OTHERS => "uo",
+            w if w == GROUP | OTHERS => "go",
+            _ => "all",
         };
+        let umask = format!("{:03o}", self.umask);
         let mut may = Vec::new();
         let mut specials = Vec::new();
         for (op, perms) in &self.actions {
             let what = match perms {
-                Perms::Copy(class) => format!(
-                    "what {} may",
-                    match *class {
-                        USER => "the owner",
-                        GROUP => "the group",
-                        _ => "others",
-                    }
-                ),
+                Perms::Copy(class) => Some(words!(
+                    access_does_copy = "what { $class ->
+                            [u] the owner
+                            [g] the group
+                           *[o] others
+                        } may",
+                    class = match *class {
+                        USER => "u",
+                        GROUP => "g",
+                        _ => "o",
+                    },
+                    note = "What a class is given, said after may: what another class may do (the group may only what the owner may)."
+                )),
                 Perms::Letters(letters) => letters_said(letters, kinds),
             };
-            match (op, what.is_empty()) {
-                ('=', true) => may.push("may not use it".to_owned()),
-                (_, true) => {}
-                ('+', false) => may.push(format!("may also {what}")),
-                ('-', false) => may.push(format!("may no longer {what}")),
-                (_, false) => may.push(format!("may only {what}")),
+            match (*op, what) {
+                ('=', None) => may.push(words!(
+                    access_clause_none = "{ $who ->
+                            [u] the owner
+                            [g] the group
+                            [o] others
+                            [ug] the owner and the group
+                            [uo] the owner and others
+                            [go] the group and others
+                            [umask] everyone but what the umask ({ $umask }) leaves out
+                           *[all] everyone
+                        } may not use it",
+                    who = who,
+                    umask = umask.clone(),
+                    note = "What a clause of a mode typed in Properties' Access field does (o=). who: whom it is about (u the owner, g the group, o others, a everyone); umask: the umask's digits, which a clause naming no class leaves out."
+                )),
+                (_, None) => {}
+                ('+', Some(what)) => may.push(words!(
+                    access_clause_also = "{ $who ->
+                            [u] the owner
+                            [g] the group
+                            [o] others
+                            [ug] the owner and the group
+                            [uo] the owner and others
+                            [go] the group and others
+                            [umask] everyone but what the umask ({ $umask }) leaves out
+                           *[all] everyone
+                        } may also { $does }",
+                    who = who,
+                    umask = umask.clone(),
+                    does = what,
+                    note = "What a clause of a mode typed in Properties' Access field does (u+x). who: whom it is about (u the owner, g the group, o others, a everyone); umask: the umask's digits, which a clause naming no class leaves out; does: what they are given (run it)."
+                )),
+                ('-', Some(what)) => may.push(words!(
+                    access_clause_no_longer = "{ $who ->
+                            [u] the owner
+                            [g] the group
+                            [o] others
+                            [ug] the owner and the group
+                            [uo] the owner and others
+                            [go] the group and others
+                            [umask] everyone but what the umask ({ $umask }) leaves out
+                           *[all] everyone
+                        } may no longer { $does }",
+                    who = who,
+                    umask = umask.clone(),
+                    does = what,
+                    note = "What a clause of a mode typed in Properties' Access field does (go-w). who: whom it is about (u the owner, g the group, o others, a everyone); umask: the umask's digits, which a clause naming no class leaves out; does: what is taken from them (write)."
+                )),
+                (_, Some(what)) => may.push(words!(
+                    access_clause_only = "{ $who ->
+                            [u] the owner
+                            [g] the group
+                            [o] others
+                            [ug] the owner and the group
+                            [uo] the owner and others
+                            [go] the group and others
+                            [umask] everyone but what the umask ({ $umask }) leaves out
+                           *[all] everyone
+                        } may only { $does }",
+                    who = who,
+                    umask = umask.clone(),
+                    does = what,
+                    note = "What a clause of a mode typed in Properties' Access field does (a=r). who: whom it is about (u the owner, g the group, o others, a everyone); umask: the umask's digits, which a clause naming no class leaves out; does: all they are left (read)."
+                )),
             }
             if let Perms::Letters(_) = perms {
                 let special = kinds
@@ -559,41 +764,49 @@ impl Clause {
         }
         let mut said = Vec::new();
         if !may.is_empty() || specials.is_empty() {
-            said.push(if may.is_empty() {
-                format!("nothing changes for {who}")
+            if may.is_empty() {
+                said.push(words!(
+                    access_clause_nothing = "nothing changes for { $who ->
+                            [u] the owner
+                            [g] the group
+                            [o] others
+                            [ug] the owner and the group
+                            [uo] the owner and others
+                            [go] the group and others
+                            [umask] everyone but what the umask ({ $umask }) leaves out
+                           *[all] everyone
+                        }",
+                    who = who,
+                    umask = umask,
+                    note = "What a clause of a mode typed in Properties' Access field does where it gives nothing (o+s). who: whom it is about (u the owner, g the group, o others, a everyone); umask: the umask's digits, which a clause naming no class leaves out."
+                ));
             } else {
-                format!(
-                    "{who} {}",
-                    and(&may.iter().map(String::as_str).collect::<Vec<_>>())
-                )
-            });
+                said.extend(may);
+            }
         }
-        said.extend(specials.into_iter().map(str::to_owned));
-        said.join("; ")
+        said.extend(specials);
+        then(said)
     }
 }
 
 /// What `letters`' read, write and run let one do; the set-ID and
-/// sticky letters are said apart ([`specials_said`]).
-fn letters_said(letters: &str, kinds: Kinds) -> String {
-    let mut words = Vec::new();
-    for letter in letters.chars() {
-        let word = match (letter, kinds) {
-            ('r', Kinds::Folders) => "list it",
-            ('r', _) => "read",
-            ('w', Kinds::Folders) => "change what it holds",
-            ('w', _) => "write",
-            ('x' | 'X', Kinds::Folders) => "open it",
-            ('x', _) => "run it",
-            ('X', Kinds::Files) => "run it where someone may already",
-            ('X', Kinds::Both) => "open it, a file where someone may already run it",
-            _ => continue,
-        };
-        if !words.contains(&word) {
-            words.push(word);
-        }
+/// sticky letters are said apart ([`specials_said`]). `x` says what `X`
+/// would; a folder opens with either.
+fn letters_said(letters: &str, kinds: Kinds) -> Option<Words> {
+    let has = |letter: char| letters.contains(letter);
+    let mut canonical = String::with_capacity(3);
+    if has('r') {
+        canonical.push('r');
     }
-    and(&words)
+    if has('w') {
+        canonical.push('w');
+    }
+    if has('x') || (has('X') && kinds == Kinds::Folders) {
+        canonical.push('x');
+    } else if has('X') {
+        canonical.push('X');
+    }
+    does(&canonical, kinds)
 }
 
 /// What the set-ID and sticky bits `special` do, given (`taken`: taken
@@ -601,75 +814,74 @@ fn letters_said(letters: &str, kinds: Kinds) -> String {
 /// folder's group passes on, a folder's sticky bit keeps what it holds to
 /// their owners; a bit the kind ignores (a folder's set-user-ID, a file's
 /// sticky bit) is said so, for one kind alone.
-fn specials_said(special: u32, taken: bool, kinds: Kinds) -> Vec<&'static str> {
-    use Kinds::{Both, Files, Folders};
-    // Each bit, for each kind: what it does given, and taken away.
-    const SAID: [(u32, Kinds, &str, &str); 10] = [
-        (
-            SETUID,
-            Files,
-            "it runs as its owner",
-            "it no longer runs as its owner",
-        ),
-        (
-            SETUID,
-            Both,
-            "a file runs as its owner",
-            "a file no longer runs as its owner",
-        ),
-        (
-            SETUID,
-            Folders,
-            "it keeps a set-user-ID bit, which a folder ignores",
-            "its set-user-ID bit, which a folder ignores, goes",
-        ),
-        (
-            SETGID,
-            Files,
-            "it runs as its group",
-            "it no longer runs as its group",
-        ),
-        (
-            SETGID,
-            Both,
-            "a file runs as its group",
-            "a file no longer runs as its group",
-        ),
-        (
-            SETGID,
-            Folders,
-            "what is made in it takes its group",
-            "what is made in it no longer takes its group",
-        ),
-        (
-            SETGID,
-            Both,
-            "what is made in a folder takes its group",
-            "what is made in a folder no longer takes its group",
-        ),
-        (
-            STICKY,
-            Files,
-            "it keeps a sticky bit, which a file ignores",
-            "its sticky bit, which a file ignores, goes",
-        ),
-        (
-            STICKY,
-            Folders,
-            "only their owners may remove what it holds",
-            "whoever may change it may remove what it holds",
-        ),
-        (
-            STICKY,
-            Both,
-            "only their owners may remove what a folder holds",
-            "whoever may change a folder may remove what it holds",
-        ),
-    ];
-    SAID.iter()
-        .filter(|(bit, of, ..)| special & bit != 0 && *of == kinds)
-        .map(|(_, _, given, gone)| if taken { *gone } else { *given })
+fn specials_said(special: u32, taken: bool, kinds: Kinds) -> Vec<Words> {
+    [SETUID, SETGID, STICKY]
+        .into_iter()
+        .filter(|bit| special & bit != 0)
+        .flat_map(|bit| special_said(bit, kinds, taken))
         .collect()
+}
+
+/// What the special bit `bit` does for `kinds`, given or `taken` away.
+fn special_said(bit: u32, kinds: Kinds, taken: bool) -> Vec<Words> {
+    use Kinds::{Both, Files, Folders};
+    let said = match (bit, kinds, taken) {
+        (SETUID, Files, false) => words!(access_suid_file = "it runs as its owner"),
+        (SETUID, Files, true) => words!(access_suid_file_gone = "it no longer runs as its owner"),
+        (SETUID, Both, false) => words!(access_suid_both = "a file runs as its owner"),
+        (SETUID, Both, true) => {
+            words!(access_suid_both_gone = "a file no longer runs as its owner")
+        }
+        (SETUID, Folders, false) => {
+            words!(access_suid_folder = "it keeps a set-user-ID bit, which a folder ignores")
+        }
+        (SETUID, Folders, true) => {
+            words!(access_suid_folder_gone = "its set-user-ID bit, which a folder ignores, goes")
+        }
+        (SETGID, Files, false) => words!(access_sgid_file = "it runs as its group"),
+        (SETGID, Files, true) => words!(access_sgid_file_gone = "it no longer runs as its group"),
+        (SETGID, Both, false) => {
+            return vec![
+                words!(access_sgid_both_file = "a file runs as its group"),
+                words!(access_sgid_both_folder = "what is made in a folder takes its group"),
+            ];
+        }
+        (SETGID, Both, true) => {
+            return vec![
+                words!(access_sgid_both_file_gone = "a file no longer runs as its group"),
+                words!(
+                    access_sgid_both_folder_gone =
+                        "what is made in a folder no longer takes its group"
+                ),
+            ];
+        }
+        (SETGID, Folders, false) => {
+            words!(access_sgid_folder = "what is made in it takes its group")
+        }
+        (SETGID, Folders, true) => {
+            words!(access_sgid_folder_gone = "what is made in it no longer takes its group")
+        }
+        (STICKY, Files, false) => {
+            words!(access_sticky_file = "it keeps a sticky bit, which a file ignores")
+        }
+        (STICKY, Files, true) => {
+            words!(access_sticky_file_gone = "its sticky bit, which a file ignores, goes")
+        }
+        (STICKY, Folders, false) => {
+            words!(access_sticky_folder = "only their owners may remove what it holds")
+        }
+        (STICKY, Folders, true) => {
+            words!(access_sticky_folder_gone = "whoever may change it may remove what it holds")
+        }
+        (STICKY, Both, false) => {
+            words!(access_sticky_both = "only their owners may remove what a folder holds")
+        }
+        (STICKY, Both, true) => {
+            words!(access_sticky_both_gone = "whoever may change a folder may remove what it holds")
+        }
+        _ => return Vec::new(),
+    };
+    vec![said]
 }
 
 /// What a mode is written as, for Properties' Access to show beside its
@@ -678,54 +890,88 @@ fn specials_said(special: u32, taken: bool, kinds: Kinds) -> Vec<&'static str> {
 /// each put where the caret is.
 pub fn reference() -> crate::reference::Reference {
     use crate::reference::{Group, Item, Reference};
-    let whole = |mode: &str, says: &str| Item::new(mode, says).whole_in("mode");
-    Reference::new("Access")
-        .group(
-            Group::new("Digits: owner, group, others")
-                .item(whole(
-                    "644",
-                    "The owner reads and writes; the group and others read",
-                ))
-                .item(whole(
-                    "755",
-                    "Everyone reads and runs; the owner writes too",
-                ))
-                .item(whole("600", "The owner alone reads and writes"))
-                .item(whole("700", "The owner alone reads, writes and runs"))
-                .note("Each digit adds 4 to read, 2 to write and 1 to run (to open a folder)."),
-        )
-        .group(
-            Group::new("Who")
-                .item(Item::new("u", "The owner"))
-                .item(Item::new("g", "The group"))
-                .item(Item::new("o", "Others"))
-                .item(Item::new("a", "Everyone")),
-        )
-        .group(
-            Group::new("Then")
-                .item(Item::new("+", "May also"))
-                .item(Item::new("-", "May no longer"))
-                .item(Item::new("=", "May only")),
-        )
-        .group(
-            Group::new("What")
-                .item(Item::new("r", "Read (list, for a folder)"))
-                .item(Item::new("w", "Write (change what a folder holds)"))
-                .item(Item::new("x", "Run (open, for a folder)"))
-                .item(Item::new(
-                    "X",
-                    "Open folders, and run what someone may run already",
-                ))
-                .item(Item::new(
-                    "s",
-                    "Run as its owner or group; a folder's group passes on",
-                ))
-                .item(Item::new(
-                    "t",
-                    "Only their owners remove what a folder holds",
-                ))
-                .note("Clauses go one after another, by commas: u+x,go-w."),
-        )
+    let whole = |mode: &str, says: Words| Item::new(mode, says).whole_in("mode");
+    Reference::new(words!(
+        access_reference = "Access",
+        note = "The title of the list of what a mode is written as, beside Properties' Access field."
+    ))
+    .group(
+        Group::new(words!(
+            access_reference_digits = "Digits: owner, group, others",
+            note = "A heading of the list of what a mode is written as: modes in digits, one for the owner, one for the group, one for others."
+        ))
+        .item(whole(
+            "644",
+            words!(access_reference_644 = "The owner reads and writes; the group and others read"),
+        ))
+        .item(whole(
+            "755",
+            words!(access_reference_755 = "Everyone reads and runs; the owner writes too"),
+        ))
+        .item(whole(
+            "600",
+            words!(access_reference_600 = "The owner alone reads and writes"),
+        ))
+        .item(whole(
+            "700",
+            words!(access_reference_700 = "The owner alone reads, writes and runs"),
+        ))
+        .note(words!(
+            access_reference_digits_note = "Each digit adds 4 to read, 2 to write and 1 to run (to open a folder)."
+        )),
+    )
+    .group(
+        Group::new(words!(
+            access_reference_who = "Who",
+            note = "A heading of the list of what a mode is written as: the letters naming whom a clause is about (u, g, o, a)."
+        ))
+        .item(Item::new("u", words!(access_reference_owner = "The owner")))
+        .item(Item::new("g", words!(access_reference_group = "The group")))
+        .item(Item::new("o", words!(access_reference_others = "Others")))
+        .item(Item::new("a", words!(access_reference_everyone = "Everyone"))),
+    )
+    .group(
+        Group::new(words!(
+            access_reference_then = "Then",
+            note = "A heading of the list of what a mode is written as: the signs that follow whom a clause is about (+, -, =)."
+        ))
+        .item(Item::new("+", words!(access_reference_also = "May also")))
+        .item(Item::new("-", words!(access_reference_no_longer = "May no longer")))
+        .item(Item::new("=", words!(access_reference_only = "May only"))),
+    )
+    .group(
+        Group::new(words!(
+            access_reference_what = "What",
+            note = "A heading of the list of what a mode is written as: the letters naming what a clause gives or takes (r, w, x…)."
+        ))
+        .item(Item::new(
+            "r",
+            words!(access_reference_r = "Read (list, for a folder)"),
+        ))
+        .item(Item::new(
+            "w",
+            words!(access_reference_w = "Write (change what a folder holds)"),
+        ))
+        .item(Item::new(
+            "x",
+            words!(access_reference_x = "Run (open, for a folder)"),
+        ))
+        .item(Item::new(
+            "X",
+            words!(access_reference_big_x = "Open folders, and run what someone may run already"),
+        ))
+        .item(Item::new(
+            "s",
+            words!(access_reference_s = "Run as its owner or group; a folder's group passes on"),
+        ))
+        .item(Item::new(
+            "t",
+            words!(access_reference_t = "Only their owners remove what a folder holds"),
+        ))
+        .note(words!(
+            access_reference_clauses_note = "Clauses go one after another, by commas: u+x,go-w."
+        )),
+    )
 }
 
 // ------------------------------------------------------------------ words
@@ -734,43 +980,71 @@ pub fn reference() -> crate::reference::Reference {
 /// a group `gid` asked), or nothing when they can: its owner may (and
 /// root), giving it only to a group they are in. `me` is `None` where
 /// users are not numbers (Windows): a mode may be asked, a group not yet.
-fn refused(me: Option<&Me>, uid: Option<u32>, gid: Option<u32>) -> Option<String> {
+fn refused(me: Option<&Me>, uid: Option<u32>, gid: Option<u32>) -> Option<Words> {
     let Some(me) = me else {
-        return gid.map(|_| crate::system::not_yet("Changing a file's group").to_string());
+        return gid.map(|_| {
+            words!(
+                access_group_not_yet =
+                    "Changing a file's group is not available on { $system } yet",
+                system = crate::system::named(),
+                note = "Why a file's group cannot be changed. system: the system's name (Windows)."
+            )
+        });
     };
     if me.root {
         return None;
     }
     if uid.is_some_and(|uid| uid != me.uid) {
-        return Some("only its owner can change who may use it".into());
+        return Some(words!(
+            access_not_owner = "only its owner can change who may use it",
+            note = "Why who may use a file cannot be changed. Begins in lower case: said after the file's name too."
+        ));
     }
     if let Some(gid) = gid
         && !me.may_give(gid)
     {
-        return Some(format!("you are not in the group {gid}"));
+        return Some(words!(
+            access_not_in_group = "you are not in the group { $group }",
+            group = gid.to_string(),
+            note = "Why a file cannot be given to a group. group: the group's number. Begins in lower case: said after the file's name too."
+        ));
     }
     None
 }
 
-fn name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    )
+/// A dry run's conflict, said for the review that shows it.
+fn conflict(reason: &Words) -> StepStatus {
+    StepStatus::Conflict {
+        reason: reason.say(),
+    }
 }
 
+/// What is no longer there as it was.
 fn gone(e: &ResolveError) -> StepStatus {
-    StepStatus::Conflict {
-        reason: match e {
-            ResolveError::Gone(p) => format!("“{}” is not there any more", name(p)),
-            other @ ResolveError::Replaced { .. } => other.to_string(),
+    match e {
+        ResolveError::Gone(p) => conflict(&not_there(p)),
+        other @ ResolveError::Replaced { .. } => StepStatus::Conflict {
+            reason: other.to_string(),
         },
     }
 }
 
+/// That the file at `path` is not there any more.
+fn not_there(path: &Path) -> Words {
+    words!(
+        access_gone = "{ $name } is not there any more",
+        name = Name::of(path),
+        note = "Why who may use a file cannot be changed, or put back as it was: it is gone."
+    )
+}
+
 /// What reading a folder or an item inside one failed on, by its path.
-fn unreadable(path: &Path) -> String {
-    format!("“{}” could not be read", path.display())
+fn unreadable(path: &Path) -> Words {
+    words!(
+        access_unreadable = "“{ $path }” could not be read",
+        path = path.display().to_string(),
+        note = "What a change of who may use files failed on. path: where the folder or file is; why follows."
+    )
 }
 
 /// Whether a folder whose owner has `mode` can be listed and looked into
@@ -854,37 +1128,104 @@ impl super::Effect for SetAccess {
         Some(self.entry.id)
     }
     fn describe(&self) -> Change {
-        let name = name(&self.entry.path);
-        let (inside, of_inside) = if self.inside {
-            (" and everything inside", " and of everything inside")
-        } else {
-            ("", "")
-        };
-        let (will, did, already) = match (&self.mode, self.group) {
-            (Some(mode), None) => (
-                format!("change who may use “{name}”{inside} ({mode})"),
-                format!("changed who may use “{name}”{inside}"),
-                format!("who may use “{name}”{inside} was already as asked"),
-            ),
-            (None, Some(_)) => (
-                format!("change the group of “{name}”{of_inside}"),
-                format!("changed the group of “{name}”{of_inside}"),
-                format!("the group of “{name}”{of_inside} was already as asked"),
-            ),
-            _ => (
-                format!("change the access and group of “{name}”{of_inside}"),
-                format!("changed the access and group of “{name}”{of_inside}"),
-                format!("the access and group of “{name}”{of_inside} were already as asked"),
-            ),
+        let name = || Name::of(&self.entry.path);
+        // Whether it covers everything a folder holds too, for its words to
+        // choose by.
+        let inside = if self.inside { "yes" } else { "no" };
+        let words = match (&self.mode, self.group) {
+            (Some(mode), None) => Tenses {
+                will: words!(
+                    access_change_mode = "{ $inside ->
+                            [yes] change who may use { $name } and everything inside ({ $mode })
+                           *[no] change who may use { $name } ({ $mode })
+                        }",
+                    inside = inside,
+                    name = name(),
+                    mode = mode.clone(),
+                    note = "A step of a plan, in its review. inside: yes where it changes everything a folder holds too; mode: the mode, as chmod writes it (u+x). Begins in lower case."
+                ),
+                did: words!(
+                    access_changed_mode = "{ $inside ->
+                            [yes] changed who may use { $name } and everything inside
+                           *[no] changed who may use { $name }
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan, done. inside: yes where it changed everything a folder holds too. Begins in lower case."
+                ),
+                already: Some(words!(
+                    access_mode_already = "{ $inside ->
+                            [yes] who may use { $name } and everything inside was already as asked
+                           *[no] who may use { $name } was already as asked
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan found already done. inside: yes where it covers everything a folder holds too. Begins in lower case."
+                )),
+            },
+            (None, Some(_)) => Tenses {
+                will: words!(
+                    access_change_group = "{ $inside ->
+                            [yes] change the group of { $name } and of everything inside
+                           *[no] change the group of { $name }
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan, in its review. inside: yes where it changes everything a folder holds too. Begins in lower case."
+                ),
+                did: words!(
+                    access_changed_group = "{ $inside ->
+                            [yes] changed the group of { $name } and of everything inside
+                           *[no] changed the group of { $name }
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan, done. inside: yes where it changed everything a folder holds too. Begins in lower case."
+                ),
+                already: Some(words!(
+                    access_group_already = "{ $inside ->
+                            [yes] the group of { $name } and of everything inside was already as asked
+                           *[no] the group of { $name } was already as asked
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan found already done. inside: yes where it covers everything a folder holds too. Begins in lower case."
+                )),
+            },
+            _ => Tenses {
+                will: words!(
+                    access_change_both = "{ $inside ->
+                            [yes] change the access and group of { $name } and of everything inside
+                           *[no] change the access and group of { $name }
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan, in its review. inside: yes where it changes everything a folder holds too. Begins in lower case."
+                ),
+                did: words!(
+                    access_changed_both = "{ $inside ->
+                            [yes] changed the access and group of { $name } and of everything inside
+                           *[no] changed the access and group of { $name }
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan, done. inside: yes where it changed everything a folder holds too. Begins in lower case."
+                ),
+                already: Some(words!(
+                    access_both_already = "{ $inside ->
+                            [yes] the access and group of { $name } and of everything inside were already as asked
+                           *[no] the access and group of { $name } were already as asked
+                        }",
+                    inside = inside,
+                    name = name(),
+                    note = "A step of a plan found already done. inside: yes where it covers everything a folder holds too. Begins in lower case."
+                )),
+            },
         };
         Change::Metadata {
             path: self.entry.path.clone(),
             field: "access".into(),
-            words: Some(Tenses {
-                will: will.into(),
-                did: did.into(),
-                already: Some(already.into()),
-            }),
+            words: Some(words),
         }
     }
 
@@ -895,18 +1236,21 @@ impl super::Effect for SetAccess {
     /// named; a group given to an item whose group the user is not in is
     /// pending but not undoable (its group could not be given back).
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        let conflict = |reason: String| StepStatus::Conflict { reason };
         if self.mode.is_none() && self.group.is_none() {
-            return conflict("nothing to change: give a mode or a group".into());
+            return conflict(&words!(
+                access_nothing_asked = "nothing to change: give a mode or a group",
+                note = "Why a change of who may use files cannot run: neither a mode nor a group was given."
+            ));
         }
         let mode = match self.parsed() {
             Ok(mode) => mode,
-            Err(e) => return conflict(e.to_string()),
+            Err(e) => return conflict(&Words::of_error(e)),
         };
         if super::in_trash(&self.entry.path).is_some() {
-            return conflict(format!(
-                "“{}” is in the trash: restore it first",
-                name(&self.entry.path)
+            return conflict(&words!(
+                access_in_trash = "{ $name } is in the trash: restore it first",
+                name = Name::of(&self.entry.path),
+                note = "Why who may use a file cannot be changed: it is in the trash."
             ));
         }
         let path = match self.entry.resolve() {
@@ -915,7 +1259,7 @@ impl super::Effect for SetAccess {
         };
         let top = match sys::stat(&path, true) {
             Ok(top) => top,
-            Err(e) => return conflict(super::io_words(&e).english()),
+            Err(e) => return conflict(&super::io_words(&e)),
         };
         let me = sys::me();
         if let Some(why) = refused(
@@ -923,10 +1267,13 @@ impl super::Effect for SetAccess {
             top.uid,
             self.group.filter(|g| Some(*g) != top.gid),
         ) {
-            return conflict(why);
+            return conflict(&why);
         }
         if crate::fs::volume::read_only(&path) == Some(true) {
-            return conflict("the drive is read-only".into());
+            return conflict(&words!(
+                access_drive_read_only = "the drive is read-only",
+                note = "Why who may use a file cannot be changed."
+            ));
         }
         self.foresee(ctx, mode.as_ref(), &path, &top, me.as_ref())
     }
@@ -941,7 +1288,12 @@ impl super::Effect for SetAccess {
             top.uid,
             self.group.filter(|g| Some(*g) != top.gid),
         ) {
-            anyhow::bail!("“{}”: {why}", name(&path));
+            anyhow::bail!(words!(
+                access_refused = "{ $name }: { $why }",
+                name = Name::of(&path),
+                why = why,
+                note = "Why who may use a file cannot be changed. why: the reason (only its owner can change who may use it)."
+            ));
         }
         let mut changer = Changer {
             step: self,
@@ -955,15 +1307,22 @@ impl super::Effect for SetAccess {
             // Half a change is none: what was changed goes back, and what
             // could not is said.
             let (_, failed) = put_back(&was);
-            if failed.is_empty() {
+            let Some(not_put_back) = not_put_back(failed) else {
                 return Err(e);
-            }
-            let what = if e.is::<super::Cancelled>() {
-                "stopped".to_owned()
-            } else {
-                super::said(&e)
             };
-            anyhow::bail!("{what}, and {}", not_put_back(&failed));
+            if e.is::<super::Cancelled>() {
+                anyhow::bail!(words!(
+                    access_stopped_not_put_back = "stopped, and { $not_put_back }",
+                    not_put_back = not_put_back,
+                    note = "Why a change of who may use files failed: it was stopped, and what it had changed could not all be put back. not_put_back: what could not, and why."
+                ));
+            }
+            anyhow::bail!(words!(
+                access_failed_not_put_back = "{ $error }, and { $not_put_back }",
+                error = e,
+                not_put_back = not_put_back,
+                note = "Why a change of who may use files failed: error: what stopped it; not_put_back: what it had changed and could not put back, and why."
+            ));
         }
         Ok(Some(Box::new(AccessBack { items: was })))
     }
@@ -1128,12 +1487,12 @@ impl SetAccess {
             .err()
             .and_then(|e| e.downcast_ref::<Theirs>());
         if let Some(Theirs(item)) = theirs {
-            return StepStatus::Conflict {
-                reason: format!(
-                    "“{}” inside is not yours: only its owner can change who may use it",
-                    item.display()
-                ),
-            };
+            return conflict(&words!(
+                access_inside_not_yours =
+                    "“{ $path }” inside is not yours: only its owner can change who may use it",
+                path = item.display().to_string(),
+                note = "Why who may use a folder and what it holds cannot be changed: something inside belongs to someone else. path: where it is."
+            ));
         }
         match walked {
             Ok(()) if !seen.changes => StepStatus::AlreadyDone,
@@ -1165,7 +1524,12 @@ struct Theirs(PathBuf);
 
 impl std::fmt::Display for Theirs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "“{}” is not yours", self.0.display())
+        let words = words!(
+            access_not_yours = "“{ $path }” is not yours",
+            path = self.0.display().to_string(),
+            note = "What a dry run met inside a folder: something of someone else's. path: where it is."
+        );
+        std::fmt::Display::fmt(&words, f)
     }
 }
 
@@ -1203,7 +1567,13 @@ impl Visit for Changer<'_> {
         if !self.step.changes(self.mode, meta) {
             return Ok(());
         }
-        let failed = || format!("who may use “{}” could not be changed", path.display());
+        let failed = || {
+            words!(
+                access_not_changed = "who may use “{ $path }” could not be changed",
+                path = path.display().to_string(),
+                note = "What a change of who may use files failed on; why follows. path: where the file is."
+            )
+        };
         let held = at.hold(meta.id).with_context(failed)?;
         let (_, to_group) = self.step.target(self.mode, meta);
         let regroup = to_group.filter(|gid| Some(*gid) != meta.gid);
@@ -1218,7 +1588,12 @@ impl Visit for Changer<'_> {
         let mut now = *meta;
         if let Some(gid) = regroup {
             held.set_group(gid).with_context(|| {
-                format!("“{}” could not be given to the group {gid}", path.display())
+                words!(
+                    access_not_given_group = "“{ $path }” could not be given to the group { $group }",
+                    path = path.display().to_string(),
+                    group = gid.to_string(),
+                    note = "What a change of a file's group failed on; why follows. path: where the file is; group: the group's number."
+                )
             })?;
             // What the system left of its mode: a file given to a group
             // loses its set-ID bits.
@@ -1241,15 +1616,18 @@ impl Visit for Changer<'_> {
                     .zip(self.me)
                     .is_some_and(|(gid, me)| !me.may_give(gid));
                 if kept.mode ^ asked == SETGID && not_in_group {
-                    anyhow::bail!(
-                        "the system cleared the set-group-ID bit of “{}”: only a member of its group may set it",
-                        name(path)
-                    );
+                    anyhow::bail!(words!(
+                        access_set_gid_cleared = "the system cleared the set-group-ID bit of { $name }: only a member of its group may set it",
+                        name = Name::of(path),
+                        note = "Why a change of who may use a file did not hold."
+                    ));
                 }
-                anyhow::bail!(
-                    "the drive holding “{}” did not keep the change: its filesystem keeps no permissions",
-                    name(path)
-                );
+                anyhow::bail!(words!(
+                    access_not_kept = "the drive holding { $name } did not keep the change: its filesystem keeps no permissions",
+                    name = Name::of(path),
+                    note =
+                        "Why a change of who may use a file did not hold (a drive formatted FAT)."
+                ));
             }
         }
         Ok(())
@@ -1321,8 +1699,13 @@ fn put_back_one(item: &AccessWas) -> anyhow::Result<Option<AccessWas>> {
     if let Some(gid) = item.group
         && Some(gid) != st.gid
     {
-        held.set_group(gid)
-            .with_context(|| format!("it could not be given back to the group {gid}"))?;
+        held.set_group(gid).with_context(|| {
+            words!(
+                access_not_given_back = "it could not be given back to the group { $group }",
+                group = gid.to_string(),
+                note = "What putting back a file's group failed on; why follows. group: the group's number."
+            )
+        })?;
         fresh = held.stat()?;
     }
     if fresh.mode != item.mode {
@@ -1336,20 +1719,21 @@ fn put_back_one(item: &AccessWas) -> anyhow::Result<Option<AccessWas>> {
     }))
 }
 
-/// What could not be put back, in words: the first, and how many more.
-fn not_put_back(failed: &[(PathBuf, anyhow::Error)]) -> String {
-    let Some((path, e)) = failed.first() else {
-        return String::new();
-    };
-    let more = match failed.len() {
-        1 => String::new(),
-        n => format!(" (and {} more)", n - 1),
-    };
-    format!(
-        "who may use “{}” could not be put back{more}: {}",
-        path.display(),
-        super::said(e)
-    )
+/// What could not be put back, in words: the first, and how many more;
+/// `None` where everything was.
+fn not_put_back(failed: Vec<(PathBuf, anyhow::Error)>) -> Option<Words> {
+    let more = failed.len().saturating_sub(1);
+    let (path, error) = failed.into_iter().next()?;
+    Some(words!(
+        access_not_put_back = "{ $more ->
+                [0] who may use “{ $path }” could not be put back: { $error }
+               *[other] who may use “{ $path }” could not be put back (and { $more } more): { $error }
+            }",
+        more = more,
+        path = path.display().to_string(),
+        error = error,
+        note = "What putting back who may use files failed on. path: where the first file is; more: how many others could not be put back either; error: why the first could not."
+    ))
 }
 
 // ------------------------------------------------------------------ the inverse
@@ -1371,19 +1755,41 @@ impl super::Effect for AccessBack {
             .first()
             .map(|w| w.entry.path.clone())
             .unwrap_or_default();
-        let name = name(&path);
-        let more = match self.items.len() {
-            0 | 1 => String::new(),
-            n => format!(" and {} more", n - 1),
+        let name = || Name::of(&path);
+        let more = self.items.len().saturating_sub(1);
+        let words = Tenses {
+            will: words!(
+                access_put_back = "{ $more ->
+                        [0] put back who may use { $name }
+                       *[other] put back who may use { $name } and { $more } more
+                    }",
+                name = name(),
+                more = more,
+                note = "A step of an undo, in its review: who may use a file put back as it was. more: how many other files it puts back. Begins in lower case."
+            ),
+            did: words!(
+                access_put_back_done = "{ $more ->
+                        [0] put back who may use { $name }
+                       *[other] put back who may use { $name } and { $more } more
+                    }",
+                name = name(),
+                more = more,
+                note = "A step of an undo, done: who may use a file was put back as it was. more: how many other files it put back. Begins in lower case."
+            ),
+            already: Some(words!(
+                access_put_back_already = "{ $more ->
+                        [0] who may use { $name } was already as before
+                       *[other] who may use { $name } and { $more } more was already as before
+                    }",
+                name = name(),
+                more = more,
+                note = "A step of an undo found already done. more: how many other files it covers. Begins in lower case."
+            )),
         };
         Change::Metadata {
             path,
             field: "access".into(),
-            words: Some(Tenses {
-                will: format!("put back who may use “{name}”{more}").into(),
-                did: format!("put back who may use “{name}”{more}").into(),
-                already: Some(format!("who may use “{name}”{more} was already as before").into()),
-            }),
+            words: Some(words),
         }
     }
 
@@ -1392,15 +1798,13 @@ impl super::Effect for AccessBack {
         // What is gone since is skipped; the first is what it is about.
         if let Some(first) = self.items.first() {
             match now(first) {
-                Err(_) => {
-                    return StepStatus::Conflict {
-                        reason: format!("“{}” is not there any more", name(&first.entry.path)),
-                    };
-                }
+                Err(_) => return conflict(&not_there(&first.entry.path)),
                 Ok(meta) if meta.id != first.entry.id => {
-                    return StepStatus::Conflict {
-                        reason: format!("“{}” is now another file", name(&first.entry.path)),
-                    };
+                    return conflict(&words!(
+                        access_another_file = "{ $name } is now another file",
+                        name = Name::of(&first.entry.path),
+                        note = "Why who may use a file cannot be put back as it was: another file took its name."
+                    ));
                 }
                 Ok(_) => {}
             }
@@ -1424,8 +1828,8 @@ impl super::Effect for AccessBack {
     /// action stays to be undone again.
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let (now, failed) = put_back(&self.items);
-        if !failed.is_empty() {
-            anyhow::bail!("{}", not_put_back(&failed));
+        if let Some(not_put_back) = not_put_back(failed) {
+            anyhow::bail!(not_put_back);
         }
         Ok(Some(Box::new(AccessBack { items: now })))
     }
@@ -1602,7 +2006,7 @@ mod tests {
             let Mode::Symbolic(clauses) = Mode::parse_with(text, Some(umask)).unwrap() else {
                 unreachable!()
             };
-            clauses[0].said(Files)
+            clauses[0].said(Files).english()
         };
         assert_eq!(
             clause("+w", 0o022),

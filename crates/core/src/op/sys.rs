@@ -70,7 +70,10 @@ pub(super) fn exchange(a: &Path, b: &Path) -> io::Result<()> {
         let _ = (a, b);
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "Windows cannot swap two names in one step",
+            crate::words!(
+                sys_swap_windows = "Windows cannot swap two names in one step",
+                note = "Why two files' names are not exchanged, on Windows."
+            ),
         ))
     }
 }
@@ -299,8 +302,20 @@ pub(super) fn write_range(file: &File, from: u64, len: u64, wait: bool) -> io::R
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (file, from, len, wait);
-        Err(crate::system::not_yet("Writing through to a drive"))
+        Err(write_through_not_yet())
     }
+}
+
+/// Writing a copy through to its drive as it goes has no implementation on
+/// this system yet.
+#[cfg(not(target_os = "linux"))]
+fn write_through_not_yet() -> io::Error {
+    crate::system::not_yet_words(crate::words!(
+        sys_write_through_not_yet =
+            "Writing through to a drive is not available on { $system } yet",
+        system = crate::system::named(),
+        note = "Why a copy to a removable drive is not written out as it goes. system: the system's name (macOS, Windows)."
+    ))
 }
 
 /// Whether a program, not the kernel, writes the volume `dir` is on
@@ -380,7 +395,11 @@ pub(super) fn make_fifo(dst: &Path, like: &Metadata) -> io::Result<()> {
     #[cfg(windows)]
     {
         let _ = (dst, like);
-        Err(crate::system::not_yet("Copying a pipe"))
+        Err(crate::system::not_yet_words(crate::words!(
+            sys_pipe_not_yet = "Copying a pipe is not available on { $system } yet",
+            system = crate::system::named(),
+            note = "Why a named pipe is not copied. system: the system's name (Windows)."
+        )))
     }
 }
 
@@ -595,7 +614,10 @@ impl DirectoryPermissions {
                     if mode & !0o7777 != 0 {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
-                            "invalid directory permissions",
+                            crate::words!(
+                                sys_bad_folder_permissions = "invalid directory permissions",
+                                note = "Why a folder removed is not made again by its undo: the permissions it kept are none a folder can have."
+                            ),
                         ));
                     }
                     mode_kept(std::fs::set_permissions(
@@ -606,9 +628,11 @@ impl DirectoryPermissions {
                 #[cfg(not(unix))]
                 {
                     let _ = (mode, path);
-                    Err(crate::system::not_yet(
-                        "Restoring Unix directory permissions",
-                    ))
+                    Err(crate::system::not_yet_words(crate::words!(
+                        sys_unix_permissions_not_yet = "Restoring Unix directory permissions is not available on { $system } yet",
+                        system = crate::system::named(),
+                        note = "Why a folder removed on Linux or macOS is not made again on another system by its undo. system: the system's name."
+                    )))
                 }
             }
             Self::Windows { read_only } => {
@@ -621,9 +645,11 @@ impl DirectoryPermissions {
                 #[cfg(not(windows))]
                 {
                     let _ = (read_only, path);
-                    Err(crate::system::not_yet(
-                        "Restoring Windows directory permissions",
-                    ))
+                    Err(crate::system::not_yet_words(crate::words!(
+                        sys_windows_permissions_not_yet = "Restoring Windows directory permissions is not available on { $system } yet",
+                        system = crate::system::named(),
+                        note = "Why a folder removed on Windows is not made again on another system by its undo. system: the system's name."
+                    )))
                 }
             }
         }
@@ -704,12 +730,31 @@ pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, tras
         let unknown = |description: String| trash::Error::Unknown { description };
         let text = path
             .to_str()
-            .ok_or_else(|| unknown(format!("{} is no UTF-8 path", path.display())))?;
+            .ok_or_else(|| {
+                unknown(
+                    crate::words!(
+                        sys_path_not_utf8 = "{ $path } is no UTF-8 path",
+                        path = path.display().to_string(),
+                        note = "Why a file is not put in the trash on macOS: its path is not text the system's trash takes."
+                    )
+                    .say(),
+                )
+            })?;
         let url = NSURL::fileURLWithPath(&NSString::from_str(text));
         let mut landed = None;
         NSFileManager::defaultManager()
             .trashItemAtURL_resultingItemURL_error(&url, Some(&mut landed))
-            .map_err(|e| unknown(format!("trash {}: {e}", path.display())))?;
+            .map_err(|e| {
+                unknown(
+                    crate::words!(
+                        sys_trash_refused = "trash { $path }: { $error }",
+                        path = path.display().to_string(),
+                        error = e.to_string(),
+                        note = "Why a file is not put in the trash on macOS, terse: its path, then what the system said."
+                    )
+                    .say(),
+                )
+            })?;
         Ok(landed
             .and_then(|url| url.path())
             .map(|p| std::path::PathBuf::from(p.to_string())))
@@ -745,7 +790,12 @@ pub(super) fn trash_list() -> Result<Vec<trash::TrashItem>, trash::Error> {
     #[cfg(target_os = "macos")]
     {
         Err(trash::Error::Unknown {
-            description: crate::system::not_yet("Listing the trash").to_string(),
+            description: crate::words!(
+                sys_trash_list_not_yet = "Listing the trash is not available on { $system } yet",
+                system = crate::system::named(),
+                note = "Why the trash shows nothing. system: the system's name (macOS)."
+            )
+            .say(),
         })
     }
 }
@@ -763,7 +813,14 @@ pub(super) fn trash_restore(items: Vec<trash::TrashItem>) -> Result<(), trash::E
     {
         let _ = items;
         Err(trash::Error::Unknown {
-            description: crate::system::not_yet("Restoring from the trash").to_string(),
+            description: crate::words!(
+                sys_trash_restore_not_yet =
+                    "Restoring from the trash is not available on { $system } yet",
+                system = crate::system::named(),
+                note =
+                    "Why a file is not put back from the trash. system: the system's name (macOS)."
+            )
+            .say(),
         })
     }
 }
@@ -870,11 +927,11 @@ pub(super) mod access {
 
     /// What a hold found in place of the item it was asked for.
     #[derive(Debug)]
-    struct Replaced(&'static str);
+    struct Replaced(crate::words::Words);
 
     impl std::fmt::Display for Replaced {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str(self.0)
+            std::fmt::Display::fmt(&self.0, f)
         }
     }
 
@@ -882,11 +939,17 @@ pub(super) mod access {
 
     /// Another file where the one asked for was.
     pub fn replaced() -> io::Error {
-        io::Error::other(Replaced("it is now another file"))
+        io::Error::other(Replaced(crate::words!(
+            sys_now_another_file = "it is now another file",
+            note = "Why a change of access stopped: another file took the name of the one it acts on. Begins in lower case: said after the step's own words."
+        )))
     }
 
     fn a_link() -> io::Error {
-        io::Error::other(Replaced("it is a link now"))
+        io::Error::other(Replaced(crate::words!(
+            sys_now_a_link = "it is a link now",
+            note = "Why a change of access stopped: a link took the place of the file it acts on. Begins in lower case: said after the step's own words."
+        )))
     }
 
     /// The folder at `path`, a link there followed, opened to be listed:
@@ -1069,9 +1132,11 @@ pub(super) mod access {
             let at = format!("/proc/self/fd/{}", self.0.as_raw_fd());
             match rustix::fs::chmod(at.as_str(), rustix::fs::Mode::from_raw_mode(mode & 0o7777)) {
                 Err(rustix::io::Errno::NOENT) if !Path::new("/proc/self/fd").is_dir() => {
-                    Err(io::Error::other(
-                        "the system's /proc is not mounted, which changing access needs",
-                    ))
+                    Err(io::Error::other(crate::words!(
+                        sys_no_proc =
+                            "the system's /proc is not mounted, which changing access needs",
+                        note = "Why a change of access failed on Linux: the system's /proc folder, through which it reaches the file, is missing."
+                    )))
                 }
                 r => r.map_err(io::Error::from),
             }
@@ -1310,7 +1375,11 @@ pub(super) mod access {
         #[allow(clippy::unused_self)]
         pub fn set_group(&self, gid: u32) -> io::Result<()> {
             let _ = gid;
-            Err(crate::system::not_yet("Changing a file's group"))
+            Err(crate::system::not_yet_words(crate::words!(
+                sys_group_not_yet = "Changing a file's group is not available on { $system } yet",
+                system = crate::system::named(),
+                note = "Why a file's group is not changed. system: the system's name (Windows)."
+            )))
         }
 
         /// The owner's write bit of `mode` as the read-only attribute.

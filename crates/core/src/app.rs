@@ -23,6 +23,7 @@ use crate::plugin::PluginHost;
 use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
+use crate::words;
 use crate::words::Words;
 use crate::workspace::{Pane, PaneId, Selection, StepFilter, WindowId, Workspace};
 
@@ -622,14 +623,14 @@ impl App {
             app.executor.set_room_asker(Some(Arc::new(
                 move |title: &crate::words::Words, short: &op::room::Short| match asking.upgrade() {
                     Some(app) if app.window_shown() => {
-                        // For the window: its title said here, in a
-                        // sentence that is text until it is a message.
-                        let detail = format!(
-                            "{}: a drive, a network share above all, may say it has \
-                             less room than it has. Copy anyway, or cancel and make room.",
-                            title.say()
-                        );
-                        app.ask_as(Asker::Room, short.said(), detail).1
+                        // For the window, said in its language.
+                        let detail = words!(
+                            app_room_detail = "{ $title }: a drive, a network share above all, may say it has less room than it has. Copy anyway, or cancel and make room.",
+                            title = title.clone(),
+                            note = "The question asked when a drive says it has too little room for an action: its title first, in lower case (copy 3 items to Docs)."
+                        )
+                        .say();
+                        app.ask_as(Asker::Room, short.said().say(), detail).1
                     }
                     // Gone, or no window: no one answers, so nothing is
                     // copied.
@@ -751,39 +752,54 @@ impl App {
         let (id, title) = (store.id(), store.title());
         let holds = store.holds();
         // First what sets it apart: the line of its table says it.
-        let holds = if holds.limits.is_empty() {
-            "It holds all of a file's notes.".to_owned()
+        let read_said = if holds.limits.is_empty() {
+            words!(
+                app_notes_read_all = "It holds all of a file's notes. Read, what it keeps is shown merged with the other places' notes.",
+                note = "Under the Read switch of a place notes are kept (a file's attributes, a file beside it, its name)."
+            )
         } else {
-            format!("What it cannot hold: {}.", holds.limits)
+            // Transitional: a phrase the store gives as text (ADR-139).
+            words!(
+                app_notes_read_limits = "What it cannot hold: { $limits }. Read, what it keeps is shown merged with the other places' notes.",
+                limits = holds.limits,
+                note = "Under the Read switch of a place notes are kept: what it cannot hold that the others can (no comma in a tag)."
+            )
         };
         let read = crate::notes::read_key(id);
         self.settings.declare(
             crate::settings::SettingSpec::toggle(
                 &read,
-                "Read",
-                format!(
-                    "{holds} Read, what it keeps is shown merged with the other places' notes."
+                words!(
+                    app_notes_read = "Read",
+                    note = "A switch of a place notes are kept: whether Skwir reads the notes kept there."
                 ),
+                read_said,
                 store.default_read(),
             )
             .section_of(format!("notes.{id}"), title.clone())
             .essential(),
         );
         self.notes.declared(owner, read);
-        let mut choices: Vec<(&str, &str)> = vec![
-            ("off", Write::Off.title()),
-            ("update", Write::Update.title()),
+        let mut choices: Vec<(&str, Words)> = vec![
+            ("off", Write::Off.words()),
+            ("update", Write::Update.words()),
         ];
         // A name is written by a rename of its own, where it holds tags
         // already: never started.
         let said = if store.kept() == Kept::Name {
-            "Never; or, where a file's name already holds tags, rename the file as an edit changes them."
+            words!(
+                app_notes_write_renames = "Never; or, where a file's name already holds tags, rename the file as an edit changes them.",
+                note = "Under the Write choice of the notes kept in a file's name: its choices, Off and Update existing, in order."
+            )
         } else {
             if store.kept() == Kept::Beside {
-                choices.push(("fallback", Write::Fallback.title()));
+                choices.push(("fallback", Write::Fallback.words()));
             }
-            choices.push(("create", Write::Create.title()));
-            "Never; only where a file already has notes here; also where a file's volume keeps no attributes; or for every file edited."
+            choices.push(("create", Write::Create.words()));
+            words!(
+                app_notes_write_when = "Never; only where a file already has notes here; also where a file's volume keeps no attributes; or for every file edited.",
+                note = "Under the Write choice of a place notes are kept: its choices (Off, Update existing, Where attributes are missing, Create), in order."
+            )
         };
         let default = match store.default_write() {
             Write::Off => "off",
@@ -793,9 +809,18 @@ impl App {
         };
         let write = crate::notes::write_key(id);
         self.settings.declare(
-            crate::settings::SettingSpec::choice(&write, "Write", said, default, &choices)
-                .section_of(format!("notes.{id}"), title)
-                .essential(),
+            crate::settings::SettingSpec::choice_words(
+                &write,
+                words!(
+                    app_notes_write = "Write",
+                    note = "A choice of a place notes are kept: when Skwir writes notes there."
+                ),
+                said,
+                default,
+                choices,
+            )
+            .section_of(format!("notes.{id}"), title)
+            .essential(),
         );
         self.notes.declared(owner, write);
         self.notes.register(owner, store);
@@ -1343,7 +1368,13 @@ impl App {
     ) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let provider = self
             .provider(&location.scheme)
-            .ok_or_else(|| anyhow::anyhow!("no provider for scheme `{}`", location.scheme))?;
+            .ok_or_else(|| {
+                words!(
+                    app_no_provider = "no provider for scheme `{ $scheme }`",
+                    scheme = &*location.scheme,
+                    note = "An error: nothing Skwir has opens the address's scheme (sftp, tag…), which is as written."
+                )
+            })?;
         provider.open(
             location,
             OpenContext {
@@ -1656,9 +1687,7 @@ impl App {
     pub fn take_step_back(&self, pane: PaneId) -> anyhow::Result<()> {
         let (from, before) = {
             let ws = self.workspace.read();
-            let p = ws
-                .pane(pane)
-                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+            let p = ws.pane(pane).ok_or_else(no_pane)?;
             let before = p.history_pos.checked_sub(1).and_then(|pos| {
                 let location = p.history.get(pos).cloned()?;
                 Some((location, p.filter_at(pos)))
@@ -1684,9 +1713,10 @@ impl App {
             return Ok(location.clone());
         };
         let here = self.pane_dir(pane).map_err(|_| {
-            anyhow::anyhow!(
-                "{} is relative, and no folder is shown for it to be in",
-                relative.display()
+            words!(
+                app_relative_nowhere = "{ $path } is relative, and no folder is shown for it to be in",
+                path = relative.display().to_string(),
+                note = "An error: a path given as ./a or ../b where the pane shows a search or a tag, not a folder."
             )
         })?;
         let mut path = here;
@@ -1708,13 +1738,8 @@ impl App {
     pub fn step_here(&self, pane: PaneId) -> anyhow::Result<()> {
         let left = self.cursor_of(pane);
         let mut ws = self.workspace.write();
-        let p = ws
-            .pane_mut(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        let here = p
-            .location()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+        let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
+        let here = p.location().cloned().ok_or_else(shows_nothing)?;
         // The step left keeps what filters it, as Back shows it (ADR-109).
         p.leave_step();
         p.go_on(here, left);
@@ -1893,9 +1918,7 @@ impl App {
             // Sorted as the place remembers, else as the pane does
             // (ADR-132), from the first listing on.
             let order = ws.order_of(&location);
-            let p = ws
-                .pane_mut(pane)
-                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+            let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
             (
                 p.take_kept(&location),
                 p.sort.show_hidden,
@@ -1916,9 +1939,7 @@ impl App {
         };
         let mut ws = self.workspace.write();
         let (order, view) = (ws.order_of(&location), ws.view_of(&location));
-        let p = ws
-            .pane_mut(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
         if how.from.is_some_and(|from| p.location() != Some(from)) {
             drop(ws);
             open.close();
@@ -2797,7 +2818,7 @@ impl App {
             id: 0,
             title: title.into(),
             accept: accept.into(),
-            placeholder: "Password".to_owned(),
+            placeholder: password(),
             keeping: None,
             remember: false,
         })
@@ -2815,7 +2836,7 @@ impl App {
             id: 0,
             title: title.into(),
             accept: accept.into(),
-            placeholder: "Password".to_owned(),
+            placeholder: password(),
             keeping: None,
             remember: true,
         })
@@ -2836,7 +2857,11 @@ impl App {
             id: 0,
             title: title.into(),
             accept: accept.into(),
-            placeholder: "Passphrase".to_owned(),
+            placeholder: words!(
+                app_passphrase = "Passphrase",
+                note = "What the empty field asking for an encrypted volume's passphrase says."
+            )
+            .say(),
             remember: keeping.is_some(),
             keeping,
         })
@@ -3066,7 +3091,17 @@ impl App {
         self.notify_with_action(
             NotifyLevel::Info,
             text,
-            if undo { "Redo" } else { "Undo" },
+            if undo {
+                words!(
+                    app_toast_redo = "Redo",
+                    note = "A button on a message saying what an edit did: does it again."
+                )
+            } else {
+                words!(
+                    app_toast_undo = "Undo",
+                    note = "A button on a message saying what an edit did: takes it back."
+                )
+            },
             inverse,
         );
     }
@@ -3451,15 +3486,13 @@ impl App {
                 .location
                 .as_ref()
                 .and_then(Location::path)
-                .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"));
+                .ok_or_else(|| no_directory().into());
         }
         let ws = self.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        let p = ws.pane(pane).ok_or_else(no_pane)?;
         p.location()
             .and_then(Location::path)
-            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
+            .ok_or_else(|| no_directory().into())
     }
 
     /// What a command asked of `pane` (else the active pane) acts on, as it
@@ -3486,7 +3519,13 @@ impl App {
             return Ok(dir);
         }
         common_parent(self.selected_refs(pane).iter().map(|r| r.path.as_path()))
-            .ok_or_else(|| anyhow::anyhow!("select something, or open a folder"))
+            .ok_or_else(|| {
+                words!(
+                    app_no_work_dir = "select something, or open a folder",
+                    note = "An error: an action that works in a folder (a terminal, a command) asked where the pane shows no folder and nothing is selected."
+                )
+                .into()
+            })
     }
 
     /// A pane's open location and a snapshot taken with it, for what is
@@ -3774,6 +3813,58 @@ type ReadAgain = (
 fn at_in(order: &[EntryId], id: EntryId, at: Option<usize>) -> Option<usize> {
     at.filter(|&at| order.get(at) == Some(&id))
         .or_else(|| order.iter().position(|x| *x == id))
+}
+
+/// A pane named that is not there: an error for whoever named it.
+fn no_pane() -> Words {
+    words!(
+        app_no_pane = "no such pane",
+        note =
+            "An error answered to a script or an agent that named a pane the window does not have."
+    )
+}
+
+/// What a command asked of a pane that shows nothing.
+fn shows_nothing() -> Words {
+    words!(
+        app_shows_nothing = "the pane shows nothing",
+        note = "An error: an action asked something of a pane that shows no folder or place yet."
+    )
+}
+
+/// What a command that needs a folder asked of a pane that shows none.
+fn no_directory() -> Words {
+    words!(
+        app_no_directory = "pane is not showing a directory",
+        note = "An error: an action that needs a folder asked of a pane that shows a search, a tag or another place."
+    )
+}
+
+/// Undo asked with nothing to take back.
+fn nothing_to_undo() -> Words {
+    words!(app_nothing_to_undo = "nothing to undo")
+}
+
+/// Redo asked with nothing to apply again.
+fn nothing_to_redo() -> Words {
+    words!(app_nothing_to_redo = "nothing to redo")
+}
+
+/// Retry asked with no action stopped by an error.
+fn nothing_to_retry() -> Words {
+    words!(
+        app_nothing_to_retry = "nothing to retry",
+        note = "An error: Retry asked where no action was stopped by an error."
+    )
+}
+
+/// What the empty field asking for a password says.
+fn password() -> String {
+    words!(
+        app_password = "Password",
+        note = "What the empty field asking for a password (an archive's, a server's) says."
+    )
+    .say()
 }
 
 fn replayed(what: &str, title: impl Serialize, result: &op::ExecResult) -> Outcome {
@@ -4103,7 +4194,7 @@ mod builtin {
         app: &App,
         pane: Option<PaneId>,
         entries: Vec<op::EntryArg>,
-        title: impl FnOnce(&[&Path]) -> String,
+        title: impl FnOnce(&[&Path]) -> Words,
         f: impl Fn(EntryRef) -> Box<dyn op::Operation>,
     ) -> anyhow::Result<Outcome> {
         let refs = app.targets(pane, entries)?;
@@ -4124,12 +4215,34 @@ mod builtin {
         }
     }
 
+    /// The title of a plan that makes the folder `name`: the name unquoted,
+    /// as the title has always said it, its controls shown (a `Folder`'s
+    /// way).
+    fn new_folder_title(name: &str) -> Words {
+        words!(
+            app_new_folder_title = "new folder { $name }",
+            name = words::Folder(name.to_owned()),
+            note = "An action's title: the new folder's name. Begins in lower case: said inside other words too."
+        )
+    }
+
+    /// The title of a plan that deletes for good.
+    fn delete_title() -> Words {
+        words!(
+            app_delete_title = "delete permanently",
+            note = "An action's title: deleting files without the trash. Begins in lower case: said inside other words too."
+        )
+    }
+
     /// The folder a move or a copy goes to: a path, whole (it may come
     /// from another process than the window, ADR-043).
     fn destination(dest: &Path) -> anyhow::Result<PathBuf> {
-        let dest = Location::parse_os(dest.as_os_str())
-            .path()
-            .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
+        let dest = Location::parse_os(dest.as_os_str()).path().ok_or_else(|| {
+            words!(
+                app_destination_path = "destination must be a path",
+                note = "An error answered to a script or an agent that gave a move or a copy an address that is no folder's path."
+            )
+        })?;
         crate::os_path::absolute(&dest)?;
         Ok(dest)
     }
@@ -4140,8 +4253,14 @@ mod builtin {
         c.register::<NavigateArgs, _>(
             "core", Topic::Go,
             "navigate",
-            "Go to location",
-            "Open a path or location in a pane, an entry of it selected once listed when `select` names one, else, gone up to it, the one the way back down goes through; `in_place` puts it in place of the step the pane shows, with no step of its own; `as_kept` shows it as a saved place is kept, filtered by `filter` alone, the pane's lens left out (ADR-109)",
+            words!(
+                app_navigate = "Go to location",
+                note = "An action's name: go to a folder or place by its path or address."
+            ),
+            words!(
+                app_navigate_description = "Open a path or location in a pane, an entry of it selected once listed when `select` names one, else, gone up to it, the one the way back down goes through; `in_place` puts it in place of the step the pane shows, with no step of its own; `as_kept` shows it as a saved place is kept, filtered by `filter` alone, the pane's lens left out (ADR-109)",
+                note = "What the action does, read by agents and in F1's list of actions."
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let location = Location::parse_os(a.location.as_os_str());
@@ -4163,8 +4282,13 @@ mod builtin {
         c.register::<PaneArg, _>(
             "core", Topic::Places,
             "keep",
-            "Add to sidebar",
-            "Keep what the pane shows in the sidebar, as it shows it (ADR-109): a folder as a bookmark, a search as a saved search, anything shown filtered as a saved place with its filter",
+            words!(
+                app_keep = "Add to sidebar",
+                note = "An action's name: keep what the pane shows as a place in the sidebar."
+            ),
+            words!(
+                app_keep_description = "Keep what the pane shows in the sidebar, as it shows it (ADR-109): a folder as a bookmark, a search as a saved search, anything shown filtered as a saved place with its filter"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let (location, filter) = {
@@ -4172,12 +4296,19 @@ mod builtin {
                     let p = ws.pane(pane);
                     let location = p
                         .and_then(|p| p.location().cloned())
-                        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to keep"))?;
+                        .ok_or_else(|| {
+                            words!(
+                                app_keep_nothing = "the pane shows nothing to keep",
+                                note = "An error: Add to sidebar asked of a pane that shows nothing."
+                            )
+                        })?;
                     (location, p.and_then(|p| p.filter().map(str::to_owned)))
                 };
                 let (keeper, keeps_filter) = app
                     .keeper_of(&location, filter.as_deref())
-                    .ok_or_else(|| anyhow::anyhow!("this location cannot be kept in the sidebar"))?;
+                    .ok_or_else(|| {
+                        words!(app_keep_cannot = "this location cannot be kept in the sidebar")
+                    })?;
                 let mut save = keeper.save;
                 if !save.args.is_object() {
                     save.args = serde_json::json!({});
@@ -4195,8 +4326,11 @@ mod builtin {
             "core",
             Topic::Go,
             "refresh",
-            "Refresh",
-            "Re-list the pane's location",
+            words!(
+                app_refresh = "Refresh",
+                note = "An action's name: list the folder shown again."
+            ),
+            words!(app_refresh_description = "Re-list the pane's location"),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
@@ -4217,11 +4351,22 @@ mod builtin {
         .shows();
 
         for (name, title, description, forward) in [
-            ("back", "Back", "Go to the previous location", false),
+            (
+                "back",
+                words!(
+                    app_back = "Back",
+                    note = "An action's name: go to the folder or place shown before."
+                ),
+                words!(app_back_description = "Go to the previous location"),
+                false,
+            ),
             (
                 "forward",
-                "Forward",
-                "Return to the location Back came from",
+                words!(
+                    app_forward = "Forward",
+                    note = "An action's name: go again where Back came from."
+                ),
+                words!(app_forward_description = "Return to the location Back came from"),
                 true,
             ),
         ] {
@@ -4236,9 +4381,7 @@ mod builtin {
                     let steps = a.steps.unwrap_or(1).max(1);
                     let target = {
                         let ws = app.workspace.read();
-                        let p = ws
-                            .pane(pane)
-                            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                        let p = ws.pane(pane).ok_or_else(no_pane)?;
                         let pos = if forward {
                             p.history_pos.checked_add(steps)
                         } else {
@@ -4268,13 +4411,18 @@ mod builtin {
         let up = c.register::<PaneArg, _>(
             "core", Topic::Go,
             "up",
-            "Parent directory",
-            "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in), the one left selected there",
+            words!(
+                app_up = "Parent directory",
+                note = "An action's name: go up to the folder holding the one shown."
+            ),
+            words!(
+                app_up_description = "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in), the one left selected there"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let shown = app
                     .pane_location(pane)
-                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                    .ok_or_else(shows_nothing)?;
                 // The way back down selected there, as wherever a pane
                 // goes up (`App::way_down`).
                 if let Some(parent) = app.parent(&shown) {
@@ -4289,16 +4437,28 @@ mod builtin {
         c.register::<TargetsArgs, _>(
             "core", Topic::Go,
             "show_in_folder",
-            "Show in folder",
-            "Open the folder the selected file is in, the file selected: from a search, a tag, the shelf, where files from many folders are listed",
+            words!(
+                app_show_in_folder = "Show in folder",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_show_in_folder_description = "Open the folder the selected file is in, the file selected: from a search, a tag, the shelf, where files from many folders are listed"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let refs = app.targets(Some(pane), a.entries)?;
                 let [one] = refs.as_slice() else {
-                    anyhow::bail!("select one file to show in its folder");
+                    anyhow::bail!(words!(
+                        app_show_in_folder_one = "select one file to show in its folder",
+                        note = "An error: Show in folder asked with none, or several, selected."
+                    ));
                 };
                 let (Some(parent), Some(name)) = (one.path.parent(), one.path.file_name()) else {
-                    anyhow::bail!("{} is in no folder", one.path.display());
+                    anyhow::bail!(words!(
+                        app_in_no_folder = "{ $path } is in no folder",
+                        path = one.path.display().to_string(),
+                        note = "An error: Show in folder asked of a path that is a drive's top."
+                    ));
                 };
                 app.navigate(pane, &Location::from_path(parent))?;
                 app.reveal(pane, name.to_owned());
@@ -4310,15 +4470,23 @@ mod builtin {
         c.register::<PaneArg, _>(
             "core", Topic::Files,
             "take_out",
-            "Take out of here",
-            "Take the selection out of a location that lists files kept elsewhere, as it says (a tag's takes its tag off them, the shelf's unshelves them): the files stay where they are. What the Delete key does there",
+            words!(
+                app_take_out = "Take out of here",
+                note = "An action's name: take files out of a tag's or the shelf's list, the files left where they are."
+            ),
+            words!(
+                app_take_out_description = "Take the selection out of a location that lists files kept elsewhere, as it says (a tag's takes its tag off them, the shelf's unshelves them): the files stay where they are. What the Delete key does there"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let shown = app
                     .pane_location(pane)
-                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                    .ok_or_else(shows_nothing)?;
                 let Some(remove) = app.verbs(&shown).remove else {
-                    anyhow::bail!("nothing is taken out of here: Move to Trash deletes");
+                    anyhow::bail!(words!(
+                        app_nothing_taken_out = "nothing is taken out of here: Move to Trash deletes",
+                        note = "An error: Take out of here asked in a folder, where files are not listed from elsewhere. Move to Trash is the action of that name."
+                    ));
                 };
                 let mut invocation = remove.command;
                 if !invocation.args.is_object() {
@@ -4333,14 +4501,19 @@ mod builtin {
             "core",
             Topic::Select,
             "select",
-            "Select",
-            "Select entries by id or name",
+            words!(
+                app_select = "Select",
+                note = "An action's name: select entries named."
+            ),
+            words!(
+                app_select_description = "Select entries by id or name"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
                 let p = ws
                     .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    .ok_or_else(no_pane)?;
                 let mut ids = a.ids;
                 // Each name looked up by the listing's index of names.
                 if !a.names.is_empty() {
@@ -4350,12 +4523,17 @@ mod builtin {
                             // file while hidden files are off, a name the
                             // filter leaves out (`Pane::select_revealed`
                             // shows it first).
-                            Some(id) if !p.is_shown(id) => anyhow::bail!(
-                                "`{}` is not shown: hidden, or left out by the filter",
-                                n.display()
-                            ),
+                            Some(id) if !p.is_shown(id) => anyhow::bail!(words!(
+                                app_select_not_shown = "`{ $name }` is not shown: hidden, or left out by the filter",
+                                name = n.display().to_string(),
+                                note = "An error answered to a script or an agent: the name as it gave it."
+                            )),
                             Some(id) => ids.push(id),
-                            None => anyhow::bail!("no entry named `{}`", n.display()),
+                            None => anyhow::bail!(words!(
+                                app_select_no_entry = "no entry named `{ $name }`",
+                                name = n.display().to_string(),
+                                note = "An error answered to a script or an agent: the name as it gave it."
+                            )),
                         }
                     }
                 }
@@ -4365,7 +4543,10 @@ mod builtin {
                     SelectMode::Toggle => p.selection.toggle_all(&ids),
                     mode @ (SelectMode::RangeTo | SelectMode::AddRange) => {
                         let Some(&target) = ids.last() else {
-                            anyhow::bail!("a range needs a target id")
+                            anyhow::bail!(words!(
+                                app_select_range_target = "a range needs a target id",
+                                note = "An error answered to a script or an agent that asked to select a range and gave no entry it ends at."
+                            ))
                         };
                         let order = p.order();
                         let anchor = p.selection.anchor.or(p.selection.cursor).unwrap_or(target);
@@ -4423,14 +4604,18 @@ mod builtin {
             "core",
             Topic::View,
             "sort",
-            "Sort",
-            "Set the sort key, direction, and hidden-file visibility of a pane",
+            words!(
+                app_sort = "Sort",
+                note = "An action's name, a verb: set the order of a pane's files."
+            ),
+            words!(
+                app_sort_description =
+                    "Set the sort key, direction, and hidden-file visibility of a pane"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
-                let p = ws
-                    .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
                 let before = p.sort;
                 if let Some(k) = a.key {
                     // The same key again flips the direction unless one was
@@ -4468,14 +4653,19 @@ mod builtin {
             "core",
             Topic::View,
             "group",
-            "Group",
-            "Group a pane's entries under headings (ADR-130): by `by` (none, same_as_sort: by the sort's key in its direction, or a key as `sort` takes: name, kind, type, extension, size, modified, created, accessed, deleted, rating, tags, owner, folder; taken, dimensions, duration, read from the files on demand), in direction `ascending` (a key starts in its own: words A to Z, the largest, the newest, the best rated first; the same key again flips it). Within each group, folders come first while they do everywhere, then the sort decides",
+            words!(
+                app_group = "Group",
+                note = "An action's name, a verb: show a pane's files under headings."
+            ),
+            words!(
+                app_group_description = "Group a pane's entries under headings (ADR-130): by `by` (none, same_as_sort: by the sort's key in its direction, or a key as `sort` takes: name, kind, type, extension, size, modified, created, accessed, deleted, rating, tags, owner, folder; taken, dimensions, duration, read from the files on demand), in direction `ascending` (a key starts in its own: words A to Z, the largest, the newest, the best rated first; the same key again flips it). Within each group, folders come first while they do everywhere, then the sort decides"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
                 let p = ws
                     .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    .ok_or_else(no_pane)?;
                 let before = p.sort;
                 if let Some(by) = a.by {
                     p.sort.group_ascending = match (a.ascending, by) {
@@ -4510,30 +4700,41 @@ mod builtin {
             "core",
             Topic::View,
             "remember_order",
-            "Remember this folder's order",
-            "Remember how the folder a pane shows is sorted and grouped (ADR-132), and the view it is shown in (`view`: list or grid), or forget it (`on`; toggled when omitted): a folder that remembers is shown so in every pane, a change of its sort, groups or view made there changing what it remembers, the pane's own order and view set aside while it shows it and back once it shows another; forgotten, the pane's own come back. Its view is shown only while the pane shows a view a folder may remember, never in place of the columns or the tree; each column of the columns is in its own folder's order. Any place but a search, whose terms are what it is (the trash, a tag's place); hidden files stay the pane's, folders first the user's",
+            words!(
+                app_remember_order = "Remember this folder's order",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_remember_order_description = "Remember how the folder a pane shows is sorted and grouped (ADR-132), and the view it is shown in (`view`: list or grid), or forget it (`on`; toggled when omitted): a folder that remembers is shown so in every pane, a change of its sort, groups or view made there changing what it remembers, the pane's own order and view set aside while it shows it and back once it shows another; forgotten, the pane's own come back. Its view is shown only while the pane shows a view a folder may remember, never in place of the columns or the tree; each column of the columns is in its own folder's order. Any place but a search, whose terms are what it is (the trash, a tag's place); hidden files stay the pane's, folders first the user's"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let (at, on) = {
                     let ws = app.workspace.read();
                     let p = ws
                         .pane(pane)
-                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                        .ok_or_else(no_pane)?;
                     let at = p
                         .location()
                         .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                        .ok_or_else(shows_nothing)?;
                     anyhow::ensure!(
                         !ws.orders().is_unreadable(),
-                        "{} in the data file holds no list: mend it, or take it out, to remember an order",
-                        crate::orders::ORDERS
+                        words!(
+                            app_orders_unreadable = "{ $key } in the data file holds no list: mend it, or take it out, to remember an order",
+                            key = crate::orders::ORDERS,
+                            note = "An error: the folders' remembered orders, kept under a key of the data file (as written), cannot be read."
+                        )
                     );
                     (at, a.on.unwrap_or(!p.keeps_order()))
                 };
                 // Asked of its provider with no lock held.
                 anyhow::ensure!(
                     !(on && app.is_search(&at)),
-                    "a search's order is not remembered: its terms are what it is"
+                    words!(
+                        app_search_order = "a search's order is not remembered: its terms are what it is",
+                        note = "An error: Remember this folder's order asked of a search."
+                    )
                 );
                 let view: Option<Arc<str>> = a
                     .view
@@ -4546,7 +4747,12 @@ mod builtin {
                     .pane(pane)
                     .filter(|p| p.location() == Some(&at))
                     .map(|p| crate::orders::Order::of(p.sort))
-                    .ok_or_else(|| anyhow::anyhow!("the pane went elsewhere"))?;
+                    .ok_or_else(|| {
+                        words!(
+                            app_pane_went_elsewhere = "the pane went elsewhere",
+                            note = "An error: the pane showed another place before its folder's order could be remembered."
+                        )
+                    })?;
                 let mut changed = ws.remember_order(&at, on.then_some(order));
                 if on && view.is_some() {
                     changed |= ws.remember_view(&at, view);
@@ -4564,15 +4770,20 @@ mod builtin {
             "core",
             Topic::View,
             "group_fold",
-            "Fold the group",
-            "Fold or open a pane's groups (ADR-131): group `group` (counted from the first heading from 0; the cursor's when omitted) as `mode` says: toggle, fold, unfold, fold_others (every group but it), unfold_all. A folded group's entries leave what the pane shows (not drawn, passed over by the keys, out of Select All and of what commands act on), its heading kept with its count; folds are kept while the pane groups by the same criterion, and take effect only under a view that draws the groups' headings (the list, the tree, the grid): under any other, every file stays shown",
+            words!(
+                app_group_fold = "Fold the group",
+                note = "An action's name: fold a group of files under its heading."
+            ),
+            words!(
+                app_group_fold_description = "Fold or open a pane's groups (ADR-131): group `group` (counted from the first heading from 0; the cursor's when omitted) as `mode` says: toggle, fold, unfold, fold_others (every group but it), unfold_all. A folded group's entries leave what the pane shows (not drawn, passed over by the keys, out of Select All and of what commands act on), its heading kept with its count; folds are kept while the pane groups by the same criterion, and take effect only under a view that draws the groups' headings (the list, the tree, the grid): under any other, every file stays shown"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let changed = app
                     .workspace
                     .write()
                     .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+                    .ok_or_else(no_pane)?
                     .fold_groups(a.group, a.mode);
                 if changed {
                     app.wake();
@@ -4583,15 +4794,18 @@ mod builtin {
         fold.forms([
             Form::new(
                 serde_json::json!({ "mode": "toggle" }),
-                "Fold or unfold the group",
+                words!(
+                    app_group_fold_toggle = "Fold or unfold the group",
+                    note = "An action's name: fold the group of files the cursor is in under its heading, or open it."
+                ),
             ),
             Form::new(
                 serde_json::json!({ "mode": "fold_others" }),
-                "Fold the other groups",
+                words!(app_group_fold_others = "Fold the other groups"),
             ),
             Form::new(
                 serde_json::json!({ "mode": "unfold_all" }),
-                "Unfold all groups",
+                words!(app_group_unfold_all = "Unfold all groups"),
             ),
         ]);
         fold.shows();
@@ -4599,8 +4813,13 @@ mod builtin {
         c.register::<FilterArgs, _>(
             "core", Topic::Find,
             "filter",
-            "Filter",
-            "Show only the entries `text` keeps: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image, ext:pdf or size>1M hold for files, a folder showing once a search of it finds one), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them. Its terms that hold for files are the pane's lens, kept as it shows other locations until taken off; its words go with the location",
+            words!(
+                app_filter = "Filter",
+                note = "An action's name, a verb: show only the files that match."
+            ),
+            words!(
+                app_filter_description = "Show only the entries `text` keeps: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image, ext:pdf or size>1M hold for files, a folder showing once a search of it finds one), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them. Its terms that hold for files are the pane's lens, kept as it shows other locations until taken off; its words go with the location"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let text = a.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
@@ -4621,8 +4840,11 @@ mod builtin {
             "core",
             Topic::View,
             "toggle_hidden",
-            "Toggle hidden files",
-            "Show or hide dot-prefixed entries",
+            words!(
+                app_toggle_hidden = "Toggle hidden files",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(app_toggle_hidden_description = "Show or hide dot-prefixed entries"),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
@@ -4640,8 +4862,13 @@ mod builtin {
             "core",
             Topic::View,
             "show_companions",
-            "Show hidden and companion files",
-            "Show hidden files in the pane, and turn on Show companion files (`core.show_companions`): the files that keep another file's notes beside it, in every folder",
+            words!(
+                app_show_companions = "Show hidden and companion files",
+                note = "An action's name: companion files keep another file's notes beside it."
+            ),
+            words!(
+                app_show_companions_description = "Show hidden files in the pane, and turn on Show companion files (`core.show_companions`): the files that keep another file's notes beside it, in every folder"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane)
@@ -4665,14 +4892,15 @@ mod builtin {
             "core",
             Topic::Select,
             "select_all",
-            "Select all",
-            "Select every entry",
+            words!(
+                app_select_all = "Select all",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(app_select_all_description = "Select every entry"),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
-                let p = ws
-                    .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
                 // What the pane shows: hidden files it does not show are
                 // not selected, or a Delete would take them unseen.
                 let ids = p.order();
@@ -4689,14 +4917,18 @@ mod builtin {
             "core",
             Topic::Select,
             "select_invert",
-            "Invert selection",
-            "Select what is shown and not selected, and deselect the rest",
+            words!(
+                app_select_invert = "Invert selection",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_select_invert_description =
+                    "Select what is shown and not selected, and deselect the rest"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
-                let p = ws
-                    .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
                 let order = p.order();
                 let inverted = p.covered(
                     order
@@ -4717,8 +4949,11 @@ mod builtin {
             "core",
             Topic::Select,
             "select_none",
-            "Clear selection",
-            "Deselect everything",
+            words!(
+                app_select_none = "Clear selection",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(app_select_none_description = "Deselect everything"),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
@@ -4732,14 +4967,19 @@ mod builtin {
         let sweep = c.register::<SweepArgs, _>(
             "core", Topic::Select,
             "select_sweep",
-            "Select as the cursor moves",
-            "Hold a range from the cursor: moving selects, or with `unset` deselects, what lies between",
+            words!(
+                app_select_sweep = "Select as the cursor moves",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_select_sweep_description = "Hold a range from the cursor: moving selects, or with `unset` deselects, what lies between"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
                 let p = ws
                     .pane_mut(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    .ok_or_else(no_pane)?;
                 let order = p.order();
                 let (selection, ways) = p.selecting();
                 match selection.cursor.and_then(|cursor| at_in(&order, cursor, a.at)) {
@@ -4751,7 +4991,7 @@ mod builtin {
         );
         sweep.forms([Form::new(
             serde_json::json!({ "unset": true }),
-            "Deselect as the cursor moves",
+            words!(app_select_sweep_unset = "Deselect as the cursor moves"),
         )]);
         sweep.shows();
 
@@ -4759,8 +4999,14 @@ mod builtin {
             "core",
             Topic::Select,
             "select_sweep_end",
-            "Stop selecting as the cursor moves",
-            "End the range held from the cursor, keeping what it covers",
+            words!(
+                app_select_sweep_end = "Stop selecting as the cursor moves",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_select_sweep_end_description =
+                    "End the range held from the cursor, keeping what it covers"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
@@ -4775,8 +5021,13 @@ mod builtin {
             "core",
             Topic::View,
             "expand",
-            "Expand folder",
-            "Open folders in place under the one shown, as the tree view draws them, or close them",
+            words!(
+                app_expand = "Expand folder",
+                note = "An action's name: open a folder in place, under the one shown, as a tree does."
+            ),
+            words!(
+                app_expand_description = "Open folders in place under the one shown, as the tree view draws them, or close them"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if a.mode == ExpandMode::CollapseAll {
@@ -4793,7 +5044,7 @@ mod builtin {
                     let p = ws
                         .pane(pane)
                         .filter(|p| p.open.is_some())
-                        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                        .ok_or_else(shows_nothing)?;
                     let ids: Vec<EntryId> = if a.ids.is_empty() {
                         p.selection.iter().collect()
                     } else {
@@ -4810,7 +5061,7 @@ mod builtin {
                     let mut ws = app.workspace.write();
                     let p = ws
                         .pane_mut(pane)
-                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                        .ok_or_else(no_pane)?;
                     for (at, location) in leads {
                         let open = p.is_expanded(&location);
                         match a.mode {
@@ -4835,8 +5086,13 @@ mod builtin {
             "core",
             Topic::Files,
             "hydrate",
-            "Load metadata",
-            "Request metadata for entries (views call this for visible rows)",
+            words!(
+                app_hydrate = "Load metadata",
+                note = "An action's name, for scripts and agents: read the files' sizes, dates and notes."
+            ),
+            words!(
+                app_hydrate_description = "Request metadata for entries (views call this for visible rows)"
+            ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let (groups, lent) = app
@@ -4862,8 +5118,13 @@ mod builtin {
         c.register::<EntriesArgs, _>(
             "core", Topic::Files,
             "entries",
-            "List entries",
-            "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's",
+            words!(
+                app_entries = "List entries",
+                note = "An action's name, for scripts and agents."
+            ),
+            words!(
+                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's"
+            ),
             |a, app| {
                 use crate::entry::keys;
                 let info = |id: EntryId, e: &crate::entry::Entry, path: Option<PathBuf>, selected: bool| EntryInfo {
@@ -4892,7 +5153,13 @@ mod builtin {
                 let ws = app.workspace.read();
                 let p = ws
                     .pane(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no pane {pane:?}"))?;
+                    .ok_or_else(|| {
+                        words!(
+                            app_no_pane_numbered = "no pane { $pane }",
+                            pane = format!("{pane:?}"),
+                            note = "An error answered to a script or an agent: the pane it named, by its number (as written)."
+                        )
+                    })?;
                 let order: Vec<EntryId> = p
                     .order()
                     .iter()
@@ -4926,17 +5193,31 @@ mod builtin {
             "core",
             Topic::Files,
             "rename",
-            "Rename",
-            "Rename the selected entry, or the one given (plan)",
+            words!(
+                app_rename = "Rename",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_rename_description = "Rename the selected entry, or the one given (plan)"
+            ),
             |a, app| {
                 let refs = app.targets(a.pane, a.entries)?;
                 let [r] = refs.as_slice() else {
-                    anyhow::bail!("rename needs exactly one entry")
+                    anyhow::bail!(words!(
+                        app_rename_one = "rename needs exactly one entry",
+                        note = "An error: Rename asked with none, or several, selected."
+                    ))
                 };
                 let new_name = a.new_name.into_inner().into_os_string();
                 op::valid_file_name(&new_name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
-                    format!("rename to {}", new_name.display()),
+                    // The name unquoted, as the title has always said it,
+                    // its controls shown (a `Folder`'s way).
+                    words!(
+                        app_rename_title = "rename to { $name }",
+                        name = words::Folder(new_name.display().to_string()),
+                        note = "An action's title: the file's new name. Begins in lower case: said inside other words too."
+                    ),
                     vec![Box::new(op::Rename {
                         entry: r.clone(),
                         new_name,
@@ -4949,8 +5230,13 @@ mod builtin {
         c.register::<TransferArgs, _>(
             "core", Topic::Files,
             "move",
-            "Move to…",
-            "Move the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
+            words!(
+                app_move = "Move to…",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_move_description = "Move the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there"
+            ),
             |a, app| {
                 let dest = destination(&a.dest)?;
                 Ok(transfer_plan(
@@ -4958,7 +5244,7 @@ mod builtin {
                         app,
                         a.pane,
                         a.entries,
-                        |taken| op::transfer_title("move", taken, "to", &dest),
+                        |taken| op::transfer_words(op::Carried::Move, taken, &dest),
                         |e| Box::new(op::Move::new(e, dest.clone())),
                     )?,
                     a.on_conflict,
@@ -4970,8 +5256,13 @@ mod builtin {
         c.register::<TransferArgs, _>(
             "core", Topic::Files,
             "copy",
-            "Copy to…",
-            "Copy the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
+            words!(
+                app_copy = "Copy to…",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_copy_description = "Copy the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there"
+            ),
             |a, app| {
                 let dest = destination(&a.dest)?;
                 Ok(transfer_plan(
@@ -4979,7 +5270,7 @@ mod builtin {
                         app,
                         a.pane,
                         a.entries,
-                        |taken| op::transfer_title("copy", taken, "to", &dest),
+                        |taken| op::transfer_words(op::Carried::Copy, taken, &dest),
                         |e| Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings)),
                     )?,
                     a.on_conflict,
@@ -4991,8 +5282,13 @@ mod builtin {
         c.register::<TransferArgs, _>(
             "core", Topic::Files,
             "link",
-            "Link to…",
-            "Make a link in a directory to each of the selection, or the entries given, under its name (plan); on_conflict says what becomes of a name taken there",
+            words!(
+                app_link = "Link to…",
+                note = "An action's name: make links to the files in another folder."
+            ),
+            words!(
+                app_link_description = "Make a link in a directory to each of the selection, or the entries given, under its name (plan); on_conflict says what becomes of a name taken there"
+            ),
             |a, app| {
                 let dest = destination(&a.dest)?;
                 Ok(transfer_plan(
@@ -5000,7 +5296,7 @@ mod builtin {
                         app,
                         a.pane,
                         a.entries,
-                        |taken| op::transfer_title("link", taken, "in", &dest),
+                        |taken| op::transfer_words(op::Carried::Link, taken, &dest),
                         |e| Box::new(op::Link::new(e, dest.clone())),
                     )?,
                     a.on_conflict,
@@ -5012,20 +5308,39 @@ mod builtin {
         c.register::<AccessArgs, _>(
             "core", Topic::Files,
             "set_access",
-            "Change access",
-            "Change who may read, write and run the selection, or the entries given: `mode` as chmod takes it, `group` by number, `inside` for what folders hold (plan). What a link leads to changes; the owner never does",
+            words!(
+                app_set_access = "Change access",
+                note = "An action's name: change who may read, write and run files."
+            ),
+            words!(
+                app_set_access_description = "Change who may read, write and run the selection, or the entries given: `mode` as chmod takes it, `group` by number, `inside` for what folders hold (plan). What a link leads to changes; the owner never does"
+            ),
             |a, app| {
                 anyhow::ensure!(
                     a.mode.is_some() || a.group.is_some(),
-                    "say a mode, a group or both"
+                    words!(
+                        app_access_nothing = "say a mode, a group or both",
+                        note = "An error answered to a script or an agent that asked to change access and gave neither a mode (as chmod takes it) nor a group."
+                    )
                 );
                 if let Some(mode) = &a.mode {
                     op::access::Mode::parse(mode)?;
                 }
                 let title = match (&a.mode, a.group) {
-                    (Some(mode), None) => format!("change access ({mode})"),
-                    (None, Some(group)) => format!("change group ({group})"),
-                    _ => "change access and group".to_owned(),
+                    (Some(mode), None) => words!(
+                        app_access_title = "change access ({ $mode })",
+                        mode = mode.as_str(),
+                        note = "An action's title: the mode as chmod takes it (644, u+x), as written. Begins in lower case: said inside other words too."
+                    ),
+                    (None, Some(group)) => words!(
+                        app_group_title = "change group ({ $group })",
+                        group = group.to_string(),
+                        note = "An action's title: the group by its number. Begins in lower case: said inside other words too."
+                    ),
+                    _ => words!(
+                        app_access_group_title = "change access and group",
+                        note = "An action's title. Begins in lower case: said inside other words too."
+                    ),
                 };
                 targets_plan(app, a.targets.pane, a.targets.entries, |_| title, |e| {
                     Box::new(op::access::SetAccess {
@@ -5043,11 +5358,18 @@ mod builtin {
             "core",
             Topic::Files,
             "set_access.describe",
-            "Say what a mode does",
-            "Say in words what `mode` (as chmod takes it) makes of items whose mode is `current` (all sharing it, a number; else what each clause does to each), `folders` or `files` when they all are one (else both, said apart where they differ); an error for what is no mode, as `set_access` refuses it",
+            words!(
+                app_set_access_describe = "Say what a mode does",
+                note = "An action's name, for scripts and agents: say in words what a mode as chmod takes it does."
+            ),
+            words!(
+                app_set_access_describe_description = "Say in words what `mode` (as chmod takes it) makes of items whose mode is `current` (all sharing it, a number; else what each clause does to each), `folders` or `files` when they all are one (else both, said apart where they differ); an error for what is no mode, as `set_access` refuses it"
+            ),
             |a, _| {
                 let kinds = op::access::Kinds::of(a.folders, a.files);
-                let says = op::access::said(&a.mode, a.current, kinds)?;
+                // Its English, as JSON leaves the process (ADR-139, 7): the
+                // window's field says it in its language once it asks typed.
+                let says = op::access::said_words(&a.mode, a.current, kinds)?;
                 Ok(Outcome::Value(serde_json::json!({ "says": says })))
             },
         )
@@ -5057,8 +5379,13 @@ mod builtin {
             "core",
             Topic::Files,
             "trash",
-            "Move to trash",
-            "Trash the selection, or the entries given (plan)",
+            words!(
+                app_trash = "Move to trash",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_trash_description = "Trash the selection, or the entries given (plan)"
+            ),
             |a, app| {
                 // A folder a program mounts across a network (sshfs, rclone,
                 // GVfs) keeps no trash: what is there is deleted for good,
@@ -5096,28 +5423,48 @@ mod builtin {
                 let all = steps.len();
                 let plan = Plan::with_steps(
                     if deleted == all && all > 0 {
-                        "delete permanently"
+                        delete_title()
                     } else {
-                        "move to trash"
+                        words!(
+                            app_trash_title = "move to trash",
+                            note = "An action's title: moving files to the trash. Begins in lower case: said inside other words too."
+                        )
                     },
                     steps,
                 );
                 // Said after the question, which counts what is deleted
                 // (`deleting.rs`): where they are, and what goes to the
-                // trash beside them.
+                // trash beside them. Said in the window's words: the
+                // review shows it.
                 let kept = all - deleted;
-                let said = if for_good == 1 {
-                    "It is in a network folder, which keeps no trash"
-                } else {
-                    "They are in network folders, which keep no trash"
-                };
                 Ok(Outcome::Plan(match (for_good, kept) {
                     (0, _) => plan,
-                    (_, 0) => plan.with_note(said),
-                    (_, 1) => plan.with_note(format!("{said}; the other item goes to the trash")),
-                    (_, kept) => {
-                        plan.with_note(format!("{said}; the other {kept} items go to the trash"))
-                    }
+                    (_, 0) => plan.with_note(
+                        words!(
+                            app_trash_none_kept = "{ $count ->
+                                [one] It is in a network folder, which keeps no trash
+                               *[other] They are in network folders, which keep no trash
+                            }",
+                            count = for_good,
+                            note = "Said under the question asking to delete files for good, of those in network folders, which keep no trash: how many they are."
+                        )
+                        .say(),
+                    ),
+                    (_, kept) => plan.with_note(
+                        words!(
+                            app_trash_others_kept = "{ $count ->
+                                [one] It is in a network folder, which keeps no trash
+                               *[other] They are in network folders, which keep no trash
+                            }; { $kept ->
+                                [one] the other item goes to the trash
+                               *[other] the other { $kept } items go to the trash
+                            }",
+                            count = for_good,
+                            kept = kept,
+                            note = "Said under the question asking to delete files for good, of those in network folders, which keep no trash (count), and the others, which go to the trash (kept)."
+                        )
+                        .say(),
+                    ),
                 }))
             },
         )
@@ -5127,8 +5474,13 @@ mod builtin {
             "core",
             Topic::Files,
             "delete",
-            "Delete permanently",
-            "Delete the selection, or the entries given, without trash (plan, irreversible)",
+            words!(
+                app_delete = "Delete permanently",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_delete_description = "Delete the selection, or the entries given, without trash (plan, irreversible)"
+            ),
             |a, app| {
                 // What stays on the disk, said where the listing knows it:
                 // of the selection, whose rows it holds.
@@ -5141,7 +5493,7 @@ mod builtin {
                     app,
                     a.pane,
                     a.entries,
-                    |_| "delete permanently".into(),
+                    |_| delete_title(),
                     |e| Box::new(op::Delete { entry: e }),
                 )?;
                 Ok(match (plan, kept.and_then(|k| k.said())) {
@@ -5156,14 +5508,20 @@ mod builtin {
             "core",
             Topic::Files,
             "mkdir",
-            "New folder",
-            "Create a folder in the folder given in `in`, or the one the pane shows (plan)",
+            words!(
+                app_mkdir = "New folder",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_mkdir_description =
+                    "Create a folder in the folder given in `in`, or the one the pane shows (plan)"
+            ),
             |a, app| {
                 let dir = a.folder(app)?;
                 let name = a.name.into_inner().into_os_string();
                 op::valid_file_name(&name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
-                    format!("new folder {}", name.display()),
+                    new_folder_title(&name.display().to_string()),
                     vec![Box::new(op::Mkdir {
                         path: dir.join(name),
                     })],
@@ -5175,8 +5533,13 @@ mod builtin {
         c.register::<MkdirArgs, _>(
             "core", Topic::Files,
             "new_file",
-            "New file",
-            "Create an empty file in the folder given in `in`, or the one the pane shows (plan); a name ending in / makes a folder",
+            words!(
+                app_new_file = "New file",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_new_file_description = "Create an empty file in the folder given in `in`, or the one the pane shows (plan); a name ending in / makes a folder"
+            ),
             |a, app| {
                 let dir = a.folder(app)?;
                 let name = a.name.into_inner().into_os_string();
@@ -5184,7 +5547,7 @@ mod builtin {
                 if let Some(folder) = name.to_str().and_then(|n| n.strip_suffix('/')) {
                     op::valid_file_name(std::ffi::OsStr::new(folder))?;
                     return Ok(Outcome::Plan(Plan::with_steps(
-                        format!("new folder {folder}"),
+                        new_folder_title(folder),
                         vec![Box::new(op::Mkdir {
                             path: dir.join(folder),
                         })],
@@ -5192,7 +5555,13 @@ mod builtin {
                 }
                 op::valid_file_name(&name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
-                    format!("new file {}", name.display()),
+                    // The name unquoted, as the title has always said it,
+                    // its controls shown (a `Folder`'s way).
+                    words!(
+                        app_new_file_title = "new file { $name }",
+                        name = words::Folder(name.display().to_string()),
+                        note = "An action's title: the new file's name. Begins in lower case: said inside other words too."
+                    ),
                     vec![Box::new(op::NewFile {
                         path: dir.join(name),
                     })],
@@ -5205,8 +5574,13 @@ mod builtin {
             "core",
             Topic::Files,
             "plan_diff",
-            "Preview plan",
-            "Dry-run a plan and return what each step would do",
+            words!(
+                app_plan_diff = "Preview plan",
+                note = "An action's name, for scripts and agents: say what each step of a plan would do, doing nothing."
+            ),
+            words!(
+                app_plan_diff_description = "Dry-run a plan and return what each step would do"
+            ),
             |a, app| {
                 let plan = Plan::from_data(&a.plan, &app.ops)?;
                 Ok(Outcome::Value(serde_json::to_value(
@@ -5219,8 +5593,13 @@ mod builtin {
         c.register::<ApplyPlanArgs, _>(
             "core", Topic::Files,
             "apply_plan",
-            "Apply plan",
-            "Apply a plan given as data (plan): as any command's, the caller applies it, at once for the user's own gesture, after review for an agent",
+            words!(
+                app_apply_plan = "Apply plan",
+                note = "An action's name, for scripts and agents."
+            ),
+            words!(
+                app_apply_plan_description = "Apply a plan given as data (plan): as any command's, the caller applies it, at once for the user's own gesture, after review for an agent"
+            ),
             |a, app| Ok(Outcome::Plan(Plan::from_data(&a.plan, &app.ops)?)),
         )
         .plans();
@@ -5228,16 +5607,27 @@ mod builtin {
         c.register::<UndoArgs, _>(
             "core", Topic::Files,
             "undo",
-            "Undo",
-            "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after, with an entry: with the entries after it that did, newest first); asked from outside the window, says what it took back, by the titles of the history's entries; from the window, it answers the ids its runs go by (runs), for the window to follow its own runs alone",
+            words!(
+                app_undo = "Undo",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_undo_description = "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after, with an entry: with the entries after it that did, newest first); asked from outside the window, says what it took back, by the titles of the history's entries; from the window, it answers the ids its runs go by (runs), for the window to follow its own runs alone"
+            ),
             |a, app| {
                 anyhow::ensure!(
                     !(a.plan.is_some() && a.entry.is_some()),
-                    "name a plan or an entry, not both"
+                    words!(
+                        app_undo_plan_or_entry = "name a plan or an entry, not both",
+                        note = "An error answered to a script or an agent that asked Undo for both a plan and an entry of the history."
+                    )
                 );
                 anyhow::ensure!(
                     !a.with_after || a.entry.is_some(),
-                    "with_after takes back an entry with what came after it: name the entry"
+                    words!(
+                        app_undo_with_after = "with_after takes back an entry with what came after it: name the entry",
+                        note = "An error answered to a script or an agent: with_after and entry are the arguments' names, as written."
+                    )
                 );
                 if crate::scheduler::on_window_thread() {
                     let cancel = app.lifetime().child();
@@ -5252,7 +5642,7 @@ mod builtin {
                         (None, None) => vec![
                             app.executor
                                 .undo(cancel)
-                                .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?,
+                                .ok_or_else(nothing_to_undo)?,
                         ],
                     };
                     return Ok(Outcome::Value(serde_json::json!({ "runs": runs })));
@@ -5289,7 +5679,7 @@ mod builtin {
                             break;
                         }
                     }
-                    let result = all.ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                    let result = all.ok_or_else(nothing_to_undo)?;
                     return Ok(replayed("undone", undone, &result));
                 }
                 let result = match (a.plan, a.entry) {
@@ -5297,7 +5687,7 @@ mod builtin {
                     (None, Some(entry)) => app.executor.undo_entry_blocking(entry, &cancel),
                     (None, None) => app.executor.undo_blocking(&cancel),
                 }
-                .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                .ok_or_else(nothing_to_undo)?;
                 Ok(replayed("undone", &result.entry_title, &result))
             },
         );
@@ -5305,8 +5695,13 @@ mod builtin {
         c.register::<RedoArgs, _>(
             "core", Topic::Files,
             "redo",
-            "Redo",
-            "Redo the most recently undone plan, or the undone history entry named when nothing undone after it touched what it did; asked from outside the window, says what it applied again; from the window, it answers the id its run goes by (runs), as Undo does",
+            words!(
+                app_redo = "Redo",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_redo_description = "Redo the most recently undone plan, or the undone history entry named when nothing undone after it touched what it did; asked from outside the window, says what it applied again; from the window, it answers the id its run goes by (runs), as Undo does"
+            ),
             |a, app| {
                 if crate::scheduler::on_window_thread() {
                     let cancel = app.lifetime().child();
@@ -5315,7 +5710,7 @@ mod builtin {
                         None => app
                             .executor
                             .redo(cancel)
-                            .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?,
+                            .ok_or_else(nothing_to_redo)?,
                     };
                     return Ok(Outcome::Value(serde_json::json!({ "runs": [run] })));
                 }
@@ -5324,7 +5719,7 @@ mod builtin {
                     Some(entry) => app.executor.redo_entry_blocking(entry, &cancel),
                     None => app.executor.redo_blocking(&cancel),
                 }
-                .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
+                .ok_or_else(nothing_to_redo)?;
                 Ok(replayed("redone", &result.entry_title, &result))
             },
         );
@@ -5332,8 +5727,13 @@ mod builtin {
         c.register::<NoArgs, _>(
             "core", Topic::Files,
             "history",
-            "Undo history",
-            "Return the actions Undo can take back, newest first (ADR-079, 13): each one's entry (what undo and redo take as entry), title, when it applied (seconds since 1970, UTC), whether it runs, waits, is done or undone, and what its Undo (an undone one's Redo) can do now: now, once it ends, after the action named (undo, or redo, that one first), being done, or never; with, the entries undo with_after takes with it",
+            words!(
+                app_history = "Undo history",
+                note = "The name of an action, in the palette, menus and F1's list."
+            ),
+            words!(
+                app_history_description = "Return the actions Undo can take back, newest first (ADR-079, 13): each one's entry (what undo and redo take as entry), title, when it applied (seconds since 1970, UTC), whether it runs, waits, is done or undone, and what its Undo (an undone one's Redo) can do now: now, once it ends, after the action named (undo, or redo, that one first), being done, or never; with, the entries undo with_after takes with it"
+            ),
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.history())?)),
         )
         .data();
@@ -5341,17 +5741,22 @@ mod builtin {
         c.register::<RetryArgs, _>(
             "core", Topic::Files,
             "retry",
-            "Retry",
-            "Run again what a plan stopped by an error had left, the last one stopped unless told which; what it applies is undone with that plan; asked from outside the window, says what it applied",
+            words!(
+                app_retry = "Retry",
+                note = "An action's name: run again what an action stopped by an error had left."
+            ),
+            words!(
+                app_retry_description = "Run again what a plan stopped by an error had left, the last one stopped unless told which; what it applies is undone with that plan; asked from outside the window, says what it applied"
+            ),
             |a, app| {
                 let plan = a
                     .plan
                     .or_else(|| app.executor.last_stopped())
-                    .ok_or_else(|| anyhow::anyhow!("nothing to retry"))?;
+                    .ok_or_else(nothing_to_retry)?;
                 if crate::scheduler::on_window_thread() {
                     anyhow::ensure!(
                         app.executor.retry(plan, app.lifetime().child()),
-                        "nothing to retry"
+                        nothing_to_retry()
                     );
                     return Ok(Outcome::Done);
                 }
@@ -5359,7 +5764,7 @@ mod builtin {
                 let result = app
                     .executor
                     .retry_blocking(plan, &app.lifetime().child())
-                    .ok_or_else(|| anyhow::anyhow!("nothing to retry"))?;
+                    .ok_or_else(nothing_to_retry)?;
                 Ok(replayed("retried", &title, &result))
             },
         );
@@ -5367,8 +5772,13 @@ mod builtin {
         c.register::<NoArgs, _>(
             "core", Topic::Files,
             "running",
-            "Running actions",
-            "Return the actions running, in the order they started: each one's title, steps ended, bytes done and in all when known (planned), speed in bytes a second and time left in seconds while they can be told, and the files a server still takes (ADR-113)",
+            words!(
+                app_running = "Running actions",
+                note = "An action's name, for scripts and agents."
+            ),
+            words!(
+                app_running_description = "Return the actions running, in the order they started: each one's title, steps ended, bytes done and in all when known (planned), speed in bytes a second and time left in seconds while they can be told, and the files a server still takes (ADR-113)"
+            ),
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.running())?)),
         )
         .data();
@@ -5376,8 +5786,13 @@ mod builtin {
         c.register::<ArrivingArgs, _>(
             "core", Topic::Files,
             "arriving",
-            "Arriving in a folder",
-            "Return what the actions waiting and running bring into a folder (the pane's when none is given) and has not landed (ADR-135): each item's name there, the plan that brings it, its state (waiting, starting, copying with others at the batch's fraction, moving at its own fraction from 0 to 1, landed: in place while its action goes on), whether its action is paused, what it is copied or moved from, and whether it is a folder or a file of what size",
+            words!(
+                app_arriving = "Arriving in a folder",
+                note = "An action's name, for scripts and agents: what actions still bring into a folder."
+            ),
+            words!(
+                app_arriving_description = "Return what the actions waiting and running bring into a folder (the pane's when none is given) and has not landed (ADR-135): each item's name there, the plan that brings it, its state (waiting, starting, copying with others at the batch's fraction, moving at its own fraction from 0 to 1, landed: in place while its action goes on), whether its action is paused, what it is copied or moved from, and whether it is a folder or a file of what size"
+            ),
             |a, app| {
                 let folder = match &a.folder {
                     Some(folder) => crate::os_path::absolute(folder)?.to_owned(),
@@ -5392,8 +5807,14 @@ mod builtin {
             "core",
             Topic::Skwir,
             "commands",
-            "List commands",
-            "Return every registered command with its argument schema",
+            words!(
+                app_commands = "List commands",
+                note = "An action's name, for scripts and agents."
+            ),
+            words!(
+                app_commands_description =
+                    "Return every registered command with its argument schema"
+            ),
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.commands.list())?)),
         )
         .data();
@@ -5403,23 +5824,41 @@ mod builtin {
 /// `sort`'s forms: each key, each way, in words (ADR-024).
 fn sort_forms() -> Vec<Form> {
     let mut forms = vec![
-        Form::new(serde_json::json!({ "ascending": true }), "Sort ascending"),
-        Form::new(serde_json::json!({ "ascending": false }), "Sort descending"),
+        Form::new(
+            serde_json::json!({ "ascending": true }),
+            words!(app_sort_ascending = "Sort ascending"),
+        ),
+        Form::new(
+            serde_json::json!({ "ascending": false }),
+            words!(app_sort_descending = "Sort descending"),
+        ),
     ];
     for key in crate::location::SortKey::ALL {
-        let words = key.words();
-        let [(_, up), (_, down)] = key.directions();
+        let named = key.phrase_words();
+        let [(_, up), (_, down)] = key.direction_words();
+        let way = |way: Words| {
+            words!(
+                app_sort_by_way = "Sort by { $key }, { $way }",
+                key = named.clone(),
+                way = way,
+                note = "An action's name in the palette: what the files are sorted by (date modified), then its direction (oldest first, A to Z)."
+            )
+        };
         forms.push(Form::new(
             serde_json::json!({ "key": key }),
-            format!("Sort by {words}"),
+            words!(
+                app_sort_by = "Sort by { $key }",
+                key = named.clone(),
+                note = "An action's name in the palette: what the files are sorted by (name, date modified)."
+            ),
         ));
         forms.push(Form::new(
             serde_json::json!({ "key": key, "ascending": true }),
-            format!("Sort by {words}, {up}"),
+            way(up),
         ));
         forms.push(Form::new(
             serde_json::json!({ "key": key, "ascending": false }),
-            format!("Sort by {words}, {down}"),
+            way(down),
         ));
     }
     forms
@@ -5428,26 +5867,44 @@ fn sort_forms() -> Vec<Form> {
 /// The palette's forms of `group`: by each key, and its directions.
 fn group_forms() -> Vec<Form> {
     let mut forms = vec![
-        Form::new(serde_json::json!({ "by": "none" }), "Do not group"),
+        Form::new(
+            serde_json::json!({ "by": "none" }),
+            words!(app_group_none = "Do not group"),
+        ),
         Form::new(
             serde_json::json!({ "by": "same_as_sort" }),
-            "Group the same as the sort",
+            words!(
+                app_group_as_sorted = "Group the same as the sort",
+                note = "An action's name: group the files by what they are sorted by, in its direction."
+            ),
         ),
     ];
     for key in crate::location::SortKey::ALL {
-        let words = key.words();
-        let [(_, up), (_, down)] = key.directions();
+        let named = key.phrase_words();
+        let [(_, up), (_, down)] = key.direction_words();
+        let way = |way: Words| {
+            words!(
+                app_group_by_way = "Group by { $key }, { $way }",
+                key = named.clone(),
+                way = way,
+                note = "An action's name in the palette: what the files are grouped by (date modified), then the groups' direction (oldest first, A to Z)."
+            )
+        };
         forms.push(Form::new(
             serde_json::json!({ "by": key }),
-            format!("Group by {words}"),
+            words!(
+                app_group_by = "Group by { $key }",
+                key = named.clone(),
+                note = "An action's name in the palette: what the files are grouped by (name, date modified)."
+            ),
         ));
         forms.push(Form::new(
             serde_json::json!({ "by": key, "ascending": true }),
-            format!("Group by {words}, {up}"),
+            way(up),
         ));
         forms.push(Form::new(
             serde_json::json!({ "by": key, "ascending": false }),
-            format!("Group by {words}, {down}"),
+            way(down),
         ));
     }
     forms

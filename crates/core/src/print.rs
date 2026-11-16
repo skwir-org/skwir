@@ -7,6 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::words::Words;
+
 /// Points in a millimetre: PDF measures in points, 72 to the inch.
 pub const POINTS_PER_MM: f32 = 72.0 / 25.4;
 
@@ -70,22 +72,31 @@ pub struct Picked {
 
 /// Pages as people type them: `1-3, 7, 10-`, `-5`, commas or spaces
 /// between. A range backwards, a page 0 or a word is refused, saying
-/// which.
+/// which, in English ([`parse_words`] says it as words).
 pub fn parse(text: &str) -> Result<Vec<Range>, String> {
+    parse_words(text).map_err(|refused| refused.english())
+}
+
+/// Pages as people type them (see [`parse`]), what is refused said as
+/// words.
+pub fn parse_words(text: &str) -> Result<Vec<Range>, Words> {
     let mut ranges = Vec::new();
     for part in text
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|part| !part.is_empty())
     {
-        let number = |text: &str| -> Result<Option<u32>, String> {
+        let number = |text: &str| -> Result<Option<u32>, Words> {
             let text = text.trim();
             if text.is_empty() {
                 return Ok(None);
             }
             match text.parse::<u32>() {
-                Ok(0) => Err("pages are counted from 1".to_owned()),
+                Ok(0) => Err(crate::words!(
+                    print_pages_from_one = "pages are counted from 1",
+                    note = "Pages to print typed with a page 0."
+                )),
                 Ok(page) => Ok(Some(page)),
-                Err(_) => Err(format!("“{text}” is not a page")),
+                Err(_) => Err(not_a_page(text)),
             }
         };
         let range = if let Some((first, last)) = part.split_once(['-', '–']) {
@@ -101,19 +112,42 @@ pub fn parse(text: &str) -> Result<Vec<Range>, String> {
             }
         };
         if range.last.is_some_and(|last| last < range.first) {
-            return Err(format!("{part} goes backwards"));
+            return Err(crate::words!(
+                print_pages_backwards = "{ $range } goes backwards",
+                range = part,
+                note = "Pages to print typed as a range whose end is before its start: the range as typed (5-3)."
+            ));
         }
         ranges.push(range);
     }
     if ranges.is_empty() {
-        return Err("no page named".to_owned());
+        return Err(crate::words!(
+            print_no_page = "no page named",
+            note = "Pages to print typed with no page in them."
+        ));
     }
     Ok(ranges)
 }
 
-/// Ranges as the print portal writes them: from 0 (`0-2,4,9-11`).
+/// What was typed for a page and is none, as typed.
+fn not_a_page(text: &str) -> Words {
+    crate::words!(
+        print_not_a_page = "“{ $text }” is not a page",
+        text = text,
+        note = "Pages to print typed with something not a page number: what was typed."
+    )
+}
+
+/// Ranges as the print portal writes them: from 0 (`0-2,4,9-11`); what is
+/// refused in English ([`from_zero_based_words`] says it as words).
 pub fn from_zero_based(text: &str) -> Result<Vec<Range>, String> {
-    let mut ranges = parse(&shift(text, 1)?)?;
+    from_zero_based_words(text).map_err(|refused| refused.english())
+}
+
+/// Ranges as the print portal writes them (see [`from_zero_based`]), what
+/// is refused said as words.
+pub fn from_zero_based_words(text: &str) -> Result<Vec<Range>, Words> {
+    let mut ranges = parse_words(&shift(text, 1)?)?;
     ranges.retain(|range| range.first > 0);
     Ok(ranges)
 }
@@ -137,16 +171,16 @@ pub fn to_zero_based(ranges: &[Range]) -> String {
 
 /// Every number of `text` moved by `by`: one that would pass the largest
 /// page number is refused, as one past it typed is.
-fn shift(text: &str, by: u32) -> Result<String, String> {
+fn shift(text: &str, by: u32) -> Result<String, Words> {
     let mut out = String::new();
     let mut digits = String::new();
-    let flush = |digits: &mut String, out: &mut String| -> Result<(), String> {
+    let flush = |digits: &mut String, out: &mut String| -> Result<(), Words> {
         if !digits.is_empty() {
             let n = digits
                 .parse::<u32>()
                 .ok()
                 .and_then(|n| n.checked_add(by))
-                .ok_or_else(|| format!("“{digits}” is not a page"))?;
+                .ok_or_else(|| not_a_page(digits))?;
             out.push_str(&n.to_string());
             digits.clear();
         }
@@ -359,6 +393,30 @@ impl Paper {
         ("a3", "A3"),
         ("legal", "Legal"),
     ];
+
+    /// The papers of [`Paper::NAMED`], each with what it is called, said
+    /// where it is drawn.
+    pub fn named_words() -> Vec<(&'static str, Words)> {
+        vec![
+            ("a4", Words::as_written("A4")),
+            (
+                "letter",
+                crate::words!(
+                    print_paper_letter = "Letter",
+                    note = "A paper's name: US Letter, 8.5 by 11 inches."
+                ),
+            ),
+            ("a5", Words::as_written("A5")),
+            ("a3", Words::as_written("A3")),
+            (
+                "legal",
+                crate::words!(
+                    print_paper_legal = "Legal",
+                    note = "A paper's name: US Legal, 8.5 by 14 inches."
+                ),
+            ),
+        ]
+    }
 
     /// The paper called `name` (as [`Paper::NAMED`] and libpaper name them,
     /// case ignored).

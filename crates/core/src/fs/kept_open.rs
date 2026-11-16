@@ -212,8 +212,16 @@ pub struct Taken {
 }
 
 impl std::fmt::Display for Taken {
+    /// Its words: English, or the reader's language while an error's chain
+    /// is said.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("it is being moved or removed")
+        std::fmt::Display::fmt(
+            &crate::words!(
+                fs_taken = "it is being moved or removed",
+                note = "Why a file could not be read just now: an action is moving or removing it. Begins in lower case: said after other words."
+            ),
+            f,
+        )
     }
 }
 

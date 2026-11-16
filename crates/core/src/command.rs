@@ -89,8 +89,16 @@ impl Invocation {
 pub struct NothingSelected;
 
 impl std::fmt::Display for NothingSelected {
+    /// Its words: English, or the reader's language while an error's chain
+    /// is said.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("nothing selected")
+        std::fmt::Display::fmt(
+            &crate::words!(
+                command_nothing_selected = "nothing selected",
+                note = "Why a command that acts on the selection did nothing. Begins in lower case: said after other words too."
+            ),
+            f,
+        )
     }
 }
 
@@ -112,8 +120,15 @@ pub fn is_nothing_selected(error: &anyhow::Error) -> bool {
 pub struct WantsClipboard;
 
 impl std::fmt::Display for WantsClipboard {
+    /// Its words, as [`NothingSelected`]'s.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("nothing to paste")
+        std::fmt::Display::fmt(
+            &crate::words!(
+                command_nothing_to_paste = "nothing to paste",
+                note = "Why Paste did nothing: neither Skwir nor the system's clipboard holds files. Begins in lower case."
+            ),
+            f,
+        )
     }
 }
 
@@ -747,22 +762,55 @@ impl Declared<'_> {
 }
 
 /// Errors from dispatch.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum CommandError {
-    #[error("unknown command `{0}`")]
     Unknown(Arc<str>),
     /// The reason is in the message, not a source: a chain printed whole
     /// (`{:#}`) would say it twice.
-    #[error("invalid arguments for `{name}`: {reason}")]
     InvalidArgs {
         name: Arc<str>,
         reason: serde_json::Error,
     },
     /// Its handler panicked: a fault of skwir's or of a plugin's, never the
     /// caller's. What it said is in the log.
-    #[error("“{0}” stopped on a fault of its own (the log says where)")]
     Panicked(Arc<str>),
 }
+
+impl CommandError {
+    /// What it says, in words.
+    pub fn words(&self) -> Words {
+        use crate::words;
+        match self {
+            CommandError::Unknown(name) => words!(
+                command_unknown = "unknown command `{ $command }`",
+                command = name.to_string(),
+                note = "Said to an agent, a script or a key bound by the user: no action has this name (an identifier, as written)."
+            ),
+            CommandError::InvalidArgs { name, reason } => words!(
+                command_invalid_args = "invalid arguments for `{ $command }`: { $reason }",
+                command = name.to_string(),
+                reason = reason.to_string(),
+                note = "Said to an agent or a script: the action's name, then why its arguments were refused, as the JSON reader wrote it (English)."
+            ),
+            CommandError::Panicked(name) => words!(
+                command_panicked =
+                    "“{ $command }” stopped on a fault of its own (the log says where)",
+                command = name.to_string(),
+                note = "An action failed through a fault of Skwir's or of a plugin's: its name (an identifier, as written)."
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    /// Its words: English, or the reader's language while an error's chain
+    /// is said.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.words(), f)
+    }
+}
+
+impl std::error::Error for CommandError {}
 
 /// The command registry.
 ///

@@ -1703,7 +1703,10 @@ impl StepContext {
             if self.waiting.borrow().is_empty() {
                 e
             } else {
-                e.context("what was moved stays where it was")
+                e.context(crate::words!(
+                    op_moved_stays = "what was moved stays where it was",
+                    note = "Said after why a move to a removable drive could not be written out: the originals were not removed."
+                ))
             }
         };
         for (_, pace) in self.paces.borrow().iter() {
@@ -1816,7 +1819,10 @@ impl StepContext {
         if !Self::stages_in(dest_dir) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "it moves nothing between its folders (a camera): only copies are made there",
+                crate::words!(
+                    op_moves_nothing = "it moves nothing between its folders (a camera): only copies are made there",
+                    note = "Why a step that moves or stages files in a folder failed: the device it is on (a camera) does not move files between its folders."
+                ),
             ));
         }
         self.staging_in(dest_dir);

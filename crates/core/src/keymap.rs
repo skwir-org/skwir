@@ -8,6 +8,7 @@
 
 use crate::command::Invocation;
 use crate::settings::{Beside, RecordField, SettingSpec, Settings};
+use crate::words::Words;
 
 /// The settings namespace, shown as the Keyboard page.
 pub const OWNER: &str = "keyboard";
@@ -42,33 +43,46 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
     settings.declare(
         SettingSpec::records(
             BINDINGS_KEY,
-            "Your shortcuts",
-            "Keys you bind, over the ones skwir and its plugins set. Leave the command empty to free a key.",
+            crate::words!(keymap_shortcuts = "Your shortcuts", note = "A setting on the Keyboard page: the list of keys the user binds."),
+            crate::words!(
+                keymap_shortcuts_description = "Keys you bind, over the ones skwir and its plugins set. Leave the command empty to free a key.",
+                note = "skwir is the program's name."
+            ),
+            // Transitional: `records` takes the one record's name as text.
             "shortcut",
             vec![
                 RecordField::text(
                     "keys",
-                    "Keys",
-                    "One key with its modifiers, or several one after another: ctrl-shift-n, g h, shift-g",
+                    crate::words!(keymap_keys = "Keys", note = "A column of the list of shortcuts: the keys pressed."),
+                    crate::words!(
+                        keymap_keys_description = "One key with its modifiers, or several one after another: ctrl-shift-n, g h, shift-g",
+                        note = "The examples are keys as Skwir writes them: never translated."
+                    ),
                     "ctrl-alt-n",
                 )
                 .required(),
                 RecordField::text(
                     "command",
-                    "Command",
-                    "What the keys run, by name as the palette's commands are registered: mkdir, ui.jump, tab.new. Empty frees the keys",
+                    crate::words!(keymap_command = "Command", note = "A column of the list of shortcuts: the action the keys run."),
+                    crate::words!(
+                        keymap_command_description = "What the keys run, by name as the palette's commands are registered: mkdir, ui.jump, tab.new. Empty frees the keys",
+                        note = "mkdir, ui.jump and tab.new are actions' names: never translated."
+                    ),
                     "ui.jump",
                 ),
                 RecordField::text(
                     "args",
-                    "Arguments",
-                    "The command's arguments, as a JSON object",
+                    crate::words!(keymap_args = "Arguments", note = "A column of the list of shortcuts: what the action is given."),
+                    crate::words!(keymap_args_description = "The command's arguments, as a JSON object"),
                     "{\"location\": \"~\"}",
                 ),
                 RecordField::text(
                     "when",
-                    "Where",
-                    "Where the keys work: empty for anywhere, pane for the file list, with conditions such as selection, single, dir, file, folder",
+                    crate::words!(keymap_where = "Where", note = "A column of the list of shortcuts: where in the window the keys work."),
+                    crate::words!(
+                        keymap_where_description = "Where the keys work: empty for anywhere, pane for the file list, with conditions such as selection, single, dir, file, folder",
+                        note = "pane, selection, single, dir, file and folder are words the field takes: never translated."
+                    ),
                     "pane selection",
                 ),
             ],
@@ -104,16 +118,27 @@ fn binding(record: &toml::Value) -> anyhow::Result<UserBinding> {
             .map(str::trim)
             .filter(|s| !s.is_empty())
     };
-    let keys = text("keys").ok_or_else(|| anyhow::anyhow!("a shortcut needs its keys"))?;
+    let keys = text("keys").ok_or_else(|| anyhow::Error::new(needs_keys()))?;
     valid_keys(keys)?;
     let args: serde_json::Value = match text("args") {
         None => serde_json::json!({}),
-        Some(args) => serde_json::from_str(args)
-            .map_err(|error| anyhow::anyhow!("the arguments of {keys} are not JSON: {error}"))?,
+        Some(args) => serde_json::from_str(args).map_err(|error| {
+            anyhow::Error::new(crate::words!(
+                keymap_args_not_json = "the arguments of { $keys } are not JSON: { $error }",
+                keys = keys,
+                error = error.to_string(),
+                note = "A shortcut refused: its keys as written, then what the JSON reader said (English)."
+            ))
+        })?,
     };
     anyhow::ensure!(
         args.is_object(),
-        "the arguments of {keys} are an object: {{\"name\": value}}"
+        crate::words!(
+            keymap_args_object = "the arguments of { $keys } are an object: { $example }",
+            keys = keys,
+            example = "{\"name\": value}",
+            note = "A shortcut refused: its keys as written, then an example of an object in JSON, as written."
+        )
     );
     Ok(UserBinding {
         id: text("id").unwrap_or_default().to_owned(),
@@ -174,17 +199,32 @@ fn check(value: &toml::Value, beside: Beside<'_>, app: Option<&crate::App>) -> a
                         return Ok(());
                     }
                 }
-                Err(anyhow::anyhow!(
-                    "{} runs {name}, which no command is called (is its plugin on?)",
-                    binding.keys
-                ))
+                Err(anyhow::Error::new(crate::words!(
+                    keymap_unknown_command = "{ $keys } runs { $command }, which no command is called (is its plugin on?)",
+                    keys = binding.keys,
+                    command = name.to_string(),
+                    note = "A shortcut refused: its keys and the action's name, both as written."
+                )))
             }
             Err(
                 error @ (crate::command::CommandError::InvalidArgs { .. }
                 | crate::command::CommandError::Panicked(_)),
-            ) => Err(anyhow::anyhow!("{}: {error}", binding.keys)),
+            ) => Err(anyhow::Error::new(crate::words!(
+                keymap_refused = "{ $keys }: { $error }",
+                keys = binding.keys,
+                error = anyhow::Error::new(error),
+                note = "A shortcut refused: its keys as written, then why its action refused it."
+            ))),
         }
     })
+}
+
+/// Why a shortcut is refused: it names no key.
+fn needs_keys() -> Words {
+    crate::words!(
+        keymap_needs_keys = "a shortcut needs its keys",
+        note = "A shortcut refused: its keys are empty."
+    )
 }
 
 const MODIFIERS: [&str; 9] = [
@@ -204,7 +244,7 @@ const MODIFIERS: [&str; 9] = [
 /// minus key, `G` for Shift+G), as `gpui::Keystroke::parse` reads them.
 pub fn valid_keys(keys: &str) -> anyhow::Result<()> {
     let strokes: Vec<&str> = keys.split_whitespace().collect();
-    anyhow::ensure!(!strokes.is_empty(), "a shortcut needs its keys");
+    anyhow::ensure!(!strokes.is_empty(), needs_keys());
     for stroke in strokes {
         let (mods, key) = match stroke.strip_suffix("--") {
             Some(mods) => (mods, "-"),
@@ -213,13 +253,23 @@ pub fn valid_keys(keys: &str) -> anyhow::Result<()> {
         };
         anyhow::ensure!(
             !key.is_empty(),
-            "“{stroke}” names no key: write ctrl-- for Ctrl and the minus key"
+            crate::words!(
+                keymap_no_key =
+                    "“{ $stroke }” names no key: write ctrl-- for Ctrl and the minus key",
+                stroke = stroke,
+                note = "A shortcut refused: what was written. ctrl-- is how it is written: never translated."
+            )
         );
         if !mods.is_empty() {
             for modifier in mods.split('-') {
                 anyhow::ensure!(
                     MODIFIERS.iter().any(|m| m.eq_ignore_ascii_case(modifier)),
-                    "“{modifier}” in “{stroke}” is not a modifier: use ctrl, alt, shift or super"
+                    crate::words!(
+                        keymap_no_modifier = "“{ $modifier }” in “{ $stroke }” is not a modifier: use ctrl, alt, shift or super",
+                        modifier = modifier,
+                        stroke = stroke,
+                        note = "A shortcut refused: both as written. ctrl, alt, shift and super are written so: never translated."
+                    )
                 );
             }
         }

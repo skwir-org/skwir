@@ -241,18 +241,37 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn new(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> anyhow::Result<Self> {
-        anyhow::ensure!(!indices.is_empty(), "the mesh has no triangles");
+        anyhow::ensure!(
+            !indices.is_empty(),
+            crate::words!(
+                inspection_mesh_empty = "the mesh has no triangles",
+                note = "Why a 3D model cannot be shown: its mesh is empty."
+            )
+        );
         anyhow::ensure!(
             indices.len().is_multiple_of(3),
-            "the mesh's indices are not whole triangles"
+            crate::words!(
+                inspection_mesh_partial = "the mesh's indices are not whole triangles",
+                note =
+                    "Why a 3D model cannot be shown: its triangles' corners do not come in threes."
+            )
         );
         let count = positions.len();
         if let Some(index) = indices.iter().find(|&&i| i as usize >= count) {
-            anyhow::bail!("the mesh's index {index} names no position (it has {count})");
+            anyhow::bail!(crate::words!(
+                inspection_mesh_index =
+                    "the mesh's index { $index } names no position (it has { $count })",
+                index = index.to_string(),
+                count = count,
+                note = "Why a 3D model cannot be shown: a corner's number, and how many positions the mesh has."
+            ));
         }
         anyhow::ensure!(
             positions.iter().flatten().all(|v| v.is_finite()),
-            "the mesh has a position that is not finite"
+            crate::words!(
+                inspection_mesh_infinite = "the mesh has a position that is not finite",
+                note = "Why a 3D model cannot be shown: a point of it is at no place."
+            )
         );
         Ok(Mesh {
             positions,
@@ -265,9 +284,19 @@ impl Mesh {
     pub fn with_colours(self, colours: Vec<[u8; 4]>) -> anyhow::Result<Self> {
         anyhow::ensure!(
             colours.len() == self.positions.len(),
-            "the mesh has {} colours for {} positions",
-            colours.len(),
-            self.positions.len()
+            crate::words!(
+                inspection_mesh_colours = "the mesh has { $colours ->
+                    [one] { $colours } colour
+                   *[other] { $colours } colours
+                } for { $positions ->
+                    [one] { $positions } position
+                   *[other] { $positions } positions
+                }",
+                colours = colours.len(),
+                positions = self.positions.len(),
+                note =
+                    "Why a 3D model cannot be shown: its colours and its points are not as many."
+            )
         );
         Ok(Mesh {
             colours: Some(colours),
