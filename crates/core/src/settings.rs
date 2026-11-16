@@ -162,8 +162,10 @@ pub enum SettingKind {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RecordField {
     pub key: String,
-    pub title: String,
-    pub description: String,
+    /// Its label and what it is, said where they are drawn; in English to
+    /// agents and scripts (ADR-139, 7).
+    pub title: Words,
+    pub description: Words,
     pub kind: FieldKind,
     /// A record without it is refused.
     pub required: bool,
@@ -174,7 +176,8 @@ pub struct RecordField {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FieldKind {
     Text {
-        placeholder: String,
+        /// What it shows while empty (an example), said where drawn.
+        placeholder: Words,
     },
     Integer {
         min: i64,
@@ -193,37 +196,52 @@ pub enum FieldKind {
 pub const SECRET_STORED: &str = "keyring";
 
 impl RecordField {
-    fn new(key: &str, title: &str, description: &str, kind: FieldKind) -> Self {
+    fn new(key: &str, title: Words, description: Words, kind: FieldKind) -> Self {
         RecordField {
             key: key.into(),
-            title: title.into(),
-            description: description.into(),
+            title,
+            description,
             kind,
             required: false,
         }
     }
 
-    pub fn text(key: &str, title: &str, description: &str, placeholder: &str) -> Self {
+    pub fn text(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        placeholder: impl Into<Words>,
+    ) -> Self {
         Self::new(
             key,
-            title,
-            description,
+            title.into(),
+            description.into(),
             FieldKind::Text {
                 placeholder: placeholder.into(),
             },
         )
     }
 
-    pub fn integer(key: &str, title: &str, description: &str, (min, max): (i64, i64)) -> Self {
-        Self::new(key, title, description, FieldKind::Integer { min, max })
+    pub fn integer(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        (min, max): (i64, i64),
+    ) -> Self {
+        Self::new(
+            key,
+            title.into(),
+            description.into(),
+            FieldKind::Integer { min, max },
+        )
     }
 
-    pub fn pairs(key: &str, title: &str, description: &str) -> Self {
-        Self::new(key, title, description, FieldKind::Pairs)
+    pub fn pairs(key: &str, title: impl Into<Words>, description: impl Into<Words>) -> Self {
+        Self::new(key, title.into(), description.into(), FieldKind::Pairs)
     }
 
-    pub fn secret(key: &str, title: &str, description: &str) -> Self {
-        Self::new(key, title, description, FieldKind::Secret)
+    pub fn secret(key: &str, title: impl Into<Words>, description: impl Into<Words>) -> Self {
+        Self::new(key, title.into(), description.into(), FieldKind::Secret)
     }
 
     #[must_use]
@@ -237,7 +255,8 @@ impl RecordField {
 /// (a tile server's Test).
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RecordAction {
-    pub label: String,
+    /// Its button's label, said where it is drawn.
+    pub label: Words,
     pub command: String,
 }
 
@@ -492,7 +511,7 @@ pub struct Tried {
 }
 
 impl SettingSpec {
-    fn new(key: &str, title: &str, description: &str, default: toml::Value) -> Self {
+    fn new(key: &str, title: Words, description: Words, default: toml::Value) -> Self {
         let kind = match default {
             toml::Value::Boolean(_) => SettingKind::Toggle,
             toml::Value::Integer(_) => SettingKind::Integer,
@@ -502,8 +521,8 @@ impl SettingSpec {
         };
         SettingSpec {
             key: key.into(),
-            title: title.into(),
-            description: description.into(),
+            title,
+            description,
             page: String::new(),
             section: String::new(),
             section_title: Words::as_written(""),
@@ -524,16 +543,26 @@ impl SettingSpec {
         }
     }
 
-    pub fn toggle(key: &str, title: &str, description: &str, default: bool) -> Self {
-        Self::new(key, title, description, toml::Value::Boolean(default))
+    pub fn toggle(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        default: bool,
+    ) -> Self {
+        Self::new(
+            key,
+            title.into(),
+            description.into(),
+            toml::Value::Boolean(default),
+        )
     }
 
     /// `choices` are `(stored value, label)` pairs, each label as written
     /// (a name the system or the user gave, or words not yet a message).
     pub fn choice(
         key: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         default: &str,
         choices: &[(&str, &str)],
     ) -> Self {
@@ -553,12 +582,17 @@ impl SettingSpec {
     /// where the choice is drawn (`words!`).
     pub fn choice_words(
         key: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         default: &str,
         choices: Vec<(&str, Words)>,
     ) -> Self {
-        let mut spec = Self::new(key, title, description, toml::Value::String(default.into()));
+        let mut spec = Self::new(
+            key,
+            title.into(),
+            description.into(),
+            toml::Value::String(default.into()),
+        );
         spec.kind = SettingKind::Choice;
         let (values, labels): (Vec<String>, Vec<Words>) = choices
             .into_iter()
@@ -571,25 +605,55 @@ impl SettingSpec {
 
     pub fn integer(
         key: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         default: i64,
         range: (i64, i64),
     ) -> Self {
-        let mut spec = Self::new(key, title, description, toml::Value::Integer(default));
+        let mut spec = Self::new(
+            key,
+            title.into(),
+            description.into(),
+            toml::Value::Integer(default),
+        );
         spec.constraints.integer_range = Some(range);
         spec
     }
 
-    pub fn number(key: &str, title: &str, description: &str, default: f64) -> Self {
-        Self::new(key, title, description, toml::Value::Float(default))
+    pub fn number(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        default: f64,
+    ) -> Self {
+        Self::new(
+            key,
+            title.into(),
+            description.into(),
+            toml::Value::Float(default),
+        )
     }
 
-    pub fn text(key: &str, title: &str, description: &str, default: &str) -> Self {
-        Self::new(key, title, description, toml::Value::String(default.into()))
+    pub fn text(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        default: &str,
+    ) -> Self {
+        Self::new(
+            key,
+            title.into(),
+            description.into(),
+            toml::Value::String(default.into()),
+        )
     }
 
-    pub fn path(key: &str, title: &str, description: &str, default: &str) -> Self {
+    pub fn path(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        default: &str,
+    ) -> Self {
         let mut spec = Self::text(key, title, description, default);
         spec.kind = SettingKind::Path;
         spec
@@ -598,7 +662,12 @@ impl SettingSpec {
     /// A program to run (`SettingKind::Command`): a value with words after
     /// a name is refused, which would not start (`bash -l`), saying why. A
     /// path may hold spaces.
-    pub fn command(key: &str, title: &str, description: &str, default: &str) -> Self {
+    pub fn command(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        default: &str,
+    ) -> Self {
         let mut spec = Self::text(key, title, description, default).validate_with(|value, _| {
             let program = value.as_str().unwrap_or_default().trim();
             anyhow::ensure!(
@@ -616,8 +685,13 @@ impl SettingSpec {
     /// exclusions' tables, ADR-125): kept in the settings file, as any
     /// preference, checked by its owner (`validate_with`), never drawn as
     /// a row.
-    pub fn drawn_by_page(key: &str, title: &str, description: &str, default: toml::Value) -> Self {
-        let mut spec = Self::new(key, title, description, default);
+    pub fn drawn_by_page(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
+        default: toml::Value,
+    ) -> Self {
+        let mut spec = Self::new(key, title.into(), description.into(), default);
         spec.kind = SettingKind::Data;
         spec.page_drawn = true;
         spec
@@ -627,10 +701,10 @@ impl SettingSpec {
     /// (saved searches, pinned tags, tags' colours): kept in the data file,
     /// apart from the settings (ADR-057), so it is kept when the settings
     /// are read-only. Not shown in the dialog.
-    pub fn data(key: &str, description: &str, default: toml::Value) -> Self {
+    pub fn data(key: &str, description: impl Into<Words>, default: toml::Value) -> Self {
         // Never a row: no title (ADR-139, 8), its description for whoever
         // reads the file.
-        let mut spec = Self::new(key, "", description, default);
+        let mut spec = Self::new(key, Words::default(), description.into(), default);
         spec.kind = SettingKind::Data;
         spec.store = Store::Data;
         spec
@@ -639,7 +713,7 @@ impl SettingSpec {
     /// What skwir keeps of the window as it was left (its layout, its tabs,
     /// the hints it showed): data, in the state file rather than the
     /// settings (ADR-056), so the settings may be read-only.
-    pub fn state(key: &str, description: &str, default: toml::Value) -> Self {
+    pub fn state(key: &str, description: impl Into<Words>, default: toml::Value) -> Self {
         let mut spec = Self::data(key, description, default);
         spec.store = Store::State;
         spec
@@ -648,12 +722,17 @@ impl SettingSpec {
     /// A list of records, each made of `fields` (see [`SettingKind::Records`]).
     pub fn records(
         key: &str,
-        title: &str,
-        description: &str,
+        title: impl Into<Words>,
+        description: impl Into<Words>,
         record_name: &str,
         fields: Vec<RecordField>,
     ) -> Self {
-        let mut spec = Self::new(key, title, description, toml::Value::Array(Vec::new()));
+        let mut spec = Self::new(
+            key,
+            title.into(),
+            description.into(),
+            toml::Value::Array(Vec::new()),
+        );
         spec.kind = SettingKind::Records;
         spec.constraints.fields = fields;
         spec.constraints.record_name = record_name.into();
@@ -704,7 +783,7 @@ impl SettingSpec {
 
     /// A button on each record, running `command` with the record's id.
     #[must_use]
-    pub fn record_action(mut self, label: &str, command: &str) -> Self {
+    pub fn record_action(mut self, label: impl Into<Words>, command: &str) -> Self {
         self.constraints.record_action = Some(RecordAction {
             label: label.into(),
             command: command.into(),
@@ -1074,6 +1153,10 @@ impl SettingSpec {
                 table.insert("id".into(), toml::Value::String(id.into()));
             }
             for field in &self.constraints.fields {
+                // In English, as the rest of each sentence is until it is a
+                // message (PLAN.md, step E): an agent reads it, and the
+                // dialog shows the error as it is.
+                let title = field.title.english();
                 let value = record.get(&field.key).filter(|v| !v.is_null());
                 let empty = match value {
                     None => true,
@@ -1081,7 +1164,7 @@ impl SettingSpec {
                     Some(serde_json::Value::Array(a)) => a.is_empty(),
                     Some(_) => false,
                 };
-                anyhow::ensure!(!(field.required && empty), "{} is needed", field.title);
+                anyhow::ensure!(!(field.required && empty), "{title} is needed");
                 let Some(value) = value.filter(|_| !empty) else {
                     continue;
                 };
@@ -1089,7 +1172,7 @@ impl SettingSpec {
                     FieldKind::Text { .. } => toml::Value::String(
                         value
                             .as_str()
-                            .ok_or_else(|| anyhow::anyhow!("{} is text", field.title))?
+                            .ok_or_else(|| anyhow::anyhow!("{title} is text"))?
                             .trim()
                             .to_owned(),
                     ),
@@ -1097,35 +1180,33 @@ impl SettingSpec {
                         let n = value
                             .as_i64()
                             .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-                            .ok_or_else(|| anyhow::anyhow!("{} is a whole number", field.title))?;
+                            .ok_or_else(|| anyhow::anyhow!("{title} is a whole number"))?;
                         anyhow::ensure!(
                             (*min..=*max).contains(&n),
-                            "{}: enter a whole number from {min} to {max}",
-                            field.title
+                            "{title}: enter a whole number from {min} to {max}"
                         );
                         toml::Value::Integer(n)
                     }
                     FieldKind::Pairs => {
                         let pairs = value
                             .as_array()
-                            .ok_or_else(|| anyhow::anyhow!("{} is a list of pairs", field.title))?;
+                            .ok_or_else(|| anyhow::anyhow!("{title} is a list of pairs"))?;
                         let mut list = Vec::with_capacity(pairs.len());
                         for pair in pairs {
                             let [name, value] =
                                 pair.as_array().map(Vec::as_slice).unwrap_or_default()
                             else {
-                                anyhow::bail!("{} is a list of name and value pairs", field.title);
+                                anyhow::bail!("{title} is a list of name and value pairs");
                             };
                             let (Some(name), Some(value)) = (name.as_str(), value.as_str()) else {
-                                anyhow::bail!("{}: names and values are text", field.title);
+                                anyhow::bail!("{title}: names and values are text");
                             };
                             if name.trim().is_empty() && value.trim().is_empty() {
                                 continue;
                             }
                             anyhow::ensure!(
                                 !name.trim().is_empty(),
-                                "{}: a value needs a name",
-                                field.title
+                                "{title}: a value needs a name"
                             );
                             list.push(toml::Value::Array(vec![
                                 toml::Value::String(name.trim().into()),
@@ -1142,8 +1223,7 @@ impl SettingSpec {
                         // file only says that it is there.
                         anyhow::ensure!(
                             value.as_str() == Some(SECRET_STORED),
-                            "{} is kept in the keyring, not in the settings",
-                            field.title
+                            "{title} is kept in the keyring, not in the settings"
                         );
                         toml::Value::String(SECRET_STORED.into())
                     }

@@ -524,7 +524,7 @@ fn list<V: Helps>(
     let reference = help.reference.clone().unwrap_or_default();
     let mut rows = crate::modal::options(
         crate::elements::known_by("field-help-rows", id),
-        reference.title.clone(),
+        reference.title.say(),
         listed.rows.len(),
         a11y,
     )
@@ -544,7 +544,7 @@ fn list<V: Helps>(
                 .pb_1()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(reference.groups[g].title.clone())
+                .child(reference.groups[g].title.say())
                 .into_any_element(),
             Child::Note(g, n) => div()
                 .flex_none()
@@ -553,7 +553,7 @@ fn list<V: Helps>(
                 .text_small()
                 .text_color(theme.text_muted)
                 .whitespace_normal()
-                .child(reference.groups[g].notes[n].clone())
+                .child(reference.groups[g].notes[n].say())
                 .into_any_element(),
             Child::Row(row) => {
                 let (group, at) = listed.rows[row];
@@ -563,7 +563,7 @@ fn list<V: Helps>(
                 let lit = listed.lit == Some(row);
                 let hover = theme.hover;
                 let named = a11y.then(|| {
-                    let mut named = format!("{}, {}", item.written, item.says);
+                    let mut named = format!("{}, {}", item.written, item.says.say());
                     if let Some(gives) = &item.gives {
                         named.push_str(", ");
                         named.push_str(gives);
@@ -616,7 +616,7 @@ fn list<V: Helps>(
                         .min_w_0()
                         .truncate()
                         .text_color(theme.text_muted)
-                        .child(item.says.clone()),
+                        .child(item.says.say()),
                 )
                 .children(item.gives.clone().map(|gives| {
                     div()

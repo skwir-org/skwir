@@ -17,6 +17,7 @@ use skwir_core::app::{App, AppConfig};
 use skwir_core::command::Invocation;
 use skwir_core::form::{Answer, Asked, Kind, Values};
 use skwir_core::testing::free_port;
+use skwir_core::words::Words;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::Connector;
 use skwir_plugin_remote::passwords::{self, Keyring};
@@ -147,7 +148,7 @@ fn filled(asked: &Asked, values: &[(&str, &str)]) -> Values {
         assert!(
             asked.form.fields.iter().any(|f| f.key == *key),
             "“{}” has no field {key}",
-            asked.form.title
+            asked.form.title.english()
         );
         filled.set(*key, *value);
     }
@@ -158,7 +159,7 @@ fn filled(asked: &Asked, values: &[(&str, &str)]) -> Values {
 fn said(app: &App) -> Vec<String> {
     app.take_notifications()
         .into_iter()
-        .map(|n| n.text)
+        .map(|n| n.text.english())
         .collect()
 }
 
@@ -264,12 +265,12 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     assert!(
         choices
             .iter()
-            .any(|c| c.value == "webdav" && c.section == "Storage")
+            .any(|c| c.value == "webdav" && c.section.english() == "Storage")
     );
     assert!(
         choices
             .iter()
-            .any(|c| c.value == "crypt" && c.section == "On other remotes")
+            .any(|c| c.value == "crypt" && c.section.english() == "On other remotes")
     );
     assert!(!choices.iter().any(|c| c.value == "memory"));
     window.accept(&kinds, &[("picked", "webdav")]);
@@ -386,7 +387,7 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     ))
     .unwrap();
     let edit = window.form(30);
-    assert_eq!(edit.form.title, "Edit “nas-1”");
+    assert_eq!(edit.form.title.english(), "Edit “nas-1”");
     let pass_field = edit.form.fields.iter().find(|f| f.key == "pass").unwrap();
     assert_eq!(pass_field.kind, Kind::Secret { kept: true });
     assert_eq!(pass_field.value, "");
@@ -409,8 +410,9 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     let edit = window.form(30);
     window.accept(&edit, &[("pass", "wrong")]);
     let failed = window.form(60);
-    assert_eq!(failed.form.title, "“nas-1” Does Not Answer");
-    assert!(failed.form.intro.contains("401"), "{}", failed.form.intro);
+    assert_eq!(failed.form.title.english(), "“nas-1” Does Not Answer");
+    let intro = failed.form.intro.english();
+    assert!(intro.contains("401"), "{intro}");
     window.back(&failed);
     let again = window.form(30);
     window.accept(&again, &[("pass", secret)]);
@@ -460,7 +462,7 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     ))
     .unwrap();
     let asked = window.form(30);
-    assert_eq!(asked.form.title, "Remove “nas-1”?");
+    assert_eq!(asked.form.title.english(), "Remove “nas-1”?");
     window.accept(&asked, &[]);
     until_said(&app, 30, "“nas-1” is removed");
     assert!(section(&config, "nas-1").is_none());
@@ -505,7 +507,7 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
         if let Some(found) = app
             .take_notifications()
             .into_iter()
-            .find(|n| n.text.contains("“plain” is added"))
+            .find(|n| n.text.english().contains("“plain” is added"))
         {
             break found;
         }
@@ -521,7 +523,7 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     window.accept(&asked, &[("password", "one"), ("again", "other")]);
     let again = window.form(30);
     assert_eq!(
-        again.form.error.as_deref(),
+        again.form.error.as_ref().map(Words::english).as_deref(),
         Some("The two passwords differ")
     );
     let password = "a pass phrase, it's \"mine\"";
@@ -567,7 +569,7 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     ))
     .unwrap();
     let edit = window.form(30);
-    assert_eq!(edit.form.title, "Edit “plain”");
+    assert_eq!(edit.form.title.english(), "Edit “plain”");
     window.cancel(&edit);
     assert!(app.take_secret_questions().is_empty());
 
@@ -590,7 +592,7 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     assert_eq!(question.title, "Password of rclone's configuration");
     assert!(app.answer_secret(question.id, Some(password.into())));
     let edit = window.form(30);
-    assert_eq!(edit.form.title, "Edit “plain”");
+    assert_eq!(edit.form.title.english(), "Edit “plain”");
     window.cancel(&edit);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
@@ -735,7 +737,7 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
             break asked;
         }
         if asked.form.waiting.is_none() {
-            assert_eq!(asked.form.title, "Set Up “drive-1”");
+            assert_eq!(asked.form.title.english(), "Set Up “drive-1”");
             window.accept(&asked, &[]);
         }
     };
@@ -1110,12 +1112,12 @@ fn a_remote_stands_on_the_remotes_picked_in_its_form() {
     ))
     .unwrap();
     let options = window.form(30);
-    let switches: Vec<&str> = options
+    let switches: Vec<String> = options
         .form
         .fields
         .iter()
         .filter(|f| f.kind == Kind::Toggle && f.key.starts_with("upstream:"))
-        .map(|f| f.title.as_str())
+        .map(|f| f.title.english())
         .collect();
     assert_eq!(
         switches,
@@ -1658,11 +1660,8 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     window.accept(&kinds, &[("picked", "address:dav")]);
     let parts = window.form(30);
     assert!(parts.form.back, "Back to the kinds");
-    assert!(
-        parts.form.intro.contains("Skwir's list"),
-        "{}",
-        parts.form.intro
-    );
+    let intro = parts.form.intro.english();
+    assert!(intro.contains("Skwir's list"), "{intro}");
     assert!(
         !parts
             .form
@@ -1765,7 +1764,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     ))
     .unwrap();
     let edit = window.form(30);
-    assert_eq!(edit.form.title, "Edit “It's my files”");
+    assert_eq!(edit.form.title.english(), "Edit “It's my files”");
     let value = |key: &str| {
         edit.form
             .fields
@@ -1797,7 +1796,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     let kinds = window.form(30);
     window.accept(&kinds, &[("picked", "address:dav")]);
     let parts = window.form(30);
-    assert!(parts.form.intro.contains("KDE's network folders"));
+    assert!(parts.form.intro.english().contains("KDE's network folders"));
     window.accept(
         &parts,
         &[
@@ -1888,12 +1887,9 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     ))
     .unwrap();
     let confirm = window.form(30);
-    assert_eq!(confirm.form.title, "Remove “Shared”?");
-    assert!(
-        !confirm.form.intro.contains("password"),
-        "{}",
-        confirm.form.intro
-    );
+    assert_eq!(confirm.form.title.english(), "Remove “Shared”?");
+    let intro = confirm.form.intro.english();
+    assert!(!intro.contains("password"), "{intro}");
     window.accept(&confirm, &[]);
     until_said(&app, 30, "“Shared” is removed");
     assert!(!entry.exists(), "its desktop entry gone");
@@ -1955,15 +1951,12 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         ))
         .unwrap();
         let confirm = window.form(30);
-        assert_eq!(confirm.form.title, format!("Remove “{name}”?"));
+        assert_eq!(confirm.form.title.english(), format!("Remove “{name}”?"));
+        let intro = confirm.form.intro.english();
         assert_eq!(
-            confirm
-                .form
-                .intro
-                .contains("the password it keeps for it in the keyring"),
+            intro.contains("the password it keeps for it in the keyring"),
             last,
-            "{}",
-            confirm.form.intro
+            "{intro}"
         );
         window.accept(&confirm, &[]);
         until_said(&app, 30, &format!("“{name}” is removed"));
@@ -2108,7 +2101,15 @@ fn mount_options_chosen_for_a_server_shape_its_next_mount() {
     );
     window.accept(&asked, &[("read_only", "true"), ("bandwidth", "fast")]);
     let refused = window.form(30);
-    assert!(refused.form.error.as_deref().unwrap().contains("rate"));
+    assert!(
+        refused
+            .form
+            .error
+            .as_ref()
+            .unwrap()
+            .english()
+            .contains("rate")
+    );
     window.accept(
         &refused,
         &[

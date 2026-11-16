@@ -178,13 +178,13 @@ pub struct Converted {
 /// Another way of looking at what a provider accepts, offered beside the
 /// entry's own preview by a button of its own (ADR-133: a history of
 /// commits): asked by role, never by a plugin's name (`Previews::ways`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Way {
-    /// The button's label.
-    pub label: &'static str,
+    /// The button's label, said where it is drawn.
+    pub label: crate::words::Words,
     /// What its tooltip says it shows, its source named (a history read
-    /// from Git).
-    pub tip: &'static str,
+    /// from Git), said where it is drawn.
+    pub tip: crate::words::Words,
     /// The button's icon, by the toolbar's name.
     pub icon: &'static str,
     /// Whether it looks at folders too, not only at files.
@@ -669,9 +669,9 @@ mod tests {
             self.0
         }
         fn way(&self) -> Option<Way> {
-            self.1.then_some(Way {
-                label: "History",
-                tip: "",
+            self.1.then(|| Way {
+                label: "History".into(),
+                tip: crate::words::Words::default(),
                 icon: "history",
                 folders: true,
             })

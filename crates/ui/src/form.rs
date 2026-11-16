@@ -26,6 +26,7 @@ use gpui::{
     relative,
 };
 use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Mark, Picture, Values};
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -105,8 +106,9 @@ pub struct FormState {
     /// arrows go into the list. Typing `~/` in a field of folders saves
     /// there, never in the first folder offered that matches it.
     typed: bool,
-    /// Why the answer was refused (a field needed is empty).
-    refusal: Option<String>,
+    /// Why the answer was refused (a field needed is empty): the asker's
+    /// words, or the form's own as the window said them.
+    refusal: Option<Words>,
     /// What a Save field knows of the folders it read, and the read under
     /// way, one at a time.
     read: save::Reads,
@@ -297,8 +299,9 @@ fn choices(field: &Field) -> &[Choice] {
 /// Which of `choices` match `typed`, best first: all, in their order, for
 /// nothing typed.
 fn matching(choices: &[Choice], typed: &str) -> Vec<usize> {
+    // Matched as the window says them.
     modal::fuzzy(choices, typed, |c| {
-        format!("{} {} {}", c.shown(), c.value, c.detail)
+        format!("{} {} {}", c.shown().say(), c.value, c.detail.say())
     })
 }
 
@@ -335,11 +338,14 @@ impl Shell {
         for (at, field) in asked.form.fields.iter().enumerate() {
             let control = match &field.kind {
                 Kind::Text | Kind::Integer { .. } | Kind::Secret { .. } => {
+                    // Said as the form opens, for as long as it is open.
                     let placeholder = match field.kind {
-                        Kind::Secret { kept: true } => "Kept: type another to replace it",
-                        _ => field.placeholder.as_str(),
+                        Kind::Secret { kept: true } => {
+                            "Kept: type another to replace it".to_owned()
+                        }
+                        _ => field.placeholder.say(),
                     };
-                    let input = self.form_input(field, placeholder, at, &mut subs, window, cx);
+                    let input = self.form_input(field, &placeholder, at, &mut subs, window, cx);
                     Control::Input(input)
                 }
                 Kind::Toggle => Control::Toggle {
@@ -383,14 +389,8 @@ impl Shell {
                 // Its name put there once every field is (`save_open`).
                 Kind::Save { .. } => {
                     use gpui::Focusable as _;
-                    let input = self.form_input(
-                        field,
-                        field.placeholder.as_str(),
-                        at,
-                        &mut subs,
-                        window,
-                        cx,
-                    );
+                    let input =
+                        self.form_input(field, &field.placeholder.say(), at, &mut subs, window, cx);
                     // Its popover folded, its name given back, once it is
                     // left.
                     let text = input.read(cx).focus_handle(cx);
@@ -471,8 +471,9 @@ impl Shell {
     ) -> Entity<TextInput> {
         let input = cx.new(|cx| {
             let mut input = TextInput::new(placeholder.to_owned(), cx);
-            // Named by its label, as assistive technology reads it.
-            input.set_label(field.title.clone());
+            // Named by its label, as assistive technology reads it, said
+            // as the form opens.
+            input.set_label(field.title.say());
             input.set_masked(field.secret());
             if !field.secret() {
                 input.set_text(field.value.clone(), cx);
@@ -739,7 +740,7 @@ impl Shell {
         if !back && let Some(refusal) = form.form.refusal(&values) {
             // What it names may be folded: shown.
             form.more = true;
-            form.refusal = Some(refusal);
+            form.refusal = Some(Words::as_written(refusal));
             cx.notify();
             return;
         }
@@ -914,7 +915,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             div()
                 .text_body()
                 .text_color(theme.text_muted)
-                .child(form.intro.clone()),
+                .child(form.intro.say()),
         );
     }
     if let Some(waiting) = &form.waiting {
@@ -925,7 +926,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .gap_2()
                 .child(controls::glyph("busy", theme.text_muted, 16.))
                 // Wraps, beside its glyph.
-                .child(div().flex_1().min_w_0().child(waiting.clone())),
+                .child(div().flex_1().min_w_0().child(waiting.say())),
         );
     }
     for (at, (field, control)) in form.fields.iter().zip(&state.controls).enumerate() {
@@ -989,7 +990,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         cx,
     ));
     if form.waiting.is_none() {
-        let accept = form.accept_with(&values).to_owned();
+        let accept = form.accept_with(&values).say();
         // Held back while a path no file can be saved at is typed: said,
         // not offered, as the reason under its field says.
         if let Some(why) = state.blocked(cx) {
@@ -1040,19 +1041,19 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             gpui::MouseButton::Left,
             cx.listener(|this, _, _, cx| this.form_fold(cx)),
         )
-        .child(div().text_title().child(form.title.clone()))
+        .child(div().text_title().child(form.title.say()))
         .child(body)
-        .children(state.refusal.clone().map(|refusal| {
+        .children(state.refusal.as_ref().map(|refusal| {
             div()
                 .id("form-refusal")
                 .role(gpui::Role::Alert)
                 .text_body()
                 .text_color(theme.error)
-                .child(refusal)
+                .child(refusal.say())
         }))
         .child(modal::footer(hint, buttons, &theme));
     let panel = modal::panel("form", 600., &theme)
-        .when(shell.a11y, |d| d.aria_label(form.title.clone()))
+        .when(shell.a11y, |d| d.aria_label(form.title.say()))
         .key_context(context)
         .max_h(relative(0.9))
         .child(inside);
@@ -1098,9 +1099,9 @@ fn field_row(
         .text_body()
         .font_weight(gpui::FontWeight::MEDIUM)
         .child(if field.required {
-            format!("{} *", field.title)
+            format!("{} *", field.title.say())
         } else {
-            field.title.clone()
+            field.title.say()
         });
     // A file to write says what its folder read tells, else its help.
     let note = matches!(control, Control::Save { .. })
@@ -1127,7 +1128,7 @@ fn field_row(
             div()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(field.help.clone())
+                .child(field.help.say())
         }),
     };
     let mut row = div().flex().flex_col().gap_1();
@@ -1139,7 +1140,7 @@ fn field_row(
                 .child(controls::field(input, None, focused, false, None, theme));
         }
         Control::Toggle { on, focus } => {
-            let title = field.title.clone();
+            let title = SharedString::from(field.title.say());
             row = row.child(
                 div()
                     .flex()
@@ -1175,7 +1176,7 @@ fn field_row(
             let shown = choices(field)
                 .iter()
                 .find(|c| c.value == *value)
-                .map_or_else(|| value.clone(), |c| c.shown().to_owned());
+                .map_or_else(|| value.clone(), |c| c.shown().say());
             let picker = match input {
                 Some(input) => {
                     let focused = input.read(cx).is_focused(window);
@@ -1204,7 +1205,7 @@ fn field_row(
                         focus,
                         theme,
                     )
-                    .aria_label(field.title.clone())
+                    .aria_label(field.title.say())
                     .aria_expanded(open),
                     move |this, window, cx| {
                         if this.form.as_ref().is_some_and(|f| f.open == Some(at)) {
@@ -1280,7 +1281,7 @@ fn field_row(
             row = row.child(div().flex().child(modal::pressed(
                 controls::button(
                     SharedString::from(format!("form-link-{at}")),
-                    field.title.clone(),
+                    field.title.say(),
                     Some("link"),
                     ButtonStyle::Plain,
                     focus,
@@ -1332,7 +1333,7 @@ fn choice_row(
         .all(|c| c.picture.is_none() && c.detail.is_empty())
     {
         let mut frame = controls::segmented(id, focus, theme)
-            .aria_label(field.title.clone())
+            .aria_label(field.title.say())
             .on_click(keyboard);
         for (index, choice) in all.iter().enumerate() {
             let chosen = choice.value.clone();
@@ -1340,7 +1341,7 @@ fn choice_row(
             frame = frame.child(
                 controls::segment(
                     format!("form-segment-{at}-{index}"),
-                    choice.shown().to_owned(),
+                    choice.shown().say(),
                     choice.value == value,
                     theme,
                 )
@@ -1356,7 +1357,7 @@ fn choice_row(
     let mut frame = div()
         .id(id)
         .role(gpui::Role::RadioGroup)
-        .aria_label(field.title.clone())
+        .aria_label(field.title.say())
         .track_focus(focus)
         .flex()
         .gap_2()
@@ -1374,7 +1375,7 @@ fn choice_row(
         let card = div()
             .id(crate::elements::known_by("form-card", (at, index)))
             .role(gpui::Role::RadioButton)
-            .aria_label(SharedString::from(choice.shown().to_owned()))
+            .aria_label(SharedString::from(choice.shown().say()))
             .aria_toggled(if selected {
                 gpui::Toggled::True
             } else {
@@ -1396,19 +1397,14 @@ fn choice_row(
                 d.border_color(theme.border).hover(move |s| s.bg(hover))
             })
             .children(choice.picture.as_ref().map(|picture| drawn(picture, theme)))
-            .child(
-                div()
-                    .text_body()
-                    .text_center()
-                    .child(choice.shown().to_owned()),
-            )
+            .child(div().text_body().text_center().child(choice.shown().say()))
             .when(!choice.detail.is_empty(), |d| {
                 d.child(
                     div()
                         .text_small()
                         .text_center()
                         .when(!selected, |d| d.text_color(theme.text_muted))
-                        .child(choice.detail.clone()),
+                        .child(choice.detail.say()),
                 )
             })
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1490,11 +1486,12 @@ fn choice_list(
         .unwrap_or_default()
         .into_iter()
         .filter_map(|index| Some((index, all.get(index)?)))
+        // Said as it is drawn.
         .map(|(id, choice)| Item {
             id,
-            title: choice.shown().to_owned(),
-            detail: choice.detail.clone(),
-            section: choice.section.clone(),
+            title: choice.shown().say(),
+            detail: choice.detail.say(),
+            section: choice.section.say(),
         })
         .collect();
     list_of(shell, state, at, &items, rows, theme, cx)

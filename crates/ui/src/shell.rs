@@ -4157,7 +4157,8 @@ impl Shell {
                             crate::toast::Tone::Success
                         },
                         vec![crate::toast::Action {
-                            label: action.label,
+                            // Said as the toast is made, as its own are.
+                            label: action.label.say(),
                             command: action.command.name.to_string(),
                             args: action.command.args,
                         }],

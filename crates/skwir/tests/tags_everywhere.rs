@@ -199,7 +199,7 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     until(&app, "the answer", || {
         app.take_notifications()
             .into_iter()
-            .find(|n| n.text.starts_with("No file in"))
+            .find(|n| n.text.english().starts_with("No file in"))
     });
     assert!(app.take_proposals().is_empty());
 }
@@ -291,7 +291,7 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
         app.take_notifications()
             .into_iter()
             .rev()
-            .find(|n| n.text == "Moved the tag “x”")
+            .find(|n| n.text.english() == "Moved the tag “x”")
     });
     let undo = undo.action.expect("an Undo").command;
     app.dispatch(&undo).unwrap();

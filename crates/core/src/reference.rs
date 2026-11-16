@@ -23,11 +23,16 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// What a field takes: its groups, in the order they are read.
+use crate::words::Words;
+
+/// What a field takes: its groups, in the order they are read. What it
+/// says (its headings, notes and what each item means) is words, said
+/// where the window draws them and in English to agents (ADR-139); what
+/// is written and put in the field (`{name}`, `\d`) is as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Reference {
     /// What it is about, as its heading says it: "Template".
-    pub title: String,
+    pub title: Words,
     pub groups: Vec<Group>,
     /// What begins a part the field offers to go on with as it is typed
     /// (`{` in a template, `\` in a pattern); none, nothing is offered.
@@ -54,12 +59,12 @@ pub struct Offered {
 /// for them all.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Group {
-    pub title: String,
+    pub title: Words,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<Item>,
     /// Lines said under its items.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub notes: Vec<String>,
+    pub notes: Vec<Words>,
 }
 
 /// One thing the field reads. As data ([`ItemData`]), an item puts what
@@ -71,9 +76,9 @@ pub struct Item {
     /// As it is written: `{n:03}`, `\d`, `kind:`.
     pub written: String,
     /// What it means, in words.
-    pub says: String,
+    pub says: Words,
     /// What it gives for what the field is about (the first file's), when
-    /// that is known.
+    /// that is known: what the field makes of it, as it is.
     pub gives: Option<String>,
     /// What choosing it puts where the field's caret is (over what is
     /// selected there); `None`, with no `fills`: an item only read.
@@ -92,7 +97,7 @@ pub struct ItemData {
     /// As it is written: `{n:03}`, `\d`, `kind:`.
     pub written: String,
     /// What it means, in words.
-    pub says: String,
+    pub says: Words,
     /// What it gives for what the field is about (the first file's), when
     /// that is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,7 +157,7 @@ impl schemars::JsonSchema for Item {
 }
 
 impl Reference {
-    pub fn new(title: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<Words>) -> Self {
         Reference {
             title: title.into(),
             groups: Vec::new(),
@@ -287,7 +292,7 @@ fn common_prefix(a: &str, b: &str) -> usize {
 }
 
 impl Group {
-    pub fn new(title: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<Words>) -> Self {
         Group {
             title: title.into(),
             items: Vec::new(),
@@ -302,7 +307,7 @@ impl Group {
     }
 
     #[must_use]
-    pub fn note(mut self, note: impl Into<String>) -> Self {
+    pub fn note(mut self, note: impl Into<Words>) -> Self {
         self.notes.push(note.into());
         self
     }
@@ -310,7 +315,7 @@ impl Group {
 
 impl Item {
     /// An item put at the caret as it is written.
-    pub fn new(written: impl Into<String>, says: impl Into<String>) -> Self {
+    pub fn new(written: impl Into<String>, says: impl Into<Words>) -> Self {
         let written = written.into();
         Item {
             inserts: Some(written.clone()),

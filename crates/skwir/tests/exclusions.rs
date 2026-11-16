@@ -402,7 +402,7 @@ fn what_cannot_be_read_is_told_and_a_change_of_the_page_keeps_it() {
     let told: Vec<String> = app
         .take_notifications()
         .into_iter()
-        .map(|n| n.text)
+        .map(|n| n.text.english())
         .filter(|text| text.contains("cannot be read"))
         .collect();
     assert_eq!(told.len(), 1, "{told:?}");

@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 
 use crate::app::App;
 use crate::command::Topic;
+use crate::words::Words;
 
 /// The app a plugin was added to, as the plugin holds it (one plugin
 /// value for each app): what a step made of its data reaches beyond what
@@ -153,8 +154,8 @@ impl Category {
 pub struct Requirement {
     /// Program or library name as the user would install it ("ffmpeg").
     pub name: String,
-    /// What stops working without it.
-    pub purpose: String,
+    /// What stops working without it, said where the settings show it.
+    pub purpose: Words,
     /// `true` when the plugin is useless without it, `false` for a fallback.
     pub required: bool,
     /// May touch the filesystem; call from a worker.
@@ -164,7 +165,7 @@ pub struct Requirement {
 impl Requirement {
     pub fn new(
         name: &str,
-        purpose: &str,
+        purpose: impl Into<Words>,
         probe: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Self {
         Requirement {
@@ -176,7 +177,7 @@ impl Requirement {
     }
 
     /// A program looked up on `PATH`.
-    pub fn program(name: &'static str, purpose: &str) -> Self {
+    pub fn program(name: &'static str, purpose: impl Into<Words>) -> Self {
         Self::new(name, purpose, move || on_path(name))
     }
 
@@ -197,7 +198,9 @@ pub fn on_path(program: &str) -> bool {
 pub struct RequirementStatus {
     pub plugin: &'static str,
     pub name: String,
-    pub purpose: String,
+    /// What stops working without it: said where the settings show it, in
+    /// English to agents and scripts (ADR-139, 7).
+    pub purpose: Words,
     pub required: bool,
     pub found: bool,
 }

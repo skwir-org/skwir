@@ -1057,7 +1057,7 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     let refused: Vec<_> = app
         .take_notifications()
         .into_iter()
-        .filter(|n| n.text.contains("not disconnected"))
+        .filter(|n| n.text.english().contains("not disconnected"))
         .collect();
     assert!(refused.is_empty(), "{refused:?}");
     drop(watching);

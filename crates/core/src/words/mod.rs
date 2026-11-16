@@ -236,6 +236,13 @@ impl Words {
         Words(Inner::Error(Failure(Arc::clone(error), from)))
     }
 
+    /// Whether it says nothing: no words were given (text as written, and
+    /// empty), as a field that may say nothing holds then (a form's help,
+    /// a choice's detail). A message or an error always says something.
+    pub fn is_empty(&self) -> bool {
+        matches!(&self.0, Inner::Written(text) if text.is_empty())
+    }
+
     /// Its message, `None` for text as written or an error.
     pub fn message_of(&self) -> Option<&'static Message> {
         match &self.0 {
@@ -523,6 +530,14 @@ impl fmt::Display for Words {
 /// Words are an error: written with `words!`, a step's failure is said in
 /// the reader's language (`Err(words!(…).into())`, `.context(words!(…))`).
 impl std::error::Error for Words {}
+
+impl Default for Words {
+    /// No words: what a field that may say nothing holds until it is
+    /// given some (`Words::is_empty`).
+    fn default() -> Self {
+        Words::as_written("")
+    }
+}
 
 impl From<&str> for Words {
     /// Transitional (PLAN.md, step E): text not yet a message, shown as it

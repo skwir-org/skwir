@@ -23,6 +23,7 @@ use crate::plugin::PluginHost;
 use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
+use crate::words::Words;
 use crate::workspace::{Pane, PaneId, Selection, StepFilter, WindowId, Workspace};
 
 /// Folders being looked into for a lens (`App::find_where_folders_lead`),
@@ -211,7 +212,9 @@ impl From<&str> for SecretAnswer {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Notification {
     pub level: NotifyLevel,
-    pub text: String,
+    /// What it says: in the window's language where the window shows it,
+    /// in English where an agent or a log reads it (ADR-139, 7).
+    pub text: Words,
     /// Key of the setting that resolves this message, if one does; the UI
     /// offers to open it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -225,7 +228,8 @@ pub struct Notification {
 /// A button on a [`Notification`]: its label and the command it runs.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct NotifyAction {
-    pub label: String,
+    /// Its button's label, said where it is drawn.
+    pub label: Words,
     pub command: Invocation,
 }
 
@@ -757,7 +761,7 @@ impl App {
             crate::settings::SettingSpec::toggle(
                 &read,
                 "Read",
-                &format!(
+                format!(
                     "{holds} Read, what it keeps is shown merged with the other places' notes."
                 ),
                 store.default_read(),
@@ -3024,7 +3028,7 @@ impl App {
 
     /// Queue a message for the UI (errors from background work, results
     /// worth a status line) and wake it.
-    pub fn notify(&self, level: NotifyLevel, text: impl Into<String>) {
+    pub fn notify(&self, level: NotifyLevel, text: impl Into<Words>) {
         self.notifications.lock().push(Notification {
             level,
             text: text.into(),
@@ -3038,8 +3042,8 @@ impl App {
     pub fn notify_with_action(
         &self,
         level: NotifyLevel,
-        text: impl Into<String>,
-        label: impl Into<String>,
+        text: impl Into<Words>,
+        label: impl Into<Words>,
         command: Invocation,
     ) {
         self.notifications.lock().push(Notification {
@@ -3058,7 +3062,7 @@ impl App {
     /// when the edit was itself an undo (`undo`): how an edit made outside a
     /// plan answers (a bookmark, a saved search, a pinned tag, a default
     /// application), `inverse` carrying `!undo` for the next turn.
-    pub fn notify_undoable(&self, text: impl Into<String>, undo: bool, inverse: Invocation) {
+    pub fn notify_undoable(&self, text: impl Into<Words>, undo: bool, inverse: Invocation) {
         self.notify_with_action(
             NotifyLevel::Info,
             text,
@@ -3068,7 +3072,7 @@ impl App {
     }
 
     /// Like [`App::notify`], pointing at the setting that fixes the problem.
-    pub fn notify_about_setting(&self, level: NotifyLevel, text: impl Into<String>, key: &str) {
+    pub fn notify_about_setting(&self, level: NotifyLevel, text: impl Into<Words>, key: &str) {
         self.notifications.lock().push(Notification {
             level,
             text: text.into(),

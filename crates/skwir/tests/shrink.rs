@@ -536,7 +536,7 @@ fn reduce_size_asks_first_and_makes_the_copy_chosen() {
     let ask = Invocation::new("shrink.reduce_ask").with("entries", named(&picture));
     app.dispatch(&ask).unwrap();
     let asked = form_asked(&app);
-    assert_eq!(asked.form.title, "Reduce Size of “walk.jpg”");
+    assert_eq!(asked.form.title.english(), "Reduce Size of “walk.jpg”");
     let keys: Vec<&str> = asked.form.fields.iter().map(|f| f.key.as_str()).collect();
     assert_eq!(keys, ["quality", "gray", "strip", "at_most"]);
     answer(&app, &asked, &[("quality", "screen"), ("at_most", "lots")]);
@@ -545,8 +545,8 @@ fn reduce_size_asks_first_and_makes_the_copy_chosen() {
         again
             .form
             .error
-            .as_deref()
-            .is_some_and(|error| error.starts_with("At most")),
+            .as_ref()
+            .is_some_and(|error| error.english().starts_with("At most")),
         "{:?}",
         again.form.error
     );

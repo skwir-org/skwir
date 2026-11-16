@@ -1133,7 +1133,8 @@ fn the_fields_reference_is_what_the_rules_read() {
         // The signs alone, and the regex's, are parts of one, put where
         // the caret is; an example is written whole in place of what the
         // field holds (`foo` and `~/VMs` would make `foo~/VMs`).
-        if pattern.groups[g].title.starts_with("Signs") || pattern.groups[g].title == "Pattern" {
+        let title = pattern.groups[g].title.english();
+        if title.starts_with("Signs") || title == "Pattern" {
             assert!(item.fills.is_empty(), "{} is a part", item.written);
             continue;
         }

@@ -203,7 +203,11 @@ fn ask(
     Ok(match serde_json::from_value(answer)? {
         CommandAnswer::Done => Outcome::Done,
         CommandAnswer::Value { value } => Outcome::Value(value),
-        CommandAnswer::Text { text, said } => Outcome::Clipboard { text, said },
+        // What a plugin from outside says, as it wrote it.
+        CommandAnswer::Text { text, said } => Outcome::Clipboard {
+            text,
+            said: skwir_core::words::Words::as_written(said),
+        },
         CommandAnswer::Plan { title, note, steps } => {
             anyhow::ensure!(
                 runner.granted.has(Capability::Write),

@@ -305,10 +305,11 @@ impl FormState {
             .iter()
             .filter_map(|choice| {
                 let folder = complete::resolve(&choice.value, None, home.as_deref())?;
+                // Said as the list is drawn.
                 Some(Row {
-                    title: choice.shown().to_owned(),
-                    detail: choice.detail.clone(),
-                    section: choice.section.clone(),
+                    title: choice.shown().say(),
+                    detail: choice.detail.say(),
+                    section: choice.section.say(),
                     folder,
                     completed: false,
                 })
@@ -351,7 +352,9 @@ impl FormState {
         let Kind::Save { alone, beside, .. } = &field.kind else {
             return None;
         };
-        self.read.note(&self.held(at, cx)?, alone, beside)
+        // Said as the note is drawn.
+        self.read
+            .note(&self.held(at, cx)?, &alone.say(), &beside.say())
     }
 
     /// Take what the read under way found, if it answered: whether it did.

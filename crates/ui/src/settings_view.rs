@@ -1856,7 +1856,7 @@ impl SettingsView {
                                 (true, false) => theme.warning,
                                 (false, _) => theme.text_muted,
                             },
-                            format!("{} not found — {}", status.name, status.purpose),
+                            format!("{} not found — {}", status.name, status.purpose.say()),
                         )
                     };
                     texts = texts.child(

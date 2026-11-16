@@ -1222,7 +1222,8 @@ fn key_login_is_set_up_from_a_server_s_form() {
         panic!("a choice of keys");
     };
     assert_eq!(choices[0].value, "agent:0", "{choices:?}");
-    assert!(choices[0].title.contains("key b"), "{}", choices[0].title);
+    let title = choices[0].title.english();
+    assert!(title.contains("key b"), "{title}");
     assert_eq!(choices.last().unwrap().value, "new");
     let mut values = Values::default();
     values.set("key", "agent:0");
@@ -1233,7 +1234,11 @@ fn key_login_is_set_up_from_a_server_s_form() {
     let mut heard = Vec::new();
     loop {
         app.pump();
-        heard.extend(app.take_notifications().into_iter().map(|n| n.text));
+        heard.extend(
+            app.take_notifications()
+                .into_iter()
+                .map(|n| n.text.english()),
+        );
         if heard.iter().any(|t| t.contains("Key login is set up")) {
             break;
         }

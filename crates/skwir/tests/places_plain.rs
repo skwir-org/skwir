@@ -63,7 +63,7 @@ fn without_a_keeper_of_filters_a_folder_is_bookmarked_plain() {
     let said: Vec<String> = app
         .take_notifications()
         .into_iter()
-        .map(|n| n.text)
+        .map(|n| n.text.english())
         .collect();
     run(
         &app,
@@ -96,7 +96,7 @@ fn a_tag_pinned_plain_says_its_filter_was_not_kept() {
     let said: Vec<String> = app
         .take_notifications()
         .into_iter()
-        .map(|n| n.text)
+        .map(|n| n.text.english())
         .collect();
     assert!(
         said.iter()

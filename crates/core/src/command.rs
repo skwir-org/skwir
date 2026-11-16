@@ -156,11 +156,11 @@ pub enum Outcome {
     Plan(Plan),
     Value(serde_json::Value),
     /// A text for the clipboard, and what to say once it is there ("Copied
-    /// 3 paths"): the window puts it there; a script or an agent gets the
-    /// text.
+    /// 3 paths"), said where it is shown: the window puts it there; a
+    /// script or an agent gets the text.
     Clipboard {
         text: String,
-        said: String,
+        said: crate::words::Words,
     },
     /// Files copied or cut (`cut`), for the clipboard: the window puts them
     /// on the system's as file managers do (ADR-062); a script or an agent

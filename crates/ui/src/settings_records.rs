@@ -265,10 +265,11 @@ impl SettingsView {
         let mut inputs = Vec::with_capacity(fields.len());
         for field in fields {
             let input = match &field.kind {
+                // Said as the record is opened for editing.
                 FieldKind::Text { placeholder } => FieldInput::Text(self.draft_input(
                     key,
                     text_of(&record, &field.key),
-                    placeholder.clone(),
+                    placeholder.say(),
                     false,
                     &mut subscriptions,
                     window,
@@ -910,7 +911,7 @@ impl SettingsView {
             actions = actions.child(
                 controls::button(
                     format!("action-{key}-{id}"),
-                    action.label.clone(),
+                    action.label.say(),
                     None,
                     ButtonStyle::Plain,
                     &focus,
@@ -1489,7 +1490,7 @@ impl SettingsView {
                     .gap(sized(4.))
                     .child(div().text_body().child(format!(
                         "{}{}",
-                        field.title,
+                        field.title.say(),
                         if field.required { "" } else { " (optional)" }
                     )))
                     .child(body)
@@ -1498,7 +1499,7 @@ impl SettingsView {
                             div()
                                 .text_body()
                                 .text_color(theme.text_muted)
-                                .child(field.description.clone()),
+                                .child(field.description.say()),
                         )
                     }),
             );

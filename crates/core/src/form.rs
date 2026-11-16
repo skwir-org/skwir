@@ -18,25 +18,28 @@ use std::time::Duration;
 
 use crate::app::App;
 use crate::cancel::CancelToken;
+use crate::words::Words;
 
-/// What the window shows the user to fill.
+/// What the window shows the user to fill. What it says (its title, its
+/// fields' labels and help, its choices) is words, said where the window
+/// draws them (ADR-139).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Form {
     /// What it asks, in a line: "Add Server", "Edit “photos”".
-    pub title: String,
+    pub title: Words,
     /// What it is for, under the title; empty for nothing.
-    pub intro: String,
+    pub intro: Words,
     pub fields: Vec<Field>,
     /// The verb on its answer's button: "Add", "Save", "Connect".
-    pub accept: String,
+    pub accept: Words,
     /// It offers Back, to the asker's step before.
     pub back: bool,
     /// Why the last answer was refused, shown above its buttons.
-    pub error: Option<String>,
+    pub error: Option<Words>,
     /// What it waits for, while the asker works (signing in in the
     /// browser): its fields and answer are set aside, Cancel alone
     /// answers, and the asker withdraws it once done.
-    pub waiting: Option<String>,
+    pub waiting: Option<Words>,
 }
 
 /// One field of a [`Form`].
@@ -45,12 +48,12 @@ pub struct Field {
     /// What the answer names it by.
     pub key: String,
     /// Its label.
-    pub title: String,
+    pub title: Words,
     /// What it is, under it; empty for nothing.
-    pub help: String,
+    pub help: Words,
     /// What a text field shows while empty (an example); empty for
     /// nothing.
-    pub placeholder: String,
+    pub placeholder: Words,
     pub kind: Kind,
     /// What it holds as the form opens: its text, `true` or `false` for a
     /// switch, a choice's value. Never a secret's: a secret kept says so
@@ -121,8 +124,11 @@ pub enum Kind {
         names: Vec<Named>,
         /// What a name typed without it is given: `.pdf`.
         ending: String,
-        alone: String,
-        beside: String,
+        /// Said under it while it holds a folder alone; empty for nothing.
+        alone: Words,
+        /// Said under it while it holds a name with no folder; empty for
+        /// nothing.
+        beside: Words,
     },
 }
 
@@ -174,17 +180,17 @@ pub struct Choice {
     /// What the answer holds.
     pub value: String,
     /// What the user reads; the value where empty.
-    pub title: String,
+    pub title: Words,
     /// A line under it, muted; empty for none.
-    pub detail: String,
+    pub detail: Words,
     /// The heading it is listed under, consecutive choices of one sharing
     /// it; empty for none.
-    pub section: String,
+    pub section: Words,
     /// What it looks like, drawn above its title in a row.
     pub picture: Option<Picture>,
     /// The verb on the form's answer while it is chosen (Print…, Save);
     /// empty: the form's own.
-    pub accept: String,
+    pub accept: Words,
 }
 
 /// A small drawing of what a choice does (how a booklet's sheets fold),
@@ -220,7 +226,7 @@ pub enum Mark {
 }
 
 impl Choice {
-    pub fn new(value: impl Into<String>, title: impl Into<String>) -> Self {
+    pub fn new(value: impl Into<String>, title: impl Into<Words>) -> Self {
         Choice {
             value: value.into(),
             title: title.into(),
@@ -229,13 +235,13 @@ impl Choice {
     }
 
     #[must_use]
-    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+    pub fn detail(mut self, detail: impl Into<Words>) -> Self {
         self.detail = detail.into();
         self
     }
 
     #[must_use]
-    pub fn section(mut self, section: impl Into<String>) -> Self {
+    pub fn section(mut self, section: impl Into<Words>) -> Self {
         self.section = section.into();
         self
     }
@@ -247,23 +253,23 @@ impl Choice {
     }
 
     #[must_use]
-    pub fn accept(mut self, accept: impl Into<String>) -> Self {
+    pub fn accept(mut self, accept: impl Into<Words>) -> Self {
         self.accept = accept.into();
         self
     }
 
-    /// What the user reads of it.
-    pub fn shown(&self) -> &str {
+    /// What the user reads of it: its title, else its value as written.
+    pub fn shown(&self) -> Words {
         if self.title.is_empty() {
-            &self.value
+            Words::as_written(self.value.clone())
         } else {
-            &self.title
+            self.title.clone()
         }
     }
 }
 
 impl Field {
-    pub fn new(key: impl Into<String>, title: impl Into<String>, kind: Kind) -> Self {
+    pub fn new(key: impl Into<String>, title: impl Into<Words>, kind: Kind) -> Self {
         Field {
             key: key.into(),
             title: title.into(),
@@ -272,18 +278,18 @@ impl Field {
         }
     }
 
-    pub fn text(key: impl Into<String>, title: impl Into<String>) -> Self {
+    pub fn text(key: impl Into<String>, title: impl Into<Words>) -> Self {
         Field::new(key, title, Kind::Text)
     }
 
     #[must_use]
-    pub fn help(mut self, help: impl Into<String>) -> Self {
+    pub fn help(mut self, help: impl Into<Words>) -> Self {
         self.help = help.into();
         self
     }
 
     #[must_use]
-    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+    pub fn placeholder(mut self, placeholder: impl Into<Words>) -> Self {
         self.placeholder = placeholder.into();
         self
     }
@@ -347,18 +353,21 @@ impl Field {
         matches!(self.kind, Kind::Secret { .. })
     }
 
-    /// Why `text`, typed in it, is no answer; `None` when it is one.
+    /// Why `text`, typed in it, is no answer, as the window shows it (its
+    /// title said in the window's language: the sentence becomes a message
+    /// when this crate's words are converted, PLAN.md, step E); `None`
+    /// when it is one.
     pub fn refusal(&self, text: &str) -> Option<String> {
         if text.is_empty() {
             let kept = matches!(self.kind, Kind::Secret { kept: true });
-            return (self.required && !kept).then(|| format!("{} is needed", self.title));
+            return (self.required && !kept).then(|| format!("{} is needed", self.title.say()));
         }
         match &self.kind {
             Kind::Integer { min, max } => match text.trim().parse::<i64>() {
                 Ok(n) if (*min..=*max).contains(&n) => None,
                 _ => Some(format!(
                     "{} is a whole number from {min} to {max}",
-                    self.title
+                    self.title.say()
                 )),
             },
             Kind::Choice {
@@ -367,14 +376,14 @@ impl Field {
             }
             | Kind::Pick { choices }
             | Kind::Row { choices } => (!choices.iter().any(|c| c.value == text))
-                .then(|| format!("{} is one of its choices", self.title)),
+                .then(|| format!("{} is one of its choices", self.title.say())),
             _ => None,
         }
     }
 }
 
 impl Form {
-    pub fn new(title: impl Into<String>, accept: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<Words>, accept: impl Into<Words>) -> Self {
         Form {
             title: title.into(),
             accept: accept.into(),
@@ -383,7 +392,7 @@ impl Form {
     }
 
     #[must_use]
-    pub fn intro(mut self, intro: impl Into<String>) -> Self {
+    pub fn intro(mut self, intro: impl Into<Words>) -> Self {
         self.intro = intro.into();
         self
     }
@@ -401,14 +410,14 @@ impl Form {
     }
 
     #[must_use]
-    pub fn error(mut self, error: Option<String>) -> Self {
-        self.error = error;
+    pub fn error<W: Into<Words>>(mut self, error: Option<W>) -> Self {
+        self.error = error.map(Into::into);
         self
     }
 
     /// The form as it waits for `what` (see [`Form::waiting`]).
     #[must_use]
-    pub fn waiting(mut self, what: impl Into<String>) -> Self {
+    pub fn waiting(mut self, what: impl Into<Words>) -> Self {
         self.waiting = Some(what.into());
         self
     }
@@ -424,7 +433,7 @@ impl Form {
 
     /// The verb on its answer while its fields hold `values`: a shown
     /// choice's chosen, else its own.
-    pub fn accept_with(&self, values: &Values) -> &str {
+    pub fn accept_with(&self, values: &Values) -> &Words {
         self.fields
             .iter()
             .filter(|field| field.shown_with(values))
@@ -435,14 +444,14 @@ impl Form {
                     .iter()
                     .find(|choice| choice.value == held && !choice.accept.is_empty())
             })
-            .map_or(self.accept.as_str(), |choice| choice.accept.as_str())
+            .map_or(&self.accept, |choice| &choice.accept)
     }
 
     /// The form again with what `values` hold in its fields, but its
     /// secrets (never written back where the user can read them), and
     /// `error` said: asked again after an answer was refused.
     #[must_use]
-    pub fn again(mut self, values: &Values, error: impl Into<String>) -> Self {
+    pub fn again(mut self, values: &Values, error: impl Into<Words>) -> Self {
         for field in &mut self.fields {
             if !field.secret()
                 && let Some(value) = values.0.get(&field.key)
@@ -660,10 +669,10 @@ mod tests {
             form.refusal(&ranges).as_deref(),
             Some("Pages to print is needed")
         );
-        assert_eq!(form.accept_with(&all), "Print…");
-        assert_eq!(form.accept_with(&ranges), "Save");
+        assert_eq!(form.accept_with(&all).english(), "Print…");
+        assert_eq!(form.accept_with(&ranges).english(), "Save");
         let neither = values(&[("to", "fax"), ("pages", "all")]);
-        assert_eq!(form.accept_with(&neither), "OK");
+        assert_eq!(form.accept_with(&neither).english(), "OK");
         assert_eq!(
             form.refusal(&neither).as_deref(),
             Some("To is one of its choices")
@@ -683,7 +692,10 @@ mod tests {
         );
         assert_eq!(again.fields[0].value, "nas");
         assert_eq!(again.fields[1].value, "");
-        assert_eq!(again.error.as_deref(), Some("A remote is named so"));
+        assert_eq!(
+            again.error.as_ref().map(Words::english).as_deref(),
+            Some("A remote is named so")
+        );
     }
 
     #[test]
@@ -757,8 +769,8 @@ mod tests {
                         .when("together", &["one"]),
                 ],
                 ending: ".pdf".to_owned(),
-                alone: "Each named after its file".to_owned(),
-                beside: "Beside it".to_owned(),
+                alone: "Each named after its file".into(),
+                beside: "Beside it".into(),
             },
         );
         let held = |pairs: &[(&str, &str)]| field.save_name(&values(pairs)).to_owned();

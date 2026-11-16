@@ -2831,7 +2831,7 @@ impl Shell {
                 find.say(text, error);
                 cx.notify();
             }
-            None => self.set_status(text, error, cx),
+            None => self.set_status(Into::<String>::into(text), error, cx),
         }
     }
 

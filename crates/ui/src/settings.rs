@@ -422,7 +422,7 @@ fn opacity_spec(ground: Ground) -> SettingSpec {
     SettingSpec::integer(
         key,
         title,
-        &format!("{what} {AFTER}"),
+        format!("{what} {AFTER}"),
         100,
         (OPACITY_LEAST, 100),
     )
@@ -456,16 +456,11 @@ fn fonts_from_spec() -> SettingSpec {
             points(shown.hundreds[crate::sizes::Part::Interface as usize])
         );
     }
-    SettingSpec::choice(
-        FONTS_FROM_KEY,
-        "Fonts from",
-        &description,
-        pairs[0].0,
-        pairs,
+    SettingSpec::choice(FONTS_FROM_KEY, "Fonts from", description, pairs[0].0, pairs).now(
+        &crate::desktop_style::Source::now(
+            shown().and_then(|shown| shown.fonts_automatic).as_deref(),
+        ),
     )
-    .now(&crate::desktop_style::Source::now(
-        shown().and_then(|shown| shown.fonts_automatic).as_deref(),
-    ))
 }
 
 /// `ui.cards`: the window's areas as cards on its frame, or apart by
@@ -494,7 +489,7 @@ fn title_bar_spec(said: TitleBarSaid) -> SettingSpec {
     let spec = SettingSpec::choice(
         TITLE_BAR_KEY,
         "Title bar",
-        &description,
+        description,
         "auto",
         &crate::title_bar::TitleBar::VALUES,
     )
@@ -1017,7 +1012,7 @@ pub fn code_theme_spec(
     SettingSpec::choice(
         key,
         title,
-        &format!(
+        format!(
             "The colors of source files and of code in documents when code is {look}: while skwir is {look}, or always when Light or dark above says {choice}. Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
         ),
         crate::code_preview::DEFAULT,
@@ -1061,7 +1056,7 @@ pub(crate) fn grammar_folders_spec(nearly: usize) -> SettingSpec {
     };
     SettingSpec::records(
         GRAMMAR_FOLDERS_KEY,
-        &title,
+        title,
         "Each folder Skwir read for tree-sitter grammars, and the languages it held. What was nearly found comes first, each saying what to do: a repository a folder too deep, a library with no queries to color with, a folder the tree-sitter CLI's configuration names that is not there.",
         "Folder",
         vec![
@@ -1791,7 +1786,7 @@ pub fn declare(app: &App) {
         SettingSpec::records(
             LANGUAGES_KEY,
             "Languages",
-            &format!(
+            format!(
                 "The languages a grammar was found or added for, each with the files it colors and what colors it. Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder{grammars_folder} and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors."
             ),
             "Language",
@@ -3511,7 +3506,8 @@ impl SettingsView {
                 statuses
                     .iter()
                     .find(|s| s.plugin == owner && s.name == name && !s.found)
-                    .map(|s| format!("{} not found: {}", s.name, s.purpose))
+                    // Said as the dialog shows it.
+                    .map(|s| format!("{} not found: {}", s.name, s.purpose.say()))
             }),
             None => spec,
         }

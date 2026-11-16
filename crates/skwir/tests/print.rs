@@ -624,8 +624,8 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
         .with("count", 7);
     app.dispatch(&print).unwrap();
     let asked = form_asked(&app);
-    assert_eq!(asked.form.title, "Print “main.rs”");
-    assert_eq!(asked.form.intro, "7 pages");
+    assert_eq!(asked.form.title.english(), "Print “main.rs”");
+    assert_eq!(asked.form.intro.english(), "7 pages");
     let keys: Vec<&str> = asked.form.fields.iter().map(|f| f.key.as_str()).collect();
     assert_eq!(
         keys,
@@ -638,7 +638,7 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     // after it: said, in one line.
     let save_as = field(&asked, "save_as");
     assert_eq!(save_as.value, in_folder(&dir));
-    assert_eq!(offered(save_as)[0].detail, "Beside it");
+    assert_eq!(offered(save_as)[0].detail.english(), "Beside it");
     assert_eq!(held(&asked, "save_as"), "main.pdf");
     let pages_offered: Vec<&str> = field(&asked, "pages")
         .choices()
@@ -656,8 +656,8 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
         again
             .form
             .error
-            .as_deref()
-            .is_some_and(|error| error.starts_with("Pages to print")),
+            .as_ref()
+            .is_some_and(|error| error.english().starts_with("Pages to print")),
         "{:?}",
         again.form.error
     );
@@ -745,14 +745,11 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
     )
     .unwrap();
     let asked = form_asked(&app);
-    assert!(
-        asked.form.title.starts_with("Print the listing of “report"),
-        "{}",
-        asked.form.title
-    );
+    let title = asked.form.title.english();
+    assert!(title.starts_with("Print the listing of “report"), "{title}");
     let save_as = field(&asked, "save_as");
     assert_eq!(save_as.value, in_folder(&root));
-    assert_eq!(offered(save_as)[0].detail, "The folder it is of");
+    assert_eq!(offered(save_as)[0].detail.english(), "The folder it is of");
     assert_eq!(
         held(&asked, "save_as"),
         "report in l'été notes (listing).pdf"
@@ -768,8 +765,8 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
         again
             .form
             .error
-            .as_deref()
-            .is_some_and(|error| error.starts_with("Save as")),
+            .as_ref()
+            .is_some_and(|error| error.english().starts_with("Save as")),
         "{:?}",
         again.form.error
     );
@@ -1017,13 +1014,13 @@ fn the_folders_chosen_are_offered_after_a_restart() {
     let asked = form_asked(&app);
     let save_as = field(&asked, "save_as");
     assert_eq!(save_as.value, in_folder(&dir), "where it goes by itself");
-    let before: Vec<(&str, &str)> = offered(save_as)
+    let before: Vec<(&str, String)> = offered(save_as)
         .iter()
-        .map(|choice| (choice.value.as_str(), choice.section.as_str()))
+        .map(|choice| (choice.value.as_str(), choice.section.english()))
         .collect();
     let written = skwir_core::os_path::from_home(&out);
     assert!(
-        before.contains(&(written.as_str(), "Chosen before")),
+        before.contains(&(written.as_str(), "Chosen before".to_owned())),
         "{before:?}"
     );
     assert!(app.answer_form(asked.id, None));

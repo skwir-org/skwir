@@ -472,7 +472,7 @@ pub fn ways(shell: &Shell, parked: bool, shown: Option<&str>) -> Vec<WayLook> {
         .iter()
         .map(|(id, way)| WayLook {
             id,
-            way: *way,
+            way: way.clone(),
             on: shown == Some(*id),
         })
         .collect()
@@ -505,22 +505,30 @@ pub enum Hex {
 /// function pushes them all, so the order is the same in every kind's
 /// bar.
 pub fn look_tools(bar: &mut Bar, looks: Looks) {
-    let tool = |id, icon, title, args: serde_json::Value, label: &'static str, on: bool| {
+    fn tool(
+        id: &'static str,
+        icon: &'static str,
+        title: impl Into<gpui::SharedString>,
+        args: serde_json::Value,
+        label: impl Into<gpui::SharedString>,
+        on: bool,
+    ) -> Button {
         Button::new(id, icon, title, "ui.inspect")
             .args(args)
             .label(label)
             .active(on)
-    };
+    }
     for WayLook { id, way, on } in looks.ways {
+        // Its provider's words, said as the bar is built.
         bar.push(Item::button(
             Slot::Look,
             2,
             tool(
                 id,
                 way.icon,
-                way.tip,
+                way.tip.say(),
                 serde_json::json!({"action":"way","provider":id,"on":!on}),
-                way.label,
+                way.label.say(),
                 on,
             ),
         ));

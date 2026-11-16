@@ -1045,7 +1045,11 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     // Set up once it says so: enabled before it is started.
     let mut heard = Vec::new();
     until(&app, 60, "its unit was set up", || {
-        heard.extend(app.take_notifications().into_iter().map(|n| n.text));
+        heard.extend(
+            app.take_notifications()
+                .into_iter()
+                .map(|n| n.text.english()),
+        );
         heard.iter().any(|t| t.contains("connects at login"))
     });
     assert!(manager.installed(&id), "{heard:?}");
@@ -1064,7 +1068,11 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     // Taken out once it says so: disabled first, its file removed after.
     let mut heard = Vec::new();
     until(&app, 60, "its unit was taken out", || {
-        heard.extend(app.take_notifications().into_iter().map(|n| n.text));
+        heard.extend(
+            app.take_notifications()
+                .into_iter()
+                .map(|n| n.text.english()),
+        );
         heard
             .iter()
             .any(|t| t.contains("no longer connects at login"))

@@ -69,7 +69,10 @@ impl Worker {
     /// What a plugin needing it lists (`Plugin::requirements`), probed as
     /// the settings show it: installed only where it works (`works`), not
     /// where its program is and its libraries are not.
-    pub fn requirement(self, purpose: &str) -> skwir_core::plugin::Requirement {
+    pub fn requirement(
+        self,
+        purpose: impl Into<skwir_core::words::Words>,
+    ) -> skwir_core::plugin::Requirement {
         skwir_core::plugin::Requirement::new(self.executable, purpose, move || self.works())
     }
 }

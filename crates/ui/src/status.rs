@@ -18,13 +18,15 @@ use crate::shell::Shell;
 use crate::theme::Chosen;
 use crate::theme::Theme;
 use crate::toast::{Action, Toast, Tone};
+use skwir_core::words::Words;
 
 impl Shell {
-    /// Tell the user something; errors stay longer and are logged.
-    pub fn set_status(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
+    /// Tell the user something, said where the toast is drawn; errors stay
+    /// longer and are logged, in English.
+    pub fn set_status(&mut self, text: impl Into<Words>, error: bool, cx: &mut Context<Self>) {
         let text = text.into();
         if error {
-            tracing::warn!(%text, "status");
+            tracing::warn!(text = %text.english(), "status");
         }
         self.toast(
             Toast::new(
@@ -51,12 +53,12 @@ impl Shell {
     /// An error whose remedy is a setting: the toast links to it.
     pub fn set_status_about(
         &mut self,
-        text: impl Into<String>,
+        text: impl Into<Words>,
         setting: &str,
         cx: &mut Context<Self>,
     ) {
         let text = text.into();
-        tracing::warn!(%text, "status");
+        tracing::warn!(text = %text.english(), "status");
         self.toast_about(text, Tone::Error, setting, cx);
     }
 
@@ -64,14 +66,14 @@ impl Shell {
     /// the toast links to it.
     pub fn set_hint_about(
         &mut self,
-        text: impl Into<String>,
+        text: impl Into<Words>,
         setting: &str,
         cx: &mut Context<Self>,
     ) {
         self.toast_about(text.into(), Tone::Info, setting, cx);
     }
 
-    fn toast_about(&mut self, text: String, tone: Tone, setting: &str, cx: &mut Context<Self>) {
+    fn toast_about(&mut self, text: Words, tone: Tone, setting: &str, cx: &mut Context<Self>) {
         self.toast(
             Toast::new(
                 text,

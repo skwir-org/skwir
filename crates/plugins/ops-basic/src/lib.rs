@@ -188,7 +188,7 @@ fn copy_paths(app: &App, a: TargetsArgs) -> anyhow::Result<Outcome> {
     };
     Ok(Outcome::Clipboard {
         text: lines.join("\n"),
-        said,
+        said: said.into(),
     })
 }
 
@@ -782,7 +782,7 @@ mod tests {
 
     fn copied(app: &App) -> (String, String) {
         match app.dispatch(&Invocation::new("copy_paths")).unwrap() {
-            Outcome::Clipboard { text, said } => (text, said),
+            Outcome::Clipboard { text, said } => (text, said.english()),
             other => panic!("expected text for the clipboard, got {other:?}"),
         }
     }

@@ -109,12 +109,10 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
         assert!(Instant::now() < deadline, "the user is told");
         std::thread::sleep(Duration::from_millis(10));
     };
+    let told = notes[0].text.english();
     assert!(
-        notes[0]
-            .text
-            .starts_with("Agents and scripts cannot listen"),
-        "{}",
-        notes[0].text
+        told.starts_with("Agents and scripts cannot listen"),
+        "{told}"
     );
     let Outcome::Value(status) = app
         .dispatch(&skwir_core::command::Invocation::new("control.status"))
