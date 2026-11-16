@@ -395,18 +395,7 @@ pub(super) fn arrivals_of(
                 .and_then(|from| known.get(from))
                 .filter(|was| was.read);
             let (like, read) = match was {
-                Some(was) if was.folder == folder && was.name == name && was.anew == anew => {
-                    (Arc::clone(&was.like), true)
-                }
-                Some(was) => (
-                    Arc::new(moved_to(
-                        Entry::clone(&was.like),
-                        &item.placed,
-                        &name,
-                        anew.then_some(at),
-                    )),
-                    true,
-                ),
+                Some(was) => (like_was(was, &folder, &name, anew, at), true),
                 None => (Arc::new(made_like(&item, &name)), item.from.is_none()),
             };
             Some(Arrival {
@@ -422,6 +411,58 @@ pub(super) fn arrivals_of(
             })
         })
         .collect()
+}
+
+/// What an arrival landing as `name` in `folder` is like, from `was`, an
+/// arrival of its plan whose source was read: `was`'s own, shared, where
+/// it lands as `was` does; else that moved to where it lands now, dated as
+/// made at `at` where it is made anew.
+fn like_was(
+    was: &Arrival,
+    folder: &Path,
+    name: &OsString,
+    anew: bool,
+    at: SystemTime,
+) -> Arc<Entry> {
+    if was.folder == folder && was.name == *name && was.anew == anew {
+        Arc::clone(&was.like)
+    } else {
+        Arc::new(moved_to(
+            Entry::clone(&was.like),
+            &folder.join(name),
+            name,
+            anew.then_some(at),
+        ))
+    }
+}
+
+/// A run's arrivals not read yet take what was read of their sources for
+/// `record`'s plan as asked. The run takes what is known before it unfolds
+/// its steps (`Index::known`), and a reading of the plan as asked may fill
+/// what it read between, its sources claimed: no reading gives it again,
+/// so it is taken here, under the lock both fill by.
+fn carry_read(record: &Record, by_folder: &mut HashMap<PathBuf, Vec<Arc<Arrival>>>) {
+    let was: HashMap<&Path, &Arc<Arrival>> = record
+        .arrivals()
+        .filter(|a| a.read)
+        .filter_map(|a| Some((a.from.as_deref()?, a)))
+        .collect();
+    if was.is_empty() {
+        return;
+    }
+    let at = asked_at(record.asked);
+    for arrival in by_folder.values_mut().flat_map(|those| those.iter_mut()) {
+        if arrival.read {
+            continue;
+        }
+        let Some(was) = arrival.from.as_deref().and_then(|from| was.get(from)) else {
+            continue;
+        };
+        let mut carried = Arrival::clone(arrival);
+        carried.like = like_was(was, &carried.folder, &carried.name, carried.anew, at);
+        carried.read = true;
+        *arrival = Arc::new(carried);
+    }
 }
 
 /// `arrivals`, each not read whose source `read` holds made from it, as it
@@ -593,6 +634,9 @@ impl Index {
         };
         if record.runs && !runs {
             return false;
+        }
+        if runs {
+            carry_read(record, &mut by_folder);
         }
         unlist(folders, plan, &record.folders);
         for folder in &order {
@@ -838,5 +882,59 @@ mod tests {
         );
         // Its run over, not landed: nothing said.
         assert_eq!(state_of(&item, None), None);
+    }
+
+    /// What a reading of the plan as asked filled is its run's arrivals',
+    /// though it was filled after the run took what was known: its source
+    /// is claimed, and no reading gives it again (the routine CI,
+    /// 2026-11-16: a copy shown for good without its notes).
+    #[test]
+    fn what_was_read_as_asked_is_the_run_s_however_late_it_was_filled() {
+        let index = Index::default();
+        let plan = PlanId(1);
+        index.asked(plan, &CancelToken::new());
+        let from = PathBuf::from("/src/a");
+        let mut like = Entry::new(EntryId::UNKNOWN, "a", EntryKind::File);
+        like.metadata
+            .set(keys::RATING, Value::UInt(8), Provenance::Filesystem);
+        let read = Arrival {
+            from: Some(from.clone()),
+            like: Arc::new(like),
+            ..arrival(None)
+        };
+        // The run took what was known before the reading filled this.
+        let run = Arrival {
+            from: Some(from),
+            read: false,
+            ..arrival(Some(0..1))
+        };
+        assert!(index.fill(plan, vec![Arc::new(read)], false));
+        assert!(index.fill(plan, vec![Arc::new(run)], true));
+        let shown = index.in_folder(Path::new("/dest"));
+        let shown = &shown[0][0];
+        assert!(shown.read, "read as asked");
+        assert_eq!(
+            shown.like.metadata.value(keys::RATING),
+            Some(&Value::UInt(8))
+        );
+        assert_eq!(shown.steps, Some(0..1), "the run's");
+        // Landing elsewhere than asked, it is moved there.
+        let index = Index::default();
+        index.asked(plan, &CancelToken::new());
+        let read = Arrival {
+            from: Some(PathBuf::from("/src/a")),
+            ..arrival(None)
+        };
+        let renamed = Arrival {
+            from: Some(PathBuf::from("/src/a")),
+            name: "a (copy)".into(),
+            read: false,
+            ..arrival(Some(0..1))
+        };
+        index.fill(plan, vec![Arc::new(read)], false);
+        index.fill(plan, vec![Arc::new(renamed)], true);
+        let shown = index.in_folder(Path::new("/dest"));
+        assert!(shown[0][0].read);
+        assert_eq!(shown[0][0].like.name, "a (copy)", "under its name there");
     }
 }

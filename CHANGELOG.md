@@ -1,5 +1,13 @@
 # Changes
 
+## Unreleased
+
+- **What a copy brings shows with its notes**: a file a copy or a move
+  will bring, shown where it lands while the copy waits or runs, could
+  stay for good without its tags, rating and dates, read as the copy was
+  asked but lost as its run began; a filter or a sort by them left it out
+  of place until it landed.
+
 ## 0.5.1 (2026-11-16)
 
 Skwir 0.5.1 plays films on in the AppImage, puts the title bar where you want

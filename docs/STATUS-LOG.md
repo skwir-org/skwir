@@ -18418,3 +18418,32 @@ and ships unreviewed.
 - Two sways of 0.5.0's A/B were still running from 2026-11-14: its
   harness stopped the wrapper, not sway. Stopped by their pids; none
   was left running after 0.5.1's A/B.
+
+## 2026-11-16: What was read of what a plan brings, kept as its run begins
+
+The routine CI on 0.5.1's source failed once in
+`arriving::what_arrives_is_read_with_its_notes_and_dated_as_its_file_will_be`:
+in 10 s, neither of the two items a held copy and move bring was read
+with its notes. The test did not fail here (400 runs, 16 at once; the
+core's suite 20 times), and nothing in the core had changed since the
+last green run: a race in the core, not in the test.
+
+- **Cause**: what a plan brings is read on a worker once it is asked,
+  and for its run as it begins (`Executor::arrivals_run`), which takes
+  what the first reading filled (`Index::known`), unfolds its steps, and
+  puts its arrivals in place (`Index::fill`). A first reading filled
+  between those two was replaced by the run's unread arrivals; its
+  sources claimed, the run's reading left them out, and the first one,
+  its fill taken, never handed them on (`fill(..) || read(..)`). The item
+  stayed without its tags, rating and dates until it landed (0.5.0 has
+  it, ADR-135).
+- **Fix**: the run's fill takes, under the lock both fill by, what was
+  read of its sources as asked, as `arrivals_of` takes what was known
+  (`carry_read`, `like_was`, shared by the two). Filled before it, the
+  run's arrivals take it; after, the first reading finds the run and
+  hands it over.
+- **Checked**: a unit test fills in that order, under its name as asked
+  and under another (`a (copy)`): without the fix it fails ("read as
+  asked"), with it passes. The arriving and executor tests (51), the
+  workspace's tests of arrivals (32), the CI's test 200 times 16 at
+  once, `just ci-check` (852 tests): all passed.
