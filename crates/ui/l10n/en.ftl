@@ -30,6 +30,12 @@ about_graphics = Graphics
 # In About, the graphics where no graphics card draws the window: graphics is the device and its driver as they name themselves (llvmpipe · llvmpipe).
 about_graphics_software = { $graphics } (drawn by the processor)
 
+# In About, the label of the languages Skwir speaks and how it writes numbers and dates.
+about_language = Language
+
+# In About, the languages Skwir speaks, most wanted first (fr, en), then the locales it writes numbers and dates in (fr-FR), as written.
+about_language_is = { $languages }; numbers { $numbers }, dates { $dates }
+
 # The button in About showing the licences installed with skwir.
 about_licences = Licences
 
@@ -2924,7 +2930,7 @@ grid_caption_taken_description = Under each name in the grid, when a picture or 
 grid_caption_taken_title = When taken under names
 
 # A setting's description: whether each tile of the grid says this under its name.
-grid_caption_type_description = Under each name in the grid, the kind of file, such as PDF document.
+grid_caption_type_description = Under each name in the grid, each file's type, such as PDF document.
 
 # A setting's name: whether each tile of the grid says this under its name.
 grid_caption_type_title = Type under names
@@ -3709,7 +3715,7 @@ list_column_size_description = Show the size of files.
 list_column_taken_description = Show when pictures and films were taken, by their camera's clock, where a plugin reads it of them.
 
 # A setting's description: whether the list has the Type column.
-list_column_type_description = Show the kind of file, such as PDF document.
+list_column_type_description = Show each file's type, such as PDF document.
 
 # A setting's description: whether the list has the Git column. Git is a program's name.
 list_column_vcs_description = Show what Git says of each file in a repository: changed, staged, new, in conflict or ignored, and of a folder what it holds.
@@ -4886,6 +4892,12 @@ preview_turn_tip = The model turned in 3D, or its picture
 
 # A preview's caption where reading the file failed.
 preview_unavailable = Preview unavailable
+
+# Where a film preview stands, in seconds to a tenth (1.5 s).
+preview_video_at = { $seconds } s
+
+# Where a film preview stands and how long it is, in seconds to a tenth (1.5 s / 3.0 s).
+preview_video_at_of = { $seconds } s / { $total } s
 
 # A preview's caption while it shows a picture of a film: its size in pixels, width by height (1920 × 1080).
 preview_video_still = Video still · { $width } × { $height }
@@ -6487,7 +6499,7 @@ settings_intro_plugins = Everything beyond the core is a plugin. Turning one off
 settings_intro_privacy = What leaves this machine. An agent driving Skwir, and a plugin from outside Skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.
 
 # What a page of the settings window says under its title.
-settings_intro_reading = How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each kind.
+settings_intro_reading = How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each of them.
 
 # What a page of the settings window says under its title.
 settings_intro_terminal = The terminal panel, and the shell that runs a command on the selection.
@@ -7033,8 +7045,8 @@ shortcuts_filter = Filter by action or keys
 # The overview of shortcuts finds nothing; query: what was typed.
 shortcuts_none = No shortcut matches “{ $query }”.
 
-# Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title, capitalised as a title is (Copy, Move to Trash): where a capital inside a sentence would read wrong, name it as a command (the command Copy).
-shortcuts_tip = Tip: press { $keys } for { $action }. F1 lists the keys for where you are.
+# Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title as its menu writes it, quoted (Copy, Rename…).
+shortcuts_tip = Tip: press { $keys } for “{ $action }”. F1 lists the keys for where you are.
 
 # The title of the overview of shortcuts F1 opens: the keys that work where one is.
 shortcuts_title = Shortcuts here
@@ -7506,6 +7518,9 @@ timeline_later_files = { $count ->
        *[other] { $count } files later
     }
 
+# A count in the room of a timeline's bar, in millions (1.5M, 25M): n has at most one digit after the decimal sign.
+timeline_millions = { $n }M
+
 # Beside the timeline's buttons where there are no dates to count.
 timeline_no_data = no data
 
@@ -7544,6 +7559,9 @@ timeline_subtree = subtree
 
 # Pointing at the timeline's subtree button.
 timeline_subtree_tip = Count the files of the folders inside too
+
+# A count in the room of a timeline's bar, in thousands (1.2k, 12k): n has at most one digit after the decimal sign.
+timeline_thousands = { $n }k
 
 # The strip under the files with a bar for each day, week, month or year: its heading.
 timeline_title = Timeline

@@ -40,7 +40,7 @@ impl Plugin for MprisPlugin {
     }
     fn description(&self) -> skwir_core::words::Words {
         skwir_core::words!(
-            mpris_plugin_description = "Let the desktop show and steer what is playing: media keys, the panel's player, headset buttons (MPRIS)"
+            mpris_plugin_description = "Let the desktop show and steer what is playing: media keys, the desktop's media controls, headset buttons (MPRIS)"
         )
     }
     fn category(&self) -> skwir_core::plugin::Category {

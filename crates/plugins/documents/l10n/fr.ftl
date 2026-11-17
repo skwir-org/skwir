@@ -113,7 +113,7 @@ documents_pdfium_library_description = Chemin de la bibliothèque partagée PDFi
 documents_pdfium_library_description_more = Laissez vide pour la chercher aux emplacements habituels.
 
 # draft
-documents_plugin_description = Lire les documents PDF et bureautiques : défilement continu, recherche, sélection de texte, liens et sommaire ; les textes Word et OpenDocument aussi comme un texte ajusté au panneau
+documents_plugin_description = Lire les documents PDF et bureautiques : défilement continu, recherche, sélection de texte, liens et sommaire ; les textes Word et OpenDocument aussi comme un texte ajusté au volet
 
 # draft
 documents_plugin_title = Documents
@@ -152,7 +152,7 @@ documents_text_documents = Documents texte
 documents_text_documents_description = Comment les documents Word, OpenDocument et RTF sont affichés.
 
 # draft
-documents_text_documents_description_more = Lecture montre aussitôt leur texte, leurs titres, listes, tableaux, notes et images, ajustés au panneau : Skwir lit les fichiers Word et OpenDocument, Pandoc les RTF. Pages les met en page comme LibreOffice les imprime, ce qui prend quelques secondes pour chacun. Pandoc les fait tous lire par Pandoc. Quand ce dont un choix a besoin n’est pas installé, un autre est utilisé.
+documents_text_documents_description_more = Lecture montre aussitôt leur texte, leurs titres, listes, tableaux, notes et images, ajustés au volet : Skwir lit les fichiers Word et OpenDocument, Pandoc les RTF. Pages les met en page comme LibreOffice les imprime, ce qui prend quelques secondes pour chacun. Pandoc les fait tous lire par Pandoc. Quand ce dont un choix a besoin n’est pas installé, un autre est utilisé.
 
 # draft
 documents_text_documents_pages = Pages

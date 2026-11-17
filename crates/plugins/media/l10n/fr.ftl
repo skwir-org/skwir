@@ -34,7 +34,7 @@ media_keep_playing_description_more = Désactivé, la lecture s’arrête dès q
 media_play = Lire
 
 # draft
-media_plugin_description = Lire les fichiers audio et vidéo dans le panneau d’aperçu : l’audio avec sa pochette et un spectre, la vidéo avec une image fixe quand la lecture est impossible
+media_plugin_description = Lire les fichiers audio et vidéo dans le volet d’aperçu : l’audio avec sa pochette et un spectre, la vidéo avec une image fixe quand la lecture est impossible
 
 # draft
 media_plugin_title = Audio et vidéo

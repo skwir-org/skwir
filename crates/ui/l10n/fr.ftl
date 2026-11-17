@@ -31,6 +31,12 @@ about_graphics = Graphismes
 about_graphics_software = { $graphics } (rendu par le processeur)
 
 # draft
+about_language = Langue
+
+# draft
+about_language_is = { $languages } ; nombres { $numbers }, dates { $dates }
+
+# draft
 about_licences = Licences
 
 # draft
@@ -134,7 +140,7 @@ activity_earlier_count = Plus tôt ({ $count })
 activity_fold = Replier dans la barre d’état
 
 # draft
-activity_fold_tip = Replier le panneau Activité dans la barre d’état
+activity_fold_tip = Replier Activité dans la barre d’état
 
 # draft
 activity_getting_ready = préparation…
@@ -1144,7 +1150,7 @@ commands_form_up_description = Dans le champ Enregistrer sous d’une boîte de 
 commands_full_width = Activer ou désactiver la lecture pleine largeur
 
 # draft
-commands_full_width_description = Lire le texte sur toute la largeur du panneau
+commands_full_width_description = Lire le texte sur toute la largeur du volet
 
 # draft
 commands_fullscreen_controls = Plein écran : contrôles
@@ -1714,7 +1720,7 @@ commands_media_pin_description = Continuer la lecture en cours quand la sélecti
 commands_media_play = Lecteur : lire la sélection
 
 # draft
-commands_media_play_description = Lire ce qui est sélectionné sans ouvrir l’aperçu : la musique dans le lecteur au pied du panneau, les pistes sélectionnées dans leur ordre (les pistes d’une liste de lecture à la place de celle-ci, une piste seule avec celles du dossier qui l’entourent) ; un film dans l’aperçu rapide
+commands_media_play_description = Lire ce qui est sélectionné sans ouvrir l’aperçu : la musique dans le lecteur au pied du volet, les pistes sélectionnées dans leur ordre (les pistes d’une liste de lecture à la place de celle-ci, une piste seule avec celles du dossier qui l’entourent) ; un film dans l’aperçu rapide
 
 # draft
 commands_media_scrub = Lecteur : faire glisser la position
@@ -1882,7 +1888,7 @@ commands_player_volume_description = Changer le volume du lecteur épinglé
 commands_preview_close = Aperçu : fermer
 
 # draft
-commands_preview_close_description = Fermer le coup d’œil, ou masquer l’aperçu dans le panneau latéral
+commands_preview_close_description = Fermer le coup d’œil, ou masquer l’aperçu dans le volet latéral
 
 # draft
 commands_preview_contents = Aperçu : sommaire
@@ -1993,10 +1999,10 @@ commands_properties = Propriétés
 commands_properties_count = Propriétés : compter le contenu des dossiers
 
 # draft
-commands_properties_count_description = Compter la taille, la place occupée, les fichiers et les dossiers de ce qu’affiche le panneau Propriétés (la sélection, quand plusieurs éléments sont sélectionnés), ou arrêter de compter avec `stop`
+commands_properties_count_description = Compter la taille, la place occupée, les fichiers et les dossiers de ce qu’affiche le volet Propriétés (la sélection, quand plusieurs éléments sont sélectionnés), ou arrêter de compter avec `stop`
 
 # draft
-commands_properties_description = Afficher ou masquer les propriétés de la sélection (ou du dossier affiché) dans le panneau latéral, au-dessus de l’aperçu ou seules ; le panneau reste tant que l’aperçu est affiché
+commands_properties_description = Afficher ou masquer les propriétés de la sélection (ou du dossier affiché) dans le volet latéral, au-dessus de l’aperçu ou seules ; le volet reste tant que l’aperçu est affiché
 
 # draft
 commands_properties_fold = Propriétés : replier un groupe
@@ -2362,7 +2368,7 @@ commands_timeline_subtree_description = Compter aussi les fichiers des sous-doss
 commands_toggle_preview = Afficher ou masquer l’aperçu
 
 # draft
-commands_toggle_preview_description = Afficher ou masquer l’aperçu dans le panneau latéral ; le panneau reste tant que les propriétés sont affichées
+commands_toggle_preview_description = Afficher ou masquer l’aperçu dans le volet latéral ; le volet reste tant que les propriétés sont affichées
 
 # draft
 commands_toggle_sidebar = Afficher ou masquer la barre latérale
@@ -2476,7 +2482,7 @@ commands_volume_step_description = Changer d’un cran le volume du lecteur dont
 commands_wrap_lines = Retour à la ligne automatique
 
 # draft
-commands_wrap_lines_description = Renvoyer à la ligne les longues lignes d’un texte selon la largeur du panneau, ou les laisser se prolonger sur le côté
+commands_wrap_lines_description = Renvoyer à la ligne les longues lignes d’un texte selon la largeur du volet, ou les laisser se prolonger sur le côté
 
 # draft
 commands_zoom = Zoom
@@ -3379,7 +3385,7 @@ grid_caption_duration_description = Sous chaque nom de la grille, la durée d’
 grid_caption_duration_title = Durée sous les noms
 
 # draft
-grid_caption_folder_description = Sous chaque nom de la grille, le dossier qui contient l’élément, là où sont listés des fichiers de nombreux dossiers : une recherche, une étiquette, l’étagère, Récents.
+grid_caption_folder_description = Sous chaque nom de la grille, le dossier qui contient l’élément, là où sont listés des fichiers de nombreux dossiers : une recherche, une étiquette, l’Étagère, Récents.
 
 # draft
 grid_caption_folder_title = Dossier sous les noms
@@ -4238,7 +4244,7 @@ list_column_dimensions_description = Afficher la taille des images en pixels, l�
 list_column_duration_description = Afficher la durée des sons et des films, là où un module la lit.
 
 # draft
-list_column_folder_description = Afficher le dossier où se trouve chaque fichier, là où sont listés des fichiers de nombreux dossiers : une recherche, une étiquette, l’étagère, Récents.
+list_column_folder_description = Afficher le dossier où se trouve chaque fichier, là où sont listés des fichiers de nombreux dossiers : une recherche, une étiquette, l’Étagère, Récents.
 
 # draft
 list_column_folder_more = C’est la dernière colonne à céder la place.
@@ -5589,6 +5595,12 @@ preview_turn_tip = Le modèle à faire tourner en 3D, ou son image
 
 # draft
 preview_unavailable = Aperçu indisponible
+
+# draft
+preview_video_at = { $seconds } s
+
+# draft
+preview_video_at_of = { $seconds } s / { $total } s
 
 # draft
 preview_video_still = Image fixe de la vidéo · { $width } × { $height }
@@ -7247,7 +7259,7 @@ settings_intro_privacy = Ce qui quitte cet ordinateur. Un agent qui pilote Skwir
 settings_intro_reading = Comment se lisent dans l’aperçu les documents, les livres, les bandes dessinées, le Markdown, le texte et le code, et quel moteur lit chacun d’eux.
 
 # draft
-settings_intro_terminal = Le panneau du terminal, et le shell qui exécute une commande sur la sélection.
+settings_intro_terminal = Le volet du terminal, et le shell qui exécute une commande sur la sélection.
 
 # draft
 settings_intro_views = Comment un dossier montre ses fichiers : leur ordre, la façon dont leur taille est comptée, la grille, les colonnes de la liste, les vignettes dessinées pour eux, ce que montre son aperçu, et ce que Git en dit.
@@ -7439,10 +7451,10 @@ settings_printed_pages_description_more = Par exemple page 47 sur 312 plutôt qu
 settings_read_ahead = Lecture anticipée
 
 # draft
-settings_read_ahead_description = Quand vous passez d’une image à l’autre, dans le panneau d’aperçu, dans le coup d’œil ou en plein écran, décoder la suivante avant que vous y arriviez, pour qu’elle s’affiche aussitôt.
+settings_read_ahead_description = Quand vous passez d’une image à l’autre, dans le volet d’aperçu, dans le coup d’œil ou en plein écran, décoder la suivante avant que vous y arriviez, pour qu’elle s’affiche aussitôt.
 
 # draft
-settings_read_ahead_description_more = Dans le panneau, l’aperçu lit en avance une fois que deux pas sont allés dans le même sens, et garde pendant ce temps une image de plus en mémoire. Désactivé, chaque image est décodée quand vous y arrivez.
+settings_read_ahead_description_more = Dans le volet, l’aperçu lit en avance une fois que deux pas sont allés dans le même sens, et garde pendant ce temps une image de plus en mémoire. Désactivé, chaque image est décodée quand vous y arrivez.
 
 # draft
 settings_read_only = Votre fichier de paramètres est en lecture seule (un lien de Home Manager, par exemple) : une modification faite ici n’est pas conservée. Modifiez les paramètres là où ils sont déclarés.
@@ -7484,7 +7496,7 @@ settings_reading_width_comfortable = Confortable
 settings_reading_width_description = Jusqu’où peuvent s’allonger les lignes d’un livre, d’un fichier Markdown ou HTML avant que le texte cesse de s’élargir et se centre dans l’aperçu.
 
 # draft
-settings_reading_width_description_more = Étroite fait environ 65 caractères, Confortable 85, Large 110 ; Pleine largeur occupe tout le panneau, avec de petites marges.
+settings_reading_width_description_more = Étroite fait environ 65 caractères, Confortable 85, Large 110 ; Pleine largeur occupe tout le volet, avec de petites marges.
 
 # draft
 settings_reading_width_full = Pleine largeur
@@ -7681,10 +7693,10 @@ settings_up_button_description_more = Désactivé, l’avant-dernier segment du 
 settings_wrap_lines = Retour à la ligne automatique
 
 # draft
-settings_wrap_lines_description = Renvoyer à la ligne les longues lignes d’un fichier texte, à la largeur du panneau, le numéro d’une ligne sur sa première rangée.
+settings_wrap_lines_description = Renvoyer à la ligne les longues lignes d’un fichier texte, à la largeur du volet, le numéro d’une ligne sur sa première rangée.
 
 # draft
-settings_wrap_lines_description_more = Désactivé, elles se prolongent sur le côté et le panneau défile avec elles.
+settings_wrap_lines_description_more = Désactivé, elles se prolongent sur le côté et le volet défile avec elles.
 
 # draft
 shell_address = Adresse
@@ -7839,7 +7851,7 @@ shortcuts_filter = Filtrer par action ou par touches
 shortcuts_none = Aucun raccourci ne correspond à « { $query } ».
 
 # draft
-shortcuts_tip = Astuce : appuyez sur { $keys } pour la commande { $action }. F1 liste les touches qui agissent là où vous êtes.
+shortcuts_tip = Astuce : appuyez sur { $keys } pour « { $action } ». F1 liste les touches qui agissent là où vous êtes.
 
 # draft
 shortcuts_title = Raccourcis disponibles ici
@@ -8316,6 +8328,9 @@ timeline_later_files = { $count ->
     }
 
 # draft
+timeline_millions = { $n } M
+
+# draft
 timeline_no_data = aucune donnée
 
 # draft
@@ -8353,6 +8368,9 @@ timeline_subtree = sous-dossiers
 
 # draft
 timeline_subtree_tip = Compter aussi les fichiers des sous-dossiers
+
+# draft
+timeline_thousands = { $n } k
 
 # draft
 timeline_title = Chronologie

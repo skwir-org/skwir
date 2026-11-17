@@ -241,10 +241,20 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     }) = &shell.preview.content
     {
         let current = shell.preview.seconds.unwrap_or(*seconds);
-        let time = duration.map_or_else(
-            || format!("{current:.1}s"),
-            |total| format!("{current:.1}s / {total:.1}s"),
-        );
+        let time = match duration {
+            None => words!(
+                preview_video_at = "{ $seconds }\u{a0}s",
+                seconds = Decimal::of(current, 1),
+                note = "Where a film preview stands, in seconds to a tenth (1.5 s)."
+            ),
+            Some(total) => words!(
+                preview_video_at_of = "{ $seconds }\u{a0}s / { $total }\u{a0}s",
+                seconds = Decimal::of(current, 1),
+                total = Decimal::of(*total, 1),
+                note = "Where a film preview stands and how long it is, in seconds to a tenth (1.5 s / 3.0 s)."
+            ),
+        }
+        .say();
         bar.push(Item::button(
             Slot::Navigate,
             2,

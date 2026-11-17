@@ -258,6 +258,18 @@ fn text(exif: &Exif, tag: Tag) -> Option<String> {
     Some(text.trim_matches('"').trim().to_owned()).filter(|text| !text.is_empty())
 }
 
+/// `value` with the digits after the point it has, two at most, as a
+/// camera writes it: 30, 2.8, 4.25.
+fn as_written(value: f64) -> words::Decimal {
+    let digits = (0..2u8)
+        .find(|&digits| {
+            let shifted = value * 10f64.powi(i32::from(digits));
+            (shifted - shifted.round()).abs() < 1e-6
+        })
+        .unwrap_or(2);
+    words::Decimal::of(value, digits)
+}
+
 fn rational(exif: &Exif, tag: Tag) -> Option<f64> {
     match &exif.get_field(tag, In::PRIMARY)?.value {
         Value::Rational(values) => values.first().map(exif::Rational::to_f64),
@@ -298,12 +310,29 @@ fn read(exif: &Exif) -> Vec<Detail> {
     };
     let exposure = rational(exif, Tag::ExposureTime).map(|seconds| {
         if seconds > 0. && seconds < 1. {
-            format!("1/{:.0}\u{a0}s", 1. / seconds)
+            words!(
+                exif_exposure_fraction = "1/{ $denominator }\u{a0}s",
+                denominator = words::Decimal::of(1. / seconds, 0),
+                note = "A photo's exposure time under a second, as cameras write it (1/250 s)."
+            )
         } else {
-            format!("{seconds}\u{a0}s")
+            words!(
+                exif_exposure_seconds = "{ $seconds }\u{a0}s",
+                seconds = as_written(seconds),
+                note = "A photo's exposure time of a second or more (2.5 s)."
+            )
         }
+        .say()
     });
-    let position = located(exif).map(|at| format!("{:.5}, {:.5}", at.lat, at.lon));
+    let position = located(exif).map(|at| {
+        words!(
+            exif_latitude_longitude = "{ $latitude }, { $longitude }",
+            latitude = words::Decimal::of(at.lat, 5),
+            longitude = words::Decimal::of(at.lon, 5),
+            note = "Where a photo was taken, its latitude then its longitude in degrees, five digits after the decimal sign (48.85661, 2.35222): a language writing a decimal comma parts them otherwise."
+        )
+        .say()
+    });
     [
         (
             words!(
@@ -344,7 +373,14 @@ fn read(exif: &Exif) -> Vec<Detail> {
                 exif_aperture = "Aperture",
                 note = "A label in Properties: a photo's aperture (f/2.8)."
             ),
-            rational(exif, Tag::FNumber).map(|f| format!("f/{f}")),
+            rational(exif, Tag::FNumber).map(|f| {
+                words!(
+                    exif_aperture_value = "f/{ $f }",
+                    f = as_written(f),
+                    note = "A photo's aperture, as cameras write it (f/2.8)."
+                )
+                .say()
+            }),
             false,
         ),
         (
@@ -360,7 +396,14 @@ fn read(exif: &Exif) -> Vec<Detail> {
                 exif_focal_length = "Focal length",
                 note = "A label in Properties: the focal length a photo was taken at (35 mm)."
             ),
-            rational(exif, Tag::FocalLength).map(|mm| format!("{mm}\u{a0}mm")),
+            rational(exif, Tag::FocalLength).map(|mm| {
+                words!(
+                    exif_focal_length_value = "{ $mm }\u{a0}mm",
+                    mm = as_written(mm),
+                    note = "A photo's focal length in millimetres (35 mm, 4.3 mm)."
+                )
+                .say()
+            }),
             false,
         ),
         (

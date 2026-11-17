@@ -301,7 +301,7 @@ impl Column {
                 note = "A setting's description: whether the list has the Taken column."
             ),
             Detail::Type => words!(
-                list_column_type_description = "Show the kind of file, such as PDF document.",
+                list_column_type_description = "Show each file's type, such as PDF document.",
                 note = "A setting's description: whether the list has the Type column."
             ),
             Detail::Kind => words!(

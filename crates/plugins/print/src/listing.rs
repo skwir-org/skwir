@@ -95,10 +95,9 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
         folder: !location.is_path() && !one_folder,
         deleted: app.verbs(&location).restore.is_some() && !one_folder,
     };
-    let zone = jiff::tz::TimeZone::system();
     let rows = shown
         .iter()
-        .map(|(entry, depth, path)| row(entry, *depth, path.as_deref(), columns, &zone))
+        .map(|(entry, depth, path)| row(entry, *depth, path.as_deref(), columns))
         .collect();
     Ok(Listed {
         title: title(app, &location, filter.as_deref()),
@@ -167,8 +166,8 @@ impl Columns {
         }
         names.extend([
             words!(
-                print_column_kind = "Kind",
-                note = "A column's header in a printed listing: what each file is (PDF document, Folder…)."
+                print_column_type = "Type",
+                note = "A column's header in a printed listing: each file's type (PDF document, Folder…), as the list view's Type column says it."
             ),
             words!(
                 print_column_size = "Size",
@@ -187,13 +186,7 @@ impl Columns {
 /// ending with a slash), the folder it is in and when it was deleted
 /// where `columns` say them, its kind, its size and when it was modified,
 /// as the list view says them; what is not known yet is left blank.
-fn row(
-    entry: &Entry,
-    depth: usize,
-    path: Option<&Path>,
-    columns: Columns,
-    zone: &jiff::tz::TimeZone,
-) -> Vec<String> {
+fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Vec<String> {
     let mut name = "    ".repeat(depth);
     name.push_str(&entry.name.to_string_lossy());
     if entry.is_dir() {
@@ -214,7 +207,7 @@ fn row(
         row.push(folder.map_or_else(String::new, |dir| skwir_core::os_path::from_home(&dir)));
     }
     if columns.deleted {
-        row.push(when(entry.metadata.value(keys::TRASHED), zone));
+        row.push(when(entry.metadata.value(keys::TRASHED)));
     }
     let kind = if entry.is_place() {
         entry
@@ -253,21 +246,18 @@ fn row(
             .map(files)
             .unwrap_or_default(),
     };
-    row.extend([kind, size, when(entry.metadata.value(keys::MODIFIED), zone)]);
+    row.extend([kind, size, when(entry.metadata.value(keys::MODIFIED))]);
     row
 }
 
-/// A time a field holds, to the minute in the system's zone; blank when
-/// none is known.
-fn when(value: Option<&Value>, zone: &jiff::tz::TimeZone) -> String {
+/// A time a field holds, to the minute in the system's zone, as the window
+/// writes dates (by the locale, or ISO 8601 where the dates setting says
+/// so); blank when none is known.
+fn when(value: Option<&Value>) -> String {
     value
         .and_then(Value::as_time)
-        .and_then(|time| jiff::Timestamp::try_from(time).ok())
-        .map(|at| {
-            at.to_zoned(zone.clone())
-                .strftime("%Y-%m-%d %H:%M")
-                .to_string()
-        })
+        .and_then(|time| skwir_core::words::Moment::of(time, skwir_core::words::Shape::DateTime))
+        .map(skwir_core::words::Moment::said)
         .unwrap_or_default()
 }
 
@@ -330,7 +320,7 @@ mod tests {
         let Part::Table { columns, rows } = listed.table else {
             panic!("a table");
         };
-        assert_eq!(columns, ["Name", "Kind", "Size", "Modified"]);
+        assert_eq!(columns, ["Name", "Type", "Size", "Modified"]);
         // In the pane's order, a folder marked as one.
         let names: Vec<&str> = rows
             .iter()
@@ -342,7 +332,10 @@ mod tests {
         assert_eq!(row("drafts/")[2], "", "a folder's size is not said");
         assert_eq!(row("b note.txt")[2], "5\u{a0}B");
         assert!(!row("b note.txt")[1].is_empty(), "its kind");
-        assert_eq!(row("a ünïcode.md")[3].len(), "2026-10-31 12:00".len());
+        assert!(
+            !row("a ünïcode.md")[3].is_empty(),
+            "when it was modified, as the window writes dates"
+        );
 
         // Filtered: what the filter keeps, its words said.
         app.dispatch(&Invocation::with_args(
@@ -386,7 +379,7 @@ mod tests {
         };
         assert_eq!(
             columns,
-            ["Name", "Folder", "Deleted", "Kind", "Size", "Modified"]
+            ["Name", "Folder", "Deleted", "Type", "Size", "Modified"]
         );
         let row = |name: &str| rows.iter().find(|row| row[0] == name).unwrap();
         let here = row("it's here.txt");

@@ -19495,3 +19495,56 @@ messages and notes; `just words --check` refuses a space of any kind
 before a percent sign in English, and the catalogs' test a translation
 that parts an argument from the percent sign its English writes after
 it. French keeps « 42 % », a narrow no-break space (the glossary).
+
+## 2026-11-17: The glossary settled, dates the user's everywhere (ADR-139, F and G)
+
+The user followed the recommendations on the open questions.
+
+- **The French glossary is settled** (`docs/glossary-fr.md`), but for two
+  rows still marked (?) that were never put to the user (« Modifié le »
+  as a column header, « Faire une copie allégée »): a tag « étiquette »,
+  notes « annotations » (a rating is « note »), a kind « genre » (a
+  book's own « Genre littéraire »), the Shelf « Étagère », a plugin
+  « module » (another program's keep their French: « greffons
+  GStreamer »), a plan « plan », a pane « panneau » and a panel
+  « volet », Skwir capitalised in prose. Two agents brought the drafts to
+  it, each occurrence decided by the English of its id: 57 changes in
+  52 messages, most of them the Shelf's capital and a panel's « volet ».
+- **The search plugin is titled "Search"** (its id stays `query`; the
+  syntax is still the query language).
+- **The ISO choice is core's** (`locale::set_iso_dates`, set by the
+  window from `ui.date_format`): every moment said for the window
+  follows it, the plugins' too. ISO writes a month `2026-03`, a day
+  `2026-03-12`, a weekday its date (ISO names none), a bar's month or
+  day its two digits. Git's commits, a printed listing's dates and a
+  track's times, which wrote ISO in code whatever the setting, are
+  moments now. Agents read English's.
+- **The desktop's 12- or 24-hour switch outweighs the locale's hours**
+  (`locale::set_hours`, BCP 47's `-u-hc-h23` on the dates' locale):
+  GNOME's `clock-format` through the portal, followed as it changes,
+  asked only where the desktop keeps GNOME's interface settings (GNOME,
+  Budgie, Pantheon, Unity): on this Hyprland session the portal's GTK
+  back end answers the schema's default, "24h", which nobody set, and
+  would force 24 hours on every US locale of Sway, Hyprland or niri;
+  macOS's `AppleICUForce24HourTime`/`AppleICUForce12HourTime`, read with
+  the style; Windows' short time format (`GetLocaleInfoEx`, what
+  Explorer's lists write: `iTime` follows the long time), its region's
+  key watched. Cinnamon's own `clock-use-24h` is not read.
+- **About's details name the languages** Skwir speaks and the locales of
+  its numbers and dates ("fr, en; numbers fr-FR, dates fr-FR"); still in
+  English for a report. Its scale is a decimal.
+- **The small leftovers**: a photo's EXIF facts (exposure, aperture,
+  focal length, position, the last two decimals by the locale, the
+  position's two numbers parted as the language parts them), the
+  timeline's short counts ("1.2k", « 1,2 k »), a film's time, a group's
+  count, are messages; the shortcuts tip names the command's title whole,
+  in quotes, instead of trimming its "…" in code.
+- **English the translators found wrong**: the Type caption and column
+  said "kind"; a printed listing's Type column was headed "Kind"
+  (`print_column_type`); the media controls' "the panel's player" meant
+  the desktop's; the `entries` command's "kind" has a note.
+
+**Left as it was:** the window's title and the desktop entry write
+`skwir` in lowercase, the product's name as it presents itself (a
+question for the user); the hex view as a module says its size in
+English until protocol 2 (step H).

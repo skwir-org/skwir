@@ -4346,6 +4346,8 @@ impl Shell {
                 .settings
                 .get::<String>(crate::settings::DATES_KEY)
                 .is_none_or(|format| format != "iso");
+            // Every date said for the window follows it, the plugins' too.
+            skwir_core::locale::set_iso_dates(!self.prefs.friendly_dates);
             // What the window saves itself is read as it stands, a change
             // still waiting its turn included (`settings::remember`).
             self.prefs.grid_fill = self.switch(crate::settings::GRID_FILL_KEY, false);

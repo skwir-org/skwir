@@ -1,13 +1,16 @@
-# French glossary (proposal, to review)
+# French glossary
 
-Status: drafted 2026-11-17 for ADR-139's step G, **not yet settled with the
-user**. Every `fr.ftl` is drafted from it, each message marked `# draft`
-until reviewed. A term changed here is changed in the drafts by search.
+Status: drafted 2026-11-17 for ADR-139's step G and **settled with the
+user on 2026-11-17**, but for the two choices still marked **(?)**. Every `fr.ftl` is drafted from it, each message
+marked `# draft` until reviewed. A term changed here is changed in the
+drafts by search.
 
 The terms follow what French-speaking users already read in their file
 managers (GNOME Fichiers, Dolphin, the Windows Explorer, the macOS
-Finder), choosing the most common where they differ. A choice still open
-is marked **(?)**.
+Finder), choosing the most common where they differ. Where an English
+word has two senses (a pane and a panel, Skwir's notes and a document's,
+a file's kind and a book's genre), each sense has its own French word:
+decide by the English of the same id and its note for translators.
 
 ## Writing
 
@@ -63,10 +66,11 @@ is marked **(?)**.
 | new folder | nouveau dossier | |
 | open / open with | ouvrir / ouvrir avec | |
 | hidden files | fichiers cachés | |
-| tag | étiquette | Dolphin; the Finder says « tag » **(?)** |
-| rating | note | « 4 étoiles » for its stars |
+| tag | étiquette | Dolphin, Thunderbird, the OQLF. The query language's `tag:` stays as written; TagSpaces' own words (its name, its file format) stay |
+| rating | note | « 4 étoiles » for its stars; « noter », « non noté » |
 | comment | commentaire | |
-| notes (tags, rating, comment) | annotations **(?)** | Skwir's word for the three together |
+| notes (tags, rating, comment) | annotations | Skwir's word for the three together: « note » is a rating in French |
+| a document's own notes (speaker notes, footnotes, a book's notes) | notes | « les notes du document » |
 | Properties | Propriétés | |
 | preview | aperçu | |
 | quick preview | aperçu rapide | |
@@ -77,18 +81,20 @@ is marked **(?)**.
 | address (field) | adresse | « barre d’adresse » for the field |
 | trail (the path's crumbs) | fil d’Ariane | |
 | tab | onglet | |
-| pane | panneau | |
+| pane | panneau | one of the panes showing folders, side by side when split |
+| panel (the preview's, the terminal's, a side panel) | volet | « le volet d’aperçu », « le volet du terminal »; never « panneau », which is a pane |
 | split | diviser la vue | |
 | view: list, grid, columns, board | vue : liste, grille, colonnes, tableau | |
 | sort by / group by | trier par / regrouper par | |
 | folders first | dossiers en premier | |
 | name, size, modified, created, accessed | nom, taille, modifié, créé, consulté | as column headers: Nom, Taille, Modifié le **(?)** |
-| type (a file's) | type | the MIME type's description |
-| kind (what a type is: image, video…) | genre **(?)** | the Finder says « Type » for kind, Dolphin « Catégorie » |
+| type (a file's) | type | its type name, the MIME type's description (« Image PNG ») |
+| kind (what a type is: image, video, document…; `mime::Kind`) | genre | « Genre », « du même genre »; `kind:` stays as written |
+| a book's literary genre | genre littéraire | « Genre littéraire » in a book's Properties, never confused with a file's kind |
 | search / filter | recherche / filtre | |
 | saved search | recherche enregistrée | |
 | Quick filters | filtres rapides | |
-| Shelf | Étagère | Skwir's place for what waits to be pasted **(?)** |
+| Shelf | Étagère | Skwir's place for what waits to be pasted; a place's name: capital É, « l’Étagère », « sur l’Étagère » |
 | bookmark | signet | GNOME; Dolphin says « marque-page » |
 | Recent | Récents | |
 | Home | Dossier personnel | GNOME and Dolphin |
@@ -97,7 +103,7 @@ is marked **(?)**.
 | connect / disconnect | se connecter / se déconnecter | |
 | mount / unmount, eject | monter / démonter, éjecter | |
 | device, volume, drive | périphérique, volume, disque | |
-| plan (changes Skwir proposes) | plan | « le plan » of changes reviewed before applying **(?)** |
+| plan (changes Skwir proposes) | plan | « le plan » of changes reviewed before they apply |
 | proposal / review | proposition / revue | « examiner » as a verb |
 | apply | appliquer | |
 | step | étape | |
@@ -112,8 +118,11 @@ is marked **(?)**.
 | shortcut, key | raccourci, touche | |
 | Settings | Paramètres | GNOME; the Finder says « Réglages » |
 | exclusions | exclusions | |
-| plugin | module **(?)** | « extension » in GNOME and browsers, « module externe » in Dolphin |
+| plugin | module | never « extension » (a file name's extension) nor « greffon », but another program's own plugins keep the French their program gives them (« greffons GStreamer », as GNOME writes them) |
+| plugin from outside (ADR-045) | module externe | |
+| WebAssembly module | module WebAssembly | |
 | agent | agent | an AI or a script that drives Skwir |
+| Skwir (the product, in prose) | Skwir | « skwir » only where it names the program a terminal runs (`skwir --probe`), a path or an id |
 | Usage (disk usage view) | Occupation | |
 | extract / compress | extraire / compresser | |
 | archive | archive | |

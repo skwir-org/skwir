@@ -89,6 +89,10 @@ sentence, never a sentence assembled from pieces.
   a month…): each formatted for the system's number or date locale and
   the user's settings, never with `format!`, `{:.1}`, `strftime` or
   `to_string` in the code. A length of time is counts in a message.
+  Which settings: core's `locale` holds them for every owner alike, the
+  dates setting's ISO 8601 choice (`set_iso_dates`) and the desktop's own
+  12- or 24-hour switch (`set_hours`), so a plugin's dates follow them
+  as the window's do.
 - **A number and its unit stay on one line**: the message joins them with
   a no-break space, `\u{a0}` in the English (`{ $n }\u{a0}MB`, `about
   { $minutes }\u{a0}min left`), and a dimension's numbers to their sign

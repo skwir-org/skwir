@@ -767,3 +767,83 @@ fn a_sentence_is_cut_around_several_arguments() {
     );
     assert_eq!(facts.say_apart(&["kind", "nothing"]), None);
 }
+
+/// Where the window's dates setting says ISO 8601, every date said for the
+/// window is written as ISO writes it, whatever its shape and whoever says
+/// it; agents' English never is.
+#[test]
+fn dates_are_written_as_iso_where_the_setting_says_so() {
+    use super::{Moment, Shape};
+    // SAFETY: a test of its own process, before any thread reads TZ.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("TZ", "UTC");
+    }
+    crate::locale::set_formats(None, Some("en-GB".into()));
+    let on = |shape| Moment::on(2026, 3, 12, shape).expect("a day there is");
+    assert_eq!(on(Shape::Date).said(), "12 Mar 2026");
+    crate::locale::set_iso_dates(true);
+    for (shape, iso) in [
+        (Shape::Time, "12:00"),
+        (Shape::Weekday, "2026-03-12"),
+        (Shape::DayMonth, "2026-03-12"),
+        (Shape::Date, "2026-03-12"),
+        (Shape::DateLong, "2026-03-12"),
+        (Shape::DateTime, "2026-03-12 12:00"),
+        (Shape::DateTimeSeconds, "2026-03-12 12:00:00"),
+        (Shape::MonthYear, "2026-03"),
+        (Shape::Month, "2026-03"),
+        (Shape::MonthShort, "03"),
+        (Shape::Year, "2026"),
+        (Shape::Day, "12"),
+    ] {
+        assert_eq!(on(shape).said(), iso, "{shape:?}");
+    }
+    let words = crate::words!(test_on_day = "On { $day }", day = on(Shape::Date));
+    assert_eq!(words.say(), "On 2026-03-12");
+    assert_ne!(words.english(), "On 2026-03-12", "agents read English's");
+    crate::locale::set_iso_dates(false);
+    assert_eq!(words.say(), "On 12 Mar 2026");
+    crate::locale::set_formats(None, None);
+}
+
+/// A desktop's own 12- or 24-hour switch outweighs its locale's hours,
+/// whatever else the locale says.
+#[test]
+fn the_desktop_s_hours_outweigh_the_locale_s() {
+    use super::{Moment, Shape};
+    use crate::locale::{Hours, set_formats, set_hours};
+    // SAFETY: a test of its own process, before any thread reads TZ.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("TZ", "UTC");
+    }
+    let two = Moment {
+        at: 1_710_252_125,
+        shape: Shape::Time,
+    };
+    set_formats(None, Some("en-US".into()));
+    assert_eq!(two.said(), "2:02\u{202f}PM");
+    set_hours(Some(Hours::TwentyFour));
+    assert_eq!(two.said(), "14:02");
+    assert_eq!(crate::locale::dates(), "en-US-u-hc-h23");
+    set_formats(None, Some("en-GB".into()));
+    set_hours(Some(Hours::Twelve));
+    assert_eq!(two.said(), "2:02\u{202f}pm");
+    set_hours(None);
+    assert_eq!(two.said(), "14:02");
+    // The locale's other keywords and its private use kept, its own
+    // hour cycle replaced.
+    set_hours(Some(Hours::TwentyFour));
+    for (locale, with) in [
+        ("de-DE-u-co-phonebk", "de-DE-u-co-phonebk-hc-h23"),
+        ("en-US-u-hc-h12", "en-US-u-hc-h23"),
+        ("en-US-u-hc-h12-ca-gregory", "en-US-u-ca-gregory-hc-h23"),
+        ("en-US-x-skwir", "en-US-u-hc-h23-x-skwir"),
+    ] {
+        set_formats(None, Some(locale.into()));
+        assert_eq!(crate::locale::dates(), with);
+    }
+    set_hours(None);
+    set_formats(None, None);
+}

@@ -937,6 +937,10 @@ pub mod style {
     pub const DWM: &str = r"Software\Microsoft\Windows\DWM";
     const HIGH_CONTRAST: &str = r"Control Panel\Accessibility\HighContrast";
     const SYSTEM_COLORS: &str = r"Control Panel\Colors";
+    /// Where the region's formats are kept, the short time's among them
+    /// (`desktop_style`'s hours): watched, so a 24-hour clock chosen is
+    /// followed.
+    const INTERNATIONAL: &str = r"Control Panel\International";
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain([0]).collect()
@@ -1170,8 +1174,8 @@ pub mod style {
     }
 
     /// Call `changed` once its keys are watched, then each time the Text
-    /// size, the window metrics, the accent, the contrast theme or its
-    /// colors change, until `stop`, waiting on the registry's notices (no
+    /// size, the window metrics, the accent, the contrast theme, its
+    /// colors or the region's formats change, until `stop`, waiting on the registry's notices (no
     /// timer): what changed while `changed` read is told again, as each
     /// key is asked again before. Calls it once and returns when no key
     /// can be watched; a key Windows has not made yet (no accent ever
@@ -1184,6 +1188,7 @@ pub mod style {
             DWM,
             HIGH_CONTRAST,
             SYSTEM_COLORS,
+            INTERNATIONAL,
         ]
         .into_iter()
         .filter_map(Watched::open)

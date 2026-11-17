@@ -64,9 +64,6 @@ print_column_deleted = Supprimé le
 print_column_folder = Dossier
 
 # draft
-print_column_kind = Genre
-
-# draft
 print_column_modified = Modifié le
 
 # draft
@@ -74,6 +71,9 @@ print_column_name = Nom
 
 # draft
 print_column_size = Taille
+
+# draft
+print_column_type = Type
 
 # draft
 print_contact_sheet = Planche contact

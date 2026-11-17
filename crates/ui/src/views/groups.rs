@@ -594,7 +594,7 @@ pub fn heading(
     theme: &Theme,
     chevron: Option<AnyElement>,
 ) -> Div {
-    let words = (label(span), span.count.to_string());
+    let words = (label(span), crate::format::number(span.count));
     heading_saying(words, first, height, left, scale, theme, chevron)
 }
 

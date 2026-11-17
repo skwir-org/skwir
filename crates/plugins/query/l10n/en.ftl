@@ -619,7 +619,7 @@ query_plocate_database = plocate's database
 
 query_plugin_description = Search as a location: name, size, date, tag, MIME, and content queries; saved searches in the sidebar
 
-query_plugin_title = Query
+query_plugin_title = Search
 
 # A rating a search offers.
 query_rating_five = Five stars

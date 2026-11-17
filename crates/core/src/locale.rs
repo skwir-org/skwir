@@ -27,6 +27,12 @@ struct Languages {
     /// (`LC_NUMERIC`, `LC_TIME`), apart from the messages' languages.
     numbers: Option<String>,
     dates: Option<String>,
+    /// How the desktop writes the hours of a time, where it says so apart
+    /// from its locale.
+    hours: Option<Hours>,
+    /// Dates written as ISO 8601 writes them, whatever the locale (the
+    /// window's dates setting, `ui.date_format`).
+    iso_dates: bool,
     /// Moves whenever what is said would change, for what keeps what it
     /// read of them (a cache of names by language).
     revision: u64,
@@ -37,8 +43,46 @@ static LANGUAGES: RwLock<Languages> = RwLock::new(Languages {
     chosen: None,
     numbers: None,
     dates: None,
+    hours: None,
+    iso_dates: false,
     revision: 0,
 });
+
+/// How a time's hours are written, where the desktop says so apart from
+/// its locale: GNOME's clock format, macOS's and Windows' own switch
+/// (`skwir_platform::desktop_style`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Hours {
+    /// 2:02 PM.
+    Twelve,
+    /// 14:02.
+    TwentyFour,
+}
+
+/// How the desktop writes the hours, `None` where it says nothing but its
+/// locale: the dates' locale then writes them its way.
+pub fn set_hours(hours: Option<Hours>) {
+    let mut kept = LANGUAGES.write();
+    if kept.hours != hours {
+        kept.hours = hours;
+        kept.revision += 1;
+    }
+}
+
+/// Whether the window writes dates as ISO 8601 writes them (`2026-03-12
+/// 14:02`), every reader of a date in it alike, the plugins' included.
+pub fn set_iso_dates(iso: bool) {
+    let mut kept = LANGUAGES.write();
+    if kept.iso_dates != iso {
+        kept.iso_dates = iso;
+        kept.revision += 1;
+    }
+}
+
+/// Whether the window writes dates as ISO 8601 writes them.
+pub fn iso_dates() -> bool {
+    LANGUAGES.read().iso_dates
+}
 
 /// The system's locales for numbers and for dates (`skwir_platform::locale`,
 /// `LC_NUMERIC` and `LC_TIME` on Linux), `None` where it says none: the
@@ -61,10 +105,53 @@ pub fn numbers() -> String {
 }
 
 /// The locale dates and times are written in for the window: the system's,
-/// else the first language words are said in.
+/// else the first language words are said in; its hours as the desktop
+/// writes them where it says (`-u-hc-h23`, BCP 47's hour cycle).
 pub fn dates() -> String {
     let kept = LANGUAGES.read();
-    kept.dates.clone().unwrap_or_else(|| first(&kept))
+    let locale = kept.dates.clone().unwrap_or_else(|| first(&kept));
+    match kept.hours {
+        Some(hours) => with_hours(&locale, hours),
+        None => locale,
+    }
+}
+
+/// `locale` with its hour cycle `hours`, in place of any it named.
+fn with_hours(locale: &str, hours: Hours) -> String {
+    let cycle = match hours {
+        Hours::Twelve => "h12",
+        Hours::TwentyFour => "h23",
+    };
+    // The Unicode extension's keywords, kept but `hc`; the private use
+    // (`-x-`) after it, if any, kept too.
+    let (main, private) = match locale.find("-x-") {
+        Some(at) => locale.split_at(at),
+        None => (locale, ""),
+    };
+    let (base, keywords) = match main.find("-u-") {
+        Some(at) => (&main[..at], &main[at + 3..]),
+        None => (main, ""),
+    };
+    let mut kept: Vec<&str> = Vec::new();
+    let mut parts = keywords
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .peekable();
+    while let Some(part) = parts.next() {
+        if part == "hc" {
+            // Its value follows, one subtag.
+            parts.next();
+        } else {
+            kept.push(part);
+        }
+    }
+    let keywords = kept.join("-");
+    let joined = if keywords.is_empty() {
+        String::new()
+    } else {
+        format!("-{keywords}")
+    };
+    format!("{base}-u{joined}-hc-{cycle}{private}")
 }
 
 fn first(kept: &Languages) -> String {

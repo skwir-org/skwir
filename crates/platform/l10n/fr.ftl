@@ -160,6 +160,9 @@ document_worker_timed_out = le programme auxiliaire de documents a dépassé le 
 exif_aperture = Ouverture
 
 # draft
+exif_aperture_value = f/{ $f }
+
+# draft
 exif_artist = Auteur
 
 # draft
@@ -172,13 +175,25 @@ exif_copyright = Droits d’auteur
 exif_exposure = Temps de pose
 
 # draft
+exif_exposure_fraction = 1/{ $denominator } s
+
+# draft
+exif_exposure_seconds = { $seconds } s
+
+# draft
 exif_flash = Flash
 
 # draft
 exif_focal_length = Focale
 
 # draft
+exif_focal_length_value = { $mm } mm
+
+# draft
 exif_iso = ISO
+
+# draft
+exif_latitude_longitude = { $latitude } ; { $longitude }
 
 # draft
 exif_lens = Objectif

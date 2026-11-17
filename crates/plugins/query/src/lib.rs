@@ -881,7 +881,7 @@ impl Plugin for QueryPlugin {
     }
 
     fn title(&self) -> skwir_core::words::Words {
-        skwir_core::words!(query_plugin_title = "Query")
+        skwir_core::words!(query_plugin_title = "Search")
     }
 
     fn description(&self) -> skwir_core::words::Words {

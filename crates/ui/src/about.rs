@@ -192,6 +192,36 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
     }
 }
 
+/// A display's scale with the digits it has, at most two: 1, 1.5, 1.25.
+fn scale_said(scale: f32) -> Decimal {
+    let scale = f64::from(scale);
+    let digits = (0..2u8)
+        .find(|&digits| {
+            let shifted = scale * 10f64.powi(i32::from(digits));
+            (shifted - shifted.round()).abs() < 1e-6
+        })
+        .unwrap_or(2);
+    Decimal::of(scale, digits)
+}
+
+/// The languages Skwir says its words in, most wanted first, and the
+/// locales it writes numbers and dates in (ISO 8601 where the dates
+/// setting says so): for a report of words cut or a date written wrong.
+fn language_fact() -> Words {
+    let dates = if skwir_core::locale::iso_dates() {
+        "ISO 8601".to_owned()
+    } else {
+        skwir_core::locale::dates()
+    };
+    words!(
+        about_language_is = "{ $languages }; numbers { $numbers }, dates { $dates }",
+        languages = Words::as_written(skwir_core::locale::languages().join(", ")),
+        numbers = Words::as_written(skwir_core::locale::numbers()),
+        dates = Words::as_written(dates),
+        note = "In About, the languages Skwir speaks, most wanted first (fr, en), then the locales it writes numbers and dates in (fr-FR), as written."
+    )
+}
+
 /// What Copy details puts on the clipboard: the version as `skwir
 /// --version` says it, then each fact on a line, in English, as a report
 /// of a problem is written (`.github/ISSUE_TEMPLATE/problem.yml`).
@@ -245,9 +275,7 @@ impl Shell {
                 if !display.is_empty() {
                     // Its scale, which gpui follows (ADR-117): for a report
                     // of text too small or too large.
-                    // Transitional: a decimal number, as English writes it
-                    // (ADR-139, step F).
-                    let scale = window.scale_factor().to_string();
+                    let scale = scale_said(window.scale_factor());
                     let said = match std::env::var("GPUI_X11_SCALE_FACTOR") {
                         Ok(forced) => words!(
                             about_display_forced = "{ $display }, scale { $scale }, GPUI_X11_SCALE_FACTOR={ $forced }",
@@ -289,6 +317,13 @@ impl Shell {
                         graphics(&specs),
                     ));
                 }
+                facts.push((
+                    words!(
+                        about_language = "Language",
+                        note = "In About, the label of the languages Skwir speaks and how it writes numbers and dates."
+                    ),
+                    language_fact(),
+                ));
                 // A menu opened while it was read closes.
                 this.close_popups_for_dialog(window, cx);
                 let previous = FocusReturn::capture(window, cx);

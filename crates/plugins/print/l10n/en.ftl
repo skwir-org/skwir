@@ -58,9 +58,6 @@ print_column_deleted = Deleted
 # A column's header in a printed listing: the folder each file is in.
 print_column_folder = Folder
 
-# A column's header in a printed listing: what each file is (PDF document, Folder…).
-print_column_kind = Kind
-
 # A column's header in a printed listing: when each file was last changed.
 print_column_modified = Modified
 
@@ -69,6 +66,9 @@ print_column_name = Name
 
 # A column's header in a printed listing.
 print_column_size = Size
+
+# A column's header in a printed listing: each file's type (PDF document, Folder…), as the list view's Type column says it.
+print_column_type = Type
 
 # A card of the Layout field: the pictures among the files, small, several to a page.
 print_contact_sheet = Contact sheet

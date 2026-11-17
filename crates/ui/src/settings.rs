@@ -3145,7 +3145,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "reading",
         intro: || {
             words!(
-                settings_intro_reading = "How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each kind.",
+                settings_intro_reading = "How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each of them.",
                 note = "What a page of the settings window says under its title."
             )
         },

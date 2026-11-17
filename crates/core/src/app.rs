@@ -5129,7 +5129,8 @@ mod builtin {
                 note = "An action's name, for scripts and agents."
             ),
             words!(
-                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's"
+                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's",
+                note = "kind: whether an entry is a file, a folder or a link, the field's name in the answer."
             ),
             |a, app| {
                 use crate::entry::keys;

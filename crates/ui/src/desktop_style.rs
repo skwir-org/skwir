@@ -110,6 +110,9 @@ pub fn read_again(app: &Arc<App>) {
 
 /// Keep `style`; whether it differs from what was kept.
 fn set(style: DesktopStyle) -> bool {
+    // The desktop's 12- or 24-hour switch, which every date said follows
+    // (core's, as it is for the plugins' dates too).
+    skwir_core::locale::set_hours(style.hours);
     let mut said = SAID
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

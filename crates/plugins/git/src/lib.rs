@@ -194,7 +194,6 @@ fn asked<'a>(target: &'a str, path: &'a str) -> (&'a str, &'a str) {
 /// A history's inspection: a row a commit, the graph of the merges down
 /// the whole repository's, a word where no commit is.
 fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
-    let zone = jiff::tz::TimeZone::system();
     let graph = path.is_empty();
     let lanes = if graph {
         lanes::lay(
@@ -218,7 +217,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
                     commit.short.clone()
                 },
                 commit.author.clone(),
-                when(commit.time, &zone),
+                when(commit.time),
                 names(&commit.refs, log.head.as_deref()),
             ],
             // Opened under the name the file had in it.
@@ -377,17 +376,15 @@ fn names(refs: &[String], head: Option<&str>) -> String {
         .join(REFS_JOIN)
 }
 
-/// When a commit was made, in the user's time zone, as the files' dates
-/// are written (`YYYY-MM-DD HH:MM`).
-fn when(seconds: i64, zone: &jiff::tz::TimeZone) -> String {
-    jiff::Timestamp::from_second(seconds).map_or_else(
-        |_| "—".into(),
-        |at| {
-            at.to_zoned(zone.clone())
-                .strftime("%Y-%m-%d %H:%M")
-                .to_string()
-        },
-    )
+/// When a commit was made, to the minute in the user's time zone, as the
+/// window writes dates: by the locale, or as ISO 8601 where the dates
+/// setting says so.
+fn when(seconds: i64) -> String {
+    u64::try_from(seconds)
+        .ok()
+        .map(|seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+        .and_then(|at| skwir_core::words::Moment::of(at, skwir_core::words::Shape::DateTime))
+        .map_or_else(|| "—".into(), skwir_core::words::Moment::said)
 }
 
 #[cfg(test)]
@@ -505,9 +502,21 @@ mod tests {
         assert_eq!(asked(targets[1], "docs/new.txt"), ("b", "old name.txt"));
     }
 
+    /// A commit's date is written as the window writes dates: by the
+    /// locale, or as ISO 8601 where the dates setting says so.
     #[test]
     fn a_commit_s_date_is_written_as_the_files_are() {
-        let utc = jiff::tz::TimeZone::UTC;
-        assert_eq!(when(1_700_000_000, &utc), "2023-11-14 22:13");
+        // SAFETY: nextest runs each test in a process of its own, and this
+        // one starts no thread before.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("TZ", "UTC");
+        }
+        skwir_core::locale::set_formats(None, Some("en-GB".into()));
+        assert_eq!(when(1_700_000_000), "14 Nov 2023, 22:13");
+        skwir_core::locale::set_iso_dates(true);
+        assert_eq!(when(1_700_000_000), "2023-11-14 22:13");
+        skwir_core::locale::set_iso_dates(false);
+        skwir_core::locale::set_formats(None, None);
     }
 }

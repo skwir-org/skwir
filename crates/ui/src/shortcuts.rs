@@ -459,19 +459,13 @@ impl Shell {
             toml::Value::Array(shown.into_iter().map(toml::Value::String).collect()),
         );
         self.save_settings_later();
-        // Transitional: the title without the `…` that says it asks more,
-        // until each title is a message that says it (PLAN.md, step E).
-        let action = keymap::title_of(&self.app, &hint)
-            .say()
-            .trim_end_matches('…')
-            .to_owned();
         self.toast(
             Toast::new(
                 words!(
-                    shortcuts_tip = "Tip: press { $keys } for { $action }. F1 lists the keys for where you are.",
+                    shortcuts_tip = "Tip: press { $keys } for “{ $action }”. F1 lists the keys for where you are.",
                     keys = keymap::display_keys(&hint.keys),
-                    action = action,
-                    note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title, capitalised as a title is (Copy, Move to Trash): where a capital inside a sentence would read wrong, name it as a command (the command Copy)."
+                    action = keymap::title_of(&self.app, &hint),
+                    note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title as its menu writes it, quoted (Copy, Rename…)."
                 ),
                 Tone::Info,
                 Vec::new(),

@@ -382,18 +382,35 @@ fn period_words(bucket: usize, day: (i64, u32, u32)) -> String {
     }
 }
 
-/// `999`, `1.2k`, `12k`, `1.2M`: a count said in the room of a bar.
+/// `999`, `1.2k`, `12k`, `1.2M`: a count said in the room of a bar, in
+/// thousands or millions, a tenth shown below ten of them unless nought.
 fn short_count(n: u64) -> String {
-    let tenths = |unit: u64| match n % unit / (unit / 10) {
-        0 => String::new(),
-        tenth => format!(".{tenth}"),
+    let short = |unit: u64| {
+        let tenths = n / (unit / 10);
+        let (value, digits) = if n < 10 * unit && !tenths.is_multiple_of(10) {
+            (tenths, 1)
+        } else {
+            (n / unit, 0)
+        };
+        words::Decimal {
+            value: i64::try_from(value).unwrap_or(i64::MAX),
+            digits,
+        }
     };
     match n {
-        0..1_000 => n.to_string(),
-        1_000..10_000 => format!("{}{}k", n / 1_000, tenths(1_000)),
-        10_000..1_000_000 => format!("{}k", n / 1_000),
-        1_000_000..10_000_000 => format!("{}{}M", n / 1_000_000, tenths(1_000_000)),
-        _ => format!("{}M", n / 1_000_000),
+        0..1_000 => crate::format::number(usize::try_from(n).unwrap_or(usize::MAX)),
+        1_000..1_000_000 => words!(
+            timeline_thousands = "{ $n }k",
+            n = short(1_000),
+            note = "A count in the room of a timeline's bar, in thousands (1.2k, 12k): n has at most one digit after the decimal sign."
+        )
+        .say(),
+        _ => words!(
+            timeline_millions = "{ $n }M",
+            n = short(1_000_000),
+            note = "A count in the room of a timeline's bar, in millions (1.5M, 25M): n has at most one digit after the decimal sign."
+        )
+        .say(),
     }
 }
 

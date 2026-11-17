@@ -494,7 +494,7 @@ app_destination_path = la destination doit être un chemin
 app_entries = Lister les éléments
 
 # draft
-app_entries_description = Ce qu’affiche un panneau, dans son ordre (trié, filtré, avec les dossiers ouverts sur place), ou avec `location` ce que contient un dossier, listé sans l’afficher : l’identifiant, le nom, le chemin, le genre, la taille et la date de modification (en secondes depuis 1970) de chaque élément, et s’il est sélectionné ; à partir de `offset`, au plus `limit`. `complete: false` : la liste arrivait encore, redemandez. `as_of`, quand il est présent : la réponse est celle d’un index à sa dernière mise à jour (`by` dit lequel, `updated` quand, en secondes depuis 1970), si bien qu’un fichier créé, renommé ou supprimé depuis n’y est pas. `excluded`, quand il est présent : combien de fichiers et de dossiers sous la racine la recherche a passés (les dossiers écartés dans Paramètres › Général › Recherches, caches, corbeille, dossiers réseau) ; `excluded:yes` dans la recherche parcourt ceux de la liste
+app_entries_description = Ce qu’affiche un panneau, dans son ordre (trié, filtré, avec les dossiers ouverts sur place), ou avec `location` ce que contient un dossier, listé sans l’afficher : l’identifiant, le nom, le chemin, la nature, la taille et la date de modification (en secondes depuis 1970) de chaque élément, et s’il est sélectionné ; à partir de `offset`, au plus `limit`. `complete: false` : la liste arrivait encore, redemandez. `as_of`, quand il est présent : la réponse est celle d’un index à sa dernière mise à jour (`by` dit lequel, `updated` quand, en secondes depuis 1970), si bien qu’un fichier créé, renommé ou supprimé depuis n’y est pas. `excluded`, quand il est présent : combien de fichiers et de dossiers sous la racine la recherche a passés (les dossiers écartés dans Paramètres › Général › Recherches, caches, corbeille, dossiers réseau) ; `excluded:yes` dans la recherche parcourt ceux de la liste
 
 # draft
 app_expand = Déplier le dossier
@@ -800,7 +800,7 @@ app_show_companions_description = Afficher les fichiers cachés dans le panneau,
 app_show_in_folder = Afficher dans le dossier
 
 # draft
-app_show_in_folder_description = Ouvrir le dossier qui contient le fichier sélectionné, ce fichier sélectionné : depuis une recherche, une étiquette, l’étagère, où sont listés des fichiers de nombreux dossiers
+app_show_in_folder_description = Ouvrir le dossier qui contient le fichier sélectionné, ce fichier sélectionné : depuis une recherche, une étiquette, l’Étagère, où sont listés des fichiers de nombreux dossiers
 
 # draft
 app_show_in_folder_one = sélectionnez un seul fichier à afficher dans son dossier
@@ -830,7 +830,7 @@ app_sort_description = Régler la clé de tri, le sens et l’affichage des fich
 app_take_out = Retirer d’ici
 
 # draft
-app_take_out_description = Retirer la sélection d’un emplacement qui liste des fichiers gardés ailleurs, à sa façon (celui d’une étiquette leur retire son étiquette, celui de l’étagère les retire de l’étagère) : les fichiers restent où ils sont. Ce que fait la touche Suppr à cet endroit
+app_take_out_description = Retirer la sélection d’un emplacement qui liste des fichiers gardés ailleurs, à sa façon (celui d’une étiquette leur retire son étiquette, celui de l’Étagère les retire de l’Étagère) : les fichiers restent où ils sont. Ce que fait la touche Suppr à cet endroit
 
 # draft
 app_toast_redo = Rétablir
@@ -3217,13 +3217,13 @@ topic_select = Sélection
 topic_skwir = Skwir
 
 # draft
-topic_tabs = Onglets et vue divisée
+topic_tabs = Onglets et panneaux
 
 # draft
 topic_terminal = Terminal
 
 # draft
-topic_view = Vues et panneaux
+topic_view = Vues et volets
 
 # draft
 topic_window = La fenêtre

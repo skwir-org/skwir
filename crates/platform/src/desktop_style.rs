@@ -1,8 +1,9 @@
 //! What the user chose on their desktop for how applications look
 //! (ADR-071): an accent, a preference for more contrast, a color scheme,
 //! the families of its fonts (the interface's, documents', monospace:
-//! ADR-073). Skwir's own controls wear them; it never imitates a
-//! desktop's palette.
+//! ADR-073), and the hours its clock writes, where it keeps them apart
+//! from its locale (ADR-139, 10). Skwir's own controls wear them; it
+//! never imitates a desktop's palette.
 //!
 //! On Linux the accent and the contrast are the settings portal's
 //! (`org.freedesktop.appearance`, over D-Bus). The color scheme is
@@ -21,18 +22,28 @@
 //! it); a fontconfig alias among them (`Monospace`) is the family
 //! fontconfig matches it to (`fonts::unalias`). Each font's size is read
 //! with its family, from the same settings, and GTK's and Qt's fonts are
-//! also said apart, for the user to choose (ADR-117).
+//! also said apart, for the user to choose (ADR-117). The hours are
+//! GNOME's clock format (the portal's `clock-format`), read where the
+//! desktop keeps GNOME's interface settings, whose file managers follow
+//! it: elsewhere the portal answers `GSettings`' default though nothing
+//! there sets it, and the locale says the hours (Plasma writes its time
+//! format into `LC_TIME`).
 //!
 //! On macOS the interface font is the system's (San Francisco) at 13 px,
 //! as its controls are written, and its colors those `AppKit` draws its own
 //! windows in (`NSColor`'s, each look's as its appearance resolves them:
 //! the accent the user chose, which its lists' selection follows, and
-//! Increase contrast's appearances when it is on). `AppKit` tells only its own windows of a
+//! Increase contrast's appearances when it is on), and the hours its
+//! 24-hour switch forces (`AppleICUForce24HourTime`,
+//! `AppleICUForce12HourTime`). `AppKit` tells only its own windows of a
 //! change, so they are read again when the window's look changes or it is
 //! activated (`FOLLOWED`). On Windows the family it writes messages in
 //! (`Segoe UI`), the Text size chosen in its Accessibility settings, the
 //! accent (`UISettings`) and a contrast theme's colors (`GetSysColor`),
-//! followed in the registry (`windows::style`). Windows names no other
+//! followed in the registry (`windows::style`); the hours of the user's
+//! short time (`LOCALE_SSHORTTIME`, as Explorer's lists write a time),
+//! read with them, are not followed on their own (`Control
+//! Panel\International` is not watched). Windows names no other
 //! colors: its own applications' are their toolkit's, which Skwir does
 //! not copy (ADR-071, point 2).
 
@@ -110,6 +121,30 @@ pub struct DesktopStyle {
     /// names one.
     #[serde(default)]
     pub text_scaling: Option<f64>,
+    /// The hours its clock writes (GNOME's clock format, macOS's 24-hour
+    /// switch, Windows' short time), where it says so apart from its
+    /// locale: `None` where it says nothing, the dates' locale writing
+    /// them its way (`skwir_core::locale::set_hours`).
+    #[serde(default)]
+    pub hours: Option<skwir_core::locale::Hours>,
+}
+
+/// The hours a time format of Windows writes (`HH:mm`, `h:mm tt`): its
+/// first hour's letter, `H` for 24, `h` for 12, outside a quoted
+/// literal; none where it writes no hour.
+#[cfg(any(windows, test))]
+fn hours_written(format: &str) -> Option<skwir_core::locale::Hours> {
+    use skwir_core::locale::Hours;
+    let mut quoted = false;
+    for c in format.chars() {
+        match c {
+            '\'' => quoted = !quoted,
+            'H' if !quoted => return Some(Hours::TwentyFour),
+            'h' if !quoted => return Some(Hours::Twelve),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Where a style was read: the desktop portal (GTK's settings, as it says
@@ -530,6 +565,7 @@ mod imp {
     use std::time::Duration;
 
     use skwir_core::CancelToken;
+    use skwir_core::locale::Hours;
     use zbus::blocking::Connection;
     use zbus::zvariant::{OwnedValue, Value};
 
@@ -676,6 +712,14 @@ mod imp {
         fn wayland(&self) -> bool {
             std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
         }
+        /// Whether the desktop keeps GNOME's interface settings (GNOME,
+        /// Budgie, Pantheon), whose clock format (`clock-format`) its
+        /// clock and its file manager follow. Elsewhere the portal's GTK
+        /// backend answers it all the same, `GSettings`' default where
+        /// nothing set it, and the hours are the locale's.
+        fn keeps_gnome_clock(&self) -> bool {
+            false
+        }
         /// The connection a reading asks the portal on, `listened` being
         /// the one its changes are followed on: a test's portal there. The
         /// desktop's opens one of its own, with a call timeout, closed once
@@ -749,6 +793,10 @@ mod imp {
     impl Own for TheDesktop {
         fn fonts(&self) -> Named {
             own_fonts()
+        }
+
+        fn keeps_gnome_clock(&self) -> bool {
+            desktop::chosen() == Some(Chosen::GSettings(INTERFACE))
         }
 
         fn asking(&self, _: Option<&Connection>) -> Option<Connection> {
@@ -881,9 +929,20 @@ mod imp {
     /// The portal's keys of the fonts, in `INTERFACE`.
     const FONT_KEYS: [&str; 3] = ["font-name", "document-font-name", "monospace-font-name"];
     /// The other keys of `INTERFACE` read (`read_from`), each followed as
-    /// the fonts are: the GTK theme and the text scaling factor (GNOME's
-    /// Large Text).
-    const INTERFACE_KEYS: [&str; 2] = ["gtk-theme", "text-scaling-factor"];
+    /// the fonts are: the GTK theme, the text scaling factor (GNOME's
+    /// Large Text) and the clock's format (`Own::keeps_gnome_clock`).
+    const INTERFACE_KEYS: [&str; 3] = ["gtk-theme", "text-scaling-factor", CLOCK_FORMAT];
+    /// GNOME's 12- or 24-hour switch, `'12h'` or `'24h'`.
+    const CLOCK_FORMAT: &str = "clock-format";
+
+    /// The hours GNOME's clock format says.
+    fn clock_hours(format: &str) -> Option<Hours> {
+        match format {
+            "12h" => Some(Hours::Twelve),
+            "24h" => Some(Hours::TwentyFour),
+            _ => None,
+        }
+    }
 
     /// What the desktop says: each font as `own` names it where the
     /// desktop keeps it, else as the portal on `bus` names it; its scheme
@@ -892,13 +951,10 @@ mod imp {
         read_parts(bus, own, true)
     }
 
-    /// `read_from`, its colors left unread unless `colors`: a reading for
-    /// the fonts alone (`super::read_fonts`).
-    pub(super) fn read_parts(
-        bus: Option<&Connection>,
-        own: &dyn Own,
-        with_colors: bool,
-    ) -> DesktopStyle {
+    /// `read_from`, all but its fonts left unread unless `whole`: a reading
+    /// for the fonts alone (`super::read_fonts`), no portal asked of its
+    /// colors or its clock.
+    pub(super) fn read_parts(bus: Option<&Connection>, own: &dyn Own, whole: bool) -> DesktopStyle {
         // A portal that did not answer in time is not asked again in this
         // reading: one wait at most (`Own::asking`).
         let silent = std::cell::Cell::new(false);
@@ -963,13 +1019,19 @@ mod imp {
             .and_then(|value| f64::try_from(value).ok())
             .filter(|factor| *factor > 0. && factor.is_finite())
             .filter(|factor| !window_dpi.is_some_and(|dpi| super::scales_text(dpi, *factor)));
-        let (colors, gtk_colors, qt_colors) = if with_colors {
+        let (colors, gtk_colors, qt_colors) = if whole {
             read_colors(own, &portal_string)
         } else {
             Default::default()
         };
         // The accent and the contrast are the colors' too.
-        let appearance = |key: &str| with_colors.then(|| portal(APPEARANCE, key)).flatten();
+        let appearance = |key: &str| whole.then(|| portal(APPEARANCE, key)).flatten();
+        // Asked only where the desktop keeps GNOME's switch: one call less
+        // at each reading elsewhere.
+        let hours = (whole && own.keeps_gnome_clock())
+            .then(|| portal_string(INTERFACE, CLOCK_FORMAT))
+            .flatten()
+            .and_then(|format| clock_hours(&format));
         DesktopStyle {
             accent: appearance("accent-color").and_then(accent),
             more_contrast: appearance("contrast").and_then(|value| u32::try_from(value).ok())
@@ -989,6 +1051,7 @@ mod imp {
             colors_from: colors.from.clone(),
             gtk_colors: gtk_colors.apart(),
             qt_colors: qt_colors.apart(),
+            hours,
         }
     }
 
@@ -1600,7 +1663,8 @@ mod imp {
 
 // macOS: its interface font, at the size its controls are written in,
 // and the colors AppKit draws its own windows in, each look's as its
-// appearance resolves them, Increase contrast's when it is on (ADR-071).
+// appearance resolves them, Increase contrast's when it is on (ADR-071),
+// and the hours its 24-hour switch forces (ADR-139).
 // AppKit tells only its own windows of a change: the window reads it
 // again as its look changes or it is activated (`FOLLOWED`).
 // The system's calls are Objective-C messages and extern statics: each
@@ -1611,13 +1675,17 @@ mod imp {
     use std::cell::RefCell;
 
     use block2::StackBlock;
-    use objc2::rc::autoreleasepool;
+    use objc2::rc::{Retained, autoreleasepool};
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
     use objc2_app_kit::{
         NSAppearance, NSAppearanceName, NSAppearanceNameAccessibilityHighContrastAqua,
         NSAppearanceNameAccessibilityHighContrastDarkAqua, NSAppearanceNameAqua,
         NSAppearanceNameDarkAqua, NSColor, NSColorSpace, NSWorkspace,
     };
+    use objc2_foundation::NSString;
     use skwir_core::CancelToken;
+    use skwir_core::locale::Hours;
 
     use super::{DesktopStyle, Scheme, Schemes, SystemColors};
 
@@ -1654,9 +1722,38 @@ mod imp {
                 more_contrast,
                 colors_from: (!schemes.is_empty()).then(|| super::Read::desktop("macOS")),
                 schemes,
+                hours: hours(),
                 ..read_fonts()
             }
         })
+    }
+
+    /// The hours the 24-hour switch beside the region forces (System
+    /// Settings › General › Date & Time, or Language & Region), each a
+    /// boolean of the global domain as the user's defaults find it, the
+    /// 24-hour one first; none where neither is on, the region's locale
+    /// writing them its way. Asked of `NSUserDefaults` by name, as the
+    /// crate takes none of Foundation's bindings for it.
+    fn hours() -> Option<Hours> {
+        // SAFETY: `standardUserDefaults`, a class method of a class
+        // Foundation defines, takes nothing and returns the shared
+        // defaults, retained here.
+        let defaults: Option<Retained<AnyObject>> =
+            unsafe { msg_send![class!(NSUserDefaults), standardUserDefaults] };
+        let defaults = defaults?;
+        let on = |key: &str| -> bool {
+            let key = NSString::from_str(key);
+            // SAFETY: `boolForKey:` takes a string this owns for the call
+            // and returns a `BOOL`, `NO` where the key is not set.
+            unsafe { msg_send![&*defaults, boolForKey: &*key] }
+        };
+        if on("AppleICUForce24HourTime") {
+            Some(Hours::TwentyFour)
+        } else if on("AppleICUForce12HourTime") {
+            Some(Hours::Twelve)
+        } else {
+            None
+        }
     }
 
     pub(super) fn read_fonts() -> DesktopStyle {
@@ -1726,10 +1823,12 @@ mod imp {
 // followed in the registry; the size itself is WinUI's (ADR-117),
 // Windows naming none. A contrast theme is a palette the user chose: its
 // colors are a scheme, under the stricter guard, and keep their own
-// accent (ADR-071, points 4 and 6).
+// accent (ADR-071, points 4 and 6). The hours are those of the user's
+// short time, as Explorer's lists write a time (ADR-139).
 #[cfg(windows)]
 mod imp {
     use skwir_core::CancelToken;
+    use skwir_core::locale::Hours;
 
     use super::{DesktopStyle, Schemes};
 
@@ -1745,8 +1844,28 @@ mod imp {
             more_contrast: contrast,
             colors_from: contrast.then(|| super::Read::desktop("Windows")),
             schemes,
+            hours: hours(),
             ..read_fonts()
         }
+    }
+
+    /// The hours of the user's short time (`LOCALE_SSHORTTIME`: `HH:mm`,
+    /// `h:mm tt`), as the region's format page sets it, the locale's own
+    /// where the user set none; none where it writes no hour. Its short
+    /// time rather than `iTime`, which follows its long time.
+    // The system's call takes a buffer by pointer: the block says why it
+    // is sound, and nothing unsafe leaves the function.
+    #[allow(unsafe_code)]
+    pub(super) fn hours() -> Option<Hours> {
+        use windows_sys::Win32::Globalization::{GetLocaleInfoEx, LOCALE_SSHORTTIME};
+        // At most 80 characters, its NUL among them.
+        let mut text = [0u16; 80];
+        // SAFETY: the user's locale (a null name, `LOCALE_NAME_USER_DEFAULT`),
+        // and a buffer of the length given, which outlives the call.
+        let n =
+            unsafe { GetLocaleInfoEx(std::ptr::null(), LOCALE_SSHORTTIME, text.as_mut_ptr(), 80) };
+        let n = usize::try_from(n).ok()?.checked_sub(1)?;
+        super::hours_written(&String::from_utf16(text.get(..n)?).ok()?)
     }
 
     pub(super) fn read_fonts() -> DesktopStyle {
@@ -1902,6 +2021,49 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_says_the_hours_of_its_short_time() {
+        // Every locale's short time names an hour, Wine's too (its user's
+        // locale follows the test's `LANG`: 12 or 24 hours).
+        let hours = imp::hours();
+        assert!(hours.is_some());
+        assert_eq!(read().hours, hours);
+    }
+
+    #[test]
+    fn a_windows_time_format_says_its_hours_by_its_first_hour_s_letter() {
+        use skwir_core::locale::Hours;
+        for (format, hours) in [
+            ("HH:mm", Some(Hours::TwentyFour)),
+            ("H:mm", Some(Hours::TwentyFour)),
+            ("h:mm tt", Some(Hours::Twelve)),
+            ("tt hh:mm", Some(Hours::Twelve)),
+            // A literal's letters are no hour's.
+            ("'h'H'h'mm", Some(Hours::TwentyFour)),
+            ("'o''clock' h", Some(Hours::Twelve)),
+            ("mm:ss", None),
+            ("", None),
+        ] {
+            assert_eq!(hours_written(format), hours, "{format}");
+        }
+    }
+
+    #[test]
+    fn a_style_kept_before_the_hours_reads_none_of_them() {
+        let mut kept = serde_json::to_value(DesktopStyle::default()).unwrap();
+        kept.as_object_mut().unwrap().remove("hours").unwrap();
+        let read: DesktopStyle = serde_json::from_value(kept).unwrap();
+        assert_eq!(read.hours, None);
+        let twelve = DesktopStyle {
+            hours: Some(skwir_core::locale::Hours::Twelve),
+            ..DesktopStyle::default()
+        };
+        let again: DesktopStyle =
+            serde_json::from_value(serde_json::to_value(&twelve).unwrap()).unwrap();
+        assert_eq!(again, twelve);
+    }
+
     #[test]
     fn a_font_s_size_is_read_in_points_or_pixels() {
         let close = |a: Option<f32>, b: f32| a.is_some_and(|a| (a - b).abs() < 1e-3);
@@ -1989,6 +2151,7 @@ mod tests {
         use std::time::Duration;
 
         use skwir_core::CancelToken;
+        use skwir_core::locale::Hours;
         use zbus::blocking::Connection;
         use zbus::object_server::SignalEmitter;
         use zbus::zvariant::{OwnedValue, Value};
@@ -2165,6 +2328,10 @@ mod tests {
                 (self.fonts)()
             }
 
+            fn keeps_gnome_clock(&self) -> bool {
+                true
+            }
+
             fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
                 match &self.kdeglobals {
                     Some(file) => {
@@ -2239,6 +2406,7 @@ mod tests {
                     gtk_colors: None,
                     qt_colors: None,
                     text_scaling: None,
+                    hours: None,
                 }
             );
             // The desktop's own settings name a font before the portal.
@@ -2846,6 +3014,70 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             // The portal gone, asked for again until stopped: the thread
             // ends.
             drop(server);
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        #[test]
+        fn gnome_s_clock_format_says_the_hours_where_gnome_keeps_it() {
+            let values = Values::default();
+            let (bus, _server) = portal(&values);
+            let gnome = Fixed::fonts(nothing_named);
+            let hours = |own: &dyn imp::Own| imp::read_from(Some(&bus), own).hours;
+            // Said nothing: the locale's.
+            assert_eq!(hours(&*gnome), None);
+            for (format, said) in [
+                ("24h", Some(Hours::TwentyFour)),
+                ("12h", Some(Hours::Twelve)),
+                ("ampm", None),
+            ] {
+                set(&values, INTERFACE, "clock-format", &Value::from(format));
+                assert_eq!(hours(&*gnome), said, "{format}");
+            }
+            // A reading of the fonts alone asks nothing of it.
+            set(&values, INTERFACE, "clock-format", &Value::from("24h"));
+            assert_eq!(imp::read_parts(Some(&bus), &*gnome, false).hours, None);
+            // Where the desktop keeps no GNOME settings, what the portal
+            // answers (GSettings' default, set by no one) is not the
+            // desktop's: the locale's.
+            assert_eq!(hours(&IniOnly(true)), None);
+            // A portal before its second version says it too.
+            let (old, _old_server) = serve(OldPortal {
+                values: Arc::clone(&values),
+            });
+            assert_eq!(
+                imp::read_from(Some(&old), &*gnome).hours,
+                Some(Hours::TwentyFour)
+            );
+        }
+
+        #[test]
+        fn gnome_s_clock_format_is_followed() {
+            let values = Values::default();
+            set(&values, INTERFACE, "clock-format", &Value::from("12h"));
+            let (bus, server) = portal(&values);
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(vec![bus]),
+                        Fixed::fonts(nothing_named),
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
+                })
+            };
+            let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(next().hours, Some(Hours::Twelve));
+            // Switched to 24 hours: read again and told.
+            set(&values, INTERFACE, "clock-format", &Value::from("24h"));
+            say(&server, INTERFACE, "clock-format", Value::from("24h"));
+            assert_eq!(next().hours, Some(Hours::TwentyFour));
+            // Said again the same: nothing told.
+            say(&server, INTERFACE, "clock-format", Value::from("24h"));
+            assert!(got.recv_timeout(Duration::from_millis(300)).is_err());
             stop.cancel();
             following.join().unwrap();
         }

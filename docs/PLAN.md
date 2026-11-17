@@ -3719,15 +3719,18 @@ is not Skwir's to translate). Left, from
   picture's dimensions grouped counts. A number and its unit, and a
   dimension's numbers and their ×, are joined by a no-break space, so a
   line never parts them (`just words --check` refuses an English that
-  parts them, the catalogs' test a translation). The dates setting's ISO choice
-  stays ISO in the window. Left: the ISO choice is the window's, so the
-  plugins' dates (the query's chips, geo's, print's, git's) cannot follow
-  it (a core knob `Moment` reads, to decide with the user: what ISO
-  writes for a month); a photo's facts read from its EXIF (exposure,
-  aperture, focal length, position) are written by the code, with
-  English's decimal point; idle memory with the data (ICU4X's compiled data
-  holds every locale: a data export for the languages shipped is the
-  lighter way).
+  parts them, the catalogs' test a translation). The dates setting's ISO
+  choice is core's (`locale::set_iso_dates`, the user's choice of
+  2026-11-17): every moment said for the window follows it, the plugins'
+  too (a month `2026-03`, a day `2026-03-12`, a bar's month or day its
+  two digits); agents read English's. The desktop's own 12- or 24-hour
+  switch outweighs the locale's hours (GNOME's `clock-format`, macOS's
+  and Windows' own; `locale::set_hours`, BCP 47's `-u-hc-`). A photo's
+  facts read from its EXIF, the timeline's short counts, a film's time
+  and About's scale are messages; About's details name the languages
+  and the locales. Left: idle memory with the data (ICU4X's compiled
+  data holds every locale: a data export for the languages shipped is
+  the lighter way).
   - ICU4X's decimal, list and datetime, with data for English and the
     languages shipped. `Count`, `Size`, `Instant` and `Span` are
     formatted by them: `format.rs`'s dates, the timeline's months, the

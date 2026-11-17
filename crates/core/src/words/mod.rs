@@ -347,9 +347,14 @@ impl From<Moment> for Arg {
 }
 
 impl Moment {
-    /// Written for the window, as the system's locale writes dates.
+    /// Written for the window, as the system's locale writes dates, or as
+    /// ISO 8601 does where the window's dates setting says so.
     pub fn said(self) -> String {
-        dates::written(&crate::locale::dates(), self)
+        if crate::locale::iso_dates() {
+            dates::iso(self)
+        } else {
+            dates::written(&crate::locale::dates(), self)
+        }
     }
 }
 
@@ -708,7 +713,11 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Decimal(value, digits) => {
             out.push_str(&numbers::decimal(&formats::numbers(), *value, *digits));
         }
-        Arg::Moment(moment) => out.push_str(&dates::written(&formats::dates(), *moment)),
+        Arg::Moment(moment) => out.push_str(&if formats::iso() {
+            dates::iso(*moment)
+        } else {
+            dates::written(&formats::dates(), *moment)
+        }),
         Arg::Size(bytes) => crate::fs::size_words(*bytes).say_into(out, languages),
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
@@ -812,6 +821,8 @@ mod formats {
     pub struct Formats {
         numbers: String,
         dates: String,
+        /// Dates as ISO 8601 writes them (the window's dates setting).
+        iso: bool,
     }
 
     impl Formats {
@@ -819,6 +830,7 @@ mod formats {
             Formats {
                 numbers: crate::locale::numbers(),
                 dates: crate::locale::dates(),
+                iso: crate::locale::iso_dates(),
             }
         }
 
@@ -826,6 +838,7 @@ mod formats {
             Formats {
                 numbers: super::ENGLISH.to_owned(),
                 dates: super::ENGLISH.to_owned(),
+                iso: false,
             }
         }
     }
@@ -855,6 +868,10 @@ mod formats {
             now.as_ref()
                 .map_or_else(|| super::ENGLISH.to_owned(), |f| f.dates.clone())
         })
+    }
+
+    pub fn iso() -> bool {
+        NOW.with_borrow(|now| now.as_ref().is_some_and(|f| f.iso))
     }
 }
 
@@ -958,6 +975,28 @@ mod dates {
 
     /// `moment` as `locale` writes its shape, in the system's time zone;
     /// as ISO 8601 where the locale's data is missing.
+    /// `moment` as ISO 8601 writes it, in the system's zone: a date
+    /// `2026-03-12`, a time `14:02`, a month `2026-03`. A weekday is its
+    /// date (ISO names none); a month or a day labelling a bar, among its
+    /// year's or its month's, is its two digits (`03`).
+    pub fn iso(moment: Moment) -> String {
+        let Ok(at) = jiff::Timestamp::from_second(moment.at) else {
+            return "—".to_owned();
+        };
+        let local = at.to_zoned(jiff::tz::TimeZone::system()).datetime();
+        let format = match moment.shape {
+            Shape::Time => "%H:%M",
+            Shape::Weekday | Shape::DayMonth | Shape::Date | Shape::DateLong => "%Y-%m-%d",
+            Shape::DateTime => "%Y-%m-%d %H:%M",
+            Shape::DateTimeSeconds => "%Y-%m-%d %H:%M:%S",
+            Shape::MonthYear | Shape::Month => "%Y-%m",
+            Shape::MonthShort => "%m",
+            Shape::Year => "%Y",
+            Shape::Day => "%d",
+        };
+        local.strftime(format).to_string()
+    }
+
     pub fn written(locale: &str, moment: Moment) -> String {
         let Ok(at) = jiff::Timestamp::from_second(moment.at) else {
             return "—".to_owned();

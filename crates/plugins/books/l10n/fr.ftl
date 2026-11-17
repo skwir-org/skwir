@@ -13,7 +13,7 @@ books_detail_author = Auteur
 books_detail_chapters = Chapitres
 
 # draft
-books_detail_genre = Genre
+books_detail_genre = Genre littéraire
 
 # draft
 books_detail_isbn = ISBN

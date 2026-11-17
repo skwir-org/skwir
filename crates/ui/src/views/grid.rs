@@ -205,7 +205,7 @@ impl CaptionSpec {
             ),
             Caption::Detail(Detail::Type) => words!(
                 grid_caption_type_description =
-                    "Under each name in the grid, the kind of file, such as PDF document.",
+                    "Under each name in the grid, each file's type, such as PDF document.",
                 note = "A setting's description: whether each tile of the grid says this under its name."
             ),
             Caption::Detail(Detail::Kind) => words!(

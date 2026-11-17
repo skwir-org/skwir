@@ -159,6 +159,9 @@ document_worker_timed_out = document worker timed out
 # A label in Properties: a photo's aperture (f/2.8).
 exif_aperture = Aperture
 
+# A photo's aperture, as cameras write it (f/2.8).
+exif_aperture_value = f/{ $f }
+
 # A label in Properties: who took a photo, as written in it.
 exif_artist = Artist
 
@@ -171,14 +174,26 @@ exif_copyright = Copyright
 # A label in Properties: a photo's exposure time (1/250 s).
 exif_exposure = Exposure
 
+# A photo's exposure time under a second, as cameras write it (1/250 s).
+exif_exposure_fraction = 1/{ $denominator } s
+
+# A photo's exposure time of a second or more (2.5 s).
+exif_exposure_seconds = { $seconds } s
+
 # A label in Properties: whether the flash fired, as the camera wrote.
 exif_flash = Flash
 
 # A label in Properties: the focal length a photo was taken at (35 mm).
 exif_focal_length = Focal length
 
+# A photo's focal length in millimetres (35 mm, 4.3 mm).
+exif_focal_length_value = { $mm } mm
+
 # A label in Properties: a photo's sensitivity, as cameras name it.
 exif_iso = ISO
+
+# Where a photo was taken, its latitude then its longitude in degrees, five digits after the decimal sign (48.85661, 2.35222): a language writing a decimal comma parts them otherwise.
+exif_latitude_longitude = { $latitude }, { $longitude }
 
 # A label in Properties: the lens a photo was taken with.
 exif_lens = Lens

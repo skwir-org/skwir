@@ -49,7 +49,7 @@ use skwir_core::command::Topic;
 use skwir_core::geo::{Datum, LineKind};
 use skwir_core::registry::{KeyBinding, ViewSpec};
 use skwir_core::words;
-use skwir_core::words::{Size, Words};
+use skwir_core::words::{Moment, Shape, Size, Words};
 use skwir_core::workspace::PaneId;
 use skwir_core::{
     App, CancelToken,
@@ -697,18 +697,21 @@ pub fn duration(taken: Duration) -> String {
     format!("{}:{:02}:{:02}", total / 3600, total / 60 % 60, total % 60)
 }
 
-/// An instant in the user's time zone (ADR-017), to the minute; `day` is
-/// left out when it is the one given.
+/// An instant in the user's time zone (ADR-017), to the minute, as the
+/// window writes dates (by the locale, or ISO 8601 where the dates setting
+/// says so); `day` is left out when it is the one given.
 fn local(time: SystemTime, zone: &jiff::tz::TimeZone, day: Option<jiff::civil::Date>) -> String {
     let Ok(stamp) = jiff::Timestamp::try_from(time) else {
         return String::new();
     };
-    let zoned = stamp.to_zoned(zone.clone());
-    if day == Some(zoned.date()) {
-        zoned.strftime("%H:%M").to_string()
+    let shape = if day == Some(stamp.to_zoned(zone.clone()).date()) {
+        Shape::Time
     } else {
-        zoned.strftime("%Y-%m-%d %H:%M").to_string()
-    }
+        Shape::DateTime
+    };
+    Moment::of(time, shape)
+        .map(Moment::said)
+        .unwrap_or_default()
 }
 
 /// The labels two lists of facts share: a track's and a plan's.
