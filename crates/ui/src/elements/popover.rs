@@ -72,11 +72,9 @@ impl PopoverAnchor {
                     let left = (bounds.left() - pad).min(right - width).max(px(0.));
                     let top = bounds.top() - pad;
                     let room = (viewport.height - top - MARGIN).max(px(120.));
-                    let mut popup = gpui::div()
+                    let mut popup = column()
                         .w(width)
                         .max_h(room)
-                        .flex()
-                        .flex_col()
                         .child(panel)
                         .into_any_element();
                     popup.layout_as_root(
@@ -115,11 +113,9 @@ impl PopoverAnchor {
                     let viewport = window.viewport_size();
                     let width = width.min(viewport.width - MARGIN * 2.).max(px(0.));
                     let room = (viewport.height - MARGIN * 2.).max(px(120.));
-                    let mut popup = gpui::div()
+                    let mut popup = column()
                         .w(width)
                         .max_h(room)
-                        .flex()
-                        .flex_col()
                         .child(panel)
                         .into_any_element();
                     let laid = popup.layout_as_root(
@@ -277,9 +273,7 @@ impl PopoverAnchor {
                 move |_, window, cx| {
                     let row = anchor.get()?;
                     let view = window.viewport_size();
-                    let mut popup = gpui::div()
-                        .flex()
-                        .flex_col()
+                    let mut popup = column()
                         .max_h((view.height - MARGIN * 2.).max(px(120.)))
                         .child(panel)
                         .into_any_element();
@@ -421,6 +415,15 @@ fn hang(
     )
 }
 
+/// What a popup is laid out in: a column whose texts wrap, but where they
+/// say otherwise. A deferred draw keeps the text style of where it hangs
+/// (gpui's `deferred`), and the bar a popup hangs from says one line for
+/// all it holds (`whitespace_nowrap`): inherited, a popup's text would run
+/// past its edge, under its buttons (Activity's card, over the footer).
+fn column() -> gpui::Div {
+    gpui::div().flex().flex_col().whitespace_normal()
+}
+
 /// Draw `panel` deferred, at `priority`: in prepaint, where the window
 /// and the anchors are measured, `at` says where it stands and how tall
 /// it may be, and it is laid out there.
@@ -434,13 +437,7 @@ fn place(
             move |_, window, cx| {
                 let (popup, room) = at(window)?;
                 let mut popup = popup
-                    .child(
-                        gpui::div()
-                            .flex()
-                            .flex_col()
-                            .max_h(room.max(px(120.)))
-                            .child(panel()?),
-                    )
+                    .child(column().max_h(room.max(px(120.))).child(panel()?))
                     .into_any_element();
                 popup.layout_as_root(AvailableSpace::max_size(), window, cx);
                 popup.prepaint_at(gpui::Point::default(), window, cx);

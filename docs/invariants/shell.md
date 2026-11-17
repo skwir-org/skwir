@@ -200,6 +200,11 @@ Views are in [views.md](views.md); what locations decide, in
 
 - Anchor popovers to their visible trigger through `elements/popover.rs`,
   measured in the current prepaint.
+- **A popup's text starts anew** (`popover::column`): it wraps, but where
+  it says otherwise. gpui keeps a deferred draw's text style from where it
+  hangs, and a bar says one line for all it holds: inherited, a popup's
+  text ran past its edge, under its buttons (Activity's card over the
+  footer, 2026-11-17).
 - A deferred draw inside another is drawn in a later round (gpui since
   2026-10-18, ten deep). Peek stays in the normal overlay tree
   and defers its popovers, below modal dialogs. The settings dialog is not
