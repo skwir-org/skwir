@@ -101,22 +101,58 @@ pub fn set_size_units(units: SizeUnits) {
 /// (`512 B`, `1.5 kB`, `3.2 GB`; `1.5 KiB`): every size skwir says
 /// (`inspection::size`, `format::size`) is said by it.
 pub fn size_said(bytes: u64) -> String {
-    size_said_in(bytes, size_units())
+    size_words(bytes).say()
 }
 
 /// A size said in `units`, whatever the setting.
 pub fn size_said_in(bytes: u64, units: SizeUnits) -> String {
-    let (base, names) = (units.base(), units.names());
-    if bytes < base {
-        return format!("{bytes} B");
+    size_words_in(bytes, units).say()
+}
+
+/// A size as words, as the setting counts it: each unit a message, the
+/// number as the reader's language writes it ("1.5 MB", « 1,5 Mo »).
+pub fn size_words(bytes: u64) -> crate::words::Words {
+    size_words_in(bytes, size_units())
+}
+
+/// A size as words in `units`, whatever the setting.
+pub fn size_words_in(bytes: u64, units: SizeUnits) -> crate::words::Words {
+    use crate::words;
+    use crate::words::Decimal;
+    if bytes < units.base() {
+        return words!(
+            fs_size_bytes = "{ $n } B",
+            n = i64::try_from(bytes).unwrap_or(i64::MAX),
+            note = "A size in bytes, as a file's size is shown (999 B). B is the symbol of a byte."
+        );
     }
-    let (mut value, base) = (bytes as f64, base as f64);
-    let mut unit = 0;
-    while value >= base && unit < names.len() - 1 {
+    let (mut value, base) = (bytes as f64, units.base() as f64);
+    let mut power = 0;
+    while value >= base && power < 5 {
         value /= base;
-        unit += 1;
+        power += 1;
     }
-    format!("{value:.1} {}", names[unit])
+    let n = Decimal::of(value, 1);
+    match (units, power) {
+        (SizeUnits::Decimal, 1) => words!(
+            fs_size_kb = "{ $n } kB",
+            n = n,
+            note = "A size in kilobytes (1000 bytes): n has one digit after the decimal sign (1.5 kB). Symbols of 1000-based units: kB, MB, GB, TB, PB."
+        ),
+        (SizeUnits::Decimal, 2) => words!(fs_size_mb = "{ $n } MB", n = n),
+        (SizeUnits::Decimal, 3) => words!(fs_size_gb = "{ $n } GB", n = n),
+        (SizeUnits::Decimal, 4) => words!(fs_size_tb = "{ $n } TB", n = n),
+        (SizeUnits::Decimal, _) => words!(fs_size_pb = "{ $n } PB", n = n),
+        (SizeUnits::Binary, 1) => words!(
+            fs_size_kib = "{ $n } KiB",
+            n = n,
+            note = "A size in kibibytes (1024 bytes): n has one digit after the decimal sign (1.5 KiB). Symbols of 1024-based units: KiB, MiB, GiB, TiB, PiB."
+        ),
+        (SizeUnits::Binary, 2) => words!(fs_size_mib = "{ $n } MiB", n = n),
+        (SizeUnits::Binary, 3) => words!(fs_size_gib = "{ $n } GiB", n = n),
+        (SizeUnits::Binary, 4) => words!(fs_size_tib = "{ $n } TiB", n = n),
+        (SizeUnits::Binary, _) => words!(fs_size_pib = "{ $n } PiB", n = n),
+    }
 }
 
 /// Whether a folder's entry `entry`, read with `std::fs::read_dir`, is

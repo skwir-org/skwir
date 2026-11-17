@@ -677,6 +677,14 @@ mod tests {
 
     #[test]
     fn an_index_s_answer_says_as_of_when_and_what_it_leaves_out() {
+        // The dates' locale British, the zone UTC: what the English below
+        // writes.
+        // SAFETY: a test of its own process (nextest), before threads read TZ.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("TZ", "UTC");
+        }
+        skwir_core::locale::set_formats(None, Some("en-GB".into()));
         let now = jiff::Timestamp::from_second(1_800_000_007)
             .unwrap()
             .to_zoned(jiff::tz::TimeZone::UTC);

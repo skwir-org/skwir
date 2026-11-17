@@ -17,7 +17,10 @@ type Resolved = Vec<(String, Option<String>, Option<Kind>)>;
 
 #[derive(Default)]
 pub struct TypeNames {
+    /// The database's names, read in the language words were said in at
+    /// `said_at` (`words::revision`): read again once it moves.
     known: HashMap<String, Option<Arc<str>>>,
+    said_at: u64,
     /// Each type's kind, as data: said where it is drawn.
     kinds: HashMap<String, Option<Kind>>,
     wanted: HashSet<String>,
@@ -155,6 +158,11 @@ pub fn fallback(name: &str) -> String {
 impl TypeNames {
     /// The database's name if it is known; otherwise note that it is wanted.
     pub fn get(&mut self, mime: &Mime) -> Option<Arc<str>> {
+        let now = skwir_core::words::revision();
+        if self.said_at != now {
+            self.known.clear();
+            self.said_at = now;
+        }
         if let Some(name) = self.known.get(mime.as_str()) {
             return name.clone();
         }

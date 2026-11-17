@@ -23,6 +23,10 @@ pub const ENGLISH: &str = "en";
 struct Languages {
     system: Vec<String>,
     chosen: Option<String>,
+    /// The locales numbers and dates are written in, the system's
+    /// (`LC_NUMERIC`, `LC_TIME`), apart from the messages' languages.
+    numbers: Option<String>,
+    dates: Option<String>,
     /// Moves whenever what is said would change, for what keeps what it
     /// read of them (a cache of names by language).
     revision: u64,
@@ -31,8 +35,46 @@ struct Languages {
 static LANGUAGES: RwLock<Languages> = RwLock::new(Languages {
     system: Vec::new(),
     chosen: None,
+    numbers: None,
+    dates: None,
     revision: 0,
 });
+
+/// The system's locales for numbers and for dates (`skwir_platform::locale`,
+/// `LC_NUMERIC` and `LC_TIME` on Linux), `None` where it says none: the
+/// window writes them as the rest of the desktop does, whatever language
+/// its words are in.
+pub fn set_formats(numbers: Option<String>, dates: Option<String>) {
+    let mut kept = LANGUAGES.write();
+    if kept.numbers != numbers || kept.dates != dates {
+        kept.numbers = numbers;
+        kept.dates = dates;
+        kept.revision += 1;
+    }
+}
+
+/// The locale numbers are written in for the window: the system's, else
+/// the first language words are said in.
+pub fn numbers() -> String {
+    let kept = LANGUAGES.read();
+    kept.numbers.clone().unwrap_or_else(|| first(&kept))
+}
+
+/// The locale dates and times are written in for the window: the system's,
+/// else the first language words are said in.
+pub fn dates() -> String {
+    let kept = LANGUAGES.read();
+    kept.dates.clone().unwrap_or_else(|| first(&kept))
+}
+
+fn first(kept: &Languages) -> String {
+    kept.chosen
+        .iter()
+        .chain(&kept.system)
+        .next()
+        .cloned()
+        .unwrap_or_else(|| ENGLISH.to_owned())
+}
 
 /// The system's languages, most wanted first (`skwir_platform::locale`):
 /// none for its C locale.

@@ -260,11 +260,59 @@ fn text_or_binary(head: &[u8]) -> Mime {
     )
 }
 
-/// The untranslated `<comment>` of a shared-mime-info type file, capitalized.
+/// The `<comment>` of a shared-mime-info type file in the first of the
+/// languages Skwir says its words in that the file has (ADR-139, F: the
+/// database's own translations), else its untranslated one; capitalized.
 fn comment_of(xml: &str) -> Option<String> {
-    let start = xml.find("<comment>")? + "<comment>".len();
-    let end = start + xml[start..].find("</comment>")?;
-    let text = xml[start..end]
+    comment_in(xml, &skwir_core::locale::languages())
+}
+
+/// `xml`'s comment in the first of `languages` it has (`fr-FR` finding
+/// `fr`, `pt-BR` finding `pt_BR`), English its untranslated one.
+fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
+    // Each comment: its language (none for the untranslated) and its text.
+    let mut comments: Vec<(Option<String>, &str)> = Vec::new();
+    let mut rest = xml;
+    while let Some(at) = rest.find("<comment") {
+        rest = &rest[at + "<comment".len()..];
+        let close = rest.find('>')?;
+        let attributes = &rest[..close];
+        let body = &rest[close + 1..];
+        let end = body.find("</comment>")?;
+        let lang = attributes
+            .split_once("xml:lang=\"")
+            .and_then(|(_, after)| after.split_once('"'))
+            .map(|(lang, _)| lang.replace('_', "-").to_lowercase());
+        comments.push((lang, &body[..end]));
+        rest = &body[end..];
+    }
+    let untranslated = comments
+        .iter()
+        .find(|(lang, _)| lang.is_none())
+        .map(|(_, text)| *text);
+    let wanted = languages.iter().find_map(|language| {
+        let language = language.to_lowercase();
+        if language == skwir_core::locale::ENGLISH || language.starts_with("en-") {
+            return Some(untranslated);
+        }
+        let found = |tag: &str| {
+            comments
+                .iter()
+                .find(|(lang, _)| lang.as_deref() == Some(tag))
+                .map(|(_, text)| *text)
+        };
+        // The whole tag, then cut a subtag at a time: sr-latn-rs, sr-latn,
+        // sr.
+        let mut tag = language.as_str();
+        loop {
+            if let Some(text) = found(tag) {
+                return Some(Some(text));
+            }
+            tag = tag.rsplit_once('-')?.0;
+        }
+    });
+    let raw = wanted.flatten().or(untranslated)?;
+    let text = raw
         .trim()
         .replace("&amp;", "&")
         .replace("&lt;", "<")
@@ -1512,6 +1560,34 @@ mod tests {
         assert_eq!(
             text_or_binary(&[0xff, 0xfe, 0x00, 0x00]).0,
             "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn a_type_is_named_in_the_reader_s_language_where_the_database_has_it() {
+        let xml = r#"<mime-type type="image/png"><comment>PNG image</comment>
+            <comment xml:lang="fr">image PNG</comment><comment xml:lang="pt_BR">imagem PNG</comment>
+            </mime-type>"#;
+        let langs = |l: &[&str]| l.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            comment_in(xml, &langs(&["fr-FR", "en"])).as_deref(),
+            Some("Image PNG")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["pt-BR", "en"])).as_deref(),
+            Some("Imagem PNG")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["de", "en"])).as_deref(),
+            Some("PNG image")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["en-GB", "fr"])).as_deref(),
+            Some("PNG image")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["fr-Latn-FR", "en"])).as_deref(),
+            Some("Image PNG")
         );
     }
 

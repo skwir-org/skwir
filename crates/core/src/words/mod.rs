@@ -15,7 +15,10 @@ use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
-pub use catalog::{Catalog, find, languages_of, register, withdraw};
+pub use catalog::{
+    Catalog, Shipped, find, languages_of, register, register_shipped, register_shipped_of_program,
+    ship, withdraw,
+};
 pub use pattern::{Element, Key, Variant, from_fluent};
 
 /// English, the language the code writes its words in.
@@ -102,8 +105,17 @@ pub enum Arg {
     /// A folder's name where it is a destination ("to Docs"): unquoted,
     /// its bidirectional controls shown, never obeyed.
     Folder(String),
-    /// A count: chooses the plural, written with its groups.
+    /// A count: chooses the plural, written with its groups as the
+    /// reader's language writes them ("1,234", « 1 234 »).
     Count(i64),
+    /// A number with digits after the point (`Decimal`): the reader's
+    /// decimal sign and groups ("1.5", « 1,5 »). It chooses no plural: a
+    /// selector on it says its default.
+    Decimal(i64, u8),
+    /// A moment (`Moment`): written as the reader's dates and times are
+    /// ("14:02", "Tuesday 18:45", "12 Mar 2024", « 12 mars 2024 »), in the
+    /// system's time zone.
+    Moment(Moment),
     /// A size, as the size setting counts it (`fs::size_said`).
     Size(u64),
     /// What something is (`Kind`): a selector chooses by it, so a
@@ -179,6 +191,111 @@ impl Folder {
 
 /// A size, for `Arg::Size`.
 pub struct Size(pub u64);
+
+/// A number with `digits` after the point, for `Arg::Decimal`: `value` is
+/// the number times ten to the `digits` (`Decimal::of(1.5, 1)`).
+pub struct Decimal {
+    pub value: i64,
+    pub digits: u8,
+}
+
+impl Decimal {
+    /// `number` rounded to `digits` after the point.
+    pub fn of(number: f64, digits: u8) -> Self {
+        let scaled = (number * 10f64.powi(i32::from(digits))).round();
+        // Rounded first: a size or a ratio, far inside i64.
+        #[allow(clippy::cast_possible_truncation)]
+        let value = scaled as i64;
+        Decimal { value, digits }
+    }
+}
+
+impl From<Decimal> for Arg {
+    fn from(decimal: Decimal) -> Self {
+        Arg::Decimal(decimal.value, decimal.digits)
+    }
+}
+
+/// A moment, for `Arg::Moment`: when (seconds since 1970, UTC), and what of
+/// it is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Moment {
+    pub at: i64,
+    pub shape: Shape,
+}
+
+/// What of a moment is written, each as the reader's locale writes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Shape {
+    /// The time of day: "14:02" (or "2:02 PM" where the locale says so).
+    Time,
+    /// The weekday: "Tuesday" (a message places it beside a time: CLDR
+    /// writes no weekday and time together well).
+    Weekday,
+    /// The day and the month: "12 Mar", "Mar 12".
+    DayMonth,
+    /// The date: "12 Mar 2024".
+    Date,
+    /// The date and the time: "12 Mar 2024, 14:02".
+    DateTime,
+    /// The date and the time to the second.
+    DateTimeSeconds,
+    /// The month and the year: "March 2024".
+    MonthYear,
+    /// The month: "March".
+    Month,
+}
+
+impl Shape {
+    fn word(self) -> &'static str {
+        match self {
+            Shape::Time => "time",
+            Shape::Weekday => "weekday",
+            Shape::DayMonth => "day_month",
+            Shape::Date => "date",
+            Shape::DateTime => "date_time",
+            Shape::DateTimeSeconds => "date_time_seconds",
+            Shape::MonthYear => "month_year",
+            Shape::Month => "month",
+        }
+    }
+
+    const ALL: [Shape; 8] = [
+        Shape::Time,
+        Shape::Weekday,
+        Shape::DayMonth,
+        Shape::Date,
+        Shape::DateTime,
+        Shape::DateTimeSeconds,
+        Shape::MonthYear,
+        Shape::Month,
+    ];
+}
+
+impl Moment {
+    /// `t`, written as `shape` says; `None` before 1970 or past what a
+    /// date can say.
+    pub fn of(t: std::time::SystemTime, shape: Shape) -> Option<Self> {
+        let at = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        Some(Moment {
+            at: i64::try_from(at).ok()?,
+            shape,
+        })
+    }
+}
+
+impl From<Moment> for Arg {
+    fn from(moment: Moment) -> Self {
+        Arg::Moment(moment)
+    }
+}
+
+impl Moment {
+    /// Written for the window, as the system's locale writes dates.
+    pub fn said(self) -> String {
+        dates::written(&crate::locale::dates(), self)
+    }
+}
 
 /// What a message's subject is, for a language to make its words agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -359,18 +476,20 @@ impl Words {
                 const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
         }
         let now = revision();
-        SAID_IN.with_borrow_mut(|(at, languages)| {
+        let (languages, formats) = SAID_IN.with_borrow_mut(|(at, languages)| {
             if *at != now {
                 *languages = crate::locale::languages();
                 *at = now;
             }
-            self.say_in(languages)
-        })
+            (languages.clone(), formats::Formats::window())
+        });
+        formats::within(formats, || self.say_in(&languages))
     }
 
-    /// Said in English: what agents, scripts and logs read.
+    /// Said in English: what agents, scripts and logs read, its numbers
+    /// and dates as English writes them.
     pub fn english(&self) -> String {
-        self.say_in(&[])
+        formats::within(formats::Formats::english(), || self.say_in(&[]))
     }
 
     /// Said in the first of `languages` that has its message, English
@@ -491,8 +610,12 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
         Arg::Folder(name) => out.push_str(&shown_controls(name)),
-        Arg::Count(n) => out.push_str(&grouped(*n)),
-        Arg::Size(bytes) => out.push_str(&crate::fs::size_said(*bytes)),
+        Arg::Count(n) => out.push_str(&numbers::grouped(&formats::numbers(), *n)),
+        Arg::Decimal(value, digits) => {
+            out.push_str(&numbers::decimal(&formats::numbers(), *value, *digits));
+        }
+        Arg::Moment(moment) => out.push_str(&dates::written(&formats::dates(), *moment)),
+        Arg::Size(bytes) => crate::fs::size_words(*bytes).say_into(out, languages),
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
         Arg::Error(failure) => say_error(failure, languages, out),
@@ -587,19 +710,206 @@ pub fn shown_controls(name: &str) -> Cow<'_, str> {
 
 /// A count with its thousands grouped, as English groups them (`1,234`):
 /// each language's groups arrive with its numbers (PLAN.md, step F).
-fn grouped(n: i64) -> String {
-    let digits = n.unsigned_abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-    if n < 0 {
-        out.push('-');
+/// The locales numbers and dates are written in while words are said: the
+/// system's for the window (`say`), English's for agents (`english`), and
+/// English's for words said in given languages (`say_in`) outside both.
+mod formats {
+    use std::cell::RefCell;
+
+    #[derive(Clone)]
+    pub struct Formats {
+        numbers: String,
+        dates: String,
     }
-    for (at, digit) in digits.chars().enumerate() {
-        if at > 0 && (digits.len() - at).is_multiple_of(3) {
-            out.push(',');
+
+    impl Formats {
+        pub fn window() -> Self {
+            Formats {
+                numbers: crate::locale::numbers(),
+                dates: crate::locale::dates(),
+            }
         }
-        out.push(digit);
+
+        pub fn english() -> Self {
+            Formats {
+                numbers: super::ENGLISH.to_owned(),
+                dates: super::ENGLISH.to_owned(),
+            }
+        }
     }
-    out
+
+    thread_local! {
+        static NOW: RefCell<Option<Formats>> = const { RefCell::new(None) };
+    }
+
+    /// `f`'s answer, words said within it writing numbers and dates as
+    /// `formats` says.
+    pub fn within<T>(formats: Formats, f: impl FnOnce() -> T) -> T {
+        let before = NOW.with_borrow_mut(|now| now.replace(formats));
+        let answer = f();
+        NOW.with_borrow_mut(|now| *now = before);
+        answer
+    }
+
+    pub fn numbers() -> String {
+        NOW.with_borrow(|now| {
+            now.as_ref()
+                .map_or_else(|| super::ENGLISH.to_owned(), |f| f.numbers.clone())
+        })
+    }
+
+    pub fn dates() -> String {
+        NOW.with_borrow(|now| {
+            now.as_ref()
+                .map_or_else(|| super::ENGLISH.to_owned(), |f| f.dates.clone())
+        })
+    }
+}
+
+/// Dates and times as each locale writes them (ICU4X, CLDR's data), in the
+/// system's time zone; made once a locale and shape on each thread.
+mod dates {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use icu_datetime::fieldsets;
+    use icu_datetime::{DateTimeFormatter, NoCalendarFormatter};
+
+    use super::{Moment, Shape};
+
+    enum Formatter {
+        Time(NoCalendarFormatter<fieldsets::T>),
+        Weekday(DateTimeFormatter<fieldsets::E>),
+        DayMonth(DateTimeFormatter<fieldsets::MD>),
+        Date(DateTimeFormatter<fieldsets::YMD>),
+        DateTime(DateTimeFormatter<fieldsets::YMDT>),
+        MonthYear(DateTimeFormatter<fieldsets::YM>),
+        Month(DateTimeFormatter<fieldsets::M>),
+    }
+
+    thread_local! {
+        static FORMATTERS: RefCell<HashMap<(String, &'static str), Option<Formatter>>> =
+            RefCell::new(HashMap::new());
+    }
+
+    fn made(locale: &str, shape: Shape) -> Option<Formatter> {
+        let locale: icu_locale_core::Locale = locale.parse().ok()?;
+        let prefs = || (&locale).into();
+        Some(match shape {
+            Shape::Time => {
+                Formatter::Time(NoCalendarFormatter::try_new(prefs(), fieldsets::T::hm()).ok()?)
+            }
+            Shape::Weekday => {
+                Formatter::Weekday(DateTimeFormatter::try_new(prefs(), fieldsets::E::long()).ok()?)
+            }
+            Shape::DayMonth => Formatter::DayMonth(
+                DateTimeFormatter::try_new(prefs(), fieldsets::MD::medium()).ok()?,
+            ),
+            Shape::Date => {
+                Formatter::Date(DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium()).ok()?)
+            }
+            Shape::DateTime => Formatter::DateTime(
+                DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium().with_time_hm())
+                    .ok()?,
+            ),
+            Shape::DateTimeSeconds => Formatter::DateTime(
+                DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium().with_time_hms())
+                    .ok()?,
+            ),
+            Shape::MonthYear => Formatter::MonthYear(
+                DateTimeFormatter::try_new(prefs(), fieldsets::YM::long()).ok()?,
+            ),
+            Shape::Month => {
+                Formatter::Month(DateTimeFormatter::try_new(prefs(), fieldsets::M::long()).ok()?)
+            }
+        })
+    }
+
+    /// `moment` as `locale` writes its shape, in the system's time zone;
+    /// as ISO 8601 where the locale's data is missing.
+    pub fn written(locale: &str, moment: Moment) -> String {
+        let Ok(at) = jiff::Timestamp::from_second(moment.at) else {
+            return "—".to_owned();
+        };
+        let local = at.to_zoned(jiff::tz::TimeZone::system()).datetime();
+        let as_iso = || local.strftime("%Y-%m-%d %H:%M").to_string();
+        let (Ok(date), Ok(time)) = (
+            icu_calendar::Date::try_new_iso(
+                i32::from(local.year()),
+                local.month().unsigned_abs(),
+                local.day().unsigned_abs(),
+            ),
+            icu_time::Time::try_new(
+                local.hour().unsigned_abs(),
+                local.minute().unsigned_abs(),
+                local.second().unsigned_abs(),
+                0,
+            ),
+        ) else {
+            return as_iso();
+        };
+        let both = icu_time::DateTime { date, time };
+        FORMATTERS.with_borrow_mut(|formatters| {
+            let formatter = formatters
+                .entry((locale.to_owned(), moment.shape.word()))
+                .or_insert_with(|| made(locale, moment.shape));
+            match formatter {
+                None => as_iso(),
+                Some(Formatter::Time(f)) => f.format(&time).to_string(),
+                Some(Formatter::Weekday(f)) => f.format(&both).to_string(),
+                Some(Formatter::DayMonth(f)) => f.format(&both).to_string(),
+                Some(Formatter::Date(f)) => f.format(&both).to_string(),
+                Some(Formatter::DateTime(f)) => f.format(&both).to_string(),
+                Some(Formatter::MonthYear(f)) => f.format(&both).to_string(),
+                Some(Formatter::Month(f)) => f.format(&both).to_string(),
+            }
+        })
+    }
+}
+
+/// Numbers as each language writes them (ICU4X, CLDR's data): its digits,
+/// its groups, its decimal sign. Made once a language on each thread that
+/// asks, as the plurals are.
+mod numbers {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use icu_decimal::DecimalFormatter;
+    use icu_decimal::input::Decimal;
+    use icu_decimal::options::DecimalFormatterOptions;
+
+    thread_local! {
+        static FORMATTERS: RefCell<HashMap<String, Option<DecimalFormatter>>> =
+            RefCell::new(HashMap::new());
+    }
+
+    fn formatted(language: &str, number: &Decimal) -> String {
+        FORMATTERS.with_borrow_mut(|formatters| {
+            let formatter = formatters.entry(language.to_owned()).or_insert_with(|| {
+                let locale: icu_locale_core::Locale = language.parse().ok()?;
+                DecimalFormatter::try_new(locale.into(), DecimalFormatterOptions::default()).ok()
+            });
+            match formatter {
+                Some(formatter) => formatter.format_to_string(number),
+                None => number.to_string(),
+            }
+        })
+    }
+
+    /// `n` with its groups in `language`: "1,234", « 1 234 ».
+    pub fn grouped(language: &str, n: i64) -> String {
+        formatted(language, &Decimal::from(n))
+    }
+
+    /// `value` divided by ten to the `digits`, with that many digits after
+    /// the point, in `language`: "1.5", « 1,5 ».
+    pub fn decimal(language: &str, value: i64, digits: u8) -> String {
+        let mut number = Decimal::from(value);
+        let digits = i16::from(digits);
+        number.multiply_pow10(-digits);
+        number.pad_end(-digits);
+        formatted(language, &number)
+    }
 }
 
 /// English made strange but readable: each letter accented, its vowels
@@ -827,6 +1137,8 @@ pub mod data {
             Arg::Name(name) => json!({ "name": name }),
             Arg::Folder(folder) => json!({ "folder": folder }),
             Arg::Count(n) => json!({ "count": n }),
+            Arg::Decimal(value, digits) => json!({ "decimal": [value, digits] }),
+            Arg::Moment(moment) => json!({ "moment": [moment.at, moment.shape.word()] }),
             Arg::Size(n) => json!({ "size": n }),
             Arg::Kind(word) => json!({ "kind": word }),
             Arg::Words(words) => json!({ "words": of(words) }),
@@ -869,6 +1181,8 @@ pub mod data {
         Name(String),
         Folder(String),
         Count(i64),
+        Decimal((i64, u8)),
+        Moment((i64, String)),
         Size(u64),
         Kind(String),
         Words(Data),
@@ -903,6 +1217,14 @@ pub mod data {
                 ArgData::Name(name) => Arg::Name(name),
                 ArgData::Folder(folder) => Arg::Folder(folder),
                 ArgData::Count(n) => Arg::Count(n),
+                ArgData::Decimal((value, digits)) => Arg::Decimal(value, digits),
+                ArgData::Moment((at, shape)) => Arg::Moment(super::Moment {
+                    at,
+                    shape: super::Shape::ALL
+                        .into_iter()
+                        .find(|s| s.word() == shape)
+                        .unwrap_or(super::Shape::DateTime),
+                }),
                 ArgData::Size(n) => Arg::Size(n),
                 ArgData::Kind(word) => Arg::Kind(
                     [Kind::File, Kind::Folder, Kind::Link, Kind::Item]

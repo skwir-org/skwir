@@ -2,7 +2,7 @@ use std::borrow::Cow::Borrowed as B;
 
 use super::{
     Arg, Catalog, Element, Join, Key, Kind, List, Message, Name, PSEUDO, Size, Variant, Words,
-    casing, lists, register, withdraw,
+    casing, dates, lists, numbers, register, withdraw,
 };
 
 // English as `words!` writes it: each array a static of its own.
@@ -519,4 +519,100 @@ fn every_catalog_says_what_its_english_says() {
         eprintln!("{language}: {translated} of {english} messages, {drafts} still drafts");
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// Counts, decimals and sizes are written as the reader's language writes
+/// numbers: English groups with commas, French with narrow spaces and a
+/// decimal comma.
+#[test]
+fn numbers_are_written_as_the_language_writes_them() {
+    assert_eq!(numbers::grouped("en", 1_234_567), "1,234,567");
+    assert_eq!(numbers::grouped("fr", 1_234_567), "1\u{202f}234\u{202f}567");
+    assert_eq!(numbers::grouped("de", 1_234), "1.234");
+    assert_eq!(numbers::decimal("en", 15, 1), "1.5");
+    assert_eq!(numbers::decimal("fr", 15, 1), "1,5");
+    assert_eq!(numbers::decimal("en", 10, 1), "1.0");
+    let size = |bytes| crate::fs::size_words_in(bytes, crate::fs::SizeUnits::Decimal);
+    assert_eq!(size(999).english(), "999 B");
+    assert_eq!(size(1_500).english(), "1.5 kB");
+    assert_eq!(size(5_242_880).english(), "5.2 MB");
+    assert_eq!(
+        crate::fs::size_words_in(1_536, crate::fs::SizeUnits::Binary).english(),
+        "1.5 KiB"
+    );
+    // A message French has not is said whole in English, its numbers too:
+    // never an English sentence with French numbers.
+    let moved = crate::words!(test_moved_n = "Moved { $count } files", count = 12_345);
+    assert_eq!(moved.say_in(&langs(&["fr", "en"])), "Moved 12,345 files");
+}
+
+/// Moments are written as the dates' locale writes them; numbers and dates
+/// follow the system's locales in the window, English's for agents.
+#[test]
+fn moments_are_written_as_the_locale_writes_dates() {
+    // 2024-03-12 14:02:05 UTC, written in UTC.
+    // SAFETY: a test of its own process, before any thread reads TZ.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("TZ", "UTC");
+    }
+    let at = |shape| super::Moment {
+        at: 1_710_252_125,
+        shape,
+    };
+    let fr = |shape| dates::written("fr", at(shape));
+    let gb = |shape| dates::written("en-GB", at(shape));
+    assert_eq!(gb(super::Shape::Time), "14:02");
+    assert_eq!(fr(super::Shape::Time), "14:02");
+    assert_eq!(gb(super::Shape::DayMonth), "12 Mar");
+    assert_eq!(fr(super::Shape::DayMonth), "12 mars");
+    assert_eq!(fr(super::Shape::Date), "12 mars 2024");
+    assert_eq!(fr(super::Shape::MonthYear), "mars 2024");
+    assert_eq!(
+        dates::written("en-US", at(super::Shape::Time)),
+        "2:02\u{202f}PM"
+    );
+    let today = crate::words!(
+        test_today = "Today { $time }",
+        time = at(super::Shape::Time)
+    );
+    assert_eq!(today.english(), "Today 2:02\u{202f}PM");
+    crate::locale::set_formats(Some("fr-FR".into()), Some("fr-FR".into()));
+    let moved = crate::words!(test_moved_many = "Moved { $count } files", count = 12_345);
+    assert_eq!(moved.say(), "Moved 12\u{202f}345 files");
+    assert_eq!(today.say(), "Today 14:02");
+    assert_eq!(moved.english(), "Moved 12,345 files");
+    crate::locale::set_formats(None, None);
+}
+
+/// Shipped catalogs are registered by their crate's owner: the program's
+/// at once, a plugin's by its crate's name either way it is spelt, and
+/// taken back with the plugin.
+#[test]
+fn shipped_catalogs_come_and_go_with_their_crate() {
+    static SHIPPED: [super::Shipped; 2] = [
+        super::Shipped {
+            domain: "skwir-plugin-sample",
+            language: "fr",
+            source: "sample_title = Échantillon\n",
+        },
+        super::Shipped {
+            domain: "skwir-sample-core",
+            language: "fr",
+            source: "core_title = Cœur\n",
+        },
+    ];
+    super::ship(&SHIPPED);
+    super::register_shipped_of_program("skwir");
+    assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
+    assert!(super::languages_of("skwir-plugin-sample").is_empty());
+    super::register_shipped("sample", "skwir_plugin_sample");
+    assert_eq!(super::languages_of("skwir-plugin-sample"), ["fr"]);
+    withdraw("sample");
+    assert!(super::languages_of("skwir-plugin-sample").is_empty());
+    assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
+    // A plugin from outside answers its host's crate: the program's stays.
+    super::register_shipped("outside", "skwir_sample_core");
+    withdraw("outside");
+    assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
 }

@@ -5,6 +5,7 @@
 // keeps its console, for the tests' output under Wine.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod catalogs;
 mod gpu;
 
 /// The argument that makes a launch a program of its own (ADR-122).
@@ -98,6 +99,14 @@ fn main() -> anyhow::Result<()> {
 
     // The system's languages, before anything says a word (ADR-139, 6).
     skwir_core::locale::set_system(skwir_platform::locale::languages());
+    {
+        use skwir_platform::locale::{Category, of};
+        skwir_core::locale::set_formats(of(Category::Numeric), of(Category::Time));
+    }
+    // The catalogs shipped (ADR-139, G): the program's own now, a plugin's
+    // as it is enabled.
+    skwir_core::words::ship(catalogs::CATALOGS);
+    skwir_core::words::register_shipped_of_program("skwir");
     let app = App::new(AppConfig::default())?;
 
     // Plugins: each registers its commands, bindings, menus, and places, and

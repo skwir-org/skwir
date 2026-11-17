@@ -73,6 +73,14 @@ pub trait Plugin: Send + Sync {
     }
     /// Where the plugin is listed among the others.
     fn category(&self) -> Category;
+    /// The crate it is built in, as Rust names it (`skwir_plugin_tags`):
+    /// the catalogs shipped for that crate are its words in other
+    /// languages, registered while it is enabled. Read from its type's
+    /// name; a plugin from outside answers its host's.
+    fn crate_ident(&self) -> &'static str {
+        let name = std::any::type_name::<Self>();
+        name.split("::").next().unwrap_or(name)
+    }
     /// Whether the plugin is on until the user turns it off. A plugin that
     /// changes what standard keys do (a key scheme) waits to be asked.
     fn enabled_by_default(&self) -> bool {
@@ -336,6 +344,7 @@ impl PluginHost {
             .unwrap_or_else(|| plugin.enabled_by_default());
         app.registry.set_owner_enabled(plugin.id(), enabled);
         if enabled {
+            crate::words::register_shipped(plugin.id(), plugin.crate_ident());
             plugin.register(app);
         }
         self.plugins.write().push((plugin, enabled));
@@ -397,6 +406,7 @@ impl PluginHost {
         app.registry.set_owner_enabled(id, enabled);
         let readers = app.registry.filter_readers.owners();
         if enabled {
+            crate::words::register_shipped(id, plugin.crate_ident());
             plugin.register(app);
         } else {
             app.unregister_owner(id);
