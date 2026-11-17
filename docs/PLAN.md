@@ -3688,7 +3688,15 @@ their budgets in every language.
       the pseudo-language with a full catalog, within budget (otherwise,
       translations compiled to tables, ADR-139, 4);
     - the cost of saying a frame's words is measured.
-- **E. Every crate converted.**
+- **E. Every crate converted.** Built 2026-11-16/17 (`docs/STATUS-LOG.md`):
+  every crate's words are messages (6,743), what took text takes words
+  (the API pass), words cross the window's own JSON whole (`to_data`),
+  a heading, a list argument and a sentence cut around a link exist, and
+  the pseudo-language leaves no English on the window's surfaces (seen on
+  Xvfb). In progress: removing the transitional `From<&str>`. Left, from
+  the translators' notes: counts without a selector where French must
+  agree, lists still joined in code, numbers still formatted in code, a
+  gender selector for the search's reading, English to reword.
   - By crate, one owner each: agents in parallel own the plugin crates,
     the integrator owns core and the UI.
   - Every literal becomes a message, every `format!` sentence one
@@ -3699,7 +3707,16 @@ their budgets in every language.
   - *Done when:* the pseudo-language leaves no English on the window's
     surfaces (screenshots in the pseudo-language), every test is green
     and English is unchanged.
-- **F. Formats.**
+- **F. Formats.** Built in part 2026-11-17: counts, decimals and sizes
+  by the system's number locale (« 1,5 Mo », « 12 345 »), moments by its
+  date locale (`Moment`: « mardi à 08:00 », « 12 mars 2024 », a US
+  locale's "2:02 PM"), lists by the language's patterns, a type's name
+  from shared-mime-info's translations; agents read English formats. The
+  dates setting's ISO choice stays ISO. Left: the timeline's months and
+  the groups' and facets' date headings, the numbers still formatted in
+  code (`{:.1}`, `{:.0}%`), the boundary tests in `de`, and idle memory
+  with the data (ICU4X's compiled data holds every locale: a data export
+  for the languages shipped is the lighter way).
   - ICU4X's decimal, list and datetime, with data for English and the
     languages shipped. `Count`, `Size`, `Instant` and `Span` are
     formatted by them: `format.rs`'s dates, the timeline's months, the
@@ -3709,7 +3726,16 @@ their budgets in every language.
   - Tests: boundary instants with an explicit calendar in `fr`, `de` and
     `en-US`; French sizes ("1,5 Mo") and numbers grouped with U+202F.
   - *Done when:* the tests pass and `just idle-pss` holds with the data.
-- **G. French.**
+- **G. French.** Drafted 2026-11-17, to review: every crate's `fr.ftl`
+  (6,743 messages, each `# draft`), after `docs/glossary-fr.md`, a
+  proposal not yet settled with the user (its open choices marked); the
+  translators' terms and the English they found wrong are in the
+  session's notes, gathered in the status log. Each crate's catalogs ship
+  with the program (`crates/skwir/src/catalogs.rs`, made by `just
+  words`), a plugin's registered while it is enabled; the Language
+  setting offers each language by its own name. Left: the user's review
+  of the glossary and the drafts in the window, the desktop file and the
+  AppStream metainfo, macOS's localizations, the 90 % / 75 % offers.
   - A glossary settled with the user first: Skwir's terms, and French
     typography (« », U+202F before `; : ! ?`).
   - Every crate's `fr.ftl`, drafted by a model crate by crate as each is

@@ -19206,3 +19206,87 @@ notes):
 **Disk:** a core change rebuilds every crate. The libraries' tests filled
 the disk from 13.6 GB free, and with the user's leave
 `target/debug/incremental` was deleted (14 → 93 GB free).
+
+## 2026-11-17 (night): Every word a message, formats by the locale, French drafted (ADR-139, E, F, G)
+
+The user asked, before sleeping, for steps E, F and G and any follow-up
+idea, with three decisions: a locale-aware heading where a title begins
+what is shown, leave to free the disk (target/debug/incremental and
+prune), and key names translated as the desktop does.
+
+**E, the window's words and the API pass.**
+- Five agents converted crates/ui (2,762 messages). Four agents then
+  made what still took text take words, in every crate, moving every
+  caller (`516ffc77`): plans' notes, conflict reasons, questions,
+  inspections and Properties, places, menus, keys, settings, fields.
+- Words cross the window's own JSON whole (`Words::to_data`: ui.ask,
+  ui.choose, menu sources, the search's chips), agents still reading
+  English. A heading (the user's choice: the first character cased only
+  where it is a letter, so a name past a quote is never changed), a
+  list argument (`List::and`/`or`) and a sentence cut around a link
+  (`say_around`) exist.
+- Readings of words made data: menu choices and F1's families by id,
+  a tag place's name, Properties' groups, rclone's config question by
+  its missing prompt, the keys page's grouping, the deleting dialog's
+  trashes.
+- In progress at this entry: removing the transitional `From<&str>`.
+
+**F, formats** (merged in `770414dc`):
+- Counts, decimals and sizes by the system's number locale, moments by
+  its date locale, agents reading English formats; a US locale now
+  writes "2:02 PM", British English "Sept"; the dates setting's ISO
+  choice and Properties' exact times stay ISO.
+- A file type's name from shared-mime-info's own translations (« Image
+  PNG »), cut a subtag at a time (sr-Latn-RS, sr-Latn, sr).
+- Dependencies: icu_casemap, icu_list, icu_decimal, icu_datetime,
+  icu_calendar, icu_time 2.4 (Unicode-3.0), jiff in core; cargo deny
+  passes, notices made again.
+
+**G, French drafted** (`61f65e9b`, `cdb3c99e`):
+- 6,743 messages in 47 `fr.ftl`, each `# draft`, by five translating
+  agents and their helpers from `docs/glossary-fr.md` (a proposal), then
+  made to say exactly what the final English says. Words' catalog check
+  (a test) passes: fr 6,743 of 6,743, all drafts.
+- Each crate's catalogs ship with the program (`just words` writes
+  `crates/skwir/src/catalogs.rs`); a plugin's are registered while it is
+  enabled. The Language setting offers each shipped language by its own
+  name (« Français »), and Automatic says what it speaks here.
+
+**Seen in a window** (Xvfb, the debug build):
+- In French: the list (« 1,5 Go », « Hier à 19:20 »), the files' menu
+  with its key names (Entrée, Maj+F4, Suppr), Properties, the settings
+  dialog, the sidebar, a toast and its Annuler.
+- In the pseudo-language: the menu, Properties, the settings, the
+  palette, the address field's card and the footer are all said through
+  messages. What stays plain is as written by design: volume labels, the
+  system's types, paths, ISO dates, command ids, the query's own words.
+- Found: Properties' label column cuts « Commentaire » inside the word;
+  Properties' header places its date outside its message; the address
+  field's hints are joined in code.
+
+**Checked:** at each commit, `cargo check --tests` and clippy `-D
+warnings` on the default members, their tests (3,468 + 234 after the
+merge), `cargo fmt --check`, `just words --check`.
+
+**Disk:** with the user's leave, target/debug/incremental was deleted
+once more (14 → 93 GB free) and the formats worktree's own target/
+(29 GB) removed with the worktree.
+
+**For the user's review in the morning:**
+- The glossary's open choices: tag « étiquette » or « tag »; « annotations »
+  for notes; « genre » for a kind; « Étagère » for the Shelf; « module »
+  for a plugin; « plan » for a plan; « volet » for a panel, apart from a
+  pane's « panneau »; « Skwir » or « skwir » in prose.
+- Calls made on the way: About's Copy details stays English (a report
+  follows the English issue template); a command whose answer the
+  window reads (checksums.properties) answers agents in words' data
+  form, its `english` field readable; a US locale writes 12-hour times.
+- The translators' list of English to fix, for one sweep:
+  - counts without a selector where French must agree (the footer's
+    "N selected", the timeline's counts);
+  - selectors on a total where French wants the noun after the first
+    number;
+  - lists still joined in code (tags' names, the address field's hints);
+  - numbers still formatted in code (`{:.1}`, `{:.0}%`);
+  - a gender selector for the search's "Did you mean" reading;
+  - a dozen ungrammatical or elliptical descriptions.
