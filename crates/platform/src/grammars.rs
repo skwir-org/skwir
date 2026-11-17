@@ -2478,12 +2478,10 @@ mod tests {
             "[languages]\ntypst = [\"typ\"]\n",
         );
         // The CLI's: a parser directory, its library in the CLI's cache.
+        // Written as JSON, not pasted in: Windows' backslashes are escapes.
         write(
             &root.join("ts-config/config.json"),
-            &format!(
-                r#"{{"parser-directories":["{}"]}}"#,
-                root.join("src").display()
-            ),
+            &serde_json::json!({ "parser-directories": [root.join("src")] }).to_string(),
         );
         write(
             &root.join("src/tree-sitter-odin/tree-sitter.json"),

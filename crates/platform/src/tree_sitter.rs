@@ -1587,9 +1587,18 @@ mod tests {
 
     #[test]
     fn the_folders_read_are_those_told_or_of_the_grammars_files() {
+        // A path written from the root, absolute on every system: `/g` is
+        // relative on Windows, where a root has a drive.
+        let at = |path: &str| -> PathBuf {
+            if cfg!(windows) && path.starts_with('/') {
+                format!("C:{path}").into()
+            } else {
+                path.into()
+            }
+        };
         let grammar = |library: &str, highlights: &[&str]| Grammar {
-            library: library.into(),
-            highlights: highlights.iter().map(PathBuf::from).collect(),
+            library: at(library),
+            highlights: highlights.iter().map(|path| at(path)).collect(),
             ..Grammar::default()
         };
         assert_eq!(
@@ -1614,12 +1623,12 @@ mod tests {
                 "/h/grammars",
                 "/q"
             ]
-            .map(PathBuf::from)
+            .map(at)
         );
         // Folders told are read as told, those inside another left out.
         assert_eq!(
-            readable(&["/g/b", "/g", "/h/x", "relative"].map(PathBuf::from)),
-            ["/g", "/h/x"].map(PathBuf::from)
+            readable(&["/g/b", "/g", "/h/x", "relative"].map(at)),
+            ["/g", "/h/x"].map(at)
         );
     }
 }
