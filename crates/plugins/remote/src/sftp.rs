@@ -108,7 +108,7 @@ impl Sftp {
 
     /// A session reading its commands on its input, asking nothing.
     fn session(&self, sftp: &Path, mount: &Mount) -> Command {
-        let mut command = Command::new(sftp);
+        let mut command = skwir_platform::process::command(sftp);
         command.env("LC_ALL", "C").args(["-b", "-"]);
         if let Some(config) = &self.ssh_config {
             command.arg("-F").arg(config);

@@ -26,7 +26,6 @@
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
@@ -404,7 +403,7 @@ fn logs_in_alone(
 ) -> anyhow::Result<()> {
     let ssh = skwir_core::os_path::find_program("ssh")
         .ok_or_else(|| anyhow::anyhow!(connector::not_installed("ssh")))?;
-    let mut command = Command::new(ssh);
+    let mut command = skwir_platform::process::command(ssh);
     command.args([
         "-o",
         "BatchMode=yes",
@@ -1109,7 +1108,7 @@ impl Manager {
         }
         #[cfg(windows)]
         {
-            let mut command = Command::new(&self.program);
+            let mut command = skwir_platform::process::command(&self.program);
             command.args(["/Query", "/TN"]).arg(task_name(id));
             skwir_platform::process::run_to_exit(
                 &mut command,
@@ -1135,7 +1134,7 @@ impl Manager {
     ) -> std::collections::HashSet<String> {
         #[cfg(windows)]
         {
-            let mut command = Command::new(&self.program);
+            let mut command = skwir_platform::process::command(&self.program);
             command.args(["/Query", "/FO", "CSV", "/NH"]);
             let listed = skwir_platform::process::run_to_exit(
                 &mut command,
@@ -1159,7 +1158,7 @@ impl Manager {
 
     /// Run its program with `args`, its words when it fails.
     fn ask(&self, args: Vec<OsString>, cancel: &CancelToken) -> anyhow::Result<()> {
-        let mut command = Command::new(&self.program);
+        let mut command = skwir_platform::process::command(&self.program);
         command.args(args);
         if let Some(runtime) = &self.runtime {
             command.env_clear().env("XDG_RUNTIME_DIR", runtime);
@@ -1254,7 +1253,7 @@ impl Manager {
 impl Manager {
     /// The user's session in launchd: `gui/<uid>`.
     fn domain(cancel: &CancelToken) -> anyhow::Result<String> {
-        let mut id = Command::new("/usr/bin/id");
+        let mut id = skwir_platform::process::command("/usr/bin/id");
         id.arg("-u");
         let uid = skwir_platform::process::run(&mut id, cancel, Duration::from_secs(10))?;
         Ok(format!("gui/{}", String::from_utf8_lossy(&uid).trim()))

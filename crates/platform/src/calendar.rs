@@ -284,7 +284,7 @@ pub fn prewarm() {
 /// current calendar on macOS (compiled, never run there).
 #[cfg(all(unix, not(target_os = "macos")))]
 fn system_week_start() -> Option<Weekday> {
-    let mut locale = std::process::Command::new("locale");
+    let mut locale = crate::process::command("locale");
     locale
         .args(["week-1stday", "first_weekday"])
         .stdin(std::process::Stdio::null());

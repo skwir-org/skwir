@@ -4,6 +4,8 @@
 //! a `kiod6` whose kmtpd is not loaded (`Unloaded`), which says what was
 //! addressed to it, as a call to it would load it.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 // Each test file that includes this module uses a part of it.
 #![allow(dead_code)]
 

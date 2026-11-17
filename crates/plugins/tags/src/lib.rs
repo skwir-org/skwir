@@ -11,6 +11,9 @@
 //! cache (`vocabulary`), and the color a user chose for a tag is a setting
 //! (`tags.colors`); every other tag wears the color its name gives it.
 
+// Tests run from a console: no console window to keep away.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 #[cfg(test)]
 mod any_input;
 mod appledouble;

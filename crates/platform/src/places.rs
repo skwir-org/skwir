@@ -1,7 +1,6 @@
 //! Places the user already knows: home, XDG user dirs, GTK bookmarks, mounts.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use skwir_core::CancelToken;
@@ -301,7 +300,7 @@ const UDISKS_TIMEOUT: Duration = Duration::from_secs(120);
 /// Run `lsblk` and return its JSON. Spawns a process: call from a worker.
 pub fn lsblk() -> Option<String> {
     let finished = crate::process::run_to_exit(
-        Command::new("lsblk").args(LSBLK_ARGS),
+        crate::process::command("lsblk").args(LSBLK_ARGS),
         None,
         &CancelToken::new(),
         LSBLK_TIMEOUT,
@@ -342,7 +341,7 @@ fn udisks(
     extra: &[&str],
     input: Option<&[u8]>,
 ) -> anyhow::Result<String> {
-    let mut command = Command::new("udisksctl");
+    let mut command = crate::process::command("udisksctl");
     command
         .arg(verb)
         .arg("--block-device")
@@ -1357,7 +1356,7 @@ mod apfs {
     #[cfg(target_os = "macos")]
     fn diskutil(args: &[&str], input: Option<&[u8]>) -> anyhow::Result<crate::process::Finished> {
         crate::process::run_to_exit(
-            std::process::Command::new("diskutil").args(args),
+            crate::process::command("diskutil").args(args),
             input,
             &skwir_core::CancelToken::new(),
             super::UDISKS_TIMEOUT,

@@ -118,7 +118,7 @@ fn isolates() -> bool {
         return false;
     };
     let isolated = crate::process::run(
-        Command::new(bwrap).args([
+        crate::process::command(bwrap).args([
             "--unshare-all",
             "--die-with-parent",
             "--ro-bind",
@@ -375,7 +375,7 @@ pub fn fed_reading_writing(
 /// as it would without skwir: not isolated. Only through `untrusted`'s
 /// `Otherwise::Run`, and for tests of what runs so.
 pub fn plain(program: &Path, input: &Path, work: &Path) -> Untrusted {
-    let mut command = Command::new(program);
+    let mut command = crate::process::command(program);
     command.current_dir(work);
     Untrusted {
         command,
@@ -443,7 +443,7 @@ fn isolated(
     writable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     let bwrap = crate::process::required("bwrap")?;
-    let mut command = Command::new(bwrap);
+    let mut command = crate::process::command(bwrap);
     hand_environment(&mut command, false);
     command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
     for system in SYSTEM {
@@ -671,7 +671,7 @@ fn isolated(
         .extend((0..writable.len()).map(|n| {
             format!("(allow file-read* file-write* (subpath (param \"WRITABLE{n}\")))\n")
         }));
-    let mut command = Command::new("/usr/bin/sandbox-exec");
+    let mut command = crate::process::command("/usr/bin/sandbox-exec");
     hand_environment(&mut command, false);
     command.arg("-p").arg(profile);
     let named = [
@@ -768,7 +768,7 @@ fn plugin_isolated(
     network: bool,
 ) -> anyhow::Result<Command> {
     let bwrap = crate::process::required("bwrap")?;
-    let mut command = Command::new(bwrap);
+    let mut command = crate::process::command(bwrap);
     hand_environment(&mut command, network);
     command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
     if network {
@@ -849,7 +849,7 @@ fn plugin_isolated(
     if network {
         profile.push_str("(allow network*)\n");
     }
-    let mut command = Command::new("/usr/bin/sandbox-exec");
+    let mut command = crate::process::command("/usr/bin/sandbox-exec");
     hand_environment(&mut command, network);
     command.arg("-p").arg(profile);
     for (name, value) in [

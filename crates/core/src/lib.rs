@@ -25,6 +25,9 @@
 //! The crate is toolkit-agnostic and has no async runtime: work runs on the
 //! scheduler's threads and results flow through channels.
 
+// Tests run from a console: no console window to keep away.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The `words!` macro names `::skwir_core::words`, which core is too.
 extern crate self as skwir_core;
 

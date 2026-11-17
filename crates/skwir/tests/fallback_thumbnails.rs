@@ -3,6 +3,9 @@
 //! pages): tried only after the desktop's cache and thumbnailers,
 //! whichever plugin registers first, and shared through the desktop's
 //! cache.
+
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 use skwir_core::{
     App, CancelToken,
     app::AppConfig,

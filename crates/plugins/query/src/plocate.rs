@@ -10,7 +10,6 @@
 //! removed since is not in it.
 
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use skwir_core::cancel::CancelToken;
@@ -105,7 +104,7 @@ fn left_out(
 /// `LOCATE_PATH` adds. Without the default (a help that does not name it)
 /// none: the answer is then as of a time that cannot be told.
 pub fn databases(bin: &Path, cancel: &CancelToken) -> Vec<PathBuf> {
-    let mut cmd = Command::new(bin);
+    let mut cmd = skwir_platform::process::command(bin);
     cmd.arg("--help");
     let Some(default) =
         skwir_platform::process::run_capped(&mut cmd, None, cancel, HELP_TIMEOUT, HELP)
@@ -170,7 +169,7 @@ pub fn locate_with(
     case_sensitive: bool,
     cancel: &CancelToken,
 ) -> Option<Vec<PathBuf>> {
-    let mut cmd = Command::new(bin);
+    let mut cmd = skwir_platform::process::command(bin);
     cmd.arg("--basename").arg("--null");
     if !case_sensitive {
         cmd.arg("--ignore-case");

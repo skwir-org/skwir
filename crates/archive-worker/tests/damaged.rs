@@ -5,6 +5,9 @@
 //! (ADR-059). The ZIPs are written here byte by byte, `ZipCrypto` included,
 //! so that what they hold is known exactly.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

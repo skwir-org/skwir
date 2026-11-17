@@ -4,6 +4,9 @@
 //! and it is let go of. Skipped, saying why, where rclone or FUSE is
 //! missing.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;

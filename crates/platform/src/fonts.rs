@@ -200,7 +200,7 @@ mod imp {
 
     pub(super) fn matched(alias: &str) -> Option<String> {
         let family = run(
-            Command::new("fc-match").args(["--format", "%{family[0]}", alias]),
+            crate::process::command("fc-match").args(["--format", "%{family[0]}", alias]),
             4096,
         )?;
         let family = family.trim();
@@ -209,7 +209,11 @@ mod imp {
 
     pub(super) fn families() -> Option<super::Families> {
         let listed = run(
-            Command::new("fc-list").args([":charset=6d", "--format", "%{spacing}\t%{family}\n"]),
+            crate::process::command("fc-list").args([
+                ":charset=6d",
+                "--format",
+                "%{spacing}\t%{family}\n",
+            ]),
             LISTED,
         )?;
         Some(super::parse(&listed))

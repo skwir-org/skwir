@@ -267,7 +267,7 @@ fn ask(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let mut command = std::process::Command::new(shell);
+    let mut command = crate::process::command(shell);
     command.args(arguments(&kind, &marker));
     command
         .current_dir(skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")))

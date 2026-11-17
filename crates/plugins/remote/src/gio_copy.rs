@@ -238,7 +238,7 @@ impl GioCopy {
 
     /// `gio` with `words`, then `names`.
     fn gio_on(&self, gio: &Path, words: &[&str], names: &[&Path]) -> Command {
-        let mut command = Command::new(gio);
+        let mut command = skwir_platform::process::command(gio);
         crate::gvfs::english(&mut command);
         command.envs(self.env.iter().map(|(k, v)| (k, v)));
         command.args(words).arg("--").args(names);

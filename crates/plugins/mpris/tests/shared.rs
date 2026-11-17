@@ -5,6 +5,8 @@
 //! again on the next. Each run again on a session bus of its own. Skipped,
 //! saying why, without `dbus-daemon`.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::io::BufRead;
 use std::path::Path;

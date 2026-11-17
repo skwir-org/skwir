@@ -12,6 +12,9 @@
 //! `remote.thumbnails` (for a remote the user chose nothing for),
 //! `remote.chosen` (what the user chose for each, by address).
 
+// Tests run from a console: no console window to keep away.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod address;
 #[cfg(target_os = "linux")]
 mod bus;

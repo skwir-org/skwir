@@ -19,6 +19,35 @@ use anyhow::Context;
 use skwir_core::CancelToken;
 use skwir_core::os_path::find_program;
 
+/// What runs `program`: the one way a program is made, as
+/// `std::process::Command::new` is refused everywhere else
+/// (`clippy.toml`). On Windows it starts with no console window
+/// (`CREATE_NO_WINDOW`). Skwir's window has no console (ADR-074), so a
+/// console program started otherwise opens one of its own, shown as long
+/// as it runs: a window flashing at each Git state read, another behind
+/// each helper that serves. What it starts in turn shares that
+/// console, unseen. A program that needs a console (a terminal) asks
+/// for one with `creation_flags`, which replaces this.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    // The one place a program is made.
+    #[allow(clippy::disallowed_methods)]
+    let mut command = Command::new(program);
+    without_console(&mut command);
+    command
+}
+
+/// Windows' `CREATE_NO_WINDOW` for [`command`]; elsewhere nothing: no
+/// console opens a window of its own there.
+fn without_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 /// One of our optional worker executables: its name, and the variable
 /// that says where it is instead.
 #[derive(Clone, Copy)]
@@ -91,7 +120,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// macOS, a missing DLL on Windows), which fails the probe too. A helper
 /// that hangs is no helper.
 pub fn probe(path: &Path, envs: &[(&str, &std::ffi::OsStr)]) -> bool {
-    let mut command = Command::new(path);
+    let mut command = crate::process::command(path);
     command.arg("--probe").envs(envs.iter().copied());
     match run(&mut command, &CancelToken::new(), PROBE_TIMEOUT) {
         Ok(_) => true,
@@ -216,7 +245,7 @@ fn build_of(path: &Path) -> Said {
 fn ask_build(path: &Path) -> Said {
     // Windows' STATUS_DLL_NOT_FOUND, 0xC0000135, as the exit code reads it.
     const DLL_NOT_FOUND: i32 = -1_073_741_515;
-    let mut command = Command::new(path);
+    let mut command = crate::process::command(path);
     command.arg("--build");
     let Ok(finished) = run_to_exit(&mut command, None, &CancelToken::new(), BUILD_TIMEOUT) else {
         return Said::Unknown;
@@ -1549,7 +1578,7 @@ pub fn using(folder: &Path) -> Option<Vec<String>> {
         // `+f`: the files open on the file system mounted there. `lsof`
         // stats the mount point: one whose server is gone holds it, so it
         // is given a time, then nothing is said.
-        let mut command = Command::new("/usr/sbin/lsof");
+        let mut command = crate::process::command("/usr/sbin/lsof");
         command.args(["-w", "-F", "pc", "+f", "--"]).arg(folder);
         let finished = run_to_exit(
             &mut command,

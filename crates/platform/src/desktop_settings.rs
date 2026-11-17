@@ -6,7 +6,6 @@
 //! program asked or a file read: on a worker, never while drawing.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 /// Where a desktop keeps what its user chose.
@@ -60,7 +59,7 @@ pub(crate) fn gsettings_string(printed: &str) -> Option<String> {
 /// moment or not at all.
 pub(crate) fn printed(program: &Path, args: &[&str]) -> Option<String> {
     let finished = crate::process::run_capped(
-        Command::new(program).args(args),
+        crate::process::command(program).args(args),
         None,
         &skwir_core::CancelToken::new(),
         Duration::from_secs(2),

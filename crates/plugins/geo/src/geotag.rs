@@ -412,7 +412,7 @@ fn program() -> anyhow::Result<PathBuf> {
 /// `ExifTool` with the arguments every run shares: no user configuration
 /// (it could rename or redefine tags), numbers as numbers.
 fn exiftool(program: &Path) -> Command {
-    let mut command = Command::new(program);
+    let mut command = skwir_platform::process::command(program);
     command.args(["-config", "", "-n"]);
     command
 }

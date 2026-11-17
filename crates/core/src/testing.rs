@@ -179,6 +179,8 @@ pub fn in_namespace() -> bool {
 /// # Panics
 /// Where the test fails there, or does not run.
 #[cfg(target_os = "linux")]
+// Tests' own, on Linux: no console window to keep away.
+#[allow(clippy::disallowed_methods)]
 pub fn as_root_in_a_namespace(test: &str) {
     use std::process::Command;
     const UNSHARE: [&str; 4] = ["-r", "-m", "--propagation", "private"];

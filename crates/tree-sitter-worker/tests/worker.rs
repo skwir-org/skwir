@@ -1,6 +1,9 @@
 //! The helper as skwir talks to it: started as it is built, not isolated,
 //! asked over its standard input, answered on its output (`syntax`).
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};

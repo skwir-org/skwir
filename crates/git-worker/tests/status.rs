@@ -1,6 +1,9 @@
 //! The helper's status (ADR-134) against repositories the `git` program
 //! makes, its answers compared with `git status`'s own. Skipped where git
 //! is not installed.
+
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;

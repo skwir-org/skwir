@@ -2,6 +2,8 @@
 //! program by the cargo that builds the tests, then laid out in a folder
 //! of plugins as an installed one is.
 #![allow(dead_code)]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

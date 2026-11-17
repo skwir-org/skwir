@@ -5,6 +5,9 @@
 //! is made by the helper itself (`--create`), a compressed tar: read from
 //! its start, every member before is decompressed again.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};

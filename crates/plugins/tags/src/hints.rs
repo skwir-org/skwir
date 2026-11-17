@@ -116,7 +116,7 @@ impl HintProvider for Baloo {
         }
         let program = self.search_program()?;
         let query = baloo_query(value)?;
-        let mut command = std::process::Command::new(program);
+        let mut command = skwir_platform::process::command(program);
         command.arg("-d").arg(root).arg(query);
         if let Some(private) = &self.private {
             command.env("XDG_DATA_HOME", &private.data_home);
@@ -166,7 +166,7 @@ impl HintProvider for Spotlight {
         }
         let program = skwir_core::os_path::find_program("mdfind")?;
         let query = spotlight_query(value)?;
-        let mut command = std::process::Command::new(program);
+        let mut command = skwir_platform::process::command(program);
         command.arg("-onlyin").arg(root).arg(query);
         match skwir_platform::process::run(&mut command, cancel, SPOTLIGHT_TIMEOUT) {
             // One absolute path a line, as Baloo's.

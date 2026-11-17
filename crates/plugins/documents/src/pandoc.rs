@@ -13,7 +13,6 @@ use skwir_platform::inspection::{self, limits};
 use skwir_platform::{process, rich_preview, sandbox};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
@@ -70,7 +69,7 @@ fn has_sandbox(version: &str) -> bool {
 fn ask_about(path: &Path) -> Option<Said> {
     let ask = |argument: &str| {
         process::run(
-            Command::new(path).arg(argument),
+            skwir_platform::process::command(path).arg(argument),
             &CancelToken::new(),
             limits::HELPER_TIMEOUT,
         )

@@ -146,3 +146,15 @@ written on Linux and never run.
   it formulas would never be drawn. Under Wine it typesets a batch (a
   fraction, a number set apart by its `\tag`, chemistry; broken TeX
   refused with its reason). Mermaid's stays out.
+- 2026-11-17 (PR #12): what skwir starts, it starts with no console
+  window. A program of the window subsystem has no console, so each
+  console program it started opened one of its own: one flashed at each
+  Git state read, and one would stand behind each helper that serves,
+  as long as it runs. Every
+  program is made by `process::command` (`skwir_platform`), which sets
+  `CREATE_NO_WINDOW`; clippy refuses `std::process::Command::new`
+  elsewhere (`clippy.toml`), but in tests, build scripts and a helper's
+  own children, which share its unseen console. A terminal asks for a
+  console again (`CREATE_NEW_CONSOLE`). Wine shows no console windows:
+  the flashing was seen on Windows, by the PR's author; the rest is
+  compiled only.

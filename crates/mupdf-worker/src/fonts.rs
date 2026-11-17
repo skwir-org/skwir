@@ -136,6 +136,9 @@ fn family(name: &str) -> Option<String> {
 /// The face of `family` fontconfig prefers in that style, if it has the
 /// family: under its own name or written without spaces, as `PostScript`
 /// names are (`TimesNewRoman` for Times New Roman).
+// A helper's: what it starts shares its console, unseen
+// (`process::command`).
+#[allow(clippy::disallowed_methods)]
 fn fc_family(family: &str, bold: bool, italic: bool) -> Face {
     // Fontconfig's pattern syntax gives these characters a meaning.
     let mut pattern = String::new();
@@ -188,6 +191,9 @@ fn of_family(line: &str, family: &str) -> Face {
 /// sorts for the style, the first whose coverage includes the language. Its
 /// single best match is not enough, since a generic family (`serif`) weighs
 /// more than the language and would give a face without its glyphs.
+// A helper's: what it starts shares its console, unseen
+// (`process::command`).
+#[allow(clippy::disallowed_methods)]
 fn fc_match(language: &str, serif: bool) -> Face {
     let family = if serif { "serif" } else { "sans-serif" };
     let output = Command::new("fc-match")

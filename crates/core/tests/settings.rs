@@ -1,4 +1,7 @@
 //! Preference transactions use synthetic settings and isolated files.
+
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},

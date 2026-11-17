@@ -290,13 +290,13 @@ fn unmount_command(point: &Path, lazy: bool) -> Command {
             .into_iter()
             .find(|p| skwir_core::os_path::find_program(p).is_some())
             .unwrap_or("fusermount3");
-        let mut command = Command::new(fusermount);
+        let mut command = skwir_platform::process::command(fusermount);
         command.arg(if lazy { "-uz" } else { "-u" }).arg(point);
         command
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let mut command = Command::new("umount");
+        let mut command = skwir_platform::process::command("umount");
         if lazy {
             command.arg("-f");
         }

@@ -20,7 +20,6 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -82,7 +81,7 @@ impl Rsync {
         if let Some(&known) = self.runs.lock().get(&mount.point) {
             return known;
         }
-        let mut command = Command::new("ssh");
+        let mut command = skwir_platform::process::command("ssh");
         if let Some(config) = &self.ssh_config {
             command.arg("-F").arg(config);
         }
@@ -359,7 +358,7 @@ impl Transfer for Rsync {
             let empty = Empty::new()?;
             let mut from = empty.0.as_os_str().to_owned();
             from.push("/");
-            let mut command = Command::new(rsync);
+            let mut command = skwir_platform::process::command(rsync);
             command
                 .env("LC_ALL", "C")
                 .args([
@@ -433,7 +432,7 @@ impl Transfer for Rsync {
         let mut local = local_side.as_os_str().to_owned();
         local.push("/");
         let remote = mount.spec(&at);
-        let mut command = Command::new(rsync);
+        let mut command = skwir_platform::process::command(rsync);
         command
             .env("LC_ALL", "C")
             .args([
@@ -746,7 +745,7 @@ mod tests {
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
-        let mut command = Command::new(rsync);
+        let mut command = std::process::Command::new(rsync);
         command
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("SKWIR_TEST_SSH_ARGS", &captured)

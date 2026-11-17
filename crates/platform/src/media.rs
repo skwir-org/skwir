@@ -23,7 +23,6 @@ use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom},
     path::PathBuf,
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -516,7 +515,7 @@ fn manage(
     let audio_only = path.file_name().is_some_and(|name| {
         crate::mime::identify(name, &path).is_some_and(|mime| mime.0.starts_with("audio/"))
     });
-    let mut command = Command::new(executable);
+    let mut command = crate::process::command(executable);
     command.arg(path).arg(scratch.path());
     if audio_only {
         command.env("SKWIR_MEDIA_AUDIO_ONLY", "1");

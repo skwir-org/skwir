@@ -3,6 +3,9 @@
 //! outline, search and the first page alone. `just djvu-check` runs the
 //! same on documents `DjVuLibre`'s tools make, for both engines (ADR-061).
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};

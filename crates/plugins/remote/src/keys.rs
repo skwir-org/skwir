@@ -217,7 +217,7 @@ impl Ssh {
     /// keeps an option's first value, so they hold over `options` and the
     /// user's configuration.
     fn command(&self, program: &Path, ours: &[String]) -> Command {
-        let mut command = Command::new(program);
+        let mut command = skwir_platform::process::command(program);
         command.env("LC_ALL", "C");
         for option in ours.iter().chain(&self.options) {
             command.arg("-o").arg(option);
@@ -472,7 +472,7 @@ fn fingerprint(line: &str, cancel: &CancelToken) -> String {
     let Some(keygen) = skwir_core::os_path::find_program("ssh-keygen") else {
         return String::new();
     };
-    let mut command = Command::new(keygen);
+    let mut command = skwir_platform::process::command(keygen);
     command.args(["-l", "-f", "-"]);
     let input = format!("{line}\n");
     process::run_to_exit(&mut command, Some(input.as_bytes()), cancel, NEAR)
@@ -501,7 +501,7 @@ pub fn agent_keys(socket: Option<&Path>, cancel: &CancelToken) -> Vec<Key> {
     let Some(program) = skwir_core::os_path::find_program("ssh-add") else {
         return Vec::new();
     };
-    let mut command = Command::new(program);
+    let mut command = skwir_platform::process::command(program);
     command.arg("-L");
     if let Some(socket) = socket {
         command.env("SSH_AUTH_SOCK", socket);
@@ -646,7 +646,7 @@ fn keygen(
     passphrase: &str,
     asking: Option<(&Path, &Path)>,
 ) -> Command {
-    let mut command = Command::new(program);
+    let mut command = skwir_platform::process::command(program);
     command
         .env("LC_ALL", "C")
         .args(["-q", "-t", "ed25519", "-C", comment, "-f"])

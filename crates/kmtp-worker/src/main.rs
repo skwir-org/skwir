@@ -72,6 +72,9 @@ fn probe() -> i32 {
 /// helper's process group, which the caller stops whole when it gives up
 /// (`process::run_leaving`: cancelled, or kmtpd not answering); mounted,
 /// it leaves it, outliving what started it (ADR-077).
+// A helper of Linux's (ADR-097), whose console, where it has one, is
+// its starter's: no console window to keep away.
+#[allow(clippy::disallowed_methods)]
 fn mount(args: &[OsString]) -> i32 {
     use std::io::BufRead;
     let Ok(program) = std::env::current_exe() else {

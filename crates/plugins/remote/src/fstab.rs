@@ -6,7 +6,6 @@
 //! mount shares their own way.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -147,7 +146,7 @@ impl Connector for Fstab {
                     remote_fstab_no_entry = "no entry of /etc/fstab that you may mount names it"
                 ))
             })?;
-        let mut command = Command::new("mount");
+        let mut command = skwir_platform::process::command("mount");
         command.arg(&entry.point);
         let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
         skwir_core::fs::reach::changed();
@@ -192,7 +191,7 @@ impl Connector for Fstab {
             )
         );
         let umount = |lazy: bool| -> anyhow::Result<()> {
-            let mut command = Command::new("umount");
+            let mut command = skwir_platform::process::command("umount");
             if lazy {
                 command.arg("-l");
             }

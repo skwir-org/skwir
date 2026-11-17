@@ -5,6 +5,9 @@
 //! asked twice to make it and once to extract it; cancelled while the
 //! helper works.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

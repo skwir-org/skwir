@@ -114,10 +114,10 @@ impl Magick {
         }
         let path = ["magick", "convert"].into_iter().find_map(|name| {
             let path = process::required(name).ok()?;
-            let version = ask(Command::new(&path).arg("-version"))?;
+            let version = ask(crate::process::command(&path).arg("-version"))?;
             version.contains("ImageMagick").then_some(path)
         })?;
-        let listing = ask(Command::new(&path).args(["-list", "format"]))?;
+        let listing = ask(crate::process::command(&path).args(["-list", "format"]))?;
         let magick = Magick::listing(path, &listing);
         if magick.reads_its_policy() {
             Some(magick)

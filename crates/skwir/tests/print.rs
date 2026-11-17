@@ -7,6 +7,9 @@
 //! window would, saying where a PDF goes. The print helper is a
 //! default member, built with the tests; without it the test says so and
 //! passes, unless `SKWIR_REQUIRE_WORKERS` is set.
+
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

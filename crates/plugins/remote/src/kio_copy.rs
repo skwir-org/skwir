@@ -171,7 +171,7 @@ impl KioCopy {
     /// `kioclient` with `words`, its addresses after, through this
     /// session's KIO, drawing nothing.
     fn kioclient(&self, kioclient: &Path, words: &[&str], addresses: &[String]) -> Command {
-        let mut command = Command::new(kioclient);
+        let mut command = skwir_platform::process::command(kioclient);
         crate::gvfs::english(&mut command);
         command.env("QT_QPA_PLATFORM", "offscreen");
         command.envs(self.env.iter().map(|(k, v)| (k, v)));

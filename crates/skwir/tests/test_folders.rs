@@ -5,6 +5,8 @@
 //! byte, a link trashed removed and never followed. Run with a home of the
 //! test's own: never the tests' shared folders.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;

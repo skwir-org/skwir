@@ -4,6 +4,8 @@
 //! what MTP cannot do refused; let go of when the phone leaves kmtpd.
 //! Skipped, saying why, without FUSE or `dbus-daemon`.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 mod common;
 

@@ -156,7 +156,7 @@ impl Kio {
         let kioclient = ["kioclient", "kioclient6"]
             .into_iter()
             .find_map(skwir_core::os_path::find_program)?;
-        let mut command = std::process::Command::new(kioclient);
+        let mut command = skwir_platform::process::command(kioclient);
         command
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .args(["--interactive", "ls", url])

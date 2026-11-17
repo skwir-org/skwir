@@ -141,7 +141,7 @@ mod imp {
     }
 
     fn detached(term: &OsStr, dir: &Path) -> Command {
-        let mut c = Command::new(term);
+        let mut c = crate::process::command(term);
         c.current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -202,7 +202,7 @@ mod imp {
         let app = std::env::var_os("TERMINAL")
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| OsString::from("Terminal"));
-        let mut c = Command::new("/usr/bin/open");
+        let mut c = crate::process::command("/usr/bin/open");
         c.arg("-a")
             .arg(app)
             .arg(dir)
@@ -239,12 +239,13 @@ mod imp {
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    /// `CREATE_NEW_CONSOLE`: the program gets a console window of its own.
+    /// `CREATE_NEW_CONSOLE`: the program gets a console window of its own,
+    /// in place of the none `process::command` gives.
     const NEW_CONSOLE: u32 = 0x10;
 
     pub fn terminal(dir: &Path) -> anyhow::Result<Command> {
         if let Some(wt) = skwir_core::os_path::find_program("wt") {
-            let mut c = Command::new(wt);
+            let mut c = crate::process::command(wt);
             c.arg("-d")
                 .arg(dir)
                 .stdin(Stdio::null())
@@ -253,7 +254,7 @@ mod imp {
             return Ok(c);
         }
         let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
-        let mut c = Command::new(shell);
+        let mut c = crate::process::command(shell);
         c.current_dir(dir).creation_flags(NEW_CONSOLE);
         Ok(c)
     }
@@ -265,7 +266,7 @@ mod imp {
                 note = "A terminal was asked to run a program, and none was given."
             ))
         })?;
-        let mut c = Command::new(program);
+        let mut c = crate::process::command(program);
         c.args(rest).current_dir(dir).creation_flags(NEW_CONSOLE);
         Ok(c)
     }

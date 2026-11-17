@@ -344,7 +344,7 @@ fn with_listed<R>(key: &ListedKey, change: impl FnOnce(&mut Listed) -> R) -> R {
 
 /// `rclone` run with `config` where one is named.
 pub(crate) fn command(rclone: &Path, config: Option<&Path>) -> Command {
-    let mut command = Command::new(rclone);
+    let mut command = skwir_platform::process::command(rclone);
     if let Some(config) = config {
         command.arg("--config").arg(config);
     }
@@ -699,9 +699,6 @@ impl Rclone {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected> {
-        use std::os::windows::process::CommandExt as _;
-        /// `CREATE_NO_WINDOW`: no console behind it.
-        const NO_WINDOW: u32 = 0x0800_0000;
         let folder = crate::connector::mounts_folder().ok_or_else(|| {
             anyhow::anyhow!(words!(
                 remote_rclone_no_mounts_folder = "there is no folder to mount in"
@@ -733,8 +730,7 @@ impl Rclone {
             .envs(login.serving().1)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(NO_WINDOW);
+            .stderr(std::process::Stdio::null());
         if let Some((variable, password)) = password {
             command.env(variable, password);
         }
@@ -1105,7 +1101,7 @@ fn listed(
 pub(crate) fn obscured(rclone: &Path, password: &str) -> anyhow::Result<String> {
     use std::io::Write as _;
     use std::process::Stdio;
-    let mut child = Command::new(rclone)
+    let mut child = skwir_platform::process::command(rclone)
         .args(["obscure", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

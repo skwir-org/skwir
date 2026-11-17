@@ -25,6 +25,9 @@
 //! - [`links`]: addresses and paths found in plain text, and the files they name.
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
+// Tests run from a console: no console window to keep away.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod about;
 pub mod access;
 #[cfg(test)]

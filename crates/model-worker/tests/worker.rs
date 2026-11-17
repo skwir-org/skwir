@@ -1,5 +1,8 @@
 //! The helper as skwir runs it: a file and its format in, a line of
 //! measures and a PNG out, or a reason and an exit status of 1.
+
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};

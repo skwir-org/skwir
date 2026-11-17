@@ -7,6 +7,8 @@
 //!
 //! Skipped, saying why, where rclone is missing.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

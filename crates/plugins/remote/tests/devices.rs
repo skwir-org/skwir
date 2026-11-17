@@ -6,6 +6,8 @@
 //! held, and by whom. Linux only, as GVfs is. Skipped, saying why, without
 //! `dbus-daemon` or `gio`.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::collections::HashMap;
 use std::io::BufRead;

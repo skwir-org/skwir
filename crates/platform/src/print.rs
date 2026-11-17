@@ -1266,7 +1266,7 @@ mod macos {
             Duplex::LongEdge => "two-sided-long-edge",
             Duplex::ShortEdge => "two-sided-short-edge",
         };
-        let mut lp = std::process::Command::new("/usr/bin/lp");
+        let mut lp = crate::process::command("/usr/bin/lp");
         lp.args(["-d", queue, "-n", &copies.to_string(), "-t", title])
             .args(["-o", &format!("sides={sides}")]);
         if let Some(media) = media {

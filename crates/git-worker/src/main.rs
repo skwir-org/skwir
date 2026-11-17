@@ -56,6 +56,10 @@
 //! A request it refuses or cannot answer is an exit status of 1 and a
 //! reason on standard error. Nothing is written to the repository: no lock
 //! is taken, the index is read and never refreshed.
+
+// Tests run from a console: no console window to keep away.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 use serde::Deserialize;
 use std::io::{Read, Write};
 use std::path::PathBuf;

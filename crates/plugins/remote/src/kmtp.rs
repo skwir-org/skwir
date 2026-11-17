@@ -174,7 +174,7 @@ impl Kmtp {
             .helper()
             .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed(WORKER.executable)))?;
         let point = mounter::point_for(self.id(), &top)?;
-        let mut command = std::process::Command::new(helper);
+        let mut command = skwir_platform::process::command(helper);
         command
             .arg("mount")
             .arg(&held.udi)

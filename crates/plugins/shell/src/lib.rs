@@ -12,6 +12,9 @@
 //! (`shell.run_here`). Linux's terminals run a command; elsewhere both say
 //! it is not available yet, and the menu has no Run Command….
 
+// Tests run from a console: no console window to keep away.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 

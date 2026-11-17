@@ -13,6 +13,8 @@
 //! `-F /dev/null`, known hosts and keys of the test's, each command its
 //! agent by name.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

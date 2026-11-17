@@ -1,7 +1,6 @@
 //! zoxide as a frecency source: `zoxide query --list --score`.
 
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
 
 use skwir_core::CancelToken;
@@ -41,7 +40,7 @@ pub fn query(cancel: &CancelToken) -> Vec<ZEntry> {
     let Some(zoxide) = skwir_core::os_path::find_program("zoxide") else {
         return Vec::new();
     };
-    let mut command = Command::new(zoxide);
+    let mut command = skwir_platform::process::command(zoxide);
     command.args(["query", "--list", "--score"]);
     match skwir_platform::process::run(&mut command, cancel, TIMEOUT) {
         Ok(out) => parse(&out),

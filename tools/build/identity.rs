@@ -29,6 +29,8 @@ fn emit_build() {
 /// tag made) and `packed-refs`. `None` for the commit `version`'s tag
 /// names, and unless the checkout is skwir's own, whose top holds this
 /// file: git answers for whatever repository the folder is in.
+// Run as Skwir is built, not by Skwir: no console window to keep away.
+#[allow(clippy::disallowed_methods)]
 fn commit(version: &str) -> Option<String> {
     let output = std::process::Command::new("git")
         .args([

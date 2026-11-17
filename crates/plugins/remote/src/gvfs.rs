@@ -64,7 +64,7 @@ pub struct Gvfs {
 impl Gvfs {
     /// `gio`, its words in English, run as asked.
     fn gio(&self, gio: &Path) -> Command {
-        let mut command = Command::new(gio);
+        let mut command = skwir_platform::process::command(gio);
         english(&mut command);
         command.envs(self.env.iter().map(|(k, v)| (k, v)));
         command

@@ -14,6 +14,8 @@
 //! Skipped, saying why, where systemd-analyze, rclone, FUSE or OpenSSH's
 //! server is missing.
 #![cfg(target_os = "linux")]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::ffi::OsString;
 use std::os::unix::net::UnixDatagram;

@@ -1,6 +1,9 @@
 //! Phase 4 gate: every plugin can be disabled at runtime with no trace left
 //! in any registry, and re-enabled.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;

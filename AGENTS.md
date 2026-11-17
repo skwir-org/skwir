@@ -204,6 +204,11 @@ working in an area, also read that area's rules (see
     `fs::xattr` (a volume that keeps none, on Windows), `op/sys.rs`.
   - A name is bytes through `OsStr::as_encoded_bytes`, and back through
     `os_path::from_bytes`.
+  - A program is made by `process::command` (`skwir_platform`), never
+    `std::process::Command::new`, which clippy refuses (`clippy.toml`):
+    on Windows a console program started otherwise opens a console
+    window (ADR-074). Tests, build scripts and a helper starting a
+    program of its own may make one directly, an `#[allow]` saying why.
   - Tests: `#[cfg(unix)]` for links, modes, scripts standing in for
     programs; `#[cfg(target_os = "linux")]` for `mknodat` pipes, the
     freedesktop trash, `/proc`; for what Windows has and Wine lacks (its

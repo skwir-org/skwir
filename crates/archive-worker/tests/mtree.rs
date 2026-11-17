@@ -4,6 +4,9 @@
 //! never asks, so a file named so is neither listed at its size, nor
 //! previewed, nor extracted.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

@@ -2,6 +2,9 @@
 //! and `--build`, what skwir asks of one whose call failed
 //! (`platform::process::explain`).
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use std::process::Command;
 
 /// `GStreamer` without its playback plugins cannot play: the helper says so.

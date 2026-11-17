@@ -8,6 +8,9 @@
 //! mount of a folder of the test's (`fuse.rclone`: a network's, to
 //! `fs::reach`), whose program logs each request it is asked. Skipped
 //! where rclone or FUSE is missing.
+
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 // Linux's mount table, and tags in extended attributes.
 #![cfg(target_os = "linux")]
 

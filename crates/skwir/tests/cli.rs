@@ -5,6 +5,8 @@
 //! listens there (on Windows the channel is a pipe in the user's name,
 //! which a skwir the user runs could hold).
 #![cfg(unix)]
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
 
 use std::path::Path;
 use std::process::{Command, Output};

@@ -3,6 +3,9 @@
 //! size of the page before. Needs `PDFium` (`SKWIR_PDFIUM_LIBRARY`, which the
 //! dev shell sets): skipped, saying so, without.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 use pdfium_render::prelude::*;
 use skwir_core::document::{COMPOSED_FILE, Compose, Tagged, WorkerReply, WorkerRequest};
 use std::io::{BufRead, BufReader, Write};

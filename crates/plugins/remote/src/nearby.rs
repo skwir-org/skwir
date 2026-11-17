@@ -654,7 +654,7 @@ impl OwnWsdd {
             std::process::id(),
             stable_hash(format!("{:?}", std::time::Instant::now()).as_bytes()) % 100_000
         ));
-        let mut command = std::process::Command::new(program);
+        let mut command = skwir_platform::process::command(program);
         command
             .args(["--no-host", "--discovery", "--listen"])
             .arg(&socket)

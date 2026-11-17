@@ -645,7 +645,7 @@ impl Application {
                 crate::open::open_terminal_watched(&dir, &argv, |_| {})?;
                 continue;
             }
-            let mut command = std::process::Command::new(program);
+            let mut command = crate::process::command(program);
             command
                 .args(args)
                 .current_dir(&dir)

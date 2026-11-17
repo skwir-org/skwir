@@ -182,7 +182,7 @@ impl Program {
         let mut command = match (isolated, self.isolation) {
             (Ok(command), _) => command,
             (Err(_), Isolation::WhereAvailable) => {
-                let mut plain = std::process::Command::new(&self.path);
+                let mut plain = skwir_platform::process::command(&self.path);
                 plain.current_dir(work.path());
                 plain
             }

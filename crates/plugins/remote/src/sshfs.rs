@@ -4,7 +4,6 @@
 //! `SSH_ASKPASS`.
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -135,7 +134,7 @@ impl Connector for Sshfs {
         if let Some(control) = &control {
             let _ = std::fs::remove_file(control);
         }
-        let mut command = Command::new(sshfs);
+        let mut command = skwir_platform::process::command(sshfs);
         command.args(arguments(&top, &point, control.as_deref()));
         // What the user chose for it (ADR-086).
         if let Some(chosen) = crate::options::sshfs_options(options) {

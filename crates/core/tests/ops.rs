@@ -1,6 +1,9 @@
 //! Operation properties: inverse(apply(plan)) restores the tree, applying
 //! twice is a no-op, and plans round-trip through their serialized form.
 
+// Tests run from a console: no console window to keep away.
+#![allow(clippy::disallowed_methods)]
+
 mod common;
 
 use std::ffi::OsString;

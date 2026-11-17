@@ -19353,3 +19353,43 @@ catalogs it reads.
 - Should the ISO dates choice move into core, so every date follows it,
   the plugins' too? If so, what should ISO write for a month label
   ("2026-03" for "Mar 2026")?
+
+## 2026-11-17: Every program started without a console on Windows (PR #12)
+
+PR #12 (merged as 26c5b355) started the Git helper with Windows'
+`CREATE_NO_WINDOW`. skwir.exe has no console (ADR-074), so a console
+program it starts opens one of its own: the Git helper's flashed at
+each Git state read, which its author saw stop. Every other program
+skwir starts did the same: the helpers and their `--probe` and
+`--build`, plugins from outside, the `rclone rcd` behind Add Server.
+
+- `skwir_platform::process::command` makes every program, with
+  `CREATE_NO_WINDOW` on Windows; clippy refuses
+  `std::process::Command::new` elsewhere (`clippy.toml`), so a start
+  added later cannot miss it. 61 starts moved onto it, in the platform
+  crate, the plugins and the host of plugins from outside.
+- Exceptions, an `#[allow]` saying why: tests (a crate's own under
+  `cfg_attr(test)`, each integration test file), the build script's git
+  (`tools/build/identity.rs`), the MuPDF helper's fontconfig and the
+  phone helper's start of itself, which share their helper's console.
+- PR #12's block and rclone's own flag on its WinFsp mount are gone. A
+  terminal still asks for a console (`CREATE_NEW_CONSOLE` replaces it).
+- AGENTS.md ("Every system") says the rule; ADR-074 amended.
+
+**Checked:** clippy `-D warnings` on the whole workspace (Linux, every
+target); `just check-cross` (Windows with the media helper, macOS),
+which found an `lp` start in macOS's printing; a direct
+`Command::new` refused by clippy, tried in a crate and taken out.
+The changed crates' tests on Linux (1,058 passed, 26 skipped); the
+platform crate's under Wine (`just test-windows -p skwir-platform`),
+programs started with the flag: 312 of 314 passed. The two that fail,
+`grammars_are_found_where_each_source_keeps_them` and
+`the_folders_read_are_those_told_or_of_the_grammars_files`, are in files
+this leaves alone and start no program; the second gives Unix paths
+(`/g/parser`), which are not absolute on Windows. Left as found.
+
+**Disk:** the root filled during the first test run; a prune with no
+build running freed 15 GB.
+
+**Not checked:** on Windows itself. Wine shows no console windows, so
+only the Git helper's flashing was seen to stop, by the PR's author.
