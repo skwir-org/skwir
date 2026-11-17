@@ -340,7 +340,7 @@ mod tests {
         let row = |name: &str| rows.iter().find(|row| row[0] == name).unwrap();
         assert_eq!(row("drafts/")[1], "Folder");
         assert_eq!(row("drafts/")[2], "", "a folder's size is not said");
-        assert_eq!(row("b note.txt")[2], "5 B");
+        assert_eq!(row("b note.txt")[2], "5\u{a0}B");
         assert!(!row("b note.txt")[1].is_empty(), "its kind");
         assert_eq!(row("a ünïcode.md")[3].len(), "2026-10-31 12:00".len());
 
@@ -392,7 +392,7 @@ mod tests {
         let here = row("it's here.txt");
         assert_eq!(here[1], skwir_core::os_path::from_home(&one));
         assert_eq!(here[2], "", "no time said is none printed");
-        assert_eq!(here[4], "5 B", "read where the place listed none");
+        assert_eq!(here[4], "5\u{a0}B", "read where the place listed none");
         assert_eq!(row("ünïcode.md")[1], skwir_core::os_path::from_home(&two));
         let tag = row("a tag/");
         assert_eq!(tag[1], "", "a place is in no folder");

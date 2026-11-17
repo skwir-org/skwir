@@ -47,7 +47,7 @@ fonts_notice = Search sets the specimen text · font collections show their firs
 
 # An error in place of a font whose glyphs claim to be larger than any font's. ems: how many times the font's size they may span (8).
 fonts_outline_bounds = Font declares outline bounds beyond { $ems ->
-       *[other] { $ems } ems
+       *[other] { $ems } ems
     }
 
 # What a font's glyphs are drawn with, in the preview's Properties: pictures, no outlines.

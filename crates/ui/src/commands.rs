@@ -2005,7 +2005,7 @@ pub fn declare_all(app: &App) {
         "ui.text_size",
         words!(commands_text_size = "Text size"),
         words!(
-            commands_text_size_description = "Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does"
+            commands_text_size_description = "Write a part of the window larger or smaller, a step at a time, or back at 100\u{a0}%: the file views by default, else the interface, reading or code, as its setting does"
         ),
     );
     none(
@@ -2613,7 +2613,7 @@ pub fn declare_all(app: &App) {
                 "A window command's title: the panel of what runs, waits and ended this session."
         ),
         words!(
-            commands_activity_description = "Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5 s by default) (ADR-114)"
+            commands_activity_description = "Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5\u{a0}s by default) (ADR-114)"
         ),
     );
     none(

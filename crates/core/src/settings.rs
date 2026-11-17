@@ -642,7 +642,7 @@ pub mod unit {
     /// Megabytes: "64 MB".
     pub fn megabytes(n: Arg) -> Words {
         crate::words!(
-            settings_unit_megabytes = "{ $n } MB",
+            settings_unit_megabytes = "{ $n }\u{a0}MB",
             n = n,
             note = "A setting's number in megabytes, after its field or slider (64 MB)."
         )
@@ -651,7 +651,7 @@ pub mod unit {
     /// A percentage: "100 %".
     pub fn percent(n: Arg) -> Words {
         crate::words!(
-            settings_unit_percent = "{ $n } %",
+            settings_unit_percent = "{ $n }\u{a0}%",
             n = n,
             note = "A setting's number in percent, after its slider (100 %)."
         )
@@ -660,7 +660,7 @@ pub mod unit {
     /// Seconds: "1.5 s".
     pub fn seconds(n: Arg) -> Words {
         crate::words!(
-            settings_unit_seconds = "{ $n } s",
+            settings_unit_seconds = "{ $n }\u{a0}s",
             n = n,
             note = "A setting's number in seconds, after its slider (1.5 s): n may be a decimal."
         )

@@ -1447,7 +1447,10 @@ G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y200000
             [
                 ("Layer".to_owned(), "Top copper (layer 1)".to_owned()),
                 ("Made with".to_owned(), "KiCad Pcbnew 9.0".to_owned()),
-                ("Size".to_owned(), "10.25 × 20.13 mm".to_owned()),
+                (
+                    "Size".to_owned(),
+                    "10.25\u{a0}×\u{a0}20.13\u{a0}mm".to_owned()
+                ),
                 ("Apertures".to_owned(), "2".to_owned())
             ]
         );
@@ -1549,7 +1552,7 @@ G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y200000
         assert!(
             english(&drawn)
                 .iter()
-                .any(|(l, v)| l == "Size" && v == "53.59 × 28.19 mm"),
+                .any(|(l, v)| l == "Size" && v == "53.59\u{a0}×\u{a0}28.19\u{a0}mm"),
             "{:?}",
             english(&drawn)
         );

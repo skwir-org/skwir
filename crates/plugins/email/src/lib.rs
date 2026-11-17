@@ -395,7 +395,7 @@ mod tests {
             data.notice().map(|said| said.english()).as_deref(),
             Some("Remote images are not loaded · Select an attachment to preview it")
         );
-        assert_eq!(data.rows[0].cells, ["data.bin", "3 B"]);
+        assert_eq!(data.rows[0].cells, ["data.bin", "3\u{a0}B"]);
         assert_eq!(data.rows[0].bytes, Some(3));
     }
 
@@ -417,7 +417,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.plain_text().contains("Just text."));
-        assert_eq!(data.rows[0].cells, ["data.bin", "3 B"]);
+        assert_eq!(data.rows[0].cells, ["data.bin", "3\u{a0}B"]);
         let member = Provider
             .extract(&request, &view, "0", dir.path(), &CancelToken::new())
             .unwrap()

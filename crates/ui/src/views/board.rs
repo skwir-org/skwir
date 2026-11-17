@@ -587,7 +587,7 @@ fn column(
             div()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(crate::format::thousands(count)),
+                .child(crate::format::number(count)),
         );
     let mut col = div()
         .id(crate::elements::known_by("board-col", &c.location))

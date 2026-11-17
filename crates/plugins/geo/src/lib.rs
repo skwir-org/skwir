@@ -656,7 +656,7 @@ fn kmz_document<'a>(names: impl Iterator<Item = &'a str>) -> Option<String> {
 /// A length or a height in metres.
 fn in_metres(value: words::Decimal) -> Words {
     words!(
-        geo_metres = "{ $metres } m",
+        geo_metres = "{ $metres }\u{a0}m",
         metres = value,
         note = "A length or a height in metres, in a map's Properties (Climb: 120 m). metres: the number."
     )
@@ -665,7 +665,7 @@ fn in_metres(value: words::Decimal) -> Words {
 /// A distance in kilometres.
 pub(crate) fn in_kilometres(value: words::Decimal) -> Words {
     words!(
-        geo_kilometres = "{ $km } km",
+        geo_kilometres = "{ $km }\u{a0}km",
         km = value,
         note = "A distance in kilometres, in a map's Properties (Distance: 42.2 km) and in where a picture was taken (5.6 km NE of Example Town). km: the number."
     )
@@ -802,7 +802,7 @@ fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(Words, Option<
             ),
             moving.map(|m| {
                 words!(
-                    geo_speed = "{ $speed } km/h",
+                    geo_speed = "{ $speed }\u{a0}km/h",
                     speed = words::Decimal::of(totals.distance / m.as_secs_f64() * 3.6, 1),
                     note =
                         "A speed in kilometres per hour, in a map's Properties. speed: the number."
@@ -866,19 +866,21 @@ fn plan_altitude(kind: PlanKind, metres: f32, datum: Datum) -> Words {
             let feet = group_thousands((metres / FOOT / 100.).round() * 100.);
             match datum {
                 Datum::Sea => words!(
-                    geo_altitude_flight = "{ $feet } ft · { $metres } m",
+                    geo_altitude_flight = "{ $feet }\u{a0}ft · { $metres }\u{a0}m",
                     feet = feet,
                     metres = written,
                     note = "A flight plan's altitude above the sea, in feet then metres, in a map's Properties. feet, metres: the numbers."
                 ),
                 Datum::Ground => words!(
-                    geo_altitude_flight_ground = "{ $feet } ft · { $metres } m above ground",
+                    geo_altitude_flight_ground =
+                        "{ $feet }\u{a0}ft · { $metres }\u{a0}m above ground",
                     feet = feet,
                     metres = written,
                     note = "A flight plan's altitude above the ground below, in feet then metres, in a map's Properties. feet, metres: the numbers."
                 ),
                 Datum::Takeoff => words!(
-                    geo_altitude_flight_takeoff = "{ $feet } ft · { $metres } m above takeoff",
+                    geo_altitude_flight_takeoff =
+                        "{ $feet }\u{a0}ft · { $metres }\u{a0}m above takeoff",
                     feet = feet,
                     metres = written,
                     note = "A flight plan's altitude above where it took off, in feet then metres, in a map's Properties. feet, metres: the numbers."
@@ -888,12 +890,12 @@ fn plan_altitude(kind: PlanKind, metres: f32, datum: Datum) -> Words {
         PlanKind::Mission => match datum {
             Datum::Sea => in_metres(written),
             Datum::Ground => words!(
-                geo_altitude_ground = "{ $metres } m above ground",
+                geo_altitude_ground = "{ $metres }\u{a0}m above ground",
                 metres = written,
                 note = "A drone mission's height above the ground below, in a map's Properties. metres: the number."
             ),
             Datum::Takeoff => words!(
-                geo_altitude_takeoff = "{ $metres } m above takeoff",
+                geo_altitude_takeoff = "{ $metres }\u{a0}m above takeoff",
                 metres = written,
                 note = "A drone mission's height above where the drone took off, in a map's Properties. metres: the number."
             ),
@@ -930,7 +932,7 @@ fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(Words, Option<St
     let distance = (c.routes.distance > 0.).then(|| {
         if flight {
             words!(
-                geo_flight_distance = "{ $distance } · { $nautical } NM",
+                geo_flight_distance = "{ $distance } · { $nautical }\u{a0}NM",
                 distance = distance(c.routes.distance),
                 nautical = words::Decimal::of(c.routes.distance / NAUTICAL_MILE, 0),
                 note = "A flight plan's distance in a map's Properties: in metres or kilometres, then in nautical miles. distance: the first, with its unit; nautical: the number of nautical miles."
@@ -1329,10 +1331,10 @@ mod tests {
             data.title.english(),
             "GPX · 1 track, 1 route, and 2 waypoints"
         );
-        assert_eq!(fact(&data, "Distance"), Some("222 m"));
+        assert_eq!(fact(&data, "Distance"), Some("222\u{a0}m"));
         assert_eq!(fact(&data, "Duration"), Some("0:02:00"));
-        assert_eq!(fact(&data, "Climb"), Some("20 m"));
-        assert_eq!(fact(&data, "Highest point"), Some("1,520 m"));
+        assert_eq!(fact(&data, "Climb"), Some("20\u{a0}m"));
+        assert_eq!(fact(&data, "Highest point"), Some("1,520\u{a0}m"));
         assert_eq!(fact(&data, "Name"), Some("Café & ridge"));
         assert_eq!(fact(&data, "Start"), Some("45.00000, 6.00000"));
         assert!(data.source_available);
@@ -1434,9 +1436,9 @@ mod tests {
 
     #[test]
     fn distances_and_durations_read_as_people_say_them() {
-        assert_eq!(distance(850.4).english(), "850 m");
-        assert_eq!(distance(42_195.).english(), "42.2 km");
-        assert_eq!(distance(1_234_567.).english(), "1,235 km");
+        assert_eq!(distance(850.4).english(), "850\u{a0}m");
+        assert_eq!(distance(42_195.).english(), "42.2\u{a0}km");
+        assert_eq!(distance(1_234_567.).english(), "1,235\u{a0}km");
         assert_eq!(
             duration(Duration::from_secs(3 * 3600 + 42 * 60 + 10)),
             "3:42:10"

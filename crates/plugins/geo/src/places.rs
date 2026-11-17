@@ -783,31 +783,31 @@ mod tests {
         // 0.05° of latitude: 5.56 km.
         assert_eq!(
             describe(10.05, 20.0).as_deref(),
-            Some("5.6 km N of Example Town")
+            Some("5.6\u{a0}km N of Example Town")
         );
         // 0.15° of longitude at 10°: 16.4 km, whole above 10 km.
         assert_eq!(
             describe(10.0, 19.85).as_deref(),
-            Some("16 km W of Example Town")
+            Some("16\u{a0}km W of Example Town")
         );
         assert_eq!(
             describe(10.03, 20.03).as_deref(),
-            Some("4.7 km NE of Example Town")
+            Some("4.7\u{a0}km NE of Example Town")
         );
         assert_eq!(
             describe(9.95, 20.0).as_deref(),
-            Some("5.6 km S of Example Town")
+            Some("5.6\u{a0}km S of Example Town")
         );
     }
 
     #[test]
     fn distances_round_to_a_decimal_under_ten_km() {
-        assert_eq!(distance_words(2_040.).english(), "2.0 km");
-        assert_eq!(distance_words(9_940.).english(), "9.9 km");
-        // Rounds up to ten: no "10.0 km".
-        assert_eq!(distance_words(9_960.).english(), "10 km");
-        assert_eq!(distance_words(16_430.).english(), "16 km");
-        assert_eq!(distance_words(99_600.).english(), "100 km");
+        assert_eq!(distance_words(2_040.).english(), "2.0\u{a0}km");
+        assert_eq!(distance_words(9_940.).english(), "9.9\u{a0}km");
+        // Rounds up to ten: no "10.0\u{a0}km".
+        assert_eq!(distance_words(9_960.).english(), "10\u{a0}km");
+        assert_eq!(distance_words(16_430.).english(), "16\u{a0}km");
+        assert_eq!(distance_words(99_600.).english(), "100\u{a0}km");
     }
 
     #[test]
@@ -816,13 +816,13 @@ mod tests {
         // from the hamlet (more than a quarter of its 15 km).
         assert_eq!(
             describe(10.32, 20.0).as_deref(),
-            Some("20 km S of Example City")
+            Some("20\u{a0}km S of Example City")
         );
         // 2.2 km from the hamlet (just beyond its 2 km): a seventh of its
         // reach, against a fifth of the city's.
         assert_eq!(
             describe(10.32, 20.02).as_deref(),
-            Some("2.2 km W of Quiet Hamlet")
+            Some("2.2\u{a0}km W of Quiet Hamlet")
         );
     }
 
@@ -842,16 +842,16 @@ mod tests {
         assert_eq!(describe(0.0, -179.995).as_deref(), Some("Meridian Town"));
         assert_eq!(
             describe(0.0, -179.9).as_deref(),
-            Some("12 km E of Meridian Town")
+            Some("12\u{a0}km E of Meridian Town")
         );
         assert_eq!(
             describe(0.0, 179.85).as_deref(),
-            Some("16 km W of Meridian Town")
+            Some("16\u{a0}km W of Meridian Town")
         );
         // 11 km over the pole, on the far side of the station.
         assert_eq!(
             describe(89.95, -80.0).as_deref(),
-            Some("11 km N of Polar Station")
+            Some("11\u{a0}km N of Polar Station")
         );
     }
 

@@ -1825,7 +1825,7 @@ mod tests {
         file.set_len(limits::WHOLE_TEXT_INPUT as u64 + 1).unwrap();
         let error = read_text(&path, limits::Bounds::WHOLE, &cancel).unwrap_err();
         assert!(!TooLarge::is(&error), "{error}");
-        assert!(error.to_string().contains("33.6 MB"), "{error}");
+        assert!(error.to_string().contains("33.6\u{a0}MB"), "{error}");
         let font = || Words::as_written("Font too large");
         let error = read_file(&path, limits::Bounds::QUICK, font(), &cancel).unwrap_err();
         assert!(TooLarge::is(&error), "{error}");
@@ -2032,8 +2032,11 @@ mod tests {
             facts,
             [skwir_core::inspection::Detail::new(label("Words"), "12")]
         );
-        assert_eq!(details([(label("Size"), size(1536))])[0].value, "1.5 kB");
-        assert_eq!(size(512), "512 B");
+        assert_eq!(
+            details([(label("Size"), size(1536))])[0].value,
+            "1.5\u{a0}kB"
+        );
+        assert_eq!(size(512), "512\u{a0}B");
     }
 
     // Pipes are made with mknodat, Linux's alone here (ADR-035).

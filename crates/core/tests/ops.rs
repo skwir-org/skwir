@@ -756,7 +756,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     assert_eq!(asked.asker, skwir_core::app::Asker::Room);
     assert_eq!(
         asked.title.english(),
-        "Not enough room in “dest”: 1.0 kB needed, 10 B free"
+        "Not enough room in “dest”: 1.0\u{a0}kB needed, 10\u{a0}B free"
     );
     app.answer(asked.id, false);
     let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
@@ -817,7 +817,7 @@ fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
             .as_ref()
             .map(skwir_core::words::Words::english)
             .as_deref(),
-        Some("1 file has names elsewhere: the disk keeps its 8 B")
+        Some("1 file has names elsewhere: the disk keeps its 8\u{a0}B")
     );
     select(&app, &["a.txt", "b.txt", "c.txt"]);
     assert_eq!(

@@ -2249,7 +2249,7 @@ mod tests {
             ..Transfer::default()
         };
         let (fraction, words) = bar(40_000, &small);
-        assert_eq!(words, "1,286 of 40,000 items · 82.3 kB");
+        assert_eq!(words, "1,286 of 40,000 items · 82.3\u{a0}kB");
         assert!((fraction - 1286. / 40_000.).abs() < 1e-6);
         // Three large folders: halfway through the second is half of a third.
         let large = Transfer {
@@ -2270,7 +2270,7 @@ mod tests {
             total: 4 << 30,
             ..Transfer::default()
         };
-        assert_eq!(bar(1, &one), (0.25, "1.1 GB of 4.3 GB".into()));
+        assert_eq!(bar(1, &one), (0.25, "1.1\u{a0}GB of 4.3\u{a0}GB".into()));
         // Sized before it began (ADR-113): its bytes in all move it, its
         // items counted beside.
         let sized = Transfer {
@@ -2279,7 +2279,7 @@ mod tests {
         };
         assert_eq!(
             bar(3, &sized),
-            (0.375, "1 of 3 items · 3.2 GB of 8.6 GB".into())
+            (0.375, "1 of 3 items · 3.2\u{a0}GB of 8.6\u{a0}GB".into())
         );
         // Items a batch finished before their steps place them count as
         // they come whole; the bar still by the bytes.
@@ -2290,7 +2290,7 @@ mod tests {
         };
         assert_eq!(
             bar(3, &batched),
-            (0.375, "2 of 3 items · 3.2 GB of 8.6 GB".into())
+            (0.375, "2 of 3 items · 3.2\u{a0}GB of 8.6\u{a0}GB".into())
         );
         // One item sized before it began: what it was sized at.
         let one_sized = Transfer {
@@ -2298,7 +2298,10 @@ mod tests {
             total: 0,
             ..one
         };
-        assert_eq!(bar(1, &one_sized), (0.25, "1.1 GB of 4.3 GB".into()));
+        assert_eq!(
+            bar(1, &one_sized),
+            (0.25, "1.1\u{a0}GB of 4.3\u{a0}GB".into())
+        );
     }
 
     /// Into a mount that sends after (ADR-113, amended): the bar is as far
@@ -2332,7 +2335,7 @@ mod tests {
         assert_eq!((share(3, &sending), written(3, &sending)), (0.25, 1.));
         assert_eq!(
             bar(3, &sending).1,
-            "3 of 3 items · 4.3 GB of 4.3 GB",
+            "3 of 3 items · 4.3\u{a0}GB of 4.3\u{a0}GB",
             "what it wrote, in words"
         );
         // Not sized: by its items, half of what it wrote half sent.
@@ -2357,26 +2360,29 @@ mod tests {
             speed: Some(24.0 * 1024.0 * 1024.0),
             ..Transfer::default()
         };
-        assert_eq!(pace(&speed).as_deref(), Some("25.2 MB/s"));
+        assert_eq!(pace(&speed).as_deref(), Some("25.2\u{a0}MB/s"));
         let both = Transfer {
             left: Some(Duration::from_secs(170)),
             ..speed
         };
-        assert_eq!(pace(&both).as_deref(), Some("25.2 MB/s · about 3 min left"));
+        assert_eq!(
+            pace(&both).as_deref(),
+            Some("25.2\u{a0}MB/s · about 3\u{a0}min left")
+        );
         let then = Transfer {
             then_sends: true,
             ..speed
         };
         assert_eq!(
             pace(&then).as_deref(),
-            Some("25.2 MB/s · then sent to the server")
+            Some("25.2\u{a0}MB/s · then sent to the server")
         );
         // A plan of no bytes: its time left alone.
         let steps = Transfer {
             left: Some(Duration::from_secs(40)),
             ..Transfer::default()
         };
-        assert_eq!(pace(&steps).as_deref(), Some("about 40 s left"));
+        assert_eq!(pace(&steps).as_deref(), Some("about 40\u{a0}s left"));
     }
 
     /// A long copy says what it moved, in how long; a short one, or one
@@ -2410,7 +2416,7 @@ mod tests {
         };
         assert_eq!(
             ended(running(), long).0,
-            "Copied “it's big.iso” to it's here (5.4 GB in 3 min 20 s)"
+            "Copied “it's big.iso” to it's here (5.4\u{a0}GB in 3\u{a0}min 20\u{a0}s)"
         );
         let short = End {
             applied: 1,

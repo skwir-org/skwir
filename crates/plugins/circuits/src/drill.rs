@@ -290,7 +290,7 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
                 crate::millimetres(round(smallest))
             } else {
                 words!(
-                    circuits_millimetres_range = "{ $smallest } to { $largest } mm",
+                    circuits_millimetres_range = "{ $smallest } to { $largest }\u{a0}mm",
                     smallest = round(smallest).to_string(),
                     largest = round(largest).to_string(),
                     note = "Beside Sizes in a drill file's Properties: its smallest and largest drill bits. smallest, largest: numbers of millimetres."
@@ -403,7 +403,7 @@ mod tests {
                 "Drilled: 3",
                 "Slots and routes: 1",
                 "Tools: 2",
-                "Sizes: 0.8 to 3.2 mm"
+                "Sizes: 0.8 to 3.2\u{a0}mm"
             ]
         );
     }

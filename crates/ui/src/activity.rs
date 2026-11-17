@@ -477,7 +477,7 @@ pub(crate) fn percent_words(fraction: f32) -> Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let percent = (fraction.clamp(0., 1.) * 100.).floor() as u32;
     words!(
-        activity_percent = "{ $percent } %",
+        activity_percent = "{ $percent }\u{a0}%",
         percent = percent,
         note = "How far an action is, in percent (42 %)."
     )
@@ -3109,10 +3109,10 @@ mod tests {
     #[test]
     fn a_share_is_said_whole_and_never_full_before_the_end() {
         let percent = |fraction| percent_words(fraction).english();
-        assert_eq!(percent(0.0), "0 %");
-        assert_eq!(percent(0.429), "42 %");
-        assert_eq!(percent(0.999), "99 %");
-        assert_eq!(percent(1.0), "100 %");
+        assert_eq!(percent(0.0), "0\u{a0}%");
+        assert_eq!(percent(0.429), "42\u{a0}%");
+        assert_eq!(percent(0.999), "99\u{a0}%");
+        assert_eq!(percent(1.0), "100\u{a0}%");
     }
 
     /// The spell of work counts each action once (ADR-114, amended
@@ -3215,9 +3215,9 @@ mod tests {
         assert_eq!(
             strip_said(&between, &s),
             [
-                "1 of 2 · 50 % · 1 waiting".to_owned(),
-                "1 of 2 · 50 % · 1 waiting".to_owned(),
-                "50 %".to_owned(),
+                "1 of 2 · 50\u{a0}% · 1 waiting".to_owned(),
+                "1 of 2 · 50\u{a0}% · 1 waiting".to_owned(),
+                "50\u{a0}%".to_owned(),
             ]
         );
         let first = waiting(0, 2);
@@ -3260,16 +3260,16 @@ mod tests {
         assert_eq!(
             strip_said(&one, &s),
             [
-                "Copy 3 items to Backup · 42 % · about 3 min left".to_owned(),
-                "42 % · about 3 min left".to_owned(),
-                "42 %".to_owned(),
+                "Copy 3 items to Backup · 42\u{a0}% · about 3\u{a0}min left".to_owned(),
+                "42\u{a0}% · about 3\u{a0}min left".to_owned(),
+                "42\u{a0}%".to_owned(),
             ]
         );
         let paused = Summary {
             paused: true,
             ..s.clone()
         };
-        assert_eq!(how(&paused, None, false).english(), "paused at 42 %");
+        assert_eq!(how(&paused, None, false).english(), "paused at 42\u{a0}%");
         let stopping = Summary {
             stopping: true,
             ..s.clone()
@@ -3306,15 +3306,16 @@ mod tests {
         assert_eq!(
             strip_said(&queued, &s),
             [
-                "Copy 3 items to Backup · 2 of 3 · 47 % · about 3 min left · 1 waiting".to_owned(),
-                "2 of 3 · 47 % · about 3 min left · 1 waiting".to_owned(),
-                "47 %".to_owned(),
+                "Copy 3 items to Backup · 2 of 3 · 47\u{a0}% · about 3\u{a0}min left · 1 waiting"
+                    .to_owned(),
+                "2 of 3 · 47\u{a0}% · about 3\u{a0}min left · 1 waiting".to_owned(),
+                "47\u{a0}%".to_owned(),
             ]
         );
         let paused = Summary { paused: true, ..s };
         assert_eq!(
             how(&paused, None, false).english(),
-            "paused at 47 % · 1 waiting"
+            "paused at 47\u{a0}% · 1 waiting"
         );
     }
 }

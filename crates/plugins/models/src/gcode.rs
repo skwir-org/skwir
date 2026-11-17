@@ -108,7 +108,7 @@ impl Facts {
                 &mut self.layer_height,
                 value.parse::<f64>().ok().map(|mm| {
                     words!(
-                        models_layer_height_mm = "{ $mm } mm",
+                        models_layer_height_mm = "{ $mm }\u{a0}mm",
                         mm = short(mm),
                         note = "A print's layer height in millimetres, in the preview's Properties. mm: the number."
                     )
@@ -213,7 +213,7 @@ impl Facts {
 /// A length of filament, `metres` written as a number.
 fn metres(metres: words::Decimal) -> String {
     words!(
-        models_filament_metres = "{ $metres } m",
+        models_filament_metres = "{ $metres }\u{a0}m",
         metres = metres,
         note = "A length of filament in metres, in the preview's Properties. metres: the number."
     )
@@ -476,9 +476,9 @@ mod tests {
             details,
             [
                 ("Print time", "1h 2m 3s"),
-                ("Filament", "1 g"),
+                ("Filament", "1\u{a0}g"),
                 ("Material", "PLA"),
-                ("Layer height", "0.2 mm"),
+                ("Layer height", "0.2\u{a0}mm"),
                 ("Printer", "MK4S"),
                 ("Sliced with", "PrusaSlicer 2.8.1"),
             ]
@@ -504,8 +504,11 @@ mod tests {
                 .map(|(_, v)| v.clone())
         };
         assert_eq!(get(&found, "Print time").as_deref(), Some("1h 2m 5s"));
-        assert_eq!(get(&found, "Filament length").as_deref(), Some("1.23 m"));
-        assert_eq!(get(&found, "Layer height").as_deref(), Some("0.12 mm"));
+        assert_eq!(
+            get(&found, "Filament length").as_deref(),
+            Some("1.23\u{a0}m")
+        );
+        assert_eq!(get(&found, "Layer height").as_deref(), Some("0.12\u{a0}mm"));
         assert_eq!(get(&found, "Layers").as_deref(), Some("80"));
         assert_eq!(get(&found, "Printer").as_deref(), Some("Creality Ender-3"));
         assert_eq!(get(&found, "Sliced with").as_deref(), Some("Cura 5.6.0"));
@@ -517,7 +520,7 @@ mod tests {
         .unwrap();
         let found = super::text(&bambu, 256, &CancelToken::new()).unwrap();
         assert_eq!(get(&found, "Print time").as_deref(), Some("56m 9s"));
-        assert_eq!(get(&found, "Filament").as_deref(), Some("3.21 g"));
+        assert_eq!(get(&found, "Filament").as_deref(), Some("3.21\u{a0}g"));
         assert_eq!(get(&found, "Layers").as_deref(), Some("50"));
         assert_eq!(
             get(&found, "Sliced with").as_deref(),

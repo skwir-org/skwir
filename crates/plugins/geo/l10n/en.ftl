@@ -7,27 +7,27 @@ geo_already_at = { $name } was already at { $lat }, { $lon }
 geo_already_no_location = { $name } already had no location
 
 # A flight plan's altitude above the sea, in feet then metres, in a map's Properties. feet, metres: the numbers.
-geo_altitude_flight = { $feet } ft · { $metres } m
+geo_altitude_flight = { $feet } ft · { $metres } m
 
 # A flight plan's altitude above the ground below, in feet then metres, in a map's Properties. feet, metres: the numbers.
-geo_altitude_flight_ground = { $feet } ft · { $metres } m above ground
+geo_altitude_flight_ground = { $feet } ft · { $metres } m above ground
 
 # A flight plan's altitude above where it took off, in feet then metres, in a map's Properties. feet, metres: the numbers.
-geo_altitude_flight_takeoff = { $feet } ft · { $metres } m above takeoff
+geo_altitude_flight_takeoff = { $feet } ft · { $metres } m above takeoff
 
 # A drone mission's height above the ground below, in a map's Properties. metres: the number.
-geo_altitude_ground = { $metres } m above ground
+geo_altitude_ground = { $metres } m above ground
 
 # A drone mission's height above where the drone took off, in a map's Properties. metres: the number.
-geo_altitude_takeoff = { $metres } m above takeoff
+geo_altitude_takeoff = { $metres } m above takeoff
 
 # Why a step of a plan that writes a picture's location does not run: the picture was written since the plan was reviewed.
 geo_changed_since = { $name } changed since the plan was made
 
 # Under a geotag's plan: the time each picture says it was taken was moved by this many seconds to match the track (+120 s: later). sign: plus or minus, as written; seconds: how many. Begins in lower case.
 geo_clocks_corrected = { $sign ->
-        [plus] cameras' clocks corrected by +{ $seconds } s
-       *[minus] cameras' clocks corrected by −{ $seconds } s
+        [plus] cameras' clocks corrected by +{ $seconds } s
+       *[minus] cameras' clocks corrected by −{ $seconds } s
     }
 
 # East, abbreviated, as a picture's place says it (5.6 km E of Example Town).
@@ -205,7 +205,7 @@ geo_fit_undefined_message = a message's type was never defined
 geo_fit_unfinished = the recording was not finished
 
 # A flight plan's distance in a map's Properties: in metres or kilometres, then in nautical miles. distance: the first, with its unit; nautical: the number of nautical miles.
-geo_flight_distance = { $distance } · { $nautical } NM
+geo_flight_distance = { $distance } · { $nautical } NM
 
 # Why an X-Plane plan reads as damaged, inside the notice that says so: it holds fewer waypoints than its header counts. expected: that count; read: how many it holds.
 geo_fms_fewer_waypoints = { $expected ->
@@ -271,7 +271,7 @@ geo_invalid_points = { $count ->
     }
 
 # A distance in kilometres, in a map's Properties (Distance: 42.2 km) and in where a picture was taken (5.6 km NE of Example Town). km: the number.
-geo_kilometres = { $km } km
+geo_kilometres = { $km } km
 
 # Why a KMZ file (a zipped Google Earth file) is not shown on a map: it holds more files than the preview reads (4,000).
 geo_kmz_members = { $count ->
@@ -355,7 +355,7 @@ geo_mavlink_empty = Not a MAVLink mission: the file is empty
 geo_mavlink_no_header = Not a MAVLink mission: its first line is not “QGC WPL 110”
 
 # A length or a height in metres, in a map's Properties (Climb: 120 m). metres: the number.
-geo_metres = { $metres } m
+geo_metres = { $metres } m
 
 # The name a drone mission's area is given on the map: an area the drone must keep out of.
 geo_mission_exclusion_zone = Exclusion zone
@@ -497,7 +497,7 @@ geo_select_pictures = Select the pictures whose location to remove
 geo_select_track = Select a track and the pictures to place along it
 
 # A speed in kilometres per hour, in a map's Properties. speed: the number.
-geo_speed = { $speed } km/h
+geo_speed = { $speed } km/h
 
 # How a stop of a flight plan is labelled on the map: its identifier (an airport's or a beacon's code, XAAA) with its name as the plan gives it (Example Field), both as written.
 geo_stop_named = { $ident } ({ $name })

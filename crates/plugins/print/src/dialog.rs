@@ -937,7 +937,7 @@ fn smaller(last: bool) -> Field {
         Kind::Toggle,
     )
     .help(words!(
-        print_smaller_help = "Pictures in it at most 150 dpi, as Reduce Size's Screen",
+        print_smaller_help = "Pictures in it at most 150\u{a0}dpi, as Reduce Size's Screen",
         note = "Under the Smaller file switch. Reduce Size is a command's name and Screen its card's, as their own words say them."
     ))
         .value(last.to_string())

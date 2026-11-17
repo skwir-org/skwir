@@ -10,15 +10,15 @@ shrink_as_small = { $name } is as small as it gets already: no copy was made
 shrink_at_most = At most
 
 # In the empty At most field. The sizes are examples of what may be typed, with their units as written.
-shrink_at_most_placeholder = No limit, or a size: 2 MB, 500 KB
+shrink_at_most_placeholder = No limit, or a size: 2 MB, 500 KB
 
 # Said in the dialog: why what was typed in the At most field is no size.
 shrink_at_most_refused = At most: { $why }
 
 # On a card, where pictures and PDFs are chosen: a PDF's images brought down to this many dots per inch, pictures to this many pixels across.
 shrink_both = { $pixels ->
-        [one] Images at most { $dpi } dpi; pictures { $pixels } pixel
-       *[other] Images at most { $dpi } dpi; pictures { $pixels } pixels
+        [one] Images at most { $dpi } dpi; pictures { $pixels } pixel
+       *[other] Images at most { $dpi } dpi; pictures { $pixels } pixels
     }
 
 shrink_cancelled = Making the copy was cancelled
@@ -112,7 +112,7 @@ shrink_nothing_made = Nothing is made smaller until you choose.
 shrink_nothing_re_encoded = Nothing re-encoded
 
 # On a card: a PDF's images brought down to this many dots per inch.
-shrink_pdf_dpi = Images at most { $dpi } dpi
+shrink_pdf_dpi = Images at most { $dpi } dpi
 
 # On a card: pictures brought down to this many pixels on their longest side.
 shrink_picture_pixels = { $pixels ->
@@ -144,7 +144,7 @@ shrink_reduce = Make Smaller Copies
 shrink_reduce_ask_description = Ask how small, then make a smaller copy of each picture and PDF beside it, as `shrink.reduce` does
 
 # Read by agents and in F1's list of actions: the words in backticks are the command's arguments, and lossless, print, screen and small the values `quality` takes, as written.
-shrink_reduce_description = Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300 dpi), screen (1920, 150 dpi) or small (1280, 96 dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)
+shrink_reduce_description = Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300 dpi), screen (1920, 150 dpi) or small (1280, 96 dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)
 
 # A menu item, in the Compress submenu and the preview's menu: asks how small, then makes smaller copies of pictures and PDFs.
 shrink_reduce_size = Reduce Size…

@@ -256,7 +256,7 @@ fn title_block() -> [(&'static str, Words); 4] {
 /// caller).
 fn millimetres(value: f64) -> String {
     words!(
-        circuits_millimetres = "{ $mm } mm",
+        circuits_millimetres = "{ $mm }\u{a0}mm",
         mm = value.to_string(),
         note = "A length in Properties (a board's thickness, a drill's size). mm: the number of millimetres."
     )
@@ -266,7 +266,7 @@ fn millimetres(value: f64) -> String {
 /// A width by a height in millimetres, as Properties says it.
 fn millimetres_by(width: f64, height: f64) -> String {
     words!(
-        circuits_millimetres_by = "{ $width } × { $height } mm",
+        circuits_millimetres_by = "{ $width }\u{a0}×\u{a0}{ $height }\u{a0}mm",
         width = width.to_string(),
         height = height.to_string(),
         note = "A size in Properties: a board's or a layer's width by its height. width, height: numbers of millimetres."
@@ -560,7 +560,10 @@ mod tests {
                 &CancelToken::new(),
             )
             .unwrap_err();
-        assert_eq!(error.to_string(), "Too large to draw (more than 33.6 MB)");
+        assert_eq!(
+            error.to_string(),
+            "Too large to draw (more than 33.6\u{a0}MB)"
+        );
         assert!(
             skwir_core::inspection::TooLarge::is(&error),
             "Full preview draws it"

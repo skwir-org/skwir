@@ -89,6 +89,13 @@ sentence, never a sentence assembled from pieces.
   a month…): each formatted for the system's number or date locale and
   the user's settings, never with `format!`, `{:.1}`, `strftime` or
   `to_string` in the code. A length of time is counts in a message.
+- **A number and its unit stay on one line**: the message joins them with
+  a no-break space, `\u{a0}` in the English (`{ $n }\u{a0}MB`, `about
+  { $minutes }\u{a0}min left`), and a dimension's numbers to their sign
+  (`{ $width }\u{a0}×\u{a0}{ $height }`); gpui wraps at a plain space
+  only. `just words --check` refuses an English that parts them, and
+  the catalogs' test a translation that parts an argument its English
+  joins. A unit written as a word ("pixels") is prose, which may break.
 - **Words in words are a `Words` argument** (a plan's title in a
   toast). A message never receives another message already said as a
   string.

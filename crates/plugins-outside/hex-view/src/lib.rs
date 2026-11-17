@@ -157,13 +157,14 @@ fn rows(bytes: &[u8], base: u64) -> Vec<Row> {
 }
 
 /// `512 B`, `1.5 kB`: a size as the preview's title says it, as the
-/// host says it by default (ADR-139, 9), a thousand to the next. A module
+/// host says it by default (ADR-139, 9), a thousand to the next, a
+/// no-break space before its unit. A module
 /// is told no setting, so it does not follow Binary.
 #[allow(clippy::cast_precision_loss)] // A size shown to one decimal.
 fn size(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "kB", "MB", "GB", "TB", "PB"];
     if bytes < 1000 {
-        return format!("{bytes} B");
+        return format!("{bytes}\u{a0}B");
     }
     let mut value = bytes as f64;
     let mut unit = 0;
@@ -171,7 +172,7 @@ fn size(bytes: u64) -> String {
         value /= 1000.0;
         unit += 1;
     }
-    format!("{value:.1} {}", UNITS[unit])
+    format!("{value:.1}\u{a0}{}", UNITS[unit])
 }
 
 skwir_plugin_api::export!(HexView);
@@ -192,8 +193,8 @@ mod tests {
 
     #[test]
     fn sizes_and_rows_read_as_the_preview_says_them() {
-        assert_eq!(size(512), "512 B");
-        assert_eq!(size(1536), "1.5 kB");
+        assert_eq!(size(512), "512\u{a0}B");
+        assert_eq!(size(1536), "1.5\u{a0}kB");
         let rows = rows(b"Hello, bytes!\x00\x01\x02more", 32);
         assert_eq!(rows[0].cells[0], "0000000000000020");
         assert_eq!(rows[0].cells[2], "Hello, bytes!...");

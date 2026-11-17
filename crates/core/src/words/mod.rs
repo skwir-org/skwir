@@ -802,8 +802,6 @@ pub fn shown_controls(name: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// A count with its thousands grouped, as English groups them (`1,234`):
-/// each language's groups arrive with its numbers (PLAN.md, step F).
 /// The locales numbers and dates are written in while words are said: the
 /// system's for the window (`say`), English's for agents (`english`), and
 /// English's for words said in given languages (`say_in`) outside both.

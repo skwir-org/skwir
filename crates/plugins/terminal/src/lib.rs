@@ -150,7 +150,7 @@ impl Plugin for TerminalPlugin {
                         note = "A setting's description: the most lines it allows (30,000)."
                     ),
                     words!(
-                        terminal_scrollback_description_more = "Once full, every { $lines } lines of a wide terminal take about 30 MB.",
+                        terminal_scrollback_description_more = "Once full, every { $lines } lines of a wide terminal take about 30\u{a0}MB.",
                         lines = SCROLLBACK,
                         note = "What a setting's description says after its first sentence, in its tooltip: how much memory 10,000 lines take."
                     ),

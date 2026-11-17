@@ -909,7 +909,7 @@ query_ref_quotes = Tel quel : {"\u0022"}deux mots{"\u0022"}, {"\u0022"}OR{"\u00
 query_ref_rating = Au moins (> < >= <=) ; rating:0 trouve les fichiers sans note
 
 # draft
-query_ref_size = Plus de 10 { $mb }. Les unités { $decimal } valent chacune 1 000 fois la précédente ; les unités { $binary } valent chacune 1 024 fois la précédente, tout comme { $alone } écrites seules.
+query_ref_size = Plus de 10 { $mb }. Les unités { $decimal } valent chacune 1 000 fois la précédente ; les unités { $binary } valent chacune 1 024 fois la précédente, tout comme { $alone } écrites seules.
 
 # draft
 query_ref_size_range = D’une taille à l’autre, toutes deux comprises

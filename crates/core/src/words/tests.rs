@@ -141,7 +141,10 @@ fn arguments_are_said_as_their_types_say_them() {
             ),
         ],
     );
-    assert_eq!(kept.english(), "1.5 MB kept: Moved one item to the Trash");
+    assert_eq!(
+        kept.english(),
+        "1.5\u{a0}MB kept: Moved one item to the Trash"
+    );
     // Text as written, in every language.
     assert_eq!(
         Words::as_written("rclone: 403").say_in(&langs(&["fr"])),
@@ -152,7 +155,7 @@ fn arguments_are_said_as_their_types_say_them() {
     // Out of the process, its English.
     assert_eq!(
         serde_json::to_value(&kept).unwrap(),
-        "1.5 MB kept: Moved one item to the Trash"
+        "1.5\u{a0}MB kept: Moved one item to the Trash"
     );
     let back: Words = serde_json::from_value(serde_json::json!("Écrit")).unwrap();
     assert_eq!(back, Words::as_written("Écrit"));
@@ -382,11 +385,53 @@ fn words_sent_as_data_come_back_as_themselves() {
 /// Every translated catalog of the workspace (`crates/**/l10n/<lang>.ftl`)
 /// says what its crate's English says: each message one the English has,
 /// in the part of Fluent Skwir speaks, naming only the arguments the
-/// English gives. How much of each language is there, and how much is
-/// still a draft (a message whose comment says `draft`), is printed.
+/// English gives, and keeping on one line what the English keeps there: an
+/// argument the English joins to the words beside it by a no-break space
+/// (a number to its unit, `{ $n }\u{a0}MB`, `10\u{a0}{ $unit }`) is never
+/// parted from them by a plain one. How much of each language is there, and how much is still a
+/// draft (a message whose comment says `draft`), is printed.
 #[test]
 fn every_catalog_says_what_its_english_says() {
     use std::collections::{BTreeMap, BTreeSet};
+
+    /// The words beside each argument of `elements`: the arguments joined
+    /// to them by a no-break space, and those parted from them by a plain
+    /// one, each with the side (`<` the words before, `>` those after).
+    #[derive(Default)]
+    struct Follows {
+        joined: BTreeSet<String>,
+        parted: BTreeSet<String>,
+    }
+
+    fn follows(elements: &[Element], into: &mut Follows) {
+        const NO_BREAK: [char; 2] = ['\u{a0}', '\u{202f}'];
+        for (at, element) in elements.iter().enumerate() {
+            match element {
+                Element::Arg(name) => {
+                    if let Some(Element::Text(after)) = elements.get(at + 1) {
+                        if after.starts_with(NO_BREAK) {
+                            into.joined.insert(format!("{name}>"));
+                        } else if after.starts_with(' ') {
+                            into.parted.insert(format!("{name}>"));
+                        }
+                    }
+                    if let Some(Element::Text(before)) = at.checked_sub(1).map(|b| &elements[b]) {
+                        if before.ends_with(NO_BREAK) {
+                            into.joined.insert(format!("{name}<"));
+                        } else if before.ends_with(' ') {
+                            into.parted.insert(format!("{name}<"));
+                        }
+                    }
+                }
+                Element::Select { variants, .. } => {
+                    for variant in variants.iter() {
+                        follows(&variant.value, into);
+                    }
+                }
+                Element::Text(_) => {}
+            }
+        }
+    }
 
     fn named(elements: &[Element], into: &mut BTreeSet<String>) {
         for element in elements {
@@ -406,8 +451,11 @@ fn every_catalog_says_what_its_english_says() {
     }
 
     /// Each message of `source`: its id, the arguments it names, whether it
-    /// is a draft; or why it cannot be read.
-    fn messages(source: &str) -> Result<BTreeMap<String, (BTreeSet<String>, bool)>, Vec<String>> {
+    /// is a draft, what follows its arguments; or why it cannot be read.
+    #[expect(clippy::type_complexity, reason = "a test's own reading, used once")]
+    fn messages(
+        source: &str,
+    ) -> Result<BTreeMap<String, (BTreeSet<String>, bool, Follows)>, Vec<String>> {
         let resource = match fluent_syntax::parser::parse(source) {
             Ok(resource) => resource,
             Err((_, errors)) => return Err(errors.iter().map(|e| format!("{e:?}")).collect()),
@@ -434,7 +482,9 @@ fn every_catalog_says_what_its_english_says() {
                 Ok(elements) => {
                     let mut names = BTreeSet::new();
                     named(&elements, &mut names);
-                    found.insert(id, (names, draft));
+                    let mut after = Follows::default();
+                    follows(&elements, &mut after);
+                    found.insert(id, (names, draft, after));
                 }
                 Err(why) => problems.push(format!("{id}: {why}")),
             }
@@ -494,8 +544,8 @@ fn every_catalog_says_what_its_english_says() {
             };
             let tally = said.entry(language.to_owned()).or_default();
             tally.0 += english.len();
-            for (id, (names, draft)) in &translated {
-                let Some((given, _)) = english.get(id) else {
+            for (id, (names, draft, after)) in &translated {
+                let Some((given, _, kept)) = english.get(id) else {
                     problems.push(format!(
                         "{}: {id}: the English has no such message",
                         path.display()
@@ -507,6 +557,19 @@ fn every_catalog_says_what_its_english_says() {
                         "{}: {id}: names ${name}, which the English gives not",
                         path.display()
                     ));
+                }
+                for side in after.parted.intersection(&kept.joined) {
+                    if !kept.parted.contains(side) {
+                        let (name, words) = match side.strip_suffix('>') {
+                            Some(name) => (name, "what follows"),
+                            None => (side.trim_end_matches('<'), "what comes before"),
+                        };
+                        problems.push(format!(
+                            "{}: {id}: parts ${name} from {words} by a plain space, \
+                             where the English joins them by a no-break space",
+                            path.display()
+                        ));
+                    }
                 }
                 tally.1 += 1;
                 if *draft {
@@ -533,12 +596,12 @@ fn numbers_are_written_as_the_language_writes_them() {
     assert_eq!(numbers::decimal("fr", 15, 1), "1,5");
     assert_eq!(numbers::decimal("en", 10, 1), "1.0");
     let size = |bytes| crate::fs::size_words_in(bytes, crate::fs::SizeUnits::Decimal);
-    assert_eq!(size(999).english(), "999 B");
-    assert_eq!(size(1_500).english(), "1.5 kB");
-    assert_eq!(size(5_242_880).english(), "5.2 MB");
+    assert_eq!(size(999).english(), "999\u{a0}B");
+    assert_eq!(size(1_500).english(), "1.5\u{a0}kB");
+    assert_eq!(size(5_242_880).english(), "5.2\u{a0}MB");
     assert_eq!(
         crate::fs::size_words_in(1_536, crate::fs::SizeUnits::Binary).english(),
-        "1.5 KiB"
+        "1.5\u{a0}KiB"
     );
     // A message French has not is said whole in English, its numbers too:
     // never an English sentence with French numbers.

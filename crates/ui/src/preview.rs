@@ -1839,7 +1839,7 @@ fn decode_image(
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
         return Err(bounds.refuse(words!(
-            preview_too_many_pixels = "Too large to preview ({ $width } × { $height } pixels, more than { $megapixels ->
+            preview_too_many_pixels = "Too large to preview ({ $width }\u{a0}×\u{a0}{ $height } pixels, more than { $megapixels ->
                 [one] { $megapixels } megapixel
                *[other] { $megapixels } megapixels
             })",
@@ -3212,7 +3212,15 @@ impl Shell {
         };
         let count = found.unwrap_or(self.ui().list.sorted.len());
         self.preview.info.size = Some(if self.app.is_search(&location) {
-            format::count(count, "result")
+            skwir_core::words!(
+                preview_results = "{ $count ->
+                    [one] { $count } result
+                   *[other] { $count } results
+                }",
+                count = count,
+                note = "What a search holds, under its name when nothing is selected."
+            )
+            .say()
         } else {
             format::items(count)
         });
@@ -7792,7 +7800,7 @@ pub(crate) fn shown_picture(
                 d.aria_label(name).when_some(size, |d, (width, height)| {
                     d.aria_description(
                         words!(
-                            preview_pixels_said = "{ $width } × { $height } pixels",
+                            preview_pixels_said = "{ $width }\u{a0}×\u{a0}{ $height } pixels",
                             width = width,
                             height = height,
                             note = "What a screen reader hears of a picture shown: its size in pixels, width by height (4032 × 3024)."
@@ -9023,7 +9031,7 @@ mod tests {
         assert!(skwir_core::inspection::TooLarge::is(&error), "{error}");
         assert!(matches!(
             super::failure_content(error),
-            super::PreviewContent::TooLarge(why) if why.english().contains("8,193 × 8,193")
+            super::PreviewContent::TooLarge(why) if why.english().contains("8,193\u{a0}×\u{a0}8,193")
         ));
     }
 

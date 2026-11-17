@@ -2526,11 +2526,15 @@ mod tests {
         );
         assert_eq!(
             mkv.hint,
-            "Videos › a.mkv · 400 B · 80% of Videos · double-click to go there"
+            "Videos › a.mkv · 400\u{a0}B · 80% of Videos · double-click to go there"
         );
         let thumbs = &blocks[items[0].children[1].key];
         assert_eq!(thumbs.part, Part::Hidden("/r/Videos".into()));
-        assert!(thumbs.hint.starts_with("1 hidden item in Videos · 100 B"));
+        assert!(
+            thumbs
+                .hint
+                .starts_with("1 hidden item in Videos · 100\u{a0}B")
+        );
 
         let (items, _) = build(&tree, true, 1);
         assert_eq!(
@@ -2572,8 +2576,11 @@ mod tests {
 
     #[test]
     fn a_size_is_said_once_unless_the_disk_holds_another() {
-        assert_eq!(sizes(2048, 2048), "2.0 kB");
-        assert_eq!(sizes(10_000_000, 4096), "10.0 MB · 4.1 kB on disk");
+        assert_eq!(sizes(2048, 2048), "2.0\u{a0}kB");
+        assert_eq!(
+            sizes(10_000_000, 4096),
+            "10.0\u{a0}MB · 4.1\u{a0}kB on disk"
+        );
         assert_eq!(share(1, 1000), "<1%");
         assert_eq!(share(0, 1000), "0%");
         assert_eq!(share(500, 1000), "50%");
@@ -2690,7 +2697,7 @@ mod tests {
         };
         let (items, blocks) = build(&tree, true, 1);
         assert!(items[0].dashed && !items[1].dashed);
-        assert_eq!(items[0].detail.as_ref(), "300 B · cache");
+        assert_eq!(items[0].detail.as_ref(), "300\u{a0}B · cache");
         assert!(
             blocks[0]
                 .hint
@@ -2700,7 +2707,7 @@ mod tests {
         );
         assert_eq!(
             reclaim_said(&tree, None).as_deref(),
-            Some("300 B of it in caches and the Trash")
+            Some("300\u{a0}B of it in caches and the Trash")
         );
         assert_eq!(
             reclaim_said(&tree.children[1], Some(Reclaim::Trash)).as_deref(),

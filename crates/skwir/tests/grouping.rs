@@ -366,7 +366,10 @@ fn pictures_sort_and_group_by_their_size_read_on_demand() {
         .into_iter()
         .map(|(label, _)| label)
         .collect();
-    assert_eq!(labels, ["1 to 4 MP", "Under 1 MP", "No dimensions"]);
+    assert_eq!(
+        labels,
+        ["1 to 4\u{a0}MP", "Under 1\u{a0}MP", "No dimensions"]
+    );
 }
 
 /// Sorted by dimensions while no provider reads them, a file says none

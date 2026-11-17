@@ -46,7 +46,7 @@ about_summary = An augmented file manager, for humans and agents.
 about_system = System
 
 # In About, the interface's font and size and where they were read, then each part's text size (100%).
-about_text = { $font } { $px } px ({ $pt } pt) { $source }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }
+about_text = { $font } { $px } px ({ $pt } pt) { $source }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }
 
 # In About, where the text's size was read: desktop is where (GTK, Plasma).
 about_text_from = from { $desktop }
@@ -58,7 +58,7 @@ about_text_label = Text
 about_text_own_size = Skwir's own size
 
 # In About, the interface's font and size, where they were read and the desktop's text scaling (1.25), then each part's text size (100%).
-about_text_scaled = { $font } { $px } px ({ $pt } pt) { $source }, text scaling { $scaling }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }
+about_text_scaled = { $font } { $px } px ({ $pt } pt) { $source }, text scaling { $scaling }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }
 
 # Under skwir's name in About: version is its number (0.5.1), licence its licence's identifier (GPL-3.0-or-later).
 about_version = Version { $version } · { $licence }
@@ -178,7 +178,7 @@ activity_paused_at = paused at { $percent }
 activity_paused_at_opening = Paused at { $percent }
 
 # How far an action is, in percent (42 %).
-activity_percent = { $percent } %
+activity_percent = { $percent } %
 
 # How far the queue of actions started: those ended or running of all of them (2 of 5).
 activity_queue = { $at } of { $of }
@@ -770,6 +770,12 @@ clipboard_unreachable_remote = { $count ->
        *[other] The clipboard holds { $count } remote items Skwir cannot reach
     }
 
+# What stands for a folded block of code: how many lines it hides.
+code_preview_folded = … { $count ->
+        [one] { $count } line
+       *[other] { $count } lines
+    }
+
 commands_about = About Skwir
 
 commands_about_description = Show Skwir's version and licence, and what it runs on
@@ -786,7 +792,7 @@ commands_activity_cancel_all = Cancel all actions
 
 commands_activity_cancel_all_description = Cancel every action under way and every one waiting its turn: what each did stays, undoable, and what it left half done is taken back
 
-commands_activity_description = Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5 s by default) (ADR-114)
+commands_activity_description = Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5 s by default) (ADR-114)
 
 commands_activity_earlier = Show Earlier in Activity
 
@@ -1859,7 +1865,7 @@ commands_text_continuous_description = Read a book, a document or a message as o
 
 commands_text_size = Text size
 
-commands_text_size_description = Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does
+commands_text_size_description = Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does
 
 commands_timeline = Timeline
 
@@ -2777,25 +2783,28 @@ form_unfold_folders = Folders
 form_waiting_keys = Escape to cancel
 
 # A picture's size in pixels, width by height, alone: the list's Dimensions column, a preview's caption (4032 × 3024).
-format_dimensions = { $width } × { $height }
+format_dimensions = { $width } × { $height }
 
 # How long an action has left, under its bar. Begins in lower case.
 format_left_few_seconds = a few seconds left
 
 # How long an action has left, under its bar; h is the hour's symbol. Begins in lower case.
-format_left_hours = about { $hours } h left
+format_left_hours = about { $hours } h left
 
 # How long an action has left, under its bar, by tens of minutes; h and min are the hour's and the minute's symbols. Begins in lower case.
-format_left_hours_minutes = about { $hours } h { $minutes } min left
+format_left_hours_minutes = about { $hours } h { $minutes } min left
 
 # How long an action has left, under its bar; min is the minute's symbol. Begins in lower case.
-format_left_minutes = about { $minutes } min left
+format_left_minutes = about { $minutes } min left
 
 # How long an action has left, under its bar. Begins in lower case.
 format_left_more_than_a_day = more than a day left
 
 # How long an action has left, under its bar, by fives of seconds; s is the second's symbol. Begins in lower case.
-format_left_seconds = about { $seconds } s left
+format_left_seconds = about { $seconds } s left
+
+# A count alone, beside what it counts: a board's column, a quick filter's value.
+format_number = { $count }
 
 # A speed: what is moved each second (23.4 MB/s).
 format_speed = { $size }/s
@@ -2804,19 +2813,19 @@ format_speed = { $size }/s
 format_today = Today { $time }
 
 # How long an action took; h is the hour's symbol.
-format_took_hours = { $hours } h
+format_took_hours = { $hours } h
 
 # How long an action took; h and min are the hour's and the minute's symbols.
-format_took_hours_minutes = { $hours } h { $minutes } min
+format_took_hours_minutes = { $hours } h { $minutes } min
 
 # How long an action took; min is the minute's symbol.
-format_took_minutes = { $minutes } min
+format_took_minutes = { $minutes } min
 
 # How long an action took; min and s are the minute's and the second's symbols.
-format_took_minutes_seconds = { $minutes } min { $seconds } s
+format_took_minutes_seconds = { $minutes } min { $seconds } s
 
 # How long an action took; s is the second's symbol.
-format_took_seconds = { $seconds } s
+format_took_seconds = { $seconds } s
 
 # When a file changed, in the last week: weekday is the day's name, time the time of day (Tuesday 18:45).
 format_weekday_time = { $weekday } { $time }
@@ -4512,7 +4521,7 @@ palette_text_size_files_in = Files text: larger
 
 palette_text_size_files_out = Files text: smaller
 
-palette_text_size_files_reset = Files text: 100 %
+palette_text_size_files_reset = Files text: 100 %
 
 palette_timeline = Timeline
 
@@ -4801,7 +4810,7 @@ preview_peek_said = { $facts }. { $hint }
 preview_picture_reader_failed = the picture's reader failed
 
 # What a screen reader hears of a picture shown: its size in pixels, width by height (4032 × 3024).
-preview_pixels_said = { $width } × { $height } pixels
+preview_pixels_said = { $width } × { $height } pixels
 
 # What a screen reader calls a preview that plays a sound or a film. name: its file's name.
 preview_player_said = Player: { $name }
@@ -4818,6 +4827,12 @@ preview_printed_pages = Printed pages
 # What the facts of a file are called: the button of peek that shows them, the panel showing them alone.
 preview_properties = Properties
 
+# What a search holds, under its name when nothing is selected.
+preview_results = { $count ->
+        [one] { $count } result
+       *[other] { $count } results
+    }
+
 # Over a file shown as its own text where it could not be presented (an SVG not drawn). error: why.
 preview_shown_as_written = Shown as written: { $error }
 
@@ -4825,7 +4840,7 @@ preview_shown_as_written = Shown as written: { $error }
 preview_slideshow = Slideshow
 
 # On the button choosing a slideshow's pace: how long it shows each picture, in seconds, short (5 s).
-preview_slideshow_pace = { $seconds } s
+preview_slideshow_pace = { $seconds } s
 
 # A button of a picture shown on the whole screen.
 preview_slideshow_pause = Pause the slideshow
@@ -4858,7 +4873,7 @@ preview_stand_in_twice = { $name } is listed twice
 preview_stand_ins = Files shown for folders…
 
 # Why a picture is not previewed: it has more pixels than a preview draws. width, height: its size in pixels (8193 × 8193); megapixels: the most a preview draws.
-preview_too_many_pixels = Too large to preview ({ $width } × { $height } pixels, more than { $megapixels ->
+preview_too_many_pixels = Too large to preview ({ $width } × { $height } pixels, more than { $megapixels ->
         [one] { $megapixels } megapixel
        *[other] { $megapixels } megapixels
     })
@@ -4873,7 +4888,7 @@ preview_turn_tip = The model turned in 3D, or its picture
 preview_unavailable = Preview unavailable
 
 # A preview's caption while it shows a picture of a film: its size in pixels, width by height (1920 × 1080).
-preview_video_still = Video still · { $width } × { $height }
+preview_video_still = Video still · { $width } × { $height }
 
 # A row's label in Properties' Volume: the device a drive is (/dev/sda1), or where it is mounted from.
 preview_volume_device = Device
@@ -4927,16 +4942,16 @@ preview_zoom_percent = { $percent }%
 preview_zoom_width = Width
 
 # A distance along a track, on its altitude chart (12.4 km); km is the kilometre's symbol.
-profile_distance_kilometres = { $kilometres } km
+profile_distance_kilometres = { $kilometres } km
 
 # A distance along a track, on its altitude chart, under a kilometre (640 m); m is the metre's symbol.
-profile_distance_metres = { $metres } m
+profile_distance_metres = { $metres } m
 
 # The length of a planned route (not a recorded track), on its altitude chart: 12.4 km planned. length: a distance with its unit, which chooses no plural: where a word would agree with it, say it so it need not (planned: 12.4 km).
 profile_length_planned = { $length } planned
 
 # An altitude on a track's altitude chart, in metres (812 m); m is the metre's symbol.
-profile_metres = { $metres } m
+profile_metres = { $metres } m
 
 # Pointing at a track's altitude chart: how far along the track (2.4 km), then the altitude there (812 m).
 profile_readout = { $along } · { $altitude }
@@ -5146,7 +5161,7 @@ properties_differs_in = Differs in
 properties_dimensions = Dimensions
 
 # A picture's size in Properties, in pixels, width by height (4032 × 3024 px).
-properties_dimensions_value = { $width } × { $height } px
+properties_dimensions_value = { $width } × { $height } px
 
 # A row's label in Properties: the web address a file was downloaded from.
 properties_downloaded_from = Downloaded from
@@ -6122,10 +6137,10 @@ settings_code_light_theme_description_more = Default is the code theme of the pa
 
 settings_code_text_size = Code text size
 
-settings_code_text_size_description = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one.
+settings_code_text_size_description = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one.
 
 # points: the size 100 % comes to here, in points (10.5).
-settings_code_text_size_now = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one, now { $points } pt.
+settings_code_text_size_now = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one, now { $points } pt.
 
 # Said by settings.check of a value it does not know: it may be among the themes you added to bat (a program).
 settings_code_theme_more = the themes you added to bat
@@ -6216,17 +6231,17 @@ settings_file_at = { $path }. It lists only what differs from the defaults.
 
 settings_files_opacity = Files background opacity
 
-settings_files_opacity_description = How much the files and the terminal hide what is behind the window; at 100 % they hide it.
+settings_files_opacity_description = How much the files and the terminal hide what is behind the window; at 100 % they hide it.
 
 settings_files_text_size = Files text size
 
-settings_files_text_size_description = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size.
+settings_files_text_size_description = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size.
 
 # What the Files text size setting's description says after its first sentence, in its tooltip.
 settings_files_text_size_more = Rows and labels grow with the text, while icons and pictures keep the zoom's size.
 
 # points: the size 100 % comes to here, in points (10.5).
-settings_files_text_size_now = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size, now { $points } pt.
+settings_files_text_size_now = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size, now { $points } pt.
 
 # The button adding a name to the list of files a folder's preview looks for.
 settings_folder_preview_add_name = Add name
@@ -6268,10 +6283,10 @@ settings_fonts_from = Fonts from
 settings_fonts_from_description = Where Skwir reads the fonts a font setting's Automatic writes in, and their sizes.
 
 # What Automatic comes to here, after the setting's description. font: a font's family; points: its size in points (10.5); from: where it was read, a desktop's or a toolkit's name (Plasma, GTK).
-settings_fonts_from_now_read = Now { $font } at { $points } pt, sizes read from { $from }.
+settings_fonts_from_now_read = Now { $font } at { $points } pt, sizes read from { $from }.
 
 # What Automatic comes to here, after the setting's description. font: a font's family; points: its size in points (10.5).
-settings_fonts_from_now_usual = Now { $font } at { $points } pt, the system's usual size, as no desktop names one.
+settings_fonts_from_now_usual = Now { $font } at { $points } pt, the system's usual size, as no desktop names one.
 
 # Inter and JetBrains Mono are fonts' names.
 settings_fonts_from_system = Automatic is the system font, at the size its applications write in; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size.
@@ -6576,7 +6591,7 @@ settings_opacity = Background opacity
 # What the background opacity settings' descriptions say after their first sentence, in their tooltip: below 100 %.
 settings_opacity_below = Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
 
-settings_opacity_description = How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100 % they hide it.
+settings_opacity_description = How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100 % they hide it.
 
 # The button opening the settings file in an editor.
 settings_open_file = Open
@@ -6637,7 +6652,7 @@ settings_preview_opacity = Preview background opacity
 settings_preview_opacity_description = How much a preview hides what is behind the window, whatever it shows.
 
 # Properties is the name of a panel.
-settings_preview_opacity_description_more = That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
+settings_preview_opacity_description_more = That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
 
 settings_printed_pages = Printed page numbers
 
@@ -6672,10 +6687,10 @@ settings_reading_font_description_more = Automatic is your desktop's document fo
 
 settings_reading_text_size = Reading text size
 
-settings_reading_text_size_description = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at.
+settings_reading_text_size_description = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at.
 
 # points: the size 100 % comes to here, in points (12).
-settings_reading_text_size_now = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at, now { $points } pt.
+settings_reading_text_size_now = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at, now { $points } pt.
 
 settings_reading_width = Reading width
 
@@ -6737,7 +6752,7 @@ settings_single_tab_description = Show the tabs even when the window has one, na
 settings_single_tab_description_more = Off gives the lists the strip's row; New tab stays in the More menu and on Ctrl+T.
 
 # A text size's choice: its percentage (100%), then the size it comes to in points.
-settings_size_step_points = { $step } ({ $points } pt)
+settings_size_step_points = { $step } ({ $points } pt)
 
 settings_slideshow = Slideshow
 
@@ -6781,7 +6796,7 @@ settings_text_continuous_description_more = Off shows a screen at a time, ending
 settings_text_size = Text size
 
 # desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one).
-settings_text_size_description = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+settings_text_size_description = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -6791,11 +6806,11 @@ settings_text_size_description = How large Skwir writes its menus, bars, the sid
 settings_text_size_more = Bars, rows and menus grow with the text; icons keep their size.
 
 # desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5).
-settings_text_size_now = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+settings_text_size_now = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
-    }, now { $points } pt.
+    }, now { $points } pt.
 
 # What the Reading and Code text size settings' descriptions say after their first sentence, in their tooltip.
 settings_text_size_preview_buttons = The preview's own size buttons still change only the file shown.

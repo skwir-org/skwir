@@ -19437,3 +19437,53 @@ unit ("151.3 / MB"): sizes are written with a plain space
 The two Wine failures the entry above left as found were the tests'
 own fixtures (a path written from `/`, a config's path pasted into
 JSON), fixed in c8e42d21.
+
+## 2026-11-17: A number keeps its unit on its line (ADR-139, F)
+
+The entry above saw Activity's card, once its line wrapped, cut a size
+from its unit ("151.3 / MB"). gpui already keeps a word whole across a
+no-break space (U+00A0, U+202F, `LineWrapper::is_word_char`); the
+English wrote a plain one. The French drafts already joined them, as the
+glossary asks, all but two.
+
+- **Every message that writes a number and its unit joins them with a
+  no-break space** (`{ $n }\u{a0}MB`), 103 of them: sizes, speeds,
+  lengths of time ("about 3\u{a0}min left"), percents, distances and
+  altitudes, dpi, points, pixels, a model's measures and volumes, a
+  dimension's numbers and their × (`{ $width }\u{a0}×\u{a0}{ $height }`),
+  and digits before a unit given as an argument (`100\u{a0}{ $unit } to
+  1\u{a0}{ $next }`). A unit written as a word ("pixels") stays prose.
+- **Kept so** (words.md, "Arguments"): `just words --check` refuses an
+  English that parts a number from a unit's symbol, a `×` or a unit
+  argument by a plain space; the catalogs' test refuses a translation
+  that parts an argument from the words the English joins it to, on
+  either side. Two French drafts did (a font's ems, the clocks'
+  correction; `query_ref_size`'s « 10 { $mb } »).
+- A photo's exposure and focal length, written by the code ("1/250 s",
+  "35 mm"), are joined too; that the code writes them at all, with
+  English's decimal point, is left in PLAN.md (step F). So is the hex
+  view built as a module (`crates/plugins-outside/hex-view`), which says
+  its size as the host does until protocol 2 (step H).
+- Met on the way, step E's and F's leftovers: a folded block of code
+  ("… 12 lines") and a search's count under its name ("3 results") were
+  English plurals made in code (`format::count`); the board's columns
+  and the Quick filters' counts were grouped with English's commas
+  (`format::thousands`). They are messages now, a count alone
+  `format::number` (« 1 234 »); both helpers are gone.
+
+Agents read the same English, the no-break space in it.
+
+**Checked:** `just words --check` (it refuses `{ $n } MB`, `{ $w } ×
+{ $h }`, `1 { $unit }` and lets "3 files in Docs", "{ $n } minutes"
+through); the French catalogs (0 errors); clippy `-D warnings` on every
+default crate and target; `just check-cross`; the default members'
+tests (3,477 passed) and the binary's (234), 69 of which compared the
+English with the plain space and were brought to it. That a no-break
+space keeps a line whole is gpui's own test
+(`line_wrapper.rs`, U+00A0 and U+202F as word characters).
+
+**Not checked:** the card itself in a window: the copy onto a throttled
+mount the entry above used was not set up again.
+
+**Disk:** `target/debug/incremental` (120 GB) deleted under the
+standing leave of 2026-11-17, with no build running.

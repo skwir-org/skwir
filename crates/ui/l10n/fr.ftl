@@ -818,6 +818,12 @@ clipboard_unreachable_remote = { $count ->
     }
 
 # draft
+code_preview_folded = … { $count ->
+        [one] { $count } ligne
+       *[other] { $count } lignes
+    }
+
+# draft
 commands_about = À propos de Skwir
 
 # draft
@@ -3304,6 +3310,9 @@ format_left_more_than_a_day = encore plus d’un jour
 format_left_seconds = encore environ { $seconds } s
 
 # draft
+format_number = { $count }
+
+# draft
 format_speed = { $size }/s
 
 # draft
@@ -5520,6 +5529,12 @@ preview_printed_pages = Numéros imprimés
 
 # draft
 preview_properties = Propriétés
+
+# draft
+preview_results = { $count ->
+        [one] { $count } résultat
+       *[other] { $count } résultats
+    }
 
 # draft
 preview_shown_as_written = Affiché tel qu’il est écrit : { $error }

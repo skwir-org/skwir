@@ -194,7 +194,7 @@ fn caption(shell: &Shell) -> String {
             detail: Some(PreviewInfo::Video { .. }),
             ..
         }) => words!(
-            preview_video_still = "Video still · { $width } × { $height }",
+            preview_video_still = "Video still · { $width }\u{a0}×\u{a0}{ $height }",
             width = *width,
             height = *height,
             note = "A preview's caption while it shows a picture of a film: its size in pixels, width by height (1920 × 1080)."
@@ -434,7 +434,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
             )
             .args(serde_json::json!({"kind": crate::fullscreen::SLIDESHOW_POPUP}))
             .label(words!(
-                preview_slideshow_pace = "{ $seconds } s",
+                preview_slideshow_pace = "{ $seconds }\u{a0}s",
                 seconds = seconds,
                 note = "On the button choosing a slideshow's pace: how long it shows each picture, in seconds, short (5 s)."
             )),

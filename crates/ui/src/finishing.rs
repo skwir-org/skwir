@@ -1610,7 +1610,7 @@ mod tests {
         assert_eq!(shown.about, "Copy 3 items to Backup");
         assert_eq!(
             shown.said,
-            "Copy 3 items to Backup · 25 % · about 3 min left"
+            "Copy 3 items to Backup · 25\u{a0}% · about 3\u{a0}min left"
         );
         assert_eq!(shown.standing, Standing::Running);
         assert_eq!(shown.pause, Some(true), "Pause all");
@@ -1662,7 +1662,7 @@ mod tests {
         };
         let shown = presence(&work, &between, false);
         assert_eq!(shown.title, "Finishing 1 action");
-        assert_eq!(shown.said, "1 of 2 · 50 % · 1 waiting");
+        assert_eq!(shown.said, "1 of 2 · 50\u{a0}% · 1 waiting");
         assert!((shown.fraction.unwrap() - 0.5).abs() < 1e-6);
         assert_eq!(shown.pause, None);
     }

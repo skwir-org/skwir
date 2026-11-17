@@ -225,7 +225,7 @@ pub struct Prepaint {
 /// An altitude, in whole metres, as the reader's language writes numbers.
 fn metres(value: f32) -> skwir_core::words::Words {
     skwir_core::words!(
-        profile_metres = "{ $metres } m",
+        profile_metres = "{ $metres }\u{a0}m",
         metres = skwir_core::words::Decimal::of(f64::from(value), 0),
         note =
             "An altitude on a track's altitude chart, in metres (812 m); m is the metre's symbol."
@@ -441,13 +441,13 @@ fn distance(metres: f64) -> skwir_core::words::Words {
     use skwir_core::words::Decimal;
     if metres < 1000. {
         skwir_core::words!(
-            profile_distance_metres = "{ $metres } m",
+            profile_distance_metres = "{ $metres }\u{a0}m",
             metres = Decimal::of(metres, 0),
             note = "A distance along a track, on its altitude chart, under a kilometre (640 m); m is the metre's symbol."
         )
     } else {
         skwir_core::words!(
-            profile_distance_kilometres = "{ $kilometres } km",
+            profile_distance_kilometres = "{ $kilometres }\u{a0}km",
             kilometres = Decimal::of(metres / 1000., 1),
             note = "A distance along a track, on its altitude chart (12.4 km); km is the kilometre's symbol."
         )
@@ -524,7 +524,7 @@ mod tests {
         assert!(p.planned);
         assert_eq!(
             p.readout(distance(1.), metres(2.)).english(),
-            "1 m · 2 m above takeoff"
+            "1\u{a0}m · 2\u{a0}m above takeoff"
         );
         assert!(Profile::of(&GeoDoc::default()).is_none());
     }

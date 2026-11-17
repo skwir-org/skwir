@@ -76,7 +76,7 @@ fn asked(
     });
     if within.is_cancelled() && !cancel.is_cancelled() {
         anyhow::bail!(words!(
-            remote_uploads_no_answer = "rclone did not answer within { $seconds } s: its server may have stopped answering",
+            remote_uploads_no_answer = "rclone did not answer within { $seconds }\u{a0}s: its server may have stopped answering",
             seconds = ANSWERED_WITHIN.as_secs(),
             note = "seconds: how long it was waited for; s: seconds."
         ));

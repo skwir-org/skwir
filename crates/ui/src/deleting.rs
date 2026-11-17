@@ -1252,7 +1252,13 @@ mod tests {
             .collect();
         assert_eq!(
             weights,
-            ["2.0 kB · 2 files", "500 B", "empty", "not there", "folder"]
+            [
+                "2.0\u{a0}kB · 2 files",
+                "500\u{a0}B",
+                "empty",
+                "not there",
+                "folder"
+            ]
         );
         let home = skwir_core::os_path::home();
         let xmp = tmp.path().join("it's a photo.jpg.xmp");
@@ -1267,7 +1273,7 @@ mod tests {
         // the sum is no lower bound.
         assert_eq!(
             listed.summary().english(),
-            "2.6 kB in 4 files and 3 folders"
+            "2.6\u{a0}kB in 4 files and 3 folders"
         );
         let place = written(tmp.path(), home.as_deref(), &[]);
         assert_eq!(listed.rows[1].folder.as_ref(), Some(&place));
@@ -1312,7 +1318,7 @@ mod tests {
         );
         assert_eq!(
             listed.summary().english(),
-            format!("In the trash, from {from} · 4 B in 1 file")
+            format!("In the trash, from {from} · 4\u{a0}B in 1 file")
         );
     }
 }

@@ -186,7 +186,7 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
             ),
         )
         .placeholder(words!(
-            shrink_at_most_placeholder = "No limit, or a size: 2 MB, 500 KB",
+            shrink_at_most_placeholder = "No limit, or a size: 2\u{a0}MB, 500\u{a0}KB",
             note = "In the empty At most field. The sizes are examples of what may be typed, with their units as written."
         ))
         .value(last.at_most.clone())
@@ -230,7 +230,7 @@ fn said(quality: Quality, offers: &Offers) -> Words {
     };
     let pdf = || match dpi {
         Some(dpi) => words!(
-            shrink_pdf_dpi = "Images at most { $dpi } dpi",
+            shrink_pdf_dpi = "Images at most { $dpi }\u{a0}dpi",
             dpi = dpi,
             note = "On a card: a PDF's images brought down to this many dots per inch."
         ),
@@ -241,8 +241,8 @@ fn said(quality: Quality, offers: &Offers) -> Words {
             (Quality::Lossless, _) | (_, None) => nothing_re_encoded(),
             (_, Some(dpi)) => words!(
                 shrink_both = "{ $pixels ->
-                    [one] Images at most { $dpi } dpi; pictures { $pixels } pixel
-                   *[other] Images at most { $dpi } dpi; pictures { $pixels } pixels
+                    [one] Images at most { $dpi }\u{a0}dpi; pictures { $pixels } pixel
+                   *[other] Images at most { $dpi }\u{a0}dpi; pictures { $pixels } pixels
                 }",
                 dpi = dpi,
                 pixels = pixels.unwrap_or(0),
@@ -368,7 +368,7 @@ mod tests {
     fn the_cards_say_what_they_do_to_what_is_chosen() {
         assert_eq!(
             said(Quality::Screen, &offers(false, true)).english(),
-            "Images at most 150 dpi"
+            "Images at most 150\u{a0}dpi"
         );
         assert_eq!(
             said(Quality::Screen, &offers(true, false)).english(),

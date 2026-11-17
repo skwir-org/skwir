@@ -127,19 +127,19 @@ models_faces_missing = { $missing ->
     }
 
 # A length of filament in metres, in the preview's Properties. metres: the number.
-models_filament_metres = { $metres } m
+models_filament_metres = { $metres } m
 
 # The range of frames of a Blender scene, in the preview's Properties (1–250). first, last: frame numbers.
 models_frames = { $first }–{ $last }
 
 # A weight in grams, in the preview's Properties. grams: the number.
-models_grams = { $grams } g
+models_grams = { $grams } g
 
 # Said in the preview of a 3MF model that stores no picture of itself. program: the helper program's name (skwir-model-worker).
 models_install_worker = Install { $program } to draw models that store no picture
 
 # A print's layer height in millimetres, in the preview's Properties. mm: the number.
-models_layer_height_mm = { $mm } mm
+models_layer_height_mm = { $mm } mm
 
 # Why a part of a model's package is not read: the package has none by that name. member: its name in the package, as written.
 models_member_missing = { $member } is missing
@@ -203,34 +203,34 @@ models_shown_as_picture = Shown as a picture: it has { $millions } million trian
 
 # A 3D model's width, depth and height in the preview's Properties. unit: the length unit the file states (mm, cm, m, in, ft, or µm, which the last variant writes as the file's unit).
 models_size = { $unit ->
-        [mm] { $x } × { $y } × { $z } mm
-        [cm] { $x } × { $y } × { $z } cm
-        [m] { $x } × { $y } × { $z } m
-        [in] { $x } × { $y } × { $z } in
-        [ft] { $x } × { $y } × { $z } ft
-       *[other] { $x } × { $y } × { $z } { $unit }
+        [mm] { $x } × { $y } × { $z } mm
+        [cm] { $x } × { $y } × { $z } cm
+        [m] { $x } × { $y } × { $z } m
+        [in] { $x } × { $y } × { $z } in
+        [ft] { $x } × { $y } × { $z } ft
+       *[other] { $x } × { $y } × { $z } { $unit }
     }
 
 # A drawing's width and height in the preview's Properties. unit: the length unit the drawing states (in, ft, mi, mm, cm, m, km, mil, yd, dm, or µm, which the last variant writes as the drawing's unit).
 models_size_2d = { $unit ->
-        [in] { $width } × { $height } in
-        [ft] { $width } × { $height } ft
-        [mi] { $width } × { $height } mi
-        [mm] { $width } × { $height } mm
-        [cm] { $width } × { $height } cm
-        [m] { $width } × { $height } m
-        [km] { $width } × { $height } km
-        [mil] { $width } × { $height } mil
-        [yd] { $width } × { $height } yd
-        [dm] { $width } × { $height } dm
-       *[other] { $width } × { $height } { $unit }
+        [in] { $width } × { $height } in
+        [ft] { $width } × { $height } ft
+        [mi] { $width } × { $height } mi
+        [mm] { $width } × { $height } mm
+        [cm] { $width } × { $height } cm
+        [m] { $width } × { $height } m
+        [km] { $width } × { $height } km
+        [mil] { $width } × { $height } mil
+        [yd] { $width } × { $height } yd
+        [dm] { $width } × { $height } dm
+       *[other] { $width } × { $height } { $unit }
     }
 
 # A drawing's width and height in the preview's Properties, in a drawing that states no unit.
-models_size_2d_unitless = { $width } × { $height }
+models_size_2d_unitless = { $width } × { $height }
 
 # A 3D model's width, depth and height in the preview's Properties, in a file that states no unit.
-models_size_unitless = { $x } × { $y } × { $z }
+models_size_unitless = { $x } × { $y } × { $z }
 
 # Why a model or a drawing is not drawn. size: the largest file drawn (16 MB).
 models_too_large = Too large to draw (more than { $size })
@@ -239,19 +239,19 @@ models_too_large = Too large to draw (more than { $size })
 models_toolpath_no_size = The picture has no size
 
 # A model's volume in cubic centimetres, in the preview's Properties. volume: the number.
-models_volume_cm3 = { $volume } cm³
+models_volume_cm3 = { $volume } cm³
 
 # A model's volume in cubic feet, in the preview's Properties. volume: the number.
-models_volume_ft3 = { $volume } ft³
+models_volume_ft3 = { $volume } ft³
 
 # A model's volume in cubic inches, in the preview's Properties. volume: the number.
-models_volume_in3 = { $volume } in³
+models_volume_in3 = { $volume } in³
 
 # A model's volume in cubic metres, in the preview's Properties. volume: the number.
-models_volume_m3 = { $volume } m³
+models_volume_m3 = { $volume } m³
 
 # A model's volume in cubic millimetres, in the preview's Properties. volume: the number.
-models_volume_mm3 = { $volume } mm³
+models_volume_mm3 = { $volume } mm³
 
 # The Watertight row's value in the preview's Properties: the model's mesh has holes.
 models_watertight_no = No

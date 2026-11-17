@@ -387,7 +387,7 @@ fn check_metrics(font: &skrifa::FontRef<'_>) -> anyhow::Result<()> {
             && y_min <= y_max,
         words!(
             fonts_outline_bounds = "Font declares outline bounds beyond { $ems ->
-               *[other] { $ems } ems
+               *[other] { $ems }\u{a0}ems
             }",
             ems = BOUNDS_EMS as u32,
             note = "An error in place of a font whose glyphs claim to be larger than any font's. ems: how many times the font's size they may span (8)."

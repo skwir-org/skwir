@@ -47,7 +47,7 @@ fonts_notice = La recherche définit le texte du spécimen · une collection de 
 
 # draft
 fonts_outline_bounds = La police déclare des limites de contours au-delà de { $ems ->
-       *[other] { $ems } em
+       *[other] { $ems } em
     }
 
 # draft

@@ -14,32 +14,32 @@ fn volume(value: f64, unit: &str) -> Option<String> {
     let short = crate::gcode::short;
     let said = match unit {
         "µm" => words!(
-            models_volume_mm3 = "{ $volume } mm³",
+            models_volume_mm3 = "{ $volume }\u{a0}mm³",
             volume = short(value / 1e9),
             note = "A model's volume in cubic millimetres, in the preview's Properties. volume: the number."
         ),
         "mm" => words!(
-            models_volume_cm3 = "{ $volume } cm³",
+            models_volume_cm3 = "{ $volume }\u{a0}cm³",
             volume = short(value / 1e3),
             note = "A model's volume in cubic centimetres, in the preview's Properties. volume: the number."
         ),
         "cm" => words!(
-            models_volume_cm3 = "{ $volume } cm³",
+            models_volume_cm3 = "{ $volume }\u{a0}cm³",
             volume = short(value),
             note = "A model's volume in cubic centimetres, in the preview's Properties. volume: the number."
         ),
         "m" => words!(
-            models_volume_m3 = "{ $volume } m³",
+            models_volume_m3 = "{ $volume }\u{a0}m³",
             volume = short(value),
             note = "A model's volume in cubic metres, in the preview's Properties. volume: the number."
         ),
         "in" => words!(
-            models_volume_in3 = "{ $volume } in³",
+            models_volume_in3 = "{ $volume }\u{a0}in³",
             volume = short(value),
             note = "A model's volume in cubic inches, in the preview's Properties. volume: the number."
         ),
         "ft" => words!(
-            models_volume_ft3 = "{ $volume } ft³",
+            models_volume_ft3 = "{ $volume }\u{a0}ft³",
             volume = short(value),
             note =
                 "A model's volume in cubic feet, in the preview's Properties. volume: the number."
@@ -232,8 +232,8 @@ mod tests {
         assert_eq!(
             said(details(MeshFormat::Stl, &measures)),
             [
-                "Size: 60 × 31 × 48 mm",
-                "Volume: 15.55 cm³",
+                "Size: 60\u{a0}×\u{a0}31\u{a0}×\u{a0}48\u{a0}mm",
+                "Volume: 15.55\u{a0}cm³",
                 "Watertight: Yes",
                 "Triangles: 225706"
             ]
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(
             said(details(MeshFormat::Obj, &measures)),
             [
-                "Size: 60 × 31 × 48",
+                "Size: 60\u{a0}×\u{a0}31\u{a0}×\u{a0}48",
                 "Watertight: Yes",
                 "Triangles: 225706",
                 "Objects: 3"
@@ -254,7 +254,10 @@ mod tests {
         measures.volume = None;
         assert_eq!(
             said(details(MeshFormat::Gltf, &measures))[..2],
-            ["Size: 60 × 31 × 48 m", "Watertight: No"]
+            [
+                "Size: 60\u{a0}×\u{a0}31\u{a0}×\u{a0}48\u{a0}m",
+                "Watertight: No"
+            ]
         );
         // A model of surfaces counts its faces.
         measures.faces = 637;

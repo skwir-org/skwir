@@ -128,7 +128,7 @@ fn groups() -> Vec<(Group, Written)> {
     .item(Item::new(
         format!("size>10{mb}"),
         words!(
-            query_ref_size = "More than 10 { $mb }. Each of { $decimal } is 1000 times the one before; each of { $binary } is 1024 times, and so is each of { $alone } written alone.",
+            query_ref_size = "More than 10\u{a0}{ $mb }. Each of { $decimal } is 1000 times the one before; each of { $binary } is 1024 times, and so is each of { $alone } written alone.",
             mb = mb,
             decimal = decimal,
             binary = binary,

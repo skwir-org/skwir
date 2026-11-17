@@ -166,7 +166,7 @@ impl Plugin for ShrinkPlugin {
                 "shrink.reduce",
                 words!(shrink_reduce = "Make Smaller Copies"),
                 words!(
-                    shrink_reduce_description = "Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300 dpi), screen (1920, 150 dpi) or small (1280, 96 dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)",
+                    shrink_reduce_description = "Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300\u{a0}dpi), screen (1920, 150\u{a0}dpi) or small (1280, 96\u{a0}dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)",
                     note = "Read by agents and in F1's list of actions: the words in backticks are the command's arguments, and lossless, print, screen and small the values `quality` takes, as written."
                 ),
                 move |a, app| Ok(Outcome::Plan(plan_of(app, &a, &made)?)),
@@ -828,8 +828,16 @@ mod tests {
     #[test]
     fn sizes_are_said_as_people_read_them() {
         let said = |bytes| not_under(Path::new("/example/a.pdf"), bytes).english();
-        assert!(said(1_234_567).ends_with(" 1.2 MB"), "{}", said(1_234_567));
-        assert!(said(640_400).ends_with(" 640.4 kB"), "{}", said(640_400));
-        assert!(said(512).ends_with(" 512 B"), "{}", said(512));
+        assert!(
+            said(1_234_567).ends_with(" 1.2\u{a0}MB"),
+            "{}",
+            said(1_234_567)
+        );
+        assert!(
+            said(640_400).ends_with(" 640.4\u{a0}kB"),
+            "{}",
+            said(640_400)
+        );
+        assert!(said(512).ends_with(" 512\u{a0}B"), "{}", said(512));
     }
 }

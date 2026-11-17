@@ -1096,14 +1096,14 @@ fn size_read(word: &str, of: &'static str) -> Option<(String, Words)> {
     let [_, k, m, g, ..] = skwir_core::fs::size_units().names();
     let over_100 = || {
         words!(
-            query_reading_over_100 = "{\" \"}over 100 { $unit }",
+            query_reading_over_100 = "{\" \"}over 100\u{a0}{ $unit }",
             unit = m,
             note = "The end of a reading of words as a search (PDFs over 100 MB): it begins with a space. unit: a unit of size as the size setting writes it."
         )
     };
     let under_100 = || {
         words!(
-            query_reading_under_100 = "{\" \"}under 100 { $unit }",
+            query_reading_under_100 = "{\" \"}under 100\u{a0}{ $unit }",
             unit = k,
             note = "The end of a reading of words as a search (PDFs under 100 kB): it begins with a space. unit: a unit of size as the size setting writes it."
         )
@@ -1113,7 +1113,7 @@ fn size_read(word: &str, of: &'static str) -> Option<(String, Words)> {
         "huge" => (
             format!(">1{g}"),
             words!(
-                query_reading_over_1 = "{\" \"}over 1 { $unit }",
+                query_reading_over_1 = "{\" \"}over 1\u{a0}{ $unit }",
                 unit = g,
                 note = "The end of a reading of words as a search (Videos over 1 GB): it begins with a space. unit: a unit of size as the size setting writes it."
             ),
@@ -2046,7 +2046,7 @@ mod tests {
             (
                 "big downloads",
                 "downloads size>100MB",
-                "Files named “downloads” over 100 MB",
+                "Files named “downloads” over 100\u{a0}MB",
             ),
             (
                 "videos from france",

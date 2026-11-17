@@ -274,7 +274,7 @@ fn filament() -> Words {
 /// A weight of filament, `grams` a number.
 fn grams(grams: words::Decimal) -> String {
     words!(
-        models_grams = "{ $grams } g",
+        models_grams = "{ $grams }\u{a0}g",
         grams = grams,
         note = "A weight in grams, in the preview's Properties. grams: the number."
     )
@@ -296,12 +296,12 @@ fn size_3d([x, y, z]: [words::Decimal; 3], unit: Option<&str>) -> String {
     match unit {
         Some(unit) => words!(
             models_size = "{ $unit ->
-                [mm] { $x } × { $y } × { $z } mm
-                [cm] { $x } × { $y } × { $z } cm
-                [m] { $x } × { $y } × { $z } m
-                [in] { $x } × { $y } × { $z } in
-                [ft] { $x } × { $y } × { $z } ft
-               *[other] { $x } × { $y } × { $z } { $unit }
+                [mm] { $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }\u{a0}mm
+                [cm] { $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }\u{a0}cm
+                [m] { $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }\u{a0}m
+                [in] { $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }\u{a0}in
+                [ft] { $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }\u{a0}ft
+               *[other] { $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }\u{a0}{ $unit }
             }",
             unit = unit,
             x = x,
@@ -310,7 +310,7 @@ fn size_3d([x, y, z]: [words::Decimal; 3], unit: Option<&str>) -> String {
             note = "A 3D model's width, depth and height in the preview's Properties. unit: the length unit the file states (mm, cm, m, in, ft, or µm, which the last variant writes as the file's unit)."
         ),
         None => words!(
-            models_size_unitless = "{ $x } × { $y } × { $z }",
+            models_size_unitless = "{ $x }\u{a0}×\u{a0}{ $y }\u{a0}×\u{a0}{ $z }",
             x = x,
             y = y,
             z = z,
@@ -326,17 +326,17 @@ fn size_2d([width, height]: [words::Decimal; 2], unit: Option<&str>) -> String {
     match unit {
         Some(unit) => words!(
             models_size_2d = "{ $unit ->
-                [in] { $width } × { $height } in
-                [ft] { $width } × { $height } ft
-                [mi] { $width } × { $height } mi
-                [mm] { $width } × { $height } mm
-                [cm] { $width } × { $height } cm
-                [m] { $width } × { $height } m
-                [km] { $width } × { $height } km
-                [mil] { $width } × { $height } mil
-                [yd] { $width } × { $height } yd
-                [dm] { $width } × { $height } dm
-               *[other] { $width } × { $height } { $unit }
+                [in] { $width }\u{a0}×\u{a0}{ $height }\u{a0}in
+                [ft] { $width }\u{a0}×\u{a0}{ $height }\u{a0}ft
+                [mi] { $width }\u{a0}×\u{a0}{ $height }\u{a0}mi
+                [mm] { $width }\u{a0}×\u{a0}{ $height }\u{a0}mm
+                [cm] { $width }\u{a0}×\u{a0}{ $height }\u{a0}cm
+                [m] { $width }\u{a0}×\u{a0}{ $height }\u{a0}m
+                [km] { $width }\u{a0}×\u{a0}{ $height }\u{a0}km
+                [mil] { $width }\u{a0}×\u{a0}{ $height }\u{a0}mil
+                [yd] { $width }\u{a0}×\u{a0}{ $height }\u{a0}yd
+                [dm] { $width }\u{a0}×\u{a0}{ $height }\u{a0}dm
+               *[other] { $width }\u{a0}×\u{a0}{ $height }\u{a0}{ $unit }
             }",
             unit = unit,
             width = width,
@@ -344,7 +344,7 @@ fn size_2d([width, height]: [words::Decimal; 2], unit: Option<&str>) -> String {
             note = "A drawing's width and height in the preview's Properties. unit: the length unit the drawing states (in, ft, mi, mm, cm, m, km, mil, yd, dm, or µm, which the last variant writes as the drawing's unit)."
         ),
         None => words!(
-            models_size_2d_unitless = "{ $width } × { $height }",
+            models_size_2d_unitless = "{ $width }\u{a0}×\u{a0}{ $height }",
             width = width,
             height = height,
             note = "A drawing's width and height in the preview's Properties, in a drawing that states no unit."
@@ -873,8 +873,8 @@ mod tests {
         assert_eq!(
             said,
             [
-                "Size: 10 × 10 × 10 mm",
-                "Volume: 1 cm³",
+                "Size: 10\u{a0}×\u{a0}10\u{a0}×\u{a0}10\u{a0}mm",
+                "Volume: 1\u{a0}cm³",
                 "Watertight: Yes",
                 "Triangles: 12"
             ]
@@ -933,7 +933,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.image.is_some(), "the model drawn");
-        assert_eq!(data.details[0].value, "10 × 10 × 10 mm");
+        assert_eq!(
+            data.details[0].value,
+            "10\u{a0}×\u{a0}10\u{a0}×\u{a0}10\u{a0}mm"
+        );
         // The helper read the one copy written for it: the path itself
         // never existed.
         assert!(!path.exists());
@@ -1045,7 +1048,7 @@ END-ISO-10303-21;
             [
                 "Made with: Modeller 2026",
                 "Format: STEP AP214",
-                "Size: 20 × 20 × 30 mm"
+                "Size: 20\u{a0}×\u{a0}20\u{a0}×\u{a0}30\u{a0}mm"
             ]
         );
         assert_eq!(said[4..6], ["Watertight: Yes", "Faces: 3"]);
@@ -1063,7 +1066,10 @@ END-ISO-10303-21;
             )
             .unwrap_err();
         assert!(skwir_core::inspection::TooLarge::is(&error), "{error:#}");
-        assert_eq!(error.to_string(), "Too large to draw (more than 16.8 MB)");
+        assert_eq!(
+            error.to_string(),
+            "Too large to draw (more than 16.8\u{a0}MB)"
+        );
         let whole = InspectRequest {
             whole: true,
             ..InspectRequest::default()
@@ -1131,7 +1137,10 @@ END-ISO-10303-21;
         assert!(data.image.is_none(), "no picture is drawn");
         let mesh = data.mesh.expect("the mesh");
         assert_eq!((mesh.positions().len(), mesh.triangles()), (8, 12));
-        assert_eq!(data.details[0].value, "10 × 10 × 10 mm");
+        assert_eq!(
+            data.details[0].value,
+            "10\u{a0}×\u{a0}10\u{a0}×\u{a0}10\u{a0}mm"
+        );
         assert!(data.notices.is_empty());
         // Asked for a picture, it is still drawn.
         let data = Provider

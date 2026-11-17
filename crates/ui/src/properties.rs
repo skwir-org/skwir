@@ -2237,7 +2237,7 @@ fn measure(shell: &Shell) -> Option<Row> {
             Row::new(
                 label::dimensions().say(),
                 words!(
-                    properties_dimensions_value = "{ $width } × { $height } px",
+                    properties_dimensions_value = "{ $width }\u{a0}×\u{a0}{ $height }\u{a0}px",
                     width = *width,
                     height = *height,
                     note = "A picture's size in Properties, in pixels, width by height (4032 × 3024 px)."
@@ -3340,7 +3340,7 @@ mod tests {
         };
         assert_eq!(
             find("General", "Size").unwrap().value,
-            "1.2 MB (1,234,567 bytes)"
+            "1.2\u{a0}MB (1,234,567 bytes)"
         );
         assert!(
             find("General", "Name").is_none() && find("General", "Type").is_none(),
@@ -3506,8 +3506,8 @@ mod tests {
         assert_eq!(
             said(&running),
             [
-                row("Size", "3.1 MB so far…", &["Stop"]),
-                row("On disk", "4.2 MB", &[]),
+                row("Size", "3.1\u{a0}MB so far…", &["Stop"]),
+                row("On disk", "4.2\u{a0}MB", &[]),
                 row("In all", "1,500 files, 1 folder", &[]),
             ]
         );
@@ -3517,7 +3517,7 @@ mod tests {
             said(&stopped[..1]),
             [row(
                 "Total size",
-                "At least 3.1 MB, stopped",
+                "At least 3.1\u{a0}MB, stopped",
                 &["Count again"]
             )]
         );
@@ -3530,7 +3530,7 @@ mod tests {
         let exact = count_rows("Size", Some((done, false)));
         assert_eq!(
             said(&exact[..1]),
-            [row("Size", "1.2 kB (1,234 bytes)", &["Count again"])]
+            [row("Size", "1.2\u{a0}kB (1,234 bytes)", &["Count again"])]
         );
         assert!(exact[0].links_shown(), "it starts what runs");
         assert_eq!(exact[0].actions[0].1.args, serde_json::json!({}));
@@ -3543,8 +3543,8 @@ mod tests {
         assert_eq!(
             said(&count_rows("Size", Some((partial, false)))),
             [
-                row("Size", "At least 1.2 kB", &["Count again"]),
-                row("On disk", "4.2 MB", &[]),
+                row("Size", "At least 1.2\u{a0}kB", &["Count again"]),
+                row("On disk", "4.2\u{a0}MB", &[]),
                 row("In all", "1,500 files, 1 folder", &[]),
                 row("Unreadable", "2 folders could not be listed", &[]),
                 row("Unknown", "3 items could not be read", &[]),
@@ -3555,7 +3555,7 @@ mod tests {
         let unknown = Count { unknown: 1, ..done };
         assert_eq!(
             count_rows("Size", Some((unknown, false)))[0].value.as_ref(),
-            "At least 1.2 kB"
+            "At least 1.2\u{a0}kB"
         );
     }
 
@@ -3725,7 +3725,7 @@ mod tests {
         let said = |words: &str| Some(Gist::Said(words.to_owned().into()));
         assert_eq!(
             gist(&groups, "General"),
-            said("1.2 MB"),
+            said("1.2\u{a0}MB"),
             "without the bytes"
         );
         assert_eq!(
@@ -3809,7 +3809,7 @@ mod tests {
             ..Default::default()
         };
         let counted = Group::new("General", count_rows("Size", Some((done, false))));
-        assert_eq!(counted.gist(), said("1.2 kB"));
+        assert_eq!(counted.gist(), said("1.2\u{a0}kB"));
         let so_far = skwir_core::fs::count::Count {
             size: 3 << 20,
             ..Default::default()
@@ -3817,7 +3817,7 @@ mod tests {
         let stopped = Group::new("General", count_rows("Size", Some((so_far, false))));
         assert_eq!(
             stopped.gist(),
-            said("At least 3.1 MB"),
+            said("At least 3.1\u{a0}MB"),
             "the bound, not why"
         );
         let me = User {
@@ -3828,7 +3828,7 @@ mod tests {
         let b = entry(23, "b café", EntryKind::File, 1000, Some(0o100_755));
         let pane = skwir_core::workspace::PaneId(3);
         let groups = selection_groups(&[&a, &b], 2, Some(2048), pane, &me);
-        assert_eq!(gist(&groups, "Selection"), said("2 items · 2.0 kB"));
+        assert_eq!(gist(&groups, "Selection"), said("2 items · 2.0\u{a0}kB"));
         assert_eq!(
             gist(&groups, SHARED_PERMISSIONS),
             said(&owner_gist(1000)),
@@ -3842,15 +3842,15 @@ mod tests {
             vec![
                 Row::new("Volume", "Data").in_gist().led(Lead::On),
                 Row::new("Device", "/dev/sdz1").led(Lead::OwnedBy),
-                Row::new("Free", "1 GB of 2 GB").gist("1 GB free"),
+                Row::new("Free", "1\u{a0}GB of 2\u{a0}GB").gist("1\u{a0}GB free"),
             ],
         );
-        assert_eq!(volume.gist(), said("Data · 1 GB free"));
-        assert_eq!(volume.gist_led(), said("On Data · 1 GB free"));
+        assert_eq!(volume.gist(), said("Data · 1\u{a0}GB free"));
+        assert_eq!(volume.gist_led(), said("On Data · 1\u{a0}GB free"));
         let mixed = Group::new(
             "Location",
             vec![
-                Row::new("Size", "1 B").in_gist(),
+                Row::new("Size", "1\u{a0}B").in_gist(),
                 Row {
                     gist: Some(Gist::Path(path.to_string_lossy().into_owned().into())),
                     ..Row::path("Path", path)
@@ -3859,7 +3859,7 @@ mod tests {
         );
         assert_eq!(
             mixed.gist(),
-            Some(Gist::Path(format!("1 B · {FILE}").into()))
+            Some(Gist::Path(format!("1\u{a0}B · {FILE}").into()))
         );
     }
 
@@ -3943,7 +3943,7 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(find(&groups, "Selected").value, "2 items");
-        assert_eq!(find(&groups, "Total size").value, "2.0 kB");
+        assert_eq!(find(&groups, "Total size").value, "2.0\u{a0}kB");
         assert_eq!(find(&groups, "Owner can").value, "Read and write");
         assert_eq!(find(&groups, "Access").value, "Mixed");
         let run = find(&groups, "Can run");

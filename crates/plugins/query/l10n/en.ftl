@@ -250,16 +250,16 @@ query_forget_recent = Forget a recent search
 query_forget_recent_description = Take a search out of those the address field offers as run lately
 
 # A group's heading, grouped by size. unit and next: units of size, as sizes are shown (kB and MB).
-query_group_100_to_1 = 100 { $unit } to 1 { $next }
+query_group_100_to_1 = 100 { $unit } to 1 { $next }
 
 # A group's heading, grouped by a picture's dimensions: MP, megapixels.
-query_group_12_to_24_mp = 12 to 24 MP
+query_group_12_to_24_mp = 12 to 24 MP
 
 # A group's heading, grouped by size. unit: a unit of size, as sizes are shown (MB, MiB).
-query_group_1_to_100 = 1 to 100 { $unit }
+query_group_1_to_100 = 1 to 100 { $unit }
 
 # A group's heading, grouped by a picture's dimensions: MP, megapixels.
-query_group_1_to_4_mp = 1 to 4 MP
+query_group_1_to_4_mp = 1 to 4 MP
 
 # A group's heading, grouped by how long a sound or a film lasts.
 query_group_1_to_5_minutes = 1 to 5 minutes
@@ -268,7 +268,7 @@ query_group_1_to_5_minutes = 1 to 5 minutes
 query_group_20_minutes_to_1_hour = 20 minutes to 1 hour
 
 # A group's heading, grouped by a picture's dimensions: MP, megapixels.
-query_group_4_to_12_mp = 4 to 12 MP
+query_group_4_to_12_mp = 4 to 12 MP
 
 # A group's heading, grouped by how long a sound or a film lasts.
 query_group_5_to_20_minutes = 5 to 20 minutes
@@ -328,13 +328,13 @@ query_group_other_kind = Other
 query_group_other_names = Other
 
 # A group's heading, grouped by size. unit: a unit of size, as sizes are shown (GB, GiB).
-query_group_over_1 = Over 1 { $unit }
+query_group_over_1 = Over 1 { $unit }
 
 # A group's heading, grouped by how long a sound or a film lasts.
 query_group_over_1_hour = Over 1 hour
 
 # A group's heading, grouped by a picture's dimensions: MP, megapixels.
-query_group_over_24_mp = Over 24 MP
+query_group_over_24_mp = Over 24 MP
 
 # A group's heading, grouped by Git state: files nothing was said of (in no repository, not read yet).
 query_group_state_unknown = Not known
@@ -346,13 +346,13 @@ query_group_today = Today
 query_group_unchanged = Unchanged
 
 # A group's heading, grouped by size. unit: a unit of size, as sizes are shown (kB, KiB).
-query_group_under_100 = Under 100 { $unit }
+query_group_under_100 = Under 100 { $unit }
 
 # A group's heading, grouped by how long a sound or a film lasts.
 query_group_under_1_minute = Under 1 minute
 
 # A group's heading, grouped by a picture's dimensions: MP, megapixels.
-query_group_under_1_mp = Under 1 MP
+query_group_under_1_mp = Under 1 MP
 
 # A group's heading, grouped by type: files whose type is not known.
 query_group_unknown_type = Unknown type
@@ -731,10 +731,10 @@ query_reading_named = { $of ->
     }
 
 # The end of a reading of words as a search (Videos over 1 GB): it begins with a space. unit: a unit of size as the size setting writes it.
-query_reading_over_1 = {" "}over 1 { $unit }
+query_reading_over_1 = {" "}over 1 { $unit }
 
 # The end of a reading of words as a search (PDFs over 100 MB): it begins with a space. unit: a unit of size as the size setting writes it.
-query_reading_over_100 = {" "}over 100 { $unit }
+query_reading_over_100 = {" "}over 100 { $unit }
 
 query_reading_presentations = { $at ->
         [first] Presentations
@@ -798,7 +798,7 @@ query_reading_text = { $at ->
     }
 
 # The end of a reading of words as a search (PDFs under 100 kB): it begins with a space. unit: a unit of size as the size setting writes it.
-query_reading_under_100 = {" "}under 100 { $unit }
+query_reading_under_100 = {" "}under 100 { $unit }
 
 query_reading_videos = { $at ->
         [first] Videos
@@ -891,7 +891,7 @@ query_ref_quotes = As written: "two words", "OR", "#3"
 query_ref_rating = At least (> < >= <=); rating:0 finds files with no rating
 
 # What size>10MB means in a search, and the units of size it reads. mb: a unit as the size setting writes it; decimal (kB, MB…), binary (KiB, MiB…) and alone (k, M…): lists of units as written.
-query_ref_size = More than 10 { $mb }. Each of { $decimal } is 1000 times the one before; each of { $binary } is 1024 times, and so is each of { $alone } written alone.
+query_ref_size = More than 10 { $mb }. Each of { $decimal } is 1000 times the one before; each of { $binary } is 1024 times, and so is each of { $alone } written alone.
 
 # What a range of sizes means in a search (size:1MB..100MB): both ends included.
 query_ref_size_range = From one size to the other, both included
@@ -1037,25 +1037,25 @@ query_similar_tags = Same Tags
 query_similar_unreadable = { $name } cannot be read
 
 # A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB).
-query_size_1_to_100 = 1 to 100 { $unit }
+query_size_1_to_100 = 1 to 100 { $unit }
 
 # A size a search offers: files of no bytes.
 query_size_empty = Empty
 
 # A size a search offers; unit: a unit of size as the size setting writes it (GB, GiB).
-query_size_over_1 = Over 1 { $unit }
+query_size_over_1 = Over 1 { $unit }
 
 # A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB).
-query_size_over_100 = Over 100 { $unit }
+query_size_over_100 = Over 100 { $unit }
 
 # What the field asking for a size holds while empty; the examples are written as the search language writes them, m and k units of size as the size setting writes them (MB, kB).
 query_size_placeholder = A size or a range: >10{ $m }, 1{ $m }..5{ $m }, <500{ $k }
 
 # A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB).
-query_size_under_1 = Under 1 { $unit }
+query_size_under_1 = Under 1 { $unit }
 
 # A size a search offers; unit: a unit of size as the size setting writes it (kB, KiB).
-query_size_under_100 = Under 100 { $unit }
+query_size_under_100 = Under 100 { $unit }
 
 # A tag chip's choice: goes up to the category tag, every tag within it.
 query_tag_all_of = All of { $tag }

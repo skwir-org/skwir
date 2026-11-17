@@ -288,7 +288,7 @@ mod tests {
         );
         assert_eq!(
             &people.rows[0].cells[..4],
-            ["1", "Zoë", "2.0 kB blob", "2.5"]
+            ["1", "Zoë", "2.0\u{a0}kB blob", "2.5"]
         );
         assert!(people.rows[0].cells[4].ends_with('…'));
         assert_eq!(people.rows[1].cells, ["2", "Ada", "NULL", "NULL", "NULL"]);

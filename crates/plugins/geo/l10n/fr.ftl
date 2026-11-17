@@ -26,8 +26,8 @@ geo_changed_since = { $name } a changé depuis que le plan a été établi
 
 # draft
 geo_clocks_corrected = { $sign ->
-        [plus] horloges des appareils photo corrigées de +{ $seconds } s
-       *[minus] horloges des appareils photo corrigées de −{ $seconds } s
+        [plus] horloges des appareils photo corrigées de +{ $seconds } s
+       *[minus] horloges des appareils photo corrigées de −{ $seconds } s
     }
 
 # draft

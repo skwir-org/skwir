@@ -291,7 +291,7 @@ fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
     assert_eq!(empty.len(), 3);
     assert_eq!(
         empty.note.as_ref().map(Words::english).as_deref(),
-        Some("1 file has names elsewhere: the disk keeps its 4 B")
+        Some("1 file has names elsewhere: the disk keeps its 4\u{a0}B")
     );
     let r = app.executor.execute_blocking(&empty, app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);

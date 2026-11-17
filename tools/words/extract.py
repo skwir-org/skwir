@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Each crate's English catalog, made from its code (ADR-139, 2).
+r"""Each crate's English catalog, made from its code (ADR-139, 2).
 
 Every `words!(id = "English", …, note = "…")` of a crate's sources is a
 message of that crate: written to `<crate>/l10n/en.ftl`, sorted by id, its
@@ -12,7 +12,10 @@ It also writes the program's list of shipped catalogs,
 crates/skwir/src/catalogs.rs: every crate's `l10n/<language>.ftl` but
 English, compiled in (ADR-139, G).
 
-Refused, in either mode: an id with two Englishes in one crate. Messages
+Refused, in either mode: an id with two Englishes in one crate, and an
+English that parts a number from its unit, or a dimension's numbers from
+their `×`, by a plain space, where a line may break: a no-break space
+joins them (`{ $n }\u{a0}MB`, `{ $width }\u{a0}×\u{a0}{ $height }`). Messages
 of tests (in a tests.rs or a tests/ folder, or whose id begins with
 `test_`) are not a crate's.
 """
@@ -24,6 +27,19 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HEADER = "# Made from the code by `just words` (tools/words/extract.py): never edit by hand.\n"
 CALL = re.compile(r"\bwords!\s*\(")
+
+# A number (an argument, or digits) and a unit's symbol after it, or a
+# dimension's `×`, parted by a plain space. Units written as words (pixels,
+# lines) are prose, which may break; `in` (inches) is too much an English
+# word to tell.
+NUMBER = r"(?:\{ *\$[a-z0-9_]+ *\}|\d)"
+UNIT = (
+    r"(?:[kKMGTP]i?B(?:/s)?|B|%|s|ms|µs|min|h|px|pt|ems?|µm|mm|cm|dm|m|km|mi|ft|yd|mil|NM"
+    r"|[mck]?m[²³]|in[²³]|ft[²³]|dpi|ppi|MP|fps|k?Hz|[kM]bps|km/h|mph|k?g|°C?)(?![\w²³/'’])"
+    r"|\{ *\$[a-z0-9_]*unit *\}"
+)
+# Digits before an argument: the argument is their unit (`1 { $next }`).
+PARTED = re.compile(rf"{NUMBER} (?:{UNIT})|\d \{{ *\$|{NUMBER} ×|× {NUMBER}")
 
 
 def string_literal(text, at):
@@ -142,6 +158,13 @@ def catalogs():
                 problems.append(f"{relative}: `{id_}` has two Englishes in its crate")
                 continue
             messages[id_] = (english, note or (kept[1] if kept else ""))
+            parted = PARTED.search(english)
+            if parted:
+                problems.append(
+                    f"{relative}: `{id_}` parts a number from its unit with a plain space"
+                    f" ({parted.group(0)!r}), where a line may break: join them with a"
+                    " no-break space, `\\u{a0}`"
+                )
     return {folder: messages for folder, messages in found.items() if messages}, problems
 
 

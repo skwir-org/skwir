@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(detail(&found, "Unit"), Some("millimeter"));
         assert_eq!(detail(&found, "Plates"), Some("2"));
         assert_eq!(detail(&found, "Print time"), Some("1h 2m 5s"));
-        assert_eq!(detail(&found, "Filament"), Some("14.75 g"));
+        assert_eq!(detail(&found, "Filament"), Some("14.75\u{a0}g"));
     }
 
     #[test]

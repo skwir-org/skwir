@@ -395,7 +395,7 @@ fn a_value_is_written_in_its_unit() {
         (4, 4096),
     )
     .unit(mb);
-    assert_eq!(budget.written(64).english(), "64 MB");
+    assert_eq!(budget.written(64).english(), "64\u{a0}MB");
     let bare = SettingSpec::integer("sample.count", Words::as_written("Count"), "d", 3, (0, 9));
     assert_eq!(bare.written(3).english(), "3");
     let lines = SettingSpec::integer(
@@ -425,25 +425,25 @@ fn a_value_is_written_in_its_unit() {
     )
     .step(250)
     .unit_of(
-        |n| skwir_core::words!(test_seconds = "{ $n } s", n = n),
+        |n| skwir_core::words!(test_seconds = "{ $n }\u{a0}s", n = n),
         1000,
     )
     .slider();
     assert_eq!(
         serde_json::to_value(&wait).unwrap()["unit"],
-        "n s",
+        "n\u{a0}s",
         "an agent reads where the number goes"
     );
     assert_eq!(wait.constraints.per_unit, 1000);
     for (value, written) in [
-        (1500, "1.5 s"),
-        (1000, "1 s"),
-        (500, "0.5 s"),
-        (250, "0.25 s"),
-        (0, "0 s"),
-        (5000, "5 s"),
-        (1005, "1.005 s"),
-        (-1500, "-1.5 s"),
+        (1500, "1.5\u{a0}s"),
+        (1000, "1\u{a0}s"),
+        (500, "0.5\u{a0}s"),
+        (250, "0.25\u{a0}s"),
+        (0, "0\u{a0}s"),
+        (5000, "5\u{a0}s"),
+        (1005, "1.005\u{a0}s"),
+        (-1500, "-1.5\u{a0}s"),
     ] {
         assert_eq!(wait.written(value).english(), written, "{value}");
     }
@@ -451,7 +451,7 @@ fn a_value_is_written_in_its_unit() {
 
 /// Megabytes, for the tests' settings.
 fn mb(n: skwir_core::words::Arg) -> skwir_core::words::Words {
-    skwir_core::words!(test_mb = "{ $n } MB", n = n)
+    skwir_core::words!(test_mb = "{ $n }\u{a0}MB", n = n)
 }
 
 #[test]
@@ -473,7 +473,7 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
             budget.unit.map(|unit| unit.of(16).english()),
             budget.constraints.step
         ),
-        (Some("16 MB".to_owned()), 16)
+        (Some("16\u{a0}MB".to_owned()), 16)
     );
     let engine = SettingSpec::choice(
         "sample.engine",

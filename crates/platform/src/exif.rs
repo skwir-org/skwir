@@ -298,9 +298,9 @@ fn read(exif: &Exif) -> Vec<Detail> {
     };
     let exposure = rational(exif, Tag::ExposureTime).map(|seconds| {
         if seconds > 0. && seconds < 1. {
-            format!("1/{:.0} s", 1. / seconds)
+            format!("1/{:.0}\u{a0}s", 1. / seconds)
         } else {
-            format!("{seconds} s")
+            format!("{seconds}\u{a0}s")
         }
     });
     let position = located(exif).map(|at| format!("{:.5}, {:.5}", at.lat, at.lon));
@@ -360,7 +360,7 @@ fn read(exif: &Exif) -> Vec<Detail> {
                 exif_focal_length = "Focal length",
                 note = "A label in Properties: the focal length a photo was taken at (35 mm)."
             ),
-            rational(exif, Tag::FocalLength).map(|mm| format!("{mm} mm")),
+            rational(exif, Tag::FocalLength).map(|mm| format!("{mm}\u{a0}mm")),
             false,
         ),
         (
@@ -569,7 +569,7 @@ mod tests {
             facts,
             [
                 ("Camera".to_owned(), "Acme One".to_owned()),
-                ("Exposure".to_owned(), "1/250 s".to_owned())
+                ("Exposure".to_owned(), "1/250\u{a0}s".to_owned())
             ]
         );
     }

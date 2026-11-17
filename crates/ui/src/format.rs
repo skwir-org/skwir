@@ -125,7 +125,7 @@ fn friendly(t: SystemTime, now: &jiff::Zoned) -> Friendly {
 /// alone writes it, its numbers grouped as the reader's are.
 pub fn dimensions(width: u64, height: u64) -> String {
     skwir_core::words!(
-        format_dimensions = "{ $width } × { $height }",
+        format_dimensions = "{ $width }\u{a0}×\u{a0}{ $height }",
         width = width,
         height = height,
         note = "A picture's size in pixels, width by height, alone: the list's Dimensions column, a preview's caption (4032 × 3024)."
@@ -169,16 +169,6 @@ pub fn folders(n: usize) -> String {
     .say()
 }
 
-/// `1 item`, `3 items`: a noun made plural by its English `s`, until each
-/// count is a message (PLAN.md, step E; `items`, `files`, `folders`).
-pub fn count(n: usize, singular: &str) -> String {
-    if n == 1 {
-        format!("1 {singular}")
-    } else {
-        format!("{} {singular}s", thousands(n))
-    }
-}
-
 /// A speed, as words to place in a message: `23.4 MB/s`.
 pub fn speed_words(bytes_a_second: f64) -> skwir_core::words::Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Shown, rounded.
@@ -203,13 +193,13 @@ pub fn time_left_words(left: std::time::Duration) -> skwir_core::words::Words {
             note = "How long an action has left, under its bar. Begins in lower case."
         ),
         10..60 => words!(
-            format_left_seconds = "about { $seconds } s left",
+            format_left_seconds = "about { $seconds }\u{a0}s left",
             seconds = ((secs + 2) / 5 * 5).clamp(10, 55),
             note = "How long an action has left, under its bar, by fives of seconds; s is the \
                     second's symbol. Begins in lower case."
         ),
         60..3_570 => words!(
-            format_left_minutes = "about { $minutes } min left",
+            format_left_minutes = "about { $minutes }\u{a0}min left",
             minutes = (secs + 30) / 60,
             note = "How long an action has left, under its bar; min is the minute's symbol. \
                     Begins in lower case."
@@ -218,13 +208,14 @@ pub fn time_left_words(left: std::time::Duration) -> skwir_core::words::Words {
             let minutes = (secs + 300) / 600 * 10;
             match (minutes / 60, minutes % 60) {
                 (hours, 0) => words!(
-                    format_left_hours = "about { $hours } h left",
+                    format_left_hours = "about { $hours }\u{a0}h left",
                     hours = hours,
                     note = "How long an action has left, under its bar; h is the hour's symbol. \
                             Begins in lower case."
                 ),
                 (hours, minutes) => words!(
-                    format_left_hours_minutes = "about { $hours } h { $minutes } min left",
+                    format_left_hours_minutes =
+                        "about { $hours }\u{a0}h { $minutes }\u{a0}min left",
                     hours = hours,
                     minutes = minutes,
                     note = "How long an action has left, under its bar, by tens of minutes; h \
@@ -247,29 +238,29 @@ pub fn took_words(took: std::time::Duration) -> skwir_core::words::Words {
     let secs = took.as_secs();
     match (secs / 3_600, secs / 60 % 60, secs % 60) {
         (0, 0, s) => words!(
-            format_took_seconds = "{ $seconds } s",
+            format_took_seconds = "{ $seconds }\u{a0}s",
             seconds = s,
             note = "How long an action took; s is the second's symbol."
         ),
         (0, m, 0) => words!(
-            format_took_minutes = "{ $minutes } min",
+            format_took_minutes = "{ $minutes }\u{a0}min",
             minutes = m,
             note = "How long an action took; min is the minute's symbol."
         ),
         (0, m, s) => words!(
-            format_took_minutes_seconds = "{ $minutes } min { $seconds } s",
+            format_took_minutes_seconds = "{ $minutes }\u{a0}min { $seconds }\u{a0}s",
             minutes = m,
             seconds = s,
             note = "How long an action took; min and s are the minute's and the second's \
                     symbols."
         ),
         (h, 0, _) => words!(
-            format_took_hours = "{ $hours } h",
+            format_took_hours = "{ $hours }\u{a0}h",
             hours = h,
             note = "How long an action took; h is the hour's symbol."
         ),
         (h, m, _) => words!(
-            format_took_hours_minutes = "{ $hours } h { $minutes } min",
+            format_took_hours_minutes = "{ $hours }\u{a0}h { $minutes }\u{a0}min",
             hours = h,
             minutes = m,
             note = "How long an action took; h and min are the hour's and the minute's symbols."
@@ -277,17 +268,15 @@ pub fn took_words(took: std::time::Duration) -> skwir_core::words::Words {
     }
 }
 
-/// `1,234,567`.
-pub fn thousands(n: usize) -> String {
-    let s = n.to_string();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+/// A count alone, beside what it counts, as the window's language writes
+/// numbers: "1,234", « 1 234 ».
+pub fn number(n: usize) -> String {
+    skwir_core::words!(
+        format_number = "{ $count }",
+        count = n,
+        note = "A count alone, beside what it counts: a board's column, a quick filter's value."
+    )
+    .say()
 }
 
 #[cfg(test)]
@@ -299,25 +288,25 @@ mod tests {
     #[test]
     fn speeds_and_times_are_said_roughly() {
         let speed = |bytes| super::speed_words(bytes).english();
-        assert_eq!(speed(1536.0), "1.5 kB/s");
-        assert_eq!(speed(-1.0), "0 B/s");
+        assert_eq!(speed(1536.0), "1.5\u{a0}kB/s");
+        assert_eq!(speed(-1.0), "0\u{a0}B/s");
         let left = |secs| super::time_left_words(Duration::from_secs(secs)).english();
         assert_eq!(left(3), "a few seconds left");
-        assert_eq!(left(12), "about 10 s left");
-        assert_eq!(left(43), "about 45 s left");
-        assert_eq!(left(59), "about 55 s left");
-        assert_eq!(left(60), "about 1 min left");
-        assert_eq!(left(150), "about 3 min left");
-        assert_eq!(left(3_599), "about 1 h left");
-        assert_eq!(left(3_600), "about 1 h left");
-        assert_eq!(left(7_890), "about 2 h 10 min left");
+        assert_eq!(left(12), "about 10\u{a0}s left");
+        assert_eq!(left(43), "about 45\u{a0}s left");
+        assert_eq!(left(59), "about 55\u{a0}s left");
+        assert_eq!(left(60), "about 1\u{a0}min left");
+        assert_eq!(left(150), "about 3\u{a0}min left");
+        assert_eq!(left(3_599), "about 1\u{a0}h left");
+        assert_eq!(left(3_600), "about 1\u{a0}h left");
+        assert_eq!(left(7_890), "about 2\u{a0}h 10\u{a0}min left");
         assert_eq!(left(90_000), "more than a day left");
         let took = |secs| super::took_words(Duration::from_secs(secs)).english();
-        assert_eq!(took(45), "45 s");
-        assert_eq!(took(180), "3 min");
-        assert_eq!(took(200), "3 min 20 s");
-        assert_eq!(took(3_900), "1 h 5 min");
-        assert_eq!(took(7_230), "2 h");
+        assert_eq!(took(45), "45\u{a0}s");
+        assert_eq!(took(180), "3\u{a0}min");
+        assert_eq!(took(200), "3\u{a0}min 20\u{a0}s");
+        assert_eq!(took(3_900), "1\u{a0}h 5\u{a0}min");
+        assert_eq!(took(7_230), "2\u{a0}h");
     }
 
     /// Counted as the setting says (ADR-139, 9): a thousand to the next by
@@ -325,17 +314,17 @@ mod tests {
     #[test]
     fn sizes() {
         use skwir_core::fs::{SizeUnits, size_said_in};
-        assert_eq!(super::size(0), "0 B");
-        assert_eq!(super::size(999), "999 B");
-        assert_eq!(super::size(1000), "1.0 kB");
-        assert_eq!(super::size(1536), "1.5 kB");
-        assert_eq!(super::size(5_000_000), "5.0 MB");
+        assert_eq!(super::size(0), "0\u{a0}B");
+        assert_eq!(super::size(999), "999\u{a0}B");
+        assert_eq!(super::size(1000), "1.0\u{a0}kB");
+        assert_eq!(super::size(1536), "1.5\u{a0}kB");
+        assert_eq!(super::size(5_000_000), "5.0\u{a0}MB");
         let binary = |bytes| size_said_in(bytes, SizeUnits::Binary);
-        assert_eq!(binary(1023), "1,023 B");
-        assert_eq!(binary(1024), "1.0 KiB");
-        assert_eq!(binary(1536), "1.5 KiB");
-        assert_eq!(binary(5 * 1024 * 1024), "5.0 MiB");
-        assert_eq!(binary(4_000_000_000_000), "3.6 TiB");
+        assert_eq!(binary(1023), "1,023\u{a0}B");
+        assert_eq!(binary(1024), "1.0\u{a0}KiB");
+        assert_eq!(binary(1536), "1.5\u{a0}KiB");
+        assert_eq!(binary(5 * 1024 * 1024), "5.0\u{a0}MiB");
+        assert_eq!(binary(4_000_000_000_000), "3.6\u{a0}TiB");
     }
 
     #[test]
@@ -385,18 +374,21 @@ mod tests {
 
     #[test]
     fn counts_agree_in_number() {
-        assert_eq!(super::count(1, "item"), "1 item");
-        assert_eq!(super::count(0, "item"), "0 items");
-        assert_eq!(super::count(1200, "item"), "1,200 items");
+        assert_eq!(super::items(1), "1 item");
+        assert_eq!(super::items(0), "0 items");
+        assert_eq!(super::items(1200), "1,200 items");
     }
 
     /// A picture's size groups its digits as every count does, as the
-    /// reader's numbers are grouped.
+    /// reader's numbers are grouped, and keeps on one line.
     #[test]
     fn dimensions_group_their_digits_as_counts_do() {
-        assert_eq!(super::dimensions(4032, 3024), "4,032 × 3,024");
+        assert_eq!(super::dimensions(4032, 3024), "4,032\u{a0}×\u{a0}3,024");
         skwir_core::locale::set_formats(Some("fr".into()), None);
-        assert_eq!(super::dimensions(4032, 3024), "4\u{202f}032 × 3\u{202f}024");
+        assert_eq!(
+            super::dimensions(4032, 3024),
+            "4\u{202f}032\u{a0}×\u{a0}3\u{202f}024"
+        );
         skwir_core::locale::set_formats(None, None);
     }
 
@@ -410,10 +402,12 @@ mod tests {
     }
 
     #[test]
-    fn thousands() {
-        assert_eq!(super::thousands(0), "0");
-        assert_eq!(super::thousands(999), "999");
-        assert_eq!(super::thousands(1000), "1,000");
-        assert_eq!(super::thousands(1_234_567), "1,234,567");
+    fn a_count_alone_is_written_as_the_language_writes_numbers() {
+        skwir_core::locale::set_formats(Some("en".into()), None);
+        assert_eq!(super::number(999), "999");
+        assert_eq!(super::number(1_234_567), "1,234,567");
+        skwir_core::locale::set_formats(Some("fr".into()), None);
+        assert_eq!(super::number(1_234_567), "1\u{202f}234\u{202f}567");
+        skwir_core::locale::set_formats(None, None);
     }
 }

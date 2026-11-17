@@ -1423,8 +1423,8 @@ pub(crate) fn plan_geotag(
     if offset_seconds != 0 {
         notes.push(words!(
             geo_clocks_corrected = "{ $sign ->
-                [plus] cameras' clocks corrected by +{ $seconds } s
-               *[minus] cameras' clocks corrected by −{ $seconds } s
+                [plus] cameras' clocks corrected by +{ $seconds }\u{a0}s
+               *[minus] cameras' clocks corrected by −{ $seconds }\u{a0}s
             }",
             sign = if offset_seconds > 0 { "plus" } else { "minus" },
             seconds = offset_seconds.unsigned_abs(),
@@ -2384,7 +2384,7 @@ mod tests {
             "{why}"
         );
         assert!(
-            why.ends_with("cameras' clocks corrected by +7,200 s"),
+            why.ends_with("cameras' clocks corrected by +7,200\u{a0}s"),
             "{why}"
         );
     }

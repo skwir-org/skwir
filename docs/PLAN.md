@@ -3716,11 +3716,16 @@ is not Skwir's to translate). Left, from
   from shared-mime-info's translations; agents read English formats. The
   timeline's months and bars, the groups' years and the facets' dates
   are moments (periods on the Gregorian calendar the counting uses), a
-  picture's dimensions grouped counts. The dates setting's ISO choice
+  picture's dimensions grouped counts. A number and its unit, and a
+  dimension's numbers and their ×, are joined by a no-break space, so a
+  line never parts them (`just words --check` refuses an English that
+  parts them, the catalogs' test a translation). The dates setting's ISO choice
   stays ISO in the window. Left: the ISO choice is the window's, so the
   plugins' dates (the query's chips, geo's, print's, git's) cannot follow
   it (a core knob `Moment` reads, to decide with the user: what ISO
-  writes for a month); idle memory with the data (ICU4X's compiled data
+  writes for a month); a photo's facts read from its EXIF (exposure,
+  aperture, focal length, position) are written by the code, with
+  English's decimal point; idle memory with the data (ICU4X's compiled data
   holds every locale: a data export for the languages shipped is the
   lighter way).
   - ICU4X's decimal, list and datetime, with data for English and the

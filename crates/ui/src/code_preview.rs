@@ -186,10 +186,17 @@ impl CodeRow<'_> {
                         .rounded_sm()
                         .bg(theme.code_bg)
                         .text_color(theme.text_muted)
-                        .child(format!(
-                            "… {}",
-                            crate::format::count(range.end - range.start - 1, "line")
-                        )),
+                        .child(
+                            skwir_core::words!(
+                                code_preview_folded = "… { $count ->
+                                    [one] { $count } line
+                                   *[other] { $count } lines
+                                }",
+                                count = range.end - range.start - 1,
+                                note = "What stands for a folded block of code: how many lines it hides."
+                            )
+                            .say(),
+                        ),
                 )
             })
             .into_any_element()

@@ -165,7 +165,7 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
         .filter(|factor| (factor - 1.).abs() > f32::EPSILON)
     {
         Some(factor) => words!(
-            about_text_scaled = "{ $font } { $px } px ({ $pt } pt) { $source }, text scaling { $scaling }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }",
+            about_text_scaled = "{ $font } { $px }\u{a0}px ({ $pt }\u{a0}pt) { $source }, text scaling { $scaling }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }",
             font = font,
             px = px,
             pt = pt,
@@ -178,7 +178,7 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
             note = "In About, the interface's font and size, where they were read and the desktop's text scaling (1.25), then each part's text size (100%)."
         ),
         None => words!(
-            about_text = "{ $font } { $px } px ({ $pt } pt) { $source }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }",
+            about_text = "{ $font } { $px }\u{a0}px ({ $pt }\u{a0}pt) { $source }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }",
             font = font,
             px = px,
             pt = pt,

@@ -1513,7 +1513,10 @@ mod tests {
             let (label, value) = &drawing.details[at];
             (label.english(), value.clone())
         };
-        assert_eq!(fact(0), ("Size".to_owned(), "100 × 50 mm".to_owned()));
+        assert_eq!(
+            fact(0),
+            ("Size".to_owned(), "100\u{a0}×\u{a0}50\u{a0}mm".to_owned())
+        );
         // The hidden line counts: it is in the drawing.
         assert_eq!(fact(1), ("Entities".to_owned(), "5".to_owned()));
         assert_eq!(fact(2), ("Blocks".to_owned(), "1".to_owned()));

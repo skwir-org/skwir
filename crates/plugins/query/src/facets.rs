@@ -126,7 +126,7 @@ pub fn sizes() -> Presets {
         ),
         (
             words!(
-                query_size_under_100 = "Under 100 { $unit }",
+                query_size_under_100 = "Under 100\u{a0}{ $unit }",
                 unit = k,
                 note = "A size a search offers; unit: a unit of size as the size setting writes it (kB, KiB)."
             ),
@@ -134,7 +134,7 @@ pub fn sizes() -> Presets {
         ),
         (
             words!(
-                query_size_under_1 = "Under 1 { $unit }",
+                query_size_under_1 = "Under 1\u{a0}{ $unit }",
                 unit = m,
                 note = "A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB)."
             ),
@@ -142,7 +142,7 @@ pub fn sizes() -> Presets {
         ),
         (
             words!(
-                query_size_1_to_100 = "1 to 100 { $unit }",
+                query_size_1_to_100 = "1 to 100\u{a0}{ $unit }",
                 unit = m,
                 note = "A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB)."
             ),
@@ -150,7 +150,7 @@ pub fn sizes() -> Presets {
         ),
         (
             words!(
-                query_size_over_100 = "Over 100 { $unit }",
+                query_size_over_100 = "Over 100\u{a0}{ $unit }",
                 unit = m,
                 note = "A size a search offers; unit: a unit of size as the size setting writes it (MB, MiB)."
             ),
@@ -158,7 +158,7 @@ pub fn sizes() -> Presets {
         ),
         (
             words!(
-                query_size_over_1 = "Over 1 { $unit }",
+                query_size_over_1 = "Over 1\u{a0}{ $unit }",
                 unit = g,
                 note = "A size a search offers; unit: a unit of size as the size setting writes it (GB, GiB)."
             ),

@@ -163,13 +163,13 @@ circuits_layer_top_paste = Top paste
 circuits_layer_top_silk = Top silkscreen
 
 # A length in Properties (a board's thickness, a drill's size). mm: the number of millimetres.
-circuits_millimetres = { $mm } mm
+circuits_millimetres = { $mm } mm
 
 # A size in Properties: a board's or a layer's width by its height. width, height: numbers of millimetres.
-circuits_millimetres_by = { $width } × { $height } mm
+circuits_millimetres_by = { $width } × { $height } mm
 
 # Beside Sizes in a drill file's Properties: its smallest and largest drill bits. smallest, largest: numbers of millimetres.
-circuits_millimetres_range = { $smallest } to { $largest } mm
+circuits_millimetres_range = { $smallest } to { $largest } mm
 
 # How a footprint's component is fixed to the board, beside Mounting in Properties: soldered on the surface.
 circuits_mounting_smd = Surface mount

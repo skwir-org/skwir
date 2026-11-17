@@ -918,7 +918,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .child(
                 div()
                     .text_color(theme.text_muted)
-                    .child(crate::format::thousands(files)),
+                    .child(crate::format::number(files)),
             )
     };
     let colors = &shell.tag_colors;

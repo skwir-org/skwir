@@ -121,7 +121,7 @@ pub fn size_words_in(bytes: u64, units: SizeUnits) -> crate::words::Words {
     use crate::words::Decimal;
     if bytes < units.base() {
         return words!(
-            fs_size_bytes = "{ $n } B",
+            fs_size_bytes = "{ $n }\u{a0}B",
             n = i64::try_from(bytes).unwrap_or(i64::MAX),
             note = "A size in bytes, as a file's size is shown (999 B). B is the symbol of a byte."
         );
@@ -135,23 +135,23 @@ pub fn size_words_in(bytes: u64, units: SizeUnits) -> crate::words::Words {
     let n = Decimal::of(value, 1);
     match (units, power) {
         (SizeUnits::Decimal, 1) => words!(
-            fs_size_kb = "{ $n } kB",
+            fs_size_kb = "{ $n }\u{a0}kB",
             n = n,
             note = "A size in kilobytes (1000 bytes): n has one digit after the decimal sign (1.5 kB). Symbols of 1000-based units: kB, MB, GB, TB, PB."
         ),
-        (SizeUnits::Decimal, 2) => words!(fs_size_mb = "{ $n } MB", n = n),
-        (SizeUnits::Decimal, 3) => words!(fs_size_gb = "{ $n } GB", n = n),
-        (SizeUnits::Decimal, 4) => words!(fs_size_tb = "{ $n } TB", n = n),
-        (SizeUnits::Decimal, _) => words!(fs_size_pb = "{ $n } PB", n = n),
+        (SizeUnits::Decimal, 2) => words!(fs_size_mb = "{ $n }\u{a0}MB", n = n),
+        (SizeUnits::Decimal, 3) => words!(fs_size_gb = "{ $n }\u{a0}GB", n = n),
+        (SizeUnits::Decimal, 4) => words!(fs_size_tb = "{ $n }\u{a0}TB", n = n),
+        (SizeUnits::Decimal, _) => words!(fs_size_pb = "{ $n }\u{a0}PB", n = n),
         (SizeUnits::Binary, 1) => words!(
-            fs_size_kib = "{ $n } KiB",
+            fs_size_kib = "{ $n }\u{a0}KiB",
             n = n,
             note = "A size in kibibytes (1024 bytes): n has one digit after the decimal sign (1.5 KiB). Symbols of 1024-based units: KiB, MiB, GiB, TiB, PiB."
         ),
-        (SizeUnits::Binary, 2) => words!(fs_size_mib = "{ $n } MiB", n = n),
-        (SizeUnits::Binary, 3) => words!(fs_size_gib = "{ $n } GiB", n = n),
-        (SizeUnits::Binary, 4) => words!(fs_size_tib = "{ $n } TiB", n = n),
-        (SizeUnits::Binary, _) => words!(fs_size_pib = "{ $n } PiB", n = n),
+        (SizeUnits::Binary, 2) => words!(fs_size_mib = "{ $n }\u{a0}MiB", n = n),
+        (SizeUnits::Binary, 3) => words!(fs_size_gib = "{ $n }\u{a0}GiB", n = n),
+        (SizeUnits::Binary, 4) => words!(fs_size_tib = "{ $n }\u{a0}TiB", n = n),
+        (SizeUnits::Binary, _) => words!(fs_size_pib = "{ $n }\u{a0}PiB", n = n),
     }
 }
 

@@ -880,7 +880,7 @@ mod tests {
         );
         assert_eq!(
             kept.words().map(|words| words.english()).as_deref(),
-            Some("1 file has names elsewhere: the disk keeps its 100 B")
+            Some("1 file has names elsewhere: the disk keeps its 100\u{a0}B")
         );
         assert_eq!(
             kept_by_other_names([&a, &b, &alone]).unwrap().words(),

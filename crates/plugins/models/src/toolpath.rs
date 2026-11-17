@@ -769,7 +769,10 @@ mod tests {
             .unwrap()
             .expect("drawn");
         assert_eq!(drawn.picture.width.max(drawn.picture.height), 256);
-        assert_eq!(drawn.details[0].1, "20 × 20 × 1.8 mm");
+        assert_eq!(
+            drawn.details[0].1,
+            "20\u{a0}×\u{a0}20\u{a0}×\u{a0}1.8\u{a0}mm"
+        );
         // Extrusions in the external perimeter's orange, on nothing.
         let pixels = drawn.picture.rgba.as_chunks::<4>().0;
         assert!(

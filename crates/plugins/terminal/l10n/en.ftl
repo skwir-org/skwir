@@ -28,7 +28,7 @@ terminal_scrollback = History
 terminal_scrollback_description = How many lines you can scroll back to, for terminals opened from now on, at most { $most }.
 
 # What a setting's description says after its first sentence, in its tooltip: how much memory 10,000 lines take.
-terminal_scrollback_description_more = Once full, every { $lines } lines of a wide terminal take about 30 MB.
+terminal_scrollback_description_more = Once full, every { $lines } lines of a wide terminal take about 30 MB.
 
 # The unit of how many lines a terminal keeps, after its number in the settings (10,000 lines).
 terminal_scrollback_lines = { $n ->

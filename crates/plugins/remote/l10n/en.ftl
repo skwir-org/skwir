@@ -1241,7 +1241,7 @@ remote_uploads_mount_gone = rclone's mount of “{ $path }” is gone before its
 remote_uploads_never_queued = “{ $path }” never reached rclone's queue: a program still holds it open there, and the server does not have it
 
 # seconds: how long it was waited for; s: seconds.
-remote_uploads_no_answer = rclone did not answer within { $seconds } s: its server may have stopped answering
+remote_uploads_no_answer = rclone did not answer within { $seconds } s: its server may have stopped answering
 
 remote_uploads_no_cache_mode = rclone did not say which cache it keeps
 

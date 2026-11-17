@@ -348,7 +348,7 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
             (
                 units.bytes(100, 1),
                 words!(
-                    query_group_under_100 = "Under 100 { $unit }",
+                    query_group_under_100 = "Under 100\u{a0}{ $unit }",
                     unit = k,
                     note = "A group's heading, grouped by size. unit: a unit of size, as sizes are shown (kB, KiB)."
                 )
@@ -358,7 +358,7 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
             (
                 units.bytes(1, 2),
                 words!(
-                    query_group_100_to_1 = "100 { $unit } to 1 { $next }",
+                    query_group_100_to_1 = "100\u{a0}{ $unit } to 1\u{a0}{ $next }",
                     unit = k,
                     next = m,
                     note = "A group's heading, grouped by size. unit and next: units of size, as sizes are shown (kB and MB)."
@@ -369,7 +369,7 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
             (
                 units.bytes(100, 2),
                 words!(
-                    query_group_1_to_100 = "1 to 100 { $unit }",
+                    query_group_1_to_100 = "1 to 100\u{a0}{ $unit }",
                     unit = m,
                     note = "A group's heading, grouped by size. unit: a unit of size, as sizes are shown (MB, MiB)."
                 )
@@ -379,7 +379,7 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
             (
                 units.bytes(1, 3),
                 words!(
-                    query_group_100_to_1 = "100 { $unit } to 1 { $next }",
+                    query_group_100_to_1 = "100\u{a0}{ $unit } to 1\u{a0}{ $next }",
                     unit = m,
                     next = g,
                     note = "A group's heading, grouped by size. unit and next: units of size, as sizes are shown (kB and MB)."
@@ -390,7 +390,7 @@ fn sizes() -> (Vec<(u64, String, String)>, (String, String)) {
         ],
         (
             words!(
-                query_group_over_1 = "Over 1 { $unit }",
+                query_group_over_1 = "Over 1\u{a0}{ $unit }",
                 unit = g,
                 note = "A group's heading, grouped by size. unit: a unit of size, as sizes are shown (GB, GiB)."
             )
@@ -444,28 +444,28 @@ fn by_dimensions() -> Keyer {
         (
             1_000_000,
             words!(
-                query_group_under_1_mp = "Under 1 MP",
+                query_group_under_1_mp = "Under 1\u{a0}MP",
                 note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
             ),
         ),
         (
             4_000_000,
             words!(
-                query_group_1_to_4_mp = "1 to 4 MP",
+                query_group_1_to_4_mp = "1 to 4\u{a0}MP",
                 note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
             ),
         ),
         (
             12_000_000,
             words!(
-                query_group_4_to_12_mp = "4 to 12 MP",
+                query_group_4_to_12_mp = "4 to 12\u{a0}MP",
                 note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
             ),
         ),
         (
             24_000_000,
             words!(
-                query_group_12_to_24_mp = "12 to 24 MP",
+                query_group_12_to_24_mp = "12 to 24\u{a0}MP",
                 note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
             ),
         ),
@@ -488,7 +488,7 @@ fn by_dimensions() -> Keyer {
     let over = Arc::new(Group::ranked(
         6,
         &words!(
-            query_group_over_24_mp = "Over 24 MP",
+            query_group_over_24_mp = "Over 24\u{a0}MP",
             note = "A group's heading, grouped by a picture's dimensions: MP, megapixels."
         )
         .say(),
@@ -1266,14 +1266,14 @@ mod tests {
             sizes.map(of),
             [
                 "Empty",
-                "Under 100 kB",
-                "Under 100 kB",
-                "100 kB to 1 MB",
-                "100 kB to 1 MB",
-                "1 to 100 MB",
-                "100 MB to 1 GB",
-                "100 MB to 1 GB",
-                "Over 1 GB",
+                "Under 100\u{a0}kB",
+                "Under 100\u{a0}kB",
+                "100\u{a0}kB to 1\u{a0}MB",
+                "100\u{a0}kB to 1\u{a0}MB",
+                "1 to 100\u{a0}MB",
+                "100\u{a0}MB to 1\u{a0}GB",
+                "100\u{a0}MB to 1\u{a0}GB",
+                "Over 1\u{a0}GB",
             ]
         );
         // Each group kept by a term in the same units, which the query reads

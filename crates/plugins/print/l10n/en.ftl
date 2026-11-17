@@ -477,7 +477,7 @@ print_smaller = Smaller file
 print_smaller_folder = A folder to make the PDF smaller in
 
 # Under the Smaller file switch. Reduce Size is a command's name and Screen its card's, as their own words say them.
-print_smaller_help = Pictures in it at most 150 dpi, as Reduce Size's Screen
+print_smaller_help = Pictures in it at most 150 dpi, as Reduce Size's Screen
 
 # Two sentences said one after the other in a notice; the first has no full stop of its own.
 print_then = { $said }. { $then }
