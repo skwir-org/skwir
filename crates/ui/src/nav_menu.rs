@@ -23,6 +23,8 @@ use gpui::{
     UniformListScrollHandle, Window, div, prelude::*, px,
 };
 use skwir_core::os_path::PathArg;
+use skwir_core::words;
+use skwir_core::words::Name;
 use skwir_core::workspace::PaneId;
 
 use crate::keymap::RunCommand;
@@ -275,8 +277,17 @@ impl Shell {
                 let inside = match read {
                     Ok(inside) => inside,
                     Err(error) => {
-                        let name = shell.app.location_title(&of).say();
-                        shell.set_status(format!("Could not read “{name}”: {error}"), true, cx);
+                        let name = Name(shell.app.location_title(&of).say());
+                        shell.set_status(
+                            words!(
+                                nav_menu_unreadable = "Could not read { $name }: { $error }",
+                                name = name,
+                                error = anyhow::Error::from(error),
+                                note = "The menu of the folders inside a place could not be made; name: the place's name; error: why."
+                            ),
+                            true,
+                            cx,
+                        );
                         return;
                     }
                 };
@@ -430,10 +441,26 @@ fn inside_rows(
         rule: false,
     };
     if total == 0 {
-        rows.push(note("Nothing inside".to_owned(), false, ""));
+        rows.push(note(
+            words!(
+                nav_menu_nothing_inside = "Nothing inside",
+                note = "The menu of the folders inside a place, when it holds none."
+            )
+            .say(),
+            false,
+            "",
+        ));
     } else if total > FOLDER_ROWS {
         rows.push(note(
-            format!("{} more: open it", total - FOLDER_ROWS),
+            words!(
+                nav_menu_more = "{ $count ->
+                    [one] { $count } more: open it
+                   *[other] { $count } more: open it
+                }",
+                count = total - FOLDER_ROWS,
+                note = "The last row of the menu of the folders inside a place, when it lists only some: how many it leaves out; choosing it opens the place."
+            )
+            .say(),
             true,
             "open",
         ));

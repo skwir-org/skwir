@@ -39,6 +39,8 @@ use skwir_core::CancelToken;
 use skwir_core::app::App;
 use skwir_core::entry::EntryId;
 use skwir_core::metadata::{same_tag, tag_leaf, tag_under, tag_within};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
@@ -79,7 +81,180 @@ pub struct Offer {
     pub kinds: Vec<Count<Kind>>,
     pub years: Vec<Count<i64>>,
     /// Nothing offered, every file known: what they all are.
-    pub alike: Option<String>,
+    pub alike: Option<Alike>,
+}
+
+/// What files all are, when nothing tells them apart: how many, their
+/// kind, their year, as data; said where it is drawn (`Alike::words`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Alike {
+    files: usize,
+    kind: Option<Kind>,
+    year: Option<i64>,
+}
+
+impl Alike {
+    /// `all 12 files are images from 2024`, `one file (image, 2024)`.
+    pub fn words(self) -> Words {
+        if self.files == 1 {
+            return match (self.kind, self.year) {
+                (None, None) => words!(
+                    quick_filters_alike_one = "one file",
+                    note = "Quick filters have nothing to offer: there is one file. Inside a sentence: Nothing to filter: one file."
+                ),
+                (Some(kind), None) => words!(
+                    quick_filters_alike_one_kind = "one file ({ $kind })",
+                    kind = kind_of_one(kind),
+                    note = "Quick filters have nothing to offer: there is one file, of this kind (image)."
+                ),
+                (None, Some(year)) => words!(
+                    quick_filters_alike_one_year = "one file ({ $year })",
+                    year = year.to_string(),
+                    note = "Quick filters have nothing to offer: there is one file, modified that year (2024)."
+                ),
+                (Some(kind), Some(year)) => words!(
+                    quick_filters_alike_one_kind_year = "one file ({ $kind }, { $year })",
+                    kind = kind_of_one(kind),
+                    year = year.to_string(),
+                    note = "Quick filters have nothing to offer: there is one file, of this kind (image), modified that year (2024)."
+                ),
+            };
+        }
+        match (self.kind, self.year) {
+            (Some(kind), Some(year)) => words!(
+                quick_filters_alike_kind_year = "{ $count ->
+                   *[other] all { $count } files are { $kind } from { $year }
+                }",
+                count = self.files,
+                kind = kind_of_all(kind),
+                year = year.to_string(),
+                note = "Quick filters have nothing to offer: every file is of this kind (images), modified that year (2024)."
+            ),
+            (Some(kind), None) => words!(
+                quick_filters_alike_kind = "{ $count ->
+                   *[other] all { $count } files are { $kind }
+                }",
+                count = self.files,
+                kind = kind_of_all(kind),
+                note = "Quick filters have nothing to offer: every file is of this kind (images)."
+            ),
+            (None, Some(year)) => words!(
+                quick_filters_alike_year = "{ $count ->
+                   *[other] all { $count } files are from { $year }
+                }",
+                count = self.files,
+                year = year.to_string(),
+                note = "Quick filters have nothing to offer: every file was modified that year (2024)."
+            ),
+            (None, None) => words!(
+                quick_filters_alike = "{ $count ->
+                   *[other] all { $count } files are alike
+                }",
+                count = self.files,
+                note = "Quick filters have nothing to offer: nothing tells the files apart."
+            ),
+        }
+    }
+}
+
+/// What one file of `kind` is, inside a sentence.
+fn kind_of_one(kind: Kind) -> Words {
+    match kind {
+        Kind::Folder => words!(
+            quick_filters_one_folder = "folder",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Image => words!(
+            quick_filters_one_image = "image",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Video => words!(
+            quick_filters_one_video = "video",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Audio => words!(
+            quick_filters_one_audio = "audio",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Document => words!(
+            quick_filters_one_document = "document",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Spreadsheet => words!(
+            quick_filters_one_spreadsheet = "spreadsheet",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Presentation => words!(
+            quick_filters_one_presentation = "presentation",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Text => words!(
+            quick_filters_one_text = "text",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Archive => words!(
+            quick_filters_one_archive = "archive",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Font => words!(
+            quick_filters_one_font = "font",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+        Kind::Program => words!(
+            quick_filters_one_program = "program",
+            note = "Inside a sentence, what one file is: one file (image, 2024)."
+        ),
+    }
+}
+
+/// What files of `kind` all are, inside a sentence.
+fn kind_of_all(kind: Kind) -> Words {
+    match kind {
+        Kind::Folder => words!(
+            quick_filters_all_folder = "folders",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Image => words!(
+            quick_filters_all_image = "images",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Video => words!(
+            quick_filters_all_video = "videos",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Audio => words!(
+            quick_filters_all_audio = "music and audio",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Document => words!(
+            quick_filters_all_document = "documents",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Spreadsheet => words!(
+            quick_filters_all_spreadsheet = "spreadsheets",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Presentation => words!(
+            quick_filters_all_presentation = "presentations",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Text => words!(
+            quick_filters_all_text = "text and code",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Archive => words!(
+            quick_filters_all_archive = "archives",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Font => words!(
+            quick_filters_all_font = "fonts",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+        Kind::Program => words!(
+            quick_filters_all_program = "programs",
+            note = "Inside a sentence, what several files all are: all 12 files are images."
+        ),
+    }
 }
 
 impl Offer {
@@ -559,7 +734,7 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
 
 /// What `files` all are, when nothing tells them apart: `all 12 files are
 /// images from 2024`, `one file (image, 2024)`.
-fn alike(files: &[File]) -> Option<String> {
+fn alike(files: &[File]) -> Option<Alike> {
     let first = files.first()?;
     let kind = first
         .kinds
@@ -569,25 +744,10 @@ fn alike(files: &[File]) -> Option<String> {
     let year = first
         .year
         .filter(|y| files.iter().all(|f| f.year == Some(*y)));
-    if files.len() == 1 {
-        let said: Vec<String> = kind
-            .map(|k| k.name().to_owned())
-            .into_iter()
-            .chain(year.map(|y| y.to_string()))
-            .collect();
-        return Some(if said.is_empty() {
-            "one file".to_owned()
-        } else {
-            format!("one file ({})", said.join(", "))
-        });
-    }
-    let all = format!("all {} files are", crate::format::thousands(files.len()));
-    let kind = kind.map(|k| k.title().to_lowercase());
-    Some(match (kind, year) {
-        (Some(kind), Some(year)) => format!("{all} {kind} from {year}"),
-        (Some(kind), None) => format!("{all} {kind}"),
-        (None, Some(year)) => format!("{all} from {year}"),
-        (None, None) => format!("{all} alike"),
+    Some(Alike {
+        files: files.len(),
+        kind,
+        year,
     })
 }
 
@@ -603,24 +763,53 @@ struct Read {
 fn why_empty(quick: &QuickFilters) -> String {
     let files = quick.files;
     if !quick.answered {
-        "Counting the files…".to_owned()
-    } else if files.unknown > 0 {
-        format!(
-            "Reading the details of {}…",
-            crate::format::files(files.unknown)
+        words!(
+            quick_filters_counting = "Counting the files…",
+            note = "The Quick filters bar, while it counts what it can offer."
         )
+    } else if files.unknown > 0 {
+        reading(files.unknown)
     } else if files.files == 0 && files.listed > 0 {
-        "Every file here is hidden by the filters".to_owned()
+        words!(
+            quick_filters_all_hidden = "Every file here is hidden by the filters",
+            note = "The Quick filters bar, where the filters chosen leave no file."
+        )
     } else if files.files == 0 && files.folders > 0 {
-        "No files here, only folders".to_owned()
+        words!(
+            quick_filters_only_folders = "No files here, only folders",
+            note = "The Quick filters bar, where there are only folders to filter, which it does not."
+        )
     } else if files.files == 0 {
-        "No files here".to_owned()
+        words!(
+            quick_filters_no_files = "No files here",
+            note = "The Quick filters bar, where there is nothing to filter."
+        )
     } else {
-        match &quick.offer.alike {
-            Some(alike) => format!("Nothing to filter: {alike}"),
-            None => "Nothing to filter".to_owned(),
+        match quick.offer.alike {
+            Some(alike) => words!(
+                quick_filters_nothing_alike = "Nothing to filter: { $alike }",
+                alike = alike.words(),
+                note = "The Quick filters bar, where nothing tells the files apart. alike: what they all are (all 12 files are images from 2024)."
+            ),
+            None => words!(
+                quick_filters_nothing = "Nothing to filter",
+                note = "The Quick filters bar, where nothing tells the files apart."
+            ),
         }
     }
+    .say()
+}
+
+/// The details of `files` files still being read, for the bar.
+fn reading(files: usize) -> Words {
+    words!(
+        quick_filters_reading = "Reading the details of { $count ->
+            [one] 1 file
+           *[other] { $count } files
+        }…",
+        count = files,
+        note = "The Quick filters bar, while it reads what the files' tags, kinds and dates are."
+    )
 }
 
 /// The bar of the pane being rendered: asked for, it always shows, saying
@@ -683,7 +872,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         n += 1;
         let command = command.clone();
         let tip: SharedString = if leave_out {
-            format!("{tip} · Alt+click: none tagged so").into()
+            words!(
+                quick_filters_tag_tip = "{ $tag } · Alt+click: none tagged so",
+                tag = tip,
+                note = "Pointing at a tag of the Quick filters bar: the tag, then that Alt and a click keeps the files without it."
+            )
+            .say()
+            .into()
         } else {
             tip.into()
         };
@@ -728,7 +923,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     };
     let colors = &shell.tag_colors;
     for (tag, inside) in &offer.within {
-        row = row.child(label(format!("In {}", tag_leaf(tag))));
+        row = row.child(label(
+            words!(
+                quick_filters_in_tag = "In { $tag }",
+                tag = tag_leaf(tag),
+                note = "A heading of the Quick filters bar, before the tags inside this tag."
+            )
+            .say(),
+        ));
         for c in inside {
             row = row.child(pill(
                 tag_leaf(&c.value).to_owned(),
@@ -742,7 +944,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         }
     }
     if !offer.related.is_empty() {
-        row = row.child(label("With".into()));
+        row = row.child(label(
+            words!(
+                quick_filters_with = "With",
+                note = "A heading of the Quick filters bar, before the other tags the files have."
+            )
+            .say(),
+        ));
         for c in &offer.related {
             row = row.child(pill(
                 tag_leaf(&c.value).to_owned(),
@@ -756,13 +964,19 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         }
     }
     if !offer.kinds.is_empty() {
-        row = row.child(label("Kind".into()));
+        row = row.child(label(
+            words!(
+                quick_filters_kind = "Kind",
+                note = "A heading of the Quick filters bar, before the kinds of files (Images, Documents)."
+            )
+            .say(),
+        ));
         for c in &offer.kinds {
             row = row.child(pill(
-                c.value.title().to_owned(),
+                c.value.words().say(),
                 c.files,
                 None,
-                c.value.title().to_owned(),
+                c.value.words().say(),
                 "kind",
                 c.value.name().to_owned(),
                 false,
@@ -770,13 +984,24 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         }
     }
     if !offer.years.is_empty() {
-        row = row.child(label("Modified".into()));
+        row = row.child(label(
+            words!(
+                quick_filters_modified = "Modified",
+                note = "A heading of the Quick filters bar, before the years the files were modified in."
+            )
+            .say(),
+        ));
         for c in &offer.years {
             row = row.child(pill(
                 c.value.to_string(),
                 c.files,
                 None,
-                format!("Modified in {}", c.value),
+                words!(
+                    quick_filters_modified_in = "Modified in { $year }",
+                    year = c.value.to_string(),
+                    note = "Pointing at a year of the Quick filters bar."
+                )
+                .say(),
                 "modified",
                 c.value.to_string(),
                 false,
@@ -787,10 +1012,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         row = row.child(said(why_empty(quick)));
     } else if quick.files.unknown > 0 {
         // What the details still read may offer more.
-        row = row.child(said(format!(
-            "Reading the details of {}…",
-            crate::format::files(quick.files.unknown)
-        )));
+        row = row.child(said(reading(quick.files.unknown).say()));
     }
     Some(row.into_any_element())
 }
@@ -1041,19 +1263,20 @@ mod tests {
             file(&[], &[Kind::Image], 2024),
             file(&[], &[Kind::Image], 2024),
         ];
+        let said = |files: &[File]| alike(files).map(|alike| alike.words().english());
         assert_eq!(
-            alike(&images).as_deref(),
+            said(&images).as_deref(),
             Some("all 2 files are images from 2024")
         );
         assert_eq!(
-            alike(&images[..1]).as_deref(),
+            said(&images[..1]).as_deref(),
             Some("one file (image, 2024)")
         );
         let mixed = [
             file(&[], &[Kind::Image], 2023),
             file(&[], &[Kind::Image], 2024),
         ];
-        assert_eq!(alike(&mixed).as_deref(), Some("all 2 files are images"));
+        assert_eq!(said(&mixed).as_deref(), Some("all 2 files are images"));
         assert_eq!(alike(&[]), None);
     }
 

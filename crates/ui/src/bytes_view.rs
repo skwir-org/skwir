@@ -163,7 +163,7 @@ impl BytesView {
                 chunk,
                 rows: previews
                     .inspect(&request, &view, cancel)
-                    .and_then(|page| page.ok_or_else(|| anyhow::anyhow!("no bytes view")))
+                    .and_then(|page| page.ok_or_else(no_view))
                     .map(|page| page.rows),
             },
         );
@@ -206,7 +206,7 @@ impl BytesView {
                 query,
                 answer: previews
                     .inspect(&request, &view, cancel)
-                    .and_then(|page| page.ok_or_else(|| anyhow::anyhow!("no bytes view")))
+                    .and_then(|page| page.ok_or_else(no_view))
                     .map(|page| (page.position, page.notice)),
             },
         );
@@ -345,7 +345,7 @@ impl Shell {
                         self.find_said(said, false, cx);
                     }
                 }
-                Err(error) => self.find_said(format!("{error:#}"), true, cx),
+                Err(error) => self.find_said(skwir_core::words::Words::of_error(error), true, cx),
             }
         }
         if changed {
@@ -369,7 +369,7 @@ impl Shell {
         };
         match action {
             "find" if args["back"].as_bool() == Some(true) => {
-                self.find_said("The hex view searches forward only", false, cx);
+                self.find_said(forward_only(), false, cx);
             }
             "find" => {
                 let query = args["value"].as_str().unwrap_or("").to_owned();
@@ -383,7 +383,7 @@ impl Shell {
             }
             "jump" => {
                 let Some(byte) = args["value"].as_str().and_then(offset) else {
-                    self.set_status("Enter a decimal or hexadecimal offset", true, cx);
+                    self.set_status(offset_refused(), true, cx);
                     return true;
                 };
                 let row = (byte / ROW).min(view.rows.saturating_sub(1));
@@ -411,6 +411,33 @@ impl Shell {
         }
         true
     }
+}
+
+/// What the bytes view's provider answered nothing for: it is gone.
+fn no_view() -> anyhow::Error {
+    skwir_core::words!(
+        bytes_no_view = "no bytes view",
+        note = "Why the bytes of a file cannot be read or searched: what shows them in hexadecimal is turned off."
+    )
+    .into()
+}
+
+/// The hex view's find, asked backwards.
+pub(crate) fn forward_only() -> skwir_core::words::Words {
+    skwir_core::words!(
+        bytes_forward_only = "The hex view searches forward only",
+        note =
+            "In the find field of a file's bytes shown in hexadecimal, asked for the match before."
+    )
+}
+
+/// An offset typed that is no number.
+pub(crate) fn offset_refused() -> skwir_core::words::Words {
+    skwir_core::words!(
+        bytes_offset_refused = "Enter a decimal or hexadecimal offset",
+        note =
+            "Said where what was typed to jump to in a file's bytes is no number (1024, or 0x400)."
+    )
 }
 
 #[cfg(test)]

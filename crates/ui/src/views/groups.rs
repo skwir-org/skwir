@@ -551,12 +551,32 @@ impl RowMap {
 pub fn label(span: &Span) -> Arc<str> {
     span.group
         .as_ref()
-        .map_or_else(|| Arc::from("Unknown"), |group| Arc::clone(&group.label))
+        .map_or_else(
+            || {
+                Arc::from(
+                    skwir_core::words!(
+                        views_group_unknown = "Unknown",
+                        note = "The heading of a group of files whose value is not known (no date taken, no size read)."
+                    )
+                    .say(),
+                )
+            },
+            |group| Arc::clone(&group.label),
+        )
 }
 
 /// What a screen reader hears of a group: "Today, 3 items".
 pub fn said(span: &Span) -> String {
-    format!("{}, {}", label(span), crate::format::items(span.count))
+    skwir_core::words!(
+        views_group_said = "{ $group }, { $count ->
+            [one] 1 item
+           *[other] { $count } items
+        }",
+        group = label(span).to_string(),
+        count = span.count,
+        note = "What a screen reader hears of a group's heading: its label (Today, Images), then how many it holds."
+    )
+    .say()
 }
 
 /// The heading of a group as a row `height` tall: its label in Body text,
@@ -589,14 +609,26 @@ pub fn fresh_heading(
     scale: Scale,
     theme: &Theme,
 ) -> Div {
-    let words = (Arc::clone(&fresh.group.label), "arriving".to_owned());
+    let words = (
+        Arc::clone(&fresh.group.label),
+        skwir_core::words!(
+            views_group_arriving = "arriving",
+            note = "Where a group's heading counts its files, for a group whose files a copy brings and none has arrived yet."
+        )
+        .say(),
+    );
     heading_saying(words, first, height, left, scale, theme, None)
         .opacity(crate::views::arriving::OPACITY)
 }
 
 /// What a screen reader hears of a group no file is in yet.
 pub fn fresh_said(fresh: &Fresh) -> String {
-    format!("{}, arriving", fresh.group.label)
+    skwir_core::words!(
+        views_group_said_arriving = "{ $group }, arriving",
+        group = fresh.group.label.to_string(),
+        note = "What a screen reader hears of a group whose files a copy brings, none arrived yet. group: its label."
+    )
+    .say()
 }
 
 /// A heading's row saying `(label, count)`: `heading`'s, a group's or one

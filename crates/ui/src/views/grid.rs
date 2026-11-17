@@ -35,6 +35,8 @@ use std::rc::Rc;
 use gpui::{AnyElement, Context, Window, div, prelude::*, px, size};
 use skwir_core::EntryId;
 use skwir_core::thumbs::ThumbSize;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::elements::uniform_grid::{
     GridGroups, HeadingAt, TileHeights, UniformGridScrollHandle, uniform_grid,
@@ -82,6 +84,153 @@ impl CaptionSpec {
         match self.caption {
             Caption::Tags => Some(skwir_core::SortKey::Tags),
             Caption::Detail(detail) => detail.column().sort,
+        }
+    }
+
+    /// What the View menu calls it: the title of the criterion it says
+    /// (`SortKey::title_words`), `label` as words.
+    pub fn label_words(&self) -> Words {
+        self.sorts_by().map_or_else(
+            || Words::as_written(self.label),
+            skwir_core::SortKey::title_words,
+        )
+    }
+
+    /// What Settings calls it, as words (`title` until every caller says
+    /// words).
+    pub fn title_words(&self) -> Words {
+        match self.caption {
+            Caption::Tags => words!(
+                grid_caption_tags_title = "Tags under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Folder) => words!(
+                grid_caption_folder_title = "Folder under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Deleted) => words!(
+                grid_caption_deleted_title = "Deletion under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Size) => words!(
+                grid_caption_size_title = "Size under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Dimensions) => words!(
+                grid_caption_dimensions_title = "Dimensions under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Duration) => words!(
+                grid_caption_duration_title = "Duration under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Modified) => words!(
+                grid_caption_modified_title = "Modification under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Created) => words!(
+                grid_caption_created_title = "Creation under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Accessed) => words!(
+                grid_caption_accessed_title = "Last access under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Taken) => words!(
+                grid_caption_taken_title = "When taken under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Type) => words!(
+                grid_caption_type_title = "Type under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Kind) => words!(
+                grid_caption_kind_title = "Kind under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Owner) => words!(
+                grid_caption_owner_title = "Owner under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Vcs) => words!(
+                grid_caption_vcs_title = "Git state under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Rating) => words!(
+                grid_caption_rating_title = "Rating under names",
+                note = "A setting's name: whether each tile of the grid says this under its name."
+            ),
+        }
+    }
+
+    /// What Settings says of it, as words (`description` until every
+    /// caller says words).
+    pub fn description_words(&self) -> Words {
+        match self.caption {
+            Caption::Tags => words!(
+                grid_caption_tags_description = "Under each name in the grid, a line of its tags, as many as fit, then dots. The picture is then left to itself.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Folder) => words!(
+                grid_caption_folder_description = "Under each name in the grid, the folder it is in, where files from many folders are listed: a search, a tag, the shelf, Recent.",
+                note = "A setting's description: whether each tile of the grid says this under its name. Recent is a place in the sidebar."
+            ),
+            Caption::Detail(Detail::Deleted) => words!(
+                grid_caption_deleted_description = "Under each name in the grid, when it was put in the trash, where the trash's files are listed.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Size) => words!(
+                grid_caption_size_description = "Under each name in the grid, the size of the file, or how many files a place holds.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Dimensions) => words!(
+                grid_caption_dimensions_description = "Under each name in the grid, a picture's size in pixels, where a plugin reads it.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Duration) => words!(
+                grid_caption_duration_description = "Under each name in the grid, how long a sound or a film lasts, where a plugin reads it.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Modified) => words!(
+                grid_caption_modified_description =
+                    "Under each name in the grid, when it last changed.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Created) => words!(
+                grid_caption_created_description =
+                    "Under each name in the grid, when it was made, where the system keeps it.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Accessed) => words!(
+                grid_caption_accessed_description =
+                    "Under each name in the grid, when it was last read, as the system keeps it.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Taken) => words!(
+                grid_caption_taken_description = "Under each name in the grid, when a picture or a film was taken, by its camera's clock, where a plugin reads it.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Type) => words!(
+                grid_caption_type_description =
+                    "Under each name in the grid, the kind of file, such as PDF document.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Kind) => words!(
+                grid_caption_kind_description = "Under each name in the grid, what kind of file it is, such as Image or Document.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Owner) => words!(
+                grid_caption_owner_description = "Under each name in the grid, who owns it.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
+            Caption::Detail(Detail::Vcs) => words!(
+                grid_caption_vcs_description = "Under each name in the grid, what Git says of it in a repository: changed, staged, new, in conflict or ignored.",
+                note = "A setting's description: whether each tile of the grid says this under its name. Git is a program's name."
+            ),
+            Caption::Detail(Detail::Rating) => words!(
+                grid_caption_rating_description = "Under each name in the grid, the stars it was given, where its notes are kept.",
+                note = "A setting's description: whether each tile of the grid says this under its name."
+            ),
         }
     }
 }

@@ -15,12 +15,12 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use skwir_core::App;
 use skwir_core::op::{Change, ExecEvent, PlanId, RunKind};
+use skwir_core::words;
 use skwir_core::words::Words;
 use skwir_core::workspace::WindowId;
 use skwir_platform::desktop::{Asked, Desktop, Kind, Notice, Presence, Progress, State};
 
 use crate::activity::{Ended, Stopped, Under, summary};
-use crate::format;
 use crate::toast::{self, Action, Running, Toast, Tone, capitalized};
 
 /// From how long an action ran the desktop is told that it ended while a
@@ -351,7 +351,7 @@ impl Work {
         // What waits first is read only while nothing runs, the strip
         // then saying what it waits for (never silent).
         let next = (plans.is_empty() && tasks.is_empty() && waiting > 0)
-            .then(|| app.executor.waiting().first().map(toast::waiting_words))
+            .then(|| app.executor.waiting().first().map(toast::waiting_next))
             .flatten();
         Under {
             plans,
@@ -748,15 +748,36 @@ impl Work {
             away.finished += 1;
         }
         let title = match (away.finished, away.stopped) {
-            (1, 0) => "Finished".to_owned(),
-            (0, 1) => "Stopped".to_owned(),
-            (finished, 0) => format!("{finished} actions finished"),
-            (0, stopped) => format!("{stopped} actions stopped"),
-            (finished, stopped) => format!(
-                "{} finished, {stopped} stopped",
-                format::count(finished, "action")
+            (finished, 0) => words!(
+                work_told_finished = "{ $count ->
+                    [1] Finished
+                   *[other] { $count } actions finished
+                }",
+                count = finished,
+                note = "The title of the desktop's notice of what ended while no one looked: \
+                        how many actions finished."
             ),
-        };
+            (0, stopped) => words!(
+                work_told_stopped = "{ $count ->
+                    [1] Stopped
+                   *[other] { $count } actions stopped
+                }",
+                count = stopped,
+                note = "The title of the desktop's notice of what ended while no one looked: \
+                        how many actions an error stopped."
+            ),
+            (finished, stopped) => words!(
+                work_told_finished_stopped = "{ $finished ->
+                    [one] { $finished } action
+                   *[other] { $finished } actions
+                } finished, { $stopped } stopped",
+                finished = finished,
+                stopped = stopped,
+                note = "The title of the desktop's notice of what ended while no one looked: \
+                        how many actions finished, how many an error stopped."
+            ),
+        }
+        .say();
         let kind = if away.stopped > 0 {
             Kind::Stopped
         } else {
@@ -785,11 +806,16 @@ impl Work {
             .earlier
             .iter()
             .find(|ended| ended.plan == Some(plan))
-            .map_or_else(|| Words::from(""), |ended| ended.text.clone());
+            .map_or_else(Words::default, |ended| ended.text.clone());
         desktop.notify(
             plan.0,
             Notice {
-                title: "Waiting for the server".to_owned(),
+                title: words!(
+                    work_told_waits_for_server = "Waiting for the server",
+                    note = "The title of the desktop's notice of an action its server stopped, \
+                            which goes on by itself once the server answers again."
+                )
+                .say(),
                 body: toast::goes_on(what).say(),
                 kind: Kind::Waiting,
             },
@@ -811,8 +837,19 @@ impl Work {
             desktop.notify(
                 ASKS,
                 Notice {
-                    title: "Skwir needs an answer".to_owned(),
-                    body: "An action waits for your answer: open Skwir to give it.".to_owned(),
+                    title: words!(
+                        work_told_asks = "Skwir needs an answer",
+                        note = "The title of the desktop's notice of a question waiting while \
+                                no window is up to ask it."
+                    )
+                    .say(),
+                    body: words!(
+                        work_told_asks_body =
+                            "An action waits for your answer: open Skwir to give it.",
+                        note = "The desktop's notice of a question waiting while no window is \
+                                up to ask it."
+                    )
+                    .say(),
                     kind: Kind::Waiting,
                 },
             );
@@ -887,10 +924,26 @@ impl Work {
 /// as the desktop lists it.
 pub(crate) fn why(under: &Under) -> String {
     match (under.plans.as_slice(), under.tasks.as_slice()) {
+        // Transitional: a plan's title capitalised (ADR-139).
         ([(running, _)], []) => capitalized(&running.title.say()),
-        ([], [task]) => capitalized(&task.title),
-        ([], []) => "Actions under way".to_owned(),
-        _ => format!("{} under way", format::count(under.count(), "action")),
+        // A task's title begins a sentence already (`task::Running`).
+        ([], [task]) => task.title.clone(),
+        ([], []) => words!(
+            work_why_under_way = "Actions under way",
+            note = "What the machine is kept awake for, and the session's end held off for, \
+                    as the desktop lists it."
+        )
+        .say(),
+        _ => words!(
+            work_why_actions = "{ $count ->
+                [one] { $count } action under way
+               *[other] { $count } actions under way
+            }",
+            count = under.count(),
+            note = "What the machine is kept awake for, and the session's end held off for, \
+                    as the desktop lists it: how many actions run."
+        )
+        .say(),
     }
 }
 

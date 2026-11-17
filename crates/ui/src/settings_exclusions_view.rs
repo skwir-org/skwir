@@ -29,6 +29,8 @@ use skwir_core::exclusions::{
 use skwir_core::registry::MenuItem;
 use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::settings::SettingSpec;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped;
@@ -81,11 +83,16 @@ pub(crate) struct ExclusionsPage {
     generation: u64,
     rows: RefCell<Option<(Asked, Rc<Vec<Row>>)>>,
     /// How many entries the dialog's search finds, for the rules'
-    /// generation and the words searched: not counted at each frame.
-    found: RefCell<Option<(u64, String, usize)>>,
+    /// generation, the words' revision (what a row says is searched in
+    /// the reader's language) and the words searched: not counted at each
+    /// frame.
+    found: RefCell<Option<(u64, u64, String, usize)>>,
     presence: Presence,
     /// What the last change did, said at the page's foot.
-    said: Option<String>,
+    said: Option<Words>,
+    /// The words' revision the filter's own words were said in
+    /// (`words::revision`): said again when the language moves.
+    said_in: u64,
     /// The row whose menu the window shows, while it does: the menu holds
     /// what this is a weak hold of (`SettingsMenu::held`).
     menu: Option<(Cursor, std::rc::Weak<()>)>,
@@ -125,13 +132,15 @@ struct Asked {
     changed_only: bool,
     folds: u64,
     here: u64,
+    /// What the rows say is found and ordered in the reader's language.
+    words: u64,
 }
 
 impl ExclusionsPage {
     pub fn new(cx: &mut App) -> Self {
         let filter = cx.new(|cx| {
-            let mut input = TextInput::new("Filter by name, path or what it is", cx);
-            input.set_label(format!("Filter {}", model::ENTRIES));
+            let mut input = TextInput::new(filter_placeholder().say(), cx);
+            input.set_label(filter_label().say());
             input
         });
         ExclusionsPage {
@@ -151,6 +160,7 @@ impl ExclusionsPage {
             found: RefCell::default(),
             presence: Presence::default(),
             said: None,
+            said_in: skwir_core::words::revision(),
             menu: None,
             menu_row: PopoverAnchor::default(),
             menu_area: PopoverAnchor::default(),
@@ -210,9 +220,19 @@ enum Item {
 /// agents with it unfolded.
 const SECRETS: &str = "skwir.secrets";
 
-/// An entry's menu's submenu of the categories it may move to.
-const MOVE_TO: skwir_core::registry::Submenu =
-    skwir_core::registry::Submenu::new("exclusions.move_to", "Move to");
+/// An entry's menu's submenu of the categories it may move to, its row's
+/// words said as the menu is made.
+fn move_to() -> skwir_core::registry::Submenu {
+    skwir_core::registry::Submenu {
+        id: "exclusions.move_to".into(),
+        title: words!(
+            exclusions_move_to = "Move to",
+            note = "A submenu of a row's menu on the Exclusions page: the categories the folder may move to."
+        )
+        .say()
+        .into(),
+    }
+}
 
 /// What the page asks in a modal of the dialog.
 enum Dialog {
@@ -266,9 +286,9 @@ struct EntryDialog {
     category_open: bool,
     category_anchor: PopoverAnchor,
     /// What is wrong, said under its field; worked out as it is typed.
-    problem: Option<(Field, String)>,
+    problem: Option<(Field, Words)>,
     /// What it means, said live.
-    means: Option<String>,
+    means: Option<Words>,
     /// What the name or path, the name beside it and the file held take.
     helps: [crate::reference::FieldHelp; 3],
     /// The entry already naming these folders: Show it instead.
@@ -330,7 +350,7 @@ impl EntryDialog {
 struct CategoryDialog {
     renaming: Option<String>,
     name: Entity<TextInput>,
-    problem: Option<String>,
+    problem: Option<Words>,
     cancel: FocusHandle,
     accept: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -339,8 +359,8 @@ struct CategoryDialog {
 /// A change that takes folders from agents, asked before it is saved.
 struct Asking {
     after: Catalog,
-    said: String,
-    folders: Vec<String>,
+    said: Words,
+    folders: Vec<Words>,
     keep: FocusHandle,
     expose: FocusHandle,
     scroll: gpui::ScrollHandle,
@@ -479,6 +499,7 @@ impl SettingsView {
             changed_only: page.changed_only,
             folds: page.folds,
             here: page.presence.generation,
+            words: skwir_core::words::revision(),
         };
         if let Some((kept, rows)) = page.rows.borrow().as_ref()
             && *kept == asked
@@ -506,7 +527,7 @@ impl SettingsView {
     fn propose_exclusions(
         &mut self,
         after: Catalog,
-        said: String,
+        said: Words,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -531,7 +552,7 @@ impl SettingsView {
     /// Save `after`: both tables, the 0.3.1 keys emptied where the file
     /// still holds them (what they said is in the tables now). What it did
     /// is said at the page's foot; a tick or a switch undoes itself.
-    fn save_exclusions(&mut self, after: Catalog, said: String, cx: &mut Context<Self>) {
+    fn save_exclusions(&mut self, after: Catalog, said: Words, cx: &mut Context<Self>) {
         let (categories, entries) = after.values();
         let mut changes = BTreeMap::from([
             (
@@ -559,9 +580,10 @@ impl SettingsView {
         self.exclusions.catalog.entries.iter().find(|e| e.id == id)
     }
 
-    fn exclusion_words(&self, id: &str) -> String {
+    /// The folder of the entry `id`, as its row writes it.
+    fn exclusion_words(&self, id: &str) -> Words {
         self.exclusion_entry(id)
-            .map_or_else(String::new, |e| model::pattern_of(&e.matcher))
+            .map_or_else(Words::default, |e| model::pattern_of(&e.matcher))
     }
 
     fn category_name(&self, id: &str) -> String {
@@ -583,7 +605,7 @@ impl SettingsView {
             .category(&entry.category)
             .is_some_and(|c| c.switches.get(role));
         let after = model::ticked(&catalog, id, role, on);
-        let said = model::said_tick(&model::pattern_of(&entry.matcher), role, on, category_on);
+        let said = model::said_tick(model::pattern_of(&entry.matcher), role, on, category_on);
         self.propose_exclusions(after, said, window, cx);
     }
 
@@ -606,7 +628,11 @@ impl SettingsView {
     fn remove_exclusion(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         match self.exclusion_entry(id) {
             Some(entry) if !entry.builtin => {
-                let said = format!("Removed {}", model::pattern_of(&entry.matcher));
+                let said = words!(
+                    exclusions_removed = "Removed { $folder }",
+                    folder = model::pattern_of(&entry.matcher),
+                    note = "Said on the Exclusions page after one of the user's exclusions is removed. folder: as its row writes it (~/VMs, holding .nosearch)."
+                );
                 // The cursor goes to the row after it, or before it.
                 let rows = self.exclusion_rows(cx);
                 let at = rows
@@ -623,9 +649,9 @@ impl SettingsView {
                 self.propose_exclusions(after, said, window, cx);
             }
             Some(_) => {
-                self.exclusions.said = Some(format!(
-                    "skwir's own {} are unticked, never removed",
-                    model::ENTRIES
+                self.exclusions.said = Some(words!(
+                    exclusions_never_removed = "skwir's own exclusions are unticked, never removed",
+                    note = "Said on the Exclusions page where Remove is asked of one of skwir's exclusions."
                 ));
                 cx.notify();
             }
@@ -643,11 +669,22 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // The filter's own words, said again when the language moved.
+        let revision = skwir_core::words::revision();
+        if self.exclusions.said_in != revision {
+            self.exclusions.said_in = revision;
+            self.exclusions.filter.update(cx, |input, cx| {
+                input.set_placeholder(filter_placeholder().say(), cx);
+                input.set_label(filter_label().say());
+            });
+        }
         let roles = self.handle("exclusions-role", cx);
         self.stop(&roles, None, None);
         let current = self.exclusions.role;
         let mut segmented = controls::segmented("exclusions-role", &roles, theme)
-            .when(self.a11y, |d| d.aria_label(model::EXCLUDED_FROM))
+            .when(self.a11y, |d| {
+                d.aria_label(model::excluded_from_label().say())
+            })
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 if matches!(event, ClickEvent::Keyboard(_)) {
                     this.exclusions.role = if current == Role::Searches {
@@ -664,7 +701,7 @@ impl SettingsView {
             segmented = segmented.child(
                 controls::segment(
                     SharedString::from(format!("exclusions-role-{}", role.key())),
-                    model::role_name(role),
+                    model::role_name(role).say(),
                     current == role,
                     theme,
                 )
@@ -722,7 +759,7 @@ impl SettingsView {
                                     .text_body()
                                     .whitespace_nowrap()
                                     .text_color(theme.text_muted)
-                                    .child(model::EXCLUDED_FROM),
+                                    .child(model::excluded_from_label().say()),
                             )
                             .child(segmented),
                     )
@@ -736,7 +773,11 @@ impl SettingsView {
                             .child(
                                 controls::button(
                                     "exclusions-add",
-                                    "Add…",
+                                    words!(
+                                        exclusions_add = "Add…",
+                                        note = "A button of the Exclusions page: opens the dialog that adds an exclusion."
+                                    )
+                                    .say(),
                                     Some("plus"),
                                     ButtonStyle::Plain,
                                     &add,
@@ -751,7 +792,11 @@ impl SettingsView {
                             .child(
                                 controls::button(
                                     "exclusions-new-category",
-                                    "New category…",
+                                    words!(
+                                        exclusions_new_category = "New category…",
+                                        note = "A button of the Exclusions page: opens the dialog that makes a category of the user's."
+                                    )
+                                    .say(),
                                     Some("folder-plus"),
                                     ButtonStyle::Plain,
                                     &new_category,
@@ -782,7 +827,11 @@ impl SettingsView {
                             .child(
                                 controls::check(
                                     "exclusions-here",
-                                    "Only on this computer",
+                                    words!(
+                                        exclusions_only_here = "Only on this computer",
+                                        note = "A check of the Exclusions page: lists only the folders that are on this computer."
+                                    )
+                                    .say(),
                                     self.exclusions.only_here,
                                     &here,
                                     theme,
@@ -797,7 +846,11 @@ impl SettingsView {
                             .child(
                                 controls::check(
                                     "exclusions-changed",
-                                    "Changed",
+                                    words!(
+                                        exclusions_changed_only = "Changed",
+                                        note = "A check of the Exclusions page: lists only what differs from skwir's exclusions (changed or added)."
+                                    )
+                                    .say(),
                                     self.exclusions.changed_only,
                                     &changed_focus,
                                     theme,
@@ -827,7 +880,7 @@ impl SettingsView {
         // until it is fixed, and is never erased by a change here.
         if let Some(problems) = model::unreadable(&self.exclusions.catalog) {
             bar = bar.child(
-                controls::noted("warning", theme.warning, 13., problems)
+                controls::noted("warning", theme.warning, 13., problems.say())
                     .text_body()
                     .text_color(theme.warning),
             );
@@ -852,17 +905,28 @@ impl SettingsView {
         if rows.is_empty() || waiting {
             let filter = self.exclusions.filter.read(cx).text().trim().to_owned();
             let said = if waiting {
-                "Looking for these files and folders on this computer…".to_owned()
+                words!(
+                    exclusions_looking = "Looking for these files and folders on this computer…",
+                    note = "The Exclusions page's list while it looks up which of its folders are on this computer."
+                )
             } else if !filter.is_empty() {
-                format!("No {} matches “{filter}”.", model::ENTRY)
+                words!(
+                    exclusions_none_match = "No exclusion matches “{ $filter }”.",
+                    filter = filter,
+                    note = "The Exclusions page's list when its filter finds nothing. filter: the words typed, as typed."
+                )
             } else if self.exclusions.changed_only {
-                format!(
-                    "You changed none of skwir's {} and added none yet.",
-                    model::ENTRIES
+                words!(
+                    exclusions_none_changed = "You changed none of skwir's exclusions and added none yet.",
+                    note = "The Exclusions page's list with Changed checked, when nothing differs from skwir's."
                 )
             } else {
-                format!("No {} here.", model::ENTRIES)
-            };
+                words!(
+                    exclusions_none_here = "No exclusions here.",
+                    note = "The Exclusions page's list when it lists nothing."
+                )
+            }
+            .say();
             return div()
                 .flex_1()
                 .min_h_0()
@@ -872,7 +936,7 @@ impl SettingsView {
                     div()
                         .id("exclusion-rows")
                         .role(gpui::Role::Group)
-                        .aria_label(page_title())
+                        .aria_label(page_name().say())
                         .track_focus(&focus)
                         .key_context("SettingExclusions")
                         .flex_1()
@@ -931,17 +995,20 @@ impl SettingsView {
                                     .text_body()
                                     .text_color(theme.text_muted),
                                 match why {
-                                    model::Narrowed::Here => {
-                                        "Nothing it names is on this computer".to_owned()
-                                    }
-                                    model::Narrowed::Found => {
-                                        format!("None of its {} is shown", model::ENTRIES)
-                                    }
-                                    model::Narrowed::No => format!(
-                                        "Nothing in it yet: Add… puts {} here, or Move to from a row's menu",
-                                        an(model::ENTRY)
+                                    model::Narrowed::Here => words!(
+                                        exclusions_empty_here = "Nothing it names is on this computer",
+                                        note = "In an unfolded category of the Exclusions page with Only on this computer checked, when none of its folders is here."
                                     ),
-                                },
+                                    model::Narrowed::Found => words!(
+                                        exclusions_empty_found = "None of its exclusions is shown",
+                                        note = "In an unfolded category of the Exclusions page when the filters keep none of its folders."
+                                    ),
+                                    model::Narrowed::No => words!(
+                                        exclusions_empty_category = "Nothing in it yet: Add… puts an exclusion here, or Move to from a row's menu",
+                                        note = "In an unfolded category of the Exclusions page that holds nothing. Add… and Move to are the names of a button and of a menu's row."
+                                    ),
+                                }
+                                .say(),
                             )
                             .into_any_element(),
                         };
@@ -970,7 +1037,18 @@ impl SettingsView {
                     .id("exclusion-rows")
                     .role(gpui::Role::Group)
                     .when(a11y, |d| {
-                        d.aria_label(format!("{} {}", page_title(), model::excluded_from(role)))
+                        d.aria_label(
+                            words!(
+                                exclusions_list_named = "{ $role ->
+                                    [searches] Exclusions excluded from searches and tags
+                                    [agents] Exclusions excluded from agents
+                                   *[index] Exclusions excluded from the index
+                                }",
+                                role = role.key(),
+                                note = "What a screen reader names the Exclusions page's list by: the page, and the role it shows."
+                            )
+                            .say(),
+                        )
                     })
                     .track_focus(&focus)
                     .key_context("SettingExclusions")
@@ -1000,7 +1078,7 @@ impl SettingsView {
     /// reader as it is said (a polite live region). No Undo: a tick or a
     /// switch undoes itself, as on every other page.
     fn exclusions_foot(&self, theme: &Theme) -> Option<AnyElement> {
-        let said = self.exclusions.said.clone()?;
+        let said = self.exclusions.said.as_ref()?.say();
         Some(
             div()
                 .id("exclusions-said")
@@ -1075,7 +1153,19 @@ impl SettingsView {
                 gpui::Toggled::False
             })
             .when(self.a11y, |d| {
-                d.aria_label(format!("{} {}", heading.name, model::excluded_from(role)))
+                d.aria_label(
+                    words!(
+                        exclusions_switch_named = "{ $category } { $role ->
+                            [searches] excluded from searches and tags
+                            [agents] excluded from agents
+                           *[index] excluded from the index
+                        }",
+                        category = heading.name.clone(),
+                        role = role.key(),
+                        note = "What a screen reader names a category's switch on the Exclusions page by: the category's name, and the role it is for."
+                    )
+                    .say(),
+                )
             })
             .flex_none()
             .p(px(2.))
@@ -1096,7 +1186,7 @@ impl SettingsView {
                 .id(SharedString::from(format!("exclusion-heading-{id}")))
                 .role(gpui::Role::Button)
                 .aria_expanded(!folded)
-                .when(self.a11y, |d| d.aria_label(heading.said(role)))
+                .when(self.a11y, |d| d.aria_label(heading.said(role).say()))
                 .when(cursor, StatefulInteractiveElement::aria_active_descendant)
                 .w_full()
                 .h(sized(34.))
@@ -1120,7 +1210,18 @@ impl SettingsView {
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover))
                 .tooltip(move |_, cx| {
-                    crate::toolbar::tooltip(if folded { "Unfold" } else { "Fold" }.into(), cx)
+                    let said = if folded {
+                        words!(
+                            exclusions_unfold = "Unfold",
+                            note = "The tooltip of a folded category's heading on the Exclusions page."
+                        )
+                    } else {
+                        words!(
+                            exclusions_fold = "Fold",
+                            note = "The tooltip of an unfolded category's heading on the Exclusions page."
+                        )
+                    };
+                    crate::toolbar::tooltip(said.say().into(), cx)
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.exclusions.fold(&fold_id, !folded);
@@ -1155,7 +1256,7 @@ impl SettingsView {
                         .truncate()
                         .text_small()
                         .text_color(theme.text_muted)
-                        .child(heading.count()),
+                        .child(heading.count().say()),
                 )
                 .child(div().flex_1())
                 .child(more)
@@ -1191,7 +1292,15 @@ impl SettingsView {
                 .hover(move |s| s.bg(hover))
                 .child(controls::glyph("revert", theme.text_muted, 14.))
                 .tooltip(move |_, cx| {
-                    crate::toolbar::tooltip("Reset: back as skwir ships it".into(), cx)
+                    crate::toolbar::tooltip(
+                        words!(
+                            exclusions_reset_tooltip = "Reset: back as skwir ships it",
+                            note = "The tooltip of a changed row's revert button on the Exclusions page."
+                        )
+                        .say()
+                        .into(),
+                        cx,
+                    )
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
@@ -1216,18 +1325,24 @@ impl SettingsView {
                 .flex_none()
                 .text_small()
                 .text_color(color)
-                .child(badge.words())
+                .child(badge.words().say())
         });
         let under = if line.dimmed {
             let under = line.under();
             if under.is_empty() {
                 Line::off_words(role)
             } else {
-                format!("{} · {under}", Line::off_words(role))
+                words!(
+                    exclusions_line_off_under = "{ $off } · { $under }",
+                    off = Line::off_words(role),
+                    under = under,
+                    note = "Under a folder on the Exclusions page whose category is off for the role: that its category is off, then what it is and means."
+                )
             }
         } else {
             line.under()
         };
+        let under = under.say();
         let id = line.id.clone();
         card_row(
             theme,
@@ -1244,7 +1359,7 @@ impl SettingsView {
             gpui::Toggled::False
         })
         .when(self.a11y, |d| {
-            d.aria_label(line.pattern.clone())
+            d.aria_label(line.pattern.say())
                 .aria_description(line.description(role))
         })
         .when(cursor, StatefulInteractiveElement::aria_active_descendant)
@@ -1299,7 +1414,7 @@ impl SettingsView {
                                         .min_w_0()
                                         .truncate()
                                         .text_body()
-                                        .child(line.pattern.clone()),
+                                        .child(line.pattern.say()),
                                 )
                                 .children(badges),
                         )
@@ -1333,7 +1448,13 @@ impl SettingsView {
         div()
             .id(SharedString::from(id.to_owned()))
             .role(gpui::Role::Button)
-            .aria_label("More")
+            .aria_label(
+                words!(
+                    exclusions_more = "More",
+                    note = "What a screen reader names a row's menu button by, on the Exclusions page."
+                )
+                .say(),
+            )
             .flex_none()
             .size(px(24.))
             .flex()
@@ -1344,7 +1465,17 @@ impl SettingsView {
             .hover(move |s| s.bg(hover))
             .when(open, |d| d.bg(hover))
             .child(controls::glyph("more", theme.text_muted, 14.))
-            .tooltip(|_, cx| crate::toolbar::tooltip("More (Menu key)".into(), cx))
+            .tooltip(|_, cx| {
+                crate::toolbar::tooltip(
+                    words!(
+                        exclusions_more_tooltip = "More (Menu key)",
+                        note = "The tooltip of a row's menu button on the Exclusions page: the Menu key opens it too."
+                    )
+                    .say()
+                    .into(),
+                    cx,
+                )
+            })
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 if open {
@@ -1400,7 +1531,7 @@ impl SettingsView {
     /// Reset only where it is changed; Move to lists the categories it
     /// can go to.
     fn menu_items(&self, target: &Cursor) -> Vec<MenuItem> {
-        let item = |title: &str, icon: &str, order: i32, args: serde_json::Value| {
+        let item = |title: Words, icon: &str, order: i32, args: serde_json::Value| {
             MenuItem::new(
                 "settings_exclusions",
                 title,
@@ -1416,9 +1547,25 @@ impl SettingsView {
                     return items;
                 };
                 let of = |what: &str| serde_json::json!({ "do": what, "entry": id });
-                items.push(item("Duplicate", "copy", 100, of("duplicate")));
+                items.push(item(
+                    words!(
+                        exclusions_menu_duplicate = "Duplicate",
+                        note = "A row's menu on the Exclusions page: makes a copy of the exclusion, the user's to edit."
+                    ),
+                    "copy",
+                    100,
+                    of("duplicate"),
+                ));
                 if !entry.builtin {
-                    items.push(item("Edit…", "rename", 200, of("edit")));
+                    items.push(item(
+                        words!(
+                            exclusions_menu_edit = "Edit…",
+                            note = "A row's menu on the Exclusions page: opens the dialog that edits the user's exclusion."
+                        ),
+                        "rename",
+                        200,
+                        of("edit"),
+                    ));
                 }
                 for (n, category) in model::categories(&self.exclusions.catalog)
                     .into_iter()
@@ -1426,20 +1573,36 @@ impl SettingsView {
                     .enumerate()
                 {
                     let mut to = item(
-                        &category.name,
+                        Words::as_written(category.name.clone()),
                         "folder",
                         210 + i32::try_from(n).unwrap_or(0),
                         serde_json::json!({ "do": "move", "entry": id, "to": category.id }),
                     );
-                    to.submenu = Some(MOVE_TO);
+                    to.submenu = Some(move_to());
                     items.push(to);
                 }
                 if entry.builtin {
                     if entry.changed() {
-                        items.push(item("Reset", "revert", 250, of("reset")));
+                        items.push(item(
+                            words!(
+                                exclusions_menu_reset = "Reset",
+                                note = "A row's menu on the Exclusions page: puts one of skwir's exclusions back as skwir ships it."
+                            ),
+                            "revert",
+                            250,
+                            of("reset"),
+                        ));
                     }
                 } else {
-                    items.push(item("Remove", "minus", 290, of("remove")));
+                    items.push(item(
+                        words!(
+                            exclusions_menu_remove = "Remove",
+                            note = "A row's menu on the Exclusions page: removes the user's exclusion."
+                        ),
+                        "minus",
+                        290,
+                        of("remove"),
+                    ));
                 }
             }
             Cursor::Category(id) => {
@@ -1450,11 +1613,34 @@ impl SettingsView {
                     .category(id)
                     .is_some_and(|c| !c.builtin)
                 {
-                    items.push(item("Rename…", "rename", 200, of("rename")));
-                    items.push(item("Delete", "trash", 290, of("delete")));
+                    items.push(item(
+                        words!(
+                            exclusions_menu_rename = "Rename…",
+                            note = "A category's menu on the Exclusions page: opens the dialog that renames the user's category."
+                        ),
+                        "rename",
+                        200,
+                        of("rename"),
+                    ));
+                    items.push(item(
+                        words!(
+                            exclusions_menu_delete = "Delete",
+                            note = "A category's menu on the Exclusions page: deletes the user's category, its folders going back."
+                        ),
+                        "trash",
+                        290,
+                        of("delete"),
+                    ));
                 }
-                let add = format!("Add {} here…", an(model::ENTRY));
-                items.push(item(&add, "plus", 300, of("add_here")));
+                items.push(item(
+                    words!(
+                        exclusions_menu_add_here = "Add an exclusion here…",
+                        note = "A category's menu on the Exclusions page: opens the dialog that adds an exclusion to this category."
+                    ),
+                    "plus",
+                    300,
+                    of("add_here"),
+                ));
             }
         }
         items
@@ -1513,9 +1699,18 @@ impl SettingsView {
                 let folder = self.exclusion_words(id);
                 let builtin = self.exclusion_entry(id).is_some_and(|e| e.builtin);
                 let said = if builtin {
-                    format!("Copied {folder}: the copy is yours to edit, skwir's is unticked")
+                    words!(
+                        exclusions_copied_builtin =
+                            "Copied { $folder }: the copy is yours to edit, skwir's is unticked",
+                        folder = folder,
+                        note = "Said on the Exclusions page after one of skwir's exclusions is duplicated. folder: as its row writes it."
+                    )
                 } else {
-                    format!("Copied {folder}")
+                    words!(
+                        exclusions_copied = "Copied { $folder }",
+                        folder = folder,
+                        note = "Said on the Exclusions page after one of the user's exclusions is duplicated. folder: as its row writes it."
+                    )
                 };
                 self.exclusions.cursor = Some(Cursor::Entry(copy.clone()));
                 self.exclusions.reveal(&copy);
@@ -1532,16 +1727,21 @@ impl SettingsView {
             }
             (Cursor::Entry(id), Item::Reset) => {
                 let after = model::reset(&catalog, id);
-                let said = format!("{} is back as skwir ships it", self.exclusion_words(id));
+                let said = words!(
+                    exclusions_reset = "{ $folder } is back as skwir ships it",
+                    folder = self.exclusion_words(id),
+                    note = "Said on the Exclusions page after one of skwir's exclusions is reset. folder: as its row writes it."
+                );
                 self.propose_exclusions(after, said, window, cx);
             }
             (Cursor::Entry(id), Item::Remove) => self.remove_exclusion(id, window, cx),
             (Cursor::Entry(id), Item::To(category)) => {
                 let after = model::moved(&catalog, id, category);
-                let said = format!(
-                    "Moved {} to {}",
-                    self.exclusion_words(id),
-                    self.category_name(category)
+                let said = words!(
+                    exclusions_moved = "Moved { $folder } to { $category }",
+                    folder = self.exclusion_words(id),
+                    category = self.category_name(category),
+                    note = "Said on the Exclusions page after an exclusion is moved to another category. folder: as its row writes it; category: its name."
                 );
                 self.fold_category(category, false);
                 self.exclusions.reveal(id);
@@ -1557,9 +1757,11 @@ impl SettingsView {
             (Cursor::Category(id), Item::Delete) => {
                 let name = self.category_name(id);
                 let after = model::deleted_category(&catalog, id);
-                let said = format!(
-                    "Deleted the category {name}: its {} went back",
-                    model::ENTRIES
+                let said = words!(
+                    exclusions_category_deleted =
+                        "Deleted the category { $category }: its exclusions went back",
+                    category = name,
+                    note = "Said on the Exclusions page after the user's category is deleted: its exclusions went back to where they were. category: its name."
                 );
                 // The keyboard on the heading before it.
                 let rows = self.exclusion_rows(cx);
@@ -1714,14 +1916,14 @@ impl SettingsView {
 
     fn field(
         &self,
-        placeholder: &str,
-        label: &str,
+        placeholder: &Words,
+        label: &Words,
         text: &str,
         cx: &mut Context<Self>,
     ) -> Entity<TextInput> {
-        let label = label.to_owned();
+        let label = label.say();
         let text = text.to_owned();
-        let placeholder = placeholder.to_owned();
+        let placeholder = placeholder.say();
         cx.new(move |cx| {
             let mut input = TextInput::new(placeholder, cx);
             input.set_label(label);
@@ -1749,14 +1951,41 @@ impl SettingsView {
                 Draft::of,
             );
         let folder = self.field(
-            "~/VMs, node_modules, cmake-build-*, regex:…",
-            "Name or path",
+            &words!(
+                exclusions_pattern_placeholder = "~/VMs, node_modules, cmake-build-*, regex:…",
+                note = "What the Name or path field of the dialog that adds an exclusion shows while empty: examples, each written as it is typed."
+            ),
+            &field_pattern(),
             &draft.pattern,
             cx,
         );
-        let beside = self.field("Cargo.toml, *.csproj", "Only beside", &draft.beside, cx);
-        let holding = self.field(".nosearch, CACHEDIR.TAG", "Holding", &draft.holding, cx);
-        let what = self.field("Virtual machines", "What it is", &draft.what, cx);
+        let beside = self.field(
+            &words!(
+                exclusions_beside_placeholder = "Cargo.toml, *.csproj",
+                note = "What the Only beside field of the dialog that adds an exclusion shows while empty: examples of a file's name, written as typed."
+            ),
+            &field_beside(),
+            &draft.beside,
+            cx,
+        );
+        let holding = self.field(
+            &words!(
+                exclusions_holding_placeholder = ".nosearch, CACHEDIR.TAG",
+                note = "What the Holding field of the dialog that adds an exclusion shows while empty: examples of a file's name, written as typed."
+            ),
+            &field_holding(),
+            &draft.holding,
+            cx,
+        );
+        let what = self.field(
+            &words!(
+                exclusions_what_placeholder = "Virtual machines",
+                note = "What the What it is field of the dialog that adds an exclusion shows while empty: an example of what a folder is."
+            ),
+            &field_what(),
+            &draft.what,
+            cx,
+        );
         let mut subscriptions = Vec::new();
         // What a field lists (ADR-137) takes Enter the arrows chose a row
         // for, and Escape first.
@@ -1881,19 +2110,24 @@ impl SettingsView {
             ),
             None => model::added(&catalog, matcher.clone(), &draft, role),
         };
-        dialog.problem = model::problem(&after.0, &after.1).map(|why| {
+        dialog.problem = model::problem(&after.0, &after.1).map(|unreadable| {
+            // Told by which field the rules find wrong, never by the words.
             let field = match draft.kind {
-                Kind::Beside if why.contains("beside") => Field::Beside,
+                Kind::Beside if unreadable.of_beside => Field::Beside,
                 Kind::Pattern | Kind::Beside => Field::Pattern,
                 Kind::Holding => Field::Holding,
             };
-            (field, why)
+            (field, unreadable.why)
         });
         if dialog.problem.is_none() {
             // A path's words are the path itself: say what it takes.
             dialog.means = Some(match matcher.one_path() {
-                Some(text) => format!("{text} and all it holds"),
-                None => matcher.said(),
+                Some(text) => words!(
+                    exclusions_path_and_all = "{ $path } and all it holds",
+                    path = text.to_owned(),
+                    note = "What an exclusion of one folder means, in the dialog that adds it (after Means): the path as typed, and everything inside it."
+                ),
+                None => matcher.words(),
             });
         }
         // Whether the folder typed is here: looked up on a worker.
@@ -1951,11 +2185,20 @@ impl SettingsView {
             (
                 after,
                 id,
-                format!("Changed {}", model::pattern_of(&matcher)),
+                words!(
+                    exclusions_edited = "Changed { $folder }",
+                    folder = model::pattern_of(&matcher),
+                    note = "Said on the Exclusions page after the user's exclusion is edited. folder: as its row writes it."
+                ),
             )
         } else {
             let (after, id) = model::added(&catalog, matcher.clone(), &draft, role);
-            let said = format!("Added {} to {category}", model::pattern_of(&matcher));
+            let said = words!(
+                exclusions_added = "Added { $folder } to { $category }",
+                folder = model::pattern_of(&matcher),
+                category = category,
+                note = "Said on the Exclusions page after an exclusion is added. folder: as its row writes it; category: its name."
+            );
             (after, id, said)
         };
         self.close_exclusion_dialog(window, cx);
@@ -1993,7 +2236,18 @@ impl SettingsView {
             .as_deref()
             .map(|id| self.category_name(id))
             .unwrap_or_default();
-        let name = self.field("Work, Virtual machines", "Name", &name, cx);
+        let name = self.field(
+            &words!(
+                exclusions_category_placeholder = "Work, Virtual machines",
+                note = "What the name field of the dialog that makes a category on the Exclusions page shows while empty: examples of a category's name."
+            ),
+            &words!(
+                exclusions_category_name = "Name",
+                note = "The name field of the dialog that makes or renames a category on the Exclusions page."
+            ),
+            &name,
+            cx,
+        );
         let subscriptions =
             vec![
                 cx.subscribe_in(
@@ -2035,9 +2289,16 @@ impl SettingsView {
             .iter()
             .any(|c| Some(&c.id) != dialog.renaming.as_ref() && c.name.eq_ignore_ascii_case(&name));
         if name.is_empty() {
-            dialog.problem = Some("A category needs a name".to_owned());
+            dialog.problem = Some(words!(
+                exclusions_category_unnamed = "A category needs a name",
+                note = "Under the name field of the dialog that makes a category on the Exclusions page, while it is empty."
+            ));
         } else if taken {
-            dialog.problem = Some(format!("There is a category {name} already"));
+            dialog.problem = Some(words!(
+                exclusions_category_taken = "There is a category { $category } already",
+                category = name.clone(),
+                note = "Under the name field of the dialog that makes or renames a category on the Exclusions page: another category has the name typed."
+            ));
         }
         if dialog.problem.is_some() {
             cx.notify();
@@ -2046,11 +2307,21 @@ impl SettingsView {
         let renaming = dialog.renaming.clone();
         self.close_exclusion_dialog(window, cx);
         let (after, id, said) = if let Some(id) = renaming {
-            let said = format!("Renamed the category {} to {name}", self.category_name(&id));
+            let said = words!(
+                exclusions_category_renamed = "Renamed the category { $old } to { $new }",
+                old = self.category_name(&id),
+                new = name.clone(),
+                note = "Said on the Exclusions page after the user's category is renamed: its name before, and after."
+            );
             (model::renamed(&catalog, &id, &name), id, said)
         } else {
             let (after, id) = model::new_category(&catalog, &name);
-            (after, id, format!("Made the category {name}"))
+            let said = words!(
+                exclusions_category_made = "Made the category { $category }",
+                category = name.clone(),
+                note = "Said on the Exclusions page after the user makes a category. category: its name."
+            );
+            (after, id, said)
         };
         self.exclusions.cursor = Some(Cursor::Category(id));
         self.propose_exclusions(after, said, window, cx);
@@ -2128,7 +2399,7 @@ impl SettingsView {
     fn asking_panel(&mut self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let asking = self.exclusions.asking.as_ref().expect("asked");
         let (keep, expose) = (asking.keep.clone(), asking.expose.clone());
-        let question = model::exposure_question(&asking.folders);
+        let question = model::exposure_question(&asking.folders).say();
         let folders = asking.folders.clone();
         let scroll = asking.scroll.clone();
         self.stops.clear();
@@ -2150,21 +2421,35 @@ impl SettingsView {
             .children(
                 folders
                     .into_iter()
-                    .map(|folder| div().min_w_0().truncate().text_body().child(folder)),
+                    .map(|folder| div().min_w_0().truncate().text_body().child(folder.say())),
             );
         crate::modal::panel("exclusions-asking", 460., theme)
             .role(gpui::Role::AlertDialog)
             .aria_label(question.clone())
             .p_5()
             .gap_3()
-            .child(div().text_title().child("Let agents read these files and folders?"))
+            .child(
+                div().text_title().child(
+                    words!(
+                        exclusions_asking_title = "Let agents read these files and folders?",
+                        note = "The title of what the Exclusions page asks before a change lets agents read what was kept from them."
+                    )
+                    .say(),
+                ),
+            )
             .child(div().text_body().child(question))
             .child(list)
             .child(
                 div()
                     .text_body()
                     .text_color(theme.text_muted)
-                    .child("An agent driving skwir, a plugin from outside skwir and a model could then list them and read what they hold."),
+                    .child(
+                        words!(
+                            exclusions_asking_why = "An agent driving skwir, a plugin from outside skwir and a model could then list them and read what they hold.",
+                            note = "Under the folders a change on the Exclusions page would let agents read: what that means."
+                        )
+                        .say(),
+                    ),
             )
             .child(
                 div()
@@ -2175,7 +2460,11 @@ impl SettingsView {
                     .child(
                         controls::button(
                             "exclusions-keep-private",
-                            "Keep private",
+                            words!(
+                                exclusions_keep_private = "Keep private",
+                                note = "An answer to what the Exclusions page asks before a change lets agents read folders: nothing changes."
+                            )
+                            .say(),
                             Some("lock"),
                             ButtonStyle::Plain,
                             &keep,
@@ -2186,7 +2475,11 @@ impl SettingsView {
                     .child(
                         controls::button(
                             "exclusions-let-agents-read",
-                            "Let agents read",
+                            words!(
+                                exclusions_let_agents_read = "Let agents read",
+                                note = "An answer to what the Exclusions page asks before a change lets agents read folders: the change is saved."
+                            )
+                            .say(),
                             None,
                             ButtonStyle::Danger,
                             &expose,
@@ -2244,14 +2537,19 @@ impl SettingsView {
         for stop in &stops {
             self.stop(stop, None, None);
         }
-        let label = |text: &'static str| div().text_body().text_color(theme.text_muted).child(text);
+        let label = |text: Words| {
+            div()
+                .text_body()
+                .text_color(theme.text_muted)
+                .child(text.say())
+        };
         let problem_under = |field: Field| {
             problem
                 .as_ref()
                 .filter(|(at, _)| *at == field)
                 .map(|(_, why)| {
                     // A regex's error is several lines: the mark by the first.
-                    controls::noted("warning", theme.error, 13., why.clone())
+                    controls::noted("warning", theme.error, 13., why.say())
                         .text_body()
                         .text_color(theme.error)
                 })
@@ -2278,7 +2576,15 @@ impl SettingsView {
         // What it names: a name or a path, a name beside a file, or the
         // folders holding a file. One list, so a kind more is one row more.
         let mut kinds = controls::segmented("exclusions-kind", &kind_focus, theme)
-            .when(a11y, |d| d.aria_label("What it names"))
+            .when(a11y, |d| {
+                d.aria_label(
+                    words!(
+                        exclusions_kinds_named = "What it names",
+                        note = "What a screen reader names the choice of kinds by, in the dialog that adds an exclusion: a name or a path, a name beside a file, folders holding a file."
+                    )
+                    .say(),
+                )
+            })
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 let by = match event.keystroke.key.as_str() {
                     "left" => -1,
@@ -2289,16 +2595,37 @@ impl SettingsView {
                 let next = step_kind(kind, by);
                 this.set_entry_kind(next, cx);
             }));
-        for (choice, words) in [
-            (Kind::Pattern, "Name or path"),
-            (Kind::Beside, "Name beside a file"),
-            (Kind::Holding, "Folders holding a file"),
+        for (choice, key, words) in [
+            (
+                Kind::Pattern,
+                "pattern",
+                words!(
+                    exclusions_kind_pattern = "Name or path",
+                    note = "A kind of exclusion, in the dialog that adds one: a name, a path, a glob or a regex."
+                ),
+            ),
+            (
+                Kind::Beside,
+                "beside",
+                words!(
+                    exclusions_kind_beside = "Name beside a file",
+                    note = "A kind of exclusion, in the dialog that adds one: a folder by its name, only where a file is beside it."
+                ),
+            ),
+            (
+                Kind::Holding,
+                "holding",
+                words!(
+                    exclusions_kind_holding = "Folders holding a file",
+                    note = "A kind of exclusion, in the dialog that adds one: any folder holding a file of that name."
+                ),
+            ),
         ] {
             let focus = kind_focus.clone();
             kinds = kinds.child(
                 controls::segment(
-                    SharedString::from(format!("exclusions-kind-{words}")),
-                    words,
+                    SharedString::from(format!("exclusions-kind-{key}")),
+                    words.say(),
                     kind == choice,
                     theme,
                 )
@@ -2311,13 +2638,17 @@ impl SettingsView {
         let mut form = div().flex().flex_col().gap_2().child(kinds);
         if kind == Kind::Pattern {
             // Files, folders or both: `*.kdbx` is no folder.
-            const CHOICES: [(Names, &str); 3] = [
-                (Names::Both, "Files and folders"),
-                (Names::Files, "Files"),
-                (Names::Folders, "Folders"),
-            ];
+            const CHOICES: [Names; 3] = [Names::Both, Names::Files, Names::Folders];
             let mut which = controls::segmented("exclusions-names", &names_focus, theme)
-                .when(a11y, |d| d.aria_label("Excludes"))
+                .when(a11y, |d| {
+                    d.aria_label(
+                        words!(
+                            exclusions_names_named = "Excludes",
+                            note = "What a screen reader names the choice of files, folders or both by, in the dialog that adds an exclusion."
+                        )
+                        .say(),
+                    )
+                })
                 .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                     let by = match event.keystroke.key.as_str() {
                         "left" => CHOICES.len() - 1,
@@ -2327,16 +2658,16 @@ impl SettingsView {
                     cx.stop_propagation();
                     let at = CHOICES
                         .iter()
-                        .position(|(choice, _)| *choice == names)
+                        .position(|choice| *choice == names)
                         .unwrap_or(0);
-                    this.set_entry_names(CHOICES[(at + by) % CHOICES.len()].0, cx);
+                    this.set_entry_names(CHOICES[(at + by) % CHOICES.len()], cx);
                 }));
-            for (choice, words) in CHOICES {
+            for choice in CHOICES {
                 let focus = names_focus.clone();
                 which = which.child(
                     controls::segment(
-                        SharedString::from(format!("exclusions-names-{words}")),
-                        words,
+                        SharedString::from(format!("exclusions-names-{}", choice.key())),
+                        names_words(choice).say(),
                         names == choice,
                         theme,
                     )
@@ -2351,7 +2682,7 @@ impl SettingsView {
         match kind {
             Kind::Pattern => {
                 form = form
-                    .child(label("Name or path"))
+                    .child(label(field_pattern()))
                     .child(
                         div()
                             .flex()
@@ -2361,7 +2692,11 @@ impl SettingsView {
                             .child(
                                 controls::button(
                                     "exclusions-choose",
-                                    "Choose folder…",
+                                    words!(
+                                        exclusions_choose_folder = "Choose folder…",
+                                        note = "A button of the dialog that adds an exclusion: opens the system's folder picker."
+                                    )
+                                    .say(),
                                     Some("folder"),
                                     ButtonStyle::Plain,
                                     &choose_focus,
@@ -2374,34 +2709,46 @@ impl SettingsView {
             }
             Kind::Beside => {
                 form = form
-                    .child(label("Name"))
+                    .child(label(words!(
+                        exclusions_field_name = "Name",
+                        note = "A field of the dialog that adds an exclusion beside a file: the folder's name (target)."
+                    )))
                     .child(text_field(&folder, Field::Pattern))
                     .children(problem_under(Field::Pattern))
-                    .child(label("Only beside"))
+                    .child(label(field_beside()))
                     .child(text_field(&beside, Field::Beside))
                     .children(problem_under(Field::Beside));
             }
             Kind::Holding => {
                 form = form
-                    .child(label("Holding"))
+                    .child(label(field_holding()))
                     .child(text_field(&holding, Field::Holding))
                     .children(problem_under(Field::Holding));
             }
         }
         // What it means, live, and whether a folder typed is here.
         let means_line = means.map(|means| {
-            let place = here.map(|(_, here)| {
-                if here {
-                    "on this computer"
-                } else {
-                    "not on this computer"
-                }
-            });
-            let text = match place {
-                Some(place) => format!("Means {means}, {place}."),
-                None => format!("Means {means}."),
+            let text = match here.map(|(_, here)| here) {
+                Some(true) => words!(
+                    exclusions_means_here = "Means { $means }, on this computer.",
+                    means = means,
+                    note = "In the dialog that adds an exclusion, as it is typed: what it means (~/VMs and all it holds, any folder named target), and that the folder is on this computer."
+                ),
+                Some(false) => words!(
+                    exclusions_means_not_here = "Means { $means }, not on this computer.",
+                    means = means,
+                    note = "In the dialog that adds an exclusion, as it is typed: what it means, and that the folder is not on this computer."
+                ),
+                None => words!(
+                    exclusions_means = "Means { $means }.",
+                    means = means,
+                    note = "In the dialog that adds an exclusion, as it is typed: what it means (any folder named target beside a Cargo.toml)."
+                ),
             };
-            div().text_body().text_color(theme.text_muted).child(text)
+            div()
+                .text_body()
+                .text_color(theme.text_muted)
+                .child(text.say())
         });
         let already_line = already
             .as_ref()
@@ -2414,7 +2761,12 @@ impl SettingsView {
                     "info",
                     theme.warning,
                     13.,
-                    format!("Already in the list, in {name}: Show it, rather than a second."),
+                    words!(
+                        exclusions_already = "Already in the list, in { $category }: Show it, rather than a second.",
+                        category = name,
+                        note = "In the dialog that adds an exclusion, where the list names these folders already. category: the name of the category it is in; Show it is the dialog's button."
+                    )
+                    .say(),
                 )
                 .text_body()
                 .text_color(theme.warning)
@@ -2422,7 +2774,7 @@ impl SettingsView {
         form = form
             .children(means_line)
             .children(already_line)
-            .child(label("What it is"))
+            .child(label(field_what()))
             .child(text_field(&what, Field::What));
         // Its category: a dropdown; Left and Right step it.
         let category_name = catalog
@@ -2436,7 +2788,7 @@ impl SettingsView {
         let mut dropdown =
             controls::dropdown("exclusions-category", category_name, &category_focus, theme)
                 .aria_expanded(category_open)
-                .when(a11y, |d| d.aria_label("Category"))
+                .when(a11y, |d| d.aria_label(field_category().say()))
                 .child(category_anchor.marker())
                 .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                     let by: isize = match event.keystroke.key.as_str() {
@@ -2521,30 +2873,59 @@ impl SettingsView {
             dropdown = dropdown.child(category_anchor.popup(panel));
         }
         form = form
-            .child(label("Category"))
+            .child(label(field_category()))
             .child(div().flex().child(dropdown));
         let answer = if already.is_some() {
-            "Show it"
-        } else if editing {
-            "Save"
-        } else {
-            "Add"
-        };
-        let hint = if already.is_some() {
-            "Enter shows it in the list".to_owned()
-        } else if editing {
-            "Enter saves it".to_owned()
-        } else {
-            format!(
-                "Enter adds it, {}",
-                model::excluded_from(self.exclusions.role)
+            words!(
+                exclusions_show_it = "Show it",
+                note = "The answer of the dialog that adds an exclusion, where the list names these folders already: shows that one."
             )
-        };
-        let title = if editing {
-            format!("Edit {}", model::ENTRY)
+        } else if editing {
+            words!(
+                exclusions_save = "Save",
+                note = "The answer of the dialog that edits an exclusion."
+            )
         } else {
-            format!("Add {}", an(model::ENTRY))
-        };
+            words!(
+                exclusions_add_answer = "Add",
+                note = "The answer of the dialog that adds an exclusion."
+            )
+        }
+        .say();
+        let hint = if already.is_some() {
+            words!(
+                exclusions_hint_show = "Enter shows it in the list",
+                note = "In the dialog that adds an exclusion, beside its answers, where the list names these folders already."
+            )
+        } else if editing {
+            words!(
+                exclusions_hint_save = "Enter saves it",
+                note = "In the dialog that edits an exclusion, beside its answers."
+            )
+        } else {
+            words!(
+                exclusions_hint_add = "Enter adds it, { $role ->
+                    [searches] excluded from searches and tags
+                    [agents] excluded from agents
+                   *[index] excluded from the index
+                }",
+                role = self.exclusions.role.key(),
+                note = "In the dialog that adds an exclusion, beside its answers: what Enter does, and the role the new exclusion is kept from."
+            )
+        }
+        .say();
+        let title = if editing {
+            words!(
+                exclusions_edit_title = "Edit exclusion",
+                note = "The title of the dialog that edits the user's exclusion."
+            )
+        } else {
+            words!(
+                exclusions_add_title = "Add an exclusion",
+                note = "The title of the dialog that adds an exclusion."
+            )
+        }
+        .say();
         crate::modal::panel("exclusions-entry", 520., theme)
             .aria_label(title.clone())
             .p_5()
@@ -2569,7 +2950,7 @@ impl SettingsView {
                     .child(
                         controls::button(
                             "exclusions-entry-cancel",
-                            "Cancel",
+                            cancel_words().say(),
                             None,
                             ButtonStyle::Plain,
                             &cancel,
@@ -2619,7 +3000,14 @@ impl SettingsView {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Choose".into()),
+            prompt: Some(
+                words!(
+                    exclusions_choose = "Choose",
+                    note = "The answer of the system's folder picker opened from the dialog that adds an exclusion."
+                )
+                .say()
+                .into(),
+            ),
         });
         cx.spawn(async move |this, cx| {
             let picked = paths.await;
@@ -2663,18 +3051,25 @@ impl SettingsView {
         self.stop(&accept, None, None);
         let focused = name.read(cx).is_focused(window);
         let title = if renaming {
-            "Rename category"
+            words!(
+                exclusions_rename_category_title = "Rename category",
+                note = "The title of the dialog that renames the user's category on the Exclusions page."
+            )
         } else {
-            "New category"
-        };
+            words!(
+                exclusions_new_category_title = "New category",
+                note = "The title of the dialog that makes a category on the Exclusions page."
+            )
+        }
+        .say();
         crate::modal::panel("exclusions-category", 420., theme)
-            .aria_label(title)
+            .aria_label(title.clone())
             .p_5()
             .gap_3()
             .child(div().text_title().child(title))
             .child(controls::field(&name, None, focused, problem.is_some(), None, theme))
             .children(problem.map(|why| {
-                controls::noted("warning", theme.error, 13., why)
+                controls::noted("warning", theme.error, 13., why.say())
                     .text_body()
                     .text_color(theme.error)
             }))
@@ -2683,10 +3078,13 @@ impl SettingsView {
                     div()
                         .text_body()
                         .text_color(theme.text_muted)
-                        .child(format!(
-                            "Its {} hold for every role you tick them for; its switches turn them all off at once.",
-                            model::ENTRIES
-                        )),
+                        .child(
+                            words!(
+                                exclusions_category_about = "Its exclusions hold for every role you tick them for; its switches turn them all off at once.",
+                                note = "In the dialog that makes a category on the Exclusions page: what a category does."
+                            )
+                            .say(),
+                        ),
                 )
             })
             .child(
@@ -2698,7 +3096,7 @@ impl SettingsView {
                     .child(
                         controls::button(
                             "exclusions-category-cancel",
-                            "Cancel",
+                            cancel_words().say(),
                             None,
                             ButtonStyle::Plain,
                             &cancel,
@@ -2711,7 +3109,18 @@ impl SettingsView {
                     .child(
                         controls::button(
                             "exclusions-category-accept",
-                            if renaming { "Rename" } else { "Create" },
+                            if renaming {
+                                words!(
+                                    exclusions_rename = "Rename",
+                                    note = "The answer of the dialog that renames the user's category on the Exclusions page."
+                                )
+                            } else {
+                                words!(
+                                    exclusions_create = "Create",
+                                    note = "The answer of the dialog that makes a category on the Exclusions page."
+                                )
+                            }
+                            .say(),
                             Some("check"),
                             ButtonStyle::Plain,
                             &accept,
@@ -2737,13 +3146,16 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> usize {
         let generation = self.exclusions.generation;
+        let revision = skwir_core::words::revision();
         let kept = self
             .exclusions
             .found
             .borrow()
             .as_ref()
-            .filter(|(at, words, _)| *at == generation && words == query)
-            .map(|(_, _, count)| *count);
+            .filter(|(at, said_in, words, _)| {
+                *at == generation && *said_in == revision && words == query
+            })
+            .map(|(_, _, _, count)| *count);
         let count = kept.unwrap_or_else(|| {
             // Words searched: every category shows what they find, folded or not.
             let (here, unfolded, revealed) = (HashMap::new(), HashSet::new(), HashSet::new());
@@ -2760,7 +3172,8 @@ impl SettingsView {
                 },
             );
             let count = rows.iter().filter(|r| matches!(r, Row::Entry(_))).count();
-            *self.exclusions.found.borrow_mut() = Some((generation, query.to_owned(), count));
+            *self.exclusions.found.borrow_mut() =
+                Some((generation, revision, query.to_owned(), count));
             count
         });
         if count == 0 {
@@ -2776,7 +3189,7 @@ impl SettingsView {
                 .pb_2()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(page_title())
+                .child(page_name().say())
                 .into_any_element(),
         );
         items.push(
@@ -2787,15 +3200,28 @@ impl SettingsView {
                     last: true,
                 },
             )
-            .child(div().flex_1().min_w_0().child(if count == 1 {
-                format!("One {} matches “{query}”", model::ENTRY)
-            } else {
-                format!("{count} {} match “{query}”", model::ENTRIES)
-            }))
+            .child(
+                div().flex_1().min_w_0().child(
+                    words!(
+                        exclusions_found = "{ $count ->
+                            [1] One exclusion matches “{ $query }”
+                           *[other] { $count } exclusions match “{ $query }”
+                        }",
+                        count = count,
+                        query = query.to_owned(),
+                        note = "What the settings' search finds on the Exclusions page. query: the words searched, as typed."
+                    )
+                    .say(),
+                ),
+            )
             .child(
                 controls::button(
                     "exclusions-found",
-                    "Show them",
+                    words!(
+                        exclusions_show_them = "Show them",
+                        note = "A button beside what the settings' search finds on the Exclusions page: opens the page, filtered by the words searched."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &focus,
@@ -2844,22 +3270,32 @@ impl SettingsView {
                     .flex()
                     .flex_col()
                     .gap(sized(3.))
-                    .child(page_title())
+                    .child(page_name().say())
                     .child(
                         div()
                             .text_body()
                             .text_color(theme.text_muted)
-                            .child(format!(
-                                "What agents, plugins from outside skwir and models never see: \
-                         {kept} {}, skwir's secrets and yours.",
-                                model::ENTRIES
-                            )),
+                            .child(
+                                words!(
+                                    exclusions_privacy = "What agents, plugins from outside skwir and models never see: { $count ->
+                                        [one] { $count } exclusion
+                                       *[other] { $count } exclusions
+                                    }, skwir's secrets and yours.",
+                                    count = kept,
+                                    note = "On the Privacy page of the settings, the way to the Exclusions page: how many exclusions are kept from agents."
+                                )
+                                .say(),
+                            ),
                     ),
             )
             .child(
                 controls::button(
                     "privacy-exclusions",
-                    format!("{}…", page_title()),
+                    words!(
+                        exclusions_privacy_open = "Exclusions…",
+                        note = "A button of the Privacy page of the settings: opens the Exclusions page on what agents never see."
+                    )
+                    .say(),
                     Some("lock"),
                     ButtonStyle::Plain,
                     &focus,
@@ -2872,17 +3308,91 @@ impl SettingsView {
     }
 }
 
-/// The page's name, as the dialog's sidebar and title say it.
-fn page_title() -> &'static str {
-    crate::settings::Page::Exclusions
-        .builtin()
-        .map_or("", |page| page.title)
+/// The page's name, where its list and what the search finds are named.
+fn page_name() -> Words {
+    words!(
+        exclusions_page = "Exclusions",
+        note = "The name of the settings' page of the folders kept from searches and agents: names its list to a screen reader, heads what the search finds there and the Privacy page's way to it."
+    )
 }
 
-/// `word` after its article: "an exclusion".
-fn an(word: &str) -> String {
-    let vowel = word.starts_with(['a', 'e', 'i', 'o', 'u']);
-    format!("{} {word}", if vowel { "an" } else { "a" })
+/// What the page's filter shows while empty.
+fn filter_placeholder() -> Words {
+    words!(
+        exclusions_filter_placeholder = "Filter by name, path or what it is",
+        note = "What the Exclusions page's filter shows while empty."
+    )
+}
+
+/// What a screen reader names the page's filter by.
+fn filter_label() -> Words {
+    words!(
+        exclusions_filter_label = "Filter exclusions",
+        note = "What a screen reader names the Exclusions page's filter by."
+    )
+}
+
+/// The entry dialog's fields' names, each said as its label and to a
+/// screen reader.
+fn field_pattern() -> Words {
+    words!(
+        exclusions_field_pattern = "Name or path",
+        note = "A field of the dialog that adds an exclusion: a name, a path, a glob or a regex."
+    )
+}
+
+fn field_beside() -> Words {
+    words!(
+        exclusions_field_beside = "Only beside",
+        note = "A field of the dialog that adds an exclusion beside a file: the file or folder beside it (Cargo.toml)."
+    )
+}
+
+fn field_holding() -> Words {
+    words!(
+        exclusions_field_holding = "Holding",
+        note = "A field of the dialog that adds an exclusion of folders holding a file: the file's name (.nosearch)."
+    )
+}
+
+fn field_what() -> Words {
+    words!(
+        exclusions_field_what = "What it is",
+        note = "A field of the dialog that adds an exclusion: what the folders are, in the user's words (Virtual machines)."
+    )
+}
+
+fn field_category() -> Words {
+    words!(
+        exclusions_field_category = "Category",
+        note = "A field of the dialog that adds an exclusion: the category it goes in."
+    )
+}
+
+/// What an exclusion names of what it matches, in its dialog's choice.
+fn names_words(names: Names) -> Words {
+    match names {
+        Names::Both => words!(
+            exclusions_names_both = "Files and folders",
+            note = "In the dialog that adds an exclusion: it excludes files and folders alike."
+        ),
+        Names::Files => words!(
+            exclusions_names_files = "Files",
+            note = "In the dialog that adds an exclusion: it excludes files only."
+        ),
+        Names::Folders => words!(
+            exclusions_names_folders = "Folders",
+            note = "In the dialog that adds an exclusion: it excludes folders only."
+        ),
+    }
+}
+
+/// The dialogs' Cancel.
+fn cancel_words() -> Words {
+    words!(
+        exclusions_cancel = "Cancel",
+        note = "The answer of the Exclusions page's dialogs that leaves things as they are."
+    )
 }
 
 /// The next kind of what an entry names, `by` along, round the ends.

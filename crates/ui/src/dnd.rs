@@ -24,6 +24,8 @@ use skwir_core::fs;
 use skwir_core::op::EntryRef;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
@@ -60,11 +62,20 @@ impl DropOp {
         }
     }
 
-    fn title(self) -> &'static str {
+    fn title(self) -> Words {
         match self {
-            DropOp::Move => "Move Here",
-            DropOp::Copy => "Copy Here",
-            DropOp::Link => "Link Here",
+            DropOp::Move => words!(
+                dnd_move_here = "Move Here",
+                note = "An item of the menu a drop asks with: move the files dropped into this folder."
+            ),
+            DropOp::Copy => words!(
+                dnd_copy_here = "Copy Here",
+                note = "An item of the menu a drop asks with: copy the files dropped into this folder."
+            ),
+            DropOp::Link => words!(
+                dnd_link_here = "Link Here",
+                note = "An item of the menu a drop asks with: make a link to each file dropped in this folder."
+            ),
         }
     }
 
@@ -75,6 +86,22 @@ impl DropOp {
             DropOp::Link => "link",
         }
     }
+}
+
+/// What a drop on what takes no files says.
+fn cannot_drop_here() -> Words {
+    words!(
+        dnd_cannot_drop_here = "Files cannot be dropped here",
+        note = "Said when files are dropped on a place or a pane that takes none."
+    )
+}
+
+/// What a drop of items gone meanwhile says.
+fn dropped_gone() -> Words {
+    words!(
+        dnd_dropped_gone = "The dropped items no longer exist",
+        note = "Said when the files dropped were gone by the time the drop was carried out."
+    )
 }
 
 /// What was dropped, as a drop's menu asks about it: the entries, and
@@ -221,7 +248,7 @@ impl DragPreview {
             return;
         }
         let drawn = look.drawn();
-        let name = dragged(self.count, &self.label);
+        let name = dragged(self.count, &self.label, None);
         if let Ok(Some(icon)) = shell.update(cx, |shell, cx| {
             shell.show_files_icon(drawn, &name, window, cx)
         }) {
@@ -254,12 +281,43 @@ impl DragPreview {
 }
 
 /// What a drag of `count` things says, `label` the one taken's name: its
-/// name, or how many.
-fn dragged(count: usize, label: &str) -> String {
-    if count == 1 {
-        label.to_owned()
-    } else {
-        crate::format::items(count)
+/// name, or how many; with a key held, what the drop will do (`held`).
+/// The name is bare, as the views write names under a picture.
+fn dragged(count: usize, label: &str, how: Option<DropOp>) -> String {
+    let name = label.to_owned();
+    match how {
+        None if count == 1 => name,
+        None => crate::format::items(count),
+        Some(DropOp::Copy) => words!(
+            dnd_copy_dragged = "{ $count ->
+                [1] Copy { $name }
+               *[other] Copy { $count } items
+            }",
+            count = count,
+            name = name,
+            note = "Under the files dragged while Ctrl is held: the drop copies them. name: the file's name, bare, as under a picture."
+        )
+        .say(),
+        Some(DropOp::Move) => words!(
+            dnd_move_dragged = "{ $count ->
+                [1] Move { $name }
+               *[other] Move { $count } items
+            }",
+            count = count,
+            name = name,
+            note = "Under the files dragged while Shift is held: the drop moves them. name: the file's name, bare, as under a picture."
+        )
+        .say(),
+        Some(DropOp::Link) => words!(
+            dnd_link_dragged = "{ $count ->
+                [1] Link { $name }
+               *[other] Link { $count } items
+            }",
+            count = count,
+            name = name,
+            note = "Under the files dragged while Ctrl and Shift are held: the drop makes a link to each. name: the file's name, bare, as under a picture."
+        )
+        .say(),
     }
 }
 
@@ -267,15 +325,9 @@ impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.take_icons(window, cx);
         let theme = cx.global::<Theme>().clone();
-        let text = dragged(self.count, &self.label);
         // A key held says what the drop will do wherever it lands; without
         // one it depends on where, and the label does not guess.
-        let text = match held(window.modifiers()) {
-            Some(DropOp::Copy) => format!("Copy {text}"),
-            Some(DropOp::Move) => format!("Move {text}"),
-            Some(DropOp::Link) => format!("Link {text}"),
-            None => text,
-        };
+        let text = dragged(self.count, &self.label, held(window.modifiers()));
         // The name under the icon as the grid writes names, and as the
         // compositor shows it once the drag leaves (`dragname.rs`). gpui
         // draws a drag's view on its own, outside the window's text style:
@@ -435,7 +487,7 @@ impl Shell {
             move || Dropped::of_paths(&paths),
             move |shell, dropped, window, cx| {
                 let Some(args) = dropped.args(&dest, Some(pane)) else {
-                    shell.set_status("The dropped items no longer exist", true, cx);
+                    shell.set_status(dropped_gone(), true, cx);
                     return;
                 };
                 if asks {
@@ -640,7 +692,10 @@ impl Shell {
         items.extend(offered);
         items.push(MenuItem::new(
             "drop",
-            "Cancel",
+            words!(
+                dnd_cancel = "Cancel",
+                note = "The last item of the menu a drop asks with: drop nothing."
+            ),
             "close",
             900,
             Invocation::new("ui.menu_close"),
@@ -662,7 +717,14 @@ impl Shell {
     /// folder (a tag's place), as a drop there does.
     pub fn ask_other_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(other) = self.other_pane() else {
-            self.set_status("There is no other pane: split the window first", false, cx);
+            self.set_status(
+                words!(
+                    dnd_no_other_pane = "There is no other pane: split the window first",
+                    note = "Said when the selection is offered to the other pane (Shift+F7) while the window shows one pane."
+                ),
+                false,
+                cx,
+            );
             return;
         };
         let Some(dest) = self.pane_folder(other) else {
@@ -707,7 +769,7 @@ impl Shell {
             .pane_location(to)
             .is_some_and(|place| self.drop_on_place(from, &place, how, window, cx));
         if !taken {
-            self.set_status("Files cannot be dropped here", true, cx);
+            self.set_status(cannot_drop_here(), true, cx);
         }
     }
 
@@ -729,7 +791,7 @@ impl Shell {
             // A location that takes files (a tag's) says what a drop does.
             let shown = self.app.pane_location(self.pane);
             if !shown.is_some_and(|place| self.drop_paths_on_place(paths, &place, window, cx)) {
-                self.set_status("Files cannot be dropped here", true, cx);
+                self.set_status(cannot_drop_here(), true, cx);
             }
             return;
         };
@@ -773,7 +835,7 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
                         .and_then(|(at, id)| (at == pane).then_some(id));
                     let label = shell.drag_label(pane);
                     let mut look = shell.drag_look(pane, grabbed, ink);
-                    let name = dragged(label.0, &label.1);
+                    let name = dragged(label.0, &label.1, None);
                     let icon = shell.show_files_icon(look.drawn(), &name, window, cx);
                     let waits = look.cards.iter().any(|card| card.coming.is_some());
                     (label, icon, waits.then_some(look))
@@ -888,7 +950,10 @@ impl Shell {
         };
         if verbs.restore.is_some() && how.is_some_and(|how| how != DropOp::Move) {
             self.set_status(
-                "Files cannot be copied to the trash: move them there instead",
+                words!(
+                    dnd_not_copied_to_trash = "Files cannot be copied to the trash: move them there instead",
+                    note = "Said when files are dropped on the Trash with the keys that copy or link them."
+                ),
                 true,
                 cx,
             );
@@ -962,7 +1027,7 @@ impl Shell {
             move |shell, entries, window, cx| {
                 // None named would take the selection.
                 if entries.is_empty() {
-                    shell.set_status("The dropped items no longer exist", true, cx);
+                    shell.set_status(dropped_gone(), true, cx);
                     return;
                 }
                 let mut args = drop.args.clone();

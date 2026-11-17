@@ -13,6 +13,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use skwir_core::app::{HydrateArgs, SelectArgs, SelectMode};
+use skwir_core::words;
 use skwir_core::workspace::PaneId;
 use skwir_core::{EntryId, SortKey, SortSpec};
 
@@ -1703,7 +1704,16 @@ impl Shell {
             "next" => self.cursor_move(1, step, window, cx),
             to => match nav_of(to) {
                 Some(nav) => self.navigate_by(nav, step, window, cx),
-                None => self.set_status(format!("ui.cursor cannot go to “{to}”"), true, cx),
+                None => self.set_status(
+                    words!(
+                        pane_cursor_cannot_go = "ui.cursor cannot go to “{ $to }”",
+                        to = to,
+                        note = "to: where ui.cursor was asked to go, as given (down, home, \
+                                page_up); ui.cursor is a command's id."
+                    ),
+                    true,
+                    cx,
+                ),
             },
         }
     }
@@ -2034,7 +2044,13 @@ impl Shell {
         let sought = typed.sought().to_owned();
         let said = self.a11y.then(|| {
             if typed.missed {
-                format!("{sought}: No match")
+                words!(
+                    pane_typed_no_match = "{ $sought }: No match",
+                    sought = sought.clone(),
+                    note = "What a screen reader hears of what was typed to reach a name \
+                            (sought, as typed) where no name begins with it."
+                )
+                .say()
             } else {
                 sought.clone()
             }
@@ -2065,7 +2081,16 @@ impl Shell {
                     .child(div().flex_none().w(px(2.)).h(sized(16.)).bg(theme.accent)),
             )
             .when(typed.missed, |pill| {
-                pill.child(div().text_color(theme.text_muted).child("No match"))
+                pill.child(
+                    div().text_color(theme.text_muted).child(
+                        words!(
+                            pane_no_match = "No match",
+                            note = "Beside what was typed to reach a name, where no name \
+                                    begins with it."
+                        )
+                        .say(),
+                    ),
+                )
             });
         Some(
             div()

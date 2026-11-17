@@ -9,6 +9,8 @@ use crate::{
 };
 use gpui::{AnyElement, Context, ListAlignment, ListState, Window, div, prelude::*, px};
 use skwir_core::inspection::{InspectRequest, Inspection, InspectionKind, Picture};
+use skwir_core::words;
+use skwir_core::words::Words;
 use std::{
     cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
@@ -218,7 +220,13 @@ impl Display {
                 .iter()
                 .filter_map(|r| r.bytes)
                 .fold(0u64, u64::saturating_add);
-            let unpacked = format!("{} unpacked", crate::format::size(total));
+            // Transitional: the notice is said text (ADR-139).
+            let unpacked = words!(
+                inspector_unpacked = "{ $size } unpacked",
+                size = words::Size(total),
+                note = "Beside an archive's preview: what its files weigh once unpacked."
+            )
+            .say();
             data.notice = if data.notice.is_empty() {
                 unpacked
             } else {
@@ -676,7 +684,13 @@ fn said_row(
                     cell.clone()
                 };
                 match columns.get(i).filter(|column| !column.is_empty()) {
-                    Some(column) => format!("{column}: {cell}"),
+                    Some(column) => words!(
+                        inspector_cell_said = "{ $column }: { $cell }",
+                        column = column.as_str(),
+                        cell = cell,
+                        note = "What a screen reader hears of a cell of a row in a preview's table: its column's header, then what it holds, both as the file writes them."
+                    )
+                    .say(),
                     None => cell,
                 }
             })
@@ -1839,8 +1853,11 @@ impl Shell {
                     else {
                         let (first, last) = (&pages[0].label, &pages[pages.len() - 1].label);
                         return self.set_status(
-                            format!(
-                                "Enter a page number printed in the book, from {first} to {last}"
+                            words!(
+                                inspector_page_printed_refused = "Enter a page number printed in the book, from { $first } to { $last }",
+                                first = first.as_str(),
+                                last = last.as_str(),
+                                note = "Said where a page typed is none of the book's printed pages. first, last: its first and last printed page numbers."
                             ),
                             true,
                             cx,
@@ -1861,7 +1878,11 @@ impl Shell {
                     .filter(|n| (1..=sections).contains(n));
                 let Some(number) = number else {
                     return self.set_status(
-                        format!("Enter a chapter number from 1 to {sections}"),
+                        words!(
+                            inspector_chapter_refused = "Enter a chapter number from 1 to { $last }",
+                            last = sections.to_string(),
+                            note = "Said where a chapter typed is none of the book's. last: its last chapter's number."
+                        ),
                         true,
                         cx,
                     );
@@ -1875,7 +1896,7 @@ impl Shell {
                 let (pane, generation) = (self.pane, self.preview.generation);
                 self.open_prompt(
                     crate::prompts::PromptKind::InspectJump { pane, generation },
-                    "Jump to byte offset",
+                    &jump_to_offset().say(),
                     "",
                     None,
                     window,
@@ -1914,7 +1935,14 @@ impl Shell {
                 "links" => {
                     let state = &mut self.preview.inspection;
                     if state.labels.take().is_none() && !state.label_links(&display.data) {
-                        self.set_status("No link in view", false, cx);
+                        self.set_status(
+                            words!(
+                                inspector_no_link = "No link in view",
+                                note = "Said where links are asked to be labelled for keys and none is in view."
+                            ),
+                            false,
+                            cx,
+                        );
                     }
                     return cx.notify();
                 }
@@ -1964,7 +1992,14 @@ impl Shell {
                     match picked {
                         Some(link) => return self.inspect_here(&link, window, cx),
                         None if !matches => {
-                            return self.set_status("No link has that label", false, cx);
+                            return self.set_status(
+                                words!(
+                                    inspector_no_label = "No link has that label",
+                                    note = "Said where what was typed to pick a labelled link names none."
+                                ),
+                                false,
+                                cx,
+                            );
                         }
                         None => return,
                     }
@@ -2190,7 +2225,7 @@ impl Shell {
                     if args["back"].as_bool() == Some(true)
                         && State::hex_file(display.data.kind) =>
                 {
-                    return self.find_said("The hex view searches forward only", false, cx);
+                    return self.find_said(crate::bytes_view::forward_only(), false, cx);
                 }
                 "find"
                     if !State::hex_file(display.data.kind)
@@ -2217,9 +2252,15 @@ impl Shell {
                     }
                     if !book || back {
                         let none = if book {
-                            "No earlier match in this chapter"
+                            words!(
+                                inspector_no_earlier_match = "No earlier match in this chapter",
+                                note = "In a book's find field, asked for the match before: there is none in this chapter."
+                            )
                         } else {
-                            "No match in this section"
+                            words!(
+                                inspector_no_match = "No match in this section",
+                                note = "In a preview's find field: the words looked for are nowhere in what is shown (a sheet, a page of rows)."
+                            )
                         };
                         return self.find_said(none, false, cx);
                     }
@@ -2289,7 +2330,14 @@ impl Shell {
         match action {
             "target" if container => {
                 if self.preview.nested.len() >= crate::preview::NESTING {
-                    self.set_status("Open that file itself to look deeper", false, cx);
+                    self.set_status(
+                        words!(
+                            inspector_too_deep = "Open that file itself to look deeper",
+                            note = "Said where a file inside a file inside a file is asked to be shown: the preview goes no deeper."
+                        ),
+                        false,
+                        cx,
+                    );
                     return;
                 }
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
@@ -2509,7 +2557,7 @@ impl Shell {
                 if let Ok(n) = parsed {
                     state.request.offset = n;
                 } else {
-                    self.set_status("Enter a decimal or hexadecimal offset", true, cx);
+                    self.set_status(crate::bytes_view::offset_refused(), true, cx);
                     return;
                 }
             }
@@ -2802,7 +2850,7 @@ impl Shell {
             (display.data.position + 1).to_string()
         };
         let field = crate::preview_bar::Field::new(
-            "Page",
+            &crate::preview_bar::label::page_field(),
             "ui.inspect section_submit",
             "ui.inspect section_cancel",
             window,
@@ -2822,16 +2870,17 @@ impl Shell {
     /// with no field open (a script's `ui.inspect`) is answered by a toast.
     pub(crate) fn find_said(
         &mut self,
-        text: impl Into<String>,
+        text: impl Into<skwir_core::words::Words>,
         error: bool,
         cx: &mut Context<Self>,
     ) {
+        let text = text.into();
         match &self.preview.inspection.find {
             Some(find) => {
                 find.say(text, error);
                 cx.notify();
             }
-            None => self.set_status(Into::<String>::into(text), error, cx),
+            None => self.set_status(text, error, cx),
         }
     }
 
@@ -2849,12 +2898,18 @@ impl Shell {
                 Some(PreviewContent::Inspection(display)) if display.data.kind == InspectionKind::Hex
             );
             let placeholder = if hex {
-                "Text, or hex: 00 ff 7a"
+                words!(
+                    inspector_find_hex = "Text, or hex: 00 ff 7a",
+                    note = "The placeholder of the find field of a file's bytes: words, or bytes written in hexadecimal."
+                )
             } else {
-                "Find…"
+                words!(
+                    inspector_find = "Find…",
+                    note = "The placeholder of a preview's find field."
+                )
             };
             self.preview.inspection.find = Some(crate::preview_bar::Field::new(
-                placeholder,
+                &placeholder,
                 "ui.preview_match",
                 "ui.preview_find_close",
                 window,
@@ -2882,8 +2937,16 @@ fn edge_step(resting: i8, toward: i8, here: bool) -> (i8, bool) {
     }
 }
 
-fn button(id: &'static str, icon: &'static str, title: &'static str, action: &str) -> Button {
-    Button::new(id, icon, title, "ui.inspect").args(serde_json::json!({"action":action}))
+fn button(id: &'static str, icon: &'static str, title: &Words, action: &str) -> Button {
+    Button::new(id, icon, title.say(), "ui.inspect").args(serde_json::json!({"action":action}))
+}
+
+/// What the hex view's jump is called: its button and its prompt.
+fn jump_to_offset() -> Words {
+    words!(
+        inspector_jump = "Jump to byte offset",
+        note = "A button of a file's bytes shown in hexadecimal, and the title of what it opens: go to the byte at a number typed."
+    )
 }
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     match view(shell, false) {
@@ -2974,11 +3037,25 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         (
             step(true),
             step(false),
-            ("Previous page · [", "Next page · ]", "Go to page"),
+            (
+                words!(
+                    inspector_previous_page = "Previous page · [",
+                    note = "Pointing at a book's previous button, counted by printed pages. [ is the key that does it too."
+                ),
+                words!(
+                    inspector_next_page = "Next page · ]",
+                    note = "Pointing at a book's next button, counted by printed pages. ] is the key that does it too."
+                ),
+                label::go_to_page(),
+            ),
         )
     } else if state.bytes.is_some() {
         // Bytes shown whole have no page to turn.
-        (None, None, ("", "", ""))
+        (
+            None,
+            None,
+            (Words::default(), Words::default(), Words::default()),
+        )
     } else {
         let offset = |offset: Option<u64>| {
             offset.map(|offset| serde_json::json!({"action":"page","offset":offset}))
@@ -2986,12 +3063,25 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         (
             offset(data.previous),
             offset(data.next),
-            ("Previous section · [", "Next section · ]", "Go to chapter"),
+            (
+                words!(
+                    inspector_previous_section = "Previous section · [",
+                    note = "Pointing at a preview's previous button: the chapter, sheet or page of rows before. [ is the key that does it too."
+                ),
+                words!(
+                    inspector_next_section = "Next section · ]",
+                    note = "Pointing at a preview's next button: the chapter, sheet or page of rows after. ] is the key that does it too."
+                ),
+                words!(
+                    inspector_go_to_chapter = "Go to chapter",
+                    note = "Pointing at the chapter number between a book's previous and next buttons: a click lets one be typed."
+                ),
+            ),
         )
     };
-    let step = |id, icon, title, args: Option<serde_json::Value>| {
+    let step = |id, icon, title: &Words, args: Option<serde_json::Value>| {
         let enabled = args.is_some();
-        Button::new(id, icon, title, "ui.inspect")
+        Button::new(id, icon, title.say(), "ui.inspect")
             .args(args.unwrap_or_else(|| serde_json::json!({})))
             .enabled(enabled)
     };
@@ -3004,7 +3094,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::Navigate,
             2,
-            step("inspect-prev", "left", titles.0, previous),
+            step("inspect-prev", "left", &titles.0, previous),
         ));
     }
     if numbered {
@@ -3024,18 +3114,29 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         // A book that lists its printed pages can be counted either way.
         let unit = (!data.printed_pages.is_empty()).then(|| {
             (
-                Button::new("inspect-unit", "", "Count by", "ui.preview_menu")
-                    .args(serde_json::json!({"kind":"unit"})),
+                Button::new(
+                    "inspect-unit",
+                    "",
+                    label::count_by().say(),
+                    "ui.preview_menu",
+                )
+                .args(serde_json::json!({"kind":"unit"})),
                 "unit",
             )
         });
         if unit.is_some() {
             bar.popups
-                .push(("unit", crate::preview_bar::unit_popup("Chapters")));
+                .push((
+                    "unit",
+                    crate::preview_bar::unit_popup(words!(
+                        inspector_unit_chapters = "Chapters",
+                        note = "A choice of how a book's place is counted: by its chapters, not by the numbers printed on its pages."
+                    )),
+                ));
         }
         crate::preview_bar::number_tool(
             &mut bar,
-            ("inspect-section", titles.2),
+            ("inspect-section", titles.2.clone()),
             ("ui.preview_goto", serde_json::json!({})),
             (value, total),
             |shell| shell.preview.inspection.section_input.as_ref(),
@@ -3047,7 +3148,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::Navigate,
             2,
-            step("inspect-next", "right", titles.1, next),
+            step("inspect-next", "right", &titles.1, next),
         ));
     }
     // A picture shown as text (its source, its bytes) is still one of the
@@ -3067,7 +3168,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Button::new(
                 "inspect-outline",
                 "contents",
-                label::CONTENTS,
+                label::contents().say(),
                 "ui.preview_contents",
             )
             .active(state.outline && contents)
@@ -3085,7 +3186,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::View,
             1,
-            button("inspect-offset", "move", "Jump to byte offset", "offset"),
+            button("inspect-offset", "move", &jump_to_offset(), "offset"),
         ));
     }
     // Folding is offered where there is something to fold: a code view's
@@ -3096,7 +3197,17 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::View,
             0,
-            button("inspect-expand-all", "unfold", "Expand all", "expand_all").enabled(folding),
+            button(
+                "inspect-expand-all",
+                "unfold",
+                &words!(
+                    inspector_expand_all = "Expand all",
+                    note =
+                        "A preview's button: open every part folded (a code view's, a document's)."
+                ),
+                "expand_all",
+            )
+            .enabled(folding),
         ));
         bar.push(Item::button(
             Slot::View,
@@ -3104,7 +3215,10 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             button(
                 "inspect-collapse-all",
                 "fold",
-                "Collapse all",
+                &words!(
+                    inspector_collapse_all = "Collapse all",
+                    note = "A preview's button: fold every part that folds."
+                ),
                 "collapse_all",
             )
             .enabled(folding),
@@ -3119,7 +3233,13 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::View,
             1,
-            button("inspect-smaller", "minus", "Smaller text", "smaller").enabled(sized),
+            button(
+                "inspect-smaller",
+                "minus",
+                &label::smaller_text(),
+                "smaller",
+            )
+            .enabled(sized),
         ));
         bar.push(
             Item::button(
@@ -3128,7 +3248,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 Button::new(
                     "inspect-text-size",
                     "chevron",
-                    "Text size",
+                    text_size().say(),
                     "ui.preview_menu",
                 )
                 .args(serde_json::json!({"kind":"text"}))
@@ -3140,7 +3260,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::View,
             1,
-            button("inspect-larger", "plus", "Larger text", "larger").enabled(sized),
+            button("inspect-larger", "plus", &label::larger_text(), "larger").enabled(sized),
         ));
         bar.popups.push((
             "text",
@@ -3154,7 +3274,16 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::View,
             0,
-            Button::new("inspect-full-width", "width", "Full width", "ui.full_width")
+            Button::new(
+                "inspect-full-width",
+                "width",
+                words!(
+                    inspector_full_width = "Full width",
+                    note = "A preview's button: lines of text as wide as the panel, not the reading width chosen in Settings."
+                )
+                .say(),
+                "ui.full_width",
+            )
                 .active(shell.reading_measure.is_none())
                 .enabled(sized),
         ));
@@ -3169,7 +3298,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Button::new(
                 "inspect-continuous",
                 "continuous",
-                "Continuous scrolling",
+                label::continuous().say(),
                 "ui.text_continuous",
             )
             .active(shell.prefs.text_continuous)
@@ -3215,14 +3344,37 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     // A text read where it is shown says its lines as they are counted.
     let counted = state.text.as_ref().map(|text| {
         let (lines, done) = text.lines();
-        let lines = crate::format::count(usize::try_from(lines).unwrap_or(usize::MAX), "line");
-        if done { lines } else { format!("{lines}…") }
+        if done {
+            words!(
+                inspector_lines = "{ $count ->
+                    [one] 1 line
+                   *[other] { $count } lines
+                }",
+                count = lines,
+                note = "In a text preview's bar: how many lines the file has."
+            )
+        } else {
+            words!(
+                inspector_lines_so_far = "{ $count ->
+                    [one] 1 line
+                   *[other] { $count } lines
+                }…",
+                count = lines,
+                note = "In a text preview's bar while a large file's lines are counted: how many so far."
+            )
+        }
+        .say()
     });
     let caption = counted.as_deref().unwrap_or(data.title.as_str());
     if state.text.is_some() {
+        let wrap = words!(
+            inspector_wrap_lines = "Wrap lines",
+            note = "A text preview's menu row: break the lines too long for the panel."
+        )
+        .say();
         bar.push(Item::menu_only(
-            Button::new("inspect-wrap", "width", "Wrap lines", "ui.wrap_lines")
-                .label("Wrap lines")
+            Button::new("inspect-wrap", "width", wrap.clone(), "ui.wrap_lines")
+                .label(wrap)
                 .active(shell.prefs.wrap_lines),
         ));
     }
@@ -3250,8 +3402,13 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Item::button(
                 Slot::Tools,
                 2,
-                Button::new("inspect-search", "search", label::FIND, "ui.preview_find")
-                    .active(state.finding()),
+                Button::new(
+                    "inspect-search",
+                    "search",
+                    label::find().say(),
+                    "ui.preview_find",
+                )
+                .active(state.finding()),
             )
             .opens("find"),
         );
@@ -3273,6 +3430,14 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         cx,
     )
 }
+/// What a preview's text size is called: its button and its choices.
+fn text_size() -> Words {
+    words!(
+        inspector_text_size = "Text size",
+        note = "Pointing at a preview's text size button and at each size it offers (100 %)."
+    )
+}
+
 /// The text size picker, as a document's zoom picker is: the size its
 /// part's setting says, then the sizes to choose from, as percentages of
 /// its part's 100 % as the setting writes them (ADR-117).
@@ -3294,15 +3459,20 @@ fn text_size_panel(
         ("text200", 200),
     ] {
         presets = presets.child(
-            Button::new(id, "", "Text size", "ui.inspect")
+            Button::new(id, "", text_size().say(), "ui.inspect")
                 .label(crate::sizes::step_label(step))
                 .args(serde_json::json!({"action":"text_size","percent":step}))
                 .active(percent == step)
                 .render(shell, cx),
         );
     }
-    let default = Button::new("text-default", "revert", "As in Settings", "ui.inspect")
-        .label("As in Settings")
+    let default_size = words!(
+        inspector_text_size_default = "As in Settings",
+        note = "A choice of a preview's text size: the size Settings gives this kind of text."
+    )
+    .say();
+    let default = Button::new("text-default", "revert", default_size.clone(), "ui.inspect")
+        .label(default_size)
         .args(serde_json::json!({"action":"reset"}))
         .active(view.state.percent.is_none())
         .menu()
@@ -3330,24 +3500,34 @@ pub fn find_panel(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
+    use crate::preview_bar::label;
     let find = view(shell, parked)?.state.find.as_ref()?;
     let matches = |id, icon, title, delta: i32| {
         Button::new(id, icon, title, "ui.preview_match").args(serde_json::json!({ "delta": delta }))
     };
     let buttons = vec![
-        matches("inspect-previous-match", "left", "Previous match", -1),
-        matches("inspect-next-match", "right", "Next match", 1),
+        matches(
+            "inspect-previous-match",
+            "left",
+            label::previous_match().say(),
+            -1,
+        ),
+        matches("inspect-next-match", "right", label::next_match().say(), 1),
         Button::new(
             "inspect-close-find",
             "close",
-            "Close find",
+            label::close_find().say(),
             "ui.preview_find_close",
         ),
     ];
     Some(crate::preview_bar::find_popup(
         find,
         crate::keymap::PREVIEW_FIND,
-        "Enter for the next match".into(),
+        words!(
+            inspector_find_hint = "Enter for the next match",
+            note = "Under a preview's find field, before anything is found."
+        )
+        .say(),
         buttons,
         shell,
         theme,
@@ -3554,12 +3734,21 @@ impl Contents {
                 .get(3)
                 .map_or("", |date| date.get(..10).unwrap_or(date));
             headings.push((index, entries.len()));
+            // Transitional: a list argument (ADR-139).
+            let names = names.join(", ");
             entries.push(crate::outline::Entry {
                 depth: 0,
                 title: if day.is_empty() {
-                    names.join(", ").into()
+                    names.into()
                 } else {
-                    format!("{} · {day}", names.join(", ")).into()
+                    words!(
+                        inspector_history_heading = "{ $names } · { $day }",
+                        names = names,
+                        day = day,
+                        note = "An entry of a Git history's contents: the branches and tags of a commit, then its day (2024-03-01)."
+                    )
+                    .say()
+                    .into()
                 },
                 command: Some((
                     "ui.inspect",
@@ -4409,17 +4598,15 @@ pub fn content(
             .max(display.data.columns.len());
         for index in 0..count {
             let column = display.data.columns.get(index).map_or("", String::as_str);
-            let arrow = match sort {
-                Some((sorted, ascending)) if sorted == index => {
-                    if ascending {
-                        " ▲"
-                    } else {
-                        " ▼"
-                    }
-                }
-                _ => "",
+            let said = match sort {
+                Some((sorted, ascending)) if sorted == index => crate::views::list::sorted_header(
+                    Words::as_written(column.to_owned()),
+                    ascending,
+                )
+                .say(),
+                _ => column.to_owned(),
             };
-            let (title, clip) = crate::elements::clip::text(format!("{column}{arrow}"));
+            let (title, clip) = crate::elements::clip::text(said);
             header = header.child(
                 div()
                     .id(("inspect-column", index))
@@ -4772,6 +4959,7 @@ pub(crate) fn said_hex(
                 .filter(|cell| !cell.is_empty())
                 .collect();
             // A label's words are its value, as gpui's text gives them.
+            // Transitional: a list of what the file holds (ADR-139).
             d.aria_value(cells.join(", ")).aria_selected(selected)
         })
         .into_any_element()

@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 use gpui::{Context, ElementId, ModifiersChangedEvent, Window};
 use skwir_core::os_path::PathArg;
 use skwir_core::terminal::Target;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::shell::Shell;
 
@@ -219,7 +221,11 @@ impl Shell {
     /// address goes there.
     pub(crate) fn open_address(&mut self, url: &str, cx: &mut Context<Self>) {
         if !is_address(url) {
-            self.set_status("Only web and mail links open from here", true, cx);
+            self.set_status(
+                words!(links_only_addresses = "Only web and mail links open from here"),
+                true,
+                cx,
+            );
             return;
         }
         let app = Arc::clone(&self.app);
@@ -232,7 +238,11 @@ impl Shell {
                 if let Err(error) = skwir_platform::open::open_address(&url) {
                     app.notify(
                         skwir_core::app::NotifyLevel::Error,
-                        format!("Could not open the link: {error}"),
+                        words!(
+                            links_open_failed = "Could not open the link: { $error }",
+                            error = error,
+                            note = "error: why the desktop could not open a web or mail address."
+                        ),
                     );
                 }
             },
@@ -285,7 +295,11 @@ impl Shell {
         };
         let Some((target, fragment)) = from.as_deref().and_then(|from| document_link(from, href))
         else {
-            self.set_status("This link goes nowhere we can open", false, cx);
+            self.set_status(
+                words!(links_nowhere = "This link goes nowhere we can open"),
+                false,
+                cx,
+            );
             return;
         };
         // The document itself, named: the place it says, here, as `#name`.
@@ -305,11 +319,15 @@ impl Shell {
                 .map(std::path::Path::to_path_buf),
         };
         if !self.reveal_path_at(pane, &target, at, window, cx) {
-            let name = target.file_name().map_or_else(
-                || target.display().to_string(),
-                |name| name.to_string_lossy().into_owned(),
+            self.set_status(
+                words!(
+                    links_not_there = "{ $name } is not there",
+                    name = Name::of(&target),
+                    note = "A document's link names a file that is missing; name: the file's name."
+                ),
+                true,
+                cx,
             );
-            self.set_status(format!("“{name}” is not there"), true, cx);
         }
     }
 
@@ -381,7 +399,11 @@ impl Shell {
         let args: RevealArgs = match serde_json::from_value(args.clone()) {
             Ok(args) => args,
             Err(error) => {
-                self.set_status(format!("ui.reveal: {error}"), true, cx);
+                self.set_status(
+                    Words::of_error(anyhow::Error::new(error).context("ui.reveal")),
+                    true,
+                    cx,
+                );
                 return;
             }
         };
@@ -393,7 +415,11 @@ impl Shell {
         };
         let path = args.path.into_inner();
         if !self.reveal_path_at(pane, &path, at, window, cx) {
-            self.set_status("That link does not name a file", true, cx);
+            self.set_status(
+                words!(links_no_file = "That link does not name a file"),
+                true,
+                cx,
+            );
         }
     }
 
@@ -503,7 +529,16 @@ impl Shell {
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_default(),
                     };
-                    self.set_status(format!("“{file}” has no “#{name}”"), false, cx);
+                    self.set_status(
+                        words!(
+                            links_no_anchor = "{ $file } has no “#{ $anchor }”",
+                            file = Name(file),
+                            anchor = name,
+                            note = "A link names a place in a document that has none of that name; file: the document's name; anchor: the place's name, as the link writes it."
+                        ),
+                        false,
+                        cx,
+                    );
                     return;
                 };
                 line
@@ -531,12 +566,31 @@ pub(crate) enum Inside {
 }
 
 impl Inside {
-    fn said(&self, container: &str) -> String {
+    fn said(&self, container: &str) -> Words {
+        let container = Name(container.to_owned());
         match self {
-            Inside::Unlisted => format!("This link names a file inside “{container}”"),
-            Inside::Out => format!("This link leads out of “{container}”"),
-            Inside::Missing(path) => format!("“{container}” holds no “{path}”"),
-            Inside::Folder(path) => format!("“{path}” is a folder of “{container}”"),
+            Inside::Unlisted => words!(
+                links_inside_unlisted = "This link names a file inside { $container }",
+                container = container,
+                note = "A link of a document inside an archive; container: the archive's name."
+            ),
+            Inside::Out => words!(
+                links_inside_out = "This link leads out of { $container }",
+                container = container,
+                note = "A link of a document inside an archive; container: the archive's name."
+            ),
+            Inside::Missing(path) => words!(
+                links_inside_missing = "{ $container } holds no “{ $path }”",
+                container = container,
+                path = path.as_str(),
+                note = "A link of a document inside an archive names nothing there; container: the archive's name; path: the path the link names in it."
+            ),
+            Inside::Folder(path) => words!(
+                links_inside_folder = "“{ $path }” is a folder of { $container }",
+                path = path.as_str(),
+                container = container,
+                note = "A link of a document inside an archive names a folder of it; path: the folder's path in it; container: the archive's name."
+            ),
         }
     }
 }

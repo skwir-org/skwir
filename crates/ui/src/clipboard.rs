@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use gpui::{Context, Window};
 use skwir_core::command::Invocation;
+use skwir_core::words;
+use skwir_core::words::Words;
 #[cfg(target_os = "linux")]
 use skwir_core::{CancelToken, Location, workspace::PaneId};
 
@@ -87,7 +89,7 @@ impl Shell {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (invocation, window);
-            self.set_status("Nothing to paste", false, cx);
+            self.set_status(nothing_to_paste(), false, cx);
         }
         #[cfg(target_os = "linux")]
         {
@@ -132,7 +134,7 @@ impl Shell {
             return;
         }
         let Some(files) = files else {
-            self.set_status("Nothing to paste", false, cx);
+            self.set_status(nothing_to_paste(), false, cx);
             return;
         };
         if files.paths.is_empty() {
@@ -162,16 +164,27 @@ impl Shell {
                     return;
                 }
                 if entries.is_empty() {
-                    shell.set_status("The copied items no longer exist", true, cx);
+                    shell.set_status(
+                        words!(clipboard_all_gone = "The copied items no longer exist"),
+                        true,
+                        cx,
+                    );
                     return;
                 }
                 if gone > 0 {
-                    let noun = if gone == 1 {
-                        "item no longer exists"
-                    } else {
-                        "items no longer exist"
-                    };
-                    shell.set_status(format!("{gone} copied {noun}"), true, cx);
+                    shell.set_status(
+                        words!(
+                            clipboard_some_gone = "{ $count ->
+                                [one] { $count } copied item no longer exists
+                               *[other] { $count } copied items no longer exist
+                            }",
+                            count = gone,
+                            note = "What another application put on the clipboard names \
+                                    files that are not there; count: how many."
+                        ),
+                        true,
+                        cx,
+                    );
                 }
                 if !others.is_empty() {
                     shell.set_status(unreachable(&others), true, cx);
@@ -213,19 +226,44 @@ impl Shell {
     }
 }
 
+/// What a paste says where the clipboard holds no files.
+fn nothing_to_paste() -> Words {
+    words!(
+        clipboard_nothing_to_paste = "Nothing to paste",
+        note = "Said after a paste where the clipboard holds no files."
+    )
+}
+
 /// What the clipboard named that Skwir cannot reach: another protocol's
 /// locations (ADR-021), by the first one's scheme.
 #[cfg(target_os = "linux")]
-fn unreachable(others: &[String]) -> String {
+fn unreachable(others: &[String]) -> Words {
     let scheme = others
         .first()
         .and_then(|uri| uri.split_once(':'))
-        .map_or("remote", |(scheme, _)| scheme);
-    let n = others.len();
-    format!(
-        "The clipboard holds {n} {scheme}: {} Skwir cannot reach",
-        if n == 1 { "item" } else { "items" },
-    )
+        .map(|(scheme, _)| scheme.to_owned());
+    let count = others.len();
+    match scheme {
+        Some(scheme) => words!(
+            clipboard_unreachable = "{ $count ->
+                [one] The clipboard holds { $count } { $scheme }: item Skwir cannot reach
+               *[other] The clipboard holds { $count } { $scheme }: items Skwir cannot reach
+            }",
+            count = count,
+            scheme = scheme,
+            note = "What another application copied is on another protocol, which Skwir does \
+                    not speak; scheme: the protocol, as its address writes it (sftp, smb)."
+        ),
+        None => words!(
+            clipboard_unreachable_remote = "{ $count ->
+                [one] The clipboard holds { $count } remote: item Skwir cannot reach
+               *[other] The clipboard holds { $count } remote: items Skwir cannot reach
+            }",
+            count = count,
+            note = "What another application copied is on another protocol, which Skwir does \
+                    not speak, one whose address names none."
+        ),
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -245,11 +283,11 @@ mod tests {
     #[test]
     fn what_cannot_be_reached_is_said_by_its_scheme() {
         assert_eq!(
-            unreachable(&["sftp://host/a".into()]),
+            unreachable(&["sftp://host/a".into()]).english(),
             "The clipboard holds 1 sftp: item Skwir cannot reach"
         );
         assert_eq!(
-            unreachable(&["smb://h/a".into(), "smb://h/b".into()]),
+            unreachable(&["smb://h/a".into(), "smb://h/b".into()]).english(),
             "The clipboard holds 2 smb: items Skwir cannot reach"
         );
     }

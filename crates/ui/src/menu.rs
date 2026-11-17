@@ -12,6 +12,8 @@ use gpui::{
     prelude::*, px,
 };
 use skwir_core::registry::{Check, ChoiceLook, MenuItem, MenuSource};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::mime::{self, Kind, Mime};
 
 use crate::elements::popover::PopoverAnchor;
@@ -690,11 +692,18 @@ const PROPERTIES: &str = "ui.properties";
 /// The words of the menu's Properties item: what a click does to its
 /// switch, whatever the menu is about. Read at each frame, so a press of
 /// Alt+Enter while the menu is open shows at once.
-fn properties_title(shell: &Shell) -> &'static str {
+fn properties_title(shell: &Shell) -> Words {
     if shell.properties_hide() {
-        "Hide Properties"
+        words!(
+            menu_hide_properties = "Hide Properties",
+            note =
+                "The last item of a file's menu while the properties are shown over the preview."
+        )
     } else {
-        "Properties"
+        words!(
+            menu_properties = "Properties",
+            note = "The last item of a file's menu: what it is, its size, its dates and more."
+        )
     }
 }
 
@@ -835,7 +844,7 @@ impl Shell {
     /// new place, on the background.
     fn verb_items(&self, ctx: SelectionCtx) -> Vec<MenuItem> {
         let verbs = &self.ui().place.verbs;
-        let item = |title: &str, command: &str, order: i32, icon: &str| {
+        let item = |title: Words, command: &str, order: i32, icon: &str| {
             MenuItem::new(
                 "context",
                 title,
@@ -852,16 +861,34 @@ impl Shell {
             .as_ref()
             .filter(|_| ctx.count > 0 && !ctx.all_places)
         {
-            items.push(item(&remove.title, "take_out", 280, "minus"));
+            items.push(item(
+                Words::as_written(remove.title.clone()),
+                "take_out",
+                280,
+                "minus",
+            ));
         }
         if let Some(create) = verbs.create.as_ref().filter(|_| ctx.count == 0) {
-            items.push(item(&create.title, "ui.create_here", 300, "folder-plus"));
+            items.push(item(
+                Words::as_written(create.title.clone()),
+                "ui.create_here",
+                300,
+                "folder-plus",
+            ));
         }
         // The trash's files go back where they came from.
         if let Some(restore) = verbs.restore.as_ref().filter(|_| ctx.count > 0) {
             items.push(MenuItem {
                 command: restore.clone().with("pane", self.pane),
-                ..item("Restore", "", 1, "revert")
+                ..item(
+                    words!(
+                        menu_restore = "Restore",
+                        note = "An item of the menu of files in the trash: put them back where they were."
+                    ),
+                    "",
+                    1,
+                    "revert",
+                )
             });
         }
         items
@@ -924,7 +951,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let item = |title: &str, command, order, icon: &str| {
+        let item = |title: Words, command, order, icon: &str| {
             MenuItem::new("tab", title, icon, order, command)
         };
         let tab_args = serde_json::json!({ "tab": tab });
@@ -937,19 +964,19 @@ impl Shell {
         };
         let mut items = vec![
             item(
-                "Close Tab",
+                words!(menu_close_tab = "Close Tab"),
                 skwir_core::command::Invocation::with_args("tab.close", &tab_args),
                 290,
                 "close",
             ),
             item(
-                "New Tab",
+                words!(menu_new_tab = "New Tab"),
                 skwir_core::command::Invocation::new("tab.new"),
                 300,
                 "tab-new",
             ),
             item(
-                "Reopen Closed Tab",
+                words!(menu_reopen_tab = "Reopen Closed Tab"),
                 skwir_core::command::Invocation::new("tab.reopen"),
                 310,
                 "revert",
@@ -957,7 +984,7 @@ impl Shell {
         ];
         if !alone {
             items.push(item(
-                "Move to New Window",
+                words!(menu_tab_to_window = "Move to New Window"),
                 skwir_core::command::Invocation::with_args(
                     "tab.move",
                     &serde_json::json!({ "tab": tab, "new_window": true }),
@@ -989,7 +1016,7 @@ impl Shell {
             return;
         };
         let place = &arranged.place;
-        let item = |title: &str, command, order, icon: &str| {
+        let item = |title: Words, command, order, icon: &str| {
             MenuItem::new("place", title, icon, order, command)
         };
         // While its owner works on it (unlocking, unmounting), the menu
@@ -999,19 +1026,27 @@ impl Shell {
         let mut items = Vec::new();
         if !busy {
             items.push(item(
-                "Open",
+                words!(
+                    menu_place_open = "Open",
+                    note = "An item of a sidebar place's menu: show it in the pane."
+                ),
                 crate::sidebar::open_invocation(place),
                 0,
                 "open",
             ));
             items.push(item(
-                "Open in New Tab",
+                words!(menu_place_open_tab = "Open in New Tab"),
                 crate::sidebar::open_in_tab(place),
                 2,
                 "tab-new",
             ));
             if let Some(open) = crate::sidebar::open_in_window(place) {
-                items.push(item("Open in New Window", open, 2, "window-new"));
+                items.push(item(
+                    words!(menu_place_open_window = "Open in New Window"),
+                    open,
+                    2,
+                    "window-new",
+                ));
             }
         }
         items.extend(place.menu.iter().cloned());
@@ -1024,23 +1059,52 @@ impl Shell {
         // Renamed by its owner (a bookmark, a saved search, a tag on every
         // file) or here, for one offered: F2 does the same.
         if let Some(rename) = self.sidebar_rename(&arranged) {
-            items.push(item("Rename…", rename, 200, "rename"));
+            items.push(item(
+                words!(
+                    menu_place_rename = "Rename…",
+                    note = "An item of a sidebar place's menu: give it another name."
+                ),
+                rename,
+                200,
+                "rename",
+            ));
         }
         // A place the user kept is taken out by its owner (the bookmark
         // removed, the search forgotten, the tag unpinned), as the pane's
         // keep button does; one offered or suggested is hidden here.
         if let Some(forget) = place.forget.clone() {
-            items.push(item("Remove From Sidebar", forget, 285, "minus"));
+            items.push(item(
+                words!(menu_place_remove = "Remove From Sidebar"),
+                forget,
+                285,
+                "minus",
+            ));
         }
         if let Some(up) = self.sidebar_move(&arranged, -1) {
-            items.push(item("Move Up", up, 240, "up"));
+            items.push(item(
+                words!(
+                    menu_place_up = "Move Up",
+                    note = "An item of a sidebar place's menu: move it above the one before it."
+                ),
+                up,
+                240,
+                "up",
+            ));
         }
         if let Some(down) = self.sidebar_move(&arranged, 1) {
-            items.push(item("Move Down", down, 241, "down"));
+            items.push(item(
+                words!(
+                    menu_place_down = "Move Down",
+                    note = "An item of a sidebar place's menu: move it below the one after it."
+                ),
+                down,
+                241,
+                "down",
+            ));
         }
         if arranged.role.hides() {
             items.push(item(
-                "Hide From Sidebar",
+                words!(menu_place_hide = "Hide From Sidebar"),
                 skwir_core::command::Invocation::with_args(
                     "ui.sidebar_place",
                     &serde_json::json!({ "group": group, "key": key, "hidden": true }),
@@ -1050,7 +1114,15 @@ impl Shell {
             ));
         }
         if let Some(eject) = place.eject.as_ref().filter(|_| !busy) {
-            items.push(item("Eject", eject.clone(), 299, "eject"));
+            items.push(item(
+                words!(
+                    menu_place_eject = "Eject",
+                    note = "An item of a device's menu in the sidebar: unmount it, ready to be unplugged."
+                ),
+                eject.clone(),
+                299,
+                "eject",
+            ));
         }
         if items.is_empty() {
             return;
@@ -1117,7 +1189,7 @@ impl Shell {
             .enumerate()
             .map(|(i, column)| MenuItem {
                 menu: "columns".into(),
-                title: column.label.into(),
+                title: column.label_words(),
                 command: skwir_core::command::Invocation::with_args(
                     "ui.columns",
                     &serde_json::json!({ "key": column.setting }),
@@ -1133,7 +1205,11 @@ impl Shell {
             .collect();
         items.push(MenuItem::new(
             "columns",
-            "Reset widths",
+            words!(
+                menu_reset_widths = "Reset widths",
+                note =
+                    "An item of the menu of the list's header: give every column its width back."
+            ),
             "revert",
             200,
             skwir_core::command::Invocation::new("ui.columns_reset"),
@@ -1158,7 +1234,7 @@ impl Shell {
         };
         let pane = self.pane;
         let folded = rows.folded(group);
-        let fold = |title: &str, order, mode: &str| {
+        let fold = |title: Words, order, mode: &str| {
             MenuItem::new(
                 "group",
                 title,
@@ -1172,20 +1248,52 @@ impl Shell {
         };
         let mut items = vec![
             if folded {
-                fold("Unfold", 400, "unfold")
+                fold(
+                    words!(
+                        menu_group_unfold = "Unfold",
+                        note = "An item of the menu of a group's heading in a folder grouped by something: show its files again."
+                    ),
+                    400,
+                    "unfold",
+                )
             } else {
-                fold("Fold", 400, "fold")
+                fold(
+                    words!(
+                        menu_group_fold = "Fold",
+                        note = "An item of the menu of a group's heading: hide its files under the heading."
+                    ),
+                    400,
+                    "fold",
+                )
             },
-            fold("Fold the others", 410, "fold_others"),
+            fold(
+                words!(
+                    menu_group_fold_others = "Fold the others",
+                    note = "An item of the menu of a group's heading: hide the files of every other group."
+                ),
+                410,
+                "fold_others",
+            ),
         ];
         if (0..rows.spans().len()).any(|n| rows.folded(n)) {
-            items.push(fold("Unfold all", 420, "unfold_all"));
+            items.push(fold(
+                words!(
+                    menu_group_unfold_all = "Unfold all",
+                    note =
+                        "An item of the menu of a group's heading: show the files of every group."
+                ),
+                420,
+                "unfold_all",
+            ));
         }
         // A folded group's entries are not shown: nothing to select.
         if !folded {
             items.push(MenuItem::new(
                 "group",
-                "Select these",
+                words!(
+                    menu_group_select = "Select these",
+                    note = "An item of the menu of a group's heading: select its files."
+                ),
                 "check",
                 0,
                 skwir_core::command::Invocation::with_args(
@@ -1202,7 +1310,10 @@ impl Shell {
         {
             items.push(MenuItem::new(
                 "group",
-                "Show only these",
+                words!(
+                    menu_group_only = "Show only these",
+                    note = "An item of the menu of a group's heading: filter the folder down to its files."
+                ),
                 "filter",
                 300,
                 skwir_core::command::Invocation::with_args(
@@ -1224,7 +1335,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use crate::preview::PreviewContent;
-        let item = |order, title: &str, icon: &str, name: &str, args: serde_json::Value| {
+        let item = |order, title: Words, icon: &str, name: &str, args: serde_json::Value| {
             MenuItem::new(
                 "preview",
                 title,
@@ -1243,18 +1354,42 @@ impl Shell {
                     document: Some(_), ..
                 },
             ) => vec![
-                item(0, "Copy", "copy", "ui.preview_copy", none.clone()),
+                item(
+                    0,
+                    words!(
+                        menu_preview_copy = "Copy",
+                        note = "An item of the preview's menu: copy the text selected."
+                    ),
+                    "copy",
+                    "ui.preview_copy",
+                    none.clone(),
+                ),
                 item(
                     1,
-                    "Select all",
+                    words!(menu_preview_select_all = "Select all"),
                     "check",
                     "ui.preview_select_all",
                     none.clone(),
                 ),
-                item(2, "Find…", "search", "ui.preview_find", none.clone()),
-                item(100, "Copy path", "copy", "ui.preview_copy_path", none),
+                item(
+                    2,
+                    words!(
+                        menu_preview_find = "Find…",
+                        note = "An item of the preview's menu: find a text in what it shows."
+                    ),
+                    "search",
+                    "ui.preview_find",
+                    none.clone(),
+                ),
+                item(100, menu_copy_path(), "copy", "ui.preview_copy_path", none),
             ],
-            Some(_) => vec![item(100, "Copy path", "copy", "ui.preview_copy_path", none)],
+            Some(_) => vec![item(
+                100,
+                menu_copy_path(),
+                "copy",
+                "ui.preview_copy_path",
+                none,
+            )],
             None => return,
         };
         // What plugins add, run with what the preview shows: after the
@@ -1290,7 +1425,7 @@ impl Shell {
         if !self.terminal.open {
             return;
         }
-        let item = |order, title: &str, icon: &str, name: &str, args: serde_json::Value| {
+        let item = |order, title: Words, icon: &str, name: &str, args: serde_json::Value| {
             MenuItem::new(
                 "terminal",
                 title,
@@ -1305,16 +1440,29 @@ impl Shell {
             // What a program wrote as a link may say something else than
             // where it leads: the item says where (ADR-029).
             let follow = if link.written {
-                format!("Follow link to {}", crate::links::shortened(&link.target))
+                words!(
+                    menu_follow_link_to = "Follow link to { $target }",
+                    target = crate::links::shortened(&link.target),
+                    note = "An item of the terminal's menu on a link whose text says something else than where it leads; target: where it leads (an address, a path), as it is."
+                )
             } else {
-                "Follow link".to_owned()
+                words!(
+                    menu_follow_link = "Follow link",
+                    note = "An item of the terminal's menu on a link."
+                )
             };
             match &link.target {
                 Target::Uri(uri) => {
                     let url = serde_json::json!({ "url": uri });
-                    items.push(item(0, &follow, "external", "ui.open_url", url));
+                    items.push(item(0, follow.clone(), "external", "ui.open_url", url));
                     let text = serde_json::json!({ "text": uri, "what": "the link's address" });
-                    items.push(item(110, "Copy link address", "link", "ui.copy_text", text));
+                    items.push(item(
+                        110,
+                        words!(menu_copy_link = "Copy link address"),
+                        "link",
+                        "ui.copy_text",
+                        text,
+                    ));
                 }
                 Target::Path { path, line, .. } => {
                     let reveal = |tab: bool| {
@@ -1327,10 +1475,16 @@ impl Shell {
                         }
                         args
                     };
-                    items.push(item(0, &follow, "folder", "ui.reveal", reveal(false)));
+                    items.push(item(
+                        0,
+                        follow.clone(),
+                        "folder",
+                        "ui.reveal",
+                        reveal(false),
+                    ));
                     items.push(item(
                         1,
-                        "Follow link in a new tab",
+                        words!(menu_follow_link_tab = "Follow link in a new tab"),
                         "tab-new",
                         "ui.reveal",
                         reveal(true),
@@ -1338,24 +1492,36 @@ impl Shell {
                     // A name the clipboard cannot hold as text has no item.
                     if let Some(text) = path.to_str() {
                         let text = serde_json::json!({ "text": text, "what": "the path" });
-                        items.push(item(110, "Copy path", "link", "ui.copy_text", text));
+                        items.push(item(110, menu_copy_path(), "link", "ui.copy_text", text));
                     }
                 }
             }
         }
         if self.terminal_selected() {
-            items.push(item(100, "Copy", "copy", "ui.terminal_copy", none.clone()));
+            items.push(item(
+                100,
+                words!(
+                    menu_terminal_copy = "Copy",
+                    note = "An item of the terminal's menu: copy the text selected."
+                ),
+                "copy",
+                "ui.terminal_copy",
+                none.clone(),
+            ));
         }
         items.push(item(
             101,
-            "Paste",
+            words!(
+                menu_terminal_paste = "Paste",
+                note = "An item of the terminal's menu: paste the clipboard's text."
+            ),
             "paste",
             "ui.terminal_paste",
             none.clone(),
         ));
         items.push(item(
             102,
-            "Select all",
+            words!(menu_terminal_select_all = "Select all"),
             "check",
             "ui.terminal_select_all",
             none.clone(),
@@ -1363,7 +1529,10 @@ impl Shell {
         if self.terminal_history() > 0 {
             items.push(item(
                 300,
-                "Clear the history",
+                words!(
+                    menu_terminal_clear = "Clear the history",
+                    note = "An item of the terminal's menu: forget what scrolled out of sight."
+                ),
                 "close",
                 "ui.terminal_clear",
                 none,
@@ -1654,6 +1823,15 @@ impl Shell {
     }
 }
 
+/// The item that copies a file's path, in the preview's and the terminal's
+/// menus.
+fn menu_copy_path() -> Words {
+    words!(
+        menu_copy_path = "Copy path",
+        note = "An item of a menu: copy where the file is, as text."
+    )
+}
+
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let menu = shell.menu.as_ref()?;
     let theme = cx.global::<Theme>().clone();
@@ -1662,7 +1840,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let panel = div()
         .id("context-menu")
         .role(gpui::Role::Menu)
-        .aria_label("Context menu")
+        .aria_label(
+            words!(
+                menu_name = "Context menu",
+                note = "What a screen reader calls a menu opened on a file, a place or a tab."
+            )
+            .say(),
+        )
         .min_w(sized(220.))
         .p_1()
         .flex()
@@ -1827,7 +2011,7 @@ fn row_element(
                 .flatten()
                 .or_else(|| shell.keys_here(&item.command.name, &item.command.args));
             let title = if &*item.command.name == PROPERTIES {
-                properties_title(shell).to_owned()
+                properties_title(shell).say()
             } else {
                 item.title.say()
             };

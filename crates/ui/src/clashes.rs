@@ -22,6 +22,8 @@ use gpui::{
 };
 use skwir_core::app::ClashQuestion;
 use skwir_core::op::clash::{Act, Answer, Choice, Clash, FileChoice, FolderChoice, Policy, Side};
+use skwir_core::words;
+use skwir_core::words::{Name, Size, Words};
 use skwir_core::{App, CancelToken};
 
 use crate::controls::{self, ButtonStyle};
@@ -88,13 +90,28 @@ impl Drop for Stops {
     }
 }
 
-fn label(choice: Choice) -> &'static str {
+fn label(choice: Choice) -> Words {
     match choice {
-        Choice::KeepBoth => "Keep both",
-        Choice::Replace => "Replace",
-        Choice::ReplaceIfNewer => "Replace if newer",
-        Choice::Skip => "Skip",
-        Choice::Merge => "Merge",
+        Choice::KeepBoth => words!(
+            clashes_keep_both = "Keep both",
+            note = "A choice for a name already taken where something goes: keep what is there and what comes, the one coming under a name of its own."
+        ),
+        Choice::Replace => words!(
+            clashes_replace = "Replace",
+            note = "A choice for a name already taken where something goes: what comes replaces what is there."
+        ),
+        Choice::ReplaceIfNewer => words!(
+            clashes_replace_if_newer = "Replace if newer",
+            note = "A choice for a name already taken where something goes: what comes replaces what is there only where it changed later."
+        ),
+        Choice::Skip => words!(
+            clashes_skip = "Skip",
+            note = "A choice for a name already taken where something goes: what comes is left where it is."
+        ),
+        Choice::Merge => words!(
+            clashes_merge = "Merge",
+            note = "A choice for a folder coming where a folder of its name is: what it holds goes into the one there."
+        ),
     }
 }
 
@@ -165,7 +182,7 @@ impl Clashes {
     /// file, or one a step makes that cannot say what it holds (never
     /// merged), takes a file's choices and is a folder all the same. The second, a folder's onto a
     /// folder, says so where the first names folders too.
-    fn head_names(&self) -> (&'static str, &'static str) {
+    fn head_names(&self) -> (Words, Words) {
         let (mut files, mut folders) = (false, false);
         for clash in self.question.clashes.iter().filter(|c| !c.folders()) {
             if clash.source.folder {
@@ -174,15 +191,30 @@ impl Clashes {
                 files = true;
             }
         }
+        let folders_for_all = || {
+            words!(
+                clashes_folders_for_all = "Folders, for all",
+                note = "The row choosing what becomes of every folder whose name is taken, beside the rows of each."
+            )
+        };
         let first = match (files, folders) {
-            (true, true) => "Files and folders, for all",
-            (false, true) => "Folders, for all",
-            _ => "Files, for all",
+            (true, true) => words!(
+                clashes_files_and_folders_for_all = "Files and folders, for all",
+                note = "The row choosing what becomes of every file and folder whose name is taken (but folders onto folders), beside the rows of each."
+            ),
+            (false, true) => folders_for_all(),
+            _ => words!(
+                clashes_files_for_all = "Files, for all",
+                note = "The row choosing what becomes of every file whose name is taken, beside the rows of each."
+            ),
         };
         let second = if folders {
-            "Folders onto folders, for all"
+            words!(
+                clashes_folders_onto_folders_for_all = "Folders onto folders, for all",
+                note = "The row choosing what becomes of every folder coming where a folder of its name is, beside the rows of each."
+            )
         } else {
-            "Folders, for all"
+            folders_for_all()
         };
         (first, second)
     }
@@ -283,16 +315,52 @@ impl Clashes {
         }
     }
 
-    /// What the plan does, as its button says it and as what is not done
-    /// until it is answered: ("Copy", "copied"), ("Move", "moved"),
-    /// ("Link", "linked"), or what a step makes says ("Extract",
-    /// "extracted").
-    pub fn words(&self) -> (&'static str, &'static str) {
+    /// What the plan does, as its button says it, and that nothing is
+    /// done until it is answered: ("Copy", "Nothing is copied until you
+    /// choose."), or what a step makes says ("Extract", "Nothing is
+    /// extracted…").
+    pub fn words(&self) -> (Words, Words) {
         match self.question.clashes.first().map(|c| c.act) {
-            Some(Act::Move) => ("Move", "moved"),
-            Some(Act::Link) => ("Link", "linked"),
-            Some(Act::Make { verb, done, .. }) => (verb, done),
-            Some(Act::Copy) | None => ("Copy", "copied"),
+            Some(Act::Move) => (
+                words!(
+                    clashes_move = "Move",
+                    note = "The button moving what was asked, once the names taken are answered."
+                ),
+                words!(
+                    clashes_nothing_moved = "Nothing is moved until you choose.",
+                    note = "Under the title of the dialog asking what becomes of the names taken where something is moved."
+                ),
+            ),
+            Some(Act::Link) => (
+                words!(
+                    clashes_link = "Link",
+                    note = "The button making the links asked, once the names taken are answered."
+                ),
+                words!(
+                    clashes_nothing_linked = "Nothing is linked until you choose.",
+                    note = "Under the title of the dialog asking what becomes of the names taken where links are made."
+                ),
+            ),
+            // Transitional: a step's own verb and participle arrive as
+            // English text (`Act::Make`, ADR-139).
+            Some(Act::Make { verb, done, .. }) => (
+                Words::as_written(verb),
+                words!(
+                    clashes_nothing_made = "Nothing is { $done } until you choose.",
+                    done = done,
+                    note = "Under the title of the dialog asking what becomes of the names taken where a step makes something: done is what it does, a participle (extracted)."
+                ),
+            ),
+            Some(Act::Copy) | None => (
+                words!(
+                    clashes_copy = "Copy",
+                    note = "The button copying what was asked, once the names taken are answered."
+                ),
+                words!(
+                    clashes_nothing_copied = "Nothing is copied until you choose.",
+                    note = "Under the title of the dialog asking what becomes of the names taken where something is copied."
+                ),
+            ),
         }
     }
 }
@@ -462,15 +530,41 @@ enum Row {
 }
 
 /// A side of a clash in words: "12 KB, Today 14:02", "folder, 1 Oct".
-fn said(side: &Side, now: &jiff::Zoned) -> String {
-    let what = match side.size {
-        _ if side.folder => "folder".to_owned(),
-        Some(bytes) => crate::format::size(bytes),
-        None => "file".to_owned(),
-    };
-    match side.modified {
-        Some(t) => format!("{what}, {}", crate::format::friendly_time(t, now)),
-        None => what,
+fn said(side: &Side, now: &jiff::Zoned) -> Words {
+    // Transitional: a moment said as text until moments are arguments of
+    // their own (ADR-139).
+    let time = side.modified.map(|t| crate::format::friendly_time(t, now));
+    match (side.folder, side.size, time) {
+        (true, _, None) => words!(
+            clashes_side_folder = "folder",
+            note =
+                "One side of a name taken, a folder, under its name: what comes, or what is there."
+        ),
+        (true, _, Some(time)) => words!(
+            clashes_side_folder_at = "folder, { $time }",
+            time = time,
+            note = "One side of a name taken, a folder, under its name, and when it changed (Today 14:02)."
+        ),
+        (false, Some(bytes), None) => words!(
+            clashes_side_size = "{ $size }",
+            size = Size(bytes),
+            note = "One side of a name taken, a file, under its name: its size (12 KB)."
+        ),
+        (false, Some(bytes), Some(time)) => words!(
+            clashes_side_size_at = "{ $size }, { $time }",
+            size = Size(bytes),
+            time = time,
+            note = "One side of a name taken, a file, under its name: its size (12 KB) and when it changed (Today 14:02)."
+        ),
+        (false, None, None) => words!(
+            clashes_side_file = "file",
+            note = "One side of a name taken, a file whose size is unknown, under its name."
+        ),
+        (false, None, Some(time)) => words!(
+            clashes_side_file_at = "file, { $time }",
+            time = time,
+            note = "One side of a name taken, a file whose size is unknown, under its name, and when it changed (Today 14:02)."
+        ),
     }
 }
 
@@ -499,7 +593,7 @@ fn choices(
             frame.child(
                 controls::segment(
                     SharedString::from(format!("{id}-{n}")),
-                    label(choice),
+                    label(choice).say(),
                     choice == selected,
                     theme,
                 )
@@ -542,15 +636,32 @@ fn clash_rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -
             .to_string_lossy()
             .into_owned();
         let (yours, theirs) = (said(&clash.source, &now), said(&clash.there, &now));
-        let newer_mark = |is: bool| if is { " · newer" } else { "" };
         let later = newer(clash);
         let earlier = matches!((clash.source.modified, clash.there.modified),
             (Some(coming), Some(staying)) if coming < staying);
-        let detail = format!(
-            "Yours: {yours}{} — There: {theirs}{}",
-            newer_mark(later),
-            newer_mark(earlier)
-        );
+        let detail = if later {
+            words!(
+                clashes_sides_yours_newer = "Yours: { $yours } · newer — There: { $theirs }",
+                yours = yours,
+                theirs = theirs,
+                note = "Under a name taken: what comes (yours), newer, then what is there; each a size or folder and when it changed."
+            )
+        } else if earlier {
+            words!(
+                clashes_sides_theirs_newer = "Yours: { $yours } — There: { $theirs } · newer",
+                yours = yours,
+                theirs = theirs,
+                note = "Under a name taken: what comes (yours), then what is there, newer; each a size or folder and when it changed."
+            )
+        } else {
+            words!(
+                clashes_sides = "Yours: { $yours } — There: { $theirs }",
+                yours = yours,
+                theirs = theirs,
+                note = "Under a name taken: what comes (yours), then what is there; each a size or folder and when it changed."
+            )
+        }
+        .say();
         let options: &[Choice] = if clash.folders() { &FOLDERS } else { &FILE };
         rows.push(
             div()
@@ -620,7 +731,7 @@ pub fn render(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let (verb, done) = clashes.words();
+    let (verb, nothing_done) = clashes.words();
     let first = clashes.question.clashes.first();
     let dest = first
         .and_then(|c| c.there.path.parent())
@@ -632,15 +743,32 @@ pub fn render(
         .iter()
         .filter(|c| c.inside.is_none())
         .count();
-    let title = format!("{} already in “{dest}”", crate::format::count(top, "name"));
+    let title = words!(
+        clashes_title = "{ $count ->
+        [one] { $count } name already in { $folder }
+       *[other] { $count } names already in { $folder }
+    }",
+        count = top,
+        folder = Name(dest.clone()),
+        note = "The title of the dialog asking what becomes of the names already taken where something goes: count is how many, folder where."
+    )
+    .say();
     let more = if pending > 0 {
-        format!("{pending} more waiting")
+        words!(
+            clashes_more_waiting = "{ $count ->
+        [one] { $count } more waiting
+       *[other] { $count } more waiting
+    }",
+            count = pending,
+            note = "Beside the title of a question of names taken: how many other questions wait after it."
+        )
+        .say()
     } else {
         String::new()
     };
     let at_cursor = |row: usize| clashes.cursor == row;
     let head = |row: usize,
-                name: &str,
+                name: &Words,
                 kind: Row,
                 options: &[Choice],
                 selected: Choice,
@@ -653,7 +781,7 @@ pub fn render(
             .py_1()
             .rounded_md()
             .when(at_cursor(row), |d| d.bg(theme.hover))
-            .child(div().flex_1().text_body().child(name.to_owned()))
+            .child(div().flex_1().text_body().child(name.say()))
             .child(choices(
                 format!("clash-all-{row}").into(),
                 kind,
@@ -667,8 +795,8 @@ pub fn render(
     let mut heads = div().flex().flex_col().gap(sized(2.));
     for (at, &kind) in clashes.head_rows().iter().enumerate() {
         heads = heads.child(match kind {
-            Row::Folders => head(at, second, kind, &FOLDERS, clashes.folders.into(), cx),
-            _ => head(at, first, kind, &FILES, clashes.files.into(), cx),
+            Row::Folders => head(at, &second, kind, &FOLDERS, clashes.folders.into(), cx),
+            _ => head(at, &first, kind, &FILES, clashes.files.into(), cx),
         });
     }
     let list = ROWS.list(
@@ -680,7 +808,13 @@ pub fn render(
         cx,
     );
     let panel = modal::panel("clashes", 720., &theme)
-        .aria_label("Names already taken")
+        .aria_label(
+            words!(
+                clashes_named = "Names already taken",
+                note = "What the dialog asking what becomes of the names already taken is named to a screen reader."
+            )
+            .say(),
+        )
         .p_3()
         .gap_2()
         .track_focus(&handles.focus)
@@ -696,7 +830,7 @@ pub fn render(
             div()
                 .text_body()
                 .text_color(theme.text_muted)
-                .child(format!("Nothing is {done} until you choose.")),
+                .child(nothing_done.say()),
         )
         .when(
             clashes
@@ -705,22 +839,36 @@ pub fn render(
                 .iter()
                 .any(skwir_core::op::clash::replaces_for_good),
             |d| {
-                d.child(div().text_body().text_color(theme.warning).child(format!(
-                    "“{dest}” is in a network folder, which keeps no trash: \
-                     what is replaced there is deleted for good."
-                )))
+                d.child(
+                    div().text_body().text_color(theme.warning).child(
+                        words!(
+                            clashes_for_good = "{ $folder } is in a network folder, which keeps no trash: what is replaced there is deleted for good.",
+                            folder = Name(dest.clone()),
+                            note = "In the dialog asking what becomes of the names taken, where what is replaced cannot go to the trash: folder is where it goes."
+                        )
+                        .say(),
+                    ),
+                )
             },
         )
         .child(heads)
         .child(div().h(px(1.)).bg(theme.border))
         .child(list)
         .child(modal::footer(
-            "↑↓ a row, ←→ its choice · Enter goes on, Escape cancels",
+            words!(
+                clashes_keys = "↑↓ a row, ←→ its choice · Enter goes on, Escape cancels",
+                note = "The keys of the dialog asking what becomes of the names taken, at its foot."
+            )
+            .say(),
             [
                 modal::pressed(
                     controls::button(
                         "review-cancel",
-                        "Cancel",
+                        words!(
+                            clashes_cancel = "Cancel",
+                            note = "The button giving up what was asked, rather than answer the names taken."
+                        )
+                        .say(),
                         None,
                         ButtonStyle::Plain,
                         &handles.cancel,
@@ -732,7 +880,7 @@ pub fn render(
                 modal::pressed(
                     controls::button(
                         "review-apply",
-                        verb,
+                        verb.say(),
                         Some("check"),
                         ButtonStyle::Plain,
                         &handles.apply,
@@ -883,11 +1031,16 @@ mod tests {
         );
     }
 
+    /// The names of the choices for all, in English.
+    fn english((first, second): (Words, Words)) -> [String; 2] {
+        [first.english(), second.english()]
+    }
+
     #[test]
     fn the_choices_for_all_are_named_by_what_comes() {
         assert_eq!(
-            dialog().head_names(),
-            ("Files, for all", "Folders, for all")
+            english(dialog().head_names()),
+            ["Files, for all", "Folders, for all"]
         );
         // A folder an extraction makes that cannot say what it holds takes
         // a file's choices.
@@ -908,12 +1061,12 @@ mod tests {
         };
         let folder = question(vec![made("/example/dest/notes", true)]);
         assert_eq!(folder.heads(), 1);
-        assert_eq!(folder.head_names().0, "Folders, for all");
+        assert_eq!(folder.head_names().0.english(), "Folders, for all");
         let both = question(vec![
             made("/example/dest/notes", true),
             made("/example/dest/report.pdf", false),
         ]);
-        assert_eq!(both.head_names().0, "Files and folders, for all");
+        assert_eq!(both.head_names().0.english(), "Files and folders, for all");
         // Beside folders merged, each says which folders it is for.
         let beside = question(vec![
             made("/example/dest/notes", true),
@@ -921,8 +1074,8 @@ mod tests {
         ]);
         assert_eq!(beside.heads(), 2);
         assert_eq!(
-            beside.head_names(),
-            ("Folders, for all", "Folders onto folders, for all")
+            english(beside.head_names()),
+            ["Folders, for all", "Folders onto folders, for all"]
         );
         // One that says what it holds is merged, as a copy's folder is:
         // its own clashes under it.
@@ -939,7 +1092,12 @@ mod tests {
             merged("/example/dest/photos/it's a.jpg", false, Some(0)),
         ]);
         assert_eq!(into.heads(), 2);
-        assert_eq!(into.words(), ("Extract", "extracted"));
+        let (verb, nothing_done) = into.words();
+        assert_eq!(verb.english(), "Extract");
+        assert_eq!(
+            nothing_done.english(),
+            "Nothing is extracted until you choose."
+        );
         assert_eq!(into.outcome(0), Choice::Merge);
         assert_eq!(into.shown(), vec![0, 1]);
         into.each.insert(0, Choice::KeepBoth);
@@ -958,7 +1116,7 @@ mod tests {
             clashes: vec![clash("/example/dest/photos", true, None, false)],
         });
         assert_eq!(d.heads(), 1);
-        assert_eq!(d.head_names().1, "Folders, for all");
+        assert_eq!(d.head_names().1.english(), "Folders, for all");
         assert_eq!(d.rows(), 2);
         // The first row is the folders' choice for all.
         d.step_choice(1);

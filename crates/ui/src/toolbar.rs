@@ -217,6 +217,9 @@ pub struct Button {
     beside: Option<bool>,
     /// What a setting's row says it is set to, at its end (`value`).
     value: Option<SharedString>,
+    /// What it is called, without what its title says of its state
+    /// (`named`, `menu_named`).
+    name: Option<SharedString>,
     /// Whether the keyboard stops on it; not a value its row's stop
     /// answers for (`no_stop`).
     stop: bool,
@@ -240,6 +243,18 @@ impl Tint {
             hollow: tag.lacks,
         })
     }
+}
+
+/// A setting's row named with what it is set to, as its tooltip and a
+/// screen reader say it ("Sort by: Name, A to Z").
+fn set_to(title: &str, value: &str) -> String {
+    skwir_core::words!(
+        toolbar_title_value = "{ $title }: { $value }",
+        title = title,
+        value = value,
+        note = "A setting's row in a menu, as its tooltip and a screen reader say it: its name, then what it is set to (Sort by: Name, A to Z)."
+    )
+    .say()
 }
 
 /// How a button stands among its neighbours.
@@ -290,6 +305,7 @@ impl Button {
             now: false,
             beside: None,
             value: None,
+            name: None,
             stop: true,
         }
     }
@@ -313,12 +329,27 @@ impl Button {
         self.shape = Shape::MenuRow;
         self
     }
+    /// What it is called where its title says its state too ("Volume"
+    /// for "Volume · 80%"): its row's words in a menu (`menu_named`).
+    pub fn named(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
     /// Its row in a menu of what a bar left out (a preview's More, the
-    /// dock's), called by its name: its title before what it says of its
-    /// state ("Volume", not "Volume · 80%").
+    /// dock's), called by its name (`named`): its title without what it
+    /// says of its state ("Volume", not "Volume · 80%").
     pub fn menu_named(self) -> Self {
-        let title = self.title();
-        let name = title.split(" · ").next().unwrap_or(&title).to_owned();
+        let name = self.name.clone().unwrap_or_else(|| {
+            // Transitional (ADR-139): a title cut where it says its state,
+            // until every caller names its button (`named`).
+            let title = self.title();
+            title
+                .split(" · ")
+                .next()
+                .unwrap_or(&title)
+                .to_owned()
+                .into()
+        });
         self.label(name).menu()
     }
     /// One of the window's buttons (`title_bar`): round, on its ground.
@@ -465,7 +496,7 @@ impl Button {
             let described = self.label.is_some().then(|| self.title.clone());
             let named = self.label.clone().unwrap_or_else(|| self.title.clone());
             let named: SharedString = match &self.value {
-                Some(value) => format!("{named}: {value}").into(),
+                Some(value) => set_to(&named, value).into(),
                 None => named,
             };
             (named, described, keys.clone())
@@ -475,8 +506,15 @@ impl Button {
         // when the two do not fit, which its tooltip then says whole.
         let has_value = self.value.is_some();
         let title: SharedString = match (&self.value, keys) {
-            (Some(value), _) => format!("{}: {value}", self.title).into(),
-            (None, Some(keys)) => format!("{} · {keys}", self.title).into(),
+            (Some(value), _) => set_to(&self.title, value).into(),
+            (None, Some(keys)) => skwir_core::words!(
+                toolbar_title_keys = "{ $title } · { $keys }",
+                title = self.title.to_string(),
+                keys = keys,
+                note = "A button's tooltip: what it does, then its shortcut (Back · Alt+Left)."
+            )
+            .say()
+            .into(),
             (None, None) => self.title,
         };
         let (active, dropdown, open) = (

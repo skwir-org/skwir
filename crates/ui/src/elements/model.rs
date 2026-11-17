@@ -414,12 +414,19 @@ impl Element for ModelView {
         let view = model.view(&camera, size, self.look);
         let said = match window.paint_mesh(bounds, Arc::clone(&model.mesh), view, cx) {
             MeshPainted::Painted => None,
-            MeshPainted::Loading => Some("Loading…"),
+            MeshPainted::Loading => Some(skwir_core::words!(
+                model_loading = "Loading…",
+                note = "Drawn over a 3D model's view while its shape is sent to the graphics card."
+            )),
             // The 3D button shows its still again.
-            MeshPainted::Refused => Some("Too large for this GPU to draw"),
+            MeshPainted::Refused => Some(skwir_core::words!(
+                model_too_large = "Too large for this GPU to draw",
+                note =
+                    "Drawn over a 3D model's view whose shape the graphics card (GPU) cannot hold."
+            )),
         };
         if let Some(said) = said {
-            let words = crate::elements::map::shape(said.into(), self.muted, window);
+            let words = crate::elements::map::shape(said.say().into(), self.muted, window);
             let at = bounds.center() - point(words.width / 2., px(7.));
             let _ = words.paint(at, px(14.), gpui::TextAlign::Left, None, window, cx);
         }

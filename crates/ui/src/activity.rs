@@ -30,6 +30,7 @@ use gpui::{
     AnyElement, Context, FocusHandle, ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
 use skwir_core::op::{PlanId, Transfer};
+use skwir_core::words;
 use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
@@ -39,7 +40,7 @@ use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toast::{
-    Action, Running, Toast, Tone, bar, capitalized, pace, sending, share, waiting_words,
+    Action, Running, Toast, Tone, amount, capitalized, pace, sending, share, waiting_words,
 };
 
 /// What `Earlier` keeps: the answers of this session the History does not
@@ -270,9 +271,10 @@ pub(crate) struct Under {
     pub tasks: Vec<skwir_core::task::Running>,
     pub ended: usize,
     pub waiting: usize,
-    /// The first action waiting, what it is and what it waits for
-    /// (`toast::waiting_words`): what the strip says while only that waits.
-    pub next: Option<(String, String)>,
+    /// The first action waiting, what it is and what it waits for, said
+    /// after it (`toast::waiting_next`): what the strip says while only
+    /// that waits.
+    pub next: Option<(String, Words)>,
 }
 
 impl Under {
@@ -392,24 +394,15 @@ fn segments(summary: &Summary) -> Option<Vec<f32>> {
     })
 }
 
-/// `text` with its first letter lowered, as the strip says a sentence
-/// after a title ("waits for the disk").
-fn lowered(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_lowercase().chain(chars).collect()
-    })
-}
-
 /// What the strip announces of an action that joined (ADR-114, amended
 /// 2026-11-03): its sentence, a shorter one where that does not fit (a
 /// waiting one's title, without what it waits for), and what a screen
 /// reader hears of it, once.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Announced {
-    pub sentence: String,
-    pub short: String,
-    pub heard: String,
+    pub sentence: Words,
+    pub short: Words,
+    pub heard: Words,
 }
 
 /// What the strip announces of the action `plan`, as `under` and
@@ -420,72 +413,172 @@ pub(crate) fn announced(
     plan: PlanId,
 ) -> Option<Announced> {
     if let Some((running, t)) = under.plans.iter().find(|(r, _)| r.plan == plan) {
+        // Transitional: a plan's title capitalised (ADR-139).
         let title = capitalized(&running.title.say());
         let doing = if getting_ready(running, t) {
-            "getting ready…".to_owned()
+            words!(
+                activity_getting_ready = "getting ready…",
+                note = "What an action does before its first step or byte: its checks. Said \
+                        after other words."
+            )
         } else {
-            percent(share(running.total, t))
+            percent_words(share(running.total, t))
         };
-        let sentence = format!("{title} · {doing}");
+        let sentence = words!(
+            activity_announced = "{ $title } · { $doing }",
+            title = title.clone(),
+            doing = doing,
+            note = "What the strip says of an action that joined: its title, capitalised (Copy \
+                    3 items to Docs), then how far it is (42 %, getting ready…)."
+        );
         return Some(Announced {
             short: sentence.clone(),
             sentence,
-            heard: format!("{title} started"),
+            heard: words!(
+                activity_announced_heard = "{ $title } started",
+                title = title,
+                note = "What a screen reader hears of an action that joined: its title, \
+                        capitalised (Copy 3 items to Docs)."
+            ),
         });
     }
     let waits = waiting.iter().find(|w| w.plan == Some(plan))?;
-    let (what, why) = waiting_words(waits);
-    let why = lowered(&why);
+    let (what, why) = crate::toast::waiting_next(waits);
     Some(Announced {
-        sentence: format!("{what} · {why}"),
-        short: format!("{what} · waits its turn"),
-        heard: format!("{what} {why}"),
+        sentence: words!(
+            activity_announced_waiting = "{ $what } · { $why }",
+            what = what.clone(),
+            why = why.clone(),
+            note = "What the strip says of an action that joined and waits its turn: its title, \
+                    capitalised (Rename to b.txt), then what it waits for (waits for the disk)."
+        ),
+        short: words!(
+            activity_announced_waits_turn = "{ $what } · waits its turn",
+            what = what.clone(),
+            note = "What the strip says of an action that joined and waits its turn, where \
+                    there is little room: its title, capitalised (Rename to b.txt)."
+        ),
+        heard: words!(
+            activity_announced_waiting_heard = "{ $what } { $why }",
+            what = what,
+            why = why,
+            note = "What a screen reader hears of an action that joined and waits its turn: \
+                    its title, capitalised (Rename to b.txt), then what it waits for (waits for \
+                    the disk)."
+        ),
     })
 }
 
 /// `fraction` as the strip says it: "42 %", never 100 before the end.
 pub(crate) fn percent(fraction: f32) -> String {
+    percent_words(fraction).say()
+}
+
+/// `fraction` in words, as `percent` says it.
+pub(crate) fn percent_words(fraction: f32) -> Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let percent = (fraction.clamp(0., 1.) * 100.).floor() as u32;
-    format!("{percent} %")
+    words!(
+        activity_percent = "{ $percent } %",
+        percent = percent,
+        note = "How far an action is, in percent (42 %)."
+    )
+}
+
+/// How many actions wait their turn, as the strip and Activity's header
+/// say it: "3 waiting".
+fn waiting_count(count: usize) -> Words {
+    words!(
+        activity_waiting_count = "{ $count } waiting",
+        count = count,
+        note = "How many actions wait their turn (3 waiting)."
+    )
 }
 
 /// What the strip says of how it goes: the share done and the time left
 /// of what runs, then how many wait; paused, stopping, or sending to its
 /// server instead. While nothing runs, the share of what ended, if any,
-/// and how many wait.
-fn how(summary: &Summary, sending_files: Option<usize>) -> String {
-    let at = percent(summary.fraction);
+/// and how many wait. After other words, or `opening` a sentence.
+fn how(summary: &Summary, sending_files: Option<usize>, opening: bool) -> Words {
     if summary.stopping {
-        return "stopping…".to_owned();
+        return if opening {
+            words!(
+                activity_stopping_opening = "Stopping…",
+                note = "What the strip says while every action running was cancelled and \
+                        stops."
+            )
+        } else {
+            words!(
+                activity_stopping = "stopping…",
+                note = "What the strip says while every action running was cancelled and \
+                        stops, after other words."
+            )
+        };
     }
+    let at = percent_words(summary.fraction);
     let said = if summary.shares.is_empty() {
         (summary.ended > 0).then_some(at)
     } else if summary.ready && !summary.paused {
         // Never silent: what it does before its first step or byte.
-        Some("getting ready…".to_owned())
+        Some(if opening {
+            words!(
+                activity_getting_ready_opening = "Getting ready…",
+                note = "What an action does before its first step or byte: its checks."
+            )
+        } else {
+            words!(
+                activity_getting_ready = "getting ready…",
+                note = "What an action does before its first step or byte: its checks. Said \
+                        after other words."
+            )
+        })
     } else if summary.paused {
-        Some(format!("paused at {at}"))
+        Some(if opening {
+            words!(
+                activity_paused_at_opening = "Paused at { $percent }",
+                percent = at,
+                note = "What the strip says while every action running is paused: how far \
+                        (42 %)."
+            )
+        } else {
+            words!(
+                activity_paused_at = "paused at { $percent }",
+                percent = at,
+                note = "What the strip says while every action running is paused, after other \
+                        words: how far (42 %)."
+            )
+        })
     } else if let Some(files) = sending_files {
-        Some(sending(files))
+        Some(sending(files, opening))
     } else {
         Some(match summary.left {
-            Some(left) => format!("{at} · {}", format::time_left(left)),
+            Some(left) => words!(
+                activity_at_left = "{ $percent } · { $left }",
+                percent = at,
+                left = format::time_left_words(left),
+                note = "How far what runs is (42 %), then how long it has left (about 3 min \
+                        left)."
+            ),
             None => at,
         })
     };
-    let waiting = (summary.waiting > 0).then(|| format!("{} waiting", summary.waiting));
-    [said, waiting]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
+    match (said, summary.waiting) {
+        (Some(said), 0) => said,
+        (Some(said), waiting) => words!(
+            activity_how_waiting = "{ $how } · { $count } waiting",
+            how = said,
+            count = waiting,
+            note = "How what runs goes (42 % · about 3 min left), then how many actions wait \
+                    their turn."
+        ),
+        (None, waiting) => waiting_count(waiting),
+    }
 }
 
 /// The strip's words, richest first: what runs, how far the queue started
 /// and how; that without what runs; the share alone. While only something
 /// waits, with nothing of the spell ended yet, how many wait, in each.
-pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
+pub(crate) fn words(under: &Under, summary: &Summary) -> [Words; 3] {
     let sending_files = if let [(_, t)] = under.plans.as_slice()
         && under.tasks.is_empty()
     {
@@ -493,37 +586,81 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     } else {
         None
     };
-    let how = how(summary, sending_files);
+    let how_after = how(summary, sending_files, false);
+    let how_alone = how(summary, sending_files, true);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => Some(capitalized(&running.title.say())),
-        ([], [task]) => Some(capitalized(&task.title)),
+        // Transitional: a plan's title capitalised (ADR-139).
+        ([(running, _)], []) => Some(Words::as_written(capitalized(&running.title.say()))),
+        // A task's title begins a sentence already (`task::Running`).
+        ([], [task]) => Some(Words::as_written(task.title.clone())),
         // Only waiting: what waits first, and what for (never silent).
-        ([], []) => under
-            .next
-            .as_ref()
-            .map(|(what, why)| format!("{what} · {}", lowered(why))),
-        _ => Some(format::count(under.count(), "action")),
+        ([], []) => under.next.as_ref().map(|(what, why)| {
+            words!(
+                activity_next = "{ $what } · { $why }",
+                what = what.clone(),
+                why = why.clone(),
+                note = "What the strip says while only an action waits its turn: its title, \
+                        capitalised (Rename to b.txt), then what it waits for (waits for the \
+                        disk)."
+            )
+        }),
+        _ => Some(words!(
+            activity_actions = "{ $count ->
+                [one] { $count } action
+               *[other] { $count } actions
+            }",
+            count = under.count(),
+            note = "How many actions run, beginning the strip's words."
+        )),
     };
-    let least = if summary.stopping {
-        "Stopping…".to_owned()
-    } else if summary.shares.is_empty() && summary.ended == 0 {
-        how.clone()
+    let least = if summary.stopping || (summary.shares.is_empty() && summary.ended == 0) {
+        how_alone.clone()
     } else {
-        percent(summary.fraction)
+        percent_words(summary.fraction)
     };
     // How far the queue started, once something of it did.
-    let queue =
-        (summary.of > 1 && summary.at > 0).then(|| format!("{} of {}", summary.at, summary.of));
-    let rich = [what, queue.clone(), Some(how.clone())]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
-    let without = match queue {
-        Some(queue) => format!("{queue} · {how}"),
-        None => capitalized(&how),
+    let queue = (summary.of > 1 && summary.at > 0).then(|| {
+        words!(
+            activity_queue = "{ $at } of { $of }",
+            at = summary.at,
+            of = summary.of,
+            note = "How far the queue of actions started: those ended or running of all of \
+                    them (2 of 5)."
+        )
+    });
+    let queue_how = |queue: Words| {
+        words!(
+            activity_queue_how = "{ $queue } · { $how }",
+            queue = queue,
+            how = how_after.clone(),
+            note = "How far the queue of actions started (2 of 5), then how what runs goes \
+                    (42 % · about 3 min left)."
+        )
     };
-    [capitalized(&rich), without, least]
+    let rich = match (what, queue.clone()) {
+        (Some(what), Some(queue)) => words!(
+            activity_what_queue_how = "{ $what } · { $queue } · { $how }",
+            what = what,
+            queue = queue,
+            how = how_after.clone(),
+            note = "The strip's words: what runs (Copy 3 items to Docs, 2 actions), how far the \
+                    queue started (2 of 5), how it goes (42 % · about 3 min left)."
+        ),
+        (Some(what), None) => words!(
+            activity_what_how = "{ $what } · { $how }",
+            what = what,
+            how = how_after.clone(),
+            note = "The strip's words: what runs (Copy 3 items to Docs, 2 actions), how it goes \
+                    (42 % · about 3 min left)."
+        ),
+        (None, Some(queue)) => queue_how(queue),
+        (None, None) => how_alone.clone(),
+    };
+    let without = match queue {
+        Some(queue) => queue_how(queue),
+        None => how_alone,
+    };
+    [rich, without, least]
 }
 
 impl Shell {
@@ -882,23 +1019,30 @@ fn spell_header(
     // Nothing of it started yet: how many wait, once.
     let started = summary.at > 0;
     let said = if started {
-        format!(
-            "{} of {} · {}",
-            summary.at,
-            summary.of,
-            percent(summary.fraction)
+        words!(
+            activity_spell_at = "{ $at } of { $of } · { $percent }",
+            at = summary.at,
+            of = summary.of,
+            percent = percent_words(summary.fraction),
+            note = "Over Activity's cards: how far the queue of actions started, those ended \
+                    or running of all of them (2 of 5), and its share (42 %)."
         )
     } else {
-        format!("{} waiting", summary.waiting)
+        waiting_count(summary.waiting)
     };
-    let after = [
-        summary.left.map(format::time_left),
-        (started && summary.waiting > 0).then(|| format!("{} waiting", summary.waiting)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    let waiting = (started && summary.waiting > 0).then_some(summary.waiting);
+    let after = match (summary.left, waiting) {
+        (Some(left), Some(waiting)) => Some(words!(
+            activity_left_waiting = "{ $left } · { $count } waiting",
+            left = format::time_left_words(left),
+            count = waiting,
+            note = "Over Activity's cards: how long what runs has left (about 3 min left), \
+                    then how many actions wait their turn."
+        )),
+        (Some(left), None) => Some(format::time_left_words(left)),
+        (None, Some(waiting)) => Some(waiting_count(waiting)),
+        (None, None) => None,
+    };
     let color = if summary.paused || summary.stopping {
         theme.text_muted
     } else {
@@ -916,10 +1060,22 @@ fn spell_header(
         .id("activity-spell")
         .role(gpui::Role::ProgressIndicator)
         .when(a11y, |d| {
-            d.aria_label(format!("{} of {} actions", summary.at, summary.of))
-                .aria_numeric_value(f64::from(summary.fraction) * 100.)
-                .aria_min_numeric_value(0.)
-                .aria_max_numeric_value(100.)
+            d.aria_label(
+                words!(
+                    activity_spell_label = "{ $at } of { $of ->
+                        [one] { $of } action
+                       *[other] { $of } actions
+                    }",
+                    at = summary.at,
+                    of = summary.of,
+                    note = "What a screen reader hears of the bar over Activity's cards: how \
+                            far the queue of actions started (2 of 5 actions)."
+                )
+                .say(),
+            )
+            .aria_numeric_value(f64::from(summary.fraction) * 100.)
+            .aria_min_numeric_value(0.)
+            .aria_max_numeric_value(100.)
         })
         .flex()
         .flex_col()
@@ -938,13 +1094,17 @@ fn spell_header(
                 .gap_2()
                 .min_h(sized(22.))
                 .text_body()
-                .child(div().text_color(theme.text).child(said))
+                .child(div().text_color(theme.text).child(said.say()))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().text_color(theme.text_muted).child(after))
+                        .child(
+                            div()
+                                .text_color(theme.text_muted)
+                                .children(after.map(|after| after.say())),
+                        )
                         .children(cancel),
                 ),
         )
@@ -969,7 +1129,11 @@ fn cancel_all_button(
     let tip: SharedString = cancel_all_said(count).into();
     controls::button(
         "activity-cancel-all",
-        "Cancel all",
+        words!(
+            activity_cancel_all = "Cancel all",
+            note = "A button over Activity's cards: cancel every action under way or waiting."
+        )
+        .say(),
         None,
         ButtonStyle::Plain,
         &focus,
@@ -991,10 +1155,52 @@ fn cancel_all_button(
 
 /// What Cancel all says it cancels: `count` actions under way or waiting.
 fn cancel_all_said(count: usize) -> String {
-    match count {
-        1 => "Cancel 1 action".to_owned(),
-        count => format!("Cancel all {count} actions"),
-    }
+    words!(
+        activity_cancel_all_tip = "{ $count ->
+            [1] Cancel 1 action
+           *[other] Cancel all { $count } actions
+        }",
+        count = count,
+        note = "What Cancel all says it cancels: every action under way or waiting."
+    )
+    .say()
+}
+
+/// Pause, on a button of an action under way.
+fn pause_said() -> String {
+    words!(
+        activity_pause = "Pause",
+        note = "A button of an action under way: pause it."
+    )
+    .say()
+}
+
+/// Resume, on a button of an action paused.
+fn resume_said() -> String {
+    words!(
+        activity_resume = "Resume",
+        note = "A button of an action paused: let it go on."
+    )
+    .say()
+}
+
+/// Cancel, on a button of an action under way or waiting.
+fn cancel_said() -> String {
+    words!(
+        activity_cancel = "Cancel",
+        note = "A button of an action under way or waiting: cancel it."
+    )
+    .say()
+}
+
+/// Stopping…, on the inert button of an action cancelled, which stops.
+fn stopping_said() -> String {
+    words!(
+        activity_stopping_button = "Stopping…",
+        note = "On the button of an action cancelled, while it stops: nothing more to ask of \
+                it."
+    )
+    .say()
 }
 
 /// A small bar: `fraction` of `width` in `color`.
@@ -1092,7 +1298,7 @@ fn strip_buttons(
             strip_button(
                 "activity-strip-pause",
                 if paused { "play" } else { "pause" },
-                if paused { "Resume" } else { "Pause" },
+                if paused { resume_said() } else { pause_said() },
                 &focus.pause,
                 theme,
             )
@@ -1111,7 +1317,7 @@ fn strip_buttons(
             strip_button(
                 "activity-strip-cancel",
                 "close",
-                "Cancel",
+                cancel_said(),
                 &focus.cancel,
                 theme,
             )
@@ -1128,7 +1334,7 @@ fn strip_buttons(
             strip_button(
                 "activity-strip-cancel",
                 "close",
-                "Cancel",
+                cancel_said(),
                 &focus.cancel,
                 theme,
             )
@@ -1148,7 +1354,19 @@ fn strip_buttons(
                     strip_button(
                         "activity-strip-pause",
                         if paused { "play" } else { "pause" },
-                        if paused { "Resume all" } else { "Pause all" },
+                        if paused {
+                            words!(
+                                activity_resume_all = "Resume all",
+                                note = "A button of the strip: let every action paused go on."
+                            )
+                            .say()
+                        } else {
+                            words!(
+                                activity_pause_all = "Pause all",
+                                note = "A button of the strip: pause every action running."
+                            )
+                            .say()
+                        },
                         &focus.pause,
                         theme,
                     )
@@ -1185,7 +1403,12 @@ fn strip_buttons(
                 buttons.push(
                     controls::button(
                         "activity-strip-retry",
-                        "Retry",
+                        words!(
+                            activity_retry = "Retry",
+                            note = "A button of the strip, beside an action an error stopped: \
+                                    try what failed again."
+                        )
+                        .say(),
                         None,
                         ButtonStyle::Plain,
                         &focus.retry,
@@ -1207,7 +1430,12 @@ fn strip_buttons(
                 strip_button(
                     "activity-strip-dismiss",
                     "close",
-                    "Dismiss",
+                    words!(
+                        activity_dismiss = "Dismiss",
+                        note = "A button of the strip, beside an action an error stopped: \
+                                stop saying it."
+                    )
+                    .say(),
                     &focus.dismiss,
                     theme,
                 )
@@ -1265,12 +1493,23 @@ pub fn strip(
             // Stopped by an error, nothing else under way: said until
             // seen, retried or dismissed.
             Some(stopped) => {
+                // Transitional: a plan's title capitalised (ADR-139).
                 let title = capitalized(&stopped.title.say());
+                let alone = words!(
+                    activity_stopped = "Stopped",
+                    note = "What the strip says of an action an error stopped, where its title \
+                            does not fit."
+                );
                 (
                     [
-                        format!("{title}: stopped"),
-                        "Stopped".to_owned(),
-                        "Stopped".to_owned(),
+                        words!(
+                            activity_stopped_title = "{ $title }: stopped",
+                            title = title,
+                            note = "What the strip says of an action an error stopped: its \
+                                    title, capitalised (Copy 3 items to Docs)."
+                        ),
+                        alone.clone(),
+                        alone,
                     ],
                     theme.error,
                     None,
@@ -1282,11 +1521,7 @@ pub fn strip(
             }
             // Opened with nothing under way: what Earlier keeps.
             None => (
-                [
-                    "Activity".to_owned(),
-                    "Activity".to_owned(),
-                    "Activity".to_owned(),
-                ],
+                [activity_name(), activity_name(), activity_name()],
                 theme.text_muted,
                 None,
                 Offers::Nothing,
@@ -1319,9 +1554,9 @@ pub fn strip(
         (_, offers) => offers,
     };
     // Its own words first, richest first, then the strip's as ever.
-    let said: Vec<String> = match &announce {
+    let said: Vec<Words> = match &announce {
         Some(a) => {
-            let mut said: Vec<String> = [&a.sentence, &a.short, &said[1], &said[2]]
+            let mut said: Vec<Words> = [&a.sentence, &a.short, &said[1], &said[2]]
                 .into_iter()
                 .cloned()
                 .collect();
@@ -1341,7 +1576,14 @@ pub fn strip(
     let mut versions = Vec::with_capacity(said.len());
     for (n, words) in said.iter().enumerate() {
         let last = n + 1 == said.len();
-        let label: SharedString = format!("Activity: {words}").into();
+        let label: SharedString = words!(
+            activity_strip_label = "Activity: { $said }",
+            said = words.clone(),
+            note = "What a screen reader hears of the strip in the footer, which opens \
+                    Activity: what it says (Copy 3 items to Docs · 42 %)."
+        )
+        .say()
+        .into();
         let opener = div()
             .id("activity-strip")
             .relative()
@@ -1386,7 +1628,7 @@ pub fn strip(
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .child(words.clone())
+                    .child(words.say())
             })
             // A chevron points where Activity goes: up to open it, where
             // there is more to see than the strip says, down to fold it.
@@ -1431,7 +1673,7 @@ pub fn strip(
         div()
             .id("activity-joined")
             .aria_live(gpui::Live::Polite)
-            .aria_label(heard)
+            .aria_label(heard.say())
             .size_0()
             .into_any_element()
     });
@@ -1476,7 +1718,7 @@ fn panel(
     let panel = div()
         .id("activity")
         .role(gpui::Role::Group)
-        .aria_label("Activity")
+        .aria_label(activity_name().say())
         // A place of its own, as the pinned player is: Escape gives the
         // keyboard back to the pane (`keymap::PLACES`).
         .key_context(crate::keymap::ACTIVITY)
@@ -1555,11 +1797,25 @@ fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let button = controls::icon_button(
         "activity-fold",
         "chevron",
-        "Fold into the footer",
+        words!(
+            activity_fold = "Fold into the footer",
+            note = "The chevron of Activity's heading: fold it into the strip in the footer."
+        )
+        .say(),
         &focus,
         theme,
     )
-    .tooltip(|_, cx| crate::toolbar::tooltip("Fold Activity into the footer".into(), cx));
+    .tooltip(|_, cx| {
+        crate::toolbar::tooltip(
+            words!(
+                activity_fold_tip = "Fold Activity into the footer",
+                note = "The tooltip of the chevron of Activity's heading."
+            )
+            .say()
+            .into(),
+            cx,
+        )
+    });
     div()
         .flex()
         .flex_none()
@@ -1572,7 +1828,7 @@ fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             div()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child("Activity"),
+                .child(activity_name().say()),
         )
         .child(button.size(px(24.)).press(
             |this, window, cx| {
@@ -1660,7 +1916,16 @@ fn body(
             div()
                 .id("activity-waiting")
                 .role(gpui::Role::List)
-                .when(a11y, |d| d.aria_label("Waiting"))
+                .when(a11y, |d| {
+                    d.aria_label(
+                        words!(
+                            activity_waiting_list = "Waiting",
+                            note = "What a screen reader hears of Activity's list of the \
+                                    actions waiting their turn."
+                        )
+                        .say(),
+                    )
+                })
                 .flex()
                 .flex_col()
                 .pb_1()
@@ -1706,7 +1971,7 @@ fn body(
         div()
             .id(id)
             .role(gpui::Role::List)
-            .when(a11y, |d| d.aria_label("Earlier"))
+            .when(a11y, |d| d.aria_label(earlier_said()))
             .flex()
             .flex_col()
             .children(rows)
@@ -1723,7 +1988,13 @@ fn body(
                 .border_color(theme.border)
                 .text_small()
                 .text_color(theme.text_muted)
-                .child("Stopped")
+                .child(
+                    words!(
+                        activity_stopped_heading = "Stopped",
+                        note = "A heading of Activity, over what an error stopped."
+                    )
+                    .say(),
+                )
                 .into_any_element(),
         );
         parts.push(list("activity-earlier", &said, cx));
@@ -1748,7 +2019,15 @@ fn body(
                 .py_2()
                 .text_body()
                 .text_color(theme.text_muted)
-                .child("Nothing under way. What was done is in the Undo history.")
+                .child(
+                    words!(
+                        activity_nothing_under_way =
+                            "Nothing under way. What was done is in the Undo history.",
+                        note = "What Activity says, opened with nothing under way and nothing \
+                                kept in it."
+                    )
+                    .say(),
+                )
                 .into_any_element(),
         );
     }
@@ -1772,7 +2051,7 @@ fn earlier_fold(
     div()
         .id("activity-earlier-fold")
         .role(gpui::Role::Button)
-        .aria_label("Earlier")
+        .aria_label(earlier_said())
         .aria_expanded(unfolded)
         .track_focus(focus)
         .relative()
@@ -1795,7 +2074,15 @@ fn earlier_fold(
             theme.text_muted,
             11.,
         ))
-        .child(format!("Earlier ({count})"))
+        .child(
+            words!(
+                activity_earlier_count = "Earlier ({ $count })",
+                count = count,
+                note = "The line at Activity's foot that unfolds what ended this session: how \
+                        many it holds."
+            )
+            .say(),
+        )
         .child(reveal.marker(focus))
         .press(
             |this, window, cx| {
@@ -1812,17 +2099,39 @@ fn earlier_fold(
 /// and the rows agree.
 fn waiting_said(quick: usize) -> String {
     match quick {
-        0 => "Waiting".to_owned(),
-        quick => format!("Waiting · {} not counted", quick_ones(quick)),
+        0 => words!(
+            activity_waiting_heading = "Waiting",
+            note = "A heading of Activity, over the actions waiting their turn."
+        ),
+        quick => words!(
+            activity_waiting_not_counted = "Waiting · { $count ->
+                [one] { $count } quick one
+               *[other] { $count } quick ones
+            } not counted",
+            count = quick,
+            note = "A heading of Activity, over the actions waiting their turn: how many of \
+                    them end as they start (a single rename), which the strip does not count."
+        ),
     }
+    .say()
 }
 
-/// "1 quick one", "2 quick ones".
-fn quick_ones(quick: usize) -> String {
-    match quick {
-        1 => "1 quick one".to_owned(),
-        quick => format!("{quick} quick ones"),
-    }
+/// Activity's name, as its heading, the strip and a screen reader say it.
+fn activity_name() -> Words {
+    words!(
+        activity_name = "Activity",
+        note = "The name of the panel of what runs, opened above the footer."
+    )
+}
+
+/// Earlier, as a screen reader hears what ended this session.
+fn earlier_said() -> String {
+    words!(
+        activity_earlier = "Earlier",
+        note = "What a screen reader hears of the list at Activity's foot: what ended this \
+                session."
+    )
+    .say()
 }
 
 /// Over what waits its turn: its name, how many the strip counts where some
@@ -1844,7 +2153,11 @@ fn waiting_heading(
             .clone();
         controls::button(
             "activity-waiting-cancel-all",
-            "Cancel waiting",
+            words!(
+                activity_cancel_waiting = "Cancel waiting",
+                note = "A button over the actions waiting their turn: cancel them all."
+            )
+            .say(),
             None,
             ButtonStyle::Plain,
             &focus,
@@ -1948,7 +2261,7 @@ fn waiting_row(
         .child(
             controls::button(
                 SharedString::from(format!("activity-waiting-cancel-{asked}")),
-                "Cancel",
+                cancel_said(),
                 None,
                 ButtonStyle::Plain,
                 &focus,
@@ -2060,7 +2373,7 @@ fn earlier_row(
             row = row.child(
                 controls::inert_button(
                     SharedString::from(format!("activity-earlier-{key}-{n}")),
-                    action.label.clone(),
+                    action.label.say(),
                     focus,
                     theme,
                 )
@@ -2081,7 +2394,7 @@ fn earlier_row(
         row = row.child(
             controls::button(
                 SharedString::from(format!("activity-earlier-{key}-{n}")),
-                action.label.clone(),
+                action.label.say(),
                 None,
                 ButtonStyle::Plain,
                 focus,
@@ -2119,12 +2432,29 @@ fn into_said(folders: &[std::path::PathBuf]) -> Option<SharedString> {
         .collect();
     let others = folders.len().saturating_sub(INTO_NAMED);
     (!named.is_empty()).then(|| {
-        let mut said = format!("Into {}", named.join(", "));
+        // Transitional: a list argument (ADR-139).
+        let folders = named.join(", ");
         if others > 0 {
-            said.push_str(" and ");
-            said.push_str(&crate::format::count(others, "other folder"));
+            words!(
+                activity_into_others = "Into { $folders } and { $count ->
+                    [one] { $count } other folder
+                   *[other] { $count } other folders
+                }",
+                folders = folders,
+                count = others,
+                note = "Where an action goes, as its card says it when pointed at: the paths \
+                        of the first folders it brings something into, then how many others."
+            )
+        } else {
+            words!(
+                activity_into = "Into { $folders }",
+                folders = folders,
+                note = "Where an action goes, as its card says it when pointed at: the paths \
+                        of the folders it brings something into."
+            )
         }
-        said.into()
+        .say()
+        .into()
     })
 }
 
@@ -2142,7 +2472,8 @@ fn progress_card(
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let (pause_focus, cancel_focus) = focus;
-    let (fraction, amount) = bar(running.total, transfer);
+    let fraction = share(running.total, transfer);
+    let amount = amount(running.total, transfer);
     let plan = running.plan;
     let paused = running.paused;
     // Cancelled, it stops where it next answers Cancel and takes back what
@@ -2150,21 +2481,48 @@ fn progress_card(
     // nothing more to ask of it.
     let stopping = running.cancelling;
     let state = match (paused, running.going_on, transfer.sending) {
-        _ if stopping => "stopping at ".to_owned(),
-        (true, ..) => "paused at ".to_owned(),
+        _ if stopping => words!(
+            activity_card_stopping = "Stopping at { $amount }",
+            amount = amount,
+            note = "Under the title of an action cancelled, which stops: how far it went \
+                    (3 of 5 items, 1.1 GB of 4.3 GB)."
+        ),
+        (true, ..) => words!(
+            activity_card_paused = "Paused at { $amount }",
+            amount = amount,
+            note = "Under the title of an action paused: how far it went (3 of 5 items, 1.1 GB \
+                    of 4.3 GB)."
+        ),
         // Its checks, before its first step or byte (ADR-114, amended).
-        _ if getting_ready(running, transfer) => "getting ready, ".to_owned(),
+        _ if getting_ready(running, transfer) => words!(
+            activity_card_getting_ready = "Getting ready, { $amount }",
+            amount = amount,
+            note = "Under the title of an action making its checks, before its first step or \
+                    byte: how far it is (0 of 5 items)."
+        ),
         // Copied onto a mount that sends to its server after: what the
         // server still has to take before the copy is done (ADR-102).
-        (false, _, Some(files)) => format!("{}, ", sending(files)),
-        (false, true, None) => "going on, ".to_owned(),
-        (false, false, None) => String::new(),
+        (false, _, Some(files)) => words!(
+            activity_card_sending = "{ $sending }, { $amount }",
+            sending = sending(files, true),
+            amount = amount,
+            note = "Under the title of a copy onto a server's folder: what the server still \
+                    takes (Sending 3 files to the server), then how far it is (3 of 5 items)."
+        ),
+        (false, true, None) => words!(
+            activity_card_going_on = "Going on, { $amount }",
+            amount = amount,
+            note = "Under the title of an action its server stopped, going on by itself: how \
+                    far it is (3 of 5 items)."
+        ),
+        (false, false, None) => amount,
     };
     // What runs, said by its title; how far, as a value, said when asked,
     // never at each step.
     div()
         .id(("activity-card", plan.0))
         .role(gpui::Role::ProgressIndicator)
+        // Transitional: a plan's title capitalised (ADR-139).
         .when(a11y, |d| {
             d.aria_label(capitalized(&running.title.say()))
                 .aria_numeric_value(f64::from(fraction) * 100.)
@@ -2192,6 +2550,7 @@ fn progress_card(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis(),
+                    // Transitional: a plan's title capitalised (ADR-139).
                     capitalized(&running.title.say()),
                     into,
                 ))
@@ -2199,7 +2558,7 @@ fn progress_card(
                     div()
                         .text_body()
                         .text_color(theme.text_muted)
-                        .child(format!("{}{amount}", capitalized(&state))),
+                        .child(state.say()),
                 )
                 .child(small_bar_full(
                     fraction,
@@ -2221,7 +2580,7 @@ fn progress_card(
             card.child(
                 controls::button(
                     format!("activity-pause-{}", plan.0),
-                    if paused { "Resume" } else { "Pause" },
+                    if paused { resume_said() } else { pause_said() },
                     None,
                     ButtonStyle::Plain,
                     pause_focus,
@@ -2245,7 +2604,7 @@ fn progress_card(
             // Said, not offered: nothing more to ask of it.
             controls::inert_button(
                 format!("activity-cancel-{}", plan.0),
-                "Stopping…",
+                stopping_said(),
                 cancel_focus,
                 theme,
             )
@@ -2254,7 +2613,7 @@ fn progress_card(
         } else {
             controls::button(
                 format!("activity-cancel-{}", plan.0),
-                "Cancel",
+                cancel_said(),
                 None,
                 ButtonStyle::Plain,
                 cancel_focus,
@@ -2305,8 +2664,9 @@ fn task_card(
     div()
         .id(("activity-task", id))
         .role(gpui::Role::ProgressIndicator)
+        // A task's title begins a sentence already (`task::Running`).
         .when(a11y, |d| {
-            d.aria_label(capitalized(&task.title))
+            d.aria_label(task.title.clone())
                 .aria_numeric_value(f64::from(fraction) * 100.)
                 .aria_min_numeric_value(0.)
                 .aria_max_numeric_value(100.)
@@ -2332,7 +2692,7 @@ fn task_card(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis(),
-                    capitalized(&task.title),
+                    task.title.clone(),
                 ))
                 .when(!amount.is_empty(), |d| {
                     d.child(div().text_body().text_color(theme.text_muted).child(amount))
@@ -2342,7 +2702,7 @@ fn task_card(
         .child(if task.cancelling {
             controls::inert_button(
                 format!("activity-task-cancel-{id}"),
-                "Stopping…",
+                stopping_said(),
                 focus,
                 theme,
             )
@@ -2351,7 +2711,7 @@ fn task_card(
         } else {
             controls::button(
                 format!("activity-task-cancel-{id}"),
-                "Cancel",
+                cancel_said(),
                 None,
                 ButtonStyle::Plain,
                 focus,
@@ -2455,9 +2815,14 @@ mod tests {
         EARLIER, Ended, Offers, Summary, Under, announced, cancel_all_said, how, keep, offers,
         percent, segments, showing, summary, waiting_said, words,
     };
-    use crate::toast::{Running, waiting_words};
+    use crate::toast::{Running, waiting_next};
     use skwir_core::op::{PlanId, RunKind, Transfer};
     use std::time::Duration;
+
+    /// The strip's words, in English.
+    fn strip_said(under: &Under, summary: &Summary) -> [String; 3] {
+        words(under, summary).map(|said| said.english())
+    }
 
     /// A card pointed at names the first folders its action brings
     /// something into, and counts the others: a restore into thousands of
@@ -2595,12 +2960,15 @@ mod tests {
         let s = summary(&ready).unwrap();
         assert!(s.ready);
         assert_eq!(
-            words(&ready, &s)[0],
+            strip_said(&ready, &s)[0],
             "Copy “it's a” to Backup · getting ready…"
         );
         let said = announced(&ready, &[], PlanId(1)).unwrap();
-        assert_eq!(said.sentence, "Copy “it's a” to Backup · getting ready…");
-        assert_eq!(said.heard, "Copy “it's a” to Backup started");
+        assert_eq!(
+            said.sentence.english(),
+            "Copy “it's a” to Backup · getting ready…"
+        );
+        assert_eq!(said.heard.english(), "Copy “it's a” to Backup started");
         let waits = skwir_core::op::Waiting {
             asked: 9,
             named: "copy “interview.mkv” to Backup".into(),
@@ -2615,24 +2983,24 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 1,
-            next: Some(waiting_words(&waits)),
+            next: Some(waiting_next(&waits)),
         };
         let s = summary(&only).unwrap();
         assert_eq!(
-            words(&only, &s)[0],
+            strip_said(&only, &s)[0],
             "Copy “interview.mkv” to Backup · waits for copy 3 items to Backup · 1 waiting"
         );
         let said = announced(&only, std::slice::from_ref(&waits), PlanId(2)).unwrap();
         assert_eq!(
-            said.sentence,
+            said.sentence.english(),
             "Copy “interview.mkv” to Backup · waits for copy 3 items to Backup"
         );
         assert_eq!(
-            said.short,
+            said.short.english(),
             "Copy “interview.mkv” to Backup · waits its turn"
         );
         assert_eq!(
-            said.heard,
+            said.heard.english(),
             "Copy “interview.mkv” to Backup waits for copy 3 items to Backup"
         );
         assert_eq!(
@@ -2803,7 +3171,7 @@ mod tests {
         let between = waiting(1, 1);
         let s = summary(&between).expect("shown between two");
         assert_eq!(
-            words(&between, &s),
+            strip_said(&between, &s),
             [
                 "1 of 2 · 50 % · 1 waiting".to_owned(),
                 "1 of 2 · 50 % · 1 waiting".to_owned(),
@@ -2813,7 +3181,7 @@ mod tests {
         let first = waiting(0, 2);
         let s = summary(&first).expect("shown before the first starts");
         assert_eq!(
-            words(&first, &s),
+            strip_said(&first, &s),
             [
                 "2 waiting".to_owned(),
                 "2 waiting".to_owned(),
@@ -2848,7 +3216,7 @@ mod tests {
         };
         let s = summary(&one).unwrap();
         assert_eq!(
-            words(&one, &s),
+            strip_said(&one, &s),
             [
                 "Copy 3 items to Backup · 42 % · about 3 min left".to_owned(),
                 "42 % · about 3 min left".to_owned(),
@@ -2859,13 +3227,16 @@ mod tests {
             paused: true,
             ..s.clone()
         };
-        assert_eq!(how(&paused, None), "paused at 42 %");
+        assert_eq!(how(&paused, None, false).english(), "paused at 42 %");
         let stopping = Summary {
             stopping: true,
             ..s.clone()
         };
-        assert_eq!(words(&one, &stopping)[2], "Stopping…");
-        assert_eq!(how(&s, Some(3)), "sending 3 files to the server");
+        assert_eq!(strip_said(&one, &stopping)[2], "Stopping…");
+        assert_eq!(
+            how(&s, Some(3), false).english(),
+            "sending 3 files to the server"
+        );
 
         let two = Under {
             plans: vec![copy.clone(), (running(2, "move b", 2), Transfer::default())],
@@ -2876,9 +3247,9 @@ mod tests {
         };
         let s = summary(&two).unwrap();
         assert!(
-            words(&two, &s)[0].starts_with("2 actions · 2 of 2 · "),
+            strip_said(&two, &s)[0].starts_with("2 actions · 2 of 2 · "),
             "{:?}",
-            words(&two, &s)
+            strip_said(&two, &s)
         );
 
         // One ended before it, one waiting after it.
@@ -2891,7 +3262,7 @@ mod tests {
         };
         let s = summary(&queued).unwrap();
         assert_eq!(
-            words(&queued, &s),
+            strip_said(&queued, &s),
             [
                 "Copy 3 items to Backup · 2 of 3 · 47 % · about 3 min left · 1 waiting".to_owned(),
                 "2 of 3 · 47 % · about 3 min left · 1 waiting".to_owned(),
@@ -2899,6 +3270,9 @@ mod tests {
             ]
         );
         let paused = Summary { paused: true, ..s };
-        assert_eq!(how(&paused, None), "paused at 47 % · 1 waiting");
+        assert_eq!(
+            how(&paused, None, false).english(),
+            "paused at 47 % · 1 waiting"
+        );
     }
 }

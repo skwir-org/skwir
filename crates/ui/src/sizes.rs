@@ -40,6 +40,8 @@
 
 use gpui::{Pixels, Rems, Styled, Window, px, rems};
 use skwir_core::App;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// The steps a part's size is chosen in, as percentages of its 100 %.
 pub const STEPS: [u32; 8] = [80, 90, 100, 110, 125, 150, 175, 200];
@@ -162,12 +164,37 @@ impl Part {
     }
 
     /// How the user knows it: what a change of its size says.
+    /// Transitional (ADR-139): its English, for callers not yet moved to
+    /// `title_words`.
     pub fn title(self) -> &'static str {
         match self {
             Part::Interface => "Text size",
             Part::Files => "Files text",
             Part::Reading => "Reading text",
             Part::Code => "Code text",
+        }
+    }
+
+    /// How the user knows it, as words: what a change of its size says.
+    pub fn title_words(self) -> Words {
+        match self {
+            Part::Interface => words!(
+                sizes_interface = "Text size",
+                note =
+                    "The interface's text size, named as a change of it is said (Text size: 120%)."
+            ),
+            Part::Files => words!(
+                sizes_files = "Files text",
+                note = "The text size of the files in a pane, named as a change of it is said (Files text: 120%)."
+            ),
+            Part::Reading => words!(
+                sizes_reading = "Reading text",
+                note = "The text size of what previews show to read, named as a change of it is said (Reading text: 120%)."
+            ),
+            Part::Code => words!(
+                sizes_code = "Code text",
+                note = "The text size of code, named as a change of it is said (Code text: 120%)."
+            ),
         }
     }
 
@@ -223,9 +250,19 @@ pub fn preview_stepped(percent: u32, larger: bool) -> u32 {
     }
 }
 
-/// How a size is written, in the settings and the preview: `110%`.
+/// How a size is written, in the settings and the preview: `110%`, said
+/// in the window. Transitional (ADR-139): `step_words` is it as words.
 pub fn step_label(step: u32) -> String {
-    format!("{step}%")
+    step_words(step).say()
+}
+
+/// How a size is written, in the settings and the preview: `110%`.
+pub fn step_words(step: u32) -> Words {
+    words!(
+        sizes_step = "{ $step }%",
+        step = step,
+        note = "A text size, a percentage of its part's own size (110%)."
+    )
 }
 
 /// The parts' sizes: each one's 100 %, in pixels, and the step its

@@ -195,13 +195,33 @@ pub fn tagged(row: &Row) -> impl Iterator<Item = &str> {
 
 /// What a screen reader hears of a row's names: each with what it is.
 pub fn said_names(cell: &str) -> String {
+    use skwir_core::words;
+    // Transitional: a list argument (ADR-139): the names, each said.
     cell.split(REFS_JOIN)
         .filter(|name| !name.is_empty())
         .map(|name| match RefKind::of(name) {
-            (RefKind::Current, name) => format!("{name} (checked out)"),
+            (RefKind::Current, name) => words!(
+                history_view_ref_current = "{ $name } (checked out)",
+                name = name,
+                note = "What a screen reader hears of a branch at a commit, checked out. name: \
+                        the branch (main)."
+            )
+            .say(),
             (RefKind::Branch, name) => name.to_owned(),
-            (RefKind::Remote, name) => format!("{name} (remote)"),
-            (RefKind::Tag, name) => format!("tag {name}"),
+            (RefKind::Remote, name) => words!(
+                history_view_ref_remote = "{ $name } (remote)",
+                name = name,
+                note = "What a screen reader hears of a remote's branch at a commit. name: the \
+                        branch (origin/main)."
+            )
+            .say(),
+            (RefKind::Tag, name) => words!(
+                history_view_ref_tag = "tag { $name }",
+                name = name,
+                note = "What a screen reader hears of a tag at a commit (a version's). name: \
+                        the tag (v1)."
+            )
+            .say(),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -289,6 +309,8 @@ impl crate::shell::Shell {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        use skwir_core::words;
+        use skwir_core::words::Words;
         let choose = |shell: &mut Self| {
             shell.preview.inspection.selected = Some(index);
             let Some(crate::preview::PreviewContent::Inspection(display)) = &shell.preview.content
@@ -313,7 +335,9 @@ impl crate::shell::Shell {
         let Some((id, short, summary)) = found else {
             return;
         };
-        let item = |order, title: &str, what: &str, text: String| {
+        // What it is goes as text in the command's arguments, said here
+        // (Transitional, ADR-139: `ui.copy_text` takes text).
+        let item = |order, title: Words, what: Words, text: String| {
             skwir_core::registry::MenuItem::new(
                 "preview",
                 title,
@@ -321,14 +345,47 @@ impl crate::shell::Shell {
                 order,
                 skwir_core::command::Invocation::with_args(
                     "ui.copy_text",
-                    &serde_json::json!({ "text": text, "what": what }),
+                    &serde_json::json!({ "text": text, "what": what.say() }),
                 ),
             )
         };
         let items = vec![
-            item(100, "Copy hash", "the commit's hash", id),
-            item(101, "Copy short hash", "the commit's short hash", short),
-            item(102, "Copy summary", "the commit's summary", summary),
+            item(
+                100,
+                words!(
+                    history_view_copy_hash = "Copy hash",
+                    note = "A menu item of a commit of a history: copy its hash."
+                ),
+                words!(
+                    history_view_the_hash = "the commit's hash",
+                    note = "What was copied, said after Copied (Copied the commit's hash)."
+                ),
+                id,
+            ),
+            item(
+                101,
+                words!(
+                    history_view_copy_short_hash = "Copy short hash",
+                    note = "A menu item of a commit of a history: copy its short hash."
+                ),
+                words!(
+                    history_view_the_short_hash = "the commit's short hash",
+                    note = "What was copied, said after Copied (Copied the commit's short hash)."
+                ),
+                short,
+            ),
+            item(
+                102,
+                words!(
+                    history_view_copy_summary = "Copy summary",
+                    note = "A menu item of a commit of a history: copy its summary."
+                ),
+                words!(
+                    history_view_the_summary = "the commit's summary",
+                    note = "What was copied, said after Copied (Copied the commit's summary)."
+                ),
+                summary,
+            ),
         ];
         self.menu = Some(crate::menu::MenuState::open(position, items, window, cx));
         cx.notify();

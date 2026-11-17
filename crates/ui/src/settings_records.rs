@@ -22,6 +22,8 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, Context, Entity, Focusable, Subscription, Window, div, prelude::*, px};
 use skwir_core::settings::{FieldKind, RecordField, SECRET_STORED, SettingKind};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -79,7 +81,7 @@ impl Run {
         args[self.field.as_str()] = serde_json::json!(value);
         let invocation = skwir_core::command::Invocation::with_args(self.command.as_str(), &args);
         if let Err(error) = app.dispatch(&invocation) {
-            app.notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+            app.notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
         }
     }
 }
@@ -98,6 +100,22 @@ impl Pick {
             self.run.with(&view.app, &self.values[at]);
         }
     }
+}
+
+/// The label of a record's Edit.
+fn edit_words() -> Words {
+    words!(
+        records_edit = "Edit",
+        note = "A button of a record in a list of the settings (a tile server): change it."
+    )
+}
+
+/// The label of a record's Remove.
+fn remove_words() -> Words {
+    words!(
+        records_remove = "Remove",
+        note = "A button of a record in a list of the settings (a tile server): take it out."
+    )
 }
 
 /// A row of a list inset in its setting's card: a line between rows.
@@ -163,7 +181,8 @@ pub(crate) struct Draft {
     /// Not in the list yet: Cancel drops it.
     new: bool,
     fields: Vec<(RecordField, FieldInput)>,
-    error: Option<String>,
+    /// Why it was not kept, said where it is drawn.
+    error: Option<Words>,
     /// Waiting for the keyring.
     busy: bool,
     subscriptions: Vec<Subscription>,
@@ -172,7 +191,7 @@ pub(crate) struct Draft {
 /// What a keyring job came back with: the list to save, or why not.
 pub(crate) struct KeyringDone {
     key: String,
-    result: Result<String, String>,
+    result: Result<String, Words>,
 }
 
 /// A record being dragged to another place in its list.
@@ -311,7 +330,11 @@ impl SettingsView {
                             key,
                             String::new(),
                             if stored {
-                                "Kept in the keyring: type to replace".into()
+                                words!(
+                                    records_secret_kept = "Kept in the keyring: type to replace",
+                                    note = "The placeholder of a secret's field (a password) whose value the desktop's keyring keeps."
+                                )
+                                .say()
                             } else {
                                 String::new()
                             },
@@ -353,9 +376,21 @@ impl SettingsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Pair {
+        let (name_said, value_said) = (
+            words!(
+                records_pair_name = "Name",
+                note = "The placeholder of the first field of a name and value pair (an HTTP header's name)."
+            )
+            .say(),
+            words!(
+                records_pair_value = "Value",
+                note = "The placeholder of the second field of a name and value pair (an HTTP header's value)."
+            )
+            .say(),
+        );
         Pair {
-            name: self.draft_input(key, name, "Name".into(), false, subscriptions, window, cx),
-            value: self.draft_input(key, value, "Value".into(), false, subscriptions, window, cx),
+            name: self.draft_input(key, name, name_said, false, subscriptions, window, cx),
+            value: self.draft_input(key, value, value_said, false, subscriptions, window, cx),
         }
     }
 
@@ -410,7 +445,13 @@ impl SettingsView {
             && let Some((_, FieldInput::Secret { stored, input })) = fields.get_mut(index)
         {
             *stored = false;
-            input.update(cx, |input, cx| input.set_placeholder("Not set", cx));
+            let unset = words!(
+                records_secret_not_set = "Not set",
+                note =
+                    "The placeholder of a secret's field (a password) the keyring no longer keeps."
+            )
+            .say();
+            input.update(cx, |input, cx| input.set_placeholder(unset, cx));
         }
         cx.notify();
     }
@@ -487,7 +528,7 @@ impl SettingsView {
         let stored = self.app.settings.get::<toml::Value>(key);
         if let Err(error) = spec.parse_over(&text, stored.as_ref()) {
             if let Some(draft) = self.drafts.get_mut(key) {
-                draft.error = Some(format!("{error:#}"));
+                draft.error = Some(Words::of_error(error));
             }
             cx.notify();
             return;
@@ -512,7 +553,13 @@ impl SettingsView {
         }
         let (slot, weak, owner) = (Arc::clone(&self.keyring), self.app.weak(), key.to_owned());
         // What the keyring's own window shows the user: said as Skwir's.
-        let label = format!("skwir: {name} ({})", spec.title.say());
+        let label = words!(
+            records_keyring_label = "skwir: { $record } ({ $setting })",
+            record = name,
+            setting = spec.title.clone(),
+            note = "What the desktop's keyring calls a secret skwir keeps there: record is the record's name or id, as the user wrote it; setting is the setting it belongs to (Tile servers)."
+        )
+        .say();
         self.app.scheduler.spawn(
             skwir_core::scheduler::Priority::Visible,
             "settings-keyring",
@@ -538,7 +585,13 @@ impl SettingsView {
                     anyhow::Ok(())
                 })()
                 .map(|()| text)
-                .map_err(|error| format!("The keyring did not keep it: {error:#}"));
+                .map_err(|error| {
+                    words!(
+                        records_keyring_failed = "The keyring did not keep it: { $error }",
+                        error = error,
+                        note = "Why a record holding a secret (a password) was not saved: the desktop's keyring refused it."
+                    )
+                });
                 if let Ok(mut done) = slot.lock() {
                     done.push(KeyringDone { key: owner, result });
                 }
@@ -585,7 +638,11 @@ impl SettingsView {
                     {
                         app.notify(
                             skwir_core::app::NotifyLevel::Error,
-                            format!("The keyring kept a secret of the record removed: {error:#}"),
+                            words!(
+                                records_keyring_kept = "The keyring kept a secret of the record removed: { $error }",
+                                error = error,
+                                note = "A record holding a secret (a password) was removed, and the desktop's keyring did not forget the secret."
+                            ),
                         );
                     }
                 },
@@ -768,17 +825,28 @@ impl SettingsView {
         }
         if shown.is_empty() {
             let said = if !query.is_empty() {
-                format!("Nothing matches “{query}”")
+                words!(
+                    records_none_match = "Nothing matches “{ $filter }”",
+                    filter = query.clone(),
+                    note = "A list of records in the settings, filtered: filter is what the user typed."
+                )
             } else if spec
                 .constraints
                 .record_source
                 .as_ref()
                 .is_some_and(|source| source.add.is_empty())
             {
-                "None found".to_owned()
+                words!(
+                    records_none_found = "None found",
+                    note = "A list of records in the settings that skwir fills (the languages found) is empty."
+                )
             } else {
-                "None yet".to_owned()
-            };
+                words!(
+                    records_none_yet = "None yet",
+                    note = "A list of records in the settings that the user fills (tile servers) is empty."
+                )
+            }
+            .say();
             rows = rows.child(
                 inset_row(theme, true)
                     .text_body()
@@ -816,11 +884,23 @@ impl SettingsView {
                             .flex_none()
                             .text_small()
                             .text_color(theme.text_muted)
-                            .child(if query.is_empty() {
-                                format!("{found}")
-                            } else {
-                                format!("{found} of {}", all.len())
-                            }),
+                            .child(
+                                if query.is_empty() {
+                                    words!(
+                                        records_count = "{ $count }",
+                                        count = found,
+                                        note = "How many records a long list in the settings holds, beside its filter."
+                                    )
+                                } else {
+                                    words!(
+                                        records_found_of = "{ $found } of { $count }",
+                                        found = found,
+                                        count = all.len(),
+                                        note = "How many records a long list's filter in the settings kept (found), of all it holds (count)."
+                                    )
+                                }
+                                .say(),
+                            ),
                     ),
             );
         }
@@ -830,10 +910,18 @@ impl SettingsView {
             self.stop(&focus, Some(item), None);
             let toggled = key.to_owned();
             let label = if unfolded {
-                "Show fewer".to_owned()
+                words!(
+                    records_show_fewer = "Show fewer",
+                    note = "Folds a long list of records in the settings to its first rows."
+                )
             } else {
-                format!("Show all {found}")
-            };
+                words!(
+                    records_show_all = "Show all { $count }",
+                    count = found,
+                    note = "Unfolds a long list of records in the settings: count is how many it holds."
+                )
+            }
+            .say();
             block = block.child(
                 controls::button(
                     format!("records-fold-{key}"),
@@ -861,8 +949,21 @@ impl SettingsView {
             return input.clone();
         }
         let input = cx.new(|cx| {
-            let mut input = TextInput::new("Filter".to_owned(), cx);
-            input.set_label("Filter the list".to_owned());
+            let mut input = TextInput::new(
+                words!(
+                    records_filter = "Filter",
+                    note = "The placeholder of a long list's filter in the settings."
+                )
+                .say(),
+                cx,
+            );
+            input.set_label(
+                words!(
+                    records_filter_label = "Filter the list",
+                    note = "What a screen reader calls a long list's filter in the settings."
+                )
+                .say(),
+            );
             input
         });
         let sub = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
@@ -922,7 +1023,7 @@ impl SettingsView {
                         skwir_core::command::Invocation::with_args(action.command.as_str(), &args);
                     if let Err(error) = this.app.dispatch(&invocation) {
                         this.app
-                            .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                            .notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
                     }
                 })),
             );
@@ -957,7 +1058,7 @@ impl SettingsView {
             .child(
                 controls::button(
                     format!("edit-{key}-{id}"),
-                    "Edit",
+                    edit_words().say(),
                     None,
                     ButtonStyle::Plain,
                     &edit_focus,
@@ -973,7 +1074,7 @@ impl SettingsView {
             .child(
                 controls::button(
                     format!("remove-{key}-{id}"),
-                    "Remove",
+                    remove_words().say(),
                     None,
                     ButtonStyle::Danger,
                     &remove_focus,
@@ -1055,11 +1156,23 @@ impl SettingsView {
     ) -> AnyElement {
         let fixed = record.get("fixed").and_then(serde_json::Value::as_bool) == Some(true);
         let wraps = record.get("wraps").and_then(serde_json::Value::as_bool) == Some(true);
+        // Each by a name of its own, for its focus and its element, and its
+        // words.
         let verbs = [
-            ("Edit", source.edit.clone(), ButtonStyle::Plain),
-            ("Remove", source.remove.clone(), ButtonStyle::Danger),
+            (
+                "Edit",
+                edit_words(),
+                source.edit.clone(),
+                ButtonStyle::Plain,
+            ),
+            (
+                "Remove",
+                remove_words(),
+                source.remove.clone(),
+                ButtonStyle::Danger,
+            ),
         ];
-        for (verb, command, style) in verbs.into_iter().filter(|_| !fixed) {
+        for (verb, label, command, style) in verbs.into_iter().filter(|_| !fixed) {
             let focus = self.handle(&format!("{verb}:{key}:{id}"), cx);
             self.stop(&focus, Some(item), None);
             self.record_stops
@@ -1068,7 +1181,7 @@ impl SettingsView {
             actions = actions.child(
                 controls::button(
                     format!("{verb}-{key}-{id}"),
-                    verb,
+                    label.say(),
                     None,
                     style,
                     &focus,
@@ -1079,7 +1192,7 @@ impl SettingsView {
                         skwir_core::command::Invocation::with_args(command.as_str(), &args);
                     if let Err(error) = this.app.dispatch(&invocation) {
                         this.app
-                            .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                            .notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
                     }
                 })),
             );
@@ -1125,7 +1238,7 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, _| {
                     if let Err(error) = this.app.dispatch(&invocation) {
                         this.app
-                            .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                            .notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
                     }
                 })),
             );
@@ -1432,7 +1545,11 @@ impl SettingsView {
                             controls::icon_button(
                                 format!("pair-remove-{key}-{index}-{pair}"),
                                 "close",
-                                "Remove",
+                                words!(
+                                    records_pair_remove = "Remove",
+                                    note = "The label of a button that takes a name and value pair (an HTTP header) out of a record."
+                                )
+                                .say(),
                                 &focus,
                                 theme,
                             )
@@ -1450,7 +1567,11 @@ impl SettingsView {
                     line = line.child(
                         controls::button(
                             format!("forget-{key}-{index}"),
-                            "Forget",
+                            words!(
+                                records_secret_forget = "Forget",
+                                note = "A button beside a secret's field (a password): the keyring forgets it once the record is saved."
+                            )
+                            .say(),
                             None,
                             ButtonStyle::Danger,
                             &focus,
@@ -1471,7 +1592,11 @@ impl SettingsView {
                     div().flex().child(
                         controls::button(
                             format!("pair-add-{key}-{index}"),
-                            "Add",
+                            words!(
+                                records_pair_add = "Add",
+                                note = "A button that adds a name and value pair (an HTTP header) to a record."
+                            )
+                            .say(),
                             Some("plus"),
                             ButtonStyle::Plain,
                             &focus,
@@ -1488,11 +1613,20 @@ impl SettingsView {
                     .flex()
                     .flex_col()
                     .gap(sized(4.))
-                    .child(div().text_body().child(format!(
-                        "{}{}",
-                        field.title.say(),
-                        if field.required { "" } else { " (optional)" }
-                    )))
+                    .child(
+                        div().text_body().child(
+                            if field.required {
+                                field.title.clone()
+                            } else {
+                                words!(
+                                    records_field_optional = "{ $field } (optional)",
+                                    field = field.title.clone(),
+                                    note = "A record's field the user may leave empty: field is its name (Headers)."
+                                )
+                            }
+                            .say(),
+                        ),
+                    )
                     .child(body)
                     .when(!field.description.is_empty(), |d| {
                         d.child(
@@ -1525,18 +1659,24 @@ impl SettingsView {
                     } else {
                         theme.text_muted
                     })
-                    .child(error.unwrap_or_else(|| {
-                        if busy {
-                            "Asking the keyring…".into()
-                        } else {
-                            String::new()
-                        }
-                    })),
+                    .child(match error {
+                        Some(error) => error.say(),
+                        None if busy => words!(
+                            records_keyring_asking = "Asking the keyring…",
+                            note = "Said while a record holding a secret (a password) waits for the desktop's keyring."
+                        )
+                        .say(),
+                        None => String::new(),
+                    }),
             )
             .child(
                 controls::button(
                     format!("draft-cancel-{key}"),
-                    "Cancel",
+                    words!(
+                        records_cancel = "Cancel",
+                        note = "A button of a record's form in the settings: close it, nothing kept."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &cancel_focus,
@@ -1549,7 +1689,11 @@ impl SettingsView {
             .child(
                 controls::button(
                     format!("draft-save-{key}"),
-                    "Save",
+                    words!(
+                        records_save = "Save",
+                        note = "A button of a record's form in the settings: keep it."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &save_focus,

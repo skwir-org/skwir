@@ -17,6 +17,7 @@ use std::sync::Arc;
 use gpui::RenderImage;
 use skwir_core::CancelToken;
 use skwir_core::tiles::{Layer, NoTile, Palette, SourceInfo, TileRequest, Tiles};
+use skwir_core::words::Words;
 
 /// How long a tile that failed is left blank before it is asked again.
 const RETRY: std::time::Duration = std::time::Duration::from_secs(30);
@@ -54,7 +55,7 @@ enum Entry {
 enum Lack {
     NoTile,
     Taken(skwir_core::fs::kept_open::Taken),
-    Failed(String),
+    Failed(Words),
 }
 
 type Arrival = (Key, Result<Arc<RenderImage>, Lack>);
@@ -64,7 +65,8 @@ type Arrival = (Key, Result<Arc<RenderImage>, Lack>);
 pub struct Failure {
     pub source: u64,
     pub revision: u64,
-    pub error: String,
+    /// Said where it is shown, in the reader's language.
+    pub error: Words,
 }
 
 /// How long a view waited for its tiles: from the first frame that lacked
@@ -272,12 +274,17 @@ impl TileStore {
                         {
                             Lack::Taken(taken)
                         } else {
-                            Lack::Failed(format!("{error:#}"))
+                            Lack::Failed(Words::of_error(error))
                         }
                     })
                     .and_then(|image| {
                         crate::thumbs::to_render_image(&image)
-                            .ok_or_else(|| Lack::Failed("the tile is not a picture".to_owned()))
+                            .ok_or_else(|| {
+                                Lack::Failed(skwir_core::words!(
+                                    map_tiles_not_a_picture = "the tile is not a picture",
+                                    note = "Why a map's tile could not be shown: what the file or the server gave for it is no picture. Said after what could not be loaded."
+                                ))
+                            })
                     });
                 if tx.send((key, image)).is_ok() {
                     wake();

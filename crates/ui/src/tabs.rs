@@ -39,6 +39,8 @@ use gpui::{
 };
 use skwir_core::Location;
 use skwir_core::command::Invocation;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::{PaneId, TabId};
 
 use crate::shell::Shell;
@@ -82,7 +84,7 @@ impl Label {
     /// Its panes' names said as one: what a screen reader hears and a drag
     /// of the tab shows.
     pub fn spoken(&self) -> String {
-        spoken(&self.names)
+        spoken(&self.names).say()
     }
 
     pub fn is_split(&self) -> bool {
@@ -90,12 +92,24 @@ impl Label {
     }
 }
 
-fn spoken(names: &[SharedString]) -> String {
-    names
-        .iter()
-        .map(SharedString::as_ref)
-        .collect::<Vec<&str>>()
-        .join(" and ")
+fn spoken(names: &[SharedString]) -> Words {
+    match names {
+        [one] => Words::as_written(one.to_string()),
+        [first, second] => words!(
+            tabs_split = "{ $first } and { $second }",
+            first = first.to_string(),
+            second = second.to_string(),
+            note = "A split tab, as a screen reader hears it and a drag of it shows; first, second: the places its two panes show, as their tabs name them."
+        ),
+        // Transitional: a list argument (ADR-139). A tab splits once.
+        _ => Words::as_written(
+            names
+                .iter()
+                .map(SharedString::as_ref)
+                .collect::<Vec<&str>>()
+                .join(" and "),
+        ),
+    }
 }
 
 /// What a tab's label is read from: its panes' locations, in the order
@@ -621,7 +635,13 @@ fn row(
     let mut strip = div()
         .id("tab-strip")
         .role(gpui::Role::TabList)
-        .aria_label("Tabs")
+        .aria_label(
+            words!(
+                tabs_strip = "Tabs",
+                note = "What a screen reader calls the strip of the window's tabs."
+            )
+            .say(),
+        )
         .when(shell.a11y, |d| d.aria_size_of_set(labels.len()))
         // Beside the tabs, the window moves while its buttons are in the
         // top row; a double click there opens a tab, as it does without.
@@ -670,7 +690,7 @@ fn row(
             cx,
         ));
     }
-    let new = crate::toolbar::Button::new("tab-strip-new", "plus", "New tab", "tab.new")
+    let new = crate::toolbar::Button::new("tab-strip-new", "plus", new_tab().say(), "tab.new")
         .render(shell, cx);
     strip = strip.child(div().flex_none().h_full().flex().items_center().child(new));
     // Split, Properties and Preview end the strip while the panel is not
@@ -853,7 +873,13 @@ fn close(id: TabId, size: f32, cx: &mut Context<Shell>) -> gpui::Stateful<gpui::
     div()
         .id(("tab-close", id.0 as usize))
         .role(gpui::Role::Button)
-        .aria_label("Close tab")
+        .aria_label(
+            words!(
+                tabs_close = "Close tab",
+                note = "What a screen reader calls a tab's close button."
+            )
+            .say(),
+        )
         .flex_none()
         .size(px(size))
         .flex()
@@ -1086,7 +1112,7 @@ pub fn sidebar_new_tab(shell: &Shell, at_cursor: bool, cx: &mut Context<Shell>) 
     div()
         .id("sidebar-new-tab")
         .role(gpui::Role::TreeItem)
-        .when(shell.a11y, |d| d.aria_label("New tab").aria_level(2))
+        .when(shell.a11y, |d| d.aria_label(new_tab().say()).aria_level(2))
         .when(
             at_cursor,
             StatefulInteractiveElement::aria_active_descendant,
@@ -1114,7 +1140,7 @@ pub fn sidebar_new_tab(shell: &Shell, at_cursor: bool, cx: &mut Context<Shell>) 
             this.run("tab.new", serde_json::json!({}), window, cx);
         }))
         .child(crate::controls::glyph("plus", theme.text_muted, 16.))
-        .child("New tab")
+        .child(new_tab().say())
         .into_any_element()
 }
 
@@ -1173,15 +1199,20 @@ fn move_target(from: usize, before: usize, count: usize) -> Option<usize> {
     Some(if before > from { before - 1 } else { before })
 }
 
+/// The button that opens a tab, as it is called.
+fn new_tab() -> Words {
+    words!(tabs_new = "New tab")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{gives_way, move_target, spoken};
 
     #[test]
     fn a_split_tab_is_said_by_both_its_panes_names() {
-        assert_eq!(spoken(&["Field Guide".into()]), "Field Guide");
+        assert_eq!(spoken(&["Field Guide".into()]).english(), "Field Guide");
         assert_eq!(
-            spoken(&["Field Guide".into(), "Maps".into()]),
+            spoken(&["Field Guide".into(), "Maps".into()]).english(),
             "Field Guide and Maps"
         );
     }

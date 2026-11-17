@@ -23,7 +23,6 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
-use std::fmt::Write as _;
 use std::rc::Rc;
 
 use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*};
@@ -31,6 +30,8 @@ use serde::Deserialize;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::calendar::{Calendar, Period, civil_from_days};
 
 use crate::elements::bars::{self, BarColors, bar_chart};
@@ -43,7 +44,6 @@ use crate::toolbar::{self, Button};
 pub const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 /// Each bucket's period on the user's calendar.
 const PERIODS: [Period; 4] = [Period::Day, Period::Week, Period::Month, Period::Year];
-const PLURALS: [&str; 4] = ["days", "weeks", "months", "years"];
 const DAY: usize = 0;
 /// The times the bars can count, as the plugin and the query language
 /// name them, and how the strip's menu says them.
@@ -54,6 +54,60 @@ pub const DATES: [(&str, &str); 4] = [
     ("taken", "When taken (pictures and videos)"),
 ];
 const TAKEN: usize = 3;
+
+/// What the strip is called: its heading, and its chart to a screen reader.
+fn title() -> Words {
+    words!(
+        timeline_title = "Timeline",
+        note =
+            "The strip under the files with a bar for each day, week, month or year: its heading."
+    )
+}
+
+/// What the strip's button calls the time counted (`DATES`' word), as words.
+fn date_label(date: usize) -> Words {
+    match date {
+        0 => words!(
+            timeline_date_modified = "modified",
+            note = "The timeline's button choosing which time its bars count: when files were modified."
+        ),
+        1 => words!(
+            timeline_date_created = "created",
+            note =
+                "The timeline's button choosing which time its bars count: when files were made."
+        ),
+        2 => words!(
+            timeline_date_accessed = "accessed",
+            note = "The timeline's button choosing which time its bars count: when files were last opened."
+        ),
+        _ => words!(
+            timeline_date_taken = "taken",
+            note = "The timeline's button choosing which time its bars count: when pictures and videos were taken."
+        ),
+    }
+}
+
+/// How the strip's menu says the time counted (`DATES`' title), as words.
+fn date_title(date: usize) -> Words {
+    match date {
+        0 => words!(
+            timeline_when_modified = "When modified",
+            note = "A choice of the timeline's menu of which time its bars count."
+        ),
+        1 => words!(
+            timeline_when_created = "When created",
+            note = "A choice of the timeline's menu of which time its bars count."
+        ),
+        2 => words!(
+            timeline_when_opened = "When last opened",
+            note = "A choice of the timeline's menu of which time its bars count."
+        ),
+        _ => words!(
+            timeline_when_taken = "When taken (pictures and videos)",
+            note = "A choice of the timeline's menu of which time its bars count: by the camera's clock."
+        ),
+    }
+}
 /// The popup choosing the time (`ui.toolbar_menu`'s `kind`).
 pub const DATES_MENU: &str = "timeline_dates";
 /// The chart under the strip's controls: bars, their counts and labels.
@@ -254,7 +308,7 @@ pub struct TimelineState {
     panned: i64,
     /// The count a worker is doing: the plugin's answer, and what it was
     /// asked of.
-    asked: crate::latest::Latest<(Asked, Result<Option<serde_json::Value>, String>)>,
+    asked: crate::latest::Latest<(Asked, Result<Option<serde_json::Value>, Words>)>,
     /// The wake a count in the background was last asked after
     /// (`crate::wakes`): it ends with a wake of its own, so a draw the
     /// pointer asked never asks it again.
@@ -323,7 +377,12 @@ fn period_words(bucket: usize, (y, m, d): (i64, u32, u32)) -> String {
     let name = MONTH_NAMES[month(m)];
     match bucket {
         DAY => format!("{d} {name} {y}"),
-        1 => format!("Week of {d} {name} {y}"),
+        1 => words!(
+            timeline_week_of = "Week of { $date }",
+            date = format!("{d} {name} {y}"),
+            note = "What a screen reader calls a bar of the timeline counting a week: the day it begins (3 March 2025)."
+        )
+        .say(),
         2 => format!("{name} {y}"),
         _ => y.to_string(),
     }
@@ -380,19 +439,29 @@ fn chart_of(h: &Histogram, measure: Measure) -> Rc<Vec<bars::Bar>> {
 
 /// `25 files, 1.2 MB, 3 selected`: what a bar holds.
 fn holds(b: &Bar) -> String {
-    let mut words = format!(
-        "{}, {}",
-        format::files(usize::try_from(b.count).unwrap_or(usize::MAX)),
-        format::size(b.bytes)
-    );
     if b.selected > 0 {
-        let _ = write!(
-            words,
-            ", {} selected",
-            format::thousands(usize::try_from(b.selected).unwrap_or(usize::MAX))
-        );
+        words!(
+            timeline_holds_selected = "{ $count ->
+                [one] 1 file
+               *[other] { $count } files
+            }, { $size }, { $selected } selected",
+            count = b.count,
+            size = words::Size(b.bytes),
+            selected = b.selected,
+            note = "What a screen reader hears of a bar of the timeline: how many files it counts, their size, how many of them are selected."
+        )
+    } else {
+        words!(
+            timeline_holds = "{ $count ->
+                [one] 1 file
+               *[other] { $count } files
+            }, { $size }",
+            count = b.count,
+            size = words::Size(b.bytes),
+            note = "What a screen reader hears of a bar of the timeline: how many files it counts, and their size."
+        )
     }
-    words
+    .say()
 }
 
 impl Shell {
@@ -814,7 +883,7 @@ impl Shell {
                     let answer = match worker.dispatch(&ask) {
                         Ok(Outcome::Value(v)) => Ok(Some(v)),
                         Ok(_) => Ok(None),
-                        Err(e) => Err(format!("{e:#}")),
+                        Err(e) => Err(Words::of_error(e)),
                     };
                     (asked, answer)
                 },
@@ -848,7 +917,7 @@ impl Shell {
     fn take_histogram(
         &mut self,
         asked: Asked,
-        answer: Result<Option<serde_json::Value>, String>,
+        answer: Result<Option<serde_json::Value>, Words>,
         cx: &mut Context<Self>,
     ) {
         // The bars of the window moved to: moves count from them now.
@@ -901,15 +970,24 @@ impl Shell {
 /// What the strip says beside its controls: the bar under the pointer (or
 /// the keys'), or what the bars show.
 fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
+    let counting = || {
+        words!(
+            timeline_counting = "counting…",
+            note = "Beside the timeline's buttons while it counts the files' dates."
+        )
+        .say()
+    };
     let Some(h) = &t.histogram else {
         return if t.scanning {
-            "counting…".into()
+            counting()
         } else {
-            "no data".into()
+            words!(
+                timeline_no_data = "no data",
+                note = "Beside the timeline's buttons where there are no dates to count."
+            )
+            .say()
         };
     };
-    let files = |n: u64| format::files(usize::try_from(n).unwrap_or(usize::MAX));
-    let number = |n: u64| format::thousands(usize::try_from(n).unwrap_or(usize::MAX));
     // `end` is the first instant of the day after a bar's last: its last
     // day holds the instant before.
     let days = |start: u64, end: u64| {
@@ -924,41 +1002,93 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
         }
     };
     if let Some(b) = t.hover.or(focused_bar).and_then(|i| h.bars.get(i)) {
-        let mut said = format!(
-            "{} · {} · {}",
+        let mut said = vec![
             days(b.start, b.end),
-            files(b.count),
-            format::size(b.bytes)
-        );
+            format::files(usize::try_from(b.count).unwrap_or(usize::MAX)),
+            format::size(b.bytes),
+        ];
         if b.selected > 0 {
-            let _ = write!(said, " · {} selected", number(b.selected));
+            said.push(
+                words!(
+                    timeline_selected = "{ $count } selected",
+                    count = b.selected,
+                    note = "Beside the timeline's buttons, pointing at a bar: how many of its files are selected."
+                )
+                .say(),
+            );
         }
-        return said;
+        return said.join(" · ");
     }
     let mut parts = Vec::new();
     if t.scanning {
-        parts.push("counting…".to_owned());
+        parts.push(counting());
     }
     if let (Some(first), Some(last)) = (h.bars.first(), h.bars.last()) {
         parts.push(days(first.start, last.end));
     }
-    parts.push(format!(
-        "{} dated",
-        number(h.total - h.unknown.min(h.total))
-    ));
+    parts.push(
+        words!(
+            timeline_dated = "{ $count } dated",
+            count = h.total - h.unknown.min(h.total),
+            note = "Beside the timeline's buttons: how many files have the date its bars count."
+        )
+        .say(),
+    );
     if h.unknown > 0 {
-        parts.push(format!("{} without a date", number(h.unknown)));
+        parts.push(
+            words!(
+                timeline_undated = "{ $count } without a date",
+                count = h.unknown,
+                note = "Beside the timeline's buttons: how many files have not the date its bars count."
+            )
+            .say(),
+        );
     }
     if h.before > 0 {
-        parts.push(format!("{} earlier", files(h.before)));
+        parts.push(
+            words!(
+                timeline_earlier_files = "{ $count ->
+                    [one] 1 file earlier
+                   *[other] { $count } files earlier
+                }",
+                count = h.before,
+                note = "Beside the timeline's buttons: how many files are dated before the bars shown."
+            )
+            .say(),
+        );
     }
     if h.after > 0 {
-        parts.push(format!("{} later", files(h.after)));
+        parts.push(
+            words!(
+                timeline_later_files = "{ $count ->
+                    [one] 1 file later
+                   *[other] { $count } files later
+                }",
+                count = h.after,
+                note =
+                    "Beside the timeline's buttons: how many files are dated after the bars shown."
+            )
+            .say(),
+        );
     }
     if h.outside > 0 {
-        parts.push(format!("{} far outside", number(h.outside)));
+        parts.push(
+            words!(
+                timeline_far_outside = "{ $count } far outside",
+                count = h.outside,
+                note = "Beside the timeline's buttons: how many files are dated far from all the others (a wrong clock), left out of the bars."
+            )
+            .say(),
+        );
     }
-    parts.push("click or drag across bars to list their files".to_owned());
+    parts.push(
+        words!(
+            timeline_how = "click or drag across bars to list their files",
+            note = "Beside the timeline's buttons, last: what the pointer does on its bars."
+        )
+        .say(),
+    );
+    // Its facts, each a message.
     parts.join(" · ")
 }
 
@@ -985,44 +1115,98 @@ fn controls(
         .items_center()
         .gap_1()
         .text_small()
-        .child(div().text_color(theme.text_muted).child("Timeline"));
+        .child(div().text_color(theme.text_muted).child(title().say()));
     // The strip's own commands, through the shared button: a tooltip,
     // focus, and the keys a button answers. The width pressed is the one
     // shown, picked or the finest that shows every date.
     for (i, bucket) in BUCKETS.iter().enumerate() {
         let title = if fits.is_some_and(|fits| i < fits) {
-            format!(
-                "A bar for each {bucket}: too many for the strip, shown a part at a time that the wheel and the arrows move"
+            words!(
+                timeline_bucket_tip_windowed = "A bar for each { $bucket ->
+                    [day] day
+                    [week] week
+                    [month] month
+                   *[year] year
+                }: too many for the strip, shown a part at a time that the wheel and the arrows move",
+                bucket = *bucket,
+                note = "Pointing at a button of the timeline choosing what each bar counts, where there are too many bars to show at once."
             )
         } else {
-            format!("A bar for each {bucket}")
+            words!(
+                timeline_bucket_tip = "A bar for each { $bucket ->
+                    [day] day
+                    [week] week
+                    [month] month
+                   *[year] year
+                }",
+                bucket = *bucket,
+                note = "Pointing at a button of the timeline choosing what each bar counts."
+            )
         };
+        let label = words!(
+            timeline_bucket = "{ $bucket ->
+                [day] day
+                [week] week
+                [month] month
+               *[year] year
+            }",
+            bucket = *bucket,
+            note = "A button of the timeline: a bar for each day, week, month or year."
+        );
         controls = controls.child(
-            Button::new(format!("tl-{bucket}"), "", title, "ui.timeline_bucket")
-                .args(serde_json::json!({ "bucket": bucket }))
-                .label(*bucket)
-                .active(shown == Some(i))
-                .render(shell, cx)
-                .h(sized(22.)),
+            Button::new(
+                format!("tl-{bucket}"),
+                "",
+                title.say(),
+                "ui.timeline_bucket",
+            )
+            .args(serde_json::json!({ "bucket": bucket }))
+            .label(label.say())
+            .active(shown == Some(i))
+            .render(shell, cx)
+            .h(sized(22.)),
         );
     }
     if windowed && let (Some(h), Some(shown)) = (&t.histogram, shown) {
-        let plural = PLURALS[shown];
+        let bucket = BUCKETS[shown];
         for (toward, icon, title, more) in [
-            ("earlier", "left", "Earlier", h.before),
-            ("later", "right", "Later", h.after),
+            (
+                "earlier",
+                "left",
+                words!(
+                    timeline_pan_earlier = "Earlier { $bucket ->
+                        [day] days
+                        [week] weeks
+                        [month] months
+                       *[year] years
+                    }",
+                    bucket = bucket,
+                    note = "Pointing at the timeline's left arrow: show the bars before."
+                ),
+                h.before,
+            ),
+            (
+                "later",
+                "right",
+                words!(
+                    timeline_pan_later = "Later { $bucket ->
+                        [day] days
+                        [week] weeks
+                        [month] months
+                       *[year] years
+                    }",
+                    bucket = bucket,
+                    note = "Pointing at the timeline's right arrow: show the bars after."
+                ),
+                h.after,
+            ),
         ] {
             controls = controls.child(
-                Button::new(
-                    format!("tl-{toward}"),
-                    icon,
-                    format!("{title} {plural}"),
-                    "ui.timeline_pan",
-                )
-                .args(serde_json::json!({ "toward": toward }))
-                .enabled(more > 0)
-                .render(shell, cx)
-                .h(sized(22.)),
+                Button::new(format!("tl-{toward}"), icon, title.say(), "ui.timeline_pan")
+                    .args(serde_json::json!({ "toward": toward }))
+                    .enabled(more > 0)
+                    .render(shell, cx)
+                    .h(sized(22.)),
             );
         }
     }
@@ -1030,30 +1214,63 @@ fn controls(
         Button::new(
             "tl-subtree",
             "",
-            "Count the files of the folders inside too",
+            words!(
+                timeline_subtree_tip = "Count the files of the folders inside too",
+                note = "Pointing at the timeline's subtree button."
+            )
+            .say(),
             "ui.timeline_subtree",
         )
-        .label("subtree")
+        .label(
+            words!(
+                timeline_subtree = "subtree",
+                note = "A button of the timeline: count the files of the folders inside too."
+            )
+            .say(),
+        )
         .active(t.subtree && folder)
         .enabled(folder)
         .render(shell, cx)
         .h(sized(22.)),
     );
-    for (by, measure, title) in [
+    for (by, measure, title, label) in [
         (
             "files",
             Measure::Files,
-            "Bars as tall as their number of files",
+            words!(
+                timeline_by_files_tip = "Bars as tall as their number of files",
+                note = "Pointing at the timeline's files button."
+            ),
+            words!(
+                timeline_by_files = "files",
+                note = "A button of the timeline: bars as tall as their number of files."
+            ),
         ),
-        ("size", Measure::Size, "Bars as tall as their files' size"),
+        (
+            "size",
+            Measure::Size,
+            words!(
+                timeline_by_size_tip = "Bars as tall as their files' size",
+                note = "Pointing at the timeline's size button."
+            ),
+            words!(
+                timeline_by_size = "size",
+                note = "A button of the timeline: bars as tall as their files' size."
+            ),
+        ),
     ] {
         controls = controls.child(
-            Button::new(format!("tl-by-{by}"), "", title, "ui.timeline_measure")
-                .args(serde_json::json!({ "by": by }))
-                .label(by)
-                .active(t.measure == measure)
-                .render(shell, cx)
-                .h(sized(22.)),
+            Button::new(
+                format!("tl-by-{by}"),
+                "",
+                title.say(),
+                "ui.timeline_measure",
+            )
+            .args(serde_json::json!({ "by": by }))
+            .label(label.say())
+            .active(t.measure == measure)
+            .render(shell, cx)
+            .h(sized(22.)),
         );
     }
     // The time's popup is the active pane's: its button opened it.
@@ -1066,11 +1283,15 @@ fn controls(
         Button::new(
             "tl-date",
             "",
-            "Which time the bars count",
+            words!(
+                timeline_date_tip = "Which time the bars count",
+                note = "Pointing at the timeline's button choosing which time its bars count."
+            )
+            .say(),
             "ui.toolbar_menu",
         )
         .args(serde_json::json!({ "kind": DATES_MENU }))
-        .label(DATES[t.date].0)
+        .label(date_label(t.date).say())
         .anchor_if(&t.dates, true)
         .active(open)
         .dropdown()
@@ -1098,13 +1319,19 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
     let parts = DATES
         .iter()
         .enumerate()
-        .map(|(i, (word, label))| {
+        .map(|(i, (word, _))| {
+            let label = date_title(i).say();
             toolbar::MenuPart::Row(
-                Button::new(format!("tl-date-{word}"), "", *label, "ui.timeline_date")
-                    .args(serde_json::json!({ "date": word }))
-                    .label(*label)
-                    .active(i == shell.timeline().date)
-                    .menu(),
+                Button::new(
+                    format!("tl-date-{word}"),
+                    "",
+                    label.clone(),
+                    "ui.timeline_date",
+                )
+                .args(serde_json::json!({ "date": word }))
+                .label(label)
+                .active(i == shell.timeline().date)
+                .menu(),
             )
         })
         .collect();
@@ -1152,7 +1379,7 @@ pub fn render(
     let mut chart_area = div()
         .id("timeline-chart")
         .role(gpui::Role::ListBox)
-        .aria_label("Timeline")
+        .aria_label(title().say())
         .relative()
         .h(sized(CHART_H))
         .w_full()
@@ -1243,12 +1470,21 @@ pub fn render(
             }
             chart_area = chart_area
                 .aria_size_of_set(h.bars.len())
-                .aria_description(format!(
-                    "{} by {}, {}. Left and Right go from bar to bar, Shift extends, Enter lists the files",
-                    DATES[t.date].1,
-                    BUCKETS[bucket],
-                    info(t, None)
-                ))
+                .aria_description(
+                    words!(
+                        timeline_said = "{ $date } by { $bucket ->
+                                [day] day
+                                [week] week
+                                [month] month
+                               *[year] year
+                            }, { $info }. Left and Right go from bar to bar, Shift extends, Enter lists the files",
+                        date = date_title(t.date),
+                        bucket = BUCKETS[bucket],
+                        info = info(t, None),
+                        note = "What a screen reader hears of the timeline's bars: which time they count (When modified), what each bar counts, what the strip says beside its buttons, then what the keys do."
+                    )
+                    .say(),
+                )
                 .child(said);
         }
         chart_area = chart_area.child(chart);

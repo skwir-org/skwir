@@ -8,41 +8,95 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use skwir_core::App;
-use skwir_platform::mime::Mime;
+use skwir_core::words;
+use skwir_core::words::Words;
+use skwir_platform::mime::{Kind, Mime};
 
-/// A type, its name, and what its kind is called: `Other` for none.
-type Resolved = Vec<(String, Option<String>, &'static str)>;
+/// A type, its name, and its kind: `None` for none.
+type Resolved = Vec<(String, Option<String>, Option<Kind>)>;
 
 #[derive(Default)]
 pub struct TypeNames {
     known: HashMap<String, Option<Arc<str>>>,
-    kinds: HashMap<String, Arc<str>>,
+    /// Each type's kind, as data: said where it is drawn.
+    kinds: HashMap<String, Option<Kind>>,
     wanted: HashSet<String>,
     results: Arc<Mutex<Resolved>>,
 }
 
 /// What one file of `kind` is: `Image`, `Audio`, `Text` (a group of them
-/// is called by `Kind::title`).
-fn one_of(kind: skwir_platform::mime::Kind) -> &'static str {
-    use skwir_platform::mime::Kind;
+/// is called by `Kind::words`); `Other` for none.
+fn one_of(kind: Option<Kind>) -> Words {
+    let Some(kind) = kind else {
+        return words!(
+            typenames_kind_other = "Other",
+            note = "What one file is, in the Kind column and caption, where its type is of no kind named."
+        );
+    };
     match kind {
-        Kind::Folder => "Folder",
-        Kind::Image => "Image",
-        Kind::Video => "Video",
-        Kind::Audio => "Audio",
-        Kind::Document => "Document",
-        Kind::Spreadsheet => "Spreadsheet",
-        Kind::Presentation => "Presentation",
-        Kind::Text => "Text",
-        Kind::Archive => "Archive",
-        Kind::Font => "Font",
-        Kind::Program => "Program",
+        Kind::Folder => words!(
+            typenames_kind_folder = "Folder",
+            note = "What one file is, in the Kind column and caption: a folder."
+        ),
+        Kind::Image => words!(
+            typenames_kind_image = "Image",
+            note = "What one file is, in the Kind column and caption: a picture."
+        ),
+        Kind::Video => words!(
+            typenames_kind_video = "Video",
+            note = "What one file is, in the Kind column and caption: a film."
+        ),
+        Kind::Audio => words!(
+            typenames_kind_audio = "Audio",
+            note = "What one file is, in the Kind column and caption: a sound or music."
+        ),
+        Kind::Document => words!(
+            typenames_kind_document = "Document",
+            note = "What one file is, in the Kind column and caption: a document."
+        ),
+        Kind::Spreadsheet => words!(
+            typenames_kind_spreadsheet = "Spreadsheet",
+            note = "What one file is, in the Kind column and caption: a spreadsheet."
+        ),
+        Kind::Presentation => words!(
+            typenames_kind_presentation = "Presentation",
+            note = "What one file is, in the Kind column and caption: a presentation's slides."
+        ),
+        Kind::Text => words!(
+            typenames_kind_text = "Text",
+            note = "What one file is, in the Kind column and caption: a text."
+        ),
+        Kind::Archive => words!(
+            typenames_kind_archive = "Archive",
+            note = "What one file is, in the Kind column and caption: an archive: files packed in one."
+        ),
+        Kind::Font => words!(
+            typenames_kind_font = "Font",
+            note = "What one file is, in the Kind column and caption: a font."
+        ),
+        Kind::Program => words!(
+            typenames_kind_program = "Program",
+            note = "What one file is, in the Kind column and caption: a program."
+        ),
     }
+}
+
+/// What a folder's type is called, in the Type and Kind columns.
+pub fn folder() -> Words {
+    words!(
+        typenames_folder = "Folder",
+        note = "The type of a folder, in the Type and Kind columns and captions."
+    )
 }
 
 /// The type of a link that leads nowhere (a link that resolves is named
 /// as what it leads to).
-pub const BROKEN_LINK: &str = "Broken link";
+pub fn broken_link() -> Words {
+    words!(
+        typenames_broken_link = "Broken link",
+        note = "The type of a link whose target is gone, in the Type column and the preview."
+    )
+}
 
 /// What an entry is called until the database's name for its type
 /// arrives: a pipe or a device by its kind (never by its name, which says
@@ -50,10 +104,26 @@ pub const BROKEN_LINK: &str = "Broken link";
 pub fn fallback_of(entry: &skwir_core::Entry) -> String {
     use skwir_core::EntryKind;
     match entry.opens() {
-        EntryKind::Fifo => "Pipe".to_owned(),
-        EntryKind::Socket => "Socket".to_owned(),
-        EntryKind::CharDevice => "Character device".to_owned(),
-        EntryKind::BlockDevice => "Block device".to_owned(),
+        EntryKind::Fifo => words!(
+            typenames_pipe = "Pipe",
+            note = "The type of a named pipe (a FIFO), in the Type column and the preview."
+        )
+        .say(),
+        EntryKind::Socket => words!(
+            typenames_socket = "Socket",
+            note = "The type of a socket file, in the Type column and the preview."
+        )
+        .say(),
+        EntryKind::CharDevice => words!(
+            typenames_char_device = "Character device",
+            note = "The type of a device file read a character at a time (a terminal), in the Type column and the preview."
+        )
+        .say(),
+        EntryKind::BlockDevice => words!(
+            typenames_block_device = "Block device",
+            note = "The type of a device file read in blocks (a disk), in the Type column and the preview."
+        )
+        .say(),
         _ => fallback(&entry.type_name().to_string_lossy()),
     }
 }
@@ -67,9 +137,18 @@ pub fn fallback(name: &str) -> String {
                 && extension.len() <= 5
                 && extension.chars().all(char::is_alphanumeric) =>
         {
-            format!("{} file", extension.to_uppercase())
+            words!(
+                typenames_extension_file = "{ $extension } file",
+                extension = extension.to_uppercase(),
+                note = "The type of a file the type database names not yet, by its extension: CSV file."
+            )
+            .say()
         }
-        _ => "File".to_owned(),
+        _ => words!(
+            typenames_file = "File",
+            note = "The type of a file with no extension the type database names not yet."
+        )
+        .say(),
     }
 }
 
@@ -92,7 +171,7 @@ impl TypeNames {
     /// otherwise note that it is wanted.
     pub fn kind(&mut self, mime: &Mime) -> Option<Arc<str>> {
         if let Some(kind) = self.kinds.get(mime.as_str()) {
-            return Some(Arc::clone(kind));
+            return Some(Arc::from(one_of(*kind).say()));
         }
         if !self.known.contains_key(mime.as_str()) {
             self.wanted.insert(mime.as_str().to_owned());
@@ -123,10 +202,7 @@ impl TypeNames {
                         let one = Mime(mime.clone());
                         let name = one.description();
                         // Its first kind, as a sort by kind finds it.
-                        let kind = skwir_platform::mime::kinds(&one)
-                            .into_iter()
-                            .next()
-                            .map_or("Other", one_of);
+                        let kind = skwir_platform::mime::kinds(&one).into_iter().next();
                         (mime, name, kind)
                     })
                     .collect();
@@ -149,7 +225,7 @@ impl TypeNames {
         drop(slot);
         let changed = !found.is_empty();
         for (mime, name, kind) in found {
-            self.kinds.insert(mime.clone(), Arc::from(kind));
+            self.kinds.insert(mime.clone(), kind);
             self.known.insert(mime, name.map(Arc::from));
         }
         changed

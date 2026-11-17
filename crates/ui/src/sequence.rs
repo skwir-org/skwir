@@ -136,11 +136,20 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .items_center()
                 .gap_2()
                 .child(caps(&typed.join(" "), &theme))
-                .child(if sequence.next.is_empty() {
-                    "Nothing follows these keys here"
-                } else {
-                    "then"
-                }),
+                .child(
+                    if sequence.next.is_empty() {
+                        skwir_core::words!(
+                            sequence_nothing_follows = "Nothing follows these keys here",
+                            note = "At the foot of the window after keys typed that begin a binding of several (g, then h): no binding goes on from them where the focus is."
+                        )
+                    } else {
+                        skwir_core::words!(
+                            sequence_then = "then",
+                            note = "At the foot of the window after the keys typed that begin a binding of several (g): what follows lists the keys that can come next and what each does."
+                        )
+                    }
+                    .say(),
+                ),
         )
         .child(list);
     Some(

@@ -484,7 +484,11 @@ pub fn declare(app: &skwir_core::App) {
     app.settings
         .declare(skwir_core::settings::SettingSpec::state(
             SESSION_KEY,
-            "The last window's view, split, preview and timeline",
+            skwir_core::words!(
+                session_setting = "The last window's view, split, preview and timeline",
+                note = "What a kept setting holds: the shape of the last window, so the next \
+                        one looks the same."
+            ),
             toml::Value::Table(toml::map::Map::new()),
         ));
 }

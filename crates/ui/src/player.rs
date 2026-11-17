@@ -27,6 +27,8 @@ use gpui::{AnyElement, Context, RenderImage, Window, div, prelude::*};
 use skwir_core::media::{Control, MediaSession, Playback};
 use skwir_core::playing::{NowPlaying, PlayerRequest};
 use skwir_core::preview::PreviewRequest;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::{
     CancelToken,
     op::{EntryRef, PlanId},
@@ -63,11 +65,21 @@ impl Continue {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> Words {
         match self {
-            Self::Stop => "Stop",
-            Self::Next => "Play next",
-            Self::Shuffle => "Shuffle",
+            Self::Stop => words!(
+                player_continue_stop = "Stop",
+                note = "What the player does when a track ends: it stops."
+            ),
+            Self::Next => words!(
+                player_continue_next = "Play next",
+                note =
+                    "What the player does when a track ends: it plays the next file of the folder."
+            ),
+            Self::Shuffle => words!(
+                player_continue_shuffle = "Shuffle",
+                note = "What the player does when a track ends: it plays another file of the folder, chosen at random."
+            ),
         }
     }
 
@@ -482,7 +494,13 @@ pub struct Opened {
 fn request_for(path: &std::path::Path, max_side: u32) -> anyhow::Result<PreviewRequest> {
     let (entry, content) = skwir_core::fs::content_path(path)
         .and_then(|content| Some((EntryRef::from_path(&*content)?, content)))
-        .ok_or_else(|| anyhow::anyhow!("{} is no file to play", path.display()))?;
+        .ok_or_else(|| {
+            anyhow::Error::from(words!(
+                player_no_file = "{ $path } is no file to play",
+                path = path.display().to_string(),
+                note = "The player was asked to play a path that leads to no file."
+            ))
+        })?;
     let mime = content
         .file_name()
         .and_then(|name| skwir_platform::mime::identify(name, &content))
@@ -1807,9 +1825,10 @@ impl Shell {
                     None => (
                         PathBuf::new(),
                         (
-                            Err(anyhow::anyhow!(
-                                "These playlists list no track to play here"
-                            )),
+                            Err(anyhow::Error::from(words!(
+                                player_playlists_empty = "These playlists list no track to play here",
+                                note = "The player was asked to play playlists whose tracks are none it can play."
+                            ))),
                             false,
                         ),
                     ),
@@ -1923,7 +1942,14 @@ impl Shell {
         match wanted.as_slice() {
             [] => match film {
                 Some(id) => self.play_film(id, window, cx),
-                None => self.set_status("Nothing selected plays", false, cx),
+                None => self.set_status(
+                    words!(
+                        player_nothing_selected = "Nothing selected plays",
+                        note = "Play was asked of a selection that holds no sound nor film."
+                    ),
+                    false,
+                    cx,
+                ),
             },
             [(id, path, Played::Track)] => {
                 if self.preview_shows(pane, *id) {
@@ -2121,11 +2147,11 @@ impl Shell {
                     }
                     Ok(None) => {
                         opened.lifetime.cancel();
-                        self.set_status("This track cannot be played here", true, cx);
+                        self.set_status(cannot_play(), true, cx);
                     }
                     Err(error) => {
                         opened.lifetime.cancel();
-                        self.set_status(format!("{error:#}"), true, cx);
+                        self.set_status(Words::of_error(error), true, cx);
                     }
                 }
                 continue;
@@ -2191,7 +2217,7 @@ impl Shell {
                 Ok(None) => {
                     opened.lifetime.cancel();
                     self.let_go_of_ended_pin();
-                    self.set_status("This track cannot be played here", true, cx);
+                    self.set_status(cannot_play(), true, cx);
                 }
                 Err(_) if opened.gone => {
                     opened.lifetime.cancel();
@@ -2200,7 +2226,7 @@ impl Shell {
                 Err(error) => {
                     opened.lifetime.cancel();
                     self.let_go_of_ended_pin();
-                    self.set_status(format!("{error:#}"), true, cx);
+                    self.set_status(Words::of_error(error), true, cx);
                 }
             }
             cx.notify();
@@ -2440,7 +2466,7 @@ impl Shell {
                 return self.media_send(control, cx);
             }
             if let Err(error) = session.control(control) {
-                self.set_status(error.to_string(), true, cx);
+                self.set_status(skwir_core::words::Words::of_error(error), true, cx);
             }
             cx.notify();
         }
@@ -2580,7 +2606,13 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
     let title = if state.artist.is_empty() {
         title
     } else {
-        format!("{title} · {}", state.artist)
+        words!(
+            player_title_artist = "{ $title } · { $artist }",
+            title = title,
+            artist = state.artist.clone(),
+            note = "The player pinned to the window: the track's title, then who plays it, both as the file's tags say them."
+        )
+        .say()
     };
     Some(
         div()
@@ -2594,7 +2626,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                 request(
                     "pin-previous",
                     "skip-previous",
-                    "Previous track",
+                    &crate::media::previous_track(),
                     "previous",
                 )
                 .enabled(pinned.can_step(-1, shell.prefs.player.continue_with))
@@ -2604,13 +2636,18 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                 request(
                     "pin-play",
                     if state.playing() { "pause" } else { "play" },
-                    "Play / pause",
+                    &crate::media::play_pause(),
                     "play_pause",
                 )
                 .render(shell, cx),
             )
             .child(
-                request("pin-next", "skip-next", "Next track", "next")
+                request(
+                    "pin-next",
+                    "skip-next",
+                    &crate::media::next_track(),
+                    "next",
+                )
                     .enabled(pinned.can_step(1, shell.prefs.player.continue_with))
                     .render(shell, cx),
             )
@@ -2637,20 +2674,34 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                     .text_color(theme.text_muted)
                     .child(crate::media::time(state.position)),
             )
-            .child(request("pin-stop", "close", "Stop and let go", "stop").render(shell, cx))
+            .child(
+                request(
+                    "pin-stop",
+                    "close",
+                    &words!(
+                        player_stop = "Stop and let go",
+                        note = "A button of the player pinned to the window: stop playing and close it."
+                    ),
+                    "stop",
+                )
+                .render(shell, cx),
+            )
             .into_any_element(),
     )
 }
 
 /// A button of the pin's transport: it sends `what` as a `PlayerRequest`,
 /// the same the desktop's media keys send, from the dock and the footer's strip.
-pub(crate) fn request(
-    id: &'static str,
-    icon: &'static str,
-    tip: &'static str,
-    what: &str,
-) -> Button {
-    Button::new(id, icon, tip, "ui.player").args(serde_json::json!({ "request": what }))
+pub(crate) fn request(id: &'static str, icon: &'static str, tip: &Words, what: &str) -> Button {
+    Button::new(id, icon, tip.say(), "ui.player").args(serde_json::json!({ "request": what }))
+}
+
+/// A track nothing here plays.
+fn cannot_play() -> Words {
+    words!(
+        player_cannot_play = "This track cannot be played here",
+        note = "The player was asked to play a file no player of this system takes."
+    )
 }
 
 #[cfg(test)]

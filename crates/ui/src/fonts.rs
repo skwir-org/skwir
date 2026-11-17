@@ -27,6 +27,8 @@ use std::sync::Arc;
 use gpui::SharedString;
 use skwir_core::App;
 use skwir_core::settings::Settings;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::desktop_style::Fonts as Desktop;
 use crate::settings::{CODE_FONT_KEY, FONT_AUTO, FONT_KEY, READING_FONT_KEY};
@@ -371,11 +373,14 @@ fn choose_with(
 
 /// A family as a person knows it: one the system keeps apart from those
 /// listed (a leading `.`, macOS's `.AppleSystemUIFont`) is the system font.
-pub fn named(family: &str) -> &str {
+pub fn named(family: &str) -> Words {
     if family.starts_with('.') {
-        "the system font"
+        words!(
+            fonts_system = "the system font",
+            note = "A font the system keeps apart and names for itself (macOS's interface font), said inside a sentence and after Automatic: Automatic (the system font)."
+        )
     } else {
-        family
+        Words::as_written(family.to_owned())
     }
 }
 

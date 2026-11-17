@@ -46,6 +46,8 @@ use serde_json::json;
 use skwir_core::CancelToken;
 use skwir_core::app::{Asked, as_asked};
 use skwir_core::command::{Effect, Invocation, Outcome};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::{PaneId, WindowId};
 
 use super::{Making, Shell, Shown};
@@ -205,11 +207,10 @@ impl Shell {
         let shown = self.shown_now();
         let lane = self.pane_lane(pane);
         let cancel = self.app.lifetime().child();
-        let title = self
-            .app
-            .commands
-            .get(&inv.name)
-            .map_or_else(|| inv.name.to_string(), |spec| spec.title.say());
+        let title = self.app.commands.get(&inv.name).map_or_else(
+            || Words::as_written(inv.name.to_string()),
+            |spec| spec.title.clone(),
+        );
         let id = self.plans.begin(cancel.clone());
         let notice = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
@@ -221,10 +222,20 @@ impl Shell {
                 }
                 shell.notice(
                     Toast::new(
-                        format!("Working out what {title} does…"),
+                        words!(
+                            planning_working_out = "Working out what { $command } does…",
+                            command = title,
+                            note = "Said while a command works out the changes it will make \
+                                    before they are shown; command: its title (Copy, Extract \
+                                    Here)."
+                        ),
                         Tone::Info,
                         vec![Action {
-                            label: "Cancel".to_owned(),
+                            label: words!(
+                                planning_cancel = "Cancel",
+                                note = "A button: stop working out the changes a command would \
+                                        make."
+                            ),
                             command: "ui.plan_cancel".to_owned(),
                             args: json!({}),
                         }],
@@ -338,7 +349,7 @@ impl Shell {
             Err(e) if skwir_core::command::wants_clipboard(&e) => {
                 self.run_with_clipboard(inv, window, cx);
             }
-            Err(e) => self.report_error(&e, cx),
+            Err(e) => self.report_error(e, cx),
         }
         self.run_waiting(window, cx);
         cx.notify();

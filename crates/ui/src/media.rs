@@ -6,6 +6,8 @@ use gpui::{
     AnimationExt, AnyElement, Context, FocusHandle, RenderImage, Window, div, prelude::*, px,
 };
 use skwir_core::media::{Control, Frame, MediaSession, Playback};
+use skwir_core::words;
+use skwir_core::words::Words;
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 /// What stands for a film or a track before its player's frames do.
@@ -615,7 +617,7 @@ impl Shell {
                         self.cancel_pending_preview();
                     }
                 }
-                Err(error) => self.set_status(error.to_string(), true, cx),
+                Err(error) => self.set_status(Words::of_error(error), true, cx),
             }
         }
         cx.notify();
@@ -994,6 +996,38 @@ pub(crate) fn time(seconds: f64) -> String {
         format!("{}:{:02}", total / 60, total % 60)
     }
 }
+/// What a screen reader calls a player's volume: its slider and its popup.
+fn volume_name() -> Words {
+    words!(
+        media_volume = "Volume",
+        note = "What a screen reader calls a player's volume slider and its popup."
+    )
+}
+
+/// A player's button: the panel's, the pinned player's.
+pub(crate) fn previous_track() -> Words {
+    words!(
+        media_previous_track = "Previous track",
+        note = "A button of the player."
+    )
+}
+
+/// A player's button: the panel's, the pinned player's.
+pub(crate) fn next_track() -> Words {
+    words!(
+        media_next_track = "Next track",
+        note = "A button of the player."
+    )
+}
+
+/// A player's button: the panel's, the pinned player's.
+pub(crate) fn play_pause() -> Words {
+    words!(
+        media_play_pause = "Play / pause",
+        note = "A button of the player."
+    )
+}
+
 fn control(
     id: impl Into<gpui::SharedString>,
     icon: &str,
@@ -1074,18 +1108,20 @@ pub(crate) fn volume_button(
     command: &'static str,
     kind: &'static str,
 ) -> Button {
-    let level = if state.muted {
-        "muted".to_owned()
+    let title = if state.muted {
+        words!(
+            media_volume_muted = "Volume · muted",
+            note = "Pointing at a player's speaker button while its sound is muted."
+        )
     } else {
-        percent(state.volume)
+        words!(
+            media_volume_level = "Volume · { $level }",
+            level = percent(state.volume),
+            note = "Pointing at a player's speaker button: how loud it plays (80 %)."
+        )
     };
-    Button::new(
-        id,
-        speaker_icon(state),
-        format!("Volume · {level}"),
-        command,
-    )
-    .args(serde_json::json!({ "kind": kind }))
+    Button::new(id, speaker_icon(state), title.say(), command)
+        .args(serde_json::json!({ "kind": kind }))
 }
 
 fn percent(volume: f64) -> String {
@@ -1109,7 +1145,11 @@ pub(crate) fn volume_control(
     use crate::controls::{Slid, Slide};
     let volume = &shell.player.volume;
     let level = if state.muted {
-        "Muted".to_owned()
+        words!(
+            media_muted = "Muted",
+            note = "What a screen reader hears of the volume slider while the sound is muted."
+        )
+        .say()
     } else {
         percent(state.volume)
     };
@@ -1153,7 +1193,7 @@ pub(crate) fn volume_control(
             .h(crate::sizes::sized(VOLUME_HEIGHT))
             .when_some(volume.focus.as_ref(), InteractiveElement::track_focus)
             .key_context(crate::keymap::VOLUME)
-            .aria_label("Volume")
+            .aria_label(volume_name().say())
             .aria_numeric_value((state.volume * 100.).round())
             .aria_min_numeric_value(0.)
             .aria_max_numeric_value(100.)
@@ -1184,7 +1224,7 @@ pub(crate) fn volume_panel(
     crate::toolbar::popup_panel(popup, close, theme, cx)
         .w_auto()
         .items_center()
-        .when(shell.a11y, |d| d.aria_label("Volume"))
+        .when(shell.a11y, |d| d.aria_label(volume_name().say()))
         .on_hover(cx.listener(move |this, over: &bool, window, cx| {
             this.volume_over(of, true, *over, window, cx);
         }))
@@ -1214,7 +1254,15 @@ fn volume_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option
     let mute = control(
         "preview-volume-mute",
         speaker_icon(state),
-        if state.muted { "Unmute" } else { "Mute" },
+        if state.muted {
+            words!(
+                media_unmute = "Unmute",
+                note = "A button of a player's volume, while its sound is muted."
+            )
+        } else {
+            words!(media_mute = "Mute", note = "A button of a player's volume.")
+        }
+        .say(),
         "mute",
         serde_json::Value::Null,
     );
@@ -1268,7 +1316,7 @@ impl Shell {
                 }
                 .and_then(|()| session.control(Control::Volume(volume)));
                 if let Err(error) = sent {
-                    self.set_status(error.to_string(), true, cx);
+                    self.set_status(Words::of_error(error), true, cx);
                 }
             }
         }
@@ -1521,12 +1569,26 @@ pub(crate) fn seek_bar_of(
         scrub(this, phase, slid.at, window, cx);
     });
     crate::controls::slider(id, fraction, held, theme, Rc::new(slid))
-        .aria_label("Position")
+        .aria_label(
+            words!(
+                media_position = "Position",
+                note = "What a screen reader calls a player's seek bar."
+            )
+            .say(),
+        )
         .when_some(at, |d, (position, duration)| {
             d.aria_numeric_value(position)
                 .aria_min_numeric_value(0.)
                 .aria_max_numeric_value(duration)
-                .aria_value(format!("{} of {}", time(position), time(duration)))
+                .aria_value(
+                    words!(
+                        media_position_of = "{ $position } of { $duration }",
+                        position = time(position),
+                        duration = time(duration),
+                        note = "What a screen reader hears of a player's seek bar: where it is (1:02), of how long the track lasts (3:45)."
+                    )
+                    .say(),
+                )
         })
         .flex_1()
         .min_w(sized(40.))
@@ -1584,7 +1646,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             step(
                 "audio-previous",
                 "skip-previous",
-                "Previous track",
+                previous_track().say(),
                 -1,
                 previous,
             ),
@@ -1596,7 +1658,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         control(
             "video-play",
             if state.playing() { "pause" } else { "play" },
-            "Play / pause",
+            play_pause().say(),
             "play",
             serde_json::Value::Null,
         ),
@@ -1605,7 +1667,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         bar.push(Item::button(
             Slot::Navigate,
             1,
-            step("audio-next", "skip-next", "Next track", 1, next),
+            step("audio-next", "skip-next", next_track().say(), 1, next),
         ));
     }
     bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
@@ -1674,7 +1736,12 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             Button::new(
                 "media-continue",
                 mode.icon(),
-                format!("When a track ends: {}", mode.label()),
+                words!(
+                    media_continue_tip = "When a track ends: { $mode }",
+                    mode = mode.label(),
+                    note = "Pointing at the button of what a player does when a track ends. mode: Stop, Play next or Shuffle."
+                )
+                .say(),
                 "ui.preview_menu",
             )
             .args(serde_json::json!({ "kind": CONTINUE_POPUP }))
@@ -1726,17 +1793,26 @@ fn continue_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Opti
 /// title: the panel's popup and the dock's More.
 pub(crate) fn continue_parts(shell: &Shell) -> Vec<crate::toolbar::MenuPart> {
     use crate::{player::Continue, toolbar::MenuPart};
-    let mut parts = vec![MenuPart::Title("When a track ends".into(), None)];
+    let mut parts = vec![MenuPart::Title(
+        words!(
+            media_continue_title = "When a track ends",
+            note = "The title of the choices of what a player does when a track ends."
+        )
+        .say()
+        .into(),
+        None,
+    )];
     for mode in Continue::ALL {
+        let label = mode.label().say();
         parts.push(MenuPart::Row(
             Button::new(
                 format!("continue-{}", mode.key()),
                 "",
-                mode.label(),
+                label.clone(),
                 "ui.media_continue",
             )
             .args(serde_json::json!({ "mode": mode.key() }))
-            .label(mode.label())
+            .label(label)
             .active(shell.prefs.player.continue_with == mode)
             .menu(),
         ));
@@ -1755,9 +1831,10 @@ pub(crate) type Send<'a> = &'a dyn Fn(String, String, &str, serde_json::Value) -
 fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     use crate::toolbar::MenuPart;
     let state = &shell.preview.media.state;
-    let toggle = |id: &'static str, icon: &'static str, title: &'static str, command, on| {
+    let toggle = |id: &'static str, icon: &'static str, title: Words, command, on| {
+        let title = title.say();
         MenuPart::Row(
-            Button::new(id, icon, title, command)
+            Button::new(id, icon, title.clone(), command)
                 .label(title)
                 .active(on)
                 .menu(),
@@ -1767,14 +1844,20 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
         toggle(
             "media-keep-playing",
             "pin",
-            "Keep playing while you browse",
+            words!(
+                media_keep_playing = "Keep playing while you browse",
+                note = "A player's menu row: go on playing when another file is selected."
+            ),
             "ui.media_keep_playing",
             shell.prefs.player.keep_playing,
         ),
         toggle(
             "media-autoplay",
             "play",
-            "Play on selection",
+            words!(
+                media_autoplay = "Play on selection",
+                note = "A player's menu row: start playing a sound or a film as soon as it is selected."
+            ),
             "ui.media_autoplay",
             shell.prefs.player.autoplay,
         ),
@@ -1804,13 +1887,33 @@ pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar
                 .segment()
         })
         .collect();
-    let mut parts = vec![MenuPart::Choice("Playback speed".into(), speeds)];
+    let mut parts = vec![MenuPart::Choice(
+        words!(
+            media_speed = "Playback speed",
+            note = "A player's menu row: how fast it plays, chosen among 0.5×, 1×, 2×."
+        )
+        .say()
+        .into(),
+        speeds,
+    )];
     // A choice of tracks: one sound track is none, one subtitle track is
     // still a choice with Off.
     for (title, action, tracks, selected, least) in [
-        ("Audio", "audio", &state.audio_tracks, state.audio, 2),
         (
-            "Subtitles",
+            words!(
+                media_audio_tracks = "Audio",
+                note = "The title of a film's sound tracks, among which one is chosen (its languages)."
+            ),
+            "audio",
+            &state.audio_tracks,
+            state.audio,
+            2,
+        ),
+        (
+            words!(
+                media_subtitles = "Subtitles",
+                note = "The title of a film's subtitles, among which one is chosen, or none."
+            ),
             "subtitle",
             &state.subtitle_tracks,
             state.subtitle,
@@ -1820,11 +1923,16 @@ pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar
         if tracks.len() < least {
             continue;
         }
-        parts.push(MenuPart::Title(title.into(), None));
+        parts.push(MenuPart::Title(title.say().into(), None));
         if action == "subtitle" {
+            let off = words!(
+                media_subtitles_off = "Off",
+                note = "The choice of no subtitles for a film."
+            )
+            .say();
             parts.push(MenuPart::Row(
-                send("subtitles-off".into(), "Off".into(), action, (-1).into())
-                    .label("Off")
+                send("subtitles-off".into(), off.clone(), action, (-1).into())
+                    .label(off)
                     .active(selected == -1)
                     .menu(),
             ));

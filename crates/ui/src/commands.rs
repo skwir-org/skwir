@@ -11,6 +11,8 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use skwir_core::app::App;
 use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome, Repeats, Topic, always};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// Who declares them.
 pub const OWNER: &str = "ui";
@@ -833,21 +835,34 @@ const ACTS: &[&str] = &[
 /// typed, which follows whichever link it labels. An agent's call of it is
 /// refused, so that showing never opens an address or writes the
 /// clipboard unasked. An address is told as the window tells it
-/// (`links::is_address`), so the two cannot disagree.
-fn reaches_out(name: &str, args: &serde_json::Value) -> Option<&'static str> {
+/// (`links::is_address`), so the two cannot disagree. Its words are the
+/// refusal, which names the command that asks.
+fn reaches_out(name: &str, args: &serde_json::Value) -> Option<Words> {
     if name != "ui.inspect" {
         return None;
     }
     match args["action"].as_str()? {
-        "copy" => Some("copies through ui.preview_copy, which asks the user first"),
+        "copy" => Some(words!(
+            commands_agent_copies = "for an agent, { $command } copies through ui.preview_copy, which asks the user first",
+            command = name,
+            note = "Why an agent's call is refused. command: the command's id (ui.inspect); ui.preview_copy is another's, as written."
+        )),
         "link"
             if args["target"]
                 .as_str()
                 .is_some_and(crate::links::is_address) =>
         {
-            Some("opens an address through ui.open_url, which asks the user first")
+            Some(words!(
+                commands_agent_opens_address = "for an agent, { $command } opens an address through ui.open_url, which asks the user first",
+                command = name,
+                note = "Why an agent's call is refused. command: the command's id (ui.inspect); ui.open_url is another's, as written."
+            ))
         }
-        "label_key" => Some("follows a link by its target (`link`), not by a label typed"),
+        "label_key" => Some(words!(
+            commands_agent_follows_label = "for an agent, { $command } follows a link by its target (`link`), not by a label typed",
+            command = name,
+            note = "Why an agent's call is refused. command: the command's id (ui.inspect); `link` is the argument naming a link's target, as written."
+        )),
         _ => None,
     }
 }
@@ -867,462 +882,486 @@ fn effect_of(name: &str) -> Effect {
 }
 
 /// What the keys of the shell's places run with arguments, beside what
-/// the palette offers (`palette::UI_COMMANDS`): the command, its arguments
+/// the palette offers (`palette::ui_commands`): the command, its arguments
 /// and the title they make, which every list of keys says (ADR-024). The
 /// cursor's moves are made from their words (`cursor_forms`).
-const KEY_FORMS: &[(&str, &str, &str)] = &[
+const KEY_FORMS: &[(&str, &str, fn() -> Words)] = &[
     // The lists one picks from while typing, and the names a copy found
     // taken.
-    ("ui.list_move", r#"{"delta":-1}"#, "Previous in the list"),
-    ("ui.list_move", r#"{"delta":1}"#, "Next in the list"),
-    ("ui.list_move", r#"{"to":"page_up"}"#, "A page up the list"),
-    (
-        "ui.list_move",
-        r#"{"to":"page_down"}"#,
-        "A page down the list",
-    ),
-    ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
-    ("ui.rename_bulk_case", r#"{"delta":-1}"#, "Previous case"),
-    ("ui.rename_bulk_case", r#"{"delta":1}"#, "Next case"),
+    ("ui.list_move", r#"{"delta":-1}"#, || {
+        words!(commands_key_list_previous = "Previous in the list")
+    }),
+    ("ui.list_move", r#"{"delta":1}"#, || {
+        words!(commands_key_list_next = "Next in the list")
+    }),
+    ("ui.list_move", r#"{"to":"page_up"}"#, || {
+        words!(commands_key_list_page_up = "A page up the list")
+    }),
+    ("ui.list_move", r#"{"to":"page_down"}"#, || {
+        words!(commands_key_list_page_down = "A page down the list")
+    }),
+    ("ui.review_choose", r#"{"delta":-1}"#, || {
+        words!(commands_key_review_previous = "Previous choice")
+    }),
+    ("ui.rename_bulk_case", r#"{"delta":-1}"#, || {
+        words!(
+            commands_key_case_previous = "Previous case",
+            note = "What a key does in Rename several: the case its names are given (lowercase, UPPERCASE, Title Case…)."
+        )
+    }),
+    ("ui.rename_bulk_case", r#"{"delta":1}"#, || {
+        words!(
+            commands_key_case_next = "Next case",
+            note = "What a key does in Rename several: the case its names are given (lowercase, UPPERCASE, Title Case…)."
+        )
+    }),
     // What a field offers as it is typed (ADR-137).
-    (
-        "ui.field_complete",
-        r#"{"step":1}"#,
-        "Next of what the field offers",
-    ),
-    (
-        "ui.field_complete",
-        r#"{"step":-1}"#,
-        "Previous of what the field offers",
-    ),
+    ("ui.field_complete", r#"{"step":1}"#, || {
+        words!(
+            commands_key_offer_next = "Next of what the field offers",
+            note = "What a key does in a field being typed in: the next of the items it offers as it is typed (a placeholder begun, a sign)."
+        )
+    }),
+    ("ui.field_complete", r#"{"step":-1}"#, || {
+        words!(
+            commands_key_offer_previous = "Previous of what the field offers",
+            note = "What a key does in a field being typed in: the previous of the items it offers as it is typed."
+        )
+    }),
     // A preview's More, its submenu beside a row (Open With).
-    ("ui.toolbar_submenu", r#"{"here":true}"#, "Open the submenu"),
-    ("ui.toolbar_submenu", r#"{"step":1}"#, "Next in the submenu"),
-    (
-        "ui.toolbar_submenu",
-        r#"{"step":-1}"#,
-        "Previous in the submenu",
-    ),
-    (
-        "ui.toolbar_submenu",
-        r#"{"end":false}"#,
-        "First in the submenu",
-    ),
-    (
-        "ui.toolbar_submenu",
-        r#"{"end":true}"#,
-        "Last in the submenu",
-    ),
-    (
-        "ui.toolbar_submenu",
-        r#"{"back":true}"#,
-        "Back from the submenu",
-    ),
-    (
-        "ui.toolbar_submenu",
-        r#"{"value":1}"#,
-        "Next value in the submenu",
-    ),
-    (
-        "ui.toolbar_submenu",
-        r#"{"value":-1}"#,
-        "Previous value in the submenu",
-    ),
-    (
-        "ui.toolbar_submenu",
-        r#"{"value":0}"#,
-        "Change the value in the submenu",
-    ),
+    ("ui.toolbar_submenu", r#"{"here":true}"#, || {
+        words!(commands_key_submenu_open = "Open the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"step":1}"#, || {
+        words!(commands_key_submenu_next = "Next in the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"step":-1}"#, || {
+        words!(commands_key_submenu_previous = "Previous in the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"end":false}"#, || {
+        words!(commands_key_submenu_first = "First in the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"end":true}"#, || {
+        words!(commands_key_submenu_last = "Last in the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"back":true}"#, || {
+        words!(commands_key_submenu_back = "Back from the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"value":1}"#, || {
+        words!(commands_key_submenu_next_value = "Next value in the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"value":-1}"#, || {
+        words!(commands_key_submenu_previous_value = "Previous value in the submenu")
+    }),
+    ("ui.toolbar_submenu", r#"{"value":0}"#, || {
+        words!(commands_key_submenu_change_value = "Change the value in the submenu")
+    }),
     // The timeline's bars.
-    ("ui.timeline_cursor", r#"{"by":-1}"#, "Previous bar"),
-    ("ui.timeline_cursor", r#"{"by":1}"#, "Next bar"),
-    (
-        "ui.timeline_cursor",
-        r#"{"by":-1,"extend":true}"#,
-        "Choose the previous bar too",
-    ),
-    (
-        "ui.timeline_cursor",
-        r#"{"by":1,"extend":true}"#,
-        "Choose the next bar too",
-    ),
-    ("ui.timeline_cursor", r#"{"to":"first"}"#, "First bar"),
-    ("ui.timeline_cursor", r#"{"to":"last"}"#, "Last bar"),
+    ("ui.timeline_cursor", r#"{"by":-1}"#, || {
+        words!(commands_key_bar_previous = "Previous bar")
+    }),
+    ("ui.timeline_cursor", r#"{"by":1}"#, || {
+        words!(commands_key_bar_next = "Next bar")
+    }),
+    ("ui.timeline_cursor", r#"{"by":-1,"extend":true}"#, || {
+        words!(commands_key_bar_previous_too = "Choose the previous bar too")
+    }),
+    ("ui.timeline_cursor", r#"{"by":1,"extend":true}"#, || {
+        words!(commands_key_bar_next_too = "Choose the next bar too")
+    }),
+    ("ui.timeline_cursor", r#"{"to":"first"}"#, || {
+        words!(commands_key_bar_first = "First bar")
+    }),
+    ("ui.timeline_cursor", r#"{"to":"last"}"#, || {
+        words!(commands_key_bar_last = "Last bar")
+    }),
     (
         "ui.timeline_cursor",
         r#"{"to":"first","extend":true}"#,
-        "Choose the bars back to the first",
+        || words!(commands_key_bars_to_first = "Choose the bars back to the first"),
     ),
     (
         "ui.timeline_cursor",
         r#"{"to":"last","extend":true}"#,
-        "Choose the bars up to the last",
+        || words!(commands_key_bars_to_last = "Choose the bars up to the last"),
     ),
-    ("ui.timeline_pan", r#"{"toward":"earlier"}"#, "Earlier bars"),
-    ("ui.timeline_pan", r#"{"toward":"later"}"#, "Later bars"),
-    ("ui.review_choose", r#"{"delta":1}"#, "Next choice"),
+    ("ui.timeline_pan", r#"{"toward":"earlier"}"#, || {
+        words!(commands_key_bars_earlier = "Earlier bars")
+    }),
+    ("ui.timeline_pan", r#"{"toward":"later"}"#, || {
+        words!(commands_key_bars_later = "Later bars")
+    }),
+    ("ui.review_choose", r#"{"delta":1}"#, || {
+        words!(commands_key_review_next = "Next choice")
+    }),
     // The file list.
-    (
-        "ui.cursor_pick",
-        "{}",
-        "Pick or unpick, then go to the next",
-    ),
-    ("ui.cursor_pick", r#"{"advance":false}"#, "Pick or unpick"),
-    (
-        "ui.search",
-        r#"{"text":"content:"}"#,
-        "Search the contents…",
-    ),
-    (
-        "ui.omnibox_submit",
-        r#"{"everywhere":true}"#,
-        "Search everywhere",
-    ),
-    (
-        "ui.omnibox_submit",
-        r#"{"open":true}"#,
-        "Open the file named",
-    ),
-    ("ui.about", r#"{"close":true}"#, "Close About"),
+    ("ui.cursor_pick", "{}", || {
+        words!(
+            commands_key_pick_advance = "Pick or unpick, then go to the next",
+            note = "What a key does in the file list. To pick is to mark an item as chosen, as yazi's mark does."
+        )
+    }),
+    ("ui.cursor_pick", r#"{"advance":false}"#, || {
+        words!(
+            commands_key_pick = "Pick or unpick",
+            note = "What a key does in the file list. To pick is to mark an item as chosen, as yazi's mark does."
+        )
+    }),
+    ("ui.search", r#"{"text":"content:"}"#, || {
+        words!(commands_key_search_contents = "Search the contents…")
+    }),
+    ("ui.omnibox_submit", r#"{"everywhere":true}"#, || {
+        words!(commands_key_search_everywhere = "Search everywhere")
+    }),
+    ("ui.omnibox_submit", r#"{"open":true}"#, || {
+        words!(commands_key_open_named = "Open the file named")
+    }),
+    ("ui.about", r#"{"close":true}"#, || {
+        words!(commands_key_about_close = "Close About")
+    }),
     // The sidebar, walked as the file list's rows.
-    ("ui.sidebar_key", r#"{"key":"up"}"#, "Go to the place above"),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"down"}"#,
-        "Go to the place below",
-    ),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"first"}"#,
-        "Go to the first place",
-    ),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"last"}"#,
-        "Go to the last place",
-    ),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"left"}"#,
-        "Go to its group, or fold the group",
-    ),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"right"}"#,
-        "Unfold the group, or go into it",
-    ),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"open"}"#,
-        "Open the place, or fold the group",
-    ),
-    (
-        "ui.sidebar_key",
-        r#"{"key":"tab"}"#,
-        "Open the place in a new tab",
-    ),
-    ("ui.sidebar_key", r#"{"key":"menu"}"#, "Open its menu"),
-    ("ui.sidebar_key", r#"{"key":"move_up"}"#, "Move it up"),
-    ("ui.sidebar_key", r#"{"key":"move_down"}"#, "Move it down"),
-    ("ui.sidebar_key", r#"{"key":"rename"}"#, "Rename it"),
-    ("ui.sidebar_key", r#"{"key":"remove"}"#, "Remove or hide it"),
-    (
-        "ui.toolbar_menu",
-        r#"{"kind":"view_buttons"}"#,
-        "Choose the row's buttons: the views', Up",
-    ),
+    ("ui.sidebar_key", r#"{"key":"up"}"#, || {
+        words!(commands_key_sidebar_up = "Go to the place above")
+    }),
+    ("ui.sidebar_key", r#"{"key":"down"}"#, || {
+        words!(commands_key_sidebar_down = "Go to the place below")
+    }),
+    ("ui.sidebar_key", r#"{"key":"first"}"#, || {
+        words!(commands_key_sidebar_first = "Go to the first place")
+    }),
+    ("ui.sidebar_key", r#"{"key":"last"}"#, || {
+        words!(commands_key_sidebar_last = "Go to the last place")
+    }),
+    ("ui.sidebar_key", r#"{"key":"left"}"#, || {
+        words!(commands_key_sidebar_left = "Go to its group, or fold the group")
+    }),
+    ("ui.sidebar_key", r#"{"key":"right"}"#, || {
+        words!(commands_key_sidebar_right = "Unfold the group, or go into it")
+    }),
+    ("ui.sidebar_key", r#"{"key":"open"}"#, || {
+        words!(commands_key_sidebar_open = "Open the place, or fold the group")
+    }),
+    ("ui.sidebar_key", r#"{"key":"tab"}"#, || {
+        words!(commands_key_sidebar_tab = "Open the place in a new tab")
+    }),
+    ("ui.sidebar_key", r#"{"key":"menu"}"#, || {
+        words!(commands_key_sidebar_menu = "Open its menu")
+    }),
+    ("ui.sidebar_key", r#"{"key":"move_up"}"#, || {
+        words!(commands_key_sidebar_move_up = "Move it up")
+    }),
+    ("ui.sidebar_key", r#"{"key":"move_down"}"#, || {
+        words!(commands_key_sidebar_move_down = "Move it down")
+    }),
+    ("ui.sidebar_key", r#"{"key":"rename"}"#, || {
+        words!(commands_key_sidebar_rename = "Rename it")
+    }),
+    ("ui.sidebar_key", r#"{"key":"remove"}"#, || {
+        words!(commands_key_sidebar_remove = "Remove or hide it")
+    }),
+    ("ui.toolbar_menu", r#"{"kind":"view_buttons"}"#, || {
+        words!(
+            commands_key_view_buttons = "Choose the row's buttons: the views', Up",
+            note = "What a key does: choose which buttons the row above the files has, the views' and Up's."
+        )
+    }),
     // What the preview plays, and the pinned player.
-    ("ui.media_control", r#"{"action":"play"}"#, "Play or pause"),
-    ("ui.media_control", r#"{"action":"mute"}"#, "Mute or unmute"),
+    ("ui.media_control", r#"{"action":"play"}"#, || {
+        words!(commands_key_media_play = "Play or pause")
+    }),
+    ("ui.media_control", r#"{"action":"mute"}"#, || {
+        words!(commands_key_media_mute = "Mute or unmute")
+    }),
     (
         "ui.media_control",
         r#"{"action":"volume_by","value":0.05}"#,
-        "Volume up",
+        || words!(commands_key_media_volume_up = "Volume up"),
     ),
     (
         "ui.media_control",
         r#"{"action":"volume_by","value":-0.05}"#,
-        "Volume down",
+        || words!(commands_key_media_volume_down = "Volume down"),
     ),
-    (
-        "ui.player",
-        r#"{"request":{"seek_by":-5.0}}"#,
-        "Player: back five seconds",
-    ),
-    (
-        "ui.player",
-        r#"{"request":{"seek_by":5.0}}"#,
-        "Player: forward five seconds",
-    ),
-    (
-        "ui.player",
-        r#"{"request":"previous"}"#,
-        "Player: previous track",
-    ),
-    ("ui.player", r#"{"request":"next"}"#, "Player: next track"),
-    (
-        "ui.player",
-        r#"{"request":"mute"}"#,
-        "Player: mute or unmute",
-    ),
-    (
-        "ui.player",
-        r#"{"request":"fullscreen"}"#,
-        "Player: full screen",
-    ),
-    ("ui.player_volume", r#"{"delta":0.05}"#, "Player: volume up"),
-    (
-        "ui.player_volume",
-        r#"{"delta":-0.05}"#,
-        "Player: volume down",
-    ),
-    ("ui.volume_step", r#"{"delta":0.05}"#, "Volume: up"),
-    ("ui.volume_step", r#"{"delta":-0.05}"#, "Volume: down"),
-    ("ui.volume_step", r#"{"delta":1.0}"#, "Volume: highest"),
-    ("ui.volume_step", r#"{"delta":-1.0}"#, "Volume: lowest"),
+    ("ui.player", r#"{"request":{"seek_by":-5.0}}"#, || {
+        words!(commands_key_player_back = "Player: back five seconds")
+    }),
+    ("ui.player", r#"{"request":{"seek_by":5.0}}"#, || {
+        words!(commands_key_player_forward = "Player: forward five seconds")
+    }),
+    ("ui.player", r#"{"request":"previous"}"#, || {
+        words!(commands_key_player_previous = "Player: previous track")
+    }),
+    ("ui.player", r#"{"request":"next"}"#, || {
+        words!(commands_key_player_next = "Player: next track")
+    }),
+    ("ui.player", r#"{"request":"mute"}"#, || {
+        words!(commands_key_player_mute = "Player: mute or unmute")
+    }),
+    ("ui.player", r#"{"request":"fullscreen"}"#, || {
+        words!(commands_key_player_fullscreen = "Player: full screen")
+    }),
+    ("ui.player_volume", r#"{"delta":0.05}"#, || {
+        words!(commands_key_player_volume_up = "Player: volume up")
+    }),
+    ("ui.player_volume", r#"{"delta":-0.05}"#, || {
+        words!(commands_key_player_volume_down = "Player: volume down")
+    }),
+    ("ui.volume_step", r#"{"delta":0.05}"#, || {
+        words!(commands_key_volume_up = "Volume: up")
+    }),
+    ("ui.volume_step", r#"{"delta":-0.05}"#, || {
+        words!(commands_key_volume_down = "Volume: down")
+    }),
+    ("ui.volume_step", r#"{"delta":1.0}"#, || {
+        words!(commands_key_volume_highest = "Volume: highest")
+    }),
+    ("ui.volume_step", r#"{"delta":-1.0}"#, || {
+        words!(commands_key_volume_lowest = "Volume: lowest")
+    }),
     // The arrows over what a preview shows.
-    ("ui.preview_scroll", r#"{"to":"up"}"#, "Preview: scroll up"),
-    (
-        "ui.preview_scroll",
-        r#"{"to":"down"}"#,
-        "Preview: scroll down",
-    ),
-    (
-        "ui.preview_scroll",
-        r#"{"to":"left"}"#,
-        "Preview: scroll left, or the previous page or picture",
-    ),
-    (
-        "ui.preview_scroll",
-        r#"{"to":"right"}"#,
-        "Preview: scroll right, or the next page or picture",
-    ),
+    ("ui.preview_scroll", r#"{"to":"up"}"#, || {
+        words!(commands_key_preview_up = "Preview: scroll up")
+    }),
+    ("ui.preview_scroll", r#"{"to":"down"}"#, || {
+        words!(commands_key_preview_down = "Preview: scroll down")
+    }),
+    ("ui.preview_scroll", r#"{"to":"left"}"#, || {
+        words!(commands_key_preview_left = "Preview: scroll left, or the previous page or picture")
+    }),
+    ("ui.preview_scroll", r#"{"to":"right"}"#, || {
+        words!(commands_key_preview_right = "Preview: scroll right, or the next page or picture")
+    }),
     // The arrows on the whole screen: a picture's neighbours, or a page.
-    (
-        "ui.fullscreen_step",
-        r#"{"delta":-1}"#,
-        "Full screen: previous picture or page",
-    ),
-    (
-        "ui.fullscreen_step",
-        r#"{"delta":1}"#,
-        "Full screen: next picture or page",
-    ),
+    ("ui.fullscreen_step", r#"{"delta":-1}"#, || {
+        words!(commands_key_fullscreen_previous = "Full screen: previous picture or page")
+    }),
+    ("ui.fullscreen_step", r#"{"delta":1}"#, || {
+        words!(commands_key_fullscreen_next = "Full screen: next picture or page")
+    }),
     // A structured preview: the files of an archive, a text read where it
     // is shown, its links, its size.
-    (
-        "ui.inspect",
-        r#"{"action":"step","delta":-1}"#,
-        "Previous file",
-    ),
-    ("ui.inspect", r#"{"action":"step","delta":1}"#, "Next file"),
-    (
-        "ui.inspect",
-        r#"{"action":"fold","delta":-1}"#,
-        "Fold the folder, or go to it",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"fold","delta":1}"#,
-        "Unfold the folder",
-    ),
-    ("ui.inspect", r#"{"action":"back"}"#, "Close the file shown"),
-    (
-        "ui.inspect",
-        r#"{"action":"scroll","to":"up"}"#,
-        "Scroll up",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"scroll","to":"down"}"#,
-        "Scroll down",
-    ),
+    ("ui.inspect", r#"{"action":"step","delta":-1}"#, || {
+        words!(commands_key_inspect_previous = "Previous file")
+    }),
+    ("ui.inspect", r#"{"action":"step","delta":1}"#, || {
+        words!(commands_key_inspect_next = "Next file")
+    }),
+    ("ui.inspect", r#"{"action":"fold","delta":-1}"#, || {
+        words!(commands_key_inspect_fold = "Fold the folder, or go to it")
+    }),
+    ("ui.inspect", r#"{"action":"fold","delta":1}"#, || {
+        words!(commands_key_inspect_unfold = "Unfold the folder")
+    }),
+    ("ui.inspect", r#"{"action":"back"}"#, || {
+        words!(commands_key_inspect_back = "Close the file shown")
+    }),
+    ("ui.inspect", r#"{"action":"scroll","to":"up"}"#, || {
+        words!(commands_key_inspect_scroll_up = "Scroll up")
+    }),
+    ("ui.inspect", r#"{"action":"scroll","to":"down"}"#, || {
+        words!(commands_key_inspect_scroll_down = "Scroll down")
+    }),
     (
         "ui.inspect",
         r#"{"action":"scroll","to":"page_up"}"#,
-        "Scroll a page up",
+        || words!(commands_key_inspect_page_up = "Scroll a page up"),
     ),
     (
         "ui.inspect",
         r#"{"action":"scroll","to":"page_down"}"#,
-        "Scroll a page down",
+        || words!(commands_key_inspect_page_down = "Scroll a page down"),
     ),
-    (
-        "ui.inspect",
-        r#"{"action":"scroll","to":"start"}"#,
-        "Scroll to the start",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"scroll","to":"end"}"#,
-        "Scroll to the end",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"links_close"}"#,
-        "Stop labelling the links",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"larger"}"#,
-        "Preview: larger text",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"smaller"}"#,
-        "Preview: smaller text",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"reset"}"#,
-        "Preview: text at its size",
-    ),
-    ("ui.map_pan", r#"{"dx":-1,"dy":0}"#, "Map: move left"),
-    ("ui.map_pan", r#"{"dx":1,"dy":0}"#, "Map: move right"),
-    ("ui.map_pan", r#"{"dx":0,"dy":-1}"#, "Map: move up"),
-    ("ui.map_pan", r#"{"dx":0,"dy":1}"#, "Map: move down"),
-    ("ui.map_point", r#"{"delta":1}"#, "Map: next place"),
-    ("ui.map_point", r#"{"delta":-1}"#, "Map: previous place"),
-    ("ui.model_turn", r#"{"dx":-1,"dy":0}"#, "Model: turn left"),
-    ("ui.model_turn", r#"{"dx":1,"dy":0}"#, "Model: turn right"),
-    ("ui.model_turn", r#"{"dx":0,"dy":-1}"#, "Model: turn up"),
-    ("ui.model_turn", r#"{"dx":0,"dy":1}"#, "Model: turn down"),
-    ("ui.model_pan", r#"{"dx":-1,"dy":0}"#, "Model: move left"),
-    ("ui.model_pan", r#"{"dx":1,"dy":0}"#, "Model: move right"),
-    ("ui.model_pan", r#"{"dx":0,"dy":-1}"#, "Model: move up"),
-    ("ui.model_pan", r#"{"dx":0,"dy":1}"#, "Model: move down"),
-    (
-        "ui.terminal_paste",
-        r#"{"from":"primary"}"#,
-        "Terminal: paste the text selected last",
-    ),
-    ("ui.terminal_page", r#"{"pages":1}"#, "Terminal: a page up"),
-    (
-        "ui.terminal_page",
-        r#"{"pages":-1}"#,
-        "Terminal: a page down",
-    ),
+    ("ui.inspect", r#"{"action":"scroll","to":"start"}"#, || {
+        words!(commands_key_inspect_start = "Scroll to the start")
+    }),
+    ("ui.inspect", r#"{"action":"scroll","to":"end"}"#, || {
+        words!(commands_key_inspect_end = "Scroll to the end")
+    }),
+    ("ui.inspect", r#"{"action":"links_close"}"#, || {
+        words!(commands_key_inspect_links_close = "Stop labelling the links")
+    }),
+    ("ui.inspect", r#"{"action":"larger"}"#, || {
+        words!(commands_key_inspect_larger = "Preview: larger text")
+    }),
+    ("ui.inspect", r#"{"action":"smaller"}"#, || {
+        words!(commands_key_inspect_smaller = "Preview: smaller text")
+    }),
+    ("ui.inspect", r#"{"action":"reset"}"#, || {
+        words!(
+            commands_key_inspect_reset = "Preview: text at its size",
+            note = "What a key does in a structured preview: its text back at its own size."
+        )
+    }),
+    ("ui.map_pan", r#"{"dx":-1,"dy":0}"#, || {
+        words!(commands_key_map_left = "Map: move left")
+    }),
+    ("ui.map_pan", r#"{"dx":1,"dy":0}"#, || {
+        words!(commands_key_map_right = "Map: move right")
+    }),
+    ("ui.map_pan", r#"{"dx":0,"dy":-1}"#, || {
+        words!(commands_key_map_up = "Map: move up")
+    }),
+    ("ui.map_pan", r#"{"dx":0,"dy":1}"#, || {
+        words!(commands_key_map_down = "Map: move down")
+    }),
+    ("ui.map_point", r#"{"delta":1}"#, || {
+        words!(commands_key_map_next = "Map: next place")
+    }),
+    ("ui.map_point", r#"{"delta":-1}"#, || {
+        words!(commands_key_map_previous = "Map: previous place")
+    }),
+    ("ui.model_turn", r#"{"dx":-1,"dy":0}"#, || {
+        words!(commands_key_model_turn_left = "Model: turn left")
+    }),
+    ("ui.model_turn", r#"{"dx":1,"dy":0}"#, || {
+        words!(commands_key_model_turn_right = "Model: turn right")
+    }),
+    ("ui.model_turn", r#"{"dx":0,"dy":-1}"#, || {
+        words!(commands_key_model_turn_up = "Model: turn up")
+    }),
+    ("ui.model_turn", r#"{"dx":0,"dy":1}"#, || {
+        words!(commands_key_model_turn_down = "Model: turn down")
+    }),
+    ("ui.model_pan", r#"{"dx":-1,"dy":0}"#, || {
+        words!(commands_key_model_move_left = "Model: move left")
+    }),
+    ("ui.model_pan", r#"{"dx":1,"dy":0}"#, || {
+        words!(commands_key_model_move_right = "Model: move right")
+    }),
+    ("ui.model_pan", r#"{"dx":0,"dy":-1}"#, || {
+        words!(commands_key_model_move_up = "Model: move up")
+    }),
+    ("ui.model_pan", r#"{"dx":0,"dy":1}"#, || {
+        words!(commands_key_model_move_down = "Model: move down")
+    }),
+    ("ui.terminal_paste", r#"{"from":"primary"}"#, || {
+        words!(
+            commands_key_terminal_paste_primary = "Terminal: paste the text selected last",
+            note = "What a key does in the terminal: paste the text selected last anywhere on the desktop (the middle button's paste)."
+        )
+    }),
+    ("ui.terminal_page", r#"{"pages":1}"#, || {
+        words!(commands_key_terminal_page_up = "Terminal: a page up")
+    }),
+    ("ui.terminal_page", r#"{"pages":-1}"#, || {
+        words!(commands_key_terminal_page_down = "Terminal: a page down")
+    }),
     // The settings, and the Keyboard page's list of actions.
-    (
-        "ui.settings_key",
-        r#"{"key":"up"}"#,
-        "Go to the action above",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"down"}"#,
-        "Go to the action below",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"first"}"#,
-        "Go to the first action",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"last"}"#,
-        "Go to the last action",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"page_up"}"#,
-        "Go a page up the actions",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"page_down"}"#,
-        "Go a page down the actions",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"left"}"#,
-        "Go to the key on the left",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"right"}"#,
-        "Go to the key on the right",
-    ),
-    (
-        "ui.settings_key",
-        r#"{"key":"open"}"#,
-        "Change the key, or add one",
-    ),
-    ("ui.settings_key", r#"{"key":"remove"}"#, "Remove the key"),
+    ("ui.settings_key", r#"{"key":"up"}"#, || {
+        words!(commands_key_actions_up = "Go to the action above")
+    }),
+    ("ui.settings_key", r#"{"key":"down"}"#, || {
+        words!(commands_key_actions_down = "Go to the action below")
+    }),
+    ("ui.settings_key", r#"{"key":"first"}"#, || {
+        words!(commands_key_actions_first = "Go to the first action")
+    }),
+    ("ui.settings_key", r#"{"key":"last"}"#, || {
+        words!(commands_key_actions_last = "Go to the last action")
+    }),
+    ("ui.settings_key", r#"{"key":"page_up"}"#, || {
+        words!(commands_key_actions_page_up = "Go a page up the actions")
+    }),
+    ("ui.settings_key", r#"{"key":"page_down"}"#, || {
+        words!(commands_key_actions_page_down = "Go a page down the actions")
+    }),
+    ("ui.settings_key", r#"{"key":"left"}"#, || {
+        words!(commands_key_actions_left = "Go to the key on the left")
+    }),
+    ("ui.settings_key", r#"{"key":"right"}"#, || {
+        words!(commands_key_actions_right = "Go to the key on the right")
+    }),
+    ("ui.settings_key", r#"{"key":"open"}"#, || {
+        words!(commands_key_actions_open = "Change the key, or add one")
+    }),
+    ("ui.settings_key", r#"{"key":"remove"}"#, || {
+        words!(commands_key_actions_remove = "Remove the key")
+    }),
     // The Exclusions page's list.
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"up"}"#,
-        "Go to the folder above",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"down"}"#,
-        "Go to the folder below",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"first"}"#,
-        "Go to the first category",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"last"}"#,
-        "Go to the last folder",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"page_up"}"#,
-        "Go a page up the folders",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"page_down"}"#,
-        "Go a page down the folders",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"left"}"#,
-        "Fold the category, or go to it",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"right"}"#,
-        "Unfold the category",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"open"}"#,
-        "Turn the switch or the tick",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"remove"}"#,
-        "Remove the folder you added",
-    ),
-    (
-        "ui.settings_exclusion",
-        r#"{"key":"menu"}"#,
-        "Open the folder's menu",
-    ),
-    ("ui.settings_page", r#"{"delta":-1}"#, "Previous page"),
-    ("ui.settings_page", r#"{"delta":1}"#, "Next page"),
-    ("ui.settings_move", r#"{"delta":-1}"#, "Move the record up"),
-    ("ui.settings_move", r#"{"delta":1}"#, "Move the record down"),
-    (
-        "ui.settings_adjust",
-        r#"{"delta":-1}"#,
-        "Less, or the previous choice",
-    ),
-    (
-        "ui.settings_adjust",
-        r#"{"delta":1}"#,
-        "More, or the next choice",
-    ),
-    ("ui.settings_adjust", r#"{"to":"page_down"}"#, "Much less"),
-    ("ui.settings_adjust", r#"{"to":"page_up"}"#, "Much more"),
-    ("ui.settings_adjust", r#"{"to":"first"}"#, "The least"),
-    ("ui.settings_adjust", r#"{"to":"last"}"#, "The most"),
+    ("ui.settings_exclusion", r#"{"key":"up"}"#, || {
+        words!(commands_key_exclusions_up = "Go to the folder above")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"down"}"#, || {
+        words!(commands_key_exclusions_down = "Go to the folder below")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"first"}"#, || {
+        words!(commands_key_exclusions_first = "Go to the first category")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"last"}"#, || {
+        words!(commands_key_exclusions_last = "Go to the last folder")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"page_up"}"#, || {
+        words!(commands_key_exclusions_page_up = "Go a page up the folders")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"page_down"}"#, || {
+        words!(commands_key_exclusions_page_down = "Go a page down the folders")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"left"}"#, || {
+        words!(commands_key_exclusions_left = "Fold the category, or go to it")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"right"}"#, || {
+        words!(commands_key_exclusions_right = "Unfold the category")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"open"}"#, || {
+        words!(
+            commands_key_exclusions_open = "Turn the switch or the tick",
+            note = "What a key does in the list of the settings' Exclusions page: turn the switch or the tick of the row."
+        )
+    }),
+    ("ui.settings_exclusion", r#"{"key":"remove"}"#, || {
+        words!(commands_key_exclusions_remove = "Remove the folder you added")
+    }),
+    ("ui.settings_exclusion", r#"{"key":"menu"}"#, || {
+        words!(commands_key_exclusions_menu = "Open the folder's menu")
+    }),
+    ("ui.settings_page", r#"{"delta":-1}"#, || {
+        words!(commands_key_settings_page_previous = "Previous page")
+    }),
+    ("ui.settings_page", r#"{"delta":1}"#, || {
+        words!(commands_key_settings_page_next = "Next page")
+    }),
+    ("ui.settings_move", r#"{"delta":-1}"#, || {
+        words!(commands_key_record_up = "Move the record up")
+    }),
+    ("ui.settings_move", r#"{"delta":1}"#, || {
+        words!(commands_key_record_down = "Move the record down")
+    }),
+    ("ui.settings_adjust", r#"{"delta":-1}"#, || {
+        words!(
+            commands_key_adjust_less = "Less, or the previous choice",
+            note = "What a key does on a setting's control: a number made smaller, or the choice before."
+        )
+    }),
+    ("ui.settings_adjust", r#"{"delta":1}"#, || {
+        words!(
+            commands_key_adjust_more = "More, or the next choice",
+            note = "What a key does on a setting's control: a number made larger, or the choice after."
+        )
+    }),
+    ("ui.settings_adjust", r#"{"to":"page_down"}"#, || {
+        words!(
+            commands_key_adjust_much_less = "Much less",
+            note = "What a key does on a slider of the settings: a tenth of its range less."
+        )
+    }),
+    ("ui.settings_adjust", r#"{"to":"page_up"}"#, || {
+        words!(
+            commands_key_adjust_much_more = "Much more",
+            note = "What a key does on a slider of the settings: a tenth of its range more."
+        )
+    }),
+    ("ui.settings_adjust", r#"{"to":"first"}"#, || {
+        words!(
+            commands_key_adjust_least = "The least",
+            note = "What a key does on a slider of the settings: to its lowest."
+        )
+    }),
+    ("ui.settings_adjust", r#"{"to":"last"}"#, || {
+        words!(
+            commands_key_adjust_most = "The most",
+            note = "What a key does on a slider of the settings: to its highest."
+        )
+    }),
 ];
 
 /// The shell's commands whose keys may change but never all go (ADR-024):
@@ -1456,49 +1495,177 @@ fn repeats_of(name: &str) -> Option<Repeats> {
 /// The cursor's moves (`ui.cursor`), each where it goes and what the
 /// selection does, in words: Select up, Extend the selection a page down.
 fn cursor_forms() -> impl Iterator<Item = Form> {
-    const TO: [(&str, &str); 13] = [
-        ("up", "up"),
-        ("down", "down"),
-        ("left", "left"),
-        ("right", "right"),
-        ("page_up", "a page up"),
-        ("page_down", "a page down"),
-        ("half_page_up", "half a page up"),
-        ("half_page_down", "half a page down"),
-        ("home", "to the first item"),
-        ("end", "to the last item"),
-        ("here", "to the item under the cursor"),
-        ("previous", "to the previous item"),
-        ("next", "to the next item"),
+    const TO: [&str; 13] = [
+        "up",
+        "down",
+        "left",
+        "right",
+        "page_up",
+        "page_down",
+        "half_page_up",
+        "half_page_down",
+        "home",
+        "end",
+        "here",
+        "previous",
+        "next",
     ];
-    const STEP: [(Option<&str>, &str); 5] = [
-        (None, "Select"),
-        (Some("select"), "Select"),
-        (Some("extend"), "Extend the selection"),
-        (Some("move"), "Move the cursor"),
-        (Some("follow"), "Go"),
+    const STEP: [Option<&str>; 5] = [
+        None,
+        Some("select"),
+        Some("extend"),
+        Some("move"),
+        Some("follow"),
     ];
-    STEP.into_iter().flat_map(|(step, verb)| {
-        TO.into_iter().map(move |(to, words)| {
+    STEP.into_iter().flat_map(|step| {
+        TO.into_iter().map(move |to| {
             let args = match step {
                 Some(step) => serde_json::json!({ "to": to, "step": step }),
                 None => serde_json::json!({ "to": to }),
             };
-            let title = if verb == "Select" && to == "here" {
-                "Select only the item under the cursor".to_owned()
-            } else {
-                format!("{verb} {words}")
-            };
             // A page at a time is a row of its own: with the arrows and
             // the ends, one row would be too long to read.
-            let family = if to.contains("page") {
-                format!("{verb} a page up or down")
-            } else {
-                verb.to_owned()
-            };
+            let (title, family) = cursor_words(step, to, to.contains("page"));
             Form::new(args, title).in_family(family)
         })
     })
+}
+
+/// A move of the cursor in words, by what the selection does (`step`) and
+/// where the cursor goes (`to`), and its family's: the step's alone, or the
+/// step's a page at a time (`paged`).
+fn cursor_words(step: Option<&str>, to: &'static str, paged: bool) -> (Words, Words) {
+    match step {
+        Some("extend") => (
+            words!(
+                commands_cursor_extend_to = "{ $to ->
+                    [up] Extend the selection up
+                    [down] Extend the selection down
+                    [left] Extend the selection left
+                    [right] Extend the selection right
+                    [page_up] Extend the selection a page up
+                    [page_down] Extend the selection a page down
+                    [half_page_up] Extend the selection half a page up
+                    [half_page_down] Extend the selection half a page down
+                    [home] Extend the selection to the first item
+                    [end] Extend the selection to the last item
+                    [here] Extend the selection to the item under the cursor
+                    [previous] Extend the selection to the previous item
+                   *[next] Extend the selection to the next item
+                }",
+                to = to,
+                note = "A move of the file list's cursor, in F1 and the Keyboard settings: the selection grows to the item reached (Shift). to: where the cursor goes, as the identifier in brackets names it (never translated)."
+            ),
+            if paged {
+                words!(
+                    commands_cursor_family_extend_paged = "Extend the selection a page up or down",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection grows to the item reached."
+                )
+            } else {
+                words!(
+                    commands_cursor_family_extend = "Extend the selection",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection grows to the item reached (up, down, to the first item…)."
+                )
+            },
+        ),
+        Some("move") => (
+            words!(
+                commands_cursor_move_to = "{ $to ->
+                    [up] Move the cursor up
+                    [down] Move the cursor down
+                    [left] Move the cursor left
+                    [right] Move the cursor right
+                    [page_up] Move the cursor a page up
+                    [page_down] Move the cursor a page down
+                    [half_page_up] Move the cursor half a page up
+                    [half_page_down] Move the cursor half a page down
+                    [home] Move the cursor to the first item
+                    [end] Move the cursor to the last item
+                    [here] Move the cursor to the item under the cursor
+                    [previous] Move the cursor to the previous item
+                   *[next] Move the cursor to the next item
+                }",
+                to = to,
+                note = "A move of the file list's cursor, in F1 and the Keyboard settings: the selection stays (Ctrl). to: where the cursor goes, as the identifier in brackets names it (never translated)."
+            ),
+            if paged {
+                words!(
+                    commands_cursor_family_move_paged = "Move the cursor a page up or down",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection stays."
+                )
+            } else {
+                words!(
+                    commands_cursor_family_move = "Move the cursor",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection stays (up, down, to the first item…)."
+                )
+            },
+        ),
+        Some("follow") => (
+            words!(
+                commands_cursor_go_to = "{ $to ->
+                    [up] Go up
+                    [down] Go down
+                    [left] Go left
+                    [right] Go right
+                    [page_up] Go a page up
+                    [page_down] Go a page down
+                    [half_page_up] Go half a page up
+                    [half_page_down] Go half a page down
+                    [home] Go to the first item
+                    [end] Go to the last item
+                    [here] Go to the item under the cursor
+                    [previous] Go to the previous item
+                   *[next] Go to the next item
+                }",
+                to = to,
+                note = "A move of the file list's cursor, in F1 and the Keyboard settings: the selection follows the cursor if it did, and stays if it was picked. to: where the cursor goes, as the identifier in brackets names it (never translated)."
+            ),
+            if paged {
+                words!(
+                    commands_cursor_family_go_paged = "Go a page up or down",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection follows the cursor if it did."
+                )
+            } else {
+                words!(
+                    commands_cursor_family_go = "Go",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection follows the cursor if it did (up, down, to the first item…)."
+                )
+            },
+        ),
+        // `select`, and no step said.
+        _ => (
+            words!(
+                commands_cursor_select_to = "{ $to ->
+                    [up] Select up
+                    [down] Select down
+                    [left] Select left
+                    [right] Select right
+                    [page_up] Select a page up
+                    [page_down] Select a page down
+                    [half_page_up] Select half a page up
+                    [half_page_down] Select half a page down
+                    [home] Select to the first item
+                    [end] Select to the last item
+                    [here] Select only the item under the cursor
+                    [previous] Select to the previous item
+                   *[next] Select to the next item
+                }",
+                to = to,
+                note = "A move of the file list's cursor, in F1 and the Keyboard settings: the selection becomes the item reached (the arrows). to: where the cursor goes, as the identifier in brackets names it (never translated)."
+            ),
+            if paged {
+                words!(
+                    commands_cursor_family_select_paged = "Select a page up or down",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection becomes the item reached."
+                )
+            } else {
+                words!(
+                    commands_cursor_family_select = "Select",
+                    note = "A family of the cursor's moves, one row of F1's list of keys: the selection becomes the item reached (up, down, to the first item…)."
+                )
+            },
+        ),
+    }
 }
 
 /// Every form of the shell's command `name`: what the palette offers, then
@@ -1507,26 +1674,26 @@ fn forms_of(name: &str) -> Vec<Form> {
     let offered = crate::palette::ui_commands()
         .iter()
         .filter(|(n, _, _)| *n == name)
-        .map(|(_, args, title)| Form::new(args.clone(), *title));
+        .map(|(_, args, title)| Form::new(args.clone(), title.clone()));
     let keys = KEY_FORMS
         .iter()
         .filter(|(n, _, _)| *n == name)
         .map(|(_, args, title)| {
-            Form::new(serde_json::from_str(args).expect("valid form args"), *title)
+            Form::new(
+                serde_json::from_str(args).expect("valid form args"),
+                title(),
+            )
         });
     let moves = (name == "ui.cursor")
         .then(cursor_forms)
         .into_iter()
         .flatten();
-    let family = FAMILIES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, family)| *family);
+    let family = family_of(name);
     let mut forms: Vec<Form> = Vec::new();
     for form in offered.chain(keys).chain(moves) {
         if !forms.iter().any(|known| known.args == form.args) {
-            forms.push(match family {
-                Some(family) => form.in_family(family),
+            forms.push(match &family {
+                Some(family) => form.in_family(family.clone()),
                 None => form,
             });
         }
@@ -1534,22 +1701,38 @@ fn forms_of(name: &str) -> Vec<Form> {
     forms
 }
 
-/// The shell's commands whose forms are one family (`Form::family`), by
-/// its name: what differs is only which way they go.
-const FAMILIES: &[(&str, &str)] = &[
-    ("ui.zoom", "Zoom"),
-    ("ui.text_size", "Text size"),
-    ("ui.preview_zoom", "Preview: zoom"),
-    ("ui.preview_page", "Preview: turn the page"),
-];
+/// The family the forms of the shell's command `name` are one of
+/// (`Form::family`), when they are: what differs is only which way they
+/// go.
+fn family_of(name: &str) -> Option<Words> {
+    Some(match name {
+        "ui.zoom" => words!(
+            commands_family_zoom = "Zoom",
+            note = "A family of keys, one row of F1's list: zoom in, out or back."
+        ),
+        "ui.text_size" => words!(
+            commands_family_text_size = "Text size",
+            note = "A family of keys, one row of F1's list: the text larger, smaller or back at 100 %."
+        ),
+        "ui.preview_zoom" => words!(
+            commands_family_preview_zoom = "Preview: zoom",
+            note = "A family of keys, one row of F1's list: the preview zoomed in, out or back."
+        ),
+        "ui.preview_page" => words!(
+            commands_family_preview_page = "Preview: turn the page",
+            note = "A family of keys, one row of F1's list: the preview's next or previous page."
+        ),
+        _ => return None,
+    })
+}
 
 /// Declare `name`, carried out by the window.
 fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     app: &App,
     topic: Topic,
     name: &'static str,
-    title: &str,
-    description: &str,
+    title: Words,
+    description: Words,
 ) {
     let declared = app.commands.register_raw::<A, _>(
         OWNER,
@@ -1562,7 +1745,7 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
             // the window, which runs what it is handed as the user's.
             let agent = skwir_core::permissions::agent_call().is_some();
             if agent && let Some(instead) = reaches_out(name, &args) {
-                anyhow::bail!("for an agent, {name} {instead}");
+                anyhow::bail!(instead);
             }
             // What a question runs as it is typed, before anyone answers,
             // only answers (ADR-137); an agent's runs as the agent's.
@@ -1603,8 +1786,8 @@ fn declare_suggest(app: &App) {
         .register_raw::<args::Suggest, _>(
             OWNER, Topic::Go,
             "ui.suggest",
-            "Address suggestions",
-            "What the address field offers for `text`: its rows, each with its section, title, detail and the invocation Enter runs, and the spans the text is drawn with",
+            words!(commands_suggest = "Address suggestions"),
+            words!(commands_suggest_description = "What the address field offers for `text`: its rows, each with its section, title, detail and the invocation Enter runs, and the spans the text is drawn with", note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."),
             |args, app| {
                 let a: args::Suggest = serde_json::from_value(args)?;
                 let pane = app.pane_or_active(a.pane);
@@ -1641,6 +1824,14 @@ fn declare_suggest(app: &App) {
         .data();
 }
 
+/// What the settings' keys are, as each command of them says.
+fn key_in_settings() -> Words {
+    words!(
+        commands_key_in_settings = "A key in the settings",
+        note = "What a window command is, read by agents and in F1's list of actions: one of the keys of the settings."
+    )
+}
+
 /// Declare every `ui.*` command in the core's registry.
 #[allow(clippy::too_many_lines)] // One line of the table per command.
 pub fn declare_all(app: &App) {
@@ -1651,315 +1842,421 @@ pub fn declare_all(app: &App) {
         app,
         Topic::Select,
         "ui.cursor",
-        "Move the cursor",
-        "Move the file list's cursor (`to`), and with it the selection as `step` says",
+        words!(commands_cursor = "Move the cursor"),
+        words!(
+            commands_cursor_description =
+                "Move the file list's cursor (`to`), and with it the selection as `step` says",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     declare::<Pick>(
         app,
         Topic::Select,
         "ui.cursor_pick",
-        "Pick or unpick",
-        "Pick or unpick the item under the cursor, as yazi's mark, then go to the next",
+        words!(
+            commands_cursor_pick = "Pick or unpick",
+            note = "A window command's title. To pick is to mark an item as chosen, as yazi's mark does, beside the selection."
+        ),
+        words!(
+            commands_cursor_pick_description =
+                "Pick or unpick the item under the cursor, as yazi's mark, then go to the next"
+        ),
     );
     none(
         Topic::Select,
         "ui.cursor_toggle",
-        "Select or deselect",
-        "Select or deselect the item under the cursor",
+        words!(commands_cursor_toggle = "Select or deselect"),
+        words!(commands_cursor_toggle_description = "Select or deselect the item under the cursor"),
     );
     none(
         Topic::Window,
         "ui.context_menu",
-        "Open the menu",
-        "Open the menu of the selection, or of the folder shown",
+        words!(commands_context_menu = "Open the menu"),
+        words!(
+            commands_context_menu_description =
+                "Open the menu of the selection, or of the folder shown"
+        ),
     );
     declare::<Find>(
         app,
         Topic::Find,
         "ui.find",
-        "Find a name…",
-        "Find a name in the pane as it is typed, after the cursor or before it",
+        words!(commands_find = "Find a name…"),
+        words!(
+            commands_find_description =
+                "Find a name in the pane as it is typed, after the cursor or before it"
+        ),
     );
     declare::<Delta>(
         app,
         Topic::Find,
         "ui.find_next",
-        "Find the next name",
-        "Find the name last looked for again, after the cursor (or before it)",
+        words!(commands_find_next = "Find the next name"),
+        words!(
+            commands_find_next_description =
+                "Find the name last looked for again, after the cursor (or before it)"
+        ),
     );
     declare::<View>(
         app,
         Topic::View,
         "ui.view",
-        "Show a view",
-        "Show the pane's files in a view",
+        words!(commands_view = "Show a view"),
+        words!(commands_view_description = "Show the pane's files in a view"),
     );
     declare::<Key>(
         app,
         Topic::View,
         "ui.columns",
-        "Show or hide a column",
-        "Show or hide one of the list's detail columns",
+        words!(commands_columns = "Show or hide a column"),
+        words!(commands_columns_description = "Show or hide one of the list's detail columns"),
     );
     none(
         Topic::View,
         "ui.columns_reset",
-        "Reset column widths",
-        "Give the list's detail columns their default widths",
+        words!(commands_columns_reset = "Reset column widths"),
+        words!(
+            commands_columns_reset_description =
+                "Give the list's detail columns their default widths"
+        ),
     );
     declare::<SelectGroup>(
         app,
         Topic::Select,
         "ui.select_group",
-        "Select the group",
-        "Select the entries of a group the pane draws under its heading (ADR-130): group `group`, counted from the first heading from 0, else the cursor's; with `add`, beside what is selected. A heading's click and its menu's Select these run it",
+        words!(commands_select_group = "Select the group"),
+        words!(
+            commands_select_group_description = "Select the entries of a group the pane draws under its heading (ADR-130): group `group`, counted from the first heading from 0, else the cursor's; with `add`, beside what is selected. A heading's click and its menu's Select these run it",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     declare::<Key>(
         app,
         Topic::View,
         "ui.grid_caption",
-        "Show or hide a grid caption",
-        "Say one caption under every name in the grid, or no longer: its tags or one of the list's details, by its setting (ui.grid_caption_tags, ui.grid_caption_size…)",
+        words!(commands_grid_caption = "Show or hide a grid caption"),
+        words!(
+            commands_grid_caption_description = "Say one caption under every name in the grid, or no longer: its tags or one of the list's details, by its setting (ui.grid_caption_tags, ui.grid_caption_size…)"
+        ),
     );
     declare::<ViewButton>(
         app,
         Topic::View,
         "ui.view_button",
-        "Show or hide a view's button",
-        "Give a view a button beside the address, or take it away; the view shown keeps its button while shown",
+        words!(commands_view_button = "Show or hide a view's button"),
+        words!(
+            commands_view_button_description = "Give a view a button beside the address, or take it away; the view shown keeps its button while shown"
+        ),
     );
     none(
         Topic::View,
         "ui.view_buttons_reset",
-        "Default view buttons",
-        "Give a button to the views that show the files as listed (list, grid, columns), and no other",
+        words!(commands_view_buttons_reset = "Default view buttons"),
+        words!(
+            commands_view_buttons_reset_description = "Give a button to the views that show the files as listed (list, grid, columns), and no other"
+        ),
     );
     declare::<On>(
         app,
         Topic::View,
         "ui.view_buttons_shown",
-        "Show view buttons",
-        "Show the views' buttons beside the address, or one button for them, the view shown, that opens the View menu",
+        words!(commands_view_buttons_shown = "Show view buttons"),
+        words!(
+            commands_view_buttons_shown_description = "Show the views' buttons beside the address, or one button for them, the view shown, that opens the View menu"
+        ),
     );
     declare::<On>(
         app,
         Topic::View,
         "ui.up_button",
-        "Show the Up button",
-        "Show Up after Back and Forward on each pane's row, or leave it to the trail and Alt+Up",
+        words!(commands_up_button = "Show the Up button"),
+        words!(
+            commands_up_button_description = "Show Up after Back and Forward on each pane's row, or leave it to the trail and Alt+Up"
+        ),
     );
     declare::<Dir>(
         app,
         Topic::View,
         "ui.zoom",
-        "Zoom",
-        "Size what the view sizes (tiles, rows, a map's scale): in, out or back",
+        words!(
+            commands_zoom = "Zoom",
+            note = "A window command's title: the size of what the view draws (tiles, rows, a map's scale)."
+        ),
+        words!(
+            commands_zoom_description =
+                "Size what the view sizes (tiles, rows, a map's scale): in, out or back"
+        ),
     );
     declare::<TextSize>(
         app,
         Topic::View,
         "ui.text_size",
-        "Text size",
-        "Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does",
+        words!(commands_text_size = "Text size"),
+        words!(
+            commands_text_size_description = "Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does"
+        ),
     );
     none(
         Topic::View,
         "ui.grid_fill",
-        "Toggle filled thumbnails",
-        "Crop thumbnails in the grid to fill their box",
+        words!(
+            commands_grid_fill = "Toggle filled thumbnails",
+            note = "A window command's title: thumbnails cropped to fill their box in the grid, or not."
+        ),
+        words!(commands_grid_fill_description = "Crop thumbnails in the grid to fill their box"),
     );
     none(
         Topic::Find,
         "ui.quick_filters",
-        "Toggle Quick filters",
-        "Show Quick filters above the active pane's files, wherever it goes: their kinds, years and tags, each with how many files, a choice filtering the pane until taken off",
+        words!(commands_quick_filters = "Toggle Quick filters"),
+        words!(
+            commands_quick_filters_description = "Show Quick filters above the active pane's files, wherever it goes: their kinds, years and tags, each with how many files, a choice filtering the pane until taken off"
+        ),
     );
     none(
         Topic::Preview,
         "ui.peek",
-        "Peek",
-        "Look at the file under the cursor in a large preview; run again, or its key held and let go, it closes",
+        words!(
+            commands_peek = "Peek",
+            note = "A window command's title: look at the file under the cursor in a large preview, while its key is held."
+        ),
+        words!(
+            commands_peek_description = "Look at the file under the cursor in a large preview; run again, or its key held and let go, it closes"
+        ),
     );
     none(
         Topic::Preview,
         "ui.peek_close",
-        "Close peek",
-        "Close the large preview",
+        words!(commands_peek_close = "Close peek"),
+        words!(commands_peek_close_description = "Close the large preview"),
     );
     none(
         Topic::View,
         "ui.usage_refresh",
-        "Measure again",
-        "Measure what the Usage view shows again",
+        words!(commands_usage_refresh = "Measure again"),
+        words!(commands_usage_refresh_description = "Measure what the Usage view shows again"),
     );
     declare::<UsageMode>(
         app,
         Topic::View,
         "ui.usage_mode",
-        "Usage map shows",
-        "Size the Usage map's blocks by the room or the files they hold, or color them by when they changed or the kinds of their files",
+        words!(
+            commands_usage_mode = "Usage map shows",
+            note = "A window command's title: what the blocks of the Usage view's map say (room taken, files, when they changed, kinds)."
+        ),
+        words!(
+            commands_usage_mode_description = "Size the Usage map's blocks by the room or the files they hold, or color them by when they changed or the kinds of their files"
+        ),
     );
     // Asking and naming.
     none(
         Topic::Files,
         "ui.rename_prompt",
-        "Rename…",
-        "Rename the selected item, or a place as its location says",
+        words!(commands_rename_prompt = "Rename…"),
+        words!(
+            commands_rename_prompt_description =
+                "Rename the selected item, or a place as its location says"
+        ),
     );
     none(
         Topic::Files,
         "ui.mkdir_prompt",
-        "New folder…",
-        "Ask for a name and make a folder in the folder shown",
+        words!(commands_mkdir_prompt = "New folder…"),
+        words!(
+            commands_mkdir_prompt_description =
+                "Ask for a name and make a folder in the folder shown"
+        ),
     );
     none(
         Topic::Files,
         "ui.new_file_prompt",
-        "New file…",
-        "Ask for a name and make an empty file (a folder for a name ending in /)",
+        words!(commands_new_file_prompt = "New file…"),
+        words!(
+            commands_new_file_prompt_description =
+                "Ask for a name and make an empty file (a folder for a name ending in /)"
+        ),
     );
     none(
         Topic::Files,
         "ui.create_here",
-        "New here…",
-        "Make what the location makes (a tag in a tag's folder)",
+        words!(commands_create_here = "New here…"),
+        words!(
+            commands_create_here_description =
+                "Make what the location makes (a tag in a tag's folder)"
+        ),
     );
     none(
         Topic::Files,
         "ui.rename_bulk_prompt",
-        "Rename several…",
-        "Rename the selected items together",
+        words!(commands_rename_bulk_prompt = "Rename several…"),
+        words!(commands_rename_bulk_prompt_description = "Rename the selected items together"),
     );
     none(
         Topic::Window,
         "ui.rename_bulk_next",
-        "Next field",
-        "Go to the next field of Rename several",
+        words!(commands_rename_bulk_next = "Next field"),
+        words!(commands_rename_bulk_next_description = "Go to the next field of Rename several"),
     );
     none(
         Topic::Window,
         "ui.rename_bulk_prev",
-        "Previous field",
-        "Go to the previous field of Rename several",
+        words!(commands_rename_bulk_prev = "Previous field"),
+        words!(
+            commands_rename_bulk_prev_description = "Go to the previous field of Rename several"
+        ),
     );
     declare::<Delta>(
         app,
         Topic::Files,
         "ui.rename_bulk_case",
-        "Change case",
-        "The next case Rename several gives names, round the last; with a delta, that many steps along them, stopping at the ends",
+        words!(commands_rename_bulk_case = "Change case"),
+        words!(
+            commands_rename_bulk_case_description = "The next case Rename several gives names, round the last; with a delta, that many steps along them, stopping at the ends"
+        ),
     );
     declare::<TagsPrompt>(
         app,
         Topic::Notes,
         "ui.tags_prompt",
-        "Tags…",
-        "Edit the tags of the selection, or of the files named",
+        words!(commands_tags_prompt = "Tags…"),
+        words!(
+            commands_tags_prompt_description =
+                "Edit the tags of the selection, or of the files named"
+        ),
     );
     none(
         Topic::Notes,
         "ui.tag_editor_apply",
-        "Apply tags",
-        "Apply what the tag editor changed",
+        words!(commands_tag_editor_apply = "Apply tags"),
+        words!(commands_tag_editor_apply_description = "Apply what the tag editor changed"),
     );
     declare::<Ask>(
         app,
         Topic::Window,
         "ui.ask",
-        "Ask for a line of text",
-        "Ask the user for a line of text and run a command with it",
+        words!(commands_ask = "Ask for a line of text"),
+        words!(
+            commands_ask_description = "Ask the user for a line of text and run a command with it",
+            note = "Read by agents and in F1's list of actions."
+        ),
     );
     declare::<Object>(
         app,
         Topic::Window,
         "ui.choose",
-        "Ask for a choice",
-        "Ask the user to choose among choices, given or listed by a command, and run the one chosen",
+        words!(commands_choose = "Ask for a choice"),
+        words!(
+            commands_choose_description = "Ask the user to choose among choices, given or listed by a command, and run the one chosen"
+        ),
     );
     none(
         Topic::Window,
         "ui.choose_option",
-        "Switch the option",
-        "Switch the choice's option (Always use for…)",
+        words!(commands_choose_option = "Switch the option"),
+        words!(commands_choose_option_description = "Switch the choice's option (Always use for…)"),
     );
     none(
         Topic::Window,
         "ui.accept",
-        "Confirm",
-        "Answer yes to the question asked",
+        words!(
+            commands_accept = "Confirm",
+            note = "A window command's title: answer yes to the question a dialog asks."
+        ),
+        words!(commands_accept_description = "Answer yes to the question asked"),
     );
     none(
         Topic::Window,
         "ui.dismiss",
-        "Cancel",
-        "Answer no to the question asked",
+        words!(
+            commands_dismiss = "Cancel",
+            note = "A window command's title: answer no to the question a dialog asks."
+        ),
+        words!(commands_dismiss_description = "Answer no to the question asked"),
     );
     none(
         Topic::Files,
         "ui.review_apply",
-        "Apply the plan",
-        "Apply the plan being reviewed",
+        words!(commands_review_apply = "Apply the plan"),
+        words!(commands_review_apply_description = "Apply the plan being reviewed"),
     );
     none(
         Topic::Files,
         "ui.review_cancel",
-        "Discard the plan",
-        "Discard the plan being reviewed",
+        words!(commands_review_cancel = "Discard the plan"),
+        words!(commands_review_cancel_description = "Discard the plan being reviewed"),
     );
     declare::<Delta>(
         app,
         Topic::Window,
         "ui.review_choose",
-        "Next choice",
-        "In the names a copy, a move or a link found taken: the next choice of the row the keyboard is on, or the previous with a negative delta",
+        words!(commands_review_choose = "Next choice"),
+        words!(
+            commands_review_choose_description = "In the names a copy, a move or a link found taken: the next choice of the row the keyboard is on, or the previous with a negative delta"
+        ),
     );
     // The address and searching.
     none(
         Topic::Go,
         "ui.focus_address",
-        "Focus address bar",
-        "Edit the active pane's path",
+        words!(commands_focus_address = "Focus address bar"),
+        words!(commands_focus_address_description = "Edit the active pane's path"),
     );
     declare::<Text>(
         app,
         Topic::Find,
         "ui.search",
-        "Search…",
-        "Search the folder shown and its subfolders from the address field, from a text; typed in, look below the folder",
+        words!(commands_search = "Search…"),
+        words!(
+            commands_search_description = "Search the folder shown and its subfolders from the address field, from a text; typed in, look below the folder"
+        ),
     );
     declare::<Text>(
         app,
         Topic::Find,
         "ui.filter",
-        "Filter…",
-        "Filter the folder shown from the address field as you type, its subfolders left out, from a text; typed in, look in the folder alone",
+        words!(commands_filter = "Filter…"),
+        words!(
+            commands_filter_description = "Filter the folder shown from the address field as you type, its subfolders left out, from a text; typed in, look in the folder alone"
+        ),
     );
     declare::<Submit>(
         app,
         Topic::Go,
         "ui.omnibox_submit",
-        "Go",
-        "Run the address's suggestion, search the home folder, or open the file it names",
+        words!(
+            commands_omnibox_submit = "Go",
+            note = "A window command's title: run what the address field holds (Enter there)."
+        ),
+        words!(
+            commands_omnibox_submit_description =
+                "Run the address's suggestion, search the home folder, or open the file it names"
+        ),
     );
     none(
         Topic::Find,
         "ui.omnibox_scopes",
-        "Where to search",
-        "List the scopes the address field's words could search in, or close the list",
+        words!(commands_omnibox_scopes = "Where to search"),
+        words!(
+            commands_omnibox_scopes_description =
+                "List the scopes the address field's words could search in, or close the list"
+        ),
     );
     none(
         Topic::Go,
         "ui.omnibox_forget",
-        "Forget the suggestion",
-        "Forget the recent search highlighted in the address field's suggestions",
+        words!(commands_omnibox_forget = "Forget the suggestion"),
+        words!(
+            commands_omnibox_forget_description =
+                "Forget the recent search highlighted in the address field's suggestions"
+        ),
     );
     declare_suggest(app);
     app.commands.register_raw::<NoArgs, _>(
         OWNER,
         Topic::Skwir,
         "ui.languages",
-        "Languages and their grammars",
-        "The languages a grammar was found or added for, as last found: each one's files and what colors it, Automatic or chosen, with what may be chosen; the grammars combined from two sources checked first",
+        words!(commands_languages = "Languages and their grammars"),
+        words!(commands_languages_description = "The languages a grammar was found or added for, as last found: each one's files and what colors it, Automatic or chosen, with what may be chosen; the grammars combined from two sources checked first"),
         |_, app| {
             crate::settings::check_grammars_where_asked(app);
             Ok(Outcome::Value(crate::settings::language_records(app)))
@@ -1969,16 +2266,16 @@ pub fn declare_all(app: &App) {
         OWNER,
         Topic::Skwir,
         "ui.grammar_folders",
-        "Where grammars were looked for",
-        "Where tree-sitter grammars were looked for when last found: what was nearly found, each saying what to do, then each folder read and the languages it held",
+        words!(commands_grammar_folders = "Where grammars were looked for"),
+        words!(commands_grammar_folders_description = "Where tree-sitter grammars were looked for when last found: what was nearly found, each saying what to do, then each folder read and the languages it held"),
         |_, _| Ok(Outcome::Value(crate::settings::grammar_folder_records())),
     );
     app.commands.register::<GrammarArgs, _>(
         OWNER,
         Topic::Skwir,
         "ui.grammar_choose",
-        "Choose a language's grammar",
-        "Color `language` (its name in lower case) with `grammar`: auto (as Automatic uses says), bat, plain, or where its tree-sitter grammar was found (skwir, tree-sitter, zed, helix, neovim, system, emacs)",
+        words!(commands_grammar_choose = "Choose a language's grammar"),
+        words!(commands_grammar_choose_description = "Color `language` (its name in lower case) with `grammar`: auto (as Automatic uses says), bat, plain, or where its tree-sitter grammar was found (skwir, tree-sitter, zed, helix, neovim, system, emacs)", note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."),
         |args, app| {
             crate::settings::choose_grammar(app, &args.language, &args.grammar)?;
             Ok(Outcome::Done)
@@ -1987,896 +2284,1218 @@ pub fn declare_all(app: &App) {
     none(
         Topic::Window,
         "ui.form_complete",
-        "Complete the folder",
-        "Complete the folder typed in a dialog's Save as: the folder highlighted in its list, else the start the folders completing it share, else the first of them, the name kept",
+        words!(commands_form_complete = "Complete the folder"),
+        words!(
+            commands_form_complete_description = "Complete the folder typed in a dialog's Save as: the folder highlighted in its list, else the start the folders completing it share, else the first of them, the name kept"
+        ),
     );
     none(
         Topic::Window,
         "ui.form_up",
-        "Folder above",
-        "In a dialog's Save as, the folder above the one typed, the name kept",
+        words!(commands_form_up = "Folder above"),
+        words!(
+            commands_form_up_description =
+                "In a dialog's Save as, the folder above the one typed, the name kept"
+        ),
     );
     none(
         Topic::Go,
         "ui.omnibox_complete",
-        "Complete",
-        "Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed",
+        words!(
+            commands_omnibox_complete = "Complete",
+            note = "A window command's title: complete what is typed in the address field (Tab there)."
+        ),
+        words!(
+            commands_omnibox_complete_description = "Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed"
+        ),
     );
     declare::<Object>(
         app,
         Topic::Find,
         "ui.search_chip",
-        "Search pill's menu",
-        "Open or close a search pill's menu",
+        words!(
+            commands_search_chip = "Search pill's menu",
+            note = "A window command's title: a pill is a term of a search, drawn in the address field."
+        ),
+        words!(commands_search_chip_description = "Open or close a search pill's menu"),
     );
     declare::<History>(
         app,
         Topic::Go,
         "ui.history_menu",
-        "Back: history…",
-        "List the history behind Back, or ahead of Forward",
+        words!(
+            commands_history_menu = "Back: history…",
+            note =
+                "A window command's title: Back is the button; this lists the history behind it."
+        ),
+        words!(
+            commands_history_menu_description = "List the history behind Back, or ahead of Forward"
+        ),
     );
     declare::<Folders>(
         app,
         Topic::Go,
         "ui.subfolder_menu",
-        "Folders inside…",
-        "List the folders or places inside one of the trail's",
+        words!(
+            commands_subfolder_menu = "Folders inside…",
+            note = "A window command's title: the folders inside one of the trail's, listed."
+        ),
+        words!(
+            commands_subfolder_menu_description =
+                "List the folders or places inside one of the trail's"
+        ),
     );
     declare::<Folders>(
         app,
         Topic::Go,
         "ui.parents_menu",
-        "Folders above…",
-        "List the folders above the trail's first, from the root down",
+        words!(
+            commands_parents_menu = "Folders above…",
+            note = "A window command's title: the folders above the trail's first, listed."
+        ),
+        words!(
+            commands_parents_menu_description =
+                "List the folders above the trail's first, from the root down"
+        ),
     );
     declare::<Url>(
         app,
         Topic::Go,
         "ui.open_url",
-        "Open an address",
-        "Open an address (http, https, mailto) with the desktop's application",
+        words!(commands_open_url = "Open an address"),
+        words!(
+            commands_open_url_description =
+                "Open an address (http, https, mailto) with the desktop's application"
+        ),
     );
     declare::<crate::links::RevealArgs>(
         app,
         Topic::Go,
         "ui.reveal",
-        "Show in folder",
-        "Show a file in its folder, at a line of its preview",
+        words!(commands_reveal = "Show in folder"),
+        words!(commands_reveal_description = "Show a file in its folder, at a line of its preview"),
     );
     declare::<CopyText>(
         app,
         Topic::Files,
         "ui.copy_text",
-        "Copy",
-        "Put a text on the clipboard",
+        words!(commands_copy_text = "Copy"),
+        words!(commands_copy_text_description = "Put a text on the clipboard"),
     );
     declare::<CopyText>(
         app,
         Topic::Files,
         "ui.compare_copied",
-        "Compare with copied",
-        "Say whether the clipboard holds a text (a checksum a download page gives, one word of it or all), ignoring case",
+        words!(commands_compare_copied = "Compare with copied"),
+        words!(
+            commands_compare_copied_description = "Say whether the clipboard holds a text (a checksum a download page gives, one word of it or all), ignoring case"
+        ),
     );
     none(
         Topic::Go,
         "ui.jump",
-        "Jump…",
-        "Type in the address field, the places one goes to offered first",
+        words!(
+            commands_jump = "Jump…",
+            note = "A window command's title: go to a place by typing in the address field."
+        ),
+        words!(
+            commands_jump_description =
+                "Type in the address field, the places one goes to offered first"
+        ),
     );
     // The window.
     none(
         Topic::Skwir,
         "ui.palette",
-        "Command palette",
-        "Find a command and run it",
+        words!(commands_palette = "Command palette"),
+        words!(commands_palette_description = "Find a command and run it"),
     );
     declare::<ListMoveArgs>(
         app,
         Topic::Window,
         "ui.list_move",
-        "Next in the list",
-        "Move in the list being typed into (the palette, a choice, Jump, the tag editor, the address's suggestions) or answered (the names a copy found taken): rows round its ends, or a page, or to an end",
+        words!(commands_list_move = "Next in the list"),
+        words!(
+            commands_list_move_description = "Move in the list being typed into (the palette, a choice, Jump, the tag editor, the address's suggestions) or answered (the names a copy found taken): rows round its ends, or a page, or to an end"
+        ),
     );
     none(
         Topic::Skwir,
         "ui.shortcuts",
-        "Shortcuts",
-        "List the keys of where the keyboard is",
+        words!(
+            commands_shortcuts = "Shortcuts",
+            note = "A window command's title: the keys of where the keyboard is."
+        ),
+        words!(commands_shortcuts_description = "List the keys of where the keyboard is"),
     );
     declare::<Close>(
         app,
         Topic::Skwir,
         "ui.about",
-        "About skwir",
-        "Show skwir's version and licence, and what it runs on",
+        words!(commands_about = "About skwir"),
+        words!(
+            commands_about_description = "Show skwir's version and licence, and what it runs on"
+        ),
     );
     declare::<Settings>(
         app,
         Topic::Skwir,
         "ui.settings",
-        "Settings…",
-        "Open the settings, at a setting or a page",
+        words!(commands_settings = "Settings…"),
+        words!(commands_settings_description = "Open the settings, at a setting or a page"),
     );
     none(
         Topic::Window,
         "ui.focus_pane",
-        "Focus file list",
-        "Give the keyboard to the active pane",
+        words!(commands_focus_pane = "Focus file list"),
+        words!(commands_focus_pane_description = "Give the keyboard to the active pane"),
     );
     none(
         Topic::Tabs,
         "ui.focus_other_pane",
-        "Focus other pane",
-        "Give the keyboard to the split's other pane",
+        words!(commands_focus_other_pane = "Focus other pane"),
+        words!(
+            commands_focus_other_pane_description = "Give the keyboard to the split's other pane"
+        ),
     );
     none(
         Topic::Window,
         "ui.focus_sidebar",
-        "Focus sidebar",
-        "Give the keyboard to the sidebar",
+        words!(commands_focus_sidebar = "Focus sidebar"),
+        words!(commands_focus_sidebar_description = "Give the keyboard to the sidebar"),
     );
     none(
         Topic::Window,
         "ui.focus_next_part",
-        "Focus next part of the window",
-        "Give the keyboard to the next part of the window shown: the sidebar, the files, the preview",
+        words!(commands_focus_next_part = "Focus next part of the window"),
+        words!(
+            commands_focus_next_part_description = "Give the keyboard to the next part of the window shown: the sidebar, the files, the preview"
+        ),
     );
     none(
         Topic::View,
         "ui.toggle_sidebar",
-        "Toggle sidebar",
-        "Show or hide the sidebar",
+        words!(commands_toggle_sidebar = "Toggle sidebar"),
+        words!(commands_toggle_sidebar_description = "Show or hide the sidebar"),
     );
     declare::<Key>(
         app,
         Topic::Window,
         "ui.sidebar_key",
-        "Sidebar key",
-        "A key in the sidebar: walk, open, move, rename or remove its places",
+        words!(
+            commands_sidebar_key = "Sidebar key",
+            note = "A window command's title: what a key does in the sidebar."
+        ),
+        words!(
+            commands_sidebar_key_description =
+                "A key in the sidebar: walk, open, move, rename or remove its places"
+        ),
     );
     declare::<Key>(
         app,
         Topic::Window,
         "ui.settings_key",
-        "Keyboard page key",
-        "A key in the Keyboard page's list of actions: walk the actions and their keys, change, add or remove one",
+        words!(
+            commands_settings_key = "Keyboard page key",
+            note = "A window command's title: what a key does in the list of actions of the settings' Keyboard page."
+        ),
+        words!(
+            commands_settings_key_description = "A key in the Keyboard page's list of actions: walk the actions and their keys, change, add or remove one"
+        ),
     );
     declare::<FolderItem>(
         app,
         Topic::Window,
         "ui.settings_exclusion_item",
-        "Exclusions page menu item",
-        "What a Exclusions page row's menu does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one",
+        words!(commands_settings_exclusion_item = "Exclusions page menu item"),
+        words!(
+            commands_settings_exclusion_item_description = "What a Exclusions page row's menu does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one"
+        ),
     );
     declare::<Key>(
         app,
         Topic::Window,
         "ui.settings_exclusion",
-        "Exclusions page key",
-        "A key in the Exclusions page's list: walk the categories and their folders, fold one, turn a switch or a tick, remove a folder you added, open a folder's menu",
+        words!(
+            commands_settings_exclusion = "Exclusions page key",
+            note = "A window command's title: what a key does in the list of the settings' Exclusions page."
+        ),
+        words!(
+            commands_settings_exclusion_description = "A key in the Exclusions page's list: walk the categories and their folders, fold one, turn a switch or a tick, remove a folder you added, open a folder's menu"
+        ),
     );
     declare::<Object>(
         app,
         Topic::Places,
         "ui.sidebar_section",
-        "Arrange a sidebar group",
-        "Move, show, hide or reset the sidebar's groups",
+        words!(commands_sidebar_section = "Arrange a sidebar group"),
+        words!(
+            commands_sidebar_section_description = "Move, show, hide or reset the sidebar's groups"
+        ),
     );
     declare::<Object>(
         app,
         Topic::Places,
         "ui.sidebar_place",
-        "Arrange a sidebar place",
-        "Move, rename, show or hide a place the sidebar offers",
+        words!(commands_sidebar_place = "Arrange a sidebar place"),
+        words!(
+            commands_sidebar_place_description =
+                "Move, rename, show or hide a place the sidebar offers"
+        ),
     );
     declare::<Popup>(
         app,
         Topic::Window,
         "ui.toolbar_menu",
-        "Toolbar menu",
-        "Open or close More, the View menu, the choice of view buttons, the Map view's backgrounds or the pinned player's More (kind: more, view_options, view_buttons, map_backgrounds, player)",
+        words!(
+            commands_toolbar_menu = "Toolbar menu",
+            note = "A window command's title: one of the menus of the row above the files or of the preview."
+        ),
+        words!(
+            commands_toolbar_menu_description = "Open or close More, the View menu, the choice of view buttons, the Map view's backgrounds or the pinned player's More (kind: more, view_options, view_buttons, map_backgrounds, player)"
+        ),
     );
     declare::<FieldReference>(
         app,
         Topic::Window,
         "ui.field_reference",
-        "What the field takes",
-        "Show under the field being typed in what it takes: its placeholders, terms or signs, each with what it means and gives here, a row taken written where the caret is (ADR-137); shown, F1 shows the keys of the place. The address field says it in its card; `field` (its `?`) turns that on and off",
+        words!(
+            commands_field_reference = "What the field takes",
+            note = "A window command's title: what the field being typed in takes (its placeholders, terms, signs), shown under it."
+        ),
+        words!(
+            commands_field_reference_description = "Show under the field being typed in what it takes: its placeholders, terms or signs, each with what it means and gives here, a row taken written where the caret is (ADR-137); shown, F1 shows the keys of the place. The address field says it in its card; `field` (its `?`) turns that on and off",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     declare::<FieldComplete>(
         app,
         Topic::Window,
         "ui.field_complete",
-        "Take what the field offers",
-        "Among what the field being typed in offers as it goes on (a placeholder begun, a sign), move the highlight by `step`, take the item `group` and `item` name, or the one lit: it takes the place of the part typed (ADR-137)",
+        words!(
+            commands_field_complete = "Take what the field offers",
+            note =
+                "A window command's title: take one of the items the field being typed in offers."
+        ),
+        words!(
+            commands_field_complete_description = "Among what the field being typed in offers as it goes on (a placeholder begun, a sign), move the highlight by `step`, take the item `group` and `item` name, or the one lit: it takes the place of the part typed (ADR-137)",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     // Answered by the focused button and the open popup themselves.
     none(
         Topic::Window,
         "ui.toolbar_activate",
-        "Press the button",
-        "Press the button that has the keyboard",
+        words!(commands_toolbar_activate = "Press the button"),
+        words!(commands_toolbar_activate_description = "Press the button that has the keyboard"),
     );
     declare::<Toggle>(
         app,
         Topic::Window,
         "ui.activity",
-        "Activity",
-        "Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5 s by default) (ADR-114)",
+        words!(
+            commands_activity = "Activity",
+            note =
+                "A window command's title: the panel of what runs, waits and ended this session."
+        ),
+        words!(
+            commands_activity_description = "Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5 s by default) (ADR-114)"
+        ),
     );
     none(
         Topic::Window,
         "ui.activity_earlier",
-        "Show Earlier in Activity",
-        "Unfold Earlier at the foot of Activity, or fold it again: what ended this session that the Undo history does not hold",
+        words!(commands_activity_earlier = "Show Earlier in Activity"),
+        words!(
+            commands_activity_earlier_description = "Unfold Earlier at the foot of Activity, or fold it again: what ended this session that the Undo history does not hold"
+        ),
     );
     none(
         Topic::Files,
         "ui.activity_cancel_all",
-        "Cancel all actions",
-        "Cancel every action under way and every one waiting its turn: what each did stays, undoable, and what it left half done is taken back",
+        words!(commands_activity_cancel_all = "Cancel all actions"),
+        words!(
+            commands_activity_cancel_all_description = "Cancel every action under way and every one waiting its turn: what each did stays, undoable, and what it left half done is taken back"
+        ),
     );
     none(
         Topic::Files,
         "ui.plan_cancel",
-        "Stop working out",
-        "Let go of the plan being worked out for what was asked (Escape while it is): its answer is forgotten, and what waited for it runs on",
+        words!(
+            commands_plan_cancel = "Stop working out",
+            note =
+                "A window command's title: let go of the plan being worked out for what was asked."
+        ),
+        words!(
+            commands_plan_cancel_description = "Let go of the plan being worked out for what was asked (Escape while it is): its answer is forgotten, and what waited for it runs on"
+        ),
     );
     none(
         Topic::Files,
         "ui.activity_pause_all",
-        "Pause all actions",
-        "Pause every action under way, or resume them all once every one is paused; what waits keeps waiting",
+        words!(commands_activity_pause_all = "Pause all actions"),
+        words!(
+            commands_activity_pause_all_description = "Pause every action under way, or resume them all once every one is paused; what waits keeps waiting"
+        ),
     );
     declare::<Toggle>(
         app,
         Topic::Files,
         "ui.undo_history",
-        "Undo history",
-        "Open or close the history of what Undo can take back, above the footer's Undo: each action with its own Undo, an undone one's Redo, which take it back alone when nothing after it touched what it did, else name the action that did, and Undo with what came after (ADR-079, 13)",
+        words!(commands_undo_history = "Undo history"),
+        words!(
+            commands_undo_history_description = "Open or close the history of what Undo can take back, above the footer's Undo: each action with its own Undo, an undone one's Redo, which take it back alone when nothing after it touched what it did, else name the action that did, and Undo with what came after (ADR-079, 13)"
+        ),
     );
     none(
         Topic::Window,
         "ui.toolbar_close",
-        "Close the menu",
-        "Close the toolbar's open menu",
+        words!(commands_toolbar_close = "Close the menu"),
+        words!(commands_toolbar_close_description = "Close the toolbar's open menu"),
     );
     none(
         Topic::Window,
         "ui.toolbar_next",
-        "Next button",
-        "Give the keyboard to the next button",
+        words!(commands_toolbar_next = "Next button"),
+        words!(commands_toolbar_next_description = "Give the keyboard to the next button"),
     );
     none(
         Topic::Window,
         "ui.toolbar_prev",
-        "Previous button",
-        "Give the keyboard to the previous button",
+        words!(commands_toolbar_prev = "Previous button"),
+        words!(commands_toolbar_prev_description = "Give the keyboard to the previous button"),
     );
     none(
         Topic::Window,
         "ui.toolbar_first",
-        "First row",
-        "Give the keyboard to the first row of the open menu",
+        words!(commands_toolbar_first = "First row"),
+        words!(
+            commands_toolbar_first_description =
+                "Give the keyboard to the first row of the open menu"
+        ),
     );
     none(
         Topic::Window,
         "ui.toolbar_last",
-        "Last row",
-        "Give the keyboard to the last row of the open menu",
+        words!(commands_toolbar_last = "Last row"),
+        words!(
+            commands_toolbar_last_description =
+                "Give the keyboard to the last row of the open menu"
+        ),
     );
     declare::<Split>(
         app,
         Topic::Tabs,
         "ui.split",
-        "Split pane",
-        "Split the window in two panes, or join them",
+        words!(commands_split = "Split pane"),
+        words!(commands_split_description = "Split the window in two panes, or join them"),
     );
     declare::<Layout>(
         app,
         Topic::View,
         "ui.layout",
-        "Arrange the window",
-        "Where split panes, the preview and a file of an archive go",
+        words!(commands_layout = "Arrange the window"),
+        words!(
+            commands_layout_description =
+                "Where split panes, the preview and a file of an archive go"
+        ),
     );
     none(
         Topic::Files,
         "ui.copy_other",
-        "Copy to the other pane",
-        "Copy the selection to what the other pane shows",
+        words!(commands_copy_other = "Copy to the other pane"),
+        words!(commands_copy_other_description = "Copy the selection to what the other pane shows"),
     );
     none(
         Topic::Files,
         "ui.move_other",
-        "Move to the other pane",
-        "Move the selection to what the other pane shows",
+        words!(commands_move_other = "Move to the other pane"),
+        words!(commands_move_other_description = "Move the selection to what the other pane shows"),
     );
     none(
         Topic::Files,
         "ui.give_other",
-        "Send to the other pane…",
-        "Ask what the selection does in what the other pane shows, as a drop asks: move, copy or link it there, or what a plugin offers (extract an archive)",
+        words!(commands_give_other = "Send to the other pane…"),
+        words!(
+            commands_give_other_description = "Ask what the selection does in what the other pane shows, as a drop asks: move, copy or link it there, or what a plugin offers (extract an archive)"
+        ),
     );
     none(
         Topic::View,
         "ui.timeline",
-        "Timeline",
-        "Show or hide the timeline under the active pane's files, wherever it goes: when they changed, a bar for each period, a bar pressed showing only its files",
+        words!(commands_timeline = "Timeline"),
+        words!(
+            commands_timeline_description = "Show or hide the timeline under the active pane's files, wherever it goes: when they changed, a bar for each period, a bar pressed showing only its files"
+        ),
     );
     declare::<Bucket>(
         app,
         Topic::View,
         "ui.timeline_bucket",
-        "Timeline bars",
-        "What each bar of the timeline counts, a day, a week, a month or a year, while the pane shows what it shows: by default the finest that shows every date",
+        words!(commands_timeline_bucket = "Timeline bars"),
+        words!(
+            commands_timeline_bucket_description = "What each bar of the timeline counts, a day, a week, a month or a year, while the pane shows what it shows: by default the finest that shows every date"
+        ),
     );
     declare::<Toward>(
         app,
         Topic::View,
         "ui.timeline_pan",
-        "Timeline: move along",
-        "Show the timeline's earlier or later bars, when there are too many of them to show at once",
+        words!(commands_timeline_pan = "Timeline: move along"),
+        words!(
+            commands_timeline_pan_description = "Show the timeline's earlier or later bars, when there are too many of them to show at once"
+        ),
     );
     declare::<args::Measure>(
         app,
         Topic::View,
         "ui.timeline_measure",
-        "Timeline: files or size",
-        "Make the timeline's bars as tall as their number of files, or as their size",
+        words!(commands_timeline_measure = "Timeline: files or size"),
+        words!(
+            commands_timeline_measure_description =
+                "Make the timeline's bars as tall as their number of files, or as their size"
+        ),
     );
     declare::<TimelineDate>(
         app,
         Topic::View,
         "ui.timeline_date",
-        "Timeline: which time",
-        "Count files on the timeline by when they were modified, created, last opened, or taken (a picture's or a video's clock)",
+        words!(commands_timeline_date = "Timeline: which time"),
+        words!(
+            commands_timeline_date_description = "Count files on the timeline by when they were modified, created, last opened, or taken (a picture's or a video's clock)"
+        ),
     );
     declare::<TimelineCursor>(
         app,
         Topic::View,
         "ui.timeline_cursor",
-        "Timeline: go to a bar",
-        "Move the timeline's keyboard bar, or extend the bars chosen",
+        words!(commands_timeline_cursor = "Timeline: go to a bar"),
+        words!(
+            commands_timeline_cursor_description =
+                "Move the timeline's keyboard bar, or extend the bars chosen"
+        ),
     );
     none(
         Topic::View,
         "ui.timeline_list",
-        "Timeline: list the bars chosen",
-        "Show the files of the timeline's bars chosen",
+        words!(commands_timeline_list = "Timeline: list the bars chosen"),
+        words!(commands_timeline_list_description = "Show the files of the timeline's bars chosen"),
     );
     none(
         Topic::View,
         "ui.timeline_subtree",
-        "Timeline: folders inside",
-        "Count the files of the folders inside too",
+        words!(commands_timeline_subtree = "Timeline: folders inside"),
+        words!(commands_timeline_subtree_description = "Count the files of the folders inside too"),
     );
     none(
         Topic::Terminal,
         "ui.terminal",
-        "Toggle terminal",
-        "Show or hide the terminal",
+        words!(commands_terminal = "Toggle terminal"),
+        words!(commands_terminal_description = "Show or hide the terminal"),
     );
     none(
         Topic::Terminal,
         "ui.terminal_copy",
-        "Terminal: copy",
-        "Copy the terminal's selection",
+        words!(commands_terminal_copy = "Terminal: copy"),
+        words!(commands_terminal_copy_description = "Copy the terminal's selection"),
     );
     declare::<TerminalPaste>(
         app,
         Topic::Terminal,
         "ui.terminal_paste",
-        "Terminal: paste",
-        "Paste into the terminal",
+        words!(commands_terminal_paste = "Terminal: paste"),
+        words!(commands_terminal_paste_description = "Paste into the terminal"),
     );
     none(
         Topic::Terminal,
         "ui.terminal_select_all",
-        "Terminal: select all",
-        "Select everything the terminal shows and kept",
+        words!(commands_terminal_select_all = "Terminal: select all"),
+        words!(
+            commands_terminal_select_all_description =
+                "Select everything the terminal shows and kept"
+        ),
     );
     none(
         Topic::Terminal,
         "ui.terminal_clear",
-        "Terminal: clear the history",
-        "Forget the lines scrolled away above the terminal's screen",
+        words!(commands_terminal_clear = "Terminal: clear the history"),
+        words!(
+            commands_terminal_clear_description =
+                "Forget the lines scrolled away above the terminal's screen"
+        ),
     );
     none(
         Topic::Terminal,
         "ui.terminal_paths",
-        "Terminal: type the selection's paths",
-        "Type the paths of the selected files at the terminal's prompt, quoted for its shell",
+        words!(commands_terminal_paths = "Terminal: type the selection's paths"),
+        words!(
+            commands_terminal_paths_description = "Type the paths of the selected files at the terminal's prompt, quoted for its shell"
+        ),
     );
     none(
         Topic::Terminal,
         "ui.terminal_menu",
-        "Terminal: menu",
-        "Open the terminal's menu: copy, paste, its links",
+        words!(commands_terminal_menu = "Terminal: menu"),
+        words!(
+            commands_terminal_menu_description = "Open the terminal's menu: copy, paste, its links"
+        ),
     );
     declare::<Pages>(
         app,
         Topic::Terminal,
         "ui.terminal_page",
-        "Terminal: scroll",
-        "Scroll the terminal by pages",
+        words!(commands_terminal_page = "Terminal: scroll"),
+        words!(commands_terminal_page_description = "Scroll the terminal by pages"),
     );
     none(
         Topic::Terminal,
         "ui.terminal_links",
-        "Terminal: follow a link…",
-        "Label the terminal's links for the keyboard",
+        words!(commands_terminal_links = "Terminal: follow a link…"),
+        words!(commands_terminal_links_description = "Label the terminal's links for the keyboard"),
     );
     for (name, title) in [
-        ("ui.menu_up", "Previous item"),
-        ("ui.menu_down", "Next item"),
-        ("ui.menu_first", "First item"),
-        ("ui.menu_last", "Last item"),
-        ("ui.menu_expand", "Open the submenu, or the next value"),
+        ("ui.menu_up", words!(commands_menu_up = "Previous item")),
+        ("ui.menu_down", words!(commands_menu_down = "Next item")),
+        ("ui.menu_first", words!(commands_menu_first = "First item")),
+        ("ui.menu_last", words!(commands_menu_last = "Last item")),
+        (
+            "ui.menu_expand",
+            words!(commands_menu_expand = "Open the submenu, or the next value"),
+        ),
         (
             "ui.menu_collapse",
-            "Leave the submenu, or the previous value",
+            words!(commands_menu_collapse = "Leave the submenu, or the previous value"),
         ),
-        ("ui.menu_activate", "Run the item"),
-        ("ui.menu_close", "Close the menu"),
+        (
+            "ui.menu_activate",
+            words!(commands_menu_activate = "Run the item"),
+        ),
+        (
+            "ui.menu_close",
+            words!(commands_menu_close = "Close the menu"),
+        ),
     ] {
-        none(Topic::Window, name, title, "A key in a menu");
+        let description = words!(
+            commands_key_in_menu = "A key in a menu",
+            note = "What a window command is, read by agents and in F1's list of actions: one of the keys of a menu."
+        );
+        none(Topic::Window, name, title, description);
     }
     for (name, title) in [
-        ("ui.settings_close", "Close settings"),
-        ("ui.settings_next", "Next control"),
-        ("ui.settings_prev", "Previous control"),
-        ("ui.settings_search", "Search settings"),
-        ("ui.settings_page", "Next page"),
-        ("ui.settings_enter", "Into the page"),
-        ("ui.settings_move", "Move the record"),
+        (
+            "ui.settings_close",
+            words!(commands_settings_close = "Close settings"),
+        ),
+        (
+            "ui.settings_next",
+            words!(commands_settings_next = "Next control"),
+        ),
+        (
+            "ui.settings_prev",
+            words!(commands_settings_prev = "Previous control"),
+        ),
+        (
+            "ui.settings_search",
+            words!(commands_settings_search = "Search settings"),
+        ),
+        (
+            "ui.settings_page",
+            words!(commands_settings_page = "Next page"),
+        ),
+        (
+            "ui.settings_enter",
+            words!(
+                commands_settings_enter = "Into the page",
+                note = "A key in the settings: the keyboard goes from the list of pages into the page."
+            ),
+        ),
+        (
+            "ui.settings_move",
+            words!(
+                commands_settings_move = "Move the record",
+                note = "A key in the settings: move a record of a list up or down."
+            ),
+        ),
     ] {
-        declare::<Delta>(app, Topic::Window, name, title, "A key in the settings");
+        declare::<Delta>(app, Topic::Window, name, title, key_in_settings());
     }
     declare::<Adjust>(
         app,
         Topic::Window,
         "ui.settings_adjust",
-        "Change the value",
-        "A key in the settings",
+        words!(commands_settings_adjust = "Change the value"),
+        key_in_settings(),
     );
     none(
         Topic::Skwir,
         "ui.quit",
-        "Quit",
-        "Quit, finishing what runs without the window or stopping it",
+        words!(commands_quit = "Quit"),
+        words!(
+            commands_quit_description =
+                "Quit, finishing what runs without the window or stopping it"
+        ),
     );
     none(
         Topic::Tabs,
         "ui.close_window",
-        "Close window",
-        "Close this window and its tabs, which Reopen closed tab brings back; the last window closes as its close button does, what runs going on without it",
+        words!(commands_close_window = "Close window"),
+        words!(
+            commands_close_window_description = "Close this window and its tabs, which Reopen closed tab brings back; the last window closes as its close button does, what runs going on without it"
+        ),
     );
     none(
         Topic::Tabs,
         "ui.maximize_window",
-        "Maximize window",
-        "Maximize this window, or give it back the size it had when it is maximized",
+        words!(commands_maximize_window = "Maximize window"),
+        words!(
+            commands_maximize_window_description =
+                "Maximize this window, or give it back the size it had when it is maximized"
+        ),
     );
     none(
         Topic::Tabs,
         "ui.minimize_window",
-        "Minimize window",
-        "Hide this window until it is chosen again",
+        words!(commands_minimize_window = "Minimize window"),
+        words!(commands_minimize_window_description = "Hide this window until it is chosen again"),
     );
     // The preview.
     none(
         Topic::View,
         "ui.toggle_preview",
-        "Toggle preview",
-        "Show or hide the preview in the side panel; the panel stays while Properties is shown",
+        words!(commands_toggle_preview = "Toggle preview"),
+        words!(
+            commands_toggle_preview_description = "Show or hide the preview in the side panel; the panel stays while Properties is shown"
+        ),
     );
     none(
         Topic::Preview,
         "ui.preview_close",
-        "Preview: close",
-        "Close peek, or hide the preview in the side panel",
+        words!(commands_preview_close = "Preview: close"),
+        words!(
+            commands_preview_close_description =
+                "Close peek, or hide the preview in the side panel"
+        ),
     );
     none(
         Topic::Files,
         "ui.properties",
-        "Properties",
-        "Show or hide the properties of the selection (or of the folder shown) in the side panel, over the preview or alone; the panel stays while the preview is shown",
+        words!(commands_properties = "Properties"),
+        words!(
+            commands_properties_description = "Show or hide the properties of the selection (or of the folder shown) in the side panel, over the preview or alone; the panel stays while the preview is shown"
+        ),
     );
     declare::<Count>(
         app,
         Topic::Files,
         "ui.properties_count",
-        "Properties: count what folders hold",
-        "Count the size, room taken, files and folders of what Properties shows (the selection, with several selected), or stop counting with `stop`",
+        words!(commands_properties_count = "Properties: count what folders hold"),
+        words!(
+            commands_properties_count_description = "Count the size, room taken, files and folders of what Properties shows (the selection, with several selected), or stop counting with `stop`",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     declare::<Fold>(
         app,
         Topic::Files,
         "ui.properties_fold",
-        "Properties: fold a group",
-        "Fold one of Properties' groups (`Checksums`, `Volume`…) or unfold it, for every item from now on",
+        words!(
+            commands_properties_fold = "Properties: fold a group",
+            note = "A window command's title: fold one of the groups of Properties (Permissions, Checksums)."
+        ),
+        words!(
+            commands_properties_fold_description = "Fold one of Properties' groups (`Checksums`, `Volume`…) or unfold it, for every item from now on",
+            note = "Read by agents and in F1's list of actions. `Checksums` and `Volume` are the titles of two of Properties' groups, as their headings say them."
+        ),
     );
     declare::<Popup>(
         app,
         Topic::Preview,
         "ui.preview_menu",
-        "Preview menu",
-        "Open or close one of the preview's menus",
+        words!(commands_preview_menu = "Preview menu"),
+        words!(commands_preview_menu_description = "Open or close one of the preview's menus"),
     );
     declare::<Submenu>(
         app,
         Topic::Preview,
         "ui.toolbar_submenu",
-        "Preview menu: submenu",
-        "Open a submenu of the preview's More or the View menu beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), move the keyboard along its rows (`step`, `end`), or choose the value before (`value` -1), after (1) or the next round (0) on a setting's row",
+        words!(commands_toolbar_submenu = "Preview menu: submenu"),
+        words!(
+            commands_toolbar_submenu_description = "Open a submenu of the preview's More or the View menu beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), move the keyboard along its rows (`step`, `end`), or choose the value before (`value` -1), after (1) or the next round (0) on a setting's row",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     none(
         Topic::Preview,
         "ui.preview_open_external",
-        "Preview: open externally",
-        "Open the file shown with the desktop's application",
+        words!(commands_preview_open_external = "Preview: open externally"),
+        words!(
+            commands_preview_open_external_description =
+                "Open the file shown with the desktop's application"
+        ),
     );
     declare::<Object>(
         app,
         Topic::Preview,
         "ui.preview_invoke",
-        "Preview: run with what is shown",
-        "Run `command` with the file the preview shows, the page it is on (`page`) and what is selected in it (`selection`) added to its `args`: what a plugin's items of the preview's menu and its keys there run",
+        words!(commands_preview_invoke = "Preview: run with what is shown"),
+        words!(
+            commands_preview_invoke_description = "Run `command` with the file the preview shows, the page it is on (`page`) and what is selected in it (`selection`) added to its `args`: what a plugin's items of the preview's menu and its keys there run",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     none(
         Topic::Preview,
         "ui.preview_copy_path",
-        "Preview: copy path",
-        "Copy the path of the file shown",
+        words!(commands_preview_copy_path = "Preview: copy path"),
+        words!(commands_preview_copy_path_description = "Copy the path of the file shown"),
     );
     declare::<Delta>(
         app,
         Topic::Preview,
         "ui.preview_page",
-        "Preview: next page",
-        "Go a page, a section or a chapter on or back",
+        words!(commands_preview_page = "Preview: next page"),
+        words!(commands_preview_page_description = "Go a page, a section or a chapter on or back"),
     );
     declare::<PreviewScroll>(
         app,
         Topic::Preview,
         "ui.preview_scroll",
-        "Preview: scroll",
-        "Move what the preview shows a step up, down or sideways; where it fits, Left and Right go to the page or section before or after, and on the whole screen to the picture",
+        words!(commands_preview_scroll = "Preview: scroll"),
+        words!(
+            commands_preview_scroll_description = "Move what the preview shows a step up, down or sideways; where it fits, Left and Right go to the page or section before or after, and on the whole screen to the picture"
+        ),
     );
     declare::<Amount>(
         app,
         Topic::Preview,
         "ui.preview_seek",
-        "Preview: seek",
-        "Go seconds on or back in what plays",
+        words!(commands_preview_seek = "Preview: seek"),
+        words!(commands_preview_seek_description = "Go seconds on or back in what plays"),
     );
     declare::<Dir>(
         app,
         Topic::Preview,
         "ui.preview_zoom",
-        "Preview: zoom",
-        "Zoom what the preview shows, size what it reads",
+        words!(commands_preview_zoom = "Preview: zoom"),
+        words!(
+            commands_preview_zoom_description = "Zoom what the preview shows, size what it reads"
+        ),
     );
     declare::<Object>(
         app,
         Topic::Preview,
         "ui.inspect",
-        "Preview action",
-        "Do something in a structured preview (`action`: search, copy, outline, source, hex…)",
+        words!(
+            commands_inspect = "Preview action",
+            note = "A window command's title: something done in a structured preview (search, copy, outline, source, hex)."
+        ),
+        words!(
+            commands_inspect_description = "Do something in a structured preview (`action`: search, copy, outline, source, hex…)",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take."
+        ),
     );
     declare::<On>(
         app,
         Topic::Preview,
         "ui.printed_pages",
-        "Printed page numbers",
-        "Count a book's pages as printed, where it lists them",
+        words!(commands_printed_pages = "Printed page numbers"),
+        words!(
+            commands_printed_pages_description =
+                "Count a book's pages as printed, where it lists them"
+        ),
     );
     declare::<On>(
         app,
         Topic::Preview,
         "ui.wrap_lines",
-        "Wrap lines",
-        "Wrap a text's long lines to the panel, or let them go on sideways",
+        words!(commands_wrap_lines = "Wrap lines"),
+        words!(
+            commands_wrap_lines_description =
+                "Wrap a text's long lines to the panel, or let them go on sideways"
+        ),
     );
     declare::<On>(
         app,
         Topic::Preview,
         "ui.text_continuous",
-        "Continuous scrolling of text",
-        "Read a book, a document or a message as one scrolling column, or a screen at a time",
+        words!(commands_text_continuous = "Continuous scrolling of text"),
+        words!(
+            commands_text_continuous_description = "Read a book, a document or a message as one scrolling column, or a screen at a time"
+        ),
     );
     none(
         Topic::Preview,
         "ui.full_width",
-        "Toggle full-width reading",
-        "Read text across the whole panel",
+        words!(commands_full_width = "Toggle full-width reading"),
+        words!(commands_full_width_description = "Read text across the whole panel"),
     );
     declare::<Object>(
         app,
         Topic::Notes,
         "ui.note",
-        "Note",
-        "Close a book's note, or go to where it is",
+        words!(
+            commands_note = "Note",
+            note = "A window command's title: a book's note (a footnote), closed or gone to."
+        ),
+        words!(commands_note_description = "Close a book's note, or go to where it is"),
     );
     none(
         Topic::Preview,
         "ui.reader_continuous",
-        "Document: toggle continuous scrolling",
-        "Scroll a document's pages as one, or one at a time",
+        words!(commands_reader_continuous = "Document: toggle continuous scrolling"),
+        words!(
+            commands_reader_continuous_description =
+                "Scroll a document's pages as one, or one at a time"
+        ),
     );
     declare::<Pointer>(
         app,
         Topic::Preview,
         "ui.reader_pointer",
-        "Document: pointer",
-        "A press, a drag or a release on a document's page",
+        words!(commands_reader_pointer = "Document: pointer"),
+        words!(
+            commands_reader_pointer_description =
+                "A press, a drag or a release on a document's page"
+        ),
     );
     declare::<Page>(
         app,
         Topic::Preview,
         "ui.reader_page",
-        "Document: go to page",
-        "Show a document's page",
+        words!(commands_reader_page = "Document: go to page"),
+        words!(commands_reader_page_description = "Show a document's page"),
     );
     none(
         Topic::Preview,
         "ui.preview_goto",
-        "Preview: go to page or chapter…",
-        "Type the page to show, or a book's chapter",
+        words!(commands_preview_goto = "Preview: go to page or chapter…"),
+        words!(commands_preview_goto_description = "Type the page to show, or a book's chapter"),
     );
     none(
         Topic::Preview,
         "ui.reader_page_submit",
-        "Document: show the page typed",
-        "Show the page typed",
+        words!(commands_reader_page_submit = "Document: show the page typed"),
+        words!(commands_reader_page_submit_description = "Show the page typed"),
     );
     none(
         Topic::Preview,
         "ui.reader_page_cancel",
-        "Document: leave the page field",
-        "Leave the page field as it was",
+        words!(commands_reader_page_cancel = "Document: leave the page field"),
+        words!(commands_reader_page_cancel_description = "Leave the page field as it was"),
     );
     // What a document and a structured preview are both asked, one
     // command each, carried out as the one shown does it.
     none(
         Topic::Preview,
         "ui.preview_copy",
-        "Preview: copy",
-        "Copy the text selected, else what is selected (a block), else all the preview shows",
+        words!(commands_preview_copy = "Preview: copy"),
+        words!(
+            commands_preview_copy_description = "Copy the text selected, else what is selected (a block), else all the preview shows"
+        ),
     );
     none(
         Topic::Preview,
         "ui.preview_select_all",
-        "Preview: select all",
-        "Select all the text the preview shows",
+        words!(commands_preview_select_all = "Preview: select all"),
+        words!(commands_preview_select_all_description = "Select all the text the preview shows"),
     );
     none(
         Topic::Preview,
         "ui.preview_contents",
-        "Preview: contents",
-        "Show or hide the contents: a document's, a structured preview's headings",
+        words!(commands_preview_contents = "Preview: contents"),
+        words!(
+            commands_preview_contents_description =
+                "Show or hide the contents: a document's, a structured preview's headings"
+        ),
     );
     declare::<On>(
         app,
         Topic::Preview,
         "ui.contents_pin",
-        "Preview: keep contents open",
-        "Keep the contents open beside what is read, the content narrowed, or let choosing a part close them",
+        words!(commands_contents_pin = "Preview: keep contents open"),
+        words!(
+            commands_contents_pin_description = "Keep the contents open beside what is read, the content narrowed, or let choosing a part close them"
+        ),
     );
     none(
         Topic::Preview,
         "ui.preview_find",
-        "Preview: find text",
-        "Find text in what the preview shows",
+        words!(commands_preview_find = "Preview: find text"),
+        words!(commands_preview_find_description = "Find text in what the preview shows"),
     );
     none(
         Topic::Preview,
         "ui.preview_find_close",
-        "Preview: close find",
-        "Close the preview's find field",
+        words!(commands_preview_find_close = "Preview: close find"),
+        words!(commands_preview_find_close_description = "Close the preview's find field"),
     );
     declare::<Delta>(
         app,
         Topic::Preview,
         "ui.preview_match",
-        "Preview: next search match",
-        "Go to the next or previous match of what the find looks for",
+        words!(commands_preview_match = "Preview: next search match"),
+        words!(
+            commands_preview_match_description =
+                "Go to the next or previous match of what the find looks for"
+        ),
     );
     none(
         Topic::Preview,
         "ui.reader_search",
-        "Document: search",
-        "Search a document for what the find field holds",
+        words!(commands_reader_search = "Document: search"),
+        words!(
+            commands_reader_search_description = "Search a document for what the find field holds"
+        ),
     );
     declare::<PageLink>(
         app,
         Topic::Preview,
         "ui.reader_link",
-        "Document: follow a link",
-        "Follow one of a page's links",
+        words!(commands_reader_link = "Document: follow a link"),
+        words!(commands_reader_link_description = "Follow one of a page's links"),
     );
     // What plays.
     declare::<Object>(
         app,
         Topic::Player,
         "ui.media_control",
-        "Player: control",
-        "Play, pause, seek or set the volume of what the preview plays",
+        words!(commands_media_control = "Player: control"),
+        words!(
+            commands_media_control_description =
+                "Play, pause, seek or set the volume of what the preview plays"
+        ),
     );
     none(
         Topic::Player,
         "ui.media_play",
-        "Player: play the selection",
-        "Play what is selected without opening the preview: music in the player at the foot of the panel, the tracks selected in their order (a playlist's tracks in its place, a track alone with the folder's around it); a film in the quick preview",
+        words!(commands_media_play = "Player: play the selection"),
+        words!(
+            commands_media_play_description = "Play what is selected without opening the preview: music in the player at the foot of the panel, the tracks selected in their order (a playlist's tracks in its place, a track alone with the folder's around it); a film in the quick preview"
+        ),
     );
     none(
         Topic::Player,
         "ui.media_pin",
-        "Player: pin or let go of this track",
-        "Keep what plays playing while the selection moves, or let it go",
+        words!(
+            commands_media_pin = "Player: pin or let go of this track",
+            note = "A window command's title: keep what plays playing while the selection moves, or let it go."
+        ),
+        words!(
+            commands_media_pin_description =
+                "Keep what plays playing while the selection moves, or let it go"
+        ),
     );
     declare::<On>(
         app,
         Topic::Player,
         "ui.media_keep_playing",
-        "Player: keep playing while you browse",
-        "Keep playing when the selection moves",
+        words!(commands_media_keep_playing = "Player: keep playing while you browse"),
+        words!(commands_media_keep_playing_description = "Keep playing when the selection moves"),
     );
     declare::<On>(
         app,
         Topic::Player,
         "ui.media_autoplay",
-        "Player: play on selection",
-        "Play what is selected at once",
+        words!(commands_media_autoplay = "Player: play on selection"),
+        words!(commands_media_autoplay_description = "Play what is selected at once"),
     );
     declare::<Continue>(
         app,
         Topic::Player,
         "ui.media_continue",
-        "Player: when a track ends",
-        "What plays when a track ends: nothing, the next one, or one shuffled",
+        words!(commands_media_continue = "Player: when a track ends"),
+        words!(
+            commands_media_continue_description =
+                "What plays when a track ends: nothing, the next one, or one shuffled"
+        ),
     );
     declare::<Delta>(
         app,
         Topic::Player,
         "ui.media_step",
-        "Player: next track",
-        "Select the next or previous track",
+        words!(commands_media_step = "Player: next track"),
+        words!(commands_media_step_description = "Select the next or previous track"),
     );
     declare::<Scrub>(
         app,
         Topic::Player,
         "ui.media_scrub",
-        "Player: scrub",
-        "Drag the playing position",
+        words!(
+            commands_media_scrub = "Player: scrub",
+            note = "A window command's title: drag the playing position."
+        ),
+        words!(commands_media_scrub_description = "Drag the playing position"),
     );
     none(
         Topic::Player,
         "ui.media_escape",
-        "Player: leave",
-        "Leave full screen, else close the preview",
+        words!(
+            commands_media_escape = "Player: leave",
+            note = "A window command's title: leave full screen, else close the preview."
+        ),
+        words!(commands_media_escape_description = "Leave full screen, else close the preview"),
     );
     none(
         Topic::Preview,
         "ui.preview_fullscreen",
-        "Preview: full screen",
-        "Show the preview on the whole screen (a picture, pages, text, a film), or leave it",
+        words!(commands_preview_fullscreen = "Preview: full screen"),
+        words!(
+            commands_preview_fullscreen_description = "Show the preview on the whole screen (a picture, pages, text, a film), or leave it"
+        ),
     );
     none(
         Topic::Preview,
         "ui.fullscreen_controls",
-        "Full screen: controls",
-        "Show or hide the bar over the preview on the whole screen",
+        words!(commands_fullscreen_controls = "Full screen: controls"),
+        words!(
+            commands_fullscreen_controls_description =
+                "Show or hide the bar over the preview on the whole screen"
+        ),
     );
     declare::<Delta>(
         app,
         Topic::Preview,
         "ui.fullscreen_step",
-        "Full screen: next",
-        "On the whole screen, show the next or previous picture of the pane, or turn the page",
+        words!(commands_fullscreen_step = "Full screen: next"),
+        words!(
+            commands_fullscreen_step_description = "On the whole screen, show the next or previous picture of the pane, or turn the page"
+        ),
     );
     none(
         Topic::Preview,
         "ui.slideshow",
-        "Preview: slideshow",
-        "Play the pane's pictures one after another on the whole screen, from the one shown, or pause",
+        words!(commands_slideshow = "Preview: slideshow"),
+        words!(
+            commands_slideshow_description = "Play the pane's pictures one after another on the whole screen, from the one shown, or pause"
+        ),
     );
     declare::<Pace>(
         app,
         Topic::Preview,
         "ui.slideshow_pace",
-        "Slideshow: pace",
-        "How long a slideshow shows each picture, in seconds",
+        words!(commands_slideshow_pace = "Slideshow: pace"),
+        words!(
+            commands_slideshow_pace_description =
+                "How long a slideshow shows each picture, in seconds"
+        ),
     );
     declare::<Player>(
         app,
         Topic::Player,
         "ui.player",
-        "Player",
-        "Ask the pinned player something (play, pause, next, stop…)",
+        words!(
+            commands_player = "Player",
+            note = "A window command's title: the player pinned at the foot of the side panel."
+        ),
+        words!(
+            commands_player_description =
+                "Ask the pinned player something (play, pause, next, stop…)"
+        ),
     );
     declare::<Amount>(
         app,
         Topic::Player,
         "ui.player_volume",
-        "Player: volume",
-        "Change the pinned player's volume",
+        words!(commands_player_volume = "Player: volume"),
+        words!(commands_player_volume_description = "Change the pinned player's volume"),
     );
     declare::<Amount>(
         app,
         Topic::Player,
         "ui.volume_step",
-        "Volume: step",
-        "Step the volume of the player whose volume popup is open",
+        words!(commands_volume_step = "Volume: step"),
+        words!(
+            commands_volume_step_description =
+                "Step the volume of the player whose volume popup is open"
+        ),
     );
     // The map.
     declare::<Pan>(
         app,
         Topic::Preview,
         "ui.map_pan",
-        "Map: pan",
-        "Move the map",
+        words!(commands_map_pan = "Map: pan"),
+        words!(commands_map_pan_description = "Move the map"),
     );
     // A 3D model (ADR-067).
     declare::<On>(
         app,
         Topic::Preview,
         "ui.model_perspective",
-        "Model: perspective",
-        "Draw 3D models in perspective, nearer parts larger, or not",
+        words!(commands_model_perspective = "Model: perspective"),
+        words!(
+            commands_model_perspective_description =
+                "Draw 3D models in perspective, nearer parts larger, or not"
+        ),
     );
     declare::<On>(
         app,
         Topic::Preview,
         "ui.model_smooth",
-        "Model: smooth shading",
-        "Shade 3D models smoothly across their faces, or each face flat",
+        words!(commands_model_smooth = "Model: smooth shading"),
+        words!(
+            commands_model_smooth_description =
+                "Shade 3D models smoothly across their faces, or each face flat"
+        ),
     );
     declare::<Pan>(
         app,
         Topic::Preview,
         "ui.model_turn",
-        "Model: turn",
-        "Go round the 3D model shown, by steps right (dx) and down (dy)",
+        words!(commands_model_turn = "Model: turn"),
+        words!(
+            commands_model_turn_description =
+                "Go round the 3D model shown, by steps right (dx) and down (dy)"
+        ),
     );
     declare::<Pan>(
         app,
         Topic::Preview,
         "ui.model_pan",
-        "Model: move",
-        "Move the view of the 3D model shown, by steps right (dx) and down (dy)",
+        words!(commands_model_pan = "Model: move"),
+        words!(
+            commands_model_pan_description =
+                "Move the view of the 3D model shown, by steps right (dx) and down (dy)"
+        ),
     );
     declare::<Delta>(
         app,
         Topic::Preview,
         "ui.map_point",
-        "Map: next place",
-        "Go to the next place on the map (or the previous one), the map centred on it",
+        words!(commands_map_point = "Map: next place"),
+        words!(
+            commands_map_point_description =
+                "Go to the next place on the map (or the previous one), the map centred on it"
+        ),
     );
     none(
         Topic::Preview,
         "ui.map_open",
-        "Map: open in Maps",
-        "Open the place shown in the desktop's maps",
+        words!(commands_map_open = "Map: open in Maps"),
+        words!(commands_map_open_description = "Open the place shown in the desktop's maps"),
     );
     none(
         Topic::Preview,
         "ui.map_view_fit",
-        "Map: fit to its files",
-        "Fit the Map view to its files",
+        words!(commands_map_view_fit = "Map: fit to its files"),
+        words!(commands_map_view_fit_description = "Fit the Map view to its files"),
     );
     none(
         Topic::Preview,
         "ui.map_view_spread",
-        "Map: spread the files at one place, or group them",
-        "Spread the files at one place, or group them",
+        words!(commands_map_view_spread = "Map: spread the files at one place, or group them"),
+        words!(
+            commands_map_view_spread_description = "Spread the files at one place, or group them"
+        ),
     );
     none(
         Topic::Preview,
         "ui.map_view_search_area",
-        "Map: search the pictures and videos of this area",
-        "Search the pictures and videos taken in the area shown",
+        words!(commands_map_view_search_area = "Map: search the pictures and videos of this area"),
+        words!(
+            commands_map_view_search_area_description =
+                "Search the pictures and videos taken in the area shown"
+        ),
     );
 }
 

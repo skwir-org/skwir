@@ -5,6 +5,7 @@ use gpui::{
     AnyElement, Context, ListAlignment, ListOffset, ListState, RenderImage, ScrollEvent,
     ScrollHandle, Window, div, point, prelude::*, px,
 };
+use skwir_core::words::Words;
 use skwir_core::{CancelToken, document::PageContent, scheduler::Priority};
 
 use crate::{preview::PreviewContent, shell::Shell, theme::Theme};
@@ -146,7 +147,7 @@ pub(crate) fn report_shown(
 struct PageResult {
     generation: u64,
     number: u32,
-    result: Result<CachedPage, String>,
+    result: Result<CachedPage, Words>,
 }
 pub struct DocumentScroll {
     pub continuous: bool,
@@ -161,7 +162,7 @@ pub struct DocumentScroll {
     sizes: Rc<BTreeMap<u32, (f32, f32)>>,
     /// The widest page seen, in page units, for the sideways scroll at a zoom.
     widest: f32,
-    errors: Rc<BTreeMap<u32, String>>,
+    errors: Rc<BTreeMap<u32, Words>>,
     wanted: Vec<u32>,
     pending: Option<(u32, CancelToken)>,
     generation: u64,
@@ -980,7 +981,12 @@ impl Shell {
                             page.pixels,
                             page.order,
                         )
-                        .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
+                        .ok_or_else(|| {
+                            anyhow::Error::from(skwir_core::words!(
+                                reader_invalid_bitmap = "invalid document bitmap",
+                                note = "Drawn in place of a document's page whose picture the reader gave cannot be shown."
+                            ))
+                        })?;
                         Ok(CachedPage {
                             image,
                             content: page.content,
@@ -988,7 +994,7 @@ impl Shell {
                             side,
                         })
                     })
-                    .map_err(|e| format!("{e:#}"));
+                    .map_err(Words::of_error);
                 if !cancel.is_cancelled() {
                     let _ = tx.send(PageResult {
                         generation,
@@ -1337,10 +1343,17 @@ pub fn continuous_element(
                             .items_center()
                             .justify_center()
                             .child(
-                                errors
-                                    .get(&number)
-                                    .cloned()
-                                    .unwrap_or_else(|| format!("Page {number}…")),
+                                errors.get(&number).map_or_else(
+                                    || {
+                                        skwir_core::words!(
+                                            reader_page_waits = "Page { $number }…",
+                                            number = number,
+                                            note = "Drawn in place of a document's page while it is drawn. number: the page's."
+                                        )
+                                        .say()
+                                    },
+                                    Words::say,
+                                ),
                             ),
                     );
                 }

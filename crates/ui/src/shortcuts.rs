@@ -22,6 +22,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use skwir_core::command::Topic;
+use skwir_core::words;
 use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
@@ -74,6 +75,9 @@ struct Row {
     /// Each action's title and keys, in the keymap's order; a family's in
     /// its own.
     actions: Vec<(String, Vec<String>)>,
+    /// Which each action is, as data: its arguments (the row's actions
+    /// run one command).
+    runs: Vec<String>,
     /// Where each action stands in its family.
     ranks: Vec<usize>,
     family: bool,
@@ -181,6 +185,7 @@ fn merge(items: Vec<Item>) -> Vec<Row> {
                         .map_or_else(|| item.title.clone(), |(family, _)| family.say()),
                     topic: item.topic,
                     actions: Vec::new(),
+                    runs: Vec::new(),
                     ranks: Vec::new(),
                     family: item.family.is_some(),
                     words: vec![item.command.clone()],
@@ -194,12 +199,12 @@ fn merge(items: Vec<Item>) -> Vec<Row> {
         if !row.words.contains(&item.place) {
             row.words.push(item.place);
         }
-        match row
-            .actions
-            .iter_mut()
-            .find(|(title, _)| *title == item.title)
-        {
-            Some((_, keys)) if !keys.contains(&item.keys) => keys.push(item.keys),
+        // One action, by what it runs: never by what it is called.
+        let runs = item.args.to_string();
+        match row.runs.iter().position(|known| *known == runs) {
+            Some(at) if !row.actions[at].1.contains(&item.keys) => {
+                row.actions[at].1.push(item.keys);
+            }
             Some(_) => {}
             None => {
                 // In its family's order: the views 1 to 5, the left tab
@@ -207,6 +212,7 @@ fn merge(items: Vec<Item>) -> Vec<Row> {
                 let rank = item.family.as_ref().map_or(0, |(_, rank)| *rank);
                 let at = row.ranks.iter().take_while(|known| **known <= rank).count();
                 row.ranks.insert(at, rank);
+                row.runs.insert(at, runs);
                 row.actions.insert(at, (item.title, vec![item.keys]));
             }
         }
@@ -343,8 +349,9 @@ impl Shell {
             }
         };
         let mut here: Vec<Item> = Vec::new();
-        // Elsewhere, by place and the condition that says why it is not here.
-        let mut elsewhere: Vec<(String, Vec<Item>)> = Vec::new();
+        // Elsewhere, by place and the condition that says why it is not
+        // here: each as data, its heading the words they make.
+        let mut elsewhere: Vec<((String, String), String, Vec<Item>)> = Vec::new();
         for (i, hint) in self.key_hints.iter().enumerate() {
             if applying.iter().any(|(j, _)| *j == i) && wins(i, hint) {
                 here.push(item(hint, depth(hint)));
@@ -352,24 +359,36 @@ impl Shell {
                 .iter()
                 .any(|later| later.keys == hint.keys && later.context == hint.context)
             {
-                let label = keymap::context_label(&hint.context);
+                let at = keymap::place_of(&hint.context);
+                let key = (at.id, at.flags);
                 let found = item(hint, None);
-                match elsewhere.iter_mut().find(|(known, _)| *known == label) {
-                    Some((_, items)) => items.push(found),
-                    None => elsewhere.push((label, vec![found])),
+                match elsewhere.iter_mut().find(|(known, _, _)| *known == key) {
+                    Some((_, _, items)) => items.push(found),
+                    None => {
+                        elsewhere.push((key, keymap::context_label(&hint.context), vec![found]));
+                    }
                 }
             }
         }
         let here = by_topic(merge(here));
         let elsewhere = elsewhere
             .into_iter()
-            .map(|(heading, items)| Group {
+            .map(|(_, heading, items)| Group {
                 heading,
                 rows: merge(items),
             })
             .collect();
         let previous = FocusReturn::capture(window, cx);
-        let filter = cx.new(|cx| TextInput::new("Filter by action or keys", cx));
+        let filter = cx.new(|cx| {
+            TextInput::new(
+                words!(
+                    shortcuts_filter = "Filter by action or keys",
+                    note = "The field of the overview of shortcuts (F1), before anything is typed."
+                )
+                .say(),
+                cx,
+            )
+        });
         let typed = cx.subscribe_in(
             &filter,
             window,
@@ -437,12 +456,18 @@ impl Shell {
             toml::Value::Array(shown.into_iter().map(toml::Value::String).collect()),
         );
         self.save_settings_later();
+        // Transitional: the title without the `…` that says it asks more,
+        // until each title is a message that says it (PLAN.md, step E).
+        let action = keymap::title_of(&self.app, &hint)
+            .trim_end_matches('…')
+            .to_owned();
         self.toast(
             Toast::new(
-                format!(
-                    "Tip: press {} for {}. F1 lists the keys for where you are.",
-                    keymap::display_keys(&hint.keys),
-                    keymap::title_of(&self.app, &hint).trim_end_matches('…')
+                words!(
+                    shortcuts_tip = "Tip: press { $keys } for { $action }. F1 lists the keys for where you are.",
+                    keys = keymap::display_keys(&hint.keys),
+                    action = action,
+                    note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: what it does."
                 ),
                 Tone::Info,
                 Vec::new(),
@@ -495,9 +520,14 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let mut lists = div().flex().flex_col().gap_6().pr_3();
     if here.is_empty() && elsewhere.is_empty() {
         lists = lists.child(
-            div()
-                .text_color(theme.text_muted)
-                .child(format!("No shortcut matches “{query}”.")),
+            div().text_color(theme.text_muted).child(
+                words!(
+                    shortcuts_none = "No shortcut matches “{ $query }”.",
+                    query = query.as_str(),
+                    note = "The overview of shortcuts finds nothing; query: what was typed."
+                )
+                .say(),
+            ),
         );
     }
     for (part, groups) in [("here", here), ("elsewhere", elsewhere)] {
@@ -510,7 +540,15 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(div().text_color(theme.text_muted).child("Elsewhere"))
+                .child(
+                    div().text_color(theme.text_muted).child(
+                        words!(
+                            shortcuts_elsewhere = "Elsewhere",
+                            note = "The overview of shortcuts: the heading of the keys found that work in other places than where one is."
+                        )
+                        .say(),
+                    ),
+                )
                 .child(columns)
                 .into_any_element()
         } else {
@@ -558,7 +596,15 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .flex()
                 .items_center()
                 .gap_4()
-                .child(div().flex_none().text_title().child("Shortcuts here"))
+                .child(
+                    div().flex_none().text_title().child(
+                        words!(
+                            shortcuts_title = "Shortcuts here",
+                            note = "The title of the overview of shortcuts F1 opens: the keys that work where one is."
+                        )
+                        .say(),
+                    ),
+                )
                 .child(controls::field(
                     &overview.filter,
                     Some(300.),
@@ -576,7 +622,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .child(
                             controls::button(
                                 "shortcuts-all",
-                                "All shortcuts…",
+                                words!(
+                                    shortcuts_all = "All shortcuts…",
+                                    note = "A button of the overview of shortcuts: opens the Keyboard page of the settings."
+                                )
+                                .say(),
                                 None,
                                 ButtonStyle::Plain,
                                 &all,
@@ -601,7 +651,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                             controls::icon_button(
                                 "shortcuts-close",
                                 "close",
-                                "Close",
+                                words!(shortcuts_close = "Close").say(),
                                 &overview.close,
                                 &theme,
                             )
@@ -681,7 +731,12 @@ fn columns(groups: &[(&str, Vec<&Row>)], part: &'static str, theme: &Theme) -> C
                 .text_color(muted)
                 .truncate()
                 .child(if continued {
-                    format!("{heading}, continued")
+                    words!(
+                        shortcuts_continued = "{ $heading }, continued",
+                        heading = heading,
+                        note = "A heading of the overview of shortcuts at the top of a column whose rows began in the one before; heading: the topic."
+                    )
+                    .say()
                 } else {
                     heading.to_owned()
                 })

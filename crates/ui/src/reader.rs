@@ -9,6 +9,8 @@ use skwir_core::{
     CancelToken,
     document::{Destination, DocumentSession, PageContent, Rect, SearchHit},
     scheduler::Priority,
+    words,
+    words::Words,
 };
 use std::{rc::Rc, sync::Arc};
 
@@ -63,7 +65,7 @@ pub struct ReaderState {
     pub(crate) hits: Vec<SearchHit>,
     pub(crate) active_hit: Option<usize>,
     /// The search the find field asked for.
-    pub(crate) search: Latest<Result<Vec<SearchHit>, String>>,
+    pub(crate) search: Latest<Result<Vec<SearchHit>, Words>>,
     pub down: Option<(f32, f32)>,
 }
 impl ReaderState {
@@ -187,7 +189,7 @@ impl Shell {
             return;
         }
         let field = Field::new(
-            "Page",
+            &crate::preview_bar::label::page_field(),
             "ui.reader_page_submit",
             "ui.reader_page_cancel",
             window,
@@ -226,7 +228,12 @@ impl Shell {
                     named().next_back().cloned().unwrap_or_default(),
                 );
                 return self.set_status(
-                    format!("Enter a page number printed in the document, from {first} to {last}"),
+                    words!(
+                        reader_page_printed_refused = "Enter a page number printed in the document, from { $first } to { $last }",
+                        first = first,
+                        last = last,
+                        note = "Said where a page typed is none of the document's printed pages. first, last: its first and last printed page numbers (i, 212)."
+                    ),
                     true,
                     cx,
                 );
@@ -246,7 +253,11 @@ impl Shell {
             );
         } else {
             self.set_status(
-                format!("Enter a page number from 1 to {}", document_pages(self)),
+                words!(
+                    reader_page_refused = "Enter a page number from 1 to { $last }",
+                    last = document_pages(self).to_string(),
+                    note = "Said where a page typed is not a page of the document. last: its last page's number."
+                ),
                 true,
                 cx,
             );
@@ -381,7 +392,10 @@ impl Shell {
         }
         if self.preview.reader.find.is_none() {
             self.preview.reader.find = Some(Field::new(
-                "Find in document…",
+                &words!(
+                    reader_find_field = "Find in document…",
+                    note = "The placeholder of the field that finds words in a document (a PDF)."
+                ),
                 "ui.reader_search",
                 "ui.preview_find_close",
                 window,
@@ -425,7 +439,7 @@ impl Shell {
             &lifetime,
             Priority::Normal,
             "document-search",
-            move |cancel| session.search(&query, cancel).map_err(|e| format!("{e:#}")),
+            move |cancel| session.search(&query, cancel).map_err(Words::of_error),
         );
         cx.notify();
     }
@@ -520,7 +534,13 @@ impl Shell {
                     if first.is_none()
                         && let Some(find) = find
                     {
-                        find.say("No match", false);
+                        find.say(
+                            words!(
+                                reader_no_match = "No match",
+                                note = "In a document's find field: the words looked for are nowhere in it."
+                            ),
+                            false,
+                        );
                     }
                     self.preview.reader.hits = hits;
                     self.preview.reader.active_hit = first.map(|_| 0);
@@ -807,7 +827,14 @@ pub(crate) fn pages(shell: &Shell) -> Option<u32> {
 /// listens.
 pub(crate) fn said(shell: &Shell) -> Option<(gpui::SharedString, String)> {
     crate::preview::said(shell).map(|(name, _)| {
-        let page = format!("Page {} of {}", shell.preview.page, document_pages(shell));
+        let page = words!(
+            reader_said_page = "Page { $page } of { $pages }",
+            page = shell.preview.page,
+            pages = document_pages(shell),
+            note =
+                "What a screen reader hears of a document's preview: the page shown, of how many."
+        )
+        .say();
         (name, page)
     })
 }
@@ -887,7 +914,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Button::new(
             "reader-outline",
             "contents",
-            label::CONTENTS,
+            label::contents().say(),
             "ui.preview_contents",
         )
         .active(reader.outlines)
@@ -904,9 +931,18 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.push(Item::button(
         Slot::Navigate,
         2,
-        Button::new("preview-prev", "left", "Previous page", "ui.preview_page")
-            .args(serde_json::json!({"delta":-1}))
-            .enabled(current > 1),
+        Button::new(
+            "preview-prev",
+            "left",
+            words!(
+                reader_previous_page = "Previous page",
+                note = "A document preview's button."
+            )
+            .say(),
+            "ui.preview_page",
+        )
+        .args(serde_json::json!({"delta":-1}))
+        .enabled(current > 1),
     ));
     // A document that names its pages can show and take those names.
     let labels = page_labels(shell);
@@ -928,16 +964,27 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     };
     let unit = labels.map(|_| {
         bar.popups
-            .push(("unit", crate::preview_bar::unit_popup("Pages")));
+            .push((
+                "unit",
+                crate::preview_bar::unit_popup(words!(
+                    reader_unit_pages = "Pages",
+                    note = "A choice of how a document's pages are counted: in their order in the file (1, 2, 3), not by the numbers printed on them."
+                )),
+            ));
         (
-            Button::new("reader-unit", "", "Count by", "ui.preview_menu")
+            Button::new(
+                "reader-unit",
+                "",
+                label::count_by().say(),
+                "ui.preview_menu",
+            )
                 .args(serde_json::json!({"kind":"unit"})),
             "unit",
         )
     });
     crate::preview_bar::number_tool(
         &mut bar,
-        ("reader-page-number", "Go to page"),
+        ("reader-page-number", label::go_to_page()),
         ("ui.preview_goto", serde_json::json!({})),
         (value, total),
         |shell| shell.preview.reader.page_input.as_ref(),
@@ -947,9 +994,18 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.push(Item::button(
         Slot::Navigate,
         2,
-        Button::new("preview-next", "right", "Next page", "ui.preview_page")
-            .args(serde_json::json!({"delta":1}))
-            .enabled(current < pages),
+        Button::new(
+            "preview-next",
+            "right",
+            words!(
+                reader_next_page = "Next page",
+                note = "A document preview's button."
+            )
+            .say(),
+            "ui.preview_page",
+        )
+        .args(serde_json::json!({"delta":1}))
+        .enabled(current < pages),
     ));
 
     crate::preview_toolbar::zoom_tools(&mut bar, shell);
@@ -959,7 +1015,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Button::new(
             "reader-continuous",
             "continuous",
-            "Continuous scrolling",
+            label::continuous().say(),
             "ui.reader_continuous",
         )
         .active(reader.scroll.continuous)
@@ -970,9 +1026,14 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Item::button(
             Slot::Tools,
             1,
-            Button::new("reader-find", "search", label::FIND, "ui.preview_find")
-                .enabled(native)
-                .active(reader.find.is_some()),
+            Button::new(
+                "reader-find",
+                "search",
+                label::find().say(),
+                "ui.preview_find",
+            )
+            .enabled(native)
+            .active(reader.find.is_some()),
         )
         .opens("find"),
     );
@@ -1004,7 +1065,11 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
     let reader = &shell.preview.reader;
     let find = reader.find.as_ref()?;
     let count = if reader.search.is_pending() {
-        "Searching…".to_owned()
+        words!(
+            reader_searching = "Searching…",
+            note = "Under a document's find field while it looks for the words."
+        )
+        .say()
     } else {
         format!(
             "{} / {}{}",
@@ -1023,12 +1088,22 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             .enabled(!reader.hits.is_empty())
     };
     let buttons = vec![
-        matches("reader-prev-match", "left", "Previous match", -1),
-        matches("reader-next-match", "right", "Next match", 1),
+        matches(
+            "reader-prev-match",
+            "left",
+            crate::preview_bar::label::previous_match().say(),
+            -1,
+        ),
+        matches(
+            "reader-next-match",
+            "right",
+            crate::preview_bar::label::next_match().say(),
+            1,
+        ),
         Button::new(
             "reader-close-find",
             "close",
-            "Close find",
+            crate::preview_bar::label::close_find().say(),
             "ui.preview_find_close",
         ),
     ];

@@ -330,9 +330,9 @@ pub(crate) fn popover(
         .child(text)
         .child(
             div().flex().justify_end().child(
-                toolbar::Button::new("note-go", "forward", "Go to note", "ui.note")
+                toolbar::Button::new("note-go", "forward", go_to_note(), "ui.note")
                     .args(serde_json::json!({"go":true}))
-                    .label("Go to note")
+                    .label(go_to_note())
                     .render(shell, cx),
             ),
         );
@@ -347,6 +347,15 @@ pub(crate) fn popover(
         .with_priority(3)
         .into_any_element(),
     )
+}
+
+/// The words of the popup's button that goes to the note where it is.
+fn go_to_note() -> String {
+    skwir_core::words!(
+        note_popover_go = "Go to note",
+        note = "The button of a footnote's popup in a document's preview: go to the note where the document has it."
+    )
+    .say()
 }
 
 #[cfg(test)]

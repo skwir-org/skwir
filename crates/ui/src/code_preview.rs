@@ -9,8 +9,12 @@ use gpui::{AnyElement, Hsla, WeakEntity, div, prelude::*, px};
 use skwir_core::{inspection::Block, workspace::PaneId};
 use std::collections::BTreeSet;
 
+// The choices are given as words now (`highlight::choices_words`); a
+// test of the palettes still reads them as text.
+#[cfg(test)]
+pub use skwir_platform::highlight::choices;
 pub use skwir_platform::highlight::{
-    CodeTheme, DEFAULT, Highlighter, Palette, Resume, UserTheme, choices, user_themes,
+    CodeTheme, DEFAULT, Highlighter, Palette, Resume, UserTheme, user_themes,
 };
 
 /// A color kept as a run's is (`Run::color`), to draw with.

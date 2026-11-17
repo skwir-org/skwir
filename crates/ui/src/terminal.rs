@@ -29,6 +29,8 @@ use gpui::{
 use skwir_core::terminal::{
     Input, Key, KeyCode, Mods, Palette, Screen, Size, Spawn, TerminalSession,
 };
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::dnd::DragPayload;
 use crate::elements::terminal::{Colors, GridState, TerminalGrid};
@@ -207,10 +209,18 @@ impl Shell {
         } else if self.app.terminals.provider().is_none() {
             self.toast(
                 crate::toast::Toast::new(
-                    "The terminal is a plugin, and it is off",
+                    words!(
+                        terminal_plugin_off = "The terminal is a plugin, and it is off",
+                        note = "Said where F4 asks for the terminal while its plugin is turned \
+                                off."
+                    ),
                     crate::toast::Tone::Error,
                     vec![crate::toast::Action {
-                        label: "Open plugins".into(),
+                        label: words!(
+                            terminal_open_plugins = "Open plugins",
+                            note = "A button: open Settings at its Plugins page, to turn the \
+                                    terminal on."
+                        ),
                         command: "ui.settings".into(),
                         args: serde_json::json!({ "page": "plugins" }),
                     }],
@@ -277,7 +287,16 @@ impl Shell {
                     Err(error) => {
                         this.terminal.open = false;
                         this.remember_session();
-                        this.set_status(format!("The terminal did not start: {error:#}"), true, cx);
+                        this.set_status(
+                            words!(
+                                terminal_did_not_start = "The terminal did not start: { $error }",
+                                error = error,
+                                note = "error: why its shell did not start, as the system said \
+                                        it."
+                            ),
+                            true,
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -340,7 +359,7 @@ impl Shell {
                         .app
                         .navigate(self.pane, &skwir_core::Location::from_path(&cwd))
                     {
-                        self.set_status(format!("{error:#}"), true, cx);
+                        self.set_status(Words::of_error(error), true, cx);
                     }
                 }
             }
@@ -399,7 +418,7 @@ impl Shell {
                     };
                     match session.quote(&files.paths) {
                         Ok(words) => session.send(Input::Paste(format!("{words} "))),
-                        Err(error) => shell.set_status(format!("{error:#}"), true, cx),
+                        Err(error) => shell.set_status(Words::of_error(error), true, cx),
                     }
                 }
                 _ => shell.terminal_paste_text(cx.read_from_clipboard()),
@@ -433,11 +452,20 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.terminal_session() else {
-            let keys = self
-                .keys_for("ui.terminal", &serde_json::json!({}))
-                .map(|keys| format!(" ({keys})"))
-                .unwrap_or_default();
-            self.set_status(format!("Open the terminal first{keys}"), false, cx);
+            let said = match self.keys_for("ui.terminal", &serde_json::json!({})) {
+                Some(keys) => words!(
+                    terminal_open_first_keys = "Open the terminal first ({ $keys })",
+                    keys = keys,
+                    note = "Said where paths are to be typed at the terminal while it has no \
+                            shell; keys: the keys that open it (F4)."
+                ),
+                None => words!(
+                    terminal_open_first = "Open the terminal first",
+                    note = "Said where paths are to be typed at the terminal while it has no \
+                            shell."
+                ),
+            };
+            self.set_status(said, false, cx);
             return;
         };
         if paths.is_empty() {
@@ -452,7 +480,7 @@ impl Shell {
                 }
                 window.focus(&self.terminal.focus, cx);
             }
-            Err(error) => self.set_status(format!("{error:#}"), true, cx),
+            Err(error) => self.set_status(Words::of_error(error), true, cx),
         }
         cx.notify();
     }
@@ -467,7 +495,15 @@ impl Shell {
             .map(|entry| entry.path)
             .collect();
         if paths.is_empty() {
-            self.set_status("Nothing is selected", false, cx);
+            self.set_status(
+                words!(
+                    terminal_nothing_selected = "Nothing is selected",
+                    note = "Said where the selection is to be typed at the terminal's prompt \
+                            and none is."
+                ),
+                false,
+                cx,
+            );
             return;
         }
         self.terminal_type_paths(&paths, window, cx);
@@ -507,7 +543,11 @@ impl Shell {
         if self.terminal.labelled.is_some() {
             self.terminal.label(None);
         } else if self.terminal.screen.links.is_empty() {
-            self.set_status("No link on the terminal's screen", false, cx);
+            self.set_status(
+                words!(terminal_no_link = "No link on the terminal's screen"),
+                false,
+                cx,
+            );
         } else {
             self.terminal.label(Some(String::new()));
         }
@@ -556,7 +596,15 @@ impl Shell {
             self.terminal.label(Some(typed));
         } else {
             self.terminal.label(None);
-            self.set_status("No link has that label", false, cx);
+            self.set_status(
+                words!(
+                    terminal_no_such_label = "No link has that label",
+                    note = "Said where the letters typed over the terminal's labelled links \
+                            name none."
+                ),
+                false,
+                cx,
+            );
         }
     }
 
@@ -704,7 +752,13 @@ impl Shell {
         let panel = div()
             .id("terminal-panel")
             .role(gpui::Role::Terminal)
-            .aria_label("Terminal")
+            .aria_label(
+                words!(
+                    terminal_name = "Terminal",
+                    note = "What a screen reader calls the terminal panel."
+                )
+                .say(),
+            )
             .when_some(shown, |d, screen| {
                 let titled = (!screen.title.is_empty()).then(|| screen.title.clone());
                 d.when_some(titled, StatefulInteractiveElement::aria_description)

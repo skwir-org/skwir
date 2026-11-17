@@ -10,6 +10,8 @@
 
 use gpui::{Context, Div, InteractiveElement, Stateful, div, prelude::*, px, relative};
 use skwir_core::op::arriving::{Arrives, Arriving};
+use skwir_core::words;
+use skwir_core::words::Folder;
 
 use crate::shell::Shell;
 use crate::sizes::TextSizes;
@@ -30,10 +32,26 @@ pub fn fraction(arriving: &Arriving) -> f32 {
 /// Its pill's words: how far it has come, or why it has not.
 pub fn words(arriving: &Arriving) -> String {
     match arriving.state {
-        _ if arriving.paused => "paused".to_owned(),
-        Arrives::Waiting => "waiting".to_owned(),
-        Arrives::Starting => "starting".to_owned(),
-        Arrives::Copying(_) => "copying".to_owned(),
+        _ if arriving.paused => words!(
+            views_arriving_paused = "paused",
+            note = "On a pill beside a file a copy brings into the folder: its copy is paused."
+        )
+        .say(),
+        Arrives::Waiting => words!(
+            views_arriving_waiting = "waiting",
+            note = "On a pill beside a file a copy brings into the folder: its copy waits its turn."
+        )
+        .say(),
+        Arrives::Starting => words!(
+            views_arriving_starting = "starting",
+            note = "On a pill beside a file a copy brings into the folder: its copy is starting."
+        )
+        .say(),
+        Arrives::Copying(_) => words!(
+            views_arriving_copying = "copying",
+            note = "On a pill beside a file a copy brings into the folder: it is being copied, how far not known."
+        )
+        .say(),
         Arrives::Moving(fraction) => crate::activity::percent(fraction),
         Arrives::Landed => crate::activity::percent(1.),
     }
@@ -42,12 +60,30 @@ pub fn words(arriving: &Arriving) -> String {
 /// What a screen reader hears of it beside its name, as its pill says it.
 pub fn said(arriving: &Arriving) -> String {
     match arriving.state {
-        _ if arriving.paused => format!("arriving, paused at {}", percent_of(arriving)),
-        Arrives::Waiting => "arriving, waiting".to_owned(),
-        Arrives::Starting => "arriving, starting".to_owned(),
-        Arrives::Copying(_) => "arriving, copying".to_owned(),
-        Arrives::Moving(_) | Arrives::Landed => format!("arriving, {}", percent_of(arriving)),
+        _ if arriving.paused => words!(
+            views_arriving_said_paused = "arriving, paused at { $percent }",
+            percent = percent_of(arriving),
+            note = "What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42 %)."
+        ),
+        Arrives::Waiting => words!(
+            views_arriving_said_waiting = "arriving, waiting",
+            note = "What a screen reader hears after the name of a file a copy brings into the folder: its copy waits its turn."
+        ),
+        Arrives::Starting => words!(
+            views_arriving_said_starting = "arriving, starting",
+            note = "What a screen reader hears after the name of a file a copy brings into the folder."
+        ),
+        Arrives::Copying(_) => words!(
+            views_arriving_said_copying = "arriving, copying",
+            note = "What a screen reader hears after the name of a file a copy brings into the folder."
+        ),
+        Arrives::Moving(_) | Arrives::Landed => words!(
+            views_arriving_said_at = "arriving, { $percent }",
+            percent = percent_of(arriving),
+            note = "What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42 %)."
+        ),
     }
+    .say()
 }
 
 fn percent_of(arriving: &Arriving) -> String {
@@ -92,7 +128,13 @@ pub fn writing_pill(theme: &Theme) -> Div {
         .border_1()
         .border_color(theme.border)
         .text_color(theme.text_muted)
-        .child("writing")
+        .child(
+            words!(
+                views_writing = "writing",
+                note = "On a pill beside a file another program is still writing."
+            )
+            .say(),
+        )
 }
 
 /// The tint behind it, from its start to how far it has come, stopping
@@ -126,7 +168,13 @@ fn tip(app: &skwir_core::App, arriving: &Arriving) -> String {
                 || folder.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
             );
-            format!("From {name}")
+            words!(
+                views_arriving_from = "From { $folder }",
+                folder = Folder(name),
+                note =
+                    "Pointing at a file a copy brings into the folder: the folder it comes from."
+            )
+            .say()
         });
     let left = app
         .executor
@@ -134,13 +182,33 @@ fn tip(app: &skwir_core::App, arriving: &Arriving) -> String {
         .and_then(|transfer| transfer.left)
         .map(crate::format::time_left);
     let how = match arriving.state {
-        _ if arriving.paused => "paused".to_owned(),
-        Arrives::Waiting => "waits its turn".to_owned(),
-        Arrives::Starting => "getting ready".to_owned(),
+        _ if arriving.paused => words!(
+            views_arriving_tip_paused = "paused",
+            note = "Pointing at a file a copy brings into the folder: its copy is paused."
+        )
+        .say(),
+        Arrives::Waiting => words!(
+            views_arriving_tip_waits = "waits its turn",
+            note = "Pointing at a file a copy brings into the folder: its copy waits for others before it."
+        )
+        .say(),
+        Arrives::Starting => words!(
+            views_arriving_tip_starting = "getting ready",
+            note = "Pointing at a file a copy brings into the folder: its copy is starting."
+        )
+        .say(),
         // Its server's tool says nothing of each file until it is whole.
-        Arrives::Copying(_) => "copying with the others".to_owned(),
+        Arrives::Copying(_) => words!(
+            views_arriving_tip_copying = "copying with the others",
+            note = "Pointing at a file a copy brings into the folder: a tool copies it with the others, how far not known."
+        )
+        .say(),
         Arrives::Moving(_) => percent_of(arriving),
-        Arrives::Landed => "in place".to_owned(),
+        Arrives::Landed => words!(
+            views_arriving_tip_landed = "in place",
+            note = "Pointing at a file a copy brings into the folder: it has arrived."
+        )
+        .say(),
     };
     [from, Some(how), left]
         .into_iter()

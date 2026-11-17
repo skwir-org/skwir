@@ -13,6 +13,8 @@ use gpui::{
 };
 use skwir_core::SortKey;
 use skwir_core::entry::keys;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::format;
@@ -275,6 +277,84 @@ pub const COLUMNS: [Column; DETAILS] = [
         right: false,
     },
 ];
+
+impl Column {
+    /// What its header and the menus call it: its criterion's title
+    /// (`SortKey::title_words`), `label` as words.
+    pub fn label_words(&self) -> Words {
+        self.sort
+            .map_or_else(|| Words::as_written(self.label), SortKey::title_words)
+    }
+
+    /// What Settings says of it, as words (`description` until every
+    /// caller says words).
+    pub fn description_words(&self) -> Words {
+        match self.detail {
+            Detail::Folder => words!(
+                list_column_folder_description = "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
+                note = "A setting's description: whether the list has the Folder column. Recent is a place in the sidebar."
+            ),
+            Detail::Deleted => words!(
+                list_column_deleted_description =
+                    "Show when each file was put in the trash, where the trash's files are listed.",
+                note = "A setting's description: whether the list has the Deleted column."
+            ),
+            Detail::Size => words!(
+                list_column_size_description = "Show the size of files.",
+                note = "A setting's description: whether the list has the Size column."
+            ),
+            Detail::Dimensions => words!(
+                list_column_dimensions_description =
+                    "Show the size of pictures in pixels, where a plugin reads it of them.",
+                note = "A setting's description: whether the list has the Dimensions column."
+            ),
+            Detail::Duration => words!(
+                list_column_duration_description =
+                    "Show how long sounds and films last, where a plugin reads it of them.",
+                note = "A setting's description: whether the list has the Duration column."
+            ),
+            Detail::Modified => words!(
+                list_column_modified_description = "Show when each item last changed.",
+                note = "A setting's description: whether the list has the Modified column."
+            ),
+            Detail::Created => words!(
+                list_column_created_description =
+                    "Show when each item was made, where the system keeps it.",
+                note = "A setting's description: whether the list has the Created column."
+            ),
+            Detail::Accessed => words!(
+                list_column_accessed_description =
+                    "Show when each item was last read, as the system keeps it.",
+                note = "A setting's description: whether the list has the Accessed column."
+            ),
+            Detail::Taken => words!(
+                list_column_taken_description = "Show when pictures and films were taken, by their camera's clock, where a plugin reads it of them.",
+                note = "A setting's description: whether the list has the Taken column."
+            ),
+            Detail::Type => words!(
+                list_column_type_description = "Show the kind of file, such as PDF document.",
+                note = "A setting's description: whether the list has the Type column."
+            ),
+            Detail::Kind => words!(
+                list_column_kind_description =
+                    "Show what kind of file each is, such as Image or Document.",
+                note = "A setting's description: whether the list has the Kind column."
+            ),
+            Detail::Owner => words!(
+                list_column_owner_description = "Show who owns each item.",
+                note = "A setting's description: whether the list has the Owner column."
+            ),
+            Detail::Vcs => words!(
+                list_column_vcs_description = "Show what Git says of each file in a repository: changed, staged, new, in conflict or ignored, and of a folder what it holds.",
+                note = "A setting's description: whether the list has the Git column. Git is a program's name."
+            ),
+            Detail::Rating => words!(
+                list_column_rating_description = "Show the stars each file was given, where its notes are kept. It is the first column to give way in a narrow pane.",
+                note = "A setting's description: whether the list has the Rating column."
+            ),
+        }
+    }
+}
 
 /// One value per detail column, read by `Detail`.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -844,13 +924,22 @@ impl Shell {
                 Some(
                     value(keys::PLACE_KIND)
                         .and_then(skwir_core::Value::as_str)
-                        .unwrap_or("Place")
+                        .map_or_else(
+                            || {
+                                words!(
+                                    list_type_place = "Place",
+                                    note = "The Type of a place listed (a bookmark, a device) that does not say what it is."
+                                )
+                                .say()
+                            },
+                            str::to_owned,
+                        )
                         .into(),
                 )
             } else if e.is_dir() {
                 Some(words.into())
             } else if e.is_broken_link() {
-                Some(crate::typenames::BROKEN_LINK.into())
+                Some(crate::typenames::broken_link().say().into())
             } else {
                 None
             }
@@ -909,28 +998,35 @@ impl Shell {
                         .and_then(skwir_core::Value::as_u64)
                         .and_then(on_the_clock),
                 ),
-                Detail::Type => Said::text(&*typed("Folder").unwrap_or_else(|| {
-                    // Typed only where the column shows it.
-                    skwir_platform::mime::of_entry(e)
-                        .as_ref()
-                        .and_then(|mime| self.type_names.get(mime))
-                        .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
-                })),
-                Detail::Kind => Said::text(&*typed("Folder").unwrap_or_else(|| {
-                    skwir_platform::mime::of_entry(e)
-                        .as_ref()
-                        .and_then(|mime| self.type_names.kind(mime))
-                        .unwrap_or_else(|| "".into())
-                })),
+                Detail::Type => Said::text(
+                    &*typed(&crate::typenames::folder().say()).unwrap_or_else(|| {
+                        // Typed only where the column shows it.
+                        skwir_platform::mime::of_entry(e)
+                            .as_ref()
+                            .and_then(|mime| self.type_names.get(mime))
+                            .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
+                    }),
+                ),
+                Detail::Kind => Said::text(
+                    &*typed(&crate::typenames::folder().say()).unwrap_or_else(|| {
+                        skwir_platform::mime::of_entry(e)
+                            .as_ref()
+                            .and_then(|mime| self.type_names.kind(mime))
+                            .unwrap_or_else(|| "".into())
+                    }),
+                ),
                 // A folder's is what it holds, as a screen reader hears it
                 // (`entry::vcs_said`): "Holds changes".
-                Detail::Vcs => Said::text(skwir_core::vcs::State::of(e).map_or("", |state| {
-                    if e.is_dir() {
-                        state.below()
-                    } else {
-                        state.title()
-                    }
-                })),
+                Detail::Vcs => Said::text(skwir_core::vcs::State::of(e).map_or_else(
+                    String::new,
+                    |state| {
+                        if e.is_dir() {
+                            state.below_words().say()
+                        } else {
+                            state.words().say()
+                        }
+                    },
+                )),
                 Detail::Owner => Said::text(
                     value(keys::UID)
                         .and_then(skwir_core::Value::as_u64)
@@ -1382,28 +1478,42 @@ fn on_the_clock(clock: u64) -> Option<std::time::SystemTime> {
     Some(std::time::SystemTime::from(zoned.timestamp()))
 }
 
+/// A column's header `label` while what is listed is sorted by it, with
+/// the order's arrow: the list's, a table's in a preview.
+pub(crate) fn sorted_header(label: Words, ascending: bool) -> Words {
+    if ascending {
+        words!(
+            list_header_ascending = "{ $label } ▲",
+            label = label,
+            note = "A column's header while the rows are sorted by it, the arrow pointing up: smallest, oldest or A first."
+        )
+    } else {
+        words!(
+            list_header_descending = "{ $label } ▼",
+            label = label,
+            note = "A column's header while the rows are sorted by it, the arrow pointing down: largest, newest or Z first."
+        )
+    }
+}
+
 /// A header's label, sorting by `key` when clicked, with the order's
 /// arrow while it is the key.
 fn header_cell(
     id: impl Into<gpui::ElementId>,
-    label: &'static str,
+    label: Words,
     key: Option<SortKey>,
     shell: &Shell,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let spec = shell.sort_spec();
-    let indicator = match key {
-        Some(key) if spec.key == key && spec.ascending => " ▲",
-        Some(key) if spec.key == key => " ▼",
-        _ => "",
+    let said = match key {
+        Some(key) if spec.key == key => sorted_header(label, spec.ascending),
+        _ => label,
     };
     // Cut at its end in a column narrower than its name, said whole when
     // pointed at: the header is one line.
-    let el = crate::elements::clip::clipped(
-        div().id(id).min_w_0().truncate(),
-        format!("{label}{indicator}"),
-    );
+    let el = crate::elements::clip::clipped(div().id(id).min_w_0().truncate(), said.say());
     match key {
         Some(key) => el
             .cursor_pointer()
@@ -1425,7 +1535,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
             .when(tree, |d| d.pl(px(scale.f(DISCLOSURE + 8.) + icon)))
             .child(header_cell(
                 "h-name",
-                "Name",
+                SortKey::Name.title_words(),
                 Some(SortKey::Name),
                 shell,
                 theme,
@@ -1441,7 +1551,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                 .relative()
                 .child(header_cell(
                     ("h", column.detail as usize),
-                    column.label,
+                    column.label_words(),
                     column.sort,
                     shell,
                     theme,

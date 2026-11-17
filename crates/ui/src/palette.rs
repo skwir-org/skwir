@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
 use skwir_core::SortKey;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -46,294 +48,536 @@ pub struct PaletteState {
 /// The shell's own commands the palette offers, each with the arguments
 /// that make it one thing to do, alongside the core's and the plugins'.
 /// Every one is declared (`commands.rs`); a test checks its arguments.
-pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
-    ("ui.focus_address", "{}", "Focus address bar"),
-    ("ui.focus_pane", "{}", "Focus file list"),
-    ("ui.palette", "{}", "Command palette"),
-    ("ui.settings", "{}", "Settings…"),
-    ("ui.about", "{}", "About skwir"),
-    ("ui.rename_prompt", "{}", "Rename…"),
-    ("ui.mkdir_prompt", "{}", "New folder…"),
-    ("ui.new_file_prompt", "{}", "New file…"),
-    ("ui.find", "{}", "Find a name…"),
-    (
-        "ui.find",
-        r#"{"backward":true}"#,
-        "Find a name before the cursor…",
-    ),
-    ("ui.find_next", r#"{"delta":1}"#, "Find the next name"),
-    ("ui.find_next", r#"{"delta":-1}"#, "Find the previous name"),
-    ("ui.toggle_sidebar", "{}", "Toggle sidebar"),
-    ("ui.focus_sidebar", "{}", "Focus sidebar"),
-    ("ui.focus_next_part", "{}", "Focus next part of the window"),
-    (
-        "ui.sidebar_section",
-        r#"{"reset":true}"#,
-        "Sidebar: show every group in its place",
-    ),
-    ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
-    ("ui.view_buttons_shown", "{}", "Toggle view buttons"),
-    ("ui.up_button", "{}", "Toggle the Up button"),
-    ("ui.quick_filters", "{}", "Toggle Quick filters"),
-    ("ui.full_width", "{}", "Toggle full-width reading"),
-    (
-        "ui.usage_mode",
-        r#"{"mode":"size"}"#,
-        "Usage: blocks by size",
-    ),
-    (
-        "ui.usage_mode",
-        r#"{"mode":"files"}"#,
-        "Usage: blocks by files",
-    ),
-    ("ui.usage_mode", r#"{"mode":"age"}"#, "Usage: color by age"),
-    (
-        "ui.usage_mode",
-        r#"{"mode":"types"}"#,
-        "Usage: color by kind",
-    ),
-    ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
-    ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
-    ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
-    (
-        "ui.text_size",
-        r#"{"part":"files","dir":"in"}"#,
-        "Files text: larger",
-    ),
-    (
-        "ui.text_size",
-        r#"{"part":"files","dir":"out"}"#,
-        "Files text: smaller",
-    ),
-    (
-        "ui.text_size",
-        r#"{"part":"files","dir":"reset"}"#,
-        "Files text: 100 %",
-    ),
-    ("ui.map_view_fit", "{}", "Map: fit to its files"),
-    (
-        "ui.map_view_search_area",
-        "{}",
-        "Map: search the pictures and videos of this area",
-    ),
-    (
-        "ui.map_view_spread",
-        "{}",
-        "Map: spread the files at one place, or group them",
-    ),
-    ("ui.toggle_preview", "{}", "Toggle preview"),
-    ("ui.terminal", "{}", "Toggle terminal"),
-    ("ui.terminal_copy", "{}", "Terminal: copy"),
-    ("ui.terminal_paste", "{}", "Terminal: paste"),
-    ("ui.terminal_select_all", "{}", "Terminal: select all"),
-    ("ui.terminal_clear", "{}", "Terminal: clear the history"),
-    (
-        "ui.terminal_paths",
-        "{}",
-        "Terminal: type the selection's paths",
-    ),
-    ("ui.terminal_links", "{}", "Terminal: follow a link…"),
-    (
-        "ui.inspect",
-        r#"{"action":"links"}"#,
-        "Preview: follow a link…",
-    ),
-    (
-        "ui.preview_page",
-        r#"{"delta":-1}"#,
-        "Preview: previous page",
-    ),
-    ("ui.preview_page", r#"{"delta":1}"#, "Preview: next page"),
-    ("ui.preview_goto", "{}", "Preview: go to page or chapter…"),
-    ("ui.preview_open_external", "{}", "Preview: open externally"),
-    ("ui.preview_copy_path", "{}", "Preview: copy path"),
-    ("ui.media_play", "{}", "Player: play the selection"),
-    ("ui.media_pin", "{}", "Player: pin or let go of this track"),
-    (
-        "ui.media_keep_playing",
-        "{}",
-        "Player: keep playing while you browse",
-    ),
-    ("ui.media_autoplay", "{}", "Player: play on selection"),
-    (
-        "ui.media_continue",
-        r#"{"mode":"off"}"#,
-        "Player: stop when a track ends",
-    ),
-    (
-        "ui.media_continue",
-        r#"{"mode":"next"}"#,
-        "Player: play the next track when one ends",
-    ),
-    (
-        "ui.media_continue",
-        r#"{"mode":"shuffle"}"#,
-        "Player: shuffle",
-    ),
-    (
-        "ui.player",
-        r#"{"request":"play_pause"}"#,
-        "Player: play or pause",
-    ),
-    (
-        "ui.player",
-        r#"{"request":"stop"}"#,
-        "Player: stop and let go",
-    ),
-    ("ui.media_step", r#"{"delta":1}"#, "Player: next track"),
-    ("ui.media_step", r#"{"delta":-1}"#, "Player: previous track"),
-    ("ui.properties", "{}", "Toggle properties"),
-    ("ui.inspect", r#"{"action":"hex"}"#, "Preview: hexadecimal"),
-    (
-        "ui.inspect",
-        r#"{"action":"auto"}"#,
-        "Preview: default presentation",
-    ),
-    ("ui.preview_find", "{}", "Preview: find text"),
-    (
-        "ui.preview_match",
-        r#"{"delta":1}"#,
-        "Preview: next search match",
-    ),
-    (
-        "ui.preview_match",
-        r#"{"delta":-1}"#,
-        "Preview: previous search match",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"source"}"#,
-        "Preview: source / rendered",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"turn"}"#,
-        "Preview: 3D / picture",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"whole"}"#,
-        "Preview: full preview",
-    ),
-    ("ui.model_perspective", "{}", "Model: perspective"),
-    ("ui.model_smooth", "{}", "Model: smooth shading"),
-    ("ui.wrap_lines", "{}", "Preview: wrap lines"),
-    (
-        "ui.text_continuous",
-        "{}",
-        "Preview: toggle continuous scrolling of text",
-    ),
-    ("ui.preview_contents", "{}", "Preview: contents"),
-    ("ui.contents_pin", "{}", "Preview: keep contents open"),
-    ("ui.preview_copy", "{}", "Preview: copy"),
-    ("ui.preview_select_all", "{}", "Preview: select all"),
-    ("ui.preview_close", "{}", "Preview: close"),
-    (
-        "ui.preview_zoom",
-        r#"{"dir":"width"}"#,
-        "Preview: fit width",
-    ),
-    (
-        "ui.preview_zoom",
-        r#"{"dir":"1"}"#,
-        "Preview: actual size (100%)",
-    ),
-    (
-        "ui.reader_continuous",
-        "{}",
-        "Document: toggle continuous scrolling",
-    ),
-    (
-        "ui.preview_seek",
-        r#"{"delta":-5}"#,
-        "Preview: back five seconds",
-    ),
-    (
-        "ui.preview_seek",
-        r#"{"delta":5}"#,
-        "Preview: forward five seconds",
-    ),
-    ("ui.preview_zoom", r#"{"dir":"in"}"#, "Preview: zoom in"),
-    ("ui.preview_zoom", r#"{"dir":"out"}"#, "Preview: zoom out"),
-    ("ui.preview_zoom", r#"{"dir":"reset"}"#, "Preview: fit"),
-    ("ui.preview_fullscreen", "{}", "Preview: full screen"),
-    ("ui.slideshow", "{}", "Preview: slideshow"),
-    ("ui.map_open", "{}", "Map: open in Maps"),
-    ("ui.peek", "{}", "Peek"),
-    ("ui.search", "{}", "Search…"),
-    ("ui.filter", "{}", "Filter…"),
-    ("ui.history_menu", "{}", "Back: history…"),
-    (
-        "ui.history_menu",
-        r#"{"forward":true}"#,
-        "Forward: history…",
-    ),
-    ("ui.jump", "{}", "Jump…"),
-    ("ui.rename_bulk_prompt", "{}", "Rename several…"),
-    ("ui.tags_prompt", "{}", "Tags…"),
-    ("ui.timeline", "{}", "Timeline"),
-    ("ui.split", "{}", "Split pane"),
-    (
-        "ui.split",
-        r#"{"axis":"other"}"#,
-        "Split pane the other way",
-    ),
-    (
-        "ui.layout",
-        r#"{"panes":"auto"}"#,
-        "Panes: arrange automatically",
-    ),
-    ("ui.layout", r#"{"panes":"row"}"#, "Panes: side by side"),
-    (
-        "ui.layout",
-        r#"{"panes":"column"}"#,
-        "Panes: one above the other",
-    ),
-    (
-        "ui.layout",
-        r#"{"preview":"auto"}"#,
-        "Preview: place automatically",
-    ),
-    (
-        "ui.layout",
-        r#"{"preview":"right"}"#,
-        "Preview: on the right",
-    ),
-    (
-        "ui.layout",
-        r#"{"preview":"bottom"}"#,
-        "Preview: at the bottom",
-    ),
-    (
-        "ui.layout",
-        r#"{"member":"auto"}"#,
-        "File in an archive: place automatically",
-    ),
-    (
-        "ui.layout",
-        r#"{"member":"right"}"#,
-        "File in an archive: on the right",
-    ),
-    (
-        "ui.layout",
-        r#"{"member":"bottom"}"#,
-        "File in an archive: at the bottom",
-    ),
-    ("ui.focus_other_pane", "{}", "Focus other pane"),
-    ("ui.quit", "{}", "Quit"),
-];
+fn ui_command_table() -> Vec<(&'static str, &'static str, Words)> {
+    vec![
+        (
+            "ui.focus_address",
+            "{}",
+            words!(palette_focus_address = "Focus address bar"),
+        ),
+        (
+            "ui.focus_pane",
+            "{}",
+            words!(palette_focus_pane = "Focus file list"),
+        ),
+        (
+            "ui.palette",
+            "{}",
+            words!(palette_command_palette = "Command palette"),
+        ),
+        ("ui.settings", "{}", words!(palette_settings = "Settings…")),
+        ("ui.about", "{}", words!(palette_about = "About skwir")),
+        (
+            "ui.rename_prompt",
+            "{}",
+            words!(palette_rename_prompt = "Rename…"),
+        ),
+        (
+            "ui.mkdir_prompt",
+            "{}",
+            words!(palette_mkdir_prompt = "New folder…"),
+        ),
+        (
+            "ui.new_file_prompt",
+            "{}",
+            words!(palette_new_file_prompt = "New file…"),
+        ),
+        ("ui.find", "{}", words!(palette_find = "Find a name…")),
+        (
+            "ui.find",
+            r#"{"backward":true}"#,
+            words!(palette_find_backward = "Find a name before the cursor…"),
+        ),
+        (
+            "ui.find_next",
+            r#"{"delta":1}"#,
+            words!(palette_find_next = "Find the next name"),
+        ),
+        (
+            "ui.find_next",
+            r#"{"delta":-1}"#,
+            words!(palette_find_previous = "Find the previous name"),
+        ),
+        (
+            "ui.toggle_sidebar",
+            "{}",
+            words!(palette_toggle_sidebar = "Toggle sidebar"),
+        ),
+        (
+            "ui.focus_sidebar",
+            "{}",
+            words!(palette_focus_sidebar = "Focus sidebar"),
+        ),
+        (
+            "ui.focus_next_part",
+            "{}",
+            words!(palette_focus_next_part = "Focus next part of the window"),
+        ),
+        (
+            "ui.sidebar_section",
+            r#"{"reset":true}"#,
+            words!(palette_sidebar_section_reset = "Sidebar: show every group in its place"),
+        ),
+        (
+            "ui.grid_fill",
+            "{}",
+            words!(palette_grid_fill = "Toggle filled thumbnails"),
+        ),
+        (
+            "ui.view_buttons_shown",
+            "{}",
+            words!(palette_view_buttons_shown = "Toggle view buttons"),
+        ),
+        (
+            "ui.up_button",
+            "{}",
+            words!(palette_up_button = "Toggle the Up button"),
+        ),
+        (
+            "ui.quick_filters",
+            "{}",
+            words!(palette_quick_filters = "Toggle Quick filters"),
+        ),
+        (
+            "ui.full_width",
+            "{}",
+            words!(palette_full_width = "Toggle full-width reading"),
+        ),
+        (
+            "ui.usage_mode",
+            r#"{"mode":"size"}"#,
+            words!(palette_usage_mode_size = "Usage: blocks by size"),
+        ),
+        (
+            "ui.usage_mode",
+            r#"{"mode":"files"}"#,
+            words!(palette_usage_mode_files = "Usage: blocks by files"),
+        ),
+        (
+            "ui.usage_mode",
+            r#"{"mode":"age"}"#,
+            words!(palette_usage_mode_age = "Usage: color by age"),
+        ),
+        (
+            "ui.usage_mode",
+            r#"{"mode":"types"}"#,
+            words!(palette_usage_mode_types = "Usage: color by kind"),
+        ),
+        (
+            "ui.zoom",
+            r#"{"dir":"in"}"#,
+            words!(palette_zoom_in = "Zoom in"),
+        ),
+        (
+            "ui.zoom",
+            r#"{"dir":"out"}"#,
+            words!(palette_zoom_out = "Zoom out"),
+        ),
+        (
+            "ui.zoom",
+            r#"{"dir":"reset"}"#,
+            words!(palette_zoom_reset = "Zoom reset"),
+        ),
+        (
+            "ui.text_size",
+            r#"{"part":"files","dir":"in"}"#,
+            words!(palette_text_size_files_in = "Files text: larger"),
+        ),
+        (
+            "ui.text_size",
+            r#"{"part":"files","dir":"out"}"#,
+            words!(palette_text_size_files_out = "Files text: smaller"),
+        ),
+        (
+            "ui.text_size",
+            r#"{"part":"files","dir":"reset"}"#,
+            words!(palette_text_size_files_reset = "Files text: 100 %"),
+        ),
+        (
+            "ui.map_view_fit",
+            "{}",
+            words!(palette_map_view_fit = "Map: fit to its files"),
+        ),
+        (
+            "ui.map_view_search_area",
+            "{}",
+            words!(
+                palette_map_view_search_area = "Map: search the pictures and videos of this area"
+            ),
+        ),
+        (
+            "ui.map_view_spread",
+            "{}",
+            words!(palette_map_view_spread = "Map: spread the files at one place, or group them"),
+        ),
+        (
+            "ui.toggle_preview",
+            "{}",
+            words!(palette_toggle_preview = "Toggle preview"),
+        ),
+        (
+            "ui.terminal",
+            "{}",
+            words!(palette_terminal = "Toggle terminal"),
+        ),
+        (
+            "ui.terminal_copy",
+            "{}",
+            words!(palette_terminal_copy = "Terminal: copy"),
+        ),
+        (
+            "ui.terminal_paste",
+            "{}",
+            words!(palette_terminal_paste = "Terminal: paste"),
+        ),
+        (
+            "ui.terminal_select_all",
+            "{}",
+            words!(palette_terminal_select_all = "Terminal: select all"),
+        ),
+        (
+            "ui.terminal_clear",
+            "{}",
+            words!(palette_terminal_clear = "Terminal: clear the history"),
+        ),
+        (
+            "ui.terminal_paths",
+            "{}",
+            words!(palette_terminal_paths = "Terminal: type the selection's paths"),
+        ),
+        (
+            "ui.terminal_links",
+            "{}",
+            words!(palette_terminal_links = "Terminal: follow a link…"),
+        ),
+        (
+            "ui.inspect",
+            r#"{"action":"links"}"#,
+            words!(palette_inspect_links = "Preview: follow a link…"),
+        ),
+        (
+            "ui.preview_page",
+            r#"{"delta":-1}"#,
+            words!(palette_preview_page_previous = "Preview: previous page"),
+        ),
+        (
+            "ui.preview_page",
+            r#"{"delta":1}"#,
+            words!(palette_preview_page_next = "Preview: next page"),
+        ),
+        (
+            "ui.preview_goto",
+            "{}",
+            words!(palette_preview_goto = "Preview: go to page or chapter…"),
+        ),
+        (
+            "ui.preview_open_external",
+            "{}",
+            words!(palette_preview_open_external = "Preview: open externally"),
+        ),
+        (
+            "ui.preview_copy_path",
+            "{}",
+            words!(palette_preview_copy_path = "Preview: copy path"),
+        ),
+        (
+            "ui.media_play",
+            "{}",
+            words!(palette_media_play = "Player: play the selection"),
+        ),
+        (
+            "ui.media_pin",
+            "{}",
+            words!(palette_media_pin = "Player: pin or let go of this track"),
+        ),
+        (
+            "ui.media_keep_playing",
+            "{}",
+            words!(palette_media_keep_playing = "Player: keep playing while you browse"),
+        ),
+        (
+            "ui.media_autoplay",
+            "{}",
+            words!(palette_media_autoplay = "Player: play on selection"),
+        ),
+        (
+            "ui.media_continue",
+            r#"{"mode":"off"}"#,
+            words!(palette_media_continue_off = "Player: stop when a track ends"),
+        ),
+        (
+            "ui.media_continue",
+            r#"{"mode":"next"}"#,
+            words!(palette_media_continue_next = "Player: play the next track when one ends"),
+        ),
+        (
+            "ui.media_continue",
+            r#"{"mode":"shuffle"}"#,
+            words!(palette_media_continue_shuffle = "Player: shuffle"),
+        ),
+        (
+            "ui.player",
+            r#"{"request":"play_pause"}"#,
+            words!(palette_player_play_pause = "Player: play or pause"),
+        ),
+        (
+            "ui.player",
+            r#"{"request":"stop"}"#,
+            words!(palette_player_stop = "Player: stop and let go"),
+        ),
+        (
+            "ui.media_step",
+            r#"{"delta":1}"#,
+            words!(palette_media_next = "Player: next track"),
+        ),
+        (
+            "ui.media_step",
+            r#"{"delta":-1}"#,
+            words!(palette_media_previous = "Player: previous track"),
+        ),
+        (
+            "ui.properties",
+            "{}",
+            words!(palette_properties = "Toggle properties"),
+        ),
+        (
+            "ui.inspect",
+            r#"{"action":"hex"}"#,
+            words!(palette_inspect_hex = "Preview: hexadecimal"),
+        ),
+        (
+            "ui.inspect",
+            r#"{"action":"auto"}"#,
+            words!(palette_inspect_auto = "Preview: default presentation"),
+        ),
+        (
+            "ui.preview_find",
+            "{}",
+            words!(palette_preview_find = "Preview: find text"),
+        ),
+        (
+            "ui.preview_match",
+            r#"{"delta":1}"#,
+            words!(palette_preview_match_next = "Preview: next search match"),
+        ),
+        (
+            "ui.preview_match",
+            r#"{"delta":-1}"#,
+            words!(palette_preview_match_previous = "Preview: previous search match"),
+        ),
+        (
+            "ui.inspect",
+            r#"{"action":"source"}"#,
+            words!(palette_inspect_source = "Preview: source / rendered"),
+        ),
+        (
+            "ui.inspect",
+            r#"{"action":"turn"}"#,
+            words!(palette_inspect_turn = "Preview: 3D / picture"),
+        ),
+        (
+            "ui.inspect",
+            r#"{"action":"whole"}"#,
+            words!(palette_inspect_whole = "Preview: full preview"),
+        ),
+        (
+            "ui.model_perspective",
+            "{}",
+            words!(palette_model_perspective = "Model: perspective"),
+        ),
+        (
+            "ui.model_smooth",
+            "{}",
+            words!(palette_model_smooth = "Model: smooth shading"),
+        ),
+        (
+            "ui.wrap_lines",
+            "{}",
+            words!(palette_wrap_lines = "Preview: wrap lines"),
+        ),
+        (
+            "ui.text_continuous",
+            "{}",
+            words!(palette_text_continuous = "Preview: toggle continuous scrolling of text"),
+        ),
+        (
+            "ui.preview_contents",
+            "{}",
+            words!(palette_preview_contents = "Preview: contents"),
+        ),
+        (
+            "ui.contents_pin",
+            "{}",
+            words!(palette_contents_pin = "Preview: keep contents open"),
+        ),
+        (
+            "ui.preview_copy",
+            "{}",
+            words!(palette_preview_copy = "Preview: copy"),
+        ),
+        (
+            "ui.preview_select_all",
+            "{}",
+            words!(palette_preview_select_all = "Preview: select all"),
+        ),
+        (
+            "ui.preview_close",
+            "{}",
+            words!(palette_preview_close = "Preview: close"),
+        ),
+        (
+            "ui.preview_zoom",
+            r#"{"dir":"width"}"#,
+            words!(palette_preview_zoom_width = "Preview: fit width"),
+        ),
+        (
+            "ui.preview_zoom",
+            r#"{"dir":"1"}"#,
+            words!(palette_preview_zoom_actual = "Preview: actual size (100%)"),
+        ),
+        (
+            "ui.reader_continuous",
+            "{}",
+            words!(palette_reader_continuous = "Document: toggle continuous scrolling"),
+        ),
+        (
+            "ui.preview_seek",
+            r#"{"delta":-5}"#,
+            words!(palette_preview_seek_back = "Preview: back five seconds"),
+        ),
+        (
+            "ui.preview_seek",
+            r#"{"delta":5}"#,
+            words!(palette_preview_seek_forward = "Preview: forward five seconds"),
+        ),
+        (
+            "ui.preview_zoom",
+            r#"{"dir":"in"}"#,
+            words!(palette_preview_zoom_in = "Preview: zoom in"),
+        ),
+        (
+            "ui.preview_zoom",
+            r#"{"dir":"out"}"#,
+            words!(palette_preview_zoom_out = "Preview: zoom out"),
+        ),
+        (
+            "ui.preview_zoom",
+            r#"{"dir":"reset"}"#,
+            words!(palette_preview_zoom_reset = "Preview: fit"),
+        ),
+        (
+            "ui.preview_fullscreen",
+            "{}",
+            words!(palette_preview_fullscreen = "Preview: full screen"),
+        ),
+        (
+            "ui.slideshow",
+            "{}",
+            words!(palette_slideshow = "Preview: slideshow"),
+        ),
+        (
+            "ui.map_open",
+            "{}",
+            words!(palette_map_open = "Map: open in Maps"),
+        ),
+        ("ui.peek", "{}", words!(palette_peek = "Peek")),
+        ("ui.search", "{}", words!(palette_search = "Search…")),
+        ("ui.filter", "{}", words!(palette_filter = "Filter…")),
+        (
+            "ui.history_menu",
+            "{}",
+            words!(palette_history_menu = "Back: history…"),
+        ),
+        (
+            "ui.history_menu",
+            r#"{"forward":true}"#,
+            words!(palette_history_menu_forward = "Forward: history…"),
+        ),
+        ("ui.jump", "{}", words!(palette_jump = "Jump…")),
+        (
+            "ui.rename_bulk_prompt",
+            "{}",
+            words!(palette_rename_bulk_prompt = "Rename several…"),
+        ),
+        (
+            "ui.tags_prompt",
+            "{}",
+            words!(palette_tags_prompt = "Tags…"),
+        ),
+        ("ui.timeline", "{}", words!(palette_timeline = "Timeline")),
+        ("ui.split", "{}", words!(palette_split = "Split pane")),
+        (
+            "ui.split",
+            r#"{"axis":"other"}"#,
+            words!(palette_split_other = "Split pane the other way"),
+        ),
+        (
+            "ui.layout",
+            r#"{"panes":"auto"}"#,
+            words!(palette_layout_panes_auto = "Panes: arrange automatically"),
+        ),
+        (
+            "ui.layout",
+            r#"{"panes":"row"}"#,
+            words!(palette_layout_panes_row = "Panes: side by side"),
+        ),
+        (
+            "ui.layout",
+            r#"{"panes":"column"}"#,
+            words!(palette_layout_panes_column = "Panes: one above the other"),
+        ),
+        (
+            "ui.layout",
+            r#"{"preview":"auto"}"#,
+            words!(palette_layout_preview_auto = "Preview: place automatically"),
+        ),
+        (
+            "ui.layout",
+            r#"{"preview":"right"}"#,
+            words!(palette_layout_preview_right = "Preview: on the right"),
+        ),
+        (
+            "ui.layout",
+            r#"{"preview":"bottom"}"#,
+            words!(palette_layout_preview_bottom = "Preview: at the bottom"),
+        ),
+        (
+            "ui.layout",
+            r#"{"member":"auto"}"#,
+            words!(palette_layout_member_auto = "File in an archive: place automatically"),
+        ),
+        (
+            "ui.layout",
+            r#"{"member":"right"}"#,
+            words!(palette_layout_member_right = "File in an archive: on the right"),
+        ),
+        (
+            "ui.layout",
+            r#"{"member":"bottom"}"#,
+            words!(palette_layout_member_bottom = "File in an archive: at the bottom"),
+        ),
+        (
+            "ui.focus_other_pane",
+            "{}",
+            words!(palette_focus_other_pane = "Focus other pane"),
+        ),
+        ("ui.quit", "{}", words!(palette_quit = "Quit")),
+    ]
+}
 
-/// [`UI_COMMANDS`] with their arguments parsed, once.
-pub fn ui_commands() -> &'static [(&'static str, serde_json::Value, &'static str)] {
-    static PARSED: OnceLock<Vec<(&'static str, serde_json::Value, &'static str)>> = OnceLock::new();
+/// The shell's own commands the palette offers ([`ui_command_table`]) with
+/// their arguments parsed, once: each called by its words, said where it is
+/// shown.
+pub fn ui_commands() -> &'static [(&'static str, serde_json::Value, Words)] {
+    static PARSED: OnceLock<Vec<(&'static str, serde_json::Value, Words)>> = OnceLock::new();
     PARSED.get_or_init(|| {
-        UI_COMMANDS
-            .iter()
+        ui_command_table()
+            .into_iter()
             .map(|(name, args, title)| {
                 (
-                    *name,
+                    name,
                     serde_json::from_str(args).expect("valid ui args"),
-                    *title,
+                    title,
                 )
             })
             .collect()
@@ -423,7 +667,7 @@ pub fn offered(
         offers.push(Offer::of(
             "ui.view",
             serde_json::json!({ "id": view.id }),
-            format!("{} view", view.title),
+            keymap::view_title(view.title.clone()).say(),
         ));
     }
     // Every setting is reachable by name, like a command: its page, its
@@ -433,26 +677,53 @@ pub fn offered(
         if !spec.editable() {
             continue;
         }
-        let mut path = vec![crate::settings::page_title_of(&spec, &plugins)];
-        if !spec.section.is_empty() {
-            path.push(spec.section_title.say());
-        }
-        path.push(spec.title.say());
+        let page = crate::settings::page_title_of(&spec, &plugins);
+        let title = if spec.section.is_empty() {
+            words!(
+                palette_setting = "Settings: { $page } › { $setting }",
+                page = page,
+                setting = spec.title.clone(),
+                note = "A command of the palette opening a setting; page: the settings page it is on; setting: its title."
+            )
+        } else {
+            words!(
+                palette_setting_in_section = "Settings: { $page } › { $section } › { $setting }",
+                page = page,
+                section = spec.section_title.clone(),
+                setting = spec.title.clone(),
+                note = "A command of the palette opening a setting; page: the settings page it is on; section: the section of the page; setting: its title."
+            )
+        };
         offers.push(Offer::of(
             "ui.settings",
             serde_json::json!({ "key": spec.key }),
-            format!("Settings: {}", path.join(" › ")),
+            title.say(),
         ));
     }
-    for (page, title) in [("plugins", "Plugins"), ("keyboard", "Keyboard shortcuts")] {
+    for (page, title) in [
+        (
+            "plugins",
+            words!(
+                palette_settings_plugins = "Settings: Plugins",
+                note = "A command of the palette opening the settings' page of plugins."
+            ),
+        ),
+        (
+            "keyboard",
+            words!(
+                palette_settings_keyboard = "Settings: Keyboard shortcuts",
+                note = "A command of the palette opening the settings' page of keyboard shortcuts."
+            ),
+        ),
+    ] {
         offers.push(Offer::of(
             "ui.settings",
             serde_json::json!({ "page": page }),
-            format!("Settings: {title}"),
+            title.say(),
         ));
     }
     for (name, args, title) in ui_commands() {
-        offers.push(Offer::of(name, args.clone(), *title));
+        offers.push(Offer::of(name, args.clone(), title.say()));
     }
     // A plugin's context-menu item that runs a shell command with its
     // own arguments (Other Application… is `ui.choose` over the plugin's
@@ -469,7 +740,14 @@ pub fn offered(
             continue;
         }
         let title = match &item.submenu {
-            Some(submenu) => format!("{} › {}", submenu.title, item.title.say()),
+            Some(submenu) => words!(
+                palette_in_submenu = "{ $submenu } › { $item }",
+                submenu = skwir_core::registry::submenus::words_of(&submenu.id)
+                    .unwrap_or_else(|| Words::as_written(submenu.title.clone())),
+                item = item.title.clone(),
+                note = "A context menu's item in the palette, named by its submenu (Open With) and its own title."
+            )
+            .say(),
             None => item.title.say(),
         };
         offers.push(Offer::of(&command.name, command.args.clone(), title));
@@ -500,8 +778,9 @@ impl Shell {
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| {
-            let mut input = TextInput::new("Type a command", cx);
-            input.set_label("Command");
+            let mut input =
+                TextInput::new(words!(palette_placeholder = "Type a command").say(), cx);
+            input.set_label(palette_label().say());
             input
         });
         let sub = cx.subscribe_in(
@@ -555,7 +834,7 @@ impl Shell {
             args.values.insert(key, serde_json::Value::String(value));
             args.index += 1;
             if args.index < args.required.len() {
-                let asked = format!("{} · {}", args.name, args.required[args.index]);
+                let asked = asked(&args.name, &args.required[args.index]).say();
                 p.input.update(cx, |i, cx| {
                     i.set_text("", cx);
                     i.set_label(asked);
@@ -578,7 +857,7 @@ impl Shell {
             self.run(&item.name, item.args, window, cx);
         } else {
             // The field is named by what it asks for, as its label says.
-            let asked = format!("{} · {}", item.name, item.required[0]);
+            let asked = asked(&item.name, &item.required[0]).say();
             p.args = Some(ArgPrompt {
                 name: item.name,
                 required: item.required,
@@ -608,17 +887,42 @@ impl Shell {
     }
 }
 
+/// What the palette's field is named while it asks for no argument.
+fn palette_label() -> Words {
+    words!(
+        palette_label = "Command",
+        note = "The label before the palette's field, where a command's name is typed."
+    )
+}
+
+/// What the palette's field is named while it asks for `argument` of
+/// `command`: both identifiers, as written.
+fn asked(command: &str, argument: &str) -> Words {
+    words!(
+        palette_asks = "{ $command } · { $argument }",
+        command = command,
+        argument = argument,
+        note = "The label before the palette's field while it asks for an argument; command: the command's name; argument: the argument's name (both identifiers)."
+    )
+}
+
 pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     shell.palette_refilter(cx);
     let p = shell.palette.as_ref()?;
     let theme = cx.global::<Theme>().clone();
 
     let label = match &p.args {
-        Some(a) => format!("{} · {}", a.name, a.required[a.index]),
-        None => "Command".to_owned(),
+        Some(a) => asked(&a.name, &a.required[a.index]).say(),
+        None => palette_label().say(),
     };
     let mut panel = modal::panel("palette", 560., &theme)
-        .aria_label("Command palette")
+        .aria_label(
+            words!(
+                palette_name = "Command palette",
+                note = "What a screen reader calls the palette's panel."
+            )
+            .say(),
+        )
         .max_h(sized(420.))
         .key_context(keymap::PALETTE)
         .child(
@@ -638,11 +942,20 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         // has the focus.
         let a11y = shell.a11y;
         let typing = gpui::Focusable::focus_handle(p.input.read(cx), cx);
-        let mut list = modal::options("palette-results", "Commands", p.filtered.len(), a11y)
-            .flex()
-            .flex_col()
-            .py_1()
-            .overflow_hidden();
+        let mut list = modal::options(
+            "palette-results",
+            words!(
+                palette_commands = "Commands",
+                note = "What a screen reader calls the palette's list of commands found."
+            )
+            .say(),
+            p.filtered.len(),
+            a11y,
+        )
+        .flex()
+        .flex_col()
+        .py_1()
+        .overflow_hidden();
         for row_ix in p.picker.shown(p.filtered.len()) {
             let item = &p.items[p.filtered[row_ix]];
             let hl = row_ix == p.picker.highlighted;
@@ -709,7 +1022,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .px_3()
                     .py_2()
                     .text_color(theme.text_muted)
-                    .child("No matching command"),
+                    .child(words!(palette_none = "No matching command").say()),
             );
         }
         let list = modal::scrolled(

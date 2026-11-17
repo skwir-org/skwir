@@ -117,7 +117,9 @@ pub struct BoardView {
     scale: crate::sizes::Scale,
     /// Grouped, the groups' columns and the order and groups they were
     /// made of (ADR-131, 3).
-    groups_of: Option<(Arc<[EntryId]>, (usize, usize, usize), Vec<Column>)>,
+    /// Its titles are said: kept while the words said do not move
+    /// (`words::revision`).
+    groups_of: Option<(Arc<[EntryId]>, (usize, usize, usize), u64, Vec<Column>)>,
     /// The listing whose folders opened in place a grouped board closed:
     /// once, the folders' files being no group's.
     closed_for: Option<u64>,
@@ -258,14 +260,16 @@ impl BoardView {
     fn group_columns(&mut self, shell: &Shell) -> Vec<Column> {
         let list = &shell.ui().list;
         let key = list.rows.key();
-        if let Some((order, at, columns)) = &self.groups_of
+        let said = skwir_core::words::revision();
+        if let Some((order, at, said_at, columns)) = &self.groups_of
             && Arc::ptr_eq(order, &list.sorted)
             && *at == key
+            && *said_at == said
         {
             return columns.clone();
         }
         let columns = group_columns(&list.rows, &list.sorted);
-        self.groups_of = Some((Arc::clone(&list.sorted), key, columns.clone()));
+        self.groups_of = Some((Arc::clone(&list.sorted), key, said, columns.clone()));
         columns
     }
 
@@ -444,7 +448,15 @@ fn group_columns(rows: &crate::views::groups::RowMap, sorted: &[EntryId]) -> Vec
         .collect();
     if let (Some(first), Some(last)) = (spans.get(own), spans.last()) {
         columns.push(column(
-            crate::format::count(spans.len() - own, "more group"),
+            skwir_core::words!(
+                views_board_more_groups = "{ $count ->
+                    [one] 1 more group
+                   *[other] { $count } more groups
+                }",
+                count = spans.len() - own,
+                note = "The title of the board's last column, which holds the groups past those given a column each."
+            )
+            .say(),
             Location::new("board-groups", "more"),
             cards(first.start, last.start + last.len),
             spans[own..].iter().map(|span| span.count).sum(),

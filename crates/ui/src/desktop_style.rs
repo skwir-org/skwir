@@ -13,6 +13,8 @@ use std::sync::{Arc, RwLock};
 use gpui::{Hsla, Rgba};
 use skwir_core::App;
 use skwir_core::settings::Settings;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::desktop_style::{DesktopStyle, Scheme};
 
 use crate::palettes::{self, Palette};
@@ -254,16 +256,20 @@ impl ColorSource {
     }
 
     /// The choices this system offers, in their order: Automatic, GTK and
-    /// Qt where they are read apart, then the palettes.
-    pub fn choices() -> Vec<(ColorSource, &'static str)> {
-        let mut choices = vec![(ColorSource::Automatic, "Automatic")];
+    /// Qt where they are read apart, then the palettes. The toolkits are
+    /// named as they name themselves.
+    pub fn choices() -> Vec<(ColorSource, Words)> {
+        let mut choices = vec![(ColorSource::Automatic, crate::settings::automatic())];
         if skwir_platform::desktop_style::TOOLKITS {
-            choices.extend([(ColorSource::Gtk, "GTK"), (ColorSource::Qt, "Qt")]);
+            choices.extend([
+                (ColorSource::Gtk, Words::as_written("GTK")),
+                (ColorSource::Qt, Words::as_written("Qt")),
+            ]);
         }
         choices.extend(
             palettes::PALETTES
                 .iter()
-                .map(|palette| (ColorSource::Palette(palette), palette.name)),
+                .map(|palette| (ColorSource::Palette(palette), palette.name())),
         );
         choices
     }
@@ -336,21 +342,26 @@ pub enum Source {
 }
 
 impl Source {
-    const ALL: [(&'static str, &'static str); 4] = [
-        ("auto", "Automatic"),
-        (OWN, "Skwir's own"),
-        ("gtk", "GTK"),
-        ("qt", "Qt"),
-    ];
-
     /// The choices this system offers: GTK and Qt where they are read
-    /// apart.
-    pub fn choices() -> &'static [(&'static str, &'static str)] {
+    /// apart, named as they name themselves.
+    pub fn choices() -> Vec<(&'static str, Words)> {
+        let mut choices = vec![
+            ("auto", crate::settings::automatic()),
+            (
+                OWN,
+                words!(
+                    style_own = "Skwir's own",
+                    note = "A choice of Fonts from: skwir's own fonts, Inter and JetBrains Mono, rather than the desktop's."
+                ),
+            ),
+        ];
         if skwir_platform::desktop_style::TOOLKITS {
-            &Self::ALL
-        } else {
-            &Self::ALL[..2]
+            choices.extend([
+                ("gtk", Words::as_written("GTK")),
+                ("qt", Words::as_written("Qt")),
+            ]);
         }
+        choices
     }
 
     /// What the setting `key` chooses; a toolkit this system does not read
@@ -899,7 +910,7 @@ mod tests {
         use gpui::WindowAppearance::Light;
         static NIGHT: Palette = Palette {
             id: "night",
-            name: "Night",
+            name: || skwir_core::words::Words::as_written("Night"),
             by: None,
             light: None,
             dark: Some(Look {

@@ -212,7 +212,15 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
     // Its group where it is the first of it, then its tags and stars, as
     // the views draw them.
     let described = match (seat.group, said(look)) {
-        (Some(group), Some(said)) => Some(format!("{group}; {said}")),
+        (Some(group), Some(said)) => Some(
+            skwir_core::words!(
+                views_entry_described = "{ $group }; { $said }",
+                group = group,
+                said = said,
+                note = "What a screen reader hears after the name of the first file of a group: the group (Today, 3 items), then what marks the file (cut, hidden, its tags)."
+            )
+            .say(),
+        ),
         (group, said) => group.or(said),
     };
     let el = el
@@ -243,25 +251,40 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
 /// to what a filter keeps), its tags and stars; what is drawn is heard.
 fn said(look: &Look) -> Option<String> {
     let states = [
-        (look.writing, "being written"),
-        (look.cut, "cut"),
-        (look.hidden, "hidden"),
-        (look.only_leads, "leads to what the filter keeps"),
+        look.writing.then(|| {
+            skwir_core::words!(
+                views_entry_writing = "being written",
+                note = "What a screen reader hears after a file's name: another program is still writing it."
+            )
+        }),
+        look.cut.then(|| {
+            skwir_core::words!(
+                views_entry_cut = "cut",
+                note = "What a screen reader hears after a file's name: it was cut, to be moved where it is pasted."
+            )
+        }),
+        look.hidden.then(|| {
+            skwir_core::words!(
+                views_entry_hidden = "hidden",
+                note = "What a screen reader hears after a file's name: it is a hidden file, though its name does not begin with a dot."
+            )
+        }),
+        look.only_leads.then(|| {
+            skwir_core::words!(
+                views_entry_only_leads = "leads to what the filter keeps",
+                note = "What a screen reader hears after a folder's name: it is shown only because files the filter keeps are inside it."
+            )
+        }),
     ];
     let words: Vec<String> = look
         .plays
-        .map(icons::Plays::said)
+        .map(|plays| plays.said().say())
         .into_iter()
-        .map(str::to_owned)
         .chain(look.vcs.and_then(|state| vcs_said(state, look.is_dir)))
-        .chain(
-            states
-                .into_iter()
-                .filter(|(on, _)| *on)
-                .map(|(_, word)| word.to_owned()),
-        )
+        .chain(states.into_iter().flatten().map(|word| word.say()))
         .chain(crate::tags::said(&look.tags, look.rating))
         .collect();
+    // Transitional: a list argument (ADR-139).
     (!words.is_empty()).then(|| words.join(", "))
 }
 
@@ -269,11 +292,44 @@ fn said(look: &Look) -> Option<String> {
 /// an entry (`icons::vcs_mark`): a file's state, what a folder holds below
 /// it; nothing for what is ignored, which is not marked.
 fn vcs_said(state: skwir_core::vcs::State, is_dir: bool) -> Option<String> {
-    if state == skwir_core::vcs::State::Ignored {
-        return None;
-    }
-    let words = if is_dir { state.below() } else { state.title() };
-    Some(words.to_lowercase())
+    use skwir_core::vcs::State;
+    use skwir_core::words;
+    let words = match (state, is_dir) {
+        (State::Ignored, _) => return None,
+        (State::Conflict, false) => words!(
+            views_entry_vcs_conflict = "in conflict",
+            note = "What a screen reader hears after a file's name: its state in Git, a merge left it with both sides."
+        ),
+        (State::Changed, false) => words!(
+            views_entry_vcs_changed = "changed",
+            note = "What a screen reader hears after a file's name: its state in Git, changed since the last commit."
+        ),
+        (State::Staged, false) => words!(
+            views_entry_vcs_staged = "staged",
+            note = "What a screen reader hears after a file's name: its state in Git, its changes added for the next commit."
+        ),
+        (State::New, false) => words!(
+            views_entry_vcs_new = "new",
+            note = "What a screen reader hears after a file's name: its state in Git, in no commit yet."
+        ),
+        (State::Conflict, true) => words!(
+            views_entry_vcs_holds_conflict = "holds a conflict",
+            note = "What a screen reader hears after a folder's name: its state in Git, a file below it is in conflict."
+        ),
+        (State::Changed, true) => words!(
+            views_entry_vcs_holds_changes = "holds changes",
+            note = "What a screen reader hears after a folder's name: its state in Git, files below it changed."
+        ),
+        (State::Staged, true) => words!(
+            views_entry_vcs_holds_staged = "holds staged changes",
+            note = "What a screen reader hears after a folder's name: its state in Git, files below it have changes added for the next commit."
+        ),
+        (State::New, true) => words!(
+            views_entry_vcs_holds_new = "holds new files",
+            note = "What a screen reader hears after a folder's name: its state in Git, files below it are in no commit yet."
+        ),
+    };
+    Some(words.say())
 }
 
 /// Its name, cut in the middle when too long (the extension tells files

@@ -86,19 +86,49 @@ pub fn element(
 
 /// What a map holds, in words: its lines, places and areas.
 fn holds(shapes: &Shapes) -> String {
+    use skwir_core::words;
+    let (lines, places, areas) = (shapes.lines.len(), shapes.markers.len(), shapes.areas.len());
     let counted = [
-        (shapes.lines.len(), "line"),
-        (shapes.markers.len(), "place"),
-        (shapes.areas.len(), "area"),
+        (lines > 0).then(|| {
+            words!(
+                map_holds_lines = "{ $count ->
+                    [one] 1 line
+                   *[other] { $count } lines
+                }",
+                count = lines,
+                note = "What a screen reader hears a map holds: its lines (tracks, routes)."
+            )
+        }),
+        (places > 0).then(|| {
+            words!(
+                map_holds_places = "{ $count ->
+                    [one] 1 place
+                   *[other] { $count } places
+                }",
+                count = places,
+                note = "What a screen reader hears a map holds: its places (points)."
+            )
+        }),
+        (areas > 0).then(|| {
+            words!(
+                map_holds_areas = "{ $count ->
+                    [one] 1 area
+                   *[other] { $count } areas
+                }",
+                count = areas,
+                note = "What a screen reader hears a map holds: its areas (shapes drawn filled)."
+            )
+        }),
     ];
-    let words: Vec<String> = counted
-        .into_iter()
-        .filter(|(count, _)| *count > 0)
-        .map(|(count, what)| crate::format::count(count, what))
-        .collect();
+    let words: Vec<String> = counted.into_iter().flatten().map(|w| w.say()).collect();
     if words.is_empty() {
-        "Nothing with a position".to_owned()
+        words!(
+            map_holds_nothing = "Nothing with a position",
+            note = "What a screen reader hears a map holds where nothing of its file has a place on the earth."
+        )
+        .say()
     } else {
+        // Transitional: a list argument (ADR-139).
         words.join(", ")
     }
 }
@@ -110,11 +140,18 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
     // holds and what its keys do.
     let said = crate::preview::said(shell).map(|(name, _)| {
         (
-            format!("Map: {name}"),
-            format!(
-                "{}. PageDown and PageUp go from place to place, arrows move the map, the zoom keys zoom it, Ctrl+0 fits it again",
-                holds(&shapes)
-            ),
+            skwir_core::words!(
+                map_said = "Map: { $name }",
+                name = name.to_string(),
+                note = "What a screen reader calls the preview of a file with places (GPX, KML, GeoJSON). name: its file's name."
+            )
+            .say(),
+            skwir_core::words!(
+                map_said_holds = "{ $holds }. PageDown and PageUp go from place to place, arrows move the map, the zoom keys zoom it, Ctrl+0 fits it again",
+                holds = holds(&shapes),
+                note = "What a screen reader hears of a map's preview: what it holds (2 lines, 5 places), then what its keys do."
+            )
+            .say(),
         )
     });
     // Its places one by one, read as a list.
@@ -191,7 +228,16 @@ pub fn background_button(
     command: &'static str,
     kind: &str,
 ) -> Button {
-    Button::new(id, "layers", "Map background", command)
+    Button::new(
+        id,
+        "layers",
+        skwir_core::words!(
+            map_background = "Map background",
+            note = "Pointing at the button of a map that chooses what is drawn under its places (streets, a satellite's pictures)."
+        )
+        .say(),
+        command,
+    )
         .args(serde_json::json!({ "kind": kind }))
         .label(backgrounds.label())
 }
@@ -227,11 +273,21 @@ pub fn background_rows(
         Button::new(
             "map-backgrounds-manage",
             "settings",
-            "Manage backgrounds",
+            skwir_core::words!(
+                map_manage_backgrounds_tip = "Manage backgrounds",
+                note = "Pointing at the last row of the map background's choices, which opens their settings."
+            )
+            .say(),
             "ui.settings",
         )
         .args(serde_json::json!({ "key": backgrounds.setting }))
-        .label("Manage backgrounds…")
+        .label(
+            skwir_core::words!(
+                map_manage_backgrounds = "Manage backgrounds…",
+                note = "The last row of the map background's choices, which opens their settings."
+            )
+            .say(),
+        )
         .menu()
         .render(shell, cx),
     )
@@ -247,17 +303,17 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("map-zoom-out", "minus", "Zoom out", "out"),
+        step("map-zoom-out", "minus", label::zoom_out().say(), "out"),
     ));
     bar.push(Item::button(
         Slot::View,
         1,
-        step("map-zoom-in", "plus", "Zoom in", "in"),
+        step("map-zoom-in", "plus", label::zoom_in().say(), "in"),
     ));
     bar.push(Item::button(
         Slot::View,
         2,
-        step("map-fit", "fit", label::FIT, "reset").active(fitted),
+        step("map-fit", "fit", label::fit().say(), "reset").active(fitted),
     ));
     let backgrounds = shell.map_tiles.borrow_mut().backgrounds();
     if let Some(backgrounds) = backgrounds {
@@ -289,7 +345,11 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::menu_only(Button::new(
         "map-open-external",
         "open",
-        "Open in Maps",
+        skwir_core::words!(
+            map_open_external = "Open in Maps",
+            note = "A map preview's menu row: show the place in the desktop's maps application."
+        )
+        .say(),
         "ui.map_open",
     )));
 }
@@ -324,7 +384,11 @@ impl Shell {
                 if self.map_notes.failed_file != Some(failure.source) {
                     self.map_notes.failed_file = Some(failure.source);
                     self.set_status(
-                        format!("This file's map tiles could not be read: {}", failure.error),
+                        skwir_core::words!(
+                            map_file_tiles_failed = "This file's map tiles could not be read: { $error }",
+                            error = failure.error,
+                            note = "A file that holds its own map tiles (MBTiles, PMTiles) could not be read. error: why, as the reader said it."
+                        ),
                         true,
                         cx,
                     );
@@ -332,7 +396,11 @@ impl Shell {
             }
             Some(failure) if self.map_notes.failed != Some(failure.revision) => {
                 self.map_notes.failed = Some(failure.revision);
-                let text = format!("Map tiles could not be loaded: {}", failure.error);
+                let text = skwir_core::words!(
+                    map_tiles_failed = "Map tiles could not be loaded: { $error }",
+                    error = failure.error,
+                    note = "The map's background could not be loaded. error: why, as it was said."
+                );
                 match &setting {
                     Some(setting) => self.set_status_about(text, setting, cx),
                     None => self.set_status(text, true, cx),
@@ -359,7 +427,10 @@ impl Shell {
         {
             self.map_notes.hinted = true;
             self.set_hint_about(
-                "Streets are not drawn on this map background; another one can show them",
+                skwir_core::words!(
+                    map_no_streets = "Streets are not drawn on this map background; another one can show them",
+                    note = "A hint, as the map is zoomed in close on a background that draws no streets."
+                ),
                 setting,
                 cx,
             );
@@ -473,7 +544,11 @@ impl Shell {
                 if let Err(error) = skwir_platform::open::open_geo_uri(&uri) {
                     app.notify(
                         skwir_core::app::NotifyLevel::Error,
-                        format!("No application opens map locations: {error}"),
+                        skwir_core::words!(
+                            map_open_failed = "No application opens map locations: { $error }",
+                            error = error,
+                            note = "Open in Maps failed: no application of the desktop takes a geo: address. error: why."
+                        ),
                     );
                 }
             },

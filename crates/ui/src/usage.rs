@@ -28,6 +28,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
 use skwir_core::entry::{Entry, EntryKind};
+use skwir_core::words;
+use skwir_core::words::{Folder, Size, Words};
 use skwir_core::workspace::Loaned;
 use skwir_core::{EntryId, command::Invocation, os_path::PathArg};
 use skwir_platform::mime::Kind;
@@ -56,6 +58,42 @@ pub const STEPS: [(&str, &str); 3] = [
     ("Fewer levels", "Fewer levels (or Ctrl and the wheel)"),
     ("Default levels", "Default levels"),
 ];
+
+/// [`STEPS`], as words (`STEPS` until every caller says words).
+pub fn steps_words() -> [(Words, Words); 3] {
+    [
+        (
+            words!(
+                usage_more_levels = "More levels",
+                note = "Usage's zoom step, in the View menu: draw the folders inside the folders one level deeper."
+            ),
+            words!(
+                usage_more_levels_tip = "More levels (or Ctrl and the wheel)",
+                note = "Pointing at Usage's More levels button."
+            ),
+        ),
+        (
+            words!(
+                usage_fewer_levels = "Fewer levels",
+                note = "Usage's zoom step, in the View menu: draw the folders inside the folders one level less deep."
+            ),
+            words!(
+                usage_fewer_levels_tip = "Fewer levels (or Ctrl and the wheel)",
+                note = "Pointing at Usage's Fewer levels button."
+            ),
+        ),
+        (
+            words!(
+                usage_default_levels = "Default levels",
+                note = "Usage's zoom step, in the View menu: draw as many levels of folders as it does at first."
+            ),
+            words!(
+                usage_default_levels_tip = "Default levels",
+                note = "Pointing at Usage's Default levels button."
+            ),
+        ),
+    ]
+}
 
 /// What the map draws of each block (`Shell::usage_mode`): the window's,
 /// remembered with its shape.
@@ -89,21 +127,45 @@ impl Mode {
         }
     }
 
-    fn label(self) -> &'static str {
+    fn label(self) -> Words {
         match self {
-            Mode::Size => "Size",
-            Mode::Files => "Files",
-            Mode::Age => "Age",
-            Mode::Types => "Types",
+            Mode::Size => words!(
+                usage_mode_size = "Size",
+                note = "A button of Usage: its blocks as large as the room they take on the disk."
+            ),
+            Mode::Files => words!(
+                usage_mode_files = "Files",
+                note = "A button of Usage: its blocks as large as the number of files they hold."
+            ),
+            Mode::Age => words!(
+                usage_mode_age = "Age",
+                note = "A button of Usage: its blocks colored by when they last changed."
+            ),
+            Mode::Types => words!(
+                usage_mode_types = "Types",
+                note = "A button of Usage: its blocks colored by the kind of files that fill them."
+            ),
         }
     }
 
-    fn title(self) -> &'static str {
+    fn title(self) -> Words {
         match self {
-            Mode::Size => "Blocks as large as the room they take",
-            Mode::Files => "Blocks as large as the files they hold",
-            Mode::Age => "Blocks colored by when they last changed",
-            Mode::Types => "Blocks colored by the kind of files that fill them",
+            Mode::Size => words!(
+                usage_mode_size_tip = "Blocks as large as the room they take",
+                note = "Pointing at Usage's Size button."
+            ),
+            Mode::Files => words!(
+                usage_mode_files_tip = "Blocks as large as the files they hold",
+                note = "Pointing at Usage's Files button."
+            ),
+            Mode::Age => words!(
+                usage_mode_age_tip = "Blocks colored by when they last changed",
+                note = "Pointing at Usage's Age button."
+            ),
+            Mode::Types => words!(
+                usage_mode_types_tip = "Blocks colored by the kind of files that fill them",
+                note = "Pointing at Usage's Types button."
+            ),
         }
     }
 }
@@ -343,7 +405,7 @@ impl Shell {
                 command,
                 &serde_json::json!({"pane":self.pane}),
             )) {
-                self.set_status(error.to_string(), true, cx);
+                self.set_status(skwir_core::words::Words::of_error(error), true, cx);
             }
         }
         if dir.is_none() {
@@ -428,7 +490,7 @@ impl Shell {
                 "usage.scan",
                 &serde_json::json!({"pane":self.pane,"force":true}),
             )) {
-                self.set_status(error.to_string(), true, cx);
+                self.set_status(skwir_core::words::Words::of_error(error), true, cx);
             }
             cx.notify();
         }
@@ -468,11 +530,17 @@ struct Block {
 
 /// `480 MB`, or `480 MB · 120 MB on disk` when the two differ as said.
 fn sizes(size: u64, alloc: u64) -> String {
-    let (size, alloc) = (format::size(size), format::size(alloc));
-    if size == alloc {
-        size
+    let said = format::size(size);
+    if said == format::size(alloc) {
+        said
     } else {
-        format!("{size} · {alloc} on disk")
+        words!(
+            usage_sizes = "{ $size } · { $alloc } on disk",
+            size = Size(size),
+            alloc = Size(alloc),
+            note = "Usage: how much a file or a folder holds, then the room it takes on the disk, where they differ (480 MB · 120 MB on disk)."
+        )
+        .say()
     }
 }
 
@@ -483,16 +551,35 @@ fn names_said(node: &Node) -> Option<String> {
     if node.is_dir {
         (node.shared > 0).then(|| freed(node))
     } else {
-        (node.nlink > 1).then(|| format!("one of {} names of its file", node.nlink))
+        (node.nlink > 1).then(|| {
+            words!(
+                usage_one_of_names = "{ $count ->
+                   *[other] one of { $count } names of its file
+                }",
+                count = node.nlink,
+                note = "Usage, pointing at a file with several names (hard links): deleting this name frees nothing while the others stay."
+            )
+            .say()
+        })
     }
 }
 
 /// What deleting a folder frees: what it takes on disk but for its files
 /// with names outside it.
 fn freed(node: &Node) -> String {
-    format!(
-        "{} freed if deleted",
-        format::size(node.alloc.saturating_sub(node.shared))
+    words!(
+        usage_freed = "{ $size } freed if deleted",
+        size = Size(node.alloc.saturating_sub(node.shared)),
+        note = "Usage: the room deleting a folder frees, less than it takes where its files have names outside it too."
+    )
+    .say()
+}
+
+/// Where a double click on a block drawn inside another goes.
+fn go_there() -> Words {
+    words!(
+        usage_go_there = "double-click to go there",
+        note = "Usage, pointing at a block drawn inside a folder's block: a double click shows that folder."
     )
 }
 
@@ -534,11 +621,42 @@ fn age(modified: i64, limits: &[i64; AGES - 1]) -> usize {
 }
 
 /// What the legend calls each step of `age`.
-const AGE_NAMES: [&str; AGES] = ["a day", "a week", "a month", "a year", "longer"];
+fn age_name(step: usize) -> Words {
+    match step {
+        0 => words!(
+            usage_age_day = "a day",
+            note = "Usage's legend, after Changed within: a block's color for what changed within a day."
+        ),
+        1 => words!(
+            usage_age_week = "a week",
+            note = "Usage's legend, after Changed within: within a week."
+        ),
+        2 => words!(
+            usage_age_month = "a month",
+            note = "Usage's legend, after Changed within: within a month."
+        ),
+        3 => words!(
+            usage_age_year = "a year",
+            note = "Usage's legend, after Changed within: within a year."
+        ),
+        _ => words!(
+            usage_age_longer = "longer",
+            note = "Usage's legend, after Changed within: longer ago than a year."
+        ),
+    }
+}
 
 /// A kind as the legend and the hints say it.
-fn kind_title(kind: Option<Kind>) -> &'static str {
-    kind.map_or("Other files", Kind::title)
+fn kind_title(kind: Option<Kind>) -> Words {
+    kind.map_or_else(
+        || {
+            words!(
+                usage_other_files = "Other files",
+                note = "Usage: the files of no kind named (not Images, Videos, Documents…)."
+            )
+        },
+        Kind::words,
+    )
 }
 
 /// `Videos 62% · Images 30%`: the kinds that take a tenth of `node` or
@@ -548,11 +666,19 @@ fn kinds_said(node: &Node) -> String {
     let total: u64 = kinds.iter().map(|(_, bytes)| bytes).sum();
     match kinds.as_slice() {
         [] => String::new(),
-        [(kind, _)] => kind_title(*kind).to_owned(),
+        [(kind, _)] => kind_title(*kind).say(),
         _ => kinds
             .iter()
             .filter(|(_, bytes)| bytes * 10 >= total)
-            .map(|(kind, bytes)| format!("{} {}", kind_title(*kind), share(*bytes, total)))
+            .map(|(kind, bytes)| {
+                words!(
+                    usage_kind_share = "{ $kind } { $share }",
+                    kind = kind_title(*kind),
+                    share = share(*bytes, total),
+                    note = "Usage, pointing at a block: a kind of files and its share of the block (Videos 62%)."
+                )
+                .say()
+            })
             .collect::<Vec<_>>()
             .join(" · "),
     }
@@ -562,19 +688,26 @@ fn kinds_said(node: &Node) -> String {
 /// in it (`within`: a cache or a trash it lies in).
 fn reclaim_said(node: &Node, within: Option<Reclaim>) -> Option<String> {
     match node.reclaim.or(within) {
-        Some(Reclaim::Cache) if node.reclaim.is_some() => {
-            Some("a cache, which its program makes again when needed".into())
-        }
-        Some(Reclaim::Cache) => {
-            Some("in a cache, which its program makes again when needed".into())
-        }
-        Some(Reclaim::Trash) => Some("in the Trash: emptying it frees this".into()),
-        None if node.reclaimable > 0 => Some(format!(
-            "{} of it in caches and the Trash",
-            format::size(node.reclaimable.min(node.alloc))
+        Some(Reclaim::Cache) if node.reclaim.is_some() => Some(words!(
+            usage_is_cache = "a cache, which its program makes again when needed",
+            note = "Usage, pointing at a block that is a cache folder."
+        )),
+        Some(Reclaim::Cache) => Some(words!(
+            usage_in_cache = "in a cache, which its program makes again when needed",
+            note = "Usage, pointing at a block inside a cache folder."
+        )),
+        Some(Reclaim::Trash) => Some(words!(
+            usage_in_trash = "in the Trash: emptying it frees this",
+            note = "Usage, pointing at a block inside the Trash."
+        )),
+        None if node.reclaimable > 0 => Some(words!(
+            usage_reclaimable = "{ $size } of it in caches and the Trash",
+            size = Size(node.reclaimable.min(node.alloc)),
+            note = "Usage, pointing at a block: how much of it is caches and the Trash, which can be had back."
         )),
         None => None,
     }
+    .map(|said| said.say())
 }
 
 /// The entries of a folder drawn together: the hidden ones.
@@ -756,8 +889,20 @@ impl Build<'_> {
     fn detail(&self, node: &Node) -> String {
         let measure = node.measure(self.mode);
         match (node.incomplete, measure) {
-            (true, 0) if self.scanning => return "counting…".into(),
-            (true, 0) => return "incomplete".into(),
+            (true, 0) if self.scanning => {
+                return words!(
+                    usage_counting = "counting…",
+                    note = "Under a block's name in Usage, while what it holds is counted."
+                )
+                .say();
+            }
+            (true, 0) => {
+                return words!(
+                    usage_incomplete = "incomplete",
+                    note = "Under a block's name in Usage, where what it holds could not all be counted."
+                )
+                .say();
+            }
             _ => {}
         }
         let said = match self.mode {
@@ -768,13 +913,28 @@ impl Build<'_> {
                 .unwrap_or_else(|| format::size(measure)),
         };
         let said = if node.incomplete {
-            format!("≥ {said}")
+            words!(
+                usage_at_least = "≥ { $said }",
+                said = said,
+                note = "Under a block's name in Usage: at least this much, what it holds being still counted or partly unreadable."
+            )
+            .say()
         } else {
             said
         };
         match node.reclaim {
-            Some(Reclaim::Cache) => format!("{said} · cache"),
-            Some(Reclaim::Trash) => format!("{said} · trash"),
+            Some(Reclaim::Cache) => words!(
+                usage_detail_cache = "{ $said } · cache",
+                said = said,
+                note = "Under the name of a cache folder's block in Usage: its size, then that it is a cache."
+            )
+            .say(),
+            Some(Reclaim::Trash) => words!(
+                usage_detail_trash = "{ $said } · trash",
+                said = said,
+                note = "Under the name of the Trash's block in Usage: its size, then that it is the trash."
+            )
+            .say(),
             None => said,
         }
     }
@@ -783,7 +943,12 @@ impl Build<'_> {
     fn hint(&self, node: &Node, trail: &str, parent: &Node, outer: Option<&Outer>) -> String {
         let counted = |said: String| {
             if node.incomplete {
-                format!("counted so far: {said}")
+                words!(
+                    usage_counted_so_far = "counted so far: { $said }",
+                    said = said,
+                    note = "Usage, pointing at a block still counted: what it holds so far (3 files, 480 MB)."
+                )
+                .say()
             } else {
                 said
             }
@@ -794,30 +959,46 @@ impl Build<'_> {
                 parts.push(counted(format::files(
                     usize::try_from(node.files).unwrap_or(usize::MAX),
                 )));
-                parts.push(format!(
-                    "{} of the files in {}",
-                    share(node.files, parent.files),
-                    parent.name
-                ));
+                parts.push(
+                    words!(
+                        usage_share_of_files = "{ $share } of the files in { $folder }",
+                        share = share(node.files, parent.files),
+                        folder = Folder(parent.name.clone()),
+                        note = "Usage, pointing at a block: its share of the files of the folder holding it (24%)."
+                    )
+                    .say(),
+                );
             }
             Mode::Size | Mode::Age | Mode::Types => {
                 parts.push(counted(sizes(node.size, node.alloc)));
-                parts.push(format!(
-                    "{} of {}",
-                    share(node.alloc, parent.alloc),
-                    parent.name
-                ));
+                parts.push(
+                    words!(
+                        usage_share_of = "{ $share } of { $folder }",
+                        share = share(node.alloc, parent.alloc),
+                        folder = Folder(parent.name.clone()),
+                        note = "Usage, pointing at a block: its share of the room the folder holding it takes (24%)."
+                    )
+                    .say(),
+                );
             }
         }
         match self.mode {
-            Mode::Age => parts.extend(self.when(node.modified).map(|w| format!("changed {w}"))),
+            Mode::Age => parts.extend(self.when(node.modified).map(|when| {
+                words!(
+                    usage_changed = "changed { $when }",
+                    when = when,
+                    note =
+                        "Usage, pointing at a block: when it last changed (Today 14:02, 12 Mar)."
+                )
+                .say()
+            })),
             Mode::Types => parts.push(kinds_said(node)),
             Mode::Size | Mode::Files => {}
         }
         parts.extend(reclaim_said(node, outer.and_then(|o| o.within)));
         parts.extend(names_said(node));
         if outer.is_some() {
-            parts.push("double-click to go there".into());
+            parts.push(go_there().say());
         }
         parts.retain(|part| !part.is_empty());
         parts.join(" · ")
@@ -827,9 +1008,17 @@ impl Build<'_> {
     fn level(&mut self, node: &Node, depth: usize, outer: Option<&Outer>) -> Vec<TreemapItem> {
         // Each block is drawn at least this large, so each can be pointed at.
         let floor = (node.measure(self.mode) as f64 / 200.).max(1.);
-        let within = |what: String| match outer {
-            Some(outer) => format!("{what} in {}", outer.trail),
+        let within = |what: String| {
+            match outer {
+            Some(outer) => words!(
+                usage_within = "{ $what } in { $trail }",
+                what = what,
+                trail = outer.trail.clone(),
+                note = "Usage, pointing at a block of several entries inside a folder: what it holds (3 hidden items), then the folders it is in (Photos › 2024)."
+            )
+            .say(),
             None => what,
+        }
         };
         let mut items = Vec::new();
         let mut hidden = Gathered::default();
@@ -905,7 +1094,15 @@ impl Build<'_> {
             });
         }
         if hidden.count > 0 {
-            let what = format::count(hidden.count, "hidden item");
+            let what = words!(
+                usage_hidden_items = "{ $count ->
+                    [one] 1 hidden item
+                   *[other] { $count } hidden items
+                }",
+                count = hidden.count,
+                note = "Usage: a block standing for the hidden files of a folder, while hidden files are not shown."
+            )
+            .say();
             let key = self.blocks.len();
             self.blocks.push(Block {
                 part: Part::Hidden(node.path.clone()),
@@ -915,11 +1112,16 @@ impl Build<'_> {
                 size: hidden.size,
                 is_dir: false,
                 path: self.shown(&node.path),
-                hint: format!(
-                    "{} · {} · double-click to show hidden files",
+                hint: [
                     within(what.clone()),
-                    self.rest_said(hidden.size, hidden.alloc, hidden.files)
-                ),
+                    self.rest_said(hidden.size, hidden.alloc, hidden.files),
+                    words!(
+                        usage_show_hidden = "double-click to show hidden files",
+                        note = "Usage, pointing at the block of a folder's hidden files."
+                    )
+                    .say(),
+                ]
+                .join(" · "),
             });
             let measure = match self.mode {
                 Mode::Files => hidden.files,
@@ -938,16 +1140,30 @@ impl Build<'_> {
                 size: node.other_size,
                 is_dir: false,
                 path: self.shown(&node.path),
-                hint: format!(
-                    "{} · {} · {}",
-                    within(format::count(count, "smaller item")),
+                hint: [
+                    within(
+                        words!(
+                            usage_smaller_items = "{ $count ->
+                                [one] 1 smaller item
+                               *[other] { $count } smaller items
+                            }",
+                            count = count,
+                            note = "Usage, pointing at the block standing for entries too small to draw each."
+                        )
+                        .say(),
+                    ),
                     self.rest_said(node.other_size, node.other_alloc, node.other_files),
                     if depth == 0 {
-                        "double-click to see all items in List"
+                        words!(
+                            usage_see_all = "double-click to see all items in List",
+                            note = "Usage, pointing at the block of entries too small to draw each. List is the name of a view."
+                        )
                     } else {
-                        "double-click to go there"
+                        go_there()
                     }
-                ),
+                    .say(),
+                ]
+                .join(" · "),
             });
             let measure = match self.mode {
                 Mode::Files => node.other_files,
@@ -955,7 +1171,15 @@ impl Build<'_> {
             };
             items.push(self.rest(
                 key,
-                format::count(count, "other item"),
+                words!(
+                    usage_other_items = "{ $count ->
+                        [one] 1 other item
+                       *[other] { $count } other items
+                    }",
+                    count = count,
+                    note = "Usage: the name of the block standing for entries too small to draw each."
+                )
+                .say(),
                 measure,
                 floor,
                 node.other_incomplete > 0,
@@ -1227,6 +1451,9 @@ struct BuiltFrom {
     selection: Option<u64>,
     minute: i64,
     theme: Theme,
+    /// What the blocks say is said: kept while the words do not move
+    /// (`words::revision`).
+    said: u64,
 }
 
 impl PaneView for UsageView {
@@ -1351,6 +1578,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
             .map(|p| p.selection.revision()),
         minute: zoned.timestamp().as_second().div_euclid(60),
         theme: theme.clone(),
+        said: skwir_core::words::revision(),
     };
     // What is drawn inside the folder's own entries was lent to the pane
     // as the pane's state was synced (`Shell::sync_usage`), and what it
@@ -1383,15 +1611,31 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         || {
             status.and_then(|s| s.error.clone()).unwrap_or_else(|| {
                 if status.is_some_and(|s| s.scanning && s.tree.as_ref().is_some_and(|n| n.incomplete)) {
-                    "Striped blocks are still being counted · proportions will change as sizes arrive".into()
+                    words!(
+                        usage_striped = "Striped blocks are still being counted · proportions will change as sizes arrive",
+                        note = "The line under Usage's map while it counts."
+                    )
+                    .say()
                 } else if status.is_some_and(|s| s.updating) {
                     let read = status.map_or(0, |s| s.scanned_dirs);
                     let read = usize::try_from(read).unwrap_or(usize::MAX);
-                    format!("Scanning… {} read", crate::format::folders(read))
+                    words!(
+                        usage_scanning_read = "Scanning… { $count ->
+                            [one] 1 folder
+                           *[other] { $count } folders
+                        } read",
+                        count = read,
+                        note = "The line under Usage's map while it counts again: how many folders it read so far."
+                    )
+                    .say()
                 } else if let Some(note) = deleting {
                     note
                 } else {
-                    "Click to select · double-click to open · Ctrl and the wheel for more or fewer levels".into()
+                    words!(
+                        usage_how = "Click to select · double-click to open · Ctrl and the wheel for more or fewer levels",
+                        note = "The line under Usage's map, pointing at nothing: what the pointer does there."
+                    )
+                    .say()
                 }
             })
         },
@@ -1472,39 +1716,61 @@ fn summary(state: &UsageState) -> String {
     status.map_or_else(
         || {
             if state.root.is_some() {
-                "Scanning…".into()
+                words!(
+                    usage_scanning = "Scanning…",
+                    note = "Usage's toolbar while it counts what the folder holds."
+                )
+                .say()
             } else {
-                "Usage is available for filesystem folders".into()
+                words!(
+                    usage_unavailable = "Usage is available for filesystem folders",
+                    note = "Usage's toolbar where what is shown is no folder (a search, the Trash)."
+                )
+                .say()
             }
         },
         |s| {
             if s.tree.is_none() && s.scanning {
-                return "Calculating sizes…".into();
+                return words!(
+                    usage_calculating = "Calculating sizes…",
+                    note = "Usage's toolbar before anything is counted."
+                )
+                .say();
             }
             let reclaimable = s.tree.as_ref().map_or(0, |n| n.reclaimable.min(n.alloc));
-            let freed = s
-                .tree
-                .as_ref()
-                .filter(|n| n.shared > 0)
-                .map_or(String::new(), |n| format!(" · {}", freed(n)));
-            format!(
-                "{}{} · {} · {}{}{}{}",
-                if s.tree.as_ref().is_some_and(|n| n.incomplete) {
-                    "Counted so far: "
-                } else {
-                    ""
-                },
-                sizes(s.size, s.alloc),
-                format::files(usize::try_from(s.files).unwrap_or(usize::MAX)),
-                format::folders(usize::try_from(s.dirs).unwrap_or(usize::MAX)),
-                if reclaimable > 0 {
-                    format!(" · {} in caches and the Trash", format::size(reclaimable))
-                } else {
-                    String::new()
-                },
-                freed,
-                if s.updating { " · updating…" } else { "" }
-            )
+            let size = sizes(s.size, s.alloc);
+            let size = if s.tree.as_ref().is_some_and(|n| n.incomplete) {
+                words!(
+                    usage_summary_counted = "Counted so far: { $size }",
+                    size = size,
+                    note = "Usage's toolbar while it counts: what the folder holds so far (480 MB)."
+                )
+                .say()
+            } else {
+                size
+            };
+            let facts = [
+                Some(size),
+                Some(format::files(usize::try_from(s.files).unwrap_or(usize::MAX))),
+                Some(format::folders(usize::try_from(s.dirs).unwrap_or(usize::MAX))),
+                (reclaimable > 0).then(|| {
+                    words!(
+                        usage_summary_reclaimable = "{ $size } in caches and the Trash",
+                        size = Size(reclaimable),
+                        note = "Usage's toolbar: how much of the folder is caches and the Trash, which can be had back."
+                    )
+                    .say()
+                }),
+                s.tree.as_ref().filter(|n| n.shared > 0).map(freed),
+                s.updating.then(|| {
+                    words!(
+                        usage_updating = "updating…",
+                        note = "Usage's toolbar, last, while it counts again what changed."
+                    )
+                    .say()
+                }),
+            ];
+            facts.into_iter().flatten().collect::<Vec<_>>().join(" · ")
         },
     )
 }
@@ -1547,11 +1813,11 @@ fn tools(
             Button::new(
                 format!("usage-mode-{}-{}", each.name(), pane.0),
                 "",
-                each.title(),
+                each.title().say(),
                 "ui.usage_mode",
             )
             .args(serde_json::json!({ "mode": each.name() }))
-            .label(each.label())
+            .label(each.label().say())
             .active(each == mode)
             .render(shell, cx),
         );
@@ -1564,7 +1830,11 @@ fn tools(
             Button::new(
                 format!("usage-refresh-{}", pane.0),
                 "refresh",
-                "Recalculate sizes",
+                words!(
+                    usage_recalculate = "Recalculate sizes",
+                    note = "A button of Usage: count again what the folder holds."
+                )
+                .say(),
                 "ui.usage_refresh",
             )
             .enabled(shell.ui().usage.root.is_some())
@@ -1579,20 +1849,31 @@ fn tools(
 /// step moves under the pointer as it changes.
 fn levels(shell: &Shell, theme: &Theme, count: bool, cx: &mut Context<Shell>) -> gpui::Div {
     let levels = shell.levels;
-    let said = |n: u32| format::count(n as usize, "level");
-    let mut step = |dir: &str, icon: &'static str, (_, title): (&str, &'static str), enabled| {
+    let said = |n: u32| {
+        words!(
+            usage_levels = "{ $count ->
+                [one] 1 level
+               *[other] { $count } levels
+            }",
+            count = n,
+            note = "Between Usage's Fewer and More levels buttons: how many levels of folders it draws."
+        )
+        .say()
+    };
+    let [more, fewer, _] = steps_words();
+    let mut step = |dir: &str, icon: &'static str, (_, title): (Words, Words), enabled| {
         Button::new(
             format!("usage-levels-{dir}-{}", shell.pane.0),
             icon,
-            title,
+            title.say(),
             "ui.zoom",
         )
         .args(serde_json::json!({ "dir": dir }))
         .enabled(enabled)
         .render(shell, cx)
     };
-    let fewer = step("out", "minus", STEPS[1], levels > LEVELS[0]);
-    let more = step("in", "plus", STEPS[0], levels < MAX_LEVELS);
+    let fewer = step("out", "minus", fewer, levels > LEVELS[0]);
+    let more = step("in", "plus", more, levels < MAX_LEVELS);
     div()
         .flex()
         .flex_none()
@@ -1632,16 +1913,34 @@ fn deleting_frees(shell: &Shell) -> Option<String> {
     }
     let args = serde_json::json!({});
     let trash = shell.keys_here("trash", &args).map_or_else(
-        || "Moving to the Trash".to_owned(),
-        |keys| format!("{keys} moves to the Trash, which"),
+        || {
+            words!(
+                usage_trash_frees_nothing = "Moving to the Trash frees no room until it is emptied",
+                note = "The line under Usage's map while something is selected."
+            )
+        },
+        |keys| {
+            words!(
+                usage_trash_keys_frees_nothing = "{ $keys } moves to the Trash, which frees no room until it is emptied",
+                keys = keys,
+                note = "The line under Usage's map while something is selected. keys: the keys that move it to the Trash (Delete)."
+            )
+        },
     );
-    let delete = shell
-        .keys_here("delete", &args)
-        .map(|keys| format!(" · {keys} deletes for good"));
-    Some(format!(
-        "{trash} frees no room until it is emptied{}",
-        delete.unwrap_or_default()
-    ))
+    let delete = shell.keys_here("delete", &args).map(|keys| {
+        words!(
+            usage_delete_keys = "{ $keys } deletes for good",
+            keys = keys,
+            note = "The line under Usage's map while something is selected, after what the Trash frees. keys: the keys that delete it for good (Shift+Delete)."
+        )
+        .say()
+    });
+    Some(
+        std::iter::once(trash.say())
+            .chain(delete)
+            .collect::<Vec<_>>()
+            .join(" · "),
+    )
 }
 
 /// What the colors say, a row above the line under the map, where the
@@ -1652,7 +1951,7 @@ fn deleting_frees(shell: &Shell) -> Option<String> {
 fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
     let entries: Vec<(gpui::Hsla, String)> = match mode {
         Mode::Age => (0..AGES)
-            .map(|step| (theme.block_age(step, 0).closed, AGE_NAMES[step].to_owned()))
+            .map(|step| (theme.block_age(step, 0).closed, age_name(step).say()))
             .collect(),
         Mode::Types => {
             let tree = shell.ui().usage.status.as_ref()?.tree.as_ref()?;
@@ -1661,7 +1960,13 @@ fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
                 .map(|(kind, bytes)| {
                     (
                         theme.block_kind(kind, 1., 0).closed,
-                        format!("{} {}", kind_title(kind), format::size(bytes)),
+                        words!(
+                            usage_legend_kind = "{ $kind } { $size }",
+                            kind = kind_title(kind),
+                            size = Size(bytes),
+                            note = "Usage's legend: a kind of files and how much of the folder it takes (Videos 1.2 GB)."
+                        )
+                        .say(),
                     )
                 })
                 .collect()
@@ -1679,12 +1984,14 @@ fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
             .child(label)
     };
     let lead = (mode == Mode::Age).then(|| {
-        div()
-            .flex_none()
-            .h(sized(24.))
-            .flex()
-            .items_center()
-            .child("Changed within")
+        div().flex_none().h(sized(24.)).flex().items_center().child(
+            words!(
+                usage_changed_within = "Changed within",
+                note =
+                    "Usage's legend, before the colors of a day, a week, a month, a year, longer."
+            )
+            .say(),
+        )
     });
     Some(
         div()
@@ -1959,6 +2266,7 @@ mod tests {
                 selection: None,
                 minute: 0,
                 theme,
+                said: 0,
             },
             items: Rc::new(items),
             keys: keys_of(&blocks),

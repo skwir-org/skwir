@@ -1207,10 +1207,11 @@ pub(crate) fn inspect_as<S: FileSource + ?Sized>(
             note = "A notice under a map of a file with more waypoints and areas than are drawn. count: how many are not drawn."
         ));
     }
-    let title = match &c.plan {
-        // "Flight plan · XAAA → XBBB": the format says less than that.
-        Some(plan) => plan_summary(plan, &doc),
-        None => {
+    // "Flight plan · XAAA → XBBB": the format says less than that.
+    let title = if let Some(plan) = &c.plan {
+        plan_summary(plan, &doc)
+    } else {
+        {
             let contents = contents(&doc, &c);
             if contents.is_empty() {
                 format.name()

@@ -252,21 +252,37 @@ impl MapView {
 
     /// What the header says about the scan.
     fn status(&self) -> String {
+        use skwir_core::words;
         let (placed, looked, candidates, complete) = self.counts;
-        let files = |n: usize| if n == 1 { "file" } else { "files" };
         if !complete {
-            format!(
-                "Placing… {placed} of {candidates} pictures and tracks looked at so far: {looked}"
+            words!(
+                map_view_placing = "Placing… { $placed } of { $candidates } pictures and tracks looked at so far: { $looked }",
+                placed = placed,
+                candidates = candidates,
+                looked = looked,
+                note = "The Map view's header while it reads where the folder's files were made. placed: how many it put on the map; candidates: how many pictures and tracks it reads; looked: how many it has read."
             )
         } else if looked > placed {
-            format!(
-                "{placed} {} placed · {} without a position",
-                files(placed),
-                looked - placed
+            words!(
+                map_view_placed_without = "{ $placed ->
+                    [one] { $placed } file placed
+                   *[other] { $placed } files placed
+                } · { $without } without a position",
+                placed = placed,
+                without = looked - placed,
+                note = "The Map view's header once it read the folder's files: how many it put on the map, then how many say nothing of where they were made."
             )
         } else {
-            format!("{placed} {} placed", files(placed))
+            words!(
+                map_view_placed = "{ $placed ->
+                    [one] { $placed } file placed
+                   *[other] { $placed } files placed
+                }",
+                placed = placed,
+                note = "The Map view's header once it read the folder's files: how many it put on the map."
+            )
         }
+        .say()
     }
 }
 
@@ -430,7 +446,7 @@ impl PaneView for MapView {
                         &serde_json::json!({ "pane": pane }),
                     ))
                 {
-                    shell.set_status(format!("{error:#}"), true, cx);
+                    shell.set_status(skwir_core::words::Words::of_error(error), true, cx);
                 }
             } else if self.rescan_at.is_none_or(|at| at <= now) {
                 // One redraw when the gap ends, which asks for the location
@@ -476,9 +492,26 @@ impl PaneView for MapView {
         if self.placeholder_shown {
             let placeholder = crate::placeholder::Placeholder {
                 icon: "map",
-                title: "Nothing here says where it is".into(),
-                detail: "No picture or track of this location has a position. Pictures keep one when the camera knew where it was.".into(),
-                action: folder.then(|| ("Search the subfolders".to_owned(), "geo.search_subfolders")),
+                title: skwir_core::words!(
+                    map_view_nothing = "Nothing here says where it is",
+                    note = "The Map view's placeholder where no file of the folder has a place on the earth."
+                )
+                .say(),
+                detail: skwir_core::words!(
+                    map_view_nothing_detail = "No picture or track of this location has a position. Pictures keep one when the camera knew where it was.",
+                    note = "Under the Map view's placeholder where no file of the folder has a place on the earth."
+                )
+                .say(),
+                action: folder.then(|| {
+                    (
+                        skwir_core::words!(
+                            map_view_search_subfolders = "Search the subfolders",
+                            note = "The button of the Map view's placeholder: look for pictures and tracks in the folders inside too."
+                        )
+                        .say(),
+                        "geo.search_subfolders",
+                    )
+                }),
                 problem: false,
             };
             let focus = shell.ui().placeholder_focus.clone();
@@ -510,20 +543,40 @@ impl PaneView for MapView {
                 Button::new(
                     format!("map-view-area-{}", pane.0),
                     "search",
-                    "Search the pictures and videos of this folder and its subfolders made in the area shown",
+                    skwir_core::words!(
+                        map_view_area_tip = "Search the pictures and videos of this folder and its subfolders made in the area shown",
+                        note = "Pointing at the Map view's This area button."
+                    )
+                    .say(),
                     "ui.map_view_search_area",
                 )
-                .label("This area")
+                .label(
+                    skwir_core::words!(
+                        map_view_area = "This area",
+                        note = "A button of the Map view: search for the files made in the area the map shows."
+                    )
+                    .say(),
+                )
                 .render(shell, cx),
             );
             header = header.child(
                 Button::new(
                     format!("map-view-subfolders-{}", pane.0),
                     "search",
-                    "Show the pictures and tracks of the subfolders too",
+                    skwir_core::words!(
+                        map_view_subfolders_tip = "Show the pictures and tracks of the subfolders too",
+                        note = "Pointing at the Map view's Subfolders button."
+                    )
+                    .say(),
                     "geo.search_subfolders",
                 )
-                .label("Subfolders")
+                .label(
+                    skwir_core::words!(
+                        map_view_subfolders = "Subfolders",
+                        note = "A button of the Map view: put the files of the folders inside on the map too."
+                    )
+                    .say(),
+                )
                 .render(shell, cx),
             );
         }
@@ -534,10 +587,17 @@ impl PaneView for MapView {
                 format!("map-view-spread-{}", pane.0),
                 "spread",
                 if spread {
-                    "Group the files at one place into a count again"
+                    skwir_core::words!(
+                        map_view_gather = "Group the files at one place into a count again",
+                        note = "Pointing at the Map view's button while the files made at one place are spread around it."
+                    )
                 } else {
-                    "Spread the files at one place around it, in the order they were taken"
-                },
+                    skwir_core::words!(
+                        map_view_spread = "Spread the files at one place around it, in the order they were taken",
+                        note = "Pointing at the Map view's button while the files made at one place are one mark with their count."
+                    )
+                }
+                .say(),
                 "ui.map_view_spread",
             )
             .active(spread)
@@ -547,7 +607,12 @@ impl PaneView for MapView {
             Button::new(
                 format!("map-view-fit-{}", pane.0),
                 "fit",
-                "Fit the map to its files · Home",
+                skwir_core::words!(
+                    map_view_fit = "Fit the map to its files · Home",
+                    note =
+                        "Pointing at the Map view's Fit button. Home is the key that does it too."
+                )
+                .say(),
                 "ui.map_view_fit",
             )
             .active(self.handles.view.get().is_none())
@@ -676,11 +741,22 @@ impl PaneView for MapView {
                 div()
                     .id(("map-view-figure", pane.0 as usize))
                     .role(gpui::Role::Figure)
-                    .aria_label("Map")
+                    .aria_label(
+                        skwir_core::words!(
+                            map_view_figure = "Map",
+                            note = "What a screen reader calls the Map view's map."
+                        )
+                        .say(),
+                    )
                     .when_some(said, |d, said| {
-                        d.aria_description(format!(
-                            "{said}. PageDown and PageUp go from place to place"
-                        ))
+                        d.aria_description(
+                            skwir_core::words!(
+                                map_view_figure_said = "{ $said }. PageDown and PageUp go from place to place",
+                                said = said,
+                                note = "What a screen reader hears of the Map view's map: what its header says (3 files placed), then what its keys do."
+                            )
+                            .say(),
+                        )
                     })
                     // Its places one by one, read as a list.
                     .when(shell.a11y, |d| {

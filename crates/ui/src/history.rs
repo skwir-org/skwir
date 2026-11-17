@@ -24,6 +24,8 @@ use gpui::{
     AnyElement, Context, FocusHandle, ListOffset, SharedString, Window, div, prelude::*, px,
 };
 use skwir_core::op::{Can, Done, History, HistoryRow, PlanId, Since};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::activity::{Press, stop};
 use crate::controls::{self, ButtonStyle};
@@ -344,17 +346,30 @@ pub(crate) fn can_now(row: &HistoryRow) -> bool {
 /// takes it back at once.
 pub(crate) fn why(row: &HistoryRow) -> Option<String> {
     let undone = row.state == Done::Undone;
-    Some(match &row.can {
-        Can::Now => return None,
-        Can::OnceEnded => "Taken back once it ends".to_owned(),
-        Can::Going if undone => "Being put back…".to_owned(),
-        Can::Going => "Being undone…".to_owned(),
-        Can::Never => "Cannot be undone".to_owned(),
-        Can::After { title, since, .. } => {
-            let (before, after) = held(*since);
-            format!("{before}“{}”{after}", capitalized(&title.say()))
+    Some(
+        match &row.can {
+            Can::Now => return None,
+            Can::OnceEnded => words!(
+                history_once_ended = "Taken back once it ends",
+                note = "Why an action's Undo waits: it runs, and is taken back once it ends."
+            ),
+            Can::Going if undone => words!(
+                history_being_put_back = "Being put back…",
+                note = "Why an undone action's Redo waits: it is being done again."
+            ),
+            Can::Going => words!(
+                history_being_undone = "Being undone…",
+                note = "Why an action's Undo waits: it is being taken back."
+            ),
+            Can::Never => words!(
+                history_never = "Cannot be undone",
+                note = "Why an action has no Undo."
+            ),
+            // Transitional: a plan's title capitalised (ADR-139).
+            Can::After { title, since, .. } => held(*since, capitalized(&title.say())),
         }
-    })
+        .say(),
+    )
 }
 
 /// Why `action`, an answer's Undo (a toast's, `Earlier`'s), cannot take
@@ -367,23 +382,96 @@ pub(crate) fn undo_held(action: &Action, by_plan: &HashMap<PlanId, HistoryRow>) 
     }
     let plan: PlanId = serde_json::from_value(action.args.get("plan")?.clone()).ok()?;
     match by_plan.get(&plan) {
-        Some(row) if row.state == Done::Undone => Some("Undone already".to_owned()),
+        Some(row) if row.state == Done::Undone => Some(
+            words!(
+                history_undone_already = "Undone already",
+                note = "Why the Undo of an answer (a toast's, Activity's) is held: what it did \
+                        is undone already."
+            )
+            .say(),
+        ),
         Some(row) if can_now(row) => None,
         Some(row) => why(row),
-        None => Some("No longer in the history".to_owned()),
+        None => Some(
+            words!(
+                history_no_longer = "No longer in the history",
+                note = "Why the Undo of an answer (a toast's, Activity's) is held: what it did \
+                        is no longer in the Undo history."
+            )
+            .say(),
+        ),
     }
 }
 
-/// What is said before and after the name of the action that holds an
-/// Undo, by how that one stands.
-fn held(since: Since) -> (&'static str, &'static str) {
+/// Why an Undo waits for the action `title` that holds it, by how that
+/// one stands.
+fn held(since: Since, title: String) -> Words {
     match since {
-        Since::Done => ("Undo ", " first: it touched what this did"),
-        Since::Running => ("", " is running, and touches what this did"),
-        Since::Waiting => ("", " waits its turn, and touches what this did"),
-        Since::Undone => ("Redo ", " first: it touched what this did"),
-        Since::ForGood => ("", " took what this did for good"),
+        Since::Done => words!(
+            history_held_done = "Undo “{ $title }” first: it touched what this did",
+            title = title,
+            note = "Why an action's Undo waits: an action done after it touched what it did. \
+                    title: that action, capitalised (Copy 3 items to Docs), a link to its row."
+        ),
+        Since::Running => words!(
+            history_held_running = "“{ $title }” is running, and touches what this did",
+            title = title,
+            note = "Why an action's Undo waits: an action running touches what it did. title: \
+                    that action, capitalised (Copy 3 items to Docs), a link to its row."
+        ),
+        Since::Waiting => words!(
+            history_held_waiting = "“{ $title }” waits its turn, and touches what this did",
+            title = title,
+            note = "Why an action's Undo waits: an action waiting its turn touches what it \
+                    did. title: that action, capitalised (Copy 3 items to Docs), a link to its \
+                    row."
+        ),
+        Since::Undone => words!(
+            history_held_undone = "Redo “{ $title }” first: it touched what this did",
+            title = title,
+            note = "Why an undone action's Redo waits: an action undone after it touched what \
+                    it did. title: that action, capitalised (Copy 3 items to Docs), a link to \
+                    its row."
+        ),
+        Since::ForGood => words!(
+            history_held_for_good = "“{ $title }” took what this did for good",
+            title = title,
+            note = "Why an action cannot be undone: an action after it took what it did for \
+                    good (deleted it). title: that action, capitalised (Copy 3 items to Docs), \
+                    a link to its row."
+        ),
     }
+}
+
+/// `held`, said in two parts, before and after where its language places
+/// the title, so that the title's link stands there. Transitional
+/// (ADR-139): where an argument is placed, as data beside what is said, is
+/// core's to give (the API pass); found here by a mark placed as the title,
+/// never by reading the words.
+fn held_around(since: Since) -> (String, String) {
+    const MARK: &str = "\u{E000}";
+    let said = held(since, MARK.to_owned()).say();
+    match said.split_once(MARK) {
+        Some((before, after)) => (before.to_owned(), after.to_owned()),
+        None => (said, String::new()),
+    }
+}
+
+/// The tooltip of what the footer's Undo and the History's chevron do,
+/// with the keys that do it (`keys`, as the keymap writes them).
+fn with_keys(tip: Words, keys: Option<String>) -> SharedString {
+    match keys {
+        Some(keys) => words!(
+            history_with_keys = "{ $tip } ({ $keys })",
+            tip = tip,
+            keys = keys,
+            note = "A tooltip, then the keys that do the same (Undo copy 3 items to Docs \
+                    (Ctrl+Z))."
+        ),
+        None => tip,
+    }
+    .say()
+    .into()
 }
 
 /// The footer's Undo, split in two (the left part takes back the latest,
@@ -410,21 +498,35 @@ pub fn undo_control(
         .more
         .get_or_insert_with(|| cx.focus_handle())
         .clone();
-    let keys = |shell: &Shell, command: &str| {
-        shell
-            .keys_for(command, &serde_json::Value::Null)
-            .map_or_else(String::new, |keys| format!(" ({keys})"))
-    };
+    let keys = |shell: &Shell, command: &str| shell.keys_for(command, &serde_json::Value::Null);
     let enabled = target.is_some();
     let tip: SharedString = match &target {
-        Some((title, running)) => {
-            let once = if *running { " (once it ends)" } else { "" };
-            format!("Undo {}{once}{}", title.say(), keys(shell, "undo")).into()
-        }
-        None => "Nothing to undo".into(),
+        Some((title, running)) => with_keys(
+            if *running {
+                words!(
+                    history_undo_tip_once = "Undo { $title } (once it ends)",
+                    title = title.clone(),
+                    note = "The tooltip of the footer's Undo while the action it takes back \
+                            runs. title: the action (copy 3 items to Docs)."
+                )
+            } else {
+                words!(
+                    history_undo_tip = "Undo { $title }",
+                    title = title.clone(),
+                    note = "The tooltip of the footer's Undo. title: the action it takes back \
+                            (copy 3 items to Docs)."
+                )
+            },
+            keys(shell, "undo"),
+        ),
+        None => words!(
+            history_nothing_to_undo = "Nothing to undo",
+            note = "The tooltip of the footer's Undo while there is nothing to take back."
+        )
+        .say()
+        .into(),
     };
-    let history_tip: SharedString =
-        format!("Undo history{}", keys(shell, "ui.undo_history")).into();
+    let history_tip = with_keys(history_name(), keys(shell, "ui.undo_history"));
     let (accent, hover) = (theme.accent, theme.hover);
     let color = if enabled {
         theme.text
@@ -461,7 +563,13 @@ pub fn undo_control(
             }),
         )
         .child(controls::glyph("revert", theme.text_muted, 13.))
-        .child("Undo")
+        .child(
+            words!(
+                history_undo_footer = "Undo",
+                note = "The footer's button that takes back the latest action."
+            )
+            .say(),
+        )
         .press(
             move |this, window, cx| {
                 if enabled {
@@ -537,7 +645,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .pb_1()
         .text_small()
         .text_color(theme.text_muted)
-        .child("Undo history");
+        .child(history_name().say());
     let rows = if count == 0 {
         div()
             .flex_none()
@@ -545,7 +653,13 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
             .py_2()
             .text_body()
             .text_color(theme.text_muted)
-            .child("Nothing to undo yet")
+            .child(
+                words!(
+                    history_empty = "Nothing to undo yet",
+                    note = "What the Undo history says while it holds nothing."
+                )
+                .say(),
+            )
             .into_any_element()
     } else {
         // Only the rows in view are built (`history_row`), the rows read
@@ -567,7 +681,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
             .id("undo-history-rows")
             .role(gpui::Role::List)
             .when(a11y, |d| {
-                d.aria_label("Undo history").aria_size_of_set(count)
+                d.aria_label(history_name().say()).aria_size_of_set(count)
             })
             .relative()
             .flex()
@@ -583,7 +697,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
     let popup = shell.toolbar_menu.as_ref()?;
     let panel = crate::toolbar::popup_panel(popup, "ui.undo_history", theme, cx)
         .role(gpui::Role::Group)
-        .aria_label("Undo history")
+        .aria_label(history_name().say())
         // Its rows scroll, in their list.
         .overflow_hidden()
         // As wide as its rows' list, which says how wide (`WIDTH`).
@@ -606,6 +720,15 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         &crate::elements::adaptive::Chosen::default(),
         vec![panel.into_any_element()],
     ))
+}
+
+/// The Undo history's name, as its heading, its tooltip and a screen
+/// reader say it.
+fn history_name() -> Words {
+    words!(
+        history_name = "Undo history",
+        note = "The list of every action Undo can take back, opened above the footer's Undo."
+    )
 }
 
 /// The action at `at` of `read`: its state, title and time, why its Undo
@@ -632,24 +755,55 @@ fn history_row(
         Done::Running | Done::Waiting => controls::glyph("busy", theme.text_muted, 13.),
     };
     let pill = match row.state {
-        Done::Running => Some("running"),
-        Done::Waiting => Some("waiting"),
-        Done::Undone => Some("undone"),
+        Done::Running => Some(words!(
+            history_state_running = "running",
+            note = "On a pill before the title of an action of the Undo history: it runs."
+        )),
+        Done::Waiting => Some(words!(
+            history_state_waiting = "waiting",
+            note = "On a pill before the title of an action of the Undo history: it waits its \
+                    turn."
+        )),
+        Done::Undone => Some(words!(
+            history_state_undone = "undone",
+            note = "On a pill before the title of an action of the Undo history: it was taken \
+                    back."
+        )),
         Done::Done => None,
     };
+    // Transitional: a plan's title capitalised (ADR-139).
     let title = capitalized(&row.title.say());
     let why_said = why(row);
     // What a screen reader hears of the row, built only while one listens.
     let label: Option<SharedString> = a11y.then(|| {
-        [
-            Some(title.clone()),
-            pill.map(str::to_owned),
-            why_said.clone(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(", ")
+        let title = title.clone();
+        match (pill.clone(), why_said.clone()) {
+            (None, None) => Words::as_written(title),
+            (Some(state), None) => words!(
+                history_row_heard_state = "{ $title }, { $state }",
+                title = title,
+                state = state,
+                note = "What a screen reader hears of an action of the Undo history: its title, \
+                        capitalised (Copy 3 items to Docs), and how it stands (running)."
+            ),
+            (None, Some(why)) => words!(
+                history_row_heard_why = "{ $title }, { $why }",
+                title = title,
+                why = why,
+                note = "What a screen reader hears of an action of the Undo history: its title, \
+                        capitalised (Copy 3 items to Docs), and why its Undo waits."
+            ),
+            (Some(state), Some(why)) => words!(
+                history_row_heard_state_why = "{ $title }, { $state }, { $why }",
+                title = title,
+                state = state,
+                why = why,
+                note = "What a screen reader hears of an action of the Undo history: its title, \
+                        capitalised (Copy 3 items to Docs), how it stands (running), and why \
+                        its Undo waits."
+            ),
+        }
+        .say()
         .into()
     });
     let what = div().flex().flex_1().min_w_0().child(
@@ -667,7 +821,7 @@ fn history_row(
                     .bg(theme.hover)
                     .text_color(theme.text_muted)
                     .text_small()
-                    .child(pill)
+                    .child(pill.say())
             }))
             .child(crate::elements::clip::clipped(
                 div()
@@ -690,8 +844,9 @@ fn history_row(
             title: holder_title,
             since,
         } => focus(Part::Blocker).map(|link| {
-            let (before, after) = held(*since);
+            let (before, after) = held_around(*since);
             let holder = *holder;
+            // Transitional: a plan's title capitalised (ADR-139).
             let named = capitalized(&holder_title.say());
             div()
                 .flex()
@@ -704,7 +859,18 @@ fn history_row(
                     div()
                         .id(("undo-history-holder", entry))
                         .role(gpui::Role::Link)
-                        .when(a11y, |d| d.aria_label(format!("Go to {named}")))
+                        .when(a11y, |d| {
+                            d.aria_label(
+                                words!(
+                                    history_go_to = "Go to { $title }",
+                                    title = named.clone(),
+                                    note = "What a screen reader hears of the link to the row \
+                                            of the action that holds an Undo. title: that \
+                                            action, capitalised (Copy 3 items to Docs)."
+                                )
+                                .say(),
+                            )
+                        })
                         .track_focus(&link)
                         // A name longer than the line wraps there, rather
                         // than running past the History's edge.
@@ -720,7 +886,7 @@ fn history_row(
                             let accent = theme.accent;
                             move |s| s.border_color(accent)
                         })
-                        .child(format!("“{named}”"))
+                        .child(named)
                         .press(
                             move |this, window, cx| {
                                 // Its row lit, the keyboard on its Undo,
@@ -747,10 +913,16 @@ fn history_row(
     if !row.with.is_empty()
         && let Some(with) = focus(Part::WithAfter)
     {
-        let words = match row.with.len() {
-            1 => "Undo both".to_owned(),
-            n => format!("Undo with {n} after it"),
-        };
+        let words = words!(
+            history_undo_with = "{ $count ->
+                [1] Undo both
+               *[other] Undo with { $count } after it
+            }",
+            count = row.with.len(),
+            note = "A button of an action of the Undo history: take it back with those done \
+                    after it that touched what it did."
+        )
+        .say();
         buttons = buttons.child(
             controls::button(
                 SharedString::from(format!("undo-history-with-{entry}")),
@@ -778,9 +950,23 @@ fn history_row(
     }
     if let Some(main) = focus(Part::Main) {
         let (word, command) = if undone {
-            ("Redo", "redo")
+            (
+                words!(
+                    history_redo = "Redo",
+                    note = "A button of an undone action of the Undo history: do it again."
+                )
+                .say(),
+                "redo",
+            )
         } else {
-            ("Undo", "undo")
+            (
+                words!(
+                    history_undo = "Undo",
+                    note = "A button of an action of the Undo history: take it back."
+                )
+                .say(),
+                "undo",
+            )
         };
         let id = SharedString::from(format!("undo-history-main-{entry}"));
         let button = if can_now(row) {
@@ -856,7 +1042,7 @@ fn history_row(
 
 #[cfg(test)]
 mod tests {
-    use super::{OVERDRAW, Part, Walk, held, relist, stops, undo_held, walked, why};
+    use super::{OVERDRAW, Part, Walk, held, held_around, relist, stops, undo_held, walked, why};
     use crate::toast::Action;
     use skwir_core::op::{Can, Done, HistoryRow, Plan, PlanId, Since};
     use std::collections::HashMap;
@@ -925,7 +1111,8 @@ mod tests {
             said(Done::Done, Can::Never).as_deref(),
             Some("Cannot be undone")
         );
-        // Every way an Undo is held reads as a sentence round the name.
+        // Every way an Undo is held reads as one sentence round the name,
+        // its link where the sentence places it.
         for since in [
             Since::Done,
             Since::Running,
@@ -933,9 +1120,12 @@ mod tests {
             Since::Undone,
             Since::ForGood,
         ] {
-            let (before, after) = held(since);
-            assert!(after.starts_with(' '), "{since:?}");
-            assert!(before.is_empty() || before.ends_with(' '), "{since:?}");
+            let (before, after) = held_around(since);
+            assert_eq!(
+                format!("{before}Copy a{after}"),
+                held(since, "Copy a".to_owned()).say(),
+                "{since:?}"
+            );
         }
     }
 

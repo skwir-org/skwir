@@ -33,7 +33,7 @@ pub fn header(theme: &Theme) -> Div {
     let name = div()
         .min_w_0()
         .pl(px(DISCLOSURE_SIZE + ICON_SIZE + scale.f(8.)))
-        .child("Name");
+        .child(skwir_core::SortKey::Name.title_words().say());
     div()
         .h(px(height))
         .flex_none()
@@ -49,7 +49,7 @@ pub fn header(theme: &Theme) -> Div {
             line(name, NAME_MIN, height, scale).child(
                 column(scale.f(SIZE_WIDTH), theme.text_muted, height)
                     .text_right()
-                    .child("Size"),
+                    .child(skwir_core::SortKey::Size.title_words().say()),
             ),
         )
 }

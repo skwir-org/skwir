@@ -46,6 +46,8 @@ use crate::media::{Flash, Scrub};
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::{self, Button};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// The dock's height until it is dragged: one row and the transport.
 pub const COMPACT: f32 = 108.;
@@ -416,10 +418,13 @@ fn transport(
             .when(muted, |d| d.text_color(theme.text_muted))
             .child(text)
     };
-    let play = crate::player::request(
+    let play = request(
         "dock-play",
         if state.playing() { "pause" } else { "play" },
-        "Play / pause",
+        words!(
+            dock_play_pause = "Play / pause",
+            note = "The pinned player's button: play what it holds, or pause it."
+        ),
         "play_pause",
     );
     div()
@@ -478,17 +483,34 @@ fn transport(
             d.child(fullscreen("dock-fullscreen").render(shell, cx))
         })
         .child(
-            Button::new("dock-more", "more", "More", "ui.toolbar_menu")
-                .args(serde_json::json!({ "kind": MENU }))
-                // More's popup, and the volume when this form left the
-                // speaker out (its row in More opened it).
-                .anchor_if(anchor, open != Some(VOLUME) || !kept.mute)
-                .active(open == Some(MENU))
-                .render(shell, cx),
+            Button::new(
+                "dock-more",
+                "more",
+                words!(
+                    dock_more = "More",
+                    note = "The pinned player's button opening what its transport left out."
+                )
+                .say(),
+                "ui.toolbar_menu",
+            )
+            .args(serde_json::json!({ "kind": MENU }))
+            // More's popup, and the volume when this form left the
+            // speaker out (its row in More opened it).
+            .anchor_if(anchor, open != Some(VOLUME) || !kept.mute)
+            .active(open == Some(MENU))
+            .render(shell, cx),
         )
         .child(
-            crate::player::request("dock-close", "close", "Stop and let go", "stop")
-                .render(shell, cx),
+            request(
+                "dock-close",
+                "close",
+                words!(
+                    dock_stop = "Stop and let go",
+                    note = "The pinned player's button: stop playing and close the player."
+                ),
+                "stop",
+            )
+            .render(shell, cx),
         )
         .into_any_element()
 }
@@ -501,26 +523,51 @@ fn step(id: &'static str, delta: i64, shell: &Shell) -> Button {
         .as_ref()
         .is_some_and(|pinned| pinned.can_step(delta, shell.prefs.player.continue_with));
     if delta < 0 {
-        crate::player::request(id, "skip-previous", "Previous track", "previous")
+        request(
+            id,
+            "skip-previous",
+            words!(dock_previous = "Previous track"),
+            "previous",
+        )
     } else {
-        crate::player::request(id, "skip-next", "Next track", "next")
+        request(id, "skip-next", words!(dock_next = "Next track"), "next")
     }
     .enabled(there)
 }
 
 fn mute(id: &'static str, state: &skwir_core::media::Playback) -> Button {
-    crate::player::request(
-        id,
-        crate::media::speaker_icon(state),
-        if state.muted { "Unmute" } else { "Mute" },
-        "mute",
-    )
+    let tip = if state.muted {
+        words!(
+            dock_unmute = "Unmute",
+            note = "The pinned player's button: give its sound back."
+        )
+    } else {
+        words!(
+            dock_mute = "Mute",
+            note = "The pinned player's button: silence it."
+        )
+    };
+    request(id, crate::media::speaker_icon(state), tip, "mute")
 }
 
 /// Full screen is the panel's: the film is shown there first
 /// (`Shell::player_fullscreen`).
 fn fullscreen(id: &'static str) -> Button {
-    crate::player::request(id, "fullscreen", "Fullscreen", "fullscreen")
+    request(
+        id,
+        "fullscreen",
+        words!(
+            dock_fullscreen = "Fullscreen",
+            note = "The pinned player's button: show its film on the whole screen."
+        ),
+        "fullscreen",
+    )
+}
+
+/// A button asking the pinned player `what`, as `player::request` makes
+/// one, its tip said where it is drawn.
+fn request(id: &'static str, icon: &'static str, tip: Words, what: &str) -> Button {
+    Button::new(id, icon, tip.say(), "ui.player").args(serde_json::json!({ "request": what }))
 }
 
 /// The dock's More, above its button (the dock is at the window's foot):
@@ -564,11 +611,18 @@ fn menu(
             let mut left = Vec::new();
             if !kept.steps {
                 let position = pinned.scrub.unwrap_or(state.position);
-                panel = panel.child(div().px_2().text_body().child(format!(
-                    "{} / {}",
-                    crate::media::time(position),
-                    crate::media::duration(state)
-                )));
+                panel = panel.child(
+                    div().px_2().text_body().child(
+                        words!(
+                            dock_position = "{ $position } / { $duration }",
+                            position = crate::media::time(position),
+                            duration = crate::media::duration(state),
+                            note = "Where the pinned player is in what it plays, and how long \
+                                    it lasts (1:23 / 4:56)."
+                        )
+                        .say(),
+                    ),
+                );
                 left.push(step("dock-menu-previous", -1, shell));
                 left.push(step("dock-menu-next", 1, shell));
             }
@@ -602,10 +656,20 @@ fn menu(
 /// What a click on the dock's text does, said by its tooltip.
 pub(crate) const REVEAL_TIP: &str = "Show this track";
 
+/// `REVEAL_TIP` as words, said where it is drawn.
+pub(crate) fn reveal_tip() -> String {
+    words!(
+        dock_reveal = "Show this track",
+        note = "The tooltip of the pinned player's title: a click shows the file it plays, \
+                selected in its folder."
+    )
+    .say()
+}
+
 /// A line of the dock's text inside `reveal`: cut, it says itself whole
 /// before what a click does.
 fn revealed(el: gpui::Stateful<gpui::Div>, text: String) -> gpui::Stateful<gpui::Div> {
-    crate::elements::clip::clipped_with(el, text, Some(REVEAL_TIP.into()))
+    crate::elements::clip::clipped_with(el, text, Some(reveal_tip().into()))
 }
 
 /// Something of the dock that shows the track when clicked: what is not
@@ -620,7 +684,7 @@ fn reveal(
         .id(id)
         .cursor_pointer()
         .hover(move |d| d.bg(theme.hover))
-        .tooltip(move |_, cx| crate::toolbar::tooltip(REVEAL_TIP.into(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(reveal_tip().into(), cx))
         .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
 }
 
@@ -638,7 +702,18 @@ enum Form {
 
 /// What the cover says: it is the one place a click plays or pauses.
 fn play_tip() -> impl Fn(&mut Window, &mut gpui::App) -> gpui::AnyView + 'static {
-    move |_, cx| crate::toolbar::tooltip("Play / pause · Space".into(), cx)
+    move |_, cx| {
+        crate::toolbar::tooltip(
+            words!(
+                dock_play_pause_space = "Play / pause · Space",
+                note = "The tooltip of the pinned player's cover: a click plays or pauses, as \
+                        the Space key does."
+            )
+            .say()
+            .into(),
+            cx,
+        )
+    }
 }
 
 /// The compact dock's row in one of its forms: the cover, the title and

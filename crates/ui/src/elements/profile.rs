@@ -143,12 +143,29 @@ impl Profile {
         }
     }
 
-    /// What an altitude is measured from, in the readout.
-    pub fn from_words(&self) -> &'static str {
+    /// The readout at a point: how far `along` it is, its `altitude`, and
+    /// what the altitude is measured from.
+    pub fn readout(&self, along: String, altitude: String) -> skwir_core::words::Words {
+        use skwir_core::words;
         match self.datum {
-            Datum::Sea => "",
-            Datum::Ground => " above ground",
-            Datum::Takeoff => " above takeoff",
+            Datum::Sea => words!(
+                profile_readout = "{ $along } · { $altitude }",
+                along = along,
+                altitude = altitude,
+                note = "Pointing at a track's altitude chart: how far along the track (2.4 km), then the altitude there (812 m)."
+            ),
+            Datum::Ground => words!(
+                profile_readout_ground = "{ $along } · { $altitude } above ground",
+                along = along,
+                altitude = altitude,
+                note = "Pointing at a track's altitude chart: how far along the track, then the altitude there, measured from the ground."
+            ),
+            Datum::Takeoff => words!(
+                profile_readout_takeoff = "{ $along } · { $altitude } above takeoff",
+                along = along,
+                altitude = altitude,
+                note = "Pointing at a flight's altitude chart: how far along it, then the altitude there, measured from where it took off."
+            ),
         }
     }
 }
@@ -259,7 +276,6 @@ impl Element for Chart {
         let shape = |text: String, color: Hsla, window: &mut Window| {
             super::map::shape(text.into(), color, window)
         };
-        let from = p.from_words();
         let mut labels = vec![
             (
                 bounds.origin + point(px(4.), plot.origin.y - bounds.origin.y - px(2.)),
@@ -274,15 +290,17 @@ impl Element for Chart {
                 shape(metres(p.low), self.colors.muted, window),
             ),
         ];
-        let length = shape(
-            format!(
-                "{}{}",
-                distance(p.length),
-                if p.planned { " planned" } else { "" }
-            ),
-            self.colors.muted,
-            window,
-        );
+        let length = if p.planned {
+            skwir_core::words!(
+                profile_length_planned = "{ $length } planned",
+                length = distance(p.length),
+                note = "The length of a planned route (not a recorded track), on its altitude chart: 12.4 km planned."
+            )
+            .say()
+        } else {
+            distance(p.length)
+        };
+        let length = shape(length, self.colors.muted, window);
         labels.push((
             plot.origin + point(plot.size.width - length.width - px(2.), px(0.)),
             length,
@@ -292,7 +310,7 @@ impl Element for Chart {
             let (x, y) = p.place(along, altitude, w, h);
             let at = plot.origin + point(px(x), px(y));
             let text = shape(
-                format!("{} · {}{from}", distance(along), metres(altitude)),
+                p.readout(distance(along), metres(altitude)).say(),
                 self.colors.text,
                 window,
             );
@@ -484,7 +502,10 @@ mod tests {
         };
         let p = Profile::of(&doc).unwrap();
         assert!(p.planned);
-        assert_eq!(p.from_words(), " above takeoff");
+        assert_eq!(
+            p.readout("1 m".into(), "2 m".into()).english(),
+            "1 m · 2 m above takeoff"
+        );
         assert!(Profile::of(&GeoDoc::default()).is_none());
     }
 }

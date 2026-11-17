@@ -9,14 +9,23 @@ use crate::{
 };
 use gpui::{AnyElement, Context, Div, div, prelude::*};
 use skwir_core::preview::PreviewInfo;
+use skwir_core::words;
 
 pub fn zoom_label(shell: &Shell) -> String {
     shell.preview.zoom.map_or_else(
         || {
             if shell.preview.fit_width {
-                "Width".into()
+                words!(
+                    preview_zoom_width = "Width",
+                    note = "On a preview's zoom button, where a percentage would be: the picture or page fits the width."
+                )
+                .say()
             } else {
-                "Fit".into()
+                words!(
+                    preview_zoom_fit = "Fit",
+                    note = "On a preview's zoom button, where a percentage would be: the picture or page fits the room there is."
+                )
+                .say()
             }
         },
         |zoom| format!("{:.0}%", zoom * 100.),
@@ -28,13 +37,14 @@ pub fn zoom_label(shell: &Shell) -> String {
 fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
     let mut menu = div().flex().flex_col().gap_1();
     let fits = [
-        ("menu-fit", "fit", label::FIT, "reset"),
-        ("menu-width", "width", label::FIT_WIDTH, "width"),
+        ("menu-fit", "fit", label::fit(), "reset"),
+        ("menu-width", "width", label::fit_width(), "width"),
     ];
     let film = shell.preview.shows_film();
     for (id, icon, label, value) in fits.into_iter().filter(|fit| !(film && fit.3 == "width")) {
+        let label = label.say();
         menu = menu.child(
-            Button::new(id, icon, label, "ui.preview_zoom")
+            Button::new(id, icon, label.clone(), "ui.preview_zoom")
                 .label(label)
                 .args(serde_json::json!({"dir":value}))
                 .active(if value == "width" {
@@ -76,10 +86,11 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
         Button::new(id, icon, title, "ui.preview_zoom").args(serde_json::json!({"dir":dir}))
     };
     let (smaller, larger) = if shell.reader_reflows() {
-        ("Smaller text", "Larger text")
+        (label::smaller_text(), label::larger_text())
     } else {
-        ("Zoom out", "Zoom in")
+        (label::zoom_out(), label::zoom_in())
     };
+    let (smaller, larger) = (smaller.say(), larger.say());
     bar.push(Item::button(
         Slot::View,
         1,
@@ -92,7 +103,7 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
             Button::new(
                 "preview-zoom-menu",
                 "chevron",
-                label::ZOOM,
+                label::zoom().say(),
                 "ui.preview_menu",
             )
             .args(serde_json::json!({"kind":"zoom"}))
@@ -108,13 +119,13 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("preview-fit", "fit", label::FIT, "reset").active(fit),
+        step("preview-fit", "fit", label::fit().say(), "reset").active(fit),
     ));
     if !shell.preview.shows_film() {
         bar.push(Item::button(
             Slot::View,
             0,
-            step("preview-width", "width", label::FIT_WIDTH, "width")
+            step("preview-width", "width", label::fit_width().say(), "width")
                 .active(shell.preview.fit_width),
         ));
     }
@@ -175,13 +186,34 @@ fn caption(shell: &Shell) -> String {
             height,
             detail: Some(PreviewInfo::Video { .. }),
             ..
-        }) => format!("Video still · {width} × {height}"),
+        }) => words!(
+            preview_video_still = "Video still · { $size }",
+            size = format!("{width} × {height}"),
+            note = "A preview's caption while it shows a picture of a film: its size in pixels (1920 × 1080)."
+        )
+        .say(),
         Some(PreviewContent::Image { width, height, .. }) => format!("{width} × {height}"),
-        Some(PreviewContent::Error(_)) => "Preview unavailable".into(),
-        Some(PreviewContent::TooLarge(_)) => "Large file".into(),
-        Some(PreviewContent::Generic) => "No preview".into(),
+        Some(PreviewContent::Error(_)) => words!(
+            preview_unavailable = "Preview unavailable",
+            note = "A preview's caption where reading the file failed."
+        )
+        .say(),
+        Some(PreviewContent::TooLarge(_)) => words!(
+            preview_large_file = "Large file",
+            note = "A preview's caption for a file too large for a quick preview."
+        )
+        .say(),
+        Some(PreviewContent::Generic) => words!(
+            preview_none = "No preview",
+            note = "A preview's caption for a file nothing shows."
+        )
+        .say(),
         // Only once the wait has lasted: a caption that flashes by is noise.
-        None if shell.preview_busy() => "Loading…".into(),
+        None if shell.preview_busy() => words!(
+            preview_loading = "Loading…",
+            note = "A preview's caption while the file is read."
+        )
+        .say(),
         // A folder has no bar (`preview::controls`).
         None | Some(PreviewContent::Inspection(_) | PreviewContent::Dir { .. }) => String::new(),
     }
@@ -209,7 +241,11 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
             Button::new(
                 "preview-back",
                 "left",
-                "Back five seconds",
+                words!(
+                    preview_back_five = "Back five seconds",
+                    note = "A film preview's button."
+                )
+                .say(),
                 "ui.preview_seek",
             )
             .args(serde_json::json!({"delta":-5}))
@@ -229,7 +265,11 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
             Button::new(
                 "preview-forward",
                 "right",
-                "Forward five seconds",
+                words!(
+                    preview_forward_five = "Forward five seconds",
+                    note = "A film preview's button."
+                )
+                .say(),
                 "ui.preview_seek",
             )
             .args(serde_json::json!({"delta":5}))
@@ -302,9 +342,19 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
 /// whole screen).
 pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
     let Some(fullscreen) = shell.preview.fullscreen.as_ref() else {
+        let slideshow = words!(
+            preview_slideshow = "Slideshow",
+            note = "A picture preview's menu row: show the folder's pictures one after another, on the whole screen."
+        )
+        .say();
         bar.push(Item::menu_only(
-            Button::new("preview-slideshow", "play", "Slideshow", "ui.slideshow")
-                .label("Slideshow"),
+            Button::new(
+                "preview-slideshow",
+                "play",
+                slideshow.clone(),
+                "ui.slideshow",
+            )
+            .label(slideshow),
         ));
         return;
     };
@@ -320,7 +370,11 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
         step(
             "picture-previous",
             "left",
-            "Previous picture",
+            words!(
+                preview_previous_picture = "Previous picture",
+                note = "A button of a picture shown on the whole screen."
+            )
+            .say(),
             -1,
             previous.is_some(),
         ),
@@ -333,10 +387,17 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
             "picture-slideshow",
             if playing { "pause" } else { "play" },
             if playing {
-                "Pause the slideshow"
+                words!(
+                    preview_slideshow_pause = "Pause the slideshow",
+                    note = "A button of a picture shown on the whole screen."
+                )
             } else {
-                "Play the slideshow"
-            },
+                words!(
+                    preview_slideshow_play = "Play the slideshow",
+                    note = "A button of a picture shown on the whole screen: show the pictures one after another."
+                )
+            }
+            .say(),
             "ui.slideshow",
         )
         .active(playing),
@@ -344,7 +405,17 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::Navigate,
         2,
-        step("picture-next", "right", "Next picture", 1, next.is_some()),
+        step(
+            "picture-next",
+            "right",
+            words!(
+                preview_next_picture = "Next picture",
+                note = "A button of a picture shown on the whole screen."
+            )
+            .say(),
+            1,
+            next.is_some(),
+        ),
     ));
     let seconds = crate::settings::slideshow_seconds(shell);
     bar.push(
@@ -354,7 +425,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
             Button::new(
                 "picture-pace",
                 "chevron",
-                "Each picture for",
+                each_picture_for().say(),
                 "ui.preview_menu",
             )
             .args(serde_json::json!({"kind": crate::fullscreen::SLIDESHOW_POPUP}))
@@ -368,11 +439,22 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
     ));
 }
 
+/// The slideshow's pace's button and its popup's title, before how long.
+fn each_picture_for() -> skwir_core::words::Words {
+    words!(
+        preview_each_picture_for = "Each picture for",
+        note = "The button and the title of the choices of how long a slideshow shows each picture (5 s), which follow it."
+    )
+}
+
 /// The slideshow's pace, a picker of the Reading page's choices.
 fn pace_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
     let chosen = crate::settings::slideshow_seconds(shell).to_string();
-    let mut parts = vec![toolbar::MenuPart::Title("Each picture for".into(), None)];
+    let mut parts = vec![toolbar::MenuPart::Title(
+        each_picture_for().say().into(),
+        None,
+    )];
     for (value, label) in crate::settings::SLIDESHOW_PACES {
         let seconds: u64 = value.parse().unwrap_or(5);
         parts.push(toolbar::MenuPart::Row(

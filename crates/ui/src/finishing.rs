@@ -46,8 +46,9 @@ use skwir_core::workspace::{PaneId, WindowId};
 use skwir_platform::desktop::{Asked, Presence, Standing};
 use skwir_platform::handover::{NotTaken, Opening, TakingOver};
 
+use skwir_core::words::Words;
+
 use crate::activity::{Under, summary, words};
-use crate::format;
 use crate::keymap;
 use crate::shell::Shell;
 use crate::toast::capitalized;
@@ -278,13 +279,13 @@ fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
     if let Some(location) = initial {
         let pane = app.workspace.read().active_id();
         if let Err(error) = app.navigate(pane, &location) {
-            say_in_active(cx, format!("{error:#}"));
+            say_in_active(cx, Words::of_error(error));
         }
     }
     // Tabs restored, or asleep while no window was up, open the one each
     // window shows, now that the listings have a window to wake.
     if let Err(error) = app.resume_tabs() {
-        say_in_active(cx, format!("{error:#}"));
+        say_in_active(cx, Words::of_error(error));
     }
     // Scripts and agents reach the windows from now on: what they ask
     // comes after what they start on.
@@ -293,7 +294,7 @@ fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
 }
 
 /// Say `text` as an error in the active window's status.
-fn say_in_active(cx: &mut App, text: String) {
+fn say_in_active(cx: &mut App, text: Words) {
     if let Some(window) = active_handle(cx) {
         let _ = window.update(cx, |shell, _, cx| shell.set_status(text, true, cx));
     }
@@ -1114,48 +1115,125 @@ pub(crate) fn act(app: &skwir_core::App, work: &Work, asked: &Asked) {
 fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     let summary = summary(under);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => capitalized(&running.title.say()),
-        ([], [task]) => capitalized(&task.title),
-        ([], []) => String::new(),
-        _ => format::count(under.count(), "action"),
+        // Transitional: a plan's title capitalised (ADR-139).
+        ([(running, _)], []) => Words::as_written(capitalized(&running.title.say())),
+        // A task's title begins a sentence already (`task::Running`).
+        ([], [task]) => Words::as_written(task.title.clone()),
+        ([], []) => Words::default(),
+        _ => skwir_core::words!(
+            finishing_actions = "{ $count ->
+                [one] { $count } action
+               *[other] { $count } actions
+            }",
+            count = under.count(),
+            note = "What the desktop shows of what runs while no window is up: how many \
+                    actions."
+        ),
     };
+    // Transitional: a plan's title capitalised (ADR-139).
     let stopped = work.stopped.as_ref().map(|s| capitalized(&s.title.say()));
     let (standing, about) = if asks {
-        (Standing::Asks, "Open Skwir to answer".to_owned())
+        (
+            Standing::Asks,
+            skwir_core::words!(
+                finishing_about_asks = "Open Skwir to answer",
+                note = "What the desktop shows while a question waits and no window is up."
+            ),
+        )
     } else if let Some(summary) = &summary {
         if summary.shares.is_empty() {
             // Nothing runs yet: what is asked waits its turn.
-            (Standing::Running, "Waiting its turn".to_owned())
+            (
+                Standing::Running,
+                skwir_core::words!(
+                    finishing_about_waiting = "Waiting its turn",
+                    note = "What the desktop shows while an action waits its turn and no \
+                            window is up."
+                ),
+            )
         } else if summary.paused {
-            (Standing::Paused, format!("{what}: paused"))
+            (
+                Standing::Paused,
+                skwir_core::words!(
+                    finishing_about_paused = "{ $what }: paused",
+                    what = what,
+                    note = "What the desktop shows while what runs is paused and no window \
+                            is up: the action by its title, capitalised (Copy 3 items to \
+                            Docs), or how many (2 actions)."
+                ),
+            )
         } else {
-            (Standing::Running, what.clone())
+            (Standing::Running, what)
         }
     } else if work.waits_for_server() {
-        (Standing::Waiting, "Waiting for its server".to_owned())
-    } else if let Some(stopped) = &stopped {
-        (Standing::Stopped, format!("{stopped}: stopped"))
+        (
+            Standing::Waiting,
+            skwir_core::words!(
+                finishing_about_waits_for_server = "Waiting for its server",
+                note = "What the desktop shows while an action waits for its server to answer \
+                        again and no window is up."
+            ),
+        )
+    } else if let Some(stopped) = stopped {
+        (
+            Standing::Stopped,
+            skwir_core::words!(
+                finishing_about_stopped = "{ $title }: stopped",
+                title = stopped,
+                note = "What the desktop shows of an action an error stopped while no window \
+                        is up: its title, capitalised (Copy 3 items to Docs)."
+            ),
+        )
     } else {
-        (Standing::Running, "Finishing".to_owned())
+        (
+            Standing::Running,
+            skwir_core::words!(
+                finishing_about = "Finishing",
+                note = "What the desktop shows while Skwir finishes without its window."
+            ),
+        )
     };
     let title = match (&summary, standing) {
         // What is left of the spell to finish: what runs and what waits.
-        (Some(summary), _) => format!(
-            "Finishing {}",
-            format::count(summary.of - summary.ended, "action")
+        (Some(summary), _) => skwir_core::words!(
+            finishing_title_count = "Finishing { $count ->
+                [one] { $count } action
+               *[other] { $count } actions
+            }",
+            count = summary.of - summary.ended,
+            note = "The title of what the desktop shows while Skwir finishes without its \
+                    window: how many actions it has left, running or waiting."
         ),
-        (None, Standing::Asks) => "An action needs an answer".to_owned(),
-        (None, Standing::Waiting) => "Waiting for the server".to_owned(),
-        (None, Standing::Stopped) => "An action stopped".to_owned(),
-        _ => "Finishing".to_owned(),
-    };
+        (None, Standing::Asks) => skwir_core::words!(
+            finishing_title_asks = "An action needs an answer",
+            note = "The title of what the desktop shows while a question waits and no window \
+                    is up."
+        ),
+        (None, Standing::Waiting) => skwir_core::words!(
+            finishing_title_waits_for_server = "Waiting for the server",
+            note = "The title of what the desktop shows while an action waits for its server \
+                    and no window is up."
+        ),
+        (None, Standing::Stopped) => skwir_core::words!(
+            finishing_title_stopped = "An action stopped",
+            note = "The title of what the desktop shows of an action an error stopped while no \
+                    window is up."
+        ),
+        _ => skwir_core::words!(
+            finishing_title = "Finishing",
+            note = "The title of what the desktop shows while Skwir finishes without its \
+                    window."
+        ),
+    }
+    .say();
     let said = summary.as_ref().map_or_else(
-        || about.clone(),
+        || about.say(),
         |summary| {
             let [said, _, _] = words(under, summary);
-            said
+            said.say()
         },
     );
+    let about = about.say();
     Presence {
         title,
         said,
@@ -1213,7 +1291,7 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         let _ = window.update(cx, |shell, window, cx| {
             let pane = shell.window_pane();
             if let Err(error) = shell.app.new_tab_as_kept(Some(pane), location, None, true) {
-                shell.set_status(format!("{error:#}"), true, cx);
+                shell.set_status(Words::of_error(error), true, cx);
             }
             window.activate_window_with_token(token.as_deref());
         });
@@ -1228,7 +1306,7 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
             open_window(cx, id, false, token, false);
             cx.global_mut::<Finishing>().raised = Some(id);
         }
-        Err(error) => say_in_active(cx, format!("{error:#}")),
+        Err(error) => say_in_active(cx, Words::of_error(error)),
     }
 }
 

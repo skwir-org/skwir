@@ -16,6 +16,8 @@ use skwir_core::op::{EntryArg, EntryRef};
 use skwir_core::os_path::PathArg;
 use skwir_core::reference::Reference;
 use skwir_core::scheduler::{Lane, Priority};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
@@ -56,11 +58,22 @@ impl PromptKind {
 
     /// What its answer does, on the button Enter presses (`ui.ask` names
     /// its own).
-    fn accept(self) -> &'static str {
+    fn accept(self) -> Words {
         match self {
-            PromptKind::Find { .. } => "Find",
-            PromptKind::InspectJump { .. } => "Go",
-            PromptKind::Ask | PromptKind::Secret { .. } => "OK",
+            PromptKind::Find { .. } => words!(
+                prompt_find = "Find",
+                note = "The button of the prompt that finds a name in the pane as it is typed."
+            ),
+            PromptKind::InspectJump { .. } => words!(
+                prompt_go = "Go",
+                note = "The button of the prompt that jumps to a byte offset of a file shown \
+                        as hex."
+            ),
+            PromptKind::Ask | PromptKind::Secret { .. } => words!(
+                prompt_ok = "OK",
+                note = "The button that answers a question asked in a line of text, where \
+                        its asker named no verb for it."
+            ),
         }
     }
 }
@@ -138,7 +151,7 @@ struct Describe {
     /// forgets it.
     answering: bool,
     /// That answer has waited `work::SHOWN_AFTER`: the line under the
-    /// field says it is being worked out (`WORKING_OUT`).
+    /// field says it is being worked out (`working_out`).
     waited: bool,
     /// What makes `waited` true once that time is up; dropped, nothing.
     wait: Option<gpui::Task<()>>,
@@ -146,7 +159,13 @@ struct Describe {
 
 /// What the line under a question's field says while its answer waits for
 /// what the text comes to (`Describe::waited`).
-const WORKING_OUT: &str = "Working out what this does…";
+fn working_out() -> Words {
+    words!(
+        prompt_working_out = "Working out what this does…",
+        note = "Under a question's field, when it was answered before what its text comes to \
+                was told (a command line's effect): the answer waits for it."
+    )
+}
 
 /// How many lines what a question's text comes to takes under the field
 /// at most: the rest is said when pointed at.
@@ -207,7 +226,7 @@ pub struct PromptState {
     /// Remember in the keyring, where offered.
     pub remember: Option<Remember>,
     /// The answer's button: its verb and its focus, beside Cancel's.
-    accept: String,
+    accept: Words,
     accept_focus: FocusHandle,
     cancel_focus: FocusHandle,
     back: FocusReturn,
@@ -216,7 +235,7 @@ pub struct PromptState {
 
 /// A question before something that cannot be undone.
 pub struct ConfirmState {
-    pub message: String,
+    pub message: Words,
     pub then: Confirmed,
     /// What a plan deletes, listed under the question (`deleting.rs`).
     pub(crate) listed: Option<crate::deleting::Deleting>,
@@ -234,18 +253,31 @@ pub struct ConfirmState {
 /// command, `CommandSpec::data`), never one that acts (ADR-137). Asked
 /// where `ui.ask` is dispatched (an agent's, a script's) and where the
 /// question opens (a menu's).
-pub(crate) fn describe_refused(app: &skwir_core::App, args: &serde_json::Value) -> Option<String> {
+pub(crate) fn describe_refused(app: &skwir_core::App, args: &serde_json::Value) -> Option<Words> {
     let describe = args.get("describe").filter(|d| !d.is_null())?;
     let Some(name) = describe.get("command").and_then(serde_json::Value::as_str) else {
-        return Some("ui.ask's describe names no command".to_owned());
+        return Some(words!(
+            prompt_describe_no_command = "ui.ask's describe names no command",
+            note = "An error for who asked a question: ui.ask and describe are a command's \
+                    and its argument's names, as they are written."
+        ));
     };
     match app.commands.get(name) {
         Some(spec) if spec.data => None,
-        Some(_) => Some(format!(
-            "ui.ask's describe runs as the text is typed, before it is answered: \
-             {name} does more than answer"
+        Some(_) => Some(words!(
+            prompt_describe_acts = "ui.ask's describe runs as the text is typed, before it is \
+                                    answered: { $command } does more than answer",
+            command = name,
+            note = "An error for who asked a question: ui.ask and describe are a command's and \
+                    its argument's names, as they are written; command: the command named \
+                    (rename.describe)."
         )),
-        None => Some(format!("ui.ask's describe names no command known: {name}")),
+        None => Some(words!(
+            prompt_describe_unknown = "ui.ask's describe names no command known: { $command }",
+            command = name,
+            note = "An error for who asked a question: ui.ask and describe are a command's and \
+                    its argument's names, as they are written; command: the command named."
+        )),
     }
 }
 
@@ -356,15 +388,26 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let placeholder = match kind {
-            PromptKind::InspectJump { .. } => "Offset (decimal or 0x hexadecimal)",
-            PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
-            PromptKind::Ask => "",
-            PromptKind::Secret { .. } => "Password",
+            PromptKind::InspectJump { .. } => words!(
+                prompt_offset_placeholder = "Offset (decimal or 0x hexadecimal)",
+                note = "In the empty field of the prompt that jumps to a byte offset of a file \
+                        shown as hex; 0x is how a hexadecimal number is written."
+            ),
+            PromptKind::Find { .. } => words!(
+                prompt_find_placeholder = "Part of a name (capitals: exact case)",
+                note = "In the empty field of the prompt that finds a name in the pane: a \
+                        capital letter typed makes the case count."
+            ),
+            PromptKind::Ask => Words::default(),
+            PromptKind::Secret { .. } => words!(
+                prompt_password_placeholder = "Password",
+                note = "In the empty field of a question asking for a password."
+            ),
         };
         self.open_prompt_with(
             kind,
             title,
-            placeholder,
+            &placeholder.say(),
             initial,
             select,
             Prompted::default(),
@@ -435,7 +478,15 @@ impl Shell {
     ) {
         let text = |key: &str| args.get(key).and_then(serde_json::Value::as_str);
         let (Some(command), Some(field)) = (text("command"), text("field")) else {
-            self.set_status("ui.ask needs a command and a field", true, cx);
+            self.set_status(
+                words!(
+                    prompt_ask_needs = "ui.ask needs a command and a field",
+                    note = "An error for who asked a question: ui.ask, command and field are a \
+                            command's and its arguments' names, as they are written."
+                ),
+                true,
+                cx,
+            );
             return;
         };
         if let Some(refused) = describe_refused(&self.app, args) {
@@ -572,7 +623,8 @@ impl Shell {
             reference,
             describe,
         } = prompted;
-        let accept = accept.unwrap_or_else(|| kind.accept().to_owned());
+        // Transitional: an asker's verb is said as it wrote it (ADR-139).
+        let accept = accept.map_or_else(|| kind.accept(), Words::from);
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
@@ -694,7 +746,7 @@ impl Shell {
                             .to_owned(),
                     )),
                     Ok(_) => Ok(String::new()),
-                    Err(e) => Err(said_bounded(format!("{e:#}"))),
+                    Err(e) => Err(said_bounded(Words::of_error(e).say())),
                 };
                 (text, said)
             },
@@ -865,7 +917,7 @@ impl Shell {
     /// Ask before applying `plan`, which cannot be undone.
     pub fn open_confirm(
         &mut self,
-        message: String,
+        message: impl Into<Words>,
         then: Confirmed,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -874,7 +926,7 @@ impl Shell {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         self.confirm = Some(ConfirmState {
-            message,
+            message: message.into(),
             then,
             listed: None,
             focus,
@@ -963,14 +1015,15 @@ pub fn render_prompt(
         .child(div().text_title().child(p.title.clone()))
         .child(frame)
         .children(waited.then(|| {
+            let said = working_out().say();
             div()
                 .id("prompt-said")
                 .role(gpui::Role::Status)
                 .aria_live(gpui::Live::Polite)
-                .when(shell.a11y, |d| d.aria_label(WORKING_OUT))
+                .when(shell.a11y, |d| d.aria_label(said.clone()))
                 .text_body()
                 .text_color(theme.text_muted)
-                .child(WORKING_OUT)
+                .child(said)
         }))
         .children(said.filter(|_| !waited).and_then(|(of, said)| {
             let (says, color) = match said {
@@ -1003,7 +1056,12 @@ pub fn render_prompt(
                 .map(|note| div().text_body().text_color(theme.text_muted).child(note)),
         )
         .children(p.remember.as_ref().map(|remember| {
-            let label = "Remember in the keyring";
+            let label = words!(
+                prompt_remember = "Remember in the keyring",
+                note = "A switch under a password's field: keep the password in the desktop's \
+                        keyring."
+            )
+            .say();
             // Each its own click, the switch's answering Space and Enter
             // where it has the focus.
             let switch = div()
@@ -1017,7 +1075,7 @@ pub fn render_prompt(
                         &remember.focus,
                         &theme,
                     )
-                    .aria_label(label)
+                    .aria_label(label.clone())
                     .when_some(remember.keeping.clone(), |d, keeping| {
                         d.aria_description(keeping)
                     })
@@ -1050,12 +1108,12 @@ pub fn render_prompt(
                 .children(keeping)
         }))
         .child(modal::footer(
-            "Enter to confirm, Escape to cancel",
+            confirm_keys().say(),
             [
                 modal::pressed(
                     controls::button(
                         "prompt-cancel",
-                        "Cancel",
+                        cancel().say(),
                         None,
                         ButtonStyle::Plain,
                         &p.cancel_focus,
@@ -1070,7 +1128,7 @@ pub fn render_prompt(
                     if refused {
                         controls::inert_button_with(
                             "prompt-accept",
-                            p.accept.clone(),
+                            p.accept.say(),
                             Some("check"),
                             &p.accept_focus,
                             &theme,
@@ -1078,7 +1136,7 @@ pub fn render_prompt(
                     } else {
                         controls::button(
                             "prompt-accept",
-                            p.accept.clone(),
+                            p.accept.say(),
                             Some("check"),
                             ButtonStyle::Plain,
                             &p.accept_focus,
@@ -1101,27 +1159,69 @@ pub fn render_prompt(
     ))
 }
 
+/// The keys of a question: Enter answers it, Escape cancels.
+fn confirm_keys() -> Words {
+    words!(
+        prompt_confirm_keys = "Enter to confirm, Escape to cancel",
+        note = "The keys of a question asked in a dialog."
+    )
+}
+
+/// A question's Cancel.
+fn cancel() -> Words {
+    words!(
+        prompt_cancel = "Cancel",
+        note = "A button: close a question without answering it."
+    )
+}
+
 pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let c = shell.confirm.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let (yes, icon, style) = match c.then {
-        Confirmed::Apply(_) => ("Delete", Some("trash"), ButtonStyle::Danger),
-        Confirmed::Quit => ("Finish in the background", None, ButtonStyle::Plain),
+        Confirmed::Apply(_) => (
+            words!(
+                prompt_delete = "Delete",
+                note = "The button that answers the question before a permanent deletion: \
+                        delete, for good."
+            ),
+            Some("trash"),
+            ButtonStyle::Danger,
+        ),
+        Confirmed::Quit => (
+            words!(
+                prompt_finish_in_background = "Finish in the background",
+                note = "A button of what Quit asks while actions run: the window goes, Skwir \
+                        finishes them, then quits."
+            ),
+            None,
+            ButtonStyle::Plain,
+        ),
     };
     let (no, other) = match c.then {
-        Confirmed::Apply(_) => ("Cancel", None),
-        Confirmed::Quit => ("Keep the window", Some("Stop and quit")),
+        Confirmed::Apply(_) => (cancel(), None),
+        Confirmed::Quit => (
+            words!(
+                prompt_keep_window = "Keep the window",
+                note = "A button of what Quit asks while actions run: do not quit."
+            ),
+            Some(words!(
+                prompt_stop_and_quit = "Stop and quit",
+                note = "A button of what Quit asks while actions run: stop them now, then quit."
+            )),
+        ),
     };
+    let message = c.message.say();
     // A question that asks before something is done says itself at once.
     let width = if c.listed.is_some() { 640. } else { 560. };
     let panel = modal::panel("confirm", width, &theme)
         .role(gpui::Role::AlertDialog)
-        .when(shell.a11y, |d| d.aria_label(c.message.clone()))
+        .when(shell.a11y, |d| d.aria_label(message.clone()))
         .p_3()
         .gap_2()
         .track_focus(&c.focus)
         .key_context(keymap::CONFIRM)
-        .child(div().text_title().child(c.message.clone()))
+        .child(div().text_title().child(message))
         .children(
             c.listed
                 .as_ref()
@@ -1129,14 +1229,18 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         )
         .child(modal::footer(
             match c.then {
-                Confirmed::Apply(_) => "Enter to confirm, Escape to cancel",
-                Confirmed::Quit => "Enter to finish in the background",
-            },
+                Confirmed::Apply(_) => confirm_keys(),
+                Confirmed::Quit => words!(
+                    prompt_quit_keys = "Enter to finish in the background",
+                    note = "The keys of what Quit asks while actions run."
+                ),
+            }
+            .say(),
             [
                 Some(modal::pressed(
                     controls::button(
                         "confirm-no",
-                        no,
+                        no.say(),
                         None,
                         ButtonStyle::Plain,
                         &c.cancel,
@@ -1149,7 +1253,7 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
                     modal::pressed(
                         controls::button(
                             "confirm-other",
-                            other,
+                            other.say(),
                             None,
                             ButtonStyle::Danger,
                             &c.other,
@@ -1160,7 +1264,7 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
                     )
                 }),
                 Some(modal::pressed(
-                    controls::button("confirm-yes", yes, icon, style, &c.accept, &theme),
+                    controls::button("confirm-yes", yes.say(), icon, style, &c.accept, &theme),
                     Shell::confirm_accept,
                     cx,
                 )),

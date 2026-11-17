@@ -9,6 +9,7 @@ use skwir_core::command::Invocation;
 use skwir_core::location::Location;
 use skwir_core::registry::Opens;
 use skwir_core::suggest::{Answer, Ask, Section, SuggestSource, Suggester, Suggestion, Typed};
+use skwir_core::words;
 
 /// The most rows a source of places or commands gives for words.
 const PLACES: usize = 4;
@@ -113,7 +114,13 @@ impl SuggestSource for Tabs {
                     Section::Tabs
                 };
                 let mut row = Suggestion::new(section, title)
-                    .detail("Switch to tab")
+                    .detail(
+                        words!(
+                            suggestions_switch_tab = "Switch to tab",
+                            note = "Under a tab's title in the address field's card: Enter shows that tab."
+                        )
+                        .say(),
+                    )
                     .icon("tab-new")
                     .rank(rank)
                     .runs(Invocation::with_args(
@@ -197,7 +204,9 @@ impl SuggestSource for Places {
 
     fn suggest(&self, app: &App, ask: &Ask, _: &CancelToken) -> Answer {
         let words = ask.words();
-        let mut found: Vec<(i32, Suggestion)> = app
+        // Each with where it leads, as data: two places leading to one
+        // place, filtered alike, are offered once.
+        let mut found: Vec<(i32, (String, Option<String>), Suggestion)> = app
             .registry
             .places
             .all()
@@ -212,9 +221,16 @@ impl SuggestSource for Places {
                 let rank = rank_of(&title, words)?;
                 // A saved search or place opens as it was kept, a place
                 // saying its filter (ADR-109).
+                let leads = (said(&place.location), place.filter().map(str::to_owned));
                 let detail = match place.filter() {
-                    Some(filter) => format!("{} · {filter}", said(&place.location)),
-                    None => said(&place.location),
+                    Some(filter) => words!(
+                        suggestions_place_filtered = "{ $location } · { $filter }",
+                        location = leads.0.clone(),
+                        filter = filter,
+                        note = "Under a kept place's name in the address field's card; location: where it is (a path); filter: what it is filtered by, as typed."
+                    )
+                    .say(),
+                    None => leads.0.clone(),
                 };
                 let runs = match place.opens {
                     Opens::Lensed => navigate(&place.location, ask),
@@ -226,13 +242,17 @@ impl SuggestSource for Places {
                     .rank(rank)
                     .runs(runs);
                 row.scope = scope_of(app, &place.location);
-                Some((rank, row))
+                Some((rank, leads, row))
             })
             .collect();
-        found.sort_by_key(|(rank, _)| *rank);
-        found.dedup_by(|a, b| a.1.detail == b.1.detail);
+        found.sort_by_key(|(rank, _, _)| *rank);
+        found.dedup_by(|a, b| a.1 == b.1);
         Answer {
-            rows: found.into_iter().take(PLACES).map(|(_, row)| row).collect(),
+            rows: found
+                .into_iter()
+                .take(PLACES)
+                .map(|(_, _, row)| row)
+                .collect(),
             spans: Vec::new(),
         }
     }

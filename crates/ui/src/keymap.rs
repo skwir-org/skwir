@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use gpui::{Action, KeyBinding, Keystroke};
 use skwir_core::App;
 use skwir_core::keymap::UserBinding;
+use skwir_core::words;
+use skwir_core::words::{Folder, Words};
 
 /// The single action every key binding maps to.
 #[derive(Clone, Debug, PartialEq, Action)]
@@ -1469,19 +1471,40 @@ fn zoom_specs() -> impl Iterator<Item = (String, String, serde_json::Value, Stri
 }
 
 /// A place a binding can name: its `when` token, the key context it is,
-/// what F1 and the Keyboard page call it, and whether it is inside a
-/// dialog or a menu (the Keyboard page lists those keys last, folded).
+/// what F1 and the Keyboard page call it (its `group`, whose words
+/// `Place::words` says), and whether it is inside a dialog or a menu (the
+/// Keyboard page lists those keys last, folded).
 pub(crate) struct Place {
     pub token: &'static str,
     pub context: &'static str,
+    /// What F1 and the Keyboard page group it under, as data: the places
+    /// that share their keys (the settings' contexts, the toolbars') share
+    /// it; any other is its token.
+    pub group: &'static str,
+    /// Transitional (ADR-139, E): what `Place::words` says, in English,
+    /// until every reader asks it.
     pub label: &'static str,
     pub inside: bool,
+}
+
+impl Place {
+    /// What F1 and the Keyboard page call it, said where it is shown.
+    pub fn words(&self) -> Words {
+        group_words(self.group).unwrap_or_else(|| Words::as_written(self.label))
+    }
+
+    /// The same place, grouped with the others of `group`.
+    const fn of(mut self, group: &'static str) -> Place {
+        self.group = group;
+        self
+    }
 }
 
 const fn place(token: &'static str, context: &'static str, label: &'static str) -> Place {
     Place {
         token,
         context,
+        group: token,
         label,
         inside: false,
     }
@@ -1491,9 +1514,87 @@ const fn inside(token: &'static str, context: &'static str, label: &'static str)
     Place {
         token,
         context,
+        group: token,
         label,
         inside: true,
     }
+}
+
+/// The words of a group of places (`Place::group`): what F1 and the
+/// Keyboard page call where keys work.
+fn group_words(group: &str) -> Option<Words> {
+    Some(match group {
+        "pane" => words!(
+            keymap_place_pane = "File list",
+            note = "A place in the window, as the list of shortcuts names where keys work: the list of files."
+        ),
+        "sidebar" => words!(keymap_place_sidebar = "Sidebar"),
+        "address" => words!(keymap_place_address = "Address bar"),
+        "view_buttons" => words!(
+            keymap_place_view_buttons = "View buttons",
+            note = "A place in the window: the buttons that choose the list, the grid or another view."
+        ),
+        "peek" => words!(
+            keymap_place_peek = "Peek",
+            note =
+                "A place in the window: the quick look at a file over the list, opened with Space."
+        ),
+        "preview" => words!(keymap_place_preview = "Documents and structured previews"),
+        "reader" => words!(keymap_place_reader = "Document reader"),
+        "inspector" => words!(keymap_place_inspector = "Structured previews"),
+        "text" => words!(keymap_place_text = "Text in the preview"),
+        "preview_find" => words!(keymap_place_preview_find = "Preview search"),
+        "members" => words!(keymap_place_members = "Files of an archive or a message"),
+        "member" => words!(keymap_place_member = "A file shown from an archive or a message"),
+        "image" => words!(keymap_place_image = "Picture preview"),
+        "map" => words!(keymap_place_map = "Map preview"),
+        "model" => words!(keymap_place_model = "3D model preview"),
+        "media" => words!(keymap_place_media = "Media player"),
+        "volume" => words!(
+            keymap_place_volume = "Volume",
+            note = "A place in the window: the media player's volume slider."
+        ),
+        "fullscreen" => words!(keymap_place_fullscreen = "Preview on the whole screen"),
+        "slideshow" => words!(keymap_place_slideshow = "Picture on the whole screen"),
+        "player" => words!(
+            keymap_place_player = "Pinned player",
+            note = "A place in the window: the player kept playing while one browses."
+        ),
+        "activity" => words!(
+            keymap_place_activity = "Activity",
+            note = "A place in the window: the panel of the copies, moves and other work going on."
+        ),
+        "terminal" => words!(keymap_place_terminal = "Terminal"),
+        "timeline" => words!(
+            keymap_place_timeline = "Timeline",
+            note = "A place in the window: the strip of the files' dates."
+        ),
+        "palette" => words!(keymap_place_palette = "Command palette"),
+        "choose" => words!(keymap_place_choose = "Choosing from a list"),
+        "form" => words!(keymap_place_form = "Forms"),
+        "tag_editor" => words!(keymap_place_tag_editor = "Tag editor"),
+        "bulk" => words!(keymap_place_bulk = "Bulk rename"),
+        "bulk_case" => words!(
+            keymap_place_bulk_case = "Bulk rename's case",
+            note =
+                "A place in the window: the row of the bulk rename that changes the names' case."
+        ),
+        "review" => words!(
+            keymap_place_review = "Plan review",
+            note =
+                "A place in the window: the dialog listing what a plan will do before it does it."
+        ),
+        "confirm" => words!(keymap_place_confirm = "Confirmation dialogs"),
+        "menu" => words!(keymap_place_menu = "Context menu"),
+        "toolbars" => words!(keymap_place_toolbars = "Toolbars"),
+        "shortcuts" => words!(
+            keymap_place_shortcuts = "Shortcut overview",
+            note = "A place in the window: the overview of shortcuts F1 opens."
+        ),
+        "about" => words!(keymap_place_about = "About skwir"),
+        "settings" => words!(keymap_place_settings = "Settings"),
+        _ => return None,
+    })
 }
 
 /// Every place a binding can name, once, in the order the Keyboard page
@@ -1539,21 +1640,21 @@ pub(crate) const PLACES: &[Place] = &[
     inside("review", REVIEW, "Plan review"),
     inside("confirm", CONFIRM, "Confirmation dialogs"),
     inside("menu", MENU, "Context menu"),
-    inside("toolbar_button", "ToolbarButton", "Toolbars"),
-    inside("toolbar_popup", "ToolbarPopup", "Toolbars"),
-    inside("toolbar_submenu", "ToolbarSubmenu", "Toolbars"),
-    inside("toolbar_choice", crate::toolbar::CHOICE_ROW, "Toolbars"),
+    inside("toolbar_button", "ToolbarButton", "Toolbars").of("toolbars"),
+    inside("toolbar_popup", "ToolbarPopup", "Toolbars").of("toolbars"),
+    inside("toolbar_submenu", "ToolbarSubmenu", "Toolbars").of("toolbars"),
+    inside("toolbar_choice", crate::toolbar::CHOICE_ROW, "Toolbars").of("toolbars"),
     inside("shortcuts", "Shortcuts", "Shortcut overview"),
     inside("about", "About", "About skwir"),
     inside("settings", "Settings", "Settings"),
-    inside("settings_nav", "SettingsNav", "Settings"),
-    inside("setting_control", "SettingControl", "Settings"),
-    inside("setting_choices", "SettingChoices", "Settings"),
-    inside("setting_number", "SettingNumber", "Settings"),
-    inside("setting_slider", "SettingSlider", "Settings"),
-    inside("setting_record", "SettingRecord", "Settings"),
-    inside("setting_keys", "SettingKeys", "Settings"),
-    inside("setting_exclusions", "SettingExclusions", "Settings"),
+    inside("settings_nav", "SettingsNav", "Settings").of("settings"),
+    inside("setting_control", "SettingControl", "Settings").of("settings"),
+    inside("setting_choices", "SettingChoices", "Settings").of("settings"),
+    inside("setting_number", "SettingNumber", "Settings").of("settings"),
+    inside("setting_slider", "SettingSlider", "Settings").of("settings"),
+    inside("setting_record", "SettingRecord", "Settings").of("settings"),
+    inside("setting_keys", "SettingKeys", "Settings").of("settings"),
+    inside("setting_exclusions", "SettingExclusions", "Settings").of("settings"),
 ];
 
 /// Map a registry `when` string to a GPUI context predicate. A token of
@@ -1607,34 +1708,55 @@ pub fn predicate_holds(context: &str, holds: &dyn Fn(&str) -> Option<bool>) -> b
 
 /// A flag of the pane's key context in plain words.
 pub(crate) fn condition(flag: &str) -> String {
+    condition_words(flag).say()
+}
+
+/// A flag of the pane's key context in plain words, said where it is
+/// shown: a flag Skwir does not know (a plugin's) as it is written.
+pub(crate) fn condition_words(flag: &str) -> Words {
     if let Some(not) = flag.strip_prefix('!') {
-        return format!("not {}", condition(not));
+        return words!(
+            keymap_not = "not { $condition }",
+            condition = condition_words(not),
+            note = "Where keys work: a condition that must not hold (not in the trash); condition: the condition."
+        );
     }
     match flag {
-        "single" => "one item selected",
-        "selection" => "with a selection",
-        "empty" => "nothing selected",
-        "split" => "split view",
-        "dir" => "on a folder",
-        "file" => "on a file",
-        "folder" => "in a folder",
-        "search" => "in a search",
-        "sweep" => "selecting as the cursor moves",
-        "place" => "on a tag or another place",
-        "refs" => "where removing leaves files where they are",
-        "drops" => "where files can be dropped",
-        "creates" => "where new places can be made",
-        "restores" => "in the trash",
-        "filtered" => "filtered by name",
-        "completes" => "while what is typed can be completed",
-        "labelling" => "while links are labelled",
-        "reference" => "in a field that says what it takes",
-        "lists" => "while a field's list shows",
-        "offers" => "while a field offers a row to take",
-        "planning" => "while a plan is worked out",
-        other => other,
+        "single" => words!(
+            keymap_flag_single = "one item selected",
+            note = "Where keys work: a condition, after the place (File list, one item selected)."
+        ),
+        "selection" => words!(keymap_flag_selection = "with a selection"),
+        "empty" => words!(keymap_flag_empty = "nothing selected"),
+        "split" => words!(keymap_flag_split = "split view"),
+        "dir" => words!(keymap_flag_dir = "on a folder"),
+        "file" => words!(keymap_flag_file = "on a file"),
+        "folder" => words!(
+            keymap_flag_folder = "in a folder",
+            note = "Where keys work: while a folder is shown, not a search or a tag."
+        ),
+        "search" => words!(keymap_flag_search = "in a search"),
+        "sweep" => words!(keymap_flag_sweep = "selecting as the cursor moves"),
+        "place" => words!(keymap_flag_place = "on a tag or another place"),
+        "refs" => words!(
+            keymap_flag_refs = "where removing leaves files where they are",
+            note = "Where keys work: a list (a tag's, the shelf) whose Delete takes a file out of it, leaving the file."
+        ),
+        "drops" => words!(keymap_flag_drops = "where files can be dropped"),
+        "creates" => words!(keymap_flag_creates = "where new places can be made"),
+        "restores" => words!(keymap_flag_restores = "in the trash"),
+        "filtered" => words!(keymap_flag_filtered = "filtered by name"),
+        "completes" => words!(keymap_flag_completes = "while what is typed can be completed"),
+        "labelling" => words!(
+            keymap_flag_labelling = "while links are labelled",
+            note = "Where keys work: while a preview's links show letters to follow them by."
+        ),
+        "reference" => words!(keymap_flag_reference = "in a field that says what it takes"),
+        "lists" => words!(keymap_flag_lists = "while a field's list shows"),
+        "offers" => words!(keymap_flag_offers = "while a field offers a row to take"),
+        "planning" => words!(keymap_flag_planning = "while a plan is worked out"),
+        other => Words::as_written(other.to_owned()),
     }
-    .to_owned()
 }
 
 /// Where a binding's keys work, as the Keyboard page groups them: the
@@ -1643,26 +1765,42 @@ pub(crate) fn condition(flag: &str) -> String {
 /// inside a dialog or a menu, and what conditions it adds, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Where {
+    /// What it is called, said.
     pub place: String,
+    /// Which place it is, as data: the groups of its places
+    /// (`Place::group`), a plugin's own context as it is named, empty for
+    /// anywhere. Two places called alike are alike in this: what groups by
+    /// place reads it, never `place`.
+    pub id: String,
     /// Anywhere is 0, then `PLACES`' order; a context no place names
     /// (a plugin's own) after them.
     pub rank: usize,
     pub inside: bool,
     /// Empty for none.
     pub conditions: String,
+    /// What `conditions` says, as data: its flags as the context writes
+    /// them.
+    pub flags: String,
 }
 
 /// Where the keys of a binding of `context` work.
 pub fn place_of(context: &str) -> Where {
     let known = |atom: &str| PLACES.iter().position(|place| place.context == atom);
     let mut found = Where {
-        place: "Anywhere".to_owned(),
+        place: words!(
+            keymap_anywhere = "Anywhere",
+            note = "Where keys work: anywhere in the window."
+        )
+        .say(),
+        id: String::new(),
         rank: 0,
         inside: false,
         conditions: String::new(),
+        flags: String::new(),
     };
     let mut placed = false;
     let mut words: Vec<String> = Vec::new();
+    let mut flags: Vec<&str> = Vec::new();
     for atom in conditions(context) {
         let alts: Vec<&str> = match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
             Some(alts) => alts.split("||").map(str::trim).collect(),
@@ -1675,13 +1813,20 @@ pub fn place_of(context: &str) -> Where {
         if !placed && at.len() == alts.len() {
             // A place, or places that share their keys (the lists one
             // picks from), each named once.
-            let mut labels: Vec<&str> = Vec::new();
+            let mut groups: Vec<&str> = Vec::new();
             for &i in &at {
-                if !labels.contains(&PLACES[i].label) {
-                    labels.push(PLACES[i].label);
+                if !groups.contains(&PLACES[i].group) {
+                    groups.push(PLACES[i].group);
                 }
             }
-            found.place = labels.join(", ");
+            // Transitional: a list argument (ADR-139).
+            found.place = groups
+                .iter()
+                .filter_map(|&group| PLACES.iter().find(|place| place.group == group))
+                .map(|place| place.words().say())
+                .collect::<Vec<_>>()
+                .join(", ");
+            found.id = groups.join("|");
             found.rank = at.iter().min().map_or(0, |i| i + 1);
             found.inside = at.iter().all(|&i| PLACES[i].inside);
             placed = true;
@@ -1690,14 +1835,19 @@ pub fn place_of(context: &str) -> Where {
         if !placed && known(atom).is_none() && atom.chars().next().is_some_and(char::is_uppercase) {
             // A plugin's own context: a place of its own, after skwir's.
             atom.clone_into(&mut found.place);
+            atom.clone_into(&mut found.id);
             found.rank = PLACES.len() + 1;
             placed = true;
             continue;
         }
+        // Transitional: a list argument (ADR-139).
         let said: Vec<String> = alts.iter().map(|alt| condition(alt)).collect();
         words.push(said.join(" or "));
+        flags.push(atom);
     }
+    // Transitional: a list argument (ADR-139).
     found.conditions = words.join(", ");
+    found.flags = flags.join(" ");
     found
 }
 
@@ -1707,7 +1857,13 @@ pub fn context_label(context: &str) -> String {
     if at.conditions.is_empty() {
         at.place
     } else {
-        format!("{} ({})", at.place, at.conditions)
+        words!(
+            keymap_place_with_conditions = "{ $place } ({ $conditions })",
+            place = at.place,
+            conditions = at.conditions,
+            note = "Where keys work: a place, then the conditions that must hold there (File list (one item selected))."
+        )
+        .say()
     }
 }
 
@@ -1767,7 +1923,13 @@ pub fn topic_and_family(
                 .into_iter()
                 .find(|view| &*view.id == id)
                 .map_or(i32::MAX, |view| view.order);
-            Some(("Views".into(), usize::try_from(order).unwrap_or(0)))
+            Some((
+                words!(
+                    keymap_views = "Views",
+                    note = "A row of the list of shortcuts holding the keys of every view (list, grid, columns)."
+                ),
+                usize::try_from(order).unwrap_or(0),
+            ))
         }
         _ => {
             let at = spec.forms.iter().position(|form| form.args == *args);
@@ -1782,6 +1944,12 @@ pub fn title_of(app: &App, hint: &KeyHint) -> String {
     title(app, &hint.command, &hint.args)
 }
 
+/// What a binding does, as words said where they are shown (see
+/// `title_words`).
+pub fn title_words_of(app: &App, hint: &KeyHint) -> Words {
+    title_words(app, &hint.command, &hint.args)
+}
+
 /// What a command run with `args` does, in words: the title of the form
 /// its declaration gives these arguments, else its own with the arguments
 /// said after it (`CommandSpec::title_for`, ADR-024); a readable form of
@@ -1789,36 +1957,74 @@ pub fn title_of(app: &App, hint: &KeyHint) -> String {
 /// an argument names elsewhere is worked out here: a folder to go to, a
 /// view.
 pub fn title(app: &App, command: &str, args: &serde_json::Value) -> String {
+    title_words(app, command, args).say()
+}
+
+/// What a command run with `args` does, as words said where they are
+/// shown (see `title`).
+pub fn title_words(app: &App, command: &str, args: &serde_json::Value) -> Words {
     if let Some(title) = named_title(app, command, args) {
         return title;
     }
-    if let Some(title) = app.commands.title(command, args) {
-        return title;
+    if let Some(spec) = app.commands.get(command) {
+        return match spec.form(args) {
+            Some(form) => form.title.clone(),
+            // Its own title with the arguments said after it: said here
+            // until the command gives that as words.
+            None => Words::as_written(spec.title_for(args)),
+        };
     }
     // Not declared (a plugin turned off, a name mistyped in the keymap):
     // by its name as written, which has no words of its own (ADR-139, 8).
-    skwir_core::command::with_args(command, args)
+    Words::as_written(skwir_core::command::with_args(command, args))
+}
+
+/// A view's name as the commands that show it say it: `List view`.
+pub(crate) fn view_title(view: String) -> Words {
+    words!(
+        keymap_view = "{ $view } view",
+        view = view,
+        note =
+            "A command showing the folder in a view; view: the view's name (List, Grid, Columns)."
+    )
 }
 
 /// A title naming what an argument names elsewhere: the folder a binding
 /// goes to, the view it shows, the choice it asks for (Open with…), the
 /// command a plugin's key in the preview runs (`ui.preview_invoke`: Print…).
-fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<String> {
+fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<Words> {
     let text = |key| args.get(key).and_then(serde_json::Value::as_str);
     match command {
-        "ui.choose" => text("title").map(|title| format!("{title}…")),
+        "ui.choose" => text("title").map(|title| {
+            words!(
+                keymap_choose = "{ $title }…",
+                title = title,
+                note = "A key that offers a list to choose from; title: what the list is for, as the binding names it. The ellipsis says it asks more."
+            )
+        }),
         "ui.preview_invoke" => {
             let invoked = text("command").filter(|invoked| *invoked != command)?;
             let given = args.get("args").cloned().unwrap_or(serde_json::Value::Null);
-            Some(title(app, invoked, &given))
+            Some(title_words(app, invoked, &given))
         }
         "navigate" => {
             let location = text("location")?;
-            let place = match location.trim_end_matches('/') {
-                "~" => "your home folder",
-                path => path.rsplit('/').next().filter(|name| !name.is_empty())?,
-            };
-            Some(format!("Go to {place}"))
+            Some(match location.trim_end_matches('/') {
+                "~" => words!(
+                    keymap_go_home = "Go to your home folder",
+                    note = "A key that goes to the home folder."
+                ),
+                path => words!(
+                    keymap_go_to = "Go to { $folder }",
+                    folder = Folder(
+                        path.rsplit('/')
+                            .next()
+                            .filter(|name| !name.is_empty())?
+                            .to_owned()
+                    ),
+                    note = "A key that goes to a folder; folder: its name."
+                ),
+            })
         }
         "ui.view" => {
             let id = text("id")?;
@@ -1829,7 +2035,7 @@ fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<Str
                 .into_iter()
                 .find(|view| &*view.id == id)
                 .map_or_else(|| id.to_owned(), |view| view.title.clone());
-            Some(format!("{title} view"))
+            Some(view_title(title))
         }
         _ => None,
     }
@@ -3060,7 +3266,7 @@ mod tests {
     fn a_place_to_go_is_named() {
         let tmp = tempfile::tempdir().unwrap();
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let title = |args| super::named_title(&app, "navigate", &args);
+        let title = |args| super::named_title(&app, "navigate", &args).map(|t| t.english());
         assert_eq!(
             title(serde_json::json!({ "location": "~" })).as_deref(),
             Some("Go to your home folder")
@@ -3085,6 +3291,16 @@ mod tests {
                     && command == "ui.focus_pane"
                     && when == Some("activity"))
         );
+    }
+
+    /// Every place F1 and the Keyboard page name has words of its own,
+    /// the English its label keeps until every reader asks for them.
+    #[test]
+    fn every_place_is_named_by_its_words() {
+        for place in super::PLACES {
+            assert!(super::group_words(place.group).is_some(), "{}", place.token);
+            assert_eq!(place.words().english(), place.label, "{}", place.token);
+        }
     }
 
     #[test]

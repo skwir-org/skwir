@@ -54,6 +54,8 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::inspection::{Block, TextFile};
 use skwir_core::preview::FileSource as _;
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::links::WrittenPaths;
 use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
 
@@ -451,11 +453,11 @@ pub(crate) enum Found {
     /// What a search came to instead, said in its field: no match, or a
     /// failure.
     Missed {
-        said: String,
+        said: Words,
         error: bool,
     },
     /// What a line a link names came to instead.
-    Nothing(String),
+    Nothing(Words),
 }
 
 pub(crate) struct Copied {
@@ -1082,9 +1084,21 @@ impl TextView {
                     .and_then(|()| text_rows::find(&file, &index, &query, from, back, cancel));
                 let (said, error) = match found {
                     Ok(Some((row, found))) => return Found::Match(row, found),
-                    Ok(None) if index.read().done() => ("No match in the file".into(), false),
-                    Ok(None) => ("No match in what is counted so far".into(), false),
-                    Err(error) => (format!("{error:#}"), true),
+                    Ok(None) if index.read().done() => (
+                        words!(
+                            text_no_match = "No match in the file",
+                            note = "In a text preview's find field: the words looked for are nowhere in the file."
+                        ),
+                        false,
+                    ),
+                    Ok(None) => (
+                        words!(
+                            text_no_match_yet = "No match in what is counted so far",
+                            note = "In a text preview's find field: the words looked for are not in the part of a large file read so far."
+                        ),
+                        false,
+                    ),
+                    Err(error) => (Words::of_error(error), true),
                 };
                 Found::Missed { said, error }
             },
@@ -1119,8 +1133,12 @@ impl TextView {
             "text-rows-line",
             move |cancel| match text_rows::row_of_line(&file, &index, line - 1, cancel) {
                 Ok(Some(row)) => Found::Row(row),
-                Ok(None) => Found::Nothing(format!("The file has no line {line}")),
-                Err(error) => Found::Nothing(format!("{error:#}")),
+                Ok(None) => Found::Nothing(words!(
+                    text_no_line = "The file has no line { $line }",
+                    line = line.to_string(),
+                    note = "A link named a line past a text file's end. line: the line's number."
+                )),
+                Err(error) => Found::Nothing(Words::of_error(error)),
             },
         );
     }
@@ -1355,16 +1373,17 @@ impl Shell {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                     if cut {
                         self.set_status(
-                            format!(
-                                "Copied the first {}",
-                                skwir_platform::limits::describe(COPY_BYTES)
+                            words!(
+                                text_copied_first = "Copied the first { $size }",
+                                size = skwir_core::words::Size(COPY_BYTES as u64),
+                                note = "Said where what was selected in a text preview is longer than a copy takes: only its beginning was copied. size: how much (16.8 MB)."
                             ),
                             false,
                             cx,
                         );
                     }
                 }
-                Err(error) => self.set_status(format!("{error:#}"), true, cx),
+                Err(error) => self.set_status(Words::of_error(error), true, cx),
             }
         }
         // The count grew: the scrollbar and the caption say so.

@@ -18,7 +18,8 @@ use crate::shell::Shell;
 use crate::theme::Chosen;
 use crate::theme::Theme;
 use crate::toast::{Action, Toast, Tone};
-use skwir_core::words::Words;
+use skwir_core::words;
+use skwir_core::words::{Size, Words};
 
 impl Shell {
     /// Tell the user something, said where the toast is drawn; errors stay
@@ -39,14 +40,22 @@ impl Shell {
     }
 
     /// A command failed. Nothing selected, reached from the palette or a
-    /// menu, is a hint rather than a failure.
-    pub fn report_error(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
-        if skwir_core::command::is_nothing_selected(error) {
-            self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
-        } else if skwir_core::command::wants_clipboard(error) {
-            self.set_status("Nothing to paste", false, cx);
+    /// menu, is a hint rather than a failure. The error handed over is
+    /// said link by link in the window's language (`Words::of_error`).
+    pub fn report_error(&mut self, error: impl Failed, cx: &mut Context<Self>) {
+        if skwir_core::command::is_nothing_selected(error.error()) {
+            self.set_status(crate::shell::nothing_selected(), false, cx);
+        } else if skwir_core::command::wants_clipboard(error.error()) {
+            self.set_status(
+                words!(
+                    status_nothing_to_paste = "Nothing to paste",
+                    note = "Said when Paste is asked and nothing waits to be pasted."
+                ),
+                false,
+                cx,
+            );
         } else {
-            self.set_status(format!("{error:#}"), true, cx);
+            self.set_status(error.said(), true, cx);
         }
     }
 
@@ -79,7 +88,11 @@ impl Shell {
                 text,
                 tone,
                 vec![Action {
-                    label: "Open setting".into(),
+                    label: words!(
+                        status_open_setting = "Open setting",
+                        note = "A button on a toast whose remedy is a setting: opens Settings \
+                                at it."
+                    ),
                     command: "ui.settings".into(),
                     args: serde_json::json!({ "key": setting }),
                 }],
@@ -89,27 +102,75 @@ impl Shell {
     }
 }
 
+/// A command's error, for `Shell::report_error`: handed over, it is said
+/// link by link in the window's language.
+pub trait Failed {
+    fn error(&self) -> &anyhow::Error;
+    fn said(self) -> Words;
+}
+
+impl Failed for anyhow::Error {
+    fn error(&self) -> &anyhow::Error {
+        self
+    }
+
+    fn said(self) -> Words {
+        Words::of_error(self)
+    }
+}
+
+impl Failed for &anyhow::Error {
+    fn error(&self) -> &anyhow::Error {
+        self
+    }
+
+    /// Transitional (ADR-139): a borrowed error is said as its English
+    /// until its caller hands it over (`report_error(e, cx)`).
+    fn said(self) -> Words {
+        Words::as_written(format!("{self:#}"))
+    }
+}
+
 /// A pane footer's height.
 pub const HEIGHT: f32 = 26.;
 
 /// What the footer says of an answer that is an index's (`Listing::as_of`),
 /// and its tooltip: `as of Today 03:00`, then what answered and what that
-/// leaves out.
-fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (String, String) {
+/// leaves out. The moments are said as `format` writes them until they are
+/// `Instant`s (PLAN.md, step F); what answered as its plugin said it.
+fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (Words, Words) {
     match as_of.updated {
         Some(updated) => (
-            format!("as of {}", format::friendly_time(updated, now)),
-            format!(
-                "Found in {}, last brought up to date {}: what was made, renamed or removed since is not in this answer.",
-                as_of.by,
-                format::exact_time(updated)
+            words!(
+                status_as_of = "as of { $when }",
+                when = format::friendly_time(updated, now),
+                note = "In a pane's footer, after its count, when what answered a search (an \
+                        index) was last brought up to date; when: the moment (Today 03:00)."
+            ),
+            words!(
+                status_as_of_tip = "Found in { $index }, last brought up to date { $when }: \
+                                    what was made, renamed or removed since is not in this \
+                                    answer.",
+                index = as_of.by.clone(),
+                when = format::exact_time(updated),
+                note = "The tooltip of a footer's \"as of\": index: what answered (plocate's \
+                        database); when: the moment it was last brought up to date."
             ),
         ),
         None => (
-            format!("as of {}", as_of.by),
-            format!(
-                "Found in {}, whose last update cannot be told: what was made, renamed or removed since is not in this answer.",
-                as_of.by
+            words!(
+                status_as_of_index = "as of { $index }",
+                index = as_of.by.clone(),
+                note = "In a pane's footer, after its count: what answered a search, an index \
+                        whose last update cannot be told (plocate's database)."
+            ),
+            words!(
+                status_as_of_index_tip = "Found in { $index }, whose last update cannot be \
+                                          told: what was made, renamed or removed since is not \
+                                          in this answer.",
+                index = as_of.by.clone(),
+                note = "The tooltip of a footer's \"as of\": index: what answered (plocate's \
+                        database)."
             ),
         ),
     }
@@ -169,23 +230,64 @@ pub(crate) fn render(
     };
     // "Loading…" follows the same delayed signal as the pane banner.
     let loading = crate::loading::pending(shell, shell.pane);
+    let loading_items = |count: usize| {
+        words!(
+            status_loading_items = "Loading… { $count ->
+                [one] 1 item
+               *[other] { $count } items
+            }",
+            count = count,
+            note = "A pane's footer while its folder is read: how many items were read so far."
+        )
+    };
     let items = match (is_query, complete) {
         // A folder filled elsewhere until it is whole (ADR-120) has shown
         // nothing: how many it has read, once "Loading…" is said, nothing
         // before.
         _ if held.is_some() => match held.filter(|_| loading) {
-            None => String::new(),
-            Some(0) => "Loading…".to_owned(),
-            Some(read) => format!("Loading… {}", format::items(read)),
+            None => Words::default(),
+            Some(0) => words!(
+                status_loading = "Loading…",
+                note = "A pane's footer while its folder is read, before anything was."
+            ),
+            Some(read) => loading_items(read),
         },
-        (true, false) => format!("Searching… {}", format::count(count, "result")),
-        (true, true) => format::count(count, "result"),
-        (false, false) if error.is_none() && loading => {
-            format!("Loading… {}", format::items(count))
-        }
+        (true, false) => words!(
+            status_searching = "Searching… { $count ->
+                [one] 1 result
+               *[other] { $count } results
+            }",
+            count = count,
+            note = "A pane's footer while a search runs: how many it found so far."
+        ),
+        (true, true) => words!(
+            status_results = "{ $count ->
+                [one] 1 result
+               *[other] { $count } results
+            }",
+            count = count,
+            note = "A pane's footer once a search ended: how many it found."
+        ),
+        (false, false) if error.is_none() && loading => loading_items(count),
         (false, _) => match total {
-            Some(total) => format!("{} of {}", format::thousands(count), format::items(total)),
-            None => format::items(count),
+            Some(total) => words!(
+                status_shown_of = "{ $count } of { $total ->
+                    [one] 1 item
+                   *[other] { $total } items
+                }",
+                count = count,
+                total = total,
+                note = "A filtered pane's footer: how many items are shown, of how many there \
+                        are."
+            ),
+            None => words!(
+                status_items = "{ $count ->
+                    [one] 1 item
+                   *[other] { $count } items
+                }",
+                count = count,
+                note = "A pane's footer: how many items it lists."
+            ),
         },
     };
     // Nothing selected: what the files shown weigh, as a selection's size
@@ -196,16 +298,25 @@ pub(crate) fn render(
         .then(|| weighs.map_or_else(|| shell.listed_bytes(), |w| w.shown))
         .flatten();
     let items = match listed {
-        Some(bytes) => format!("{items} · {}", format::size(bytes)),
+        Some(bytes) => words!(
+            status_items_weigh = "{ $items } · { $size }",
+            items = items,
+            size = Size(bytes),
+            note = "A pane's footer, nothing selected: how many items it lists (12 items), then \
+                    what the files shown weigh."
+        ),
         None => items,
     };
     // An order that reads what its entries lack is made once it is read
     // (ADR-121, amended): how far the reading went, past 200 ms.
     let items = match read.filter(|_| crate::loading::reading(shell, shell.pane)) {
-        Some((read, asked)) => format!(
-            "{items} · Reading… {} of {}",
-            format::thousands(read),
-            format::thousands(asked)
+        Some((read, asked)) => words!(
+            status_reading_order = "{ $items } · Reading… { $read } of { $asked }",
+            items = items,
+            read = read,
+            asked = asked,
+            note = "A pane's footer while what its order sorts by is read: how many items it \
+                    lists (12 items), then how many were read of all."
         ),
         None => items,
     };
@@ -213,40 +324,65 @@ pub(crate) fn render(
     // comes (ADR-107): how many are still read.
     let reading = shell.ui().quick_filters.reading(reads && !is_query);
     let items = match reading.filter(|_| total.is_some()) {
-        Some(crate::quick_filters::Reading::Files(n)) => {
-            format!("{items} · Reading {}…", format::files(n))
-        }
-        Some(crate::quick_filters::Reading::Counting) => format!("{items} · Reading…"),
+        Some(crate::quick_filters::Reading::Files(n)) => words!(
+            status_reading_files = "{ $items } · Reading { $count ->
+                [one] 1 file
+               *[other] { $count } files
+            }…",
+            items = items,
+            count = n,
+            note = "A pane's footer while a filter reads what files' metadata says: how many \
+                    items it shows (3 of 12 items), then how many files are still read."
+        ),
+        Some(crate::quick_filters::Reading::Counting) => words!(
+            status_reading = "{ $items } · Reading…",
+            items = items,
+            note = "A pane's footer while a filter reads what files' metadata says, before it \
+                    knows how many: how many items it shows (3 of 12 items)."
+        ),
         // The folders under a lens show as they are found.
-        None if looking => format!("{items} · Looking in folders…"),
+        None if looking => words!(
+            status_looking = "{ $items } · Looking in folders…",
+            items = items,
+            note = "A pane's footer while a filter looks in the folders below for what it \
+                    matches: how many items it shows so far (3 of 12 items)."
+        ),
         None => items,
     };
     // An index's answer says as of when (ADR-050): what was made, renamed
     // or removed since is not in it.
     let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::Zoned::now()));
     // What a search walked past (ADR-125): said, never silently.
-    let left_out = (left_out > 0).then(|| format!("{left_out} excluded"));
+    let left_out = (left_out > 0).then(|| {
+        words!(
+            status_excluded = "{ $count } excluded",
+            count = left_out,
+            note = "In a search's footer: how many files and folders the user's exclusions left \
+                    out."
+        )
+    });
     // What folded groups hold, counted in the items: said, as what a
     // search leaves out is.
     let folded = {
         let list = &shell.ui().list;
         list.listed.len().saturating_sub(list.sorted.len())
     };
-    let folded = (folded > 0).then(|| format!("{} folded", format::thousands(folded)));
+    let folded = (folded > 0).then(|| {
+        words!(
+            status_folded = "{ $count } folded",
+            count = folded,
+            note = "In a pane's footer: how many files its folded groups hold."
+        )
+    });
     // What it says is the status line a screen reader reads when asked,
     // never announced: it changes with every key.
     let mut said = shell.a11y.then(|| {
-        let mut said = items.clone();
-        for text in as_of
+        as_of
             .iter()
             .map(|(text, _)| text)
             .chain(left_out.as_ref())
             .chain(folded.as_ref())
-        {
-            said.push_str(", ");
-            said.push_str(text);
-        }
-        said
+            .fold(items.clone(), |said, text| and_said(said, text.clone()))
     });
     let mut bar = div()
         .id(("pane-footer", shell.pane.0 as usize))
@@ -273,16 +409,16 @@ pub(crate) fn render(
         .text_color(theme.text_muted)
         .child(clipped(
             div().id("footer-items").min_w_0().truncate(),
-            items,
+            items.say(),
         ));
     if let Some((text, tip)) = as_of {
-        let tip: gpui::SharedString = tip.into();
+        let tip: gpui::SharedString = tip.say().into();
         bar = bar.child(
             div()
                 .id("listing-as-of")
                 .flex_none()
                 .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-                .child(text),
+                .child(text.say()),
         );
     }
     if let Some(text) = left_out {
@@ -292,12 +428,19 @@ pub(crate) fn render(
                 .flex_none()
                 .tooltip(|_, cx| {
                     crate::toolbar::tooltip(
-                        "Files and folders your exclusions leave out (Settings › Exclusions) were walked past: excluded:yes searches them too"
-                            .into(),
+                        words!(
+                            status_excluded_tip = "Files and folders your exclusions leave out \
+                                                   (Settings › Exclusions) were walked past: \
+                                                   excluded:yes searches them too",
+                            note = "The tooltip of a search footer's \"excluded\"; excluded:yes \
+                                    is a term of the query language, as it is typed."
+                        )
+                        .say()
+                        .into(),
                         cx,
                     )
                 })
-                .child(text),
+                .child(text.say()),
         );
     }
     if let Some(text) = folded {
@@ -307,26 +450,41 @@ pub(crate) fn render(
                 .flex_none()
                 .tooltip(|_, cx| {
                     crate::toolbar::tooltip(
-                        "Files in folded groups: a heading's chevron, or Right on it, opens its group again"
-                            .into(),
+                        words!(
+                            status_folded_tip = "Files in folded groups: a heading's chevron, \
+                                                 or Right on it, opens its group again",
+                            note = "The tooltip of a footer's \"folded\"; Right is the arrow key."
+                        )
+                        .say()
+                        .into(),
                         cx,
                     )
                 })
-                .child(text),
+                .child(text.say()),
         );
     }
     if selection.count > 0 {
-        let mut text = format!("{} selected", format::thousands(selection.count));
         // A part of the size is never said as the whole: until every
         // selected file is stat-ed (`sync_selection_hydration`), none.
         let bytes = weighs.map_or(selection.bytes.unwrap_or(0), |w| w.selected.unwrap_or(0));
-        if bytes > 0 {
-            text = format!("{text} · {}", format::size(bytes));
-        }
+        let text = if bytes > 0 {
+            words!(
+                status_selected_weigh = "{ $count } selected · { $size }",
+                count = selection.count,
+                size = Size(bytes),
+                note = "In a pane's footer: how many items are selected, then what they weigh."
+            )
+        } else {
+            words!(
+                status_selected = "{ $count } selected",
+                count = selection.count,
+                note = "In a pane's footer: how many items are selected."
+            )
+        };
         if let Some(said) = &mut said {
-            said.push_str(", ");
-            said.push_str(&text);
+            *said = and_said(said.clone(), text.clone());
         }
+        let text = text.say();
         bar = bar.child(clipped(
             div()
                 .id("footer-selected")
@@ -338,18 +496,34 @@ pub(crate) fn render(
     }
     // A sweep is a mode: the keys act differently while it lasts.
     if let Some(unset) = sweep {
-        let (mode, keys) = (
-            if unset { "Deselecting" } else { "Selecting" },
-            shell.keys_for("select_sweep_end", &serde_json::json!({})),
-        );
-        let text = match keys {
-            Some(keys) => format!("{mode} as the cursor moves · {keys} to stop"),
-            None => format!("{mode} as the cursor moves"),
+        let keys = shell.keys_for("select_sweep_end", &serde_json::json!({}));
+        let text = match (unset, keys) {
+            (false, Some(keys)) => words!(
+                status_sweep_selecting_keys = "Selecting as the cursor moves · { $keys } to stop",
+                keys = keys,
+                note = "In a pane's footer while a sweep selects what the cursor passes; keys: \
+                        the keys that end it (Escape)."
+            ),
+            (false, None) => words!(
+                status_sweep_selecting = "Selecting as the cursor moves",
+                note = "In a pane's footer while a sweep selects what the cursor passes."
+            ),
+            (true, Some(keys)) => words!(
+                status_sweep_deselecting_keys = "Deselecting as the cursor moves · { $keys } to \
+                                                 stop",
+                keys = keys,
+                note = "In a pane's footer while a sweep deselects what the cursor passes; keys: \
+                        the keys that end it (Escape)."
+            ),
+            (true, None) => words!(
+                status_sweep_deselecting = "Deselecting as the cursor moves",
+                note = "In a pane's footer while a sweep deselects what the cursor passes."
+            ),
         };
         if let Some(said) = &mut said {
-            said.push_str(", ");
-            said.push_str(&text);
+            *said = and_said(said.clone(), text.clone());
         }
+        let text = text.say();
         bar = bar.child(
             div()
                 .flex_none()
@@ -362,7 +536,7 @@ pub(crate) fn render(
     // A listing's error is a message, not state: the banner says it beside
     // the entries (`loading::message`), the pane itself with none.
     bar = bar
-        .when_some(said, StatefulInteractiveElement::aria_label)
+        .when_some(said, |d, said| d.aria_label(said.say()))
         .child(div().flex_1());
     let Some(under) = window else {
         return bar.into_any_element();
@@ -372,15 +546,44 @@ pub(crate) fn render(
     // what is waiting, and let a click forget it.
     let waiting = shell.pending.len();
     if waiting > 0 {
-        let (verb, icon) = if shell.pending.cut {
-            ("cut", "cut")
+        let (said, icon) = if shell.pending.cut {
+            (
+                words!(
+                    status_cut = "{ $count ->
+                        [one] 1 item cut
+                       *[other] { $count } items cut
+                    }",
+                    count = waiting,
+                    note = "In the window's footer: how many items wait to be moved by a paste."
+                ),
+                "cut",
+            )
         } else {
-            ("copied", "copy")
+            (
+                words!(
+                    status_copied = "{ $count ->
+                        [one] 1 item copied
+                       *[other] { $count } items copied
+                    }",
+                    count = waiting,
+                    note = "In the window's footer: how many items wait to be copied by a paste."
+                ),
+                "copy",
+            )
         };
-        let keys = shell
-            .keys_for("clipboard_paste", &serde_json::Value::Null)
-            .map_or_else(String::new, |keys| format!(" Paste with {keys}."));
-        let tip: gpui::SharedString = format!("{keys} Click to forget.").trim().to_owned().into();
+        let tip = match shell.keys_for("clipboard_paste", &serde_json::Value::Null) {
+            Some(keys) => words!(
+                status_pending_keys_tip = "Paste with { $keys }. Click to forget.",
+                keys = keys,
+                note = "The tooltip of the footer's items waiting for a paste; keys: the keys \
+                        that paste (Ctrl+V)."
+            ),
+            None => words!(
+                status_pending_tip = "Click to forget.",
+                note = "The tooltip of the footer's items waiting for a paste."
+            ),
+        };
+        let tip: gpui::SharedString = tip.say().into();
         bar = bar.child(
             div()
                 .id("status-pending")
@@ -398,40 +601,71 @@ pub(crate) fn render(
                     this.run("clipboard_clear", serde_json::json!({}), window, cx);
                 }))
                 .child(crate::controls::glyph(icon, theme.text_muted, 13.))
-                .child(format!("{} {verb}", format::items(waiting))),
+                .child(said.say()),
         );
     }
     if !shell.reviews.is_empty() {
         let questions = shell.reviews.iter().filter(|r| r.is_question()).count();
         let plans = shell.reviews.len() - questions;
-        let words: Vec<String> = [
-            (plans > 0).then(|| format!("{} to review", format::count(plans, "proposal"))),
-            (questions > 0).then(|| format::count(questions, "question")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let words = match (plans, questions) {
+            (plans, 0) => words!(
+                status_proposals = "{ $plans ->
+                    [one] 1 proposal to review
+                   *[other] { $plans } proposals to review
+                }",
+                plans = plans,
+                note = "In the window's footer: how many plans wait to be reviewed."
+            ),
+            (0, questions) => words!(
+                status_questions = "{ $questions ->
+                    [one] 1 question
+                   *[other] { $questions } questions
+                }",
+                questions = questions,
+                note = "In the window's footer: how many questions wait for an answer."
+            ),
+            (plans, questions) => words!(
+                status_proposals_questions = "{ $plans ->
+                    [one] 1 proposal
+                   *[other] { $plans } proposals
+                } to review · { $questions ->
+                    [one] 1 question
+                   *[other] { $questions } questions
+                }",
+                plans = plans,
+                questions = questions,
+                note = "In the window's footer: how many plans wait to be reviewed, then how \
+                        many questions wait for an answer."
+            ),
+        };
         bar = bar.child(clipped(
             div()
                 .id("footer-reviews")
                 .min_w_0()
                 .truncate()
                 .text_color(theme.accent_text),
-            words.join(" · "),
+            words.say(),
         ));
     }
     // What a plugin counts (the shelf's items) announces itself only
     // when it counts something, in its words; a click opens what it counts.
     for tally in &shell.tallies {
         let open = tally.open.clone();
+        // Transitional: what it counts is said as its plugin said it
+        // (`Tally::label`, ADR-139).
+        let said = words!(
+            status_tally = "{ $what }: { $count }",
+            what = tally.label.clone(),
+            count = tally.count,
+            note = "In the window's footer: what a plugin counts (Shelf), and how many."
+        )
+        .say();
         let tallied = div()
             // Known by what it counts: one that comes or goes moves the
             // others.
             .id(crate::elements::known_by("tally", &tally.label))
             .role(gpui::Role::Button)
-            .when(shell.a11y, |d| {
-                d.aria_label(format!("{}: {}", tally.label, tally.count))
-            })
+            .when(shell.a11y, |d| d.aria_label(said.clone()))
             .px_2()
             .rounded_md()
             .when(open.is_some(), gpui::Styled::cursor_pointer)
@@ -442,10 +676,7 @@ pub(crate) fn render(
                     this.run(&open.name, open.args.clone(), window, cx);
                 }
             }));
-        bar = bar.child(clipped(
-            tallied.min_w_0().truncate(),
-            format!("{}: {}", tally.label, tally.count),
-        ));
+        bar = bar.child(clipped(tallied.min_w_0().truncate(), said));
     }
     // What runs, docked: its strip, and Activity opened above it (ADR-114).
     if let Some(strip) = crate::activity::strip(shell, under, &theme, cx) {
@@ -457,6 +688,18 @@ pub(crate) fn render(
         bar = bar.child(undo);
     }
     bar.into_any_element()
+}
+
+/// What a screen reader hears of a footer: what it said so far, then one
+/// more of its facts.
+fn and_said(said: Words, fact: Words) -> Words {
+    words!(
+        status_and = "{ $said }, { $fact }",
+        said = said,
+        fact = fact,
+        note = "What a screen reader hears of a pane's footer, fact after fact: what it said \
+                so far (12 items), then the next (3 selected)."
+    )
 }
 
 #[cfg(test)]
@@ -475,6 +718,7 @@ mod tests {
             updated: Some(an_hour_before),
         };
         let (text, tip) = as_of_said(&as_of, &now);
+        let (text, tip) = (text.english(), tip.english());
         assert_eq!(text, "as of Today 07:00");
         assert!(tip.starts_with("Found in plocate's database, last brought up to date "));
         assert!(tip.ends_with("is not in this answer."), "{tip}");
@@ -486,6 +730,7 @@ mod tests {
             },
             &now,
         );
+        let (text, tip) = (text.english(), tip.english());
         assert_eq!(text, "as of plocate's database");
         assert!(tip.contains("whose last update cannot be told"), "{tip}");
     }

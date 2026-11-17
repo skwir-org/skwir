@@ -11,52 +11,74 @@ use std::path::{Path, PathBuf};
 
 use skwir_core::collate;
 use skwir_core::exclusions::{
-    Catalog, Category, Entry, Matcher, Names, Role, Switches, Written, YOURS, unique_id,
+    Catalog, Category, Entry, Matcher, Names, Role, Switches, Unreadable, Written, YOURS, unique_id,
 };
+use skwir_core::words;
+use skwir_core::words::Words;
 
 /// The roles the page offers: the index is not built.
 pub(crate) const ROLES: [Role; 2] = [Role::Searches, Role::Agents];
 
-/// What a role is called where the page names it.
-pub(crate) fn role_name(role: Role) -> &'static str {
+/// What a role is called where the page names it: its picker's segment.
+pub(crate) fn role_name(role: Role) -> Words {
     match role {
-        Role::Searches => "Searches and tags",
-        Role::Agents => "Agents",
-        Role::Index => "The index",
+        Role::Searches => words!(
+            exclusions_role_searches = "Searches and tags",
+            note = "On the Exclusions page of the settings, a segment of the picker after Excluded from: the folders kept from a search's walk, a tag's count and the timeline."
+        ),
+        Role::Agents => words!(
+            exclusions_role_agents = "Agents",
+            note = "On the Exclusions page of the settings, a segment of the picker after Excluded from: the folders kept from agents, plugins from outside skwir and models."
+        ),
+        Role::Index => words!(
+            exclusions_role_index = "The index",
+            note = "On the Exclusions page of the settings, a segment of the picker after Excluded from: the folders kept from the index of what files hold."
+        ),
     }
 }
 
-// What the page calls what it lists, in one place each: the page's own
-// name is its title (`settings::BUILTIN`).
-
-/// One of the page's entries, and several.
-pub(crate) const ENTRY: &str = "exclusion";
-pub(crate) const ENTRIES: &str = "exclusions";
-/// What the role picker says before the roles.
-pub(crate) const EXCLUDED_FROM: &str = "Excluded from";
-
-/// "excluded from searches and tags", as a count and a heading say it.
-pub(crate) fn excluded_from(role: Role) -> String {
-    format!(
-        "{} {}",
-        EXCLUDED_FROM.to_lowercase(),
-        role_name(role).to_lowercase()
+/// What the role picker says before the roles, and its name.
+pub(crate) fn excluded_from_label() -> Words {
+    words!(
+        exclusions_excluded_from = "Excluded from",
+        note = "On the Exclusions page of the settings, said before the picker of roles (Searches and tags, Agents): what the ticks keep folders from."
     )
 }
 
 /// The folder as a row writes it: its text, `~` for home; a holding rule
 /// by its file.
-pub(crate) fn pattern_of(matcher: &Matcher) -> String {
+pub(crate) fn pattern_of(matcher: &Matcher) -> Words {
+    match matcher {
+        Matcher::Pattern { text, .. } => Words::as_written(skwir_core::exclusions::shown(text)),
+        Matcher::Holding(file) => words!(
+            exclusions_holding = "holding { $file }",
+            file = file.clone(),
+            note = "A row of the Exclusions page: any folder holding this file, the file's name as written (.nosearch). holding is also the field's name in the settings file."
+        ),
+    }
+}
+
+/// What an id is made of, where an entry says nothing of what it is: its
+/// folder as written, a holding rule by its file. Data, never words: an id
+/// is the same in every language.
+fn id_source(matcher: &Matcher) -> String {
     match matcher {
         Matcher::Pattern { text, .. } => skwir_core::exclusions::shown(text),
         Matcher::Holding(file) => format!("holding {file}"),
     }
 }
 
-/// What a matcher means, where that says more than the folder written.
-pub(crate) fn meaning(matcher: &Matcher) -> Option<String> {
-    let said = matcher.said();
-    (said != pattern_of(matcher)).then_some(said)
+/// What a matcher means, where that says more than the folder written:
+/// for anything but one path written plain (its words are the path).
+/// Told by how it is written, never by its words.
+pub(crate) fn meaning(matcher: &Matcher) -> Option<Words> {
+    let plain_path = matches!(
+        matcher,
+        Matcher::Pattern { text, beside: None, .. }
+            if Written::of(text) == Written::Path
+                && skwir_core::exclusions::variables_in(text).is_empty()
+    );
+    (!plain_path).then(|| matcher.words())
 }
 
 /// Which of `texts` (paths and path globs as written) are on this
@@ -73,25 +95,35 @@ pub(crate) fn presence(texts: &[String], home: Option<&Path>) -> Vec<(String, bo
 }
 
 /// What the settings hold that cannot be read, in a line above the list:
-/// the first few, and how many more. `None` where all can be.
-pub(crate) fn unreadable(catalog: &Catalog) -> Option<String> {
+/// the first few, and how many more. `None` where all can be. Said where
+/// it is drawn.
+pub(crate) fn unreadable(catalog: &Catalog) -> Option<Words> {
     const SHOWN: usize = 3;
     if catalog.problems.is_empty() {
         return None;
     }
-    // Transitional: the window's batch makes this sentence a message.
+    // Transitional: a list argument (ADR-139)
     let shown = catalog.problems[..catalog.problems.len().min(SHOWN)]
         .iter()
         .map(|problem| problem.words().say())
         .collect::<Vec<_>>()
         .join("; ");
     let more = catalog.problems.len().saturating_sub(SHOWN);
-    let tail = if more > 0 {
-        format!(" (and {more} more)")
+    Some(if more > 0 {
+        words!(
+            exclusions_unreadable_more =
+                "Not applied, as it cannot be read: { $problems } (and { $more } more)",
+            problems = shown,
+            more = more,
+            note = "Above the Exclusions page's list: what the settings hold of the exclusions that cannot be read. problems: the first few, each where it is and why; more: how many others."
+        )
     } else {
-        String::new()
-    };
-    Some(format!("Not applied, as it cannot be read: {shown}{tail}"))
+        words!(
+            exclusions_unreadable = "Not applied, as it cannot be read: { $problems }",
+            problems = shown,
+            note = "Above the Exclusions page's list: what the settings hold of the exclusions that cannot be read. problems: each, where it is and why."
+        )
+    })
 }
 
 /// The folders whose presence the page needs: every path's and path
@@ -190,41 +222,65 @@ impl Heading {
     /// Its count, as the heading writes it after its name: "23 here of 92
     /// · 22 excluded", "7 of 7 excluded"; the picker above it says from
     /// what, and a screen reader hears it whole (`said`).
-    pub(crate) fn count(&self) -> String {
+    pub(crate) fn count(&self) -> Words {
         if self.shown == self.total {
-            return format!("{} of {} excluded", self.kept, self.total);
+            return words!(
+                exclusions_heading_count = "{ $kept } of { $total } excluded",
+                kept = self.kept,
+                total = self.total,
+                note = "After a category's name on the Exclusions page: how many of its folders are excluded from the role chosen (kept), of all it holds (total)."
+            );
         }
-        let kept = format!("{} excluded", self.kept);
         match self.narrowed {
-            Narrowed::Here => format!("{} here of {} · {kept}", self.shown, self.total),
-            Narrowed::Found | Narrowed::No => {
-                format!("{} found of {} · {kept}", self.shown, self.total)
-            }
+            Narrowed::Here => words!(
+                exclusions_heading_count_here =
+                    "{ $shown } here of { $total } · { $kept } excluded",
+                shown = self.shown,
+                total = self.total,
+                kept = self.kept,
+                note = "After a category's name on the Exclusions page: how many of its folders are on this computer (shown), of all it holds (total), then how many are excluded from the role chosen (kept)."
+            ),
+            Narrowed::Found | Narrowed::No => words!(
+                exclusions_heading_count_found =
+                    "{ $shown } found of { $total } · { $kept } excluded",
+                shown = self.shown,
+                total = self.total,
+                kept = self.kept,
+                note = "After a category's name on the Exclusions page: how many of its folders the filters find (shown), of all it holds (total), then how many are excluded from the role chosen (kept)."
+            ),
         }
     }
 
     /// What a screen reader hears of it, a button that folds and unfolds
     /// it: "Secrets, 22 of 92 excluded from searches and tags".
-    pub(crate) fn said(&self, role: Role) -> String {
-        let mut said = format!(
-            "{}, {} of {} {}",
-            self.name,
-            self.kept,
-            self.total,
-            excluded_from(role)
-        );
-        if self.shown != self.total {
-            let how = if self.narrowed == Narrowed::Here {
-                "here"
-            } else {
-                "found"
-            };
-            said = format!("{said}, {} {how}", self.shown);
-        }
-        if self.folded {
-            said.push_str(", folded");
-        }
-        said
+    pub(crate) fn said(&self, role: Role) -> Words {
+        let shown_as = match self.narrowed {
+            _ if self.shown == self.total => "all",
+            Narrowed::Here => "here",
+            Narrowed::Found | Narrowed::No => "found",
+        };
+        words!(
+            exclusions_heading_said = "{ $name }, { $kept } of { $total } { $role ->
+                [searches] excluded from searches and tags
+                [agents] excluded from agents
+               *[index] excluded from the index
+            }{ $narrowed ->
+                [here] , { $shown } here
+                [found] , { $shown } found
+               *[all] {\"\"}
+            }{ $folded ->
+                [yes] , folded
+               *[no] {\"\"}
+            }",
+            name = self.name.clone(),
+            kept = self.kept,
+            total = self.total,
+            role = role.key(),
+            narrowed = shown_as,
+            shown = self.shown,
+            folded = if self.folded { "yes" } else { "no" },
+            note = "What a screen reader hears of a category's heading on the Exclusions page: its name, how many of its folders are excluded from the role (kept) of all (total); where fewer are shown, how many are on this computer or found (shown); folded where it is."
+        )
     }
 }
 
@@ -242,12 +298,25 @@ pub(crate) enum Badge {
 }
 
 impl Badge {
-    pub(crate) fn words(self) -> &'static str {
+    pub(crate) fn words(self) -> Words {
         match self {
-            Badge::Changed => "Changed",
-            Badge::Yours => "Added by you",
-            Badge::Moved => "Moved here",
-            Badge::Absent => "Not on this computer",
+            Badge::Changed => words!(
+                exclusions_badge_changed = "Changed",
+                note = "Beside a folder on the Exclusions page: one of skwir's exclusions, changed (Reset takes it back)."
+            ),
+            Badge::Yours => words!(
+                exclusions_badge_yours = "Added by you",
+                note = "Beside a folder on the Exclusions page: an exclusion of the user's own."
+            ),
+            Badge::Moved => words!(
+                exclusions_badge_moved = "Moved here",
+                note = "Beside a folder on the Exclusions page: one of skwir's exclusions, moved to another category than skwir's."
+            ),
+            Badge::Absent => words!(
+                exclusions_badge_absent = "Not on this computer",
+                note =
+                    "Beside a folder on the Exclusions page: a path that is not on this computer."
+            ),
         }
     }
 }
@@ -269,10 +338,10 @@ pub(crate) struct Line {
     /// Its category is off for the role: the row keeps its tick, dimmed.
     pub dimmed: bool,
     /// The folder as written.
-    pub pattern: String,
+    pub pattern: Words,
     pub what: String,
     /// What it means, where that says more than the folder.
-    pub meaning: Option<String>,
+    pub meaning: Option<Words>,
     pub badges: Vec<Badge>,
     /// Where the row sits among the rows of its card.
     pub first: bool,
@@ -282,31 +351,45 @@ pub(crate) struct Line {
 impl Line {
     /// What a dimmed row says of itself: it keeps its tick, its category
     /// decides.
-    pub(crate) fn off_words(role: Role) -> String {
-        format!("Not {}: its category is off", excluded_from(role))
+    pub(crate) fn off_words(role: Role) -> Words {
+        words!(
+            exclusions_line_off = "{ $role ->
+                [searches] Not excluded from searches and tags: its category is off
+                [agents] Not excluded from agents: its category is off
+               *[index] Not excluded from the index: its category is off
+            }",
+            role = role.key(),
+            note = "Under a folder on the Exclusions page whose category is switched off for the role chosen: its tick waits for its category."
+        )
     }
 
     /// What is said under the folder: what it is, what it means.
-    pub(crate) fn under(&self) -> String {
+    pub(crate) fn under(&self) -> Words {
         match (&self.meaning, self.what.is_empty()) {
-            (Some(meaning), false) => format!("{} · {meaning}", self.what),
+            (Some(meaning), false) => words!(
+                exclusions_line_under = "{ $what } · { $meaning }",
+                what = self.what.clone(),
+                meaning = meaning.clone(),
+                note = "Under a folder on the Exclusions page: what it is (Virtual machines, as its entry says), then what it means (any folder named target beside a Cargo.toml)."
+            ),
             (Some(meaning), true) => meaning.clone(),
-            (None, _) => self.what.clone(),
+            (None, _) => Words::as_written(self.what.clone()),
         }
     }
 
     /// What a screen reader hears as its description: what it is, what
-    /// it means, its state words.
+    /// it means, its state words; said.
     pub(crate) fn description(&self, role: Role) -> String {
         let mut parts: Vec<String> = Vec::new();
         let under = self.under();
         if !under.is_empty() {
-            parts.push(under);
+            parts.push(under.say());
         }
         if self.dimmed {
-            parts.push(Line::off_words(role));
+            parts.push(Line::off_words(role).say());
         }
-        parts.extend(self.badges.iter().map(|b| b.words().to_owned()));
+        parts.extend(self.badges.iter().map(|b| b.words().say()));
+        // Transitional: a list argument (ADR-139)
         parts.join("; ")
     }
 }
@@ -403,11 +486,15 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
                 counted += 1;
                 continue;
             }
-            let shown_as = pattern_of(&entry.matcher);
+            let pattern = pattern_of(&entry.matcher);
+            // What the filter finds and the order go by what the row says,
+            // in the reader's language: the rows are kept by its revision.
+            let shown_as = pattern.say();
             let meaning = meaning(&entry.matcher);
             if filtering && !named {
+                let means = meaning.as_ref().map(Words::say);
                 let mut texts = vec![shown_as.as_str(), entry.what.as_str()];
-                texts.extend(meaning.as_deref());
+                texts.extend(means.as_deref());
                 texts.extend(entry.group.as_deref());
                 if let Matcher::Pattern {
                     beside: Some(sibling),
@@ -443,7 +530,7 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
                     tick: entry.ticks.get(ask.role),
                     kept: keeps,
                     dimmed: !on,
-                    pattern: shown_as,
+                    pattern,
                     what: entry.what.clone(),
                     meaning,
                     badges,
@@ -600,12 +687,16 @@ impl Draft {
     /// Its matcher, or what is missing, said under the field that lacks
     /// it. What the rules cannot read is said by their check
     /// (`problem`).
-    pub(crate) fn matcher(&self) -> Result<Matcher, (Field, String)> {
+    pub(crate) fn matcher(&self) -> Result<Matcher, (Field, Words)> {
         let folder = self.pattern.trim();
         match self.kind {
             Kind::Pattern | Kind::Beside if folder.is_empty() => Err((
                 Field::Pattern,
-                "Say what it names: a name, a path from ~ or /, a glob or regex:…".to_owned(),
+                words!(
+                    exclusions_draft_pattern =
+                        "Say what it names: a name, a path from ~ or /, a glob or regex:…",
+                    note = "Under the Name or path field of the dialog that adds an exclusion, while it is empty. regex: is written so."
+                ),
             )),
             Kind::Pattern => Ok(Matcher::Pattern {
                 text: folder.to_owned(),
@@ -617,13 +708,21 @@ impl Draft {
                 if beside.is_empty() {
                     return Err((
                         Field::Beside,
-                        "Say which file or folder it is beside: Cargo.toml, *.csproj".to_owned(),
+                        words!(
+                            exclusions_draft_beside =
+                                "Say which file or folder it is beside: Cargo.toml, *.csproj",
+                            note = "Under the Only beside field of the dialog that adds an exclusion, while it is empty. Cargo.toml and *.csproj are examples, written so."
+                        ),
                     ));
                 }
                 if !matches!(Written::of(folder), Written::Name | Written::NameGlob) {
                     return Err((
                         Field::Pattern,
-                        "Beside a file, give a name (target), not a path".to_owned(),
+                        words!(
+                            exclusions_draft_beside_path =
+                                "Beside a file, give a name (target), not a path",
+                            note = "Under the Name field of the dialog that adds an exclusion beside a file, where a path is typed. target is an example, written so."
+                        ),
                     ));
                 }
                 Ok(Matcher::Pattern {
@@ -637,7 +736,11 @@ impl Draft {
                 if file.is_empty() {
                     return Err((
                         Field::Holding,
-                        "Say which file a folder holds: .nosearch, CACHEDIR.TAG".to_owned(),
+                        words!(
+                            exclusions_draft_holding =
+                                "Say which file a folder holds: .nosearch, CACHEDIR.TAG",
+                            note = "Under the Holding field of the dialog that adds an exclusion, while it is empty. .nosearch and CACHEDIR.TAG are examples, written so."
+                        ),
                     ));
                 }
                 Ok(Matcher::Holding(file.to_owned()))
@@ -689,14 +792,15 @@ pub(crate) fn already<'a>(
 }
 
 /// What the rules' own check says of the folders of the entry `id` in
-/// `catalog`, if anything (`Matcher::check`).
-pub(crate) fn problem(catalog: &Catalog, id: &str) -> Option<String> {
+/// `catalog`, if anything (`Matcher::check_words`): why, and of which
+/// field.
+pub(crate) fn problem(catalog: &Catalog, id: &str) -> Option<Unreadable> {
     catalog
         .entries
         .iter()
         .find(|e| e.id == id)?
         .matcher
-        .check()
+        .check_words()
         .err()
 }
 
@@ -807,7 +911,7 @@ pub(crate) fn added(
 ) -> (Catalog, String) {
     let mut next = catalog.clone();
     let what = draft.what.trim();
-    let folder = pattern_of(&matcher);
+    let folder = id_source(&matcher);
     let id = unique_id(
         if what.is_empty() { &folder } else { what },
         &taken(catalog),
@@ -898,21 +1002,34 @@ pub(crate) fn deleted_category(catalog: &Catalog, id: &str) -> Catalog {
 }
 
 /// The folders a change takes from agents, asked before saving: those
-/// no entry keeps from them any more (`exclusions::exposed`, which an
-/// agent's `settings.apply` is refused by). Making something private
-/// never asks.
-pub(crate) use skwir_core::exclusions::exposed as exposure;
+/// no entry keeps from them any more (`exclusions::exposed_words`, which
+/// an agent's `settings.apply` is refused by), each as the page says it.
+/// Making something private never asks.
+pub(crate) use skwir_core::exclusions::exposed_words as exposure;
 
 /// "Agents will be able to read ~/.ssh": the question a change asks,
 /// naming a few of what it lets them read (files or folders).
-pub(crate) fn exposure_question(named: &[String]) -> String {
+pub(crate) fn exposure_question(named: &[Words]) -> Words {
     match named {
-        [] => String::new(),
-        [one] => format!("Agents will be able to read {one}."),
-        [a, b] => format!("Agents will be able to read {a} and {b}."),
-        [a, b, rest @ ..] => format!(
-            "Agents will be able to read {a}, {b} and {} more.",
-            rest.len()
+        [] => Words::default(),
+        [one] => words!(
+            exclusions_exposure_one = "Agents will be able to read { $folder }.",
+            folder = one.clone(),
+            note = "Asked before a change on the Exclusions page that lets agents read what was kept from them: folder is what it names, as the page says it (~/.ssh, any folder named .gnupg)."
+        ),
+        [a, b] => words!(
+            exclusions_exposure_two = "Agents will be able to read { $first } and { $second }.",
+            first = a.clone(),
+            second = b.clone(),
+            note = "Asked before a change on the Exclusions page that lets agents read what was kept from them: the two it names, as the page says them."
+        ),
+        [a, b, rest @ ..] => words!(
+            exclusions_exposure_more =
+                "Agents will be able to read { $first }, { $second } and { $more } more.",
+            first = a.clone(),
+            second = b.clone(),
+            more = rest.len(),
+            note = "Asked before a change on the Exclusions page that lets agents read what was kept from them: the first two it names, as the page says them, and how many more."
         ),
     }
 }
@@ -920,28 +1037,79 @@ pub(crate) fn exposure_question(named: &[String]) -> String {
 // ------------------------------------------------------------ words
 
 /// What a tick changed, said after the change: what it does, or, while
-/// its category is off for the role, that the tick waits for it.
-pub(crate) fn said_tick(folder: &str, role: Role, on: bool, category_on: bool) -> String {
-    if !category_on {
-        let ticked = if on { "Ticked" } else { "Unticked" };
-        return format!(
-            "{ticked} {folder}; its category is off for {}",
-            role_name(role).to_lowercase()
-        );
-    }
-    if on {
-        format!("{folder} is {}", excluded_from(role))
-    } else {
-        format!("{folder} is no longer {}", excluded_from(role))
+/// its category is off for the role, that the tick waits for it. `folder`
+/// as its row writes it (`pattern_of`).
+pub(crate) fn said_tick(folder: Words, role: Role, on: bool, category_on: bool) -> Words {
+    let role = role.key();
+    match (category_on, on) {
+        (false, true) => words!(
+            exclusions_ticked_off = "Ticked { $folder }; its category is off for { $role ->
+                [searches] searches and tags
+                [agents] agents
+               *[index] the index
+            }",
+            folder = folder,
+            role = role,
+            note = "Said on the Exclusions page after a folder is ticked while its category is switched off for the role chosen: the tick waits for it. folder: as its row writes it."
+        ),
+        (false, false) => words!(
+            exclusions_unticked_off = "Unticked { $folder }; its category is off for { $role ->
+                [searches] searches and tags
+                [agents] agents
+               *[index] the index
+            }",
+            folder = folder,
+            role = role,
+            note = "Said on the Exclusions page after a folder is unticked while its category is switched off for the role chosen. folder: as its row writes it."
+        ),
+        (true, true) => words!(
+            exclusions_ticked = "{ $folder } is { $role ->
+                [searches] excluded from searches and tags
+                [agents] excluded from agents
+               *[index] excluded from the index
+            }",
+            folder = folder,
+            role = role,
+            note = "Said on the Exclusions page after a folder is ticked. folder: as its row writes it (~/.ssh, holding .nosearch)."
+        ),
+        (true, false) => words!(
+            exclusions_unticked = "{ $folder } is no longer { $role ->
+                [searches] excluded from searches and tags
+                [agents] excluded from agents
+               *[index] excluded from the index
+            }",
+            folder = folder,
+            role = role,
+            note = "Said on the Exclusions page after a folder is unticked. folder: as its row writes it."
+        ),
     }
 }
 
 /// What a category's switch changed, said after the change.
-pub(crate) fn said_switch(name: &str, role: Role, on: bool) -> String {
+pub(crate) fn said_switch(name: &str, role: Role, on: bool) -> Words {
+    let role = role.key();
     if on {
-        format!("{name}: {}", excluded_from(role))
+        words!(
+            exclusions_switched_on = "{ $category }: { $role ->
+                [searches] excluded from searches and tags
+                [agents] excluded from agents
+               *[index] excluded from the index
+            }",
+            category = name.to_owned(),
+            role = role,
+            note = "Said on the Exclusions page after a category is switched on for the role chosen. category: its name."
+        )
     } else {
-        format!("{name}: no longer {}", excluded_from(role))
+        words!(
+            exclusions_switched_off = "{ $category }: no longer { $role ->
+                [searches] excluded from searches and tags
+                [agents] excluded from agents
+               *[index] excluded from the index
+            }",
+            category = name.to_owned(),
+            role = role,
+            note = "Said on the Exclusions page after a category is switched off for the role chosen. category: its name."
+        )
     }
 }
 
@@ -952,6 +1120,11 @@ mod tests {
 
     fn shipped() -> Catalog {
         Catalog::shipped()
+    }
+
+    /// Words as an agent reads them: English.
+    fn english(words: &[Words]) -> Vec<String> {
+        words.iter().map(Words::english).collect()
     }
 
     fn entry<'a>(catalog: &'a Catalog, text: &str) -> &'a Entry {
@@ -1070,7 +1243,7 @@ mod tests {
         for row in rows {
             match row {
                 Row::Entry(line) => {
-                    let at = place(&catalog.entries[line.at], &line.pattern);
+                    let at = place(&catalog.entries[line.at], &line.pattern.say());
                     if let Some((category, previous)) = &before
                         && *category == line.category
                     {
@@ -1166,7 +1339,7 @@ mod tests {
             toml::from_str(r#"broken = { pattern = "~/x", colour = "red" }"#).unwrap(),
         );
         let catalog = Catalog::from_values(None, Some(&entries), &Legacy::default());
-        let said = unreadable(&catalog).expect("said");
+        let said = unreadable(&catalog).expect("said").english();
         assert!(said.contains("broken"), "{said}");
         let ssh = catalog
             .entries
@@ -1239,7 +1412,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(found.iter().any(|l| l.pattern == "~/.cargo/registry"));
+        assert!(
+            found
+                .iter()
+                .any(|l| l.pattern.english() == "~/.cargo/registry")
+        );
         assert!(found.iter().all(|l| {
             let all = format!("{} {}", l.pattern, l.under()).to_lowercase();
             all.contains("cargo") && all.contains("registry")
@@ -1248,7 +1425,7 @@ mod tests {
         let toolchains = heading(&rows, "skwir.toolchains").unwrap();
         assert_eq!(toolchains.narrowed, Narrowed::Found);
         assert!(heading(&rows, "skwir.games").is_none());
-        assert!(toolchains.count().contains("found of"));
+        assert!(toolchains.count().english().contains("found of"));
         // A category's name finds it whole.
         let rows = super::rows(&catalog, &ask(Role::Searches, "secrets", &here, &unfolded));
         let secrets = heading(&rows, "skwir.secrets").unwrap();
@@ -1260,7 +1437,7 @@ mod tests {
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r, Row::Entry(l) if l.pattern == "node_modules"))
+                .any(|r| matches!(r, Row::Entry(l) if l.pattern.english() == "node_modules"))
         );
     }
 
@@ -1281,28 +1458,32 @@ mod tests {
         assert!(
             !rows
                 .iter()
-                .any(|r| matches!(r, Row::Entry(l) if l.pattern == "~/.gnupg")),
+                .any(|r| matches!(r, Row::Entry(l) if l.pattern.english() == "~/.gnupg")),
             "not here"
         );
         // Names, beside and holding rules always show.
         assert!(
             rows.iter()
-                .any(|r| matches!(r, Row::Entry(l) if l.pattern == "node_modules"))
+                .any(|r| matches!(r, Row::Entry(l) if l.pattern.english() == "node_modules"))
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r, Row::Entry(l) if l.pattern == "holding .private"))
+                .any(|r| matches!(r, Row::Entry(l) if l.pattern.english() == "holding .private"))
         );
         let secrets = heading(&rows, "skwir.secrets").unwrap();
         assert_eq!(secrets.narrowed, Narrowed::Here);
-        assert!(secrets.count().contains(" here of "), "{}", secrets.count());
+        assert!(
+            secrets.count().english().contains(" here of "),
+            "{}",
+            secrets.count()
+        );
         // Off, they show, saying so.
         asked.only_here = false;
         let rows = super::rows(&catalog, &asked);
         let gnupg = rows
             .iter()
             .find_map(|r| match r {
-                Row::Entry(l) if l.pattern == "~/.gnupg" => Some(l),
+                Row::Entry(l) if l.pattern.english() == "~/.gnupg" => Some(l),
                 _ => None,
             })
             .unwrap();
@@ -1319,7 +1500,7 @@ mod tests {
         let rows = super::rows(&catalog, &asked);
         assert!(
             rows.iter()
-                .any(|r| matches!(r, Row::Entry(l) if l.pattern == "~/.gnupg"))
+                .any(|r| matches!(r, Row::Entry(l) if l.pattern.english() == "~/.gnupg"))
         );
     }
 
@@ -1411,6 +1592,7 @@ mod tests {
         assert!(
             toolchains
                 .said(Role::Agents)
+                .english()
                 .starts_with("Toolchains and packages, 0 of ")
         );
         // Secrets are not kept from searches.
@@ -1433,7 +1615,7 @@ mod tests {
         assert!(secrets.on);
         assert_eq!(secrets.kept, secrets.total);
         assert_eq!(
-            secrets.count(),
+            secrets.count().english(),
             format!("{0} of {0} excluded", secrets.total)
         );
         let ssh = entry(&catalog, "~/.ssh").id.clone();
@@ -1589,7 +1771,10 @@ mod tests {
         assert_eq!(e.what, "VM output");
         assert_eq!(e.category, YOURS);
         assert!(e.ticks.get(Role::Agents));
-        assert_eq!(e.matcher.said(), "any folder named out beside a *.vbox");
+        assert_eq!(
+            e.matcher.words().english(),
+            "any folder named out beside a *.vbox"
+        );
         let gone = removed(&edited, &id);
         assert!(!gone.entries.iter().any(|e| e.id == id));
     }
@@ -1624,7 +1809,8 @@ mod tests {
             };
             let (catalog, id) = added(&shipped(), draft.matcher().unwrap(), &draft, Role::Searches);
             let problem = problem(&catalog, &id).unwrap_or_else(|| panic!("{bad} refused"));
-            assert!(!problem.starts_with("exclusions."), "{problem}");
+            let why = problem.why.english();
+            assert!(!why.starts_with("exclusions."), "{why}");
         }
         let fine = Draft {
             pattern: "cmake-build-*".into(),
@@ -1645,7 +1831,7 @@ mod tests {
             names: Names::Folders,
         };
         let found = already(&catalog, &written, None, home.as_deref()).unwrap();
-        assert_eq!(pattern_of(&found.matcher), "~/.ssh");
+        assert_eq!(pattern_of(&found.matcher).english(), "~/.ssh");
         // Not the one being edited.
         assert!(
             already(
@@ -1726,9 +1912,9 @@ mod tests {
         let ssh = entry(&catalog, "~/.ssh").id.clone();
         // Unticked in the Agents view: asked, naming it.
         let unticked = ticked(&catalog, &ssh, Role::Agents, false);
-        assert_eq!(exposure(&catalog, &unticked), ["~/.ssh"]);
+        assert_eq!(english(&exposure(&catalog, &unticked)), ["~/.ssh"]);
         assert_eq!(
-            exposure_question(&exposure(&catalog, &unticked)),
+            exposure_question(&exposure(&catalog, &unticked)).english(),
             "Agents will be able to read ~/.ssh."
         );
         // Ticked again: nothing asked.
@@ -1740,17 +1926,17 @@ mod tests {
         let off = switched(&catalog, "skwir.secrets", Role::Agents, false);
         let all = exposure(&catalog, &off);
         assert!(all.len() > 3);
-        assert!(exposure_question(&all).contains(" more."));
+        assert!(exposure_question(&all).english().contains(" more."));
         // Moved to a category not kept from agents, a category deleted.
         let moved = super::moved(&catalog, &ssh, "skwir.games");
-        assert_eq!(exposure(&catalog, &moved), ["~/.ssh"]);
+        assert_eq!(english(&exposure(&catalog, &moved)), ["~/.ssh"]);
         let draft = Draft {
             pattern: "~/Taxes".into(),
             ..Draft::default()
         };
         let (mine, id) = added(&catalog, draft.matcher().unwrap(), &draft, Role::Agents);
         assert!(exposure(&catalog, &mine).is_empty(), "made private");
-        assert_eq!(exposure(&mine, &removed(&mine, &id)), ["~/Taxes"]);
+        assert_eq!(english(&exposure(&mine, &removed(&mine, &id))), ["~/Taxes"]);
         let (with_category, work) = new_category(&catalog, "Work");
         let with_category = super::switched(&with_category, &work, Role::Agents, true);
         let into = super::moved(&with_category, &ssh, &work);
@@ -1777,11 +1963,11 @@ mod tests {
     #[test]
     fn a_tick_says_what_it_does_or_that_it_waits_for_its_category() {
         assert_eq!(
-            said_tick("~/.ssh", Role::Agents, false, true),
+            said_tick("~/.ssh".into(), Role::Agents, false, true).english(),
             "~/.ssh is no longer excluded from agents"
         );
         assert_eq!(
-            said_tick("~/.ssh", Role::Searches, false, false),
+            said_tick("~/.ssh".into(), Role::Searches, false, false).english(),
             "Unticked ~/.ssh; its category is off for searches and tags"
         );
     }
@@ -1802,6 +1988,8 @@ mod tests {
                 beside: Some("Cargo.toml".into()),
                 names: Names::Folders,
             })
+            .as_ref()
+            .map(Words::english)
             .as_deref(),
             Some("any folder named target beside a Cargo.toml")
         );

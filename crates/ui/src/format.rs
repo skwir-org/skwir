@@ -111,11 +111,20 @@ pub fn count(n: usize, singular: &str) -> String {
     }
 }
 
-/// A speed: `23.4 MB/s`.
+/// A speed: `23.4 MB/s`, said in the user's language.
 pub fn speed(bytes_a_second: f64) -> String {
+    speed_words(bytes_a_second).say()
+}
+
+/// A speed, as words to place in a message (`speed`).
+pub fn speed_words(bytes_a_second: f64) -> skwir_core::words::Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Shown, rounded.
     let bytes = bytes_a_second.max(0.0).round() as u64;
-    format!("{}/s", size(bytes))
+    skwir_core::words!(
+        format_speed = "{ $size }/s",
+        size = skwir_core::words::Size(bytes),
+        note = "A speed: what is moved each second (23.4 MB/s)."
+    )
 }
 
 /// How long is left, roughly, so that it counts down rather than ticks:
@@ -123,31 +132,94 @@ pub fn speed(bytes_a_second: f64) -> String {
 /// left`, `about 2 h 10 min left` (by tens of minutes), `more than a day
 /// left`.
 pub fn time_left(left: std::time::Duration) -> String {
+    time_left_words(left).say()
+}
+
+/// How long is left, as words to place in a message (`time_left`).
+pub fn time_left_words(left: std::time::Duration) -> skwir_core::words::Words {
+    use skwir_core::words;
     let secs = left.as_secs();
     match secs {
-        0..10 => "a few seconds left".to_owned(),
-        10..60 => format!("about {} s left", ((secs + 2) / 5 * 5).clamp(10, 55)),
-        60..3_570 => format!("about {} min left", (secs + 30) / 60),
+        0..10 => words!(
+            format_left_few_seconds = "a few seconds left",
+            note = "How long an action has left, under its bar. Begins in lower case."
+        ),
+        10..60 => words!(
+            format_left_seconds = "about { $seconds } s left",
+            seconds = ((secs + 2) / 5 * 5).clamp(10, 55),
+            note = "How long an action has left, under its bar, by fives of seconds; s is the \
+                    second's symbol. Begins in lower case."
+        ),
+        60..3_570 => words!(
+            format_left_minutes = "about { $minutes } min left",
+            minutes = (secs + 30) / 60,
+            note = "How long an action has left, under its bar; min is the minute's symbol. \
+                    Begins in lower case."
+        ),
         3_570..86_400 => {
             let minutes = (secs + 300) / 600 * 10;
             match (minutes / 60, minutes % 60) {
-                (hours, 0) => format!("about {hours} h left"),
-                (hours, minutes) => format!("about {hours} h {minutes} min left"),
+                (hours, 0) => words!(
+                    format_left_hours = "about { $hours } h left",
+                    hours = hours,
+                    note = "How long an action has left, under its bar; h is the hour's symbol. \
+                            Begins in lower case."
+                ),
+                (hours, minutes) => words!(
+                    format_left_hours_minutes = "about { $hours } h { $minutes } min left",
+                    hours = hours,
+                    minutes = minutes,
+                    note = "How long an action has left, under its bar, by tens of minutes; h \
+                            and min are the hour's and the minute's symbols. Begins in lower \
+                            case."
+                ),
             }
         }
-        _ => "more than a day left".to_owned(),
+        _ => words!(
+            format_left_more_than_a_day = "more than a day left",
+            note = "How long an action has left, under its bar. Begins in lower case."
+        ),
     }
 }
 
 /// How long something took: `45 s`, `3 min 20 s`, `1 h 5 min`.
 pub fn took(took: std::time::Duration) -> String {
+    took_words(took).say()
+}
+
+/// How long something took, as words to place in a message (`took`).
+pub fn took_words(took: std::time::Duration) -> skwir_core::words::Words {
+    use skwir_core::words;
     let secs = took.as_secs();
     match (secs / 3_600, secs / 60 % 60, secs % 60) {
-        (0, 0, s) => format!("{s} s"),
-        (0, m, 0) => format!("{m} min"),
-        (0, m, s) => format!("{m} min {s} s"),
-        (h, 0, _) => format!("{h} h"),
-        (h, m, _) => format!("{h} h {m} min"),
+        (0, 0, s) => words!(
+            format_took_seconds = "{ $seconds } s",
+            seconds = s,
+            note = "How long an action took; s is the second's symbol."
+        ),
+        (0, m, 0) => words!(
+            format_took_minutes = "{ $minutes } min",
+            minutes = m,
+            note = "How long an action took; min is the minute's symbol."
+        ),
+        (0, m, s) => words!(
+            format_took_minutes_seconds = "{ $minutes } min { $seconds } s",
+            minutes = m,
+            seconds = s,
+            note = "How long an action took; min and s are the minute's and the second's \
+                    symbols."
+        ),
+        (h, 0, _) => words!(
+            format_took_hours = "{ $hours } h",
+            hours = h,
+            note = "How long an action took; h is the hour's symbol."
+        ),
+        (h, m, _) => words!(
+            format_took_hours_minutes = "{ $hours } h { $minutes } min",
+            hours = h,
+            minutes = m,
+            note = "How long an action took; h and min are the hour's and the minute's symbols."
+        ),
     }
 }
 

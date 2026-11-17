@@ -2091,7 +2091,7 @@ mod tests {
                             color::reads(g.fg, &g.grounds, g.ratio),
                             "{} of {}, dark: {dark}, {contrast:?}",
                             g.name,
-                            palette.name
+                            palette.name().english()
                         );
                     }
                 }
@@ -2123,7 +2123,7 @@ mod tests {
                     assert!(
                         moved <= MOST,
                         "{name} of {}, dark: {dark}, moved {moved:.3}",
-                        palette.name
+                        palette.name().english()
                     );
                 }
                 if let Some(terminal) = base.terminal {

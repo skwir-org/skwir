@@ -36,7 +36,13 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
             .flex_1()
             .p_4()
             .text_color(theme.text_muted)
-            .child("The model could not be read")
+            .child(
+                skwir_core::words!(
+                    model_unreadable = "The model could not be read",
+                    note = "In the preview of a 3D model whose file could not be read."
+                )
+                .say(),
+            )
             .into_any_element();
     };
     let focus = shell.preview.inspection.focus.clone();
@@ -44,11 +50,21 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
     // holds and what its keys do.
     let said = crate::preview::said(shell).map(|(name, _)| {
         (
-            format!("3D model: {name}"),
-            format!(
-                "{}. Arrows turn it, Shift and the arrows move it, the zoom keys zoom it, Ctrl+0 shows it as it opened",
-                crate::format::count(shown.mesh.triangles(), "triangle")
-            ),
+            skwir_core::words!(
+                model_said = "3D model: { $name }",
+                name = name.to_string(),
+                note = "What a screen reader calls the preview of a 3D model. name: its file's name."
+            )
+            .say(),
+            skwir_core::words!(
+                model_said_holds = "{ $count ->
+                    [one] 1 triangle
+                   *[other] { $count } triangles
+                }. Arrows turn it, Shift and the arrows move it, the zoom keys zoom it, Ctrl+0 shows it as it opened",
+                count = shown.mesh.triangles(),
+                note = "What a screen reader hears of the preview of a 3D model: how many triangles its shape has, then what its keys do."
+            )
+            .say(),
         )
     });
     div()
@@ -93,42 +109,47 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("model-zoom-out", "minus", "Zoom out", "out"),
+        step("model-zoom-out", "minus", label::zoom_out().say(), "out"),
     ));
     bar.push(Item::button(
         Slot::View,
         1,
-        step("model-zoom-in", "plus", "Zoom in", "in"),
+        step("model-zoom-in", "plus", label::zoom_in().say(), "in"),
     ));
     bar.push(Item::button(
         Slot::View,
         2,
-        step("model-fit", "fit", label::FIT, "reset").active(opened),
+        step("model-fit", "fit", label::fit().say(), "reset").active(opened),
     ));
     let look = shell.prefs.model_look;
+    let perspective = skwir_core::words!(
+        model_perspective = "Perspective",
+        note = "A 3D model preview's button: draw it in perspective, the far smaller than the near, or not."
+    )
+    .say();
     bar.push(Item::button(
         Slot::View,
         0,
         Button::new(
             "model-perspective",
             "perspective",
-            "Perspective",
+            perspective.clone(),
             "ui.model_perspective",
         )
-        .label("Perspective")
+        .label(perspective)
         .active(look.perspective),
     ));
+    let smooth = skwir_core::words!(
+        model_smooth = "Smooth shading",
+        note = "A 3D model preview's button: shade its faces smoothly rather than each flat."
+    )
+    .say();
     bar.push(Item::button(
         Slot::View,
         0,
-        Button::new(
-            "model-smooth",
-            "smooth",
-            "Smooth shading",
-            "ui.model_smooth",
-        )
-        .label("Smooth shading")
-        .active(look.smooth),
+        Button::new("model-smooth", "smooth", smooth.clone(), "ui.model_smooth")
+            .label(smooth)
+            .active(look.smooth),
     ));
 }
 

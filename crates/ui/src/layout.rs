@@ -18,6 +18,7 @@
 //! tooltip then names it by where it is (`Shell::split_close_tip`).
 
 use gpui::{Context, Window};
+use skwir_core::words;
 use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
@@ -230,11 +231,26 @@ impl Layout {
 
     /// The Split toggle's icon and tooltip: the split it makes, or shows
     /// (while split, the tooltip is `Shell::split_close_tip`).
-    pub fn split_button(&self) -> (&'static str, &'static str) {
+    /// The tooltip is said where it is drawn.
+    pub fn split_button(&self) -> (&'static str, String) {
         if self.stacked() {
-            ("split-rows", "Split panes one above the other")
+            (
+                "split-rows",
+                words!(
+                    layout_split_rows = "Split panes one above the other",
+                    note = "The Split toggle's tooltip: what it makes."
+                )
+                .say(),
+            )
         } else {
-            ("split", "Split panes side by side")
+            (
+                "split",
+                words!(
+                    layout_split_side = "Split panes side by side",
+                    note = "The Split toggle's tooltip: what it makes."
+                )
+                .say(),
+            )
         }
     }
 
@@ -256,16 +272,29 @@ impl Shell {
     }
 
     /// The Split toggle's tooltip while split: the pane it closes, by
-    /// where it is.
-    pub fn split_close_tip(&self) -> Option<&'static str> {
+    /// where it is. Said where it is drawn.
+    pub fn split_close_tip(&self) -> Option<String> {
         let closes = self.split_closes()?;
         let first = self.panes.first().is_some_and(|p| p.id == closes);
-        Some(match (self.layout.stacked(), first) {
-            (false, true) => "Close the left pane",
-            (false, false) => "Close the right pane",
-            (true, true) => "Close the upper pane",
-            (true, false) => "Close the lower pane",
-        })
+        let tip = match (self.layout.stacked(), first) {
+            (false, true) => words!(
+                layout_close_left = "Close the left pane",
+                note = "The Split toggle's tooltip while split: the pane it closes."
+            ),
+            (false, false) => words!(
+                layout_close_right = "Close the right pane",
+                note = "The Split toggle's tooltip while split: the pane it closes."
+            ),
+            (true, true) => words!(
+                layout_close_upper = "Close the upper pane",
+                note = "The Split toggle's tooltip while split: the pane it closes."
+            ),
+            (true, false) => words!(
+                layout_close_lower = "Close the lower pane",
+                note = "The Split toggle's tooltip while split: the pane it closes."
+            ),
+        };
+        Some(tip.say())
     }
 
     /// `ui.split { axis? }`. Without an axis, split or close the split as
@@ -303,16 +332,40 @@ impl Shell {
         let preview = arg("preview").map(|v| (v, Preview::parse(v)));
         let member = arg("member").map(|v| (v, Member::parse(v)));
         if let Some((v, None)) = panes {
-            self.set_status(format!("“{v}” is not a way to arrange panes"), true, cx);
+            self.set_status(
+                words!(
+                    layout_not_panes = "“{ $value }” is not a way to arrange panes",
+                    value = v,
+                    note = "value: what ui.layout was given for the panes, as given (row, \
+                            column, auto)."
+                ),
+                true,
+                cx,
+            );
             return;
         }
         if let Some((v, None)) = preview {
-            self.set_status(format!("“{v}” is not a place for the preview"), true, cx);
+            self.set_status(
+                words!(
+                    layout_not_preview = "“{ $value }” is not a place for the preview",
+                    value = v,
+                    note = "value: what ui.layout was given for the preview, as given (right, \
+                            bottom, auto)."
+                ),
+                true,
+                cx,
+            );
             return;
         }
         if let Some((v, None)) = member {
             self.set_status(
-                format!("“{v}” is not a place for a file's preview in an archive"),
+                words!(
+                    layout_not_member = "“{ $value }” is not a place for a file's preview in \
+                                         an archive",
+                    value = v,
+                    note = "value: what ui.layout was given for an archive's file's preview, \
+                            as given (right, bottom, auto)."
+                ),
                 true,
                 cx,
             );

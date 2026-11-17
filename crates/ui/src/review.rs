@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use gpui::{AnyElement, Context, FocusHandle, UniformListScrollHandle, Window, div, prelude::*};
 use skwir_core::Plan;
 use skwir_core::app::{Asker, ClashQuestion, Question};
+use skwir_core::op::clash::Act;
 use skwir_core::op::{Change, PlanDiff, StepStatus};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped;
@@ -37,28 +40,56 @@ const ROWS: Rows = Rows {
 };
 
 /// A step's line: the change, its paths in `folder` written from there,
-/// a status label, and its kind.
+/// a status label, and its kind. Said where its row is drawn.
 pub fn line(
     change: &Change,
     status: &StepStatus,
     folder: Option<&Path>,
-) -> (String, &'static str, LineKind) {
-    // A step that says what it will do in words of its own says it in the
-    // window's language; any other as its change says it.
-    let said = match (change.tenses(), folder) {
-        (Some(tenses), _) => tenses.will.say(),
-        (None, Some(folder)) => change.within(folder).to_string(),
-        (None, None) => change.to_string(),
-    };
+) -> (Words, Words, LineKind) {
+    // A step that says what it will do in words of its own says them; any
+    // other as its change says it.
+    let said = change.words(folder);
     match status {
-        StepStatus::Pending { reversible: true } => (said, "pending", LineKind::Pending),
-        StepStatus::Pending { reversible: false } => {
-            (said, "pending, not undoable", LineKind::Pending)
-        }
-        StepStatus::AlreadyDone => (said, "already done", LineKind::Done),
-        StepStatus::Conflict { reason } => {
-            (format!("{said} — {reason}"), "conflict", LineKind::Conflict)
-        }
+        StepStatus::Pending { reversible: true } => (
+            said,
+            words!(
+                review_step_pending = "pending",
+                note = "Beside a step of a plan under review: it is still to be done, and can \
+                        be undone."
+            ),
+            LineKind::Pending,
+        ),
+        StepStatus::Pending { reversible: false } => (
+            said,
+            words!(
+                review_step_pending_for_good = "pending, not undoable",
+                note = "Beside a step of a plan under review: it is still to be done, and \
+                        cannot be undone."
+            ),
+            LineKind::Pending,
+        ),
+        StepStatus::AlreadyDone => (
+            said,
+            words!(
+                review_step_already_done = "already done",
+                note = "Beside a step of a plan under review: what it does is done already."
+            ),
+            LineKind::Done,
+        ),
+        StepStatus::Conflict { reason } => (
+            words!(
+                review_step_conflict = "{ $change } — { $reason }",
+                change = said,
+                reason = reason.clone(),
+                note = "A step of a plan under review that cannot be done: the step (rename \
+                        a.txt -> b.txt), then why (the file is gone)."
+            ),
+            words!(
+                review_step_conflicts = "conflict",
+                note = "Beside a step of a plan under review: it cannot be done as it is."
+            ),
+            LineKind::Conflict,
+        ),
     }
 }
 
@@ -272,9 +303,22 @@ impl Shell {
                 }
                 Some(Review::Question(question)) if !self.app.answer(question.id, true) => {
                     let said = match question.asker {
-                        Asker::Agent => "The agent stopped waiting: nothing was run",
-                        Asker::Room => "The copy stopped waiting: nothing was copied",
-                        Asker::Connection => "It stopped waiting: nothing was connected",
+                        Asker::Agent => words!(
+                            review_agent_stopped_waiting =
+                                "The agent stopped waiting: nothing was run"
+                        ),
+                        Asker::Room => words!(
+                            review_copy_stopped_waiting =
+                                "The copy stopped waiting: nothing was copied",
+                            note = "A copy short of room asked whether to go on, and stopped \
+                                    waiting for the answer."
+                        ),
+                        Asker::Connection => words!(
+                            review_connection_stopped_waiting =
+                                "It stopped waiting: nothing was connected",
+                            note = "A connection to a server asked whether to go on, and \
+                                    stopped waiting for the answer."
+                        ),
                     };
                     self.set_status(said, false, cx);
                 }
@@ -283,13 +327,24 @@ impl Shell {
                         .app
                         .answer_clashes(clashes.question.id, Some(clashes.answer())) =>
                 {
-                    self.set_status("It stopped waiting: nothing was done", false, cx);
+                    self.set_status(
+                        words!(
+                            review_clashes_stopped_waiting = "It stopped waiting: nothing was done",
+                            note = "An action that found names taken asked what becomes of \
+                                    them, and stopped waiting for the answer."
+                        ),
+                        false,
+                        cx,
+                    );
                 }
                 Some(Review::Question(_) | Review::Clashes(_)) | None => {}
             },
             Some(Some(false)) => {
                 self.set_status(
-                    "This proposal has conflicts; discard it or fix them",
+                    words!(
+                        review_has_conflicts =
+                            "This proposal has conflicts; discard it or fix them"
+                    ),
                     true,
                     cx,
                 );
@@ -304,7 +359,11 @@ impl Shell {
             Some(Review::Plan { plan, .. }) => {
                 self.app.dismissed(plan.id);
                 self.set_status(
-                    format!("Discarded proposal: {}", plan.title.say()),
+                    words!(
+                        review_discarded = "Discarded proposal: { $title }",
+                        title = plan.title.clone(),
+                        note = "title: the plan proposed, by its title (rename 3 items)."
+                    ),
                     false,
                     cx,
                 );
@@ -312,16 +371,52 @@ impl Shell {
             Some(Review::Question(question)) => {
                 self.app.answer(question.id, false);
                 let said = match question.asker {
-                    Asker::Agent => "Refused: the agent was told",
-                    Asker::Room => "Cancelled: nothing was copied",
-                    Asker::Connection => "Cancelled: nothing was connected",
+                    Asker::Agent => words!(
+                        review_refused = "Refused: the agent was told",
+                        note = "An agent asked to run a command that acts, and the user refused."
+                    ),
+                    Asker::Room => words!(
+                        review_room_cancelled = "Cancelled: nothing was copied",
+                        note = "A copy short of room asked whether to go on, and the user \
+                                cancelled it."
+                    ),
+                    Asker::Connection => words!(
+                        review_connection_cancelled = "Cancelled: nothing was connected",
+                        note = "A connection to a server asked whether to go on, and the user \
+                                cancelled it."
+                    ),
                 };
                 self.set_status(said, false, cx);
             }
             Some(Review::Clashes(clashes)) => {
                 self.app.answer_clashes(clashes.question.id, None);
-                let (_, done) = clashes.words();
-                self.set_status(format!("Cancelled: nothing was {done}"), false, cx);
+                let said = match clashes.question.clashes.first().map(|c| c.act) {
+                    Some(Act::Move) => words!(
+                        review_clashes_cancelled_move = "Cancelled: nothing was moved",
+                        note = "A move that found names taken asked what becomes of them, and \
+                                the user cancelled it."
+                    ),
+                    Some(Act::Link) => words!(
+                        review_clashes_cancelled_link = "Cancelled: nothing was linked",
+                        note = "Links that found names taken asked what becomes of them, and \
+                                the user cancelled them."
+                    ),
+                    // Transitional: what it makes says it in English
+                    // (`Act::Make::done`, ADR-139).
+                    Some(Act::Make { done, .. }) => words!(
+                        review_clashes_cancelled_make = "Cancelled: nothing was { $done }",
+                        done = done,
+                        note = "An action that makes something and found names taken asked \
+                                what becomes of them, and the user cancelled it; done: what it \
+                                would have done (extracted)."
+                    ),
+                    Some(Act::Copy) | None => words!(
+                        review_clashes_cancelled_copy = "Cancelled: nothing was copied",
+                        note = "A copy that found names taken asked what becomes of them, and \
+                                the user cancelled it."
+                    ),
+                };
+                self.set_status(said, false, cx);
             }
             None => return,
         }
@@ -341,11 +436,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let theme = cx.global::<Theme>().clone();
     let applicable = review.applicable();
     let pending = shell.reviews.len() - 1;
-    let more = if pending > 0 {
-        format!(" · {pending} more waiting")
-    } else {
-        String::new()
-    };
     // What is asked, how much there is, what it leaves out, its lines, and
     // the words of its keys and buttons.
     let (title, size, note, list, hint, refuse, allow) = match review {
@@ -355,60 +445,172 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             // what the defaults would do.
             let asked = diff.as_ref().map_or(0, |d| d.asked);
             let asked = (asked > 0).then(|| {
-                format!(
-                    "{} already taken: you choose what becomes of {} as it is applied \
-                     (shown here as both kept, folders merged).",
-                    crate::format::count(asked, "name"),
-                    if asked == 1 { "it" } else { "them" },
+                words!(
+                    review_names_taken = "{ $count ->
+                        [one] { $count } name already taken: you choose what becomes of it as \
+                            it is applied (shown here as both kept, folders merged).
+                       *[other] { $count } names already taken: you choose what becomes of \
+                            them as it is applied (shown here as both kept, folders merged).
+                    }",
+                    count = asked,
+                    note = "Under a plan proposed for review: names it finds taken where it \
+                            puts items, which the user is asked about as it is applied; its \
+                            steps are listed as if both were kept."
                 )
             });
+            // Transitional: a plan's note is said where it is made (ADR-139).
             let note = match (plan.note.clone(), asked) {
-                (Some(note), Some(asked)) => Some(format!("{note} {asked}")),
-                (note, asked) => note.or(asked),
+                (Some(note), Some(asked)) => Some(words!(
+                    review_note_then_names_taken = "{ $said } { $asked }",
+                    said = note,
+                    asked = asked,
+                    note = "A proposed plan's own note (what it leaves out), then that names are \
+                            taken where it puts items."
+                )),
+                (note, asked) => note.map(Words::from).or(asked),
             };
             (
                 match &plan.by {
-                    Some(who) => format!("{who} proposes: {}", plan.title.say()),
-                    None => format!("Proposed: {}", plan.title.say()),
+                    Some(who) => words!(
+                        review_proposes = "{ $who } proposes: { $title }",
+                        who = who.clone(),
+                        title = plan.title.clone(),
+                        note = "The title of a plan proposed for review. who: who proposes it, \
+                                as it names itself (an agent, a plugin); title: the plan's \
+                                title (rename 3 items)."
+                    ),
+                    None => words!(
+                        review_proposed = "Proposed: { $title }",
+                        title = plan.title.clone(),
+                        note = "The title of a plan proposed for review; title: the plan's \
+                                title (rename 3 items)."
+                    ),
                 },
-                format!("{}{more}", crate::format::count(steps, "step")),
+                if pending > 0 {
+                    words!(
+                        review_steps_and_waiting = "{ $count ->
+                            [one] { $count } step
+                           *[other] { $count } steps
+                        } · { $waiting } more waiting",
+                        count = steps,
+                        waiting = pending,
+                        note = "Beside a proposed plan's title: how many steps it has, then how \
+                                many other proposals and questions wait after it."
+                    )
+                } else {
+                    words!(
+                        review_steps = "{ $count ->
+                            [one] { $count } step
+                           *[other] { $count } steps
+                        }",
+                        count = steps,
+                        note = "Beside a proposed plan's title: how many steps it has."
+                    )
+                },
                 note,
                 plan_lines(diff.as_ref(), &handles.scroll, &theme, cx),
                 match applicable {
-                    Some(true) => "Enter applies (undoable), Escape discards",
-                    Some(false) => "Cannot apply: fix the conflicts first",
-                    None => "Checking…",
+                    Some(true) => words!(
+                        review_apply_hint = "Enter applies (undoable), Escape discards",
+                        note = "The keys of a plan proposed for review."
+                    ),
+                    Some(false) => words!(
+                        review_cannot_apply = "Cannot apply: fix the conflicts first",
+                        note = "Where the keys of a proposed plan are said, when a step of it \
+                                cannot be done."
+                    ),
+                    None => words!(
+                        review_checking = "Checking…",
+                        note = "Where the keys of a proposed plan are said, while each step is \
+                                checked."
+                    ),
                 },
-                "Discard",
-                "Apply",
+                words!(
+                    review_discard = "Discard",
+                    note = "A button: drop a plan proposed for review, doing nothing."
+                ),
+                words!(
+                    review_apply = "Apply",
+                    note = "A button: carry out a plan proposed for review."
+                ),
             )
         }
         Review::Clashes(_) => return None,
         Review::Question(question) => {
             let (note, hint, refuse, allow) = match question.asker {
                 Asker::Agent => (
-                    "It acts without a plan to review: allow it this once, or refuse and the agent is told.",
-                    "Enter allows it once, Escape refuses",
-                    "Refuse",
-                    "Allow",
+                    words!(
+                        review_agent_asks = "It acts without a plan to review: allow it this \
+                                             once, or refuse and the agent is told.",
+                        note = "Under what an agent asks to run: a command that acts at once."
+                    ),
+                    words!(
+                        review_agent_hint = "Enter allows it once, Escape refuses",
+                        note = "The keys of what an agent asks to run."
+                    ),
+                    words!(
+                        review_refuse = "Refuse",
+                        note = "A button: refuse what an agent asks to run; the agent is told."
+                    ),
+                    words!(
+                        review_allow = "Allow",
+                        note = "A button: let an agent run what it asks, this once."
+                    ),
                 ),
                 Asker::Room => (
-                    "Nothing is copied until you answer.",
-                    "Enter copies anyway, Escape cancels",
-                    "Cancel",
-                    "Copy anyway",
+                    words!(
+                        review_room_asks = "Nothing is copied until you answer.",
+                        note = "Under the question of a copy short of room where it writes."
+                    ),
+                    words!(
+                        review_room_hint = "Enter copies anyway, Escape cancels",
+                        note = "The keys of the question of a copy short of room."
+                    ),
+                    words!(
+                        review_cancel = "Cancel",
+                        note = "A button: answer a question by doing nothing."
+                    ),
+                    words!(
+                        review_copy_anyway = "Copy anyway",
+                        note = "A button: copy although there may not be room where it writes."
+                    ),
                 ),
                 Asker::Connection => (
-                    "Nothing is sent to the server until you answer.",
-                    "Enter connects, Escape cancels",
-                    "Cancel",
-                    "Connect",
+                    words!(
+                        review_connection_asks = "Nothing is sent to the server until you answer.",
+                        note = "Under the question of a connection to a server Skwir cannot \
+                                vouch for."
+                    ),
+                    words!(
+                        review_connection_hint = "Enter connects, Escape cancels",
+                        note = "The keys of the question of a connection to a server."
+                    ),
+                    words!(
+                        review_cancel = "Cancel",
+                        note = "A button: answer a question by doing nothing."
+                    ),
+                    words!(
+                        review_connect = "Connect",
+                        note = "A button: connect to the server although Skwir cannot vouch for \
+                                it."
+                    ),
                 ),
             };
             (
-                question.title.clone(),
-                more.trim_start_matches(" · ").to_owned(),
-                Some(note.to_owned()),
+                // Transitional: a question's title is said where it is made
+                // (ADR-139).
+                Words::from(question.title.clone()),
+                if pending > 0 {
+                    words!(
+                        review_waiting = "{ $waiting } more waiting",
+                        waiting = pending,
+                        note = "Beside a question's title: how many other proposals and \
+                                questions wait after it."
+                    )
+                } else {
+                    Words::default()
+                },
+                Some(note),
                 ROWS.text(
                     "review-detail",
                     div().text_color(theme.text).child(question.detail.clone()),
@@ -426,12 +628,18 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         Review::Plan {
             diff: Some(checked),
             ..
-        } => checked
-            .folder
-            .as_ref()
-            .map(|(_, said)| format!("In {said}")),
+        } => checked.folder.as_ref().map(|(_, said)| {
+            words!(
+                review_within = "In { $folder }",
+                folder = said.clone(),
+                note = "Above a proposed plan's steps: the folder their paths are in, as \
+                            the address writes it (~/Documents), which the steps leave out."
+            )
+            .say()
+        }),
         _ => None,
     };
+    let (title, size) = (title.say(), size.say());
     let panel = modal::panel("review", 720., &theme)
         .when(shell.a11y, |d| d.aria_label(title.clone()))
         .p_3()
@@ -447,7 +655,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         )
         // What the plan left out, and why; what a question means.
         .when_some(note, |d, note| {
-            d.child(div().text_body().text_color(theme.text_muted).child(note))
+            d.child(
+                div()
+                    .text_body()
+                    .text_color(theme.text_muted)
+                    .child(note.say()),
+            )
         })
         .when_some(within, |d, within| {
             d.child(clipped(
@@ -463,12 +676,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         })
         .child(list.text_body().font_family(theme.code_font.clone()))
         .child(modal::footer(
-            hint,
+            hint.say(),
             [
                 modal::pressed(
                     controls::button(
                         "review-cancel",
-                        refuse,
+                        refuse.say(),
                         None,
                         ButtonStyle::Plain,
                         &cancel_focus,
@@ -480,7 +693,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 modal::pressed(
                     controls::button(
                         "review-apply",
-                        allow,
+                        allow.say(),
                         Some("check"),
                         ButtonStyle::Plain,
                         &apply_focus,
@@ -519,9 +732,13 @@ fn plan_lines(
             .role(gpui::Role::List),
         None => ROWS.text(
             "review-steps",
-            div()
-                .text_color(theme.text_muted)
-                .child("Checking each step…"),
+            div().text_color(theme.text_muted).child(
+                words!(
+                    review_checking_steps = "Checking each step…",
+                    note = "Where a proposed plan's steps are listed, while each is checked."
+                )
+                .say(),
+            ),
             scroll,
             theme,
         ),
@@ -549,7 +766,17 @@ fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec
                 LineKind::Done => theme.text_muted,
                 LineKind::Conflict => theme.error,
             };
-            let said = shell.a11y.then(|| format!("{text}, {status}"));
+            let said = shell.a11y.then(|| {
+                words!(
+                    review_step_said = "{ $step }, { $status }",
+                    step = text.clone(),
+                    status = status.clone(),
+                    note = "What a screen reader says of a proposed plan's step: the step, then \
+                            its state (pending)."
+                )
+                .say()
+            });
+            let (text, status) = (text.say(), status.say());
             Some(
                 div()
                     .id(("step-row", i))
@@ -617,7 +844,7 @@ mod tests {
         assert_eq!(folder, Some(at("")));
         let said: Vec<_> = steps
             .iter()
-            .map(|(c, s)| line(c, s, folder.as_deref()).0)
+            .map(|(c, s)| line(c, s, folder.as_deref()).0.english())
             .collect();
         assert_eq!(
             said,
@@ -695,17 +922,31 @@ mod tests {
                 ),
             ],
         };
-        let l: Vec<_> = diff.steps.iter().map(|(c, s)| line(c, s, None)).collect();
+        let l: Vec<_> = diff
+            .steps
+            .iter()
+            .map(|(c, s)| {
+                let (text, status, kind) = line(c, s, None);
+                (text.english(), status.english(), kind)
+            })
+            .collect();
         assert_eq!(
             l[0],
-            ("rename /a/x -> /a/y".into(), "pending", LineKind::Pending)
+            (
+                "rename /a/x -> /a/y".into(),
+                "pending".into(),
+                LineKind::Pending
+            )
         );
-        assert_eq!(l[1], ("trash /a/z".into(), "already done", LineKind::Done));
+        assert_eq!(
+            l[1],
+            ("trash /a/z".into(), "already done".into(), LineKind::Done)
+        );
         assert_eq!(
             l[2],
             (
                 "set tags on /a/w — gone".into(),
-                "conflict",
+                "conflict".into(),
                 LineKind::Conflict
             )
         );

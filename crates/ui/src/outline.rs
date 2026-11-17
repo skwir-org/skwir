@@ -62,7 +62,13 @@ pub fn contents(
         div()
             .p_2()
             .text_color(theme.text_muted)
-            .child("No contents")
+            .child(
+                skwir_core::words!(
+                    outline_empty = "No contents",
+                    note = "In the drawer of a preview's contents, where the document or text has no headings."
+                )
+                .say(),
+            )
             .into_any_element()
     } else {
         let count = entries.len();
@@ -123,19 +129,36 @@ pub fn contents(
                 .items_center()
                 .px_2()
                 .py_1()
-                .child(div().flex_1().child(crate::preview_bar::label::CONTENTS))
+                .child(
+                    div()
+                        .flex_1()
+                        .child(crate::preview_bar::label::contents().say()),
+                )
                 .child(
                     Button::new(
                         "outline-pin",
                         "pin",
-                        "Keep contents open",
+                        skwir_core::words!(
+                            outline_pin = "Keep contents open",
+                            note = "A button of the drawer of a preview's contents: keep it open from file to file."
+                        )
+                        .say(),
                         "ui.contents_pin",
                     )
                     .active(pinned)
                     .render(shell, cx),
                 )
                 .child(
-                    Button::new("outline-close", "close", "Close contents", close.0)
+                    Button::new(
+                        "outline-close",
+                        "close",
+                        skwir_core::words!(
+                            outline_close = "Close contents",
+                            note = "A button of the drawer of a preview's contents."
+                        )
+                        .say(),
+                        close.0,
+                    )
                         .args(close.1)
                         .render(shell, cx),
                 ),

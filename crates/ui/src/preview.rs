@@ -11,6 +11,8 @@ use std::time::SystemTime;
 use skwir_core::inspection::TooLarge;
 use skwir_core::op::EntryRef;
 use skwir_core::preview::{Held, HeldSlot, PreviewInfo, PreviewRequest, WHOLE, WHOLE_FULL};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::inspection::limits::Bounds;
 use std::sync::Arc;
@@ -64,10 +66,11 @@ pub enum PreviewContent {
         folders: usize,
     },
     Generic,
-    Error(String),
+    /// Why it is not shown: said where it is drawn.
+    Error(Words),
     /// Not shown only because it is large, past a bound that keeps a
     /// preview quick (`inspection::TooLarge`): Full preview reads it.
-    TooLarge(String),
+    TooLarge(Words),
 }
 
 /// How many pixels a picture can be drawn with (`Sharpen::most`).
@@ -384,15 +387,28 @@ impl StandIns {
                 continue;
             };
             let name = name.trim();
-            anyhow::ensure!(
-                !name.chars().any(std::path::is_separator),
-                "“{name}” is a path: list a file's name"
-            );
-            anyhow::ensure!(
-                name.chars().any(|c| c != '*'),
-                "“{name}” would find every file: give some of its name"
-            );
-            anyhow::ensure!(seen.insert(lowered(name)), "“{name}” is listed twice");
+            if name.chars().any(std::path::is_separator) {
+                anyhow::bail!(words!(
+                    preview_stand_in_path = "{ $name } is a path: list a file's name",
+                    name = Name(name.to_owned()),
+                    note = "Refused in Settings' list of the files a folder's preview shows: a path where a file's name is asked."
+                ));
+            }
+            if !name.chars().any(|c| c != '*') {
+                anyhow::bail!(words!(
+                    preview_stand_in_every =
+                        "{ $name } would find every file: give some of its name",
+                    name = Name(name.to_owned()),
+                    note = "Refused in Settings' list of the files a folder's preview shows: a pattern of * alone."
+                ));
+            }
+            if !seen.insert(lowered(name)) {
+                anyhow::bail!(words!(
+                    preview_stand_in_twice = "{ $name } is listed twice",
+                    name = Name(name.to_owned()),
+                    note = "Refused in Settings' list of the files a folder's preview shows: the same name twice, letter case ignored."
+                ));
+            }
         }
         Ok(())
     }
@@ -518,8 +534,13 @@ fn read_folder(
 /// of its own, typed here on the worker, by its name and, where that is not
 /// enough (`README`), by its bytes.
 fn stand_in_member(name: String, path: PathBuf, holds: Holds) -> anyhow::Result<Arc<Nested>> {
-    let entry = EntryRef::from_path(&path)
-        .ok_or_else(|| anyhow::anyhow!("The file that stands for the folder is gone"))?;
+    let entry = EntryRef::from_path(&path).ok_or_else(|| {
+        anyhow::Error::from(words!(
+            preview_stand_in_gone = "The file that stands for the folder is gone",
+            note =
+                "Why a folder's preview shows nothing: the README or cover it showed was removed."
+        ))
+    })?;
     Ok(Arc::new(Nested {
         mime: skwir_platform::mime::identify(std::ffi::OsStr::new(&name), &path)
             .map(|mime| mime.to_string()),
@@ -1072,6 +1093,10 @@ pub struct PreviewState {
         Option<std::time::SystemTime>,
         Option<u64>,
     )>,
+    /// The words' revision the fields were read at (`words::revision`):
+    /// their labels are said on the worker, so they are read again as it
+    /// moves.
+    fields_said: u64,
     /// The reading of the fields under way, cancelled by the next.
     fields_cancel: Option<CancelToken>,
     /// The entry Properties was collected for: collected again when it
@@ -1196,34 +1221,86 @@ impl VolumeFacts {
             let name = app
                 .location_title(&skwir_core::Location::from_path(&mount.path))
                 .say();
-            rows.push(Row::new("Volume", name).in_gist().led("On"));
+            rows.push(
+                Row::new(volume_label().say(), name)
+                    .in_gist()
+                    .led(crate::properties::Lead::On),
+            );
             if !mount.source.is_empty() {
-                rows.push(Row::new("Device", mount.source.clone()));
+                rows.push(Row::new(
+                    words!(
+                        preview_volume_device = "Device",
+                        note = "A row's label in Properties' Volume: the device a drive is (/dev/sda1), or where it is mounted from."
+                    )
+                    .say(),
+                    mount.source.clone(),
+                ));
             }
-            rows.push(Row::new("Filesystem", mount.fstype.clone()));
+            rows.push(Row::new(
+                words!(
+                    preview_volume_filesystem = "Filesystem",
+                    note =
+                        "A row's label in Properties' Volume: the drive's filesystem (ext4, NTFS)."
+                )
+                .say(),
+                mount.fstype.clone(),
+            ));
         }
         if let Some((free, total)) = self.space {
             rows.push(
                 Row::new(
-                    "Free",
-                    format!("{} of {}", format::size(free), format::size(total)),
+                    words!(
+                        preview_volume_free = "Free",
+                        note = "A row's label in Properties' Volume: the room left on the drive."
+                    )
+                    .say(),
+                    words!(
+                        preview_volume_free_of = "{ $free } of { $total }",
+                        free = words::Size(free),
+                        total = words::Size(total),
+                        note = "In Properties' Volume: the room left on the drive, of all its room (12 GB of 512 GB)."
+                    )
+                    .say(),
                 )
-                .gist(format!("{} free", format::size(free))),
+                .gist(
+                    words!(
+                        preview_volume_free_gist = "{ $free } free",
+                        free = words::Size(free),
+                        note = "Properties' Volume, folded: the room left on the drive (12 GB free)."
+                    )
+                    .say(),
+                ),
             );
         }
         if self.read_only {
-            rows.push(Row::new("Read-only", "Nothing on it can change"));
+            rows.push(Row::new(
+                words!(
+                    preview_volume_read_only = "Read-only",
+                    note = "A row's label in Properties' Volume: the drive cannot be written to."
+                )
+                .say(),
+                words!(
+                    preview_volume_read_only_value = "Nothing on it can change",
+                    note = "In Properties' Volume, after Read-only."
+                )
+                .say(),
+            ));
         }
         if let Some(mount) = &self.mount {
             rows.push(Row::new(
-                "Mounted at",
+                words!(
+                    preview_volume_mounted_at = "Mounted at",
+                    note =
+                        "A row's label in Properties' Volume: the folder the drive is mounted at."
+                )
+                .say(),
                 mount.path.to_string_lossy().into_owned(),
             ));
         }
         // Seldom looked at: it ships folded, its heading saying the gist.
         (!rows.is_empty()).then(|| crate::properties::Group {
             folded: true,
-            ..crate::properties::Group::new("Volume", rows)
+            ..crate::properties::Group::new(crate::properties::group_keys::VOLUME, rows)
         })
     }
 }
@@ -1332,6 +1409,7 @@ impl Default for PreviewState {
             fields_tx,
             fields_rx,
             fields_for: None,
+            fields_said: 0,
             fields_cancel: None,
             properties_entry: None,
             properties: Vec::new(),
@@ -1684,11 +1762,14 @@ pub(crate) fn media_picture(
     request: &PreviewRequest,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
-    let preview = previews
-        .render(request, cancel)?
-        .ok_or_else(|| anyhow::anyhow!("Nothing shows this file"))?;
+    let preview = previews.render(request, cancel)?.ok_or_else(|| {
+        anyhow::Error::from(words!(
+            preview_nothing_shows = "Nothing shows this file",
+            note = "Why a film's or a track's picture is not shown: nothing installed draws one."
+        ))
+    })?;
     let image = crate::thumbs::to_render_image(&preview.image)
-        .ok_or_else(|| anyhow::anyhow!("Invalid preview image"))?;
+        .ok_or_else(|| anyhow::Error::from(invalid_preview_image()))?;
     let (width, height) = match preview.info {
         PreviewInfo::Video {
             size: Some(size), ..
@@ -1755,9 +1836,11 @@ fn decode_image(
     let reader = || skwir_platform::picture::open(held);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
-        return Err(bounds.refuse(format!(
-            "Too large to preview ({w} × {h} pixels, more than {} megapixels)",
-            bounds.picture_pixels() / (1024 * 1024)
+        return Err(bounds.refuse_words(words!(
+            preview_too_many_pixels = "Too large to preview ({ $size } pixels, more than { $megapixels } megapixels)",
+            size = format!("{w} × {h}"),
+            megapixels = (bounds.picture_pixels() / (1024 * 1024)).to_string(),
+            note = "Why a picture is not previewed: it has more pixels than a preview draws. size: its width by its height (8193 × 8193)."
         )));
     }
     let _turn = turn.take();
@@ -1774,7 +1857,7 @@ fn decode_image(
     let rgba = img.into_rgba8();
     let ink = crate::backdrop::ink(&rgba);
     let image = crate::thumbs::owned_render_image(rgba.width(), rgba.height(), rgba.into_raw())
-        .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
+        .ok_or_else(invalid_image)?;
     Ok(PreviewContent::Image {
         image,
         width: w,
@@ -1804,7 +1887,7 @@ fn decode_drawing(
     }
     let ink = crate::backdrop::ink(&decoded.rgba);
     let image = crate::thumbs::owned_render_image(decoded.width, decoded.height, decoded.rgba)
-        .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
+        .ok_or_else(invalid_image)?;
     Ok(PreviewContent::Image {
         image,
         width: decoded.own.0,
@@ -1954,23 +2037,66 @@ pub fn source_instead(
     else {
         return Err(error);
     };
-    data.notice = std::iter::once(format!("Shown as written: {error:#}"))
-        .chain((!data.notice.is_empty()).then_some(data.notice))
-        .collect::<Vec<_>>()
-        .join(" · ");
+    let whole = TooLarge::is(&error);
+    // Transitional: the notice is said text (ADR-139).
+    data.notice = std::iter::once(
+        words!(
+            preview_shown_as_written = "Shown as written: { $error }",
+            error = error,
+            note = "Over a file shown as its own text where it could not be presented (an SVG not drawn). error: why."
+        )
+        .say(),
+    )
+    .chain((!data.notice.is_empty()).then_some(data.notice))
+    .collect::<Vec<_>>()
+    .join(" · ");
     data.source_available = false;
-    data.whole_available = TooLarge::is(&error);
+    data.whole_available = whole;
     Ok(data)
 }
 
 /// What the panel shows of a preview that failed: why, and Full preview
 /// when only the file's size kept it from being shown.
-fn failure_content(error: &anyhow::Error) -> PreviewContent {
-    if TooLarge::is(error) {
-        PreviewContent::TooLarge(format!("{error:#}"))
+fn failure_content(error: anyhow::Error) -> PreviewContent {
+    if TooLarge::is(&error) {
+        PreviewContent::TooLarge(Words::of_error(error))
     } else {
-        PreviewContent::Error(format!("{error:#}"))
+        PreviewContent::Error(Words::of_error(error))
     }
+}
+
+/// What Properties is called: its button in peek, the panel without the
+/// preview.
+fn properties_name() -> Words {
+    words!(
+        preview_properties = "Properties",
+        note = "What the facts of a file are called: the button of peek that shows them, the panel showing them alone."
+    )
+}
+
+/// The row of Properties' Volume naming the drive.
+fn volume_label() -> Words {
+    words!(
+        preview_volume_name = "Volume",
+        note = "A row's label in Properties' Volume: the drive's name, as the sidebar names it."
+    )
+}
+
+/// A preview's picture that cannot be drawn.
+fn invalid_preview_image() -> Words {
+    words!(
+        preview_invalid_image = "Invalid preview image",
+        note = "Why a preview shows nothing: the picture made of the file cannot be drawn."
+    )
+}
+
+/// A picture decoded that cannot be drawn.
+fn invalid_image() -> anyhow::Error {
+    words!(
+        preview_invalid_picture = "invalid image",
+        note = "Why a picture is not shown: what was decoded of it cannot be drawn."
+    )
+    .into()
 }
 
 /// Whether a picture of type `mime` at `path` is written as text (an SVG
@@ -2033,12 +2159,18 @@ fn extract_member(
     let Some(member) = previews.extract(request, view, target, directory.path(), cancel)? else {
         return Ok(None);
     };
-    anyhow::ensure!(
-        member.own_file || member.path.starts_with(directory.path()),
-        "A member was written outside its directory"
-    );
-    let entry = EntryRef::from_path(&member.path)
-        .ok_or_else(|| anyhow::anyhow!("The extracted member is missing"))?;
+    if !(member.own_file || member.path.starts_with(directory.path())) {
+        anyhow::bail!(words!(
+            preview_member_outside = "A member was written outside its directory",
+            note = "Why a file inside an archive is not shown: what unpacked it wrote it elsewhere than asked."
+        ));
+    }
+    let entry = EntryRef::from_path(&member.path).ok_or_else(|| {
+        anyhow::Error::from(words!(
+            preview_member_missing = "The extracted member is missing",
+            note = "Why a file inside an archive is not shown: it was unpacked, then is gone."
+        ))
+    })?;
     Ok(Some(Arc::new(Nested {
         target: target.to_owned(),
         // Resolved once, here on the worker: by name, and by the bytes
@@ -2072,23 +2204,24 @@ fn compute(
                 items: holds.items,
                 folders: holds.folders,
             },
-            Err(e) => PreviewContent::Error(e.to_string()),
+            Err(e) => PreviewContent::Error(Words::of_error(e.into())),
         };
     }
     let held = match request.held() {
         Ok(held) => held,
-        Err(e) => return PreviewContent::Error(e.to_string()),
+        Err(e) => return PreviewContent::Error(Words::of_error(e.into())),
     };
     match drawn_here(mime, held.head()) {
-        Drawn::Drawing => decode_drawing(&held, picture_side, bounds, cancel)
-            .unwrap_or_else(|e| failure_content(&e)),
+        Drawn::Drawing => {
+            decode_drawing(&held, picture_side, bounds, cancel).unwrap_or_else(failure_content)
+        }
         Drawn::Picture => decode_image(&held, picture_side, bounds, Turn::Shown, cancel)
-            .unwrap_or_else(|e| failure_content(&e)),
+            .unwrap_or_else(failure_content),
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
         Drawn::Text => match skwir_platform::inspection::plain(&held, mime, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
-            Err(error) => failure_content(&error),
+            Err(error) => failure_content(error),
         },
         Drawn::Nothing => PreviewContent::Generic,
     }
@@ -2558,7 +2691,11 @@ impl Shell {
                     .wrapping_mul(31)
                     .wrapping_add(pane.selection.revision())
                     .wrapping_mul(2)
-                    .wrapping_add(u64::from(skwir_platform::users::loaded()));
+                    .wrapping_add(u64::from(skwir_platform::users::loaded()))
+                    // What Properties says is said: collected again as
+                    // the words move.
+                    .wrapping_mul(31)
+                    .wrapping_add(skwir_core::words::revision());
                 Some((seen, key, version, e))
             })
         } else {
@@ -2769,13 +2906,15 @@ impl Shell {
             // Fields read of the file: again when the file changed, never
             // for a batch of metadata, which would blank them meanwhile.
             let file = (key.path.clone(), version.modified, version.size);
-            if self.preview.fields_for.as_ref() != Some(&file) {
+            let said = skwir_core::words::revision();
+            if self.preview.fields_for.as_ref() != Some(&file) || self.preview.fields_said != said {
                 let another = self
                     .preview
                     .fields_for
                     .as_ref()
                     .is_none_or(|(before, ..)| *before != file.0);
                 self.preview.fields_for = Some(file);
+                self.preview.fields_said = said;
                 self.read_fields(&entry, &key.path, here, another);
             }
             self.preview.neighbours = match self.media_kind() {
@@ -3468,7 +3607,10 @@ impl Shell {
             // device is what the header and Properties say, and never opened
             // (a pipe waits for a writer, a device may act).
             let content = if entry.is_broken_link() {
-                PreviewContent::Error("Nothing is at the link's target".into())
+                PreviewContent::Error(words!(
+                    preview_broken_link = "Nothing is at the link's target",
+                    note = "The preview of a link whose target is gone."
+                ))
             } else {
                 PreviewContent::Generic
             };
@@ -3660,7 +3802,7 @@ impl Shell {
                         wake();
                     }
                 };
-                let fail = |error: anyhow::Error| send(failure_content(&error), true, None, None);
+                let fail = |error: anyhow::Error| send(failure_content(error), true, None, None);
                 // What is previewed: the entry, or the member of it the panel
                 // went down into. Everything below treats it as any file.
                 let mut request = request;
@@ -3699,7 +3841,7 @@ impl Shell {
                         Ok(folder) => folder,
                         Err(error) => {
                             return send(
-                                PreviewContent::Error(error.to_string()),
+                                PreviewContent::Error(Words::of_error(error.into())),
                                 true,
                                 None,
                                 None,
@@ -3815,7 +3957,10 @@ impl Shell {
                             match previews.converted(&request, &cancel) {
                                 Ok(Some(made)) => {
                                     let Some(entry) = EntryRef::from_path(&made.path) else {
-                                        return fail(anyhow::anyhow!("The converted file is gone"));
+                                        return fail(anyhow::Error::from(words!(
+                                            preview_converted_gone = "The converted file is gone",
+                                            note = "Why a preview shows nothing: the file made of it to show it (a document converted) was removed."
+                                        )));
                                     };
                                     request.retarget(entry, made.mime);
                                     path = made.path;
@@ -4008,7 +4153,10 @@ impl Shell {
                                 }
                             };
                         let unshown = picture.join().unwrap_or_else(|_| {
-                            Some(anyhow::anyhow!("the picture's reader failed"))
+                            Some(anyhow::Error::from(words!(
+                                preview_picture_reader_failed = "the picture's reader failed",
+                                note = "Why a film's or a track's picture is not shown: what read it stopped unexpectedly."
+                            )))
                         });
                         // What did not come is said after what did: a poster
                         // missing after its player, a player after its picture.
@@ -4020,7 +4168,7 @@ impl Shell {
                             (false, None) => {
                                 send(PreviewContent::Generic, true, None, Some(Media::NoPlayer));
                             }
-                            (false, Some(error)) => send(failure_content(&error), true, None, None),
+                            (false, Some(error)) => send(failure_content(error), true, None, None),
                         }
                     });
                 }
@@ -4096,7 +4244,12 @@ impl Shell {
                                         page.pixels,
                                         page.order,
                                     )
-                                    .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
+                                    .ok_or_else(|| {
+                                        anyhow::Error::from(words!(
+                                            reader_invalid_bitmap = "invalid document bitmap",
+                                            note = "Drawn in place of a document's page whose picture the reader gave cannot be shown."
+                                        ))
+                                    })?;
                                     Ok(PreviewContent::Image {
                                         image,
                                         width: page.width,
@@ -4122,7 +4275,7 @@ impl Shell {
                                 Err(error) => error,
                             },
                         };
-                        return send(failure_content(&error), true, Some(session), None);
+                        return send(failure_content(error), true, Some(session), None);
                     }
                     Err(error) => return failed(error),
                     Ok(None) => {}
@@ -4161,7 +4314,7 @@ impl Shell {
                                 ink: crate::backdrop::ink(&preview.image.rgba),
                             },
                         },
-                        None => PreviewContent::Error("Invalid preview image".into()),
+                        None => PreviewContent::Error(invalid_preview_image()),
                     },
                     Ok(None) => compute(
                         &request,
@@ -4173,16 +4326,19 @@ impl Shell {
                         Bounds::of(&inspection),
                         &cancel,
                     ),
-                    Err(e) => failure_content(&e),
+                    Err(e) => failure_content(e),
                 };
                 let content = match content {
                     // A picture not drawn, written as text (an SVG): its
                     // source, as for any presentation, offering Full
                     // preview when its size alone kept it from being drawn.
-                    PreviewContent::Error(error) if !is_dir => instead(anyhow::anyhow!(error))
-                        .unwrap_or_else(|error| failure_content(&error)),
-                    PreviewContent::TooLarge(error) if !is_dir => instead(TooLarge(error).into())
-                        .unwrap_or_else(|error| failure_content(&error)),
+                    PreviewContent::Error(error) if !is_dir => {
+                        instead(anyhow::Error::from(error)).unwrap_or_else(failure_content)
+                    }
+                    // Transitional: `TooLarge` holds text (ADR-139).
+                    PreviewContent::TooLarge(error) if !is_dir => {
+                        instead(TooLarge(error.say()).into()).unwrap_or_else(failure_content)
+                    }
                     // A picture written as text offers its source.
                     PreviewContent::Image { detail: None, .. } => {
                         picture_source.replace(
@@ -4325,7 +4481,7 @@ impl Shell {
                             decode_image(&held, side, Bounds::QUICK, Turn::Ahead, &token)
                         }
                     })
-                    .unwrap_or_else(|error| failure_content(&error));
+                    .unwrap_or_else(failure_content);
                 if token.is_cancelled() {
                     return;
                 }
@@ -4620,13 +4776,15 @@ impl Shell {
             self.preview.general = if entry.is_dir() {
                 Vec::new()
             } else {
-                vec![crate::properties::Row::reserved("On disk")]
+                vec![crate::properties::Row::reserved(
+                    crate::properties::label::on_disk().say(),
+                )]
             };
             self.preview.volume = (!here).then(|| crate::properties::Group {
                 folded: true,
                 ..crate::properties::Group::new(
-                    "Volume",
-                    vec![crate::properties::Row::reserved("Volume")],
+                    crate::properties::group_keys::VOLUME,
+                    vec![crate::properties::Row::reserved(volume_label().say())],
                 )
             });
             self.preview.read_only = false;
@@ -4660,10 +4818,13 @@ impl Shell {
             "detail-fields",
             cancel.clone(),
             move || {
-                let mut access: Vec<crate::properties::Row> = skwir_platform::access::facts(&path)
-                    .into_iter()
-                    .map(|(label, value)| crate::properties::Row::new(label, value))
-                    .collect();
+                // Said on the worker: read again as the words move
+                // (`PreviewState::fields_said`).
+                let mut access: Vec<crate::properties::Row> =
+                    skwir_platform::access::facts_words(&path)
+                        .into_iter()
+                        .map(|(label, value)| crate::properties::Row::new(label.say(), value))
+                        .collect();
                 access.extend(crate::properties::flag_rows(skwir_core::fs::stat::flags(
                     &path,
                 )));
@@ -4673,7 +4834,7 @@ impl Shell {
                     .filter(|_| !is_dir)
                     .map(|meta| {
                         crate::properties::Row::new(
-                            "On disk",
+                            crate::properties::label::on_disk().say(),
                             format::size(skwir_core::fs::stat::allocated(&meta)),
                         )
                     })
@@ -5072,7 +5233,7 @@ impl Shell {
                     .map_err(anyhow::Error::from)
                     .and_then(|p| skwir_platform::open::open_path(&p))
                 {
-                    app.notify(skwir_core::app::NotifyLevel::Error, error.to_string());
+                    app.notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
                 }
             },
         );
@@ -5535,7 +5696,14 @@ impl Shell {
             return;
         };
         let Some((entry, pane)) = self.preview.about() else {
-            self.set_status("Nothing is shown", true, cx);
+            self.set_status(
+                words!(
+                    preview_nothing_shown = "Nothing is shown",
+                    note = "Said where a command about the file shown is run and the preview shows none."
+                ),
+                true,
+                cx,
+            );
             return;
         };
         let mut given = args
@@ -5696,12 +5864,28 @@ impl Shell {
         let Some((about, pane)) = self.preview.about() else {
             return Vec::new();
         };
-        let own = |order, title: &str, icon: &str, name: &str| {
+        let own = |order, title: Words, icon: &str, name: &str| {
             MenuItem::new("preview", title, icon, order, Invocation::new(name))
         };
         let mut items = vec![
-            own(0, "Open externally", "open", "ui.preview_open_external"),
-            own(100, "Copy path", "copy", "ui.preview_copy_path"),
+            own(
+                0,
+                words!(
+                    preview_open_external = "Open externally",
+                    note = "A preview's menu row: open the file in the application the desktop opens it with."
+                ),
+                "open",
+                "ui.preview_open_external",
+            ),
+            own(
+                100,
+                words!(
+                    preview_copy_path = "Copy path",
+                    note = "A preview's menu row: copy the file's path."
+                ),
+                "copy",
+                "ui.preview_copy_path",
+            ),
         ];
         let (plugins, sources) = self.preview_menu_parts();
         items.extend(plugins.into_iter().map(|item| MenuItem {
@@ -5733,11 +5917,18 @@ impl Shell {
         };
         // Written lossily, a path that is not text would name another file.
         let Some(path) = entry.path.to_str().map(str::to_owned) else {
-            self.set_status("The path is not text the clipboard can hold", true, cx);
+            self.set_status(crate::properties::not_text(), true, cx);
             return;
         };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
-        self.set_status("Copied the path", false, cx);
+        self.set_status(
+            words!(
+                preview_copied_path = "Copied the path",
+                note = "Said as the path of the file shown was copied."
+            ),
+            false,
+            cx,
+        );
     }
 
     /// Zoom what is looked at; size what is read. A book its engine laid out
@@ -5988,7 +6179,14 @@ impl Shell {
     pub fn open_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preview.peek_press = None;
         if self.cursor_id().is_none() {
-            self.set_status("nothing to peek at", false, cx);
+            self.set_status(
+                words!(
+                    preview_nothing_to_peek = "nothing to peek at",
+                    note = "Said where peek (the preview over the window) is asked with no file under the cursor."
+                ),
+                false,
+                cx,
+            );
             return;
         }
         self.preview.menu = None;
@@ -6433,7 +6631,14 @@ pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Stateful<gpui::Di
         .when(player, |d| {
             d.role(gpui::Role::Group)
                 .when_some(said(shell), |d, (name, _)| {
-                    d.aria_label(format!("Player: {name}"))
+                    d.aria_label(
+                        words!(
+                            preview_player_said = "Player: { $name }",
+                            name = name.to_string(),
+                            note = "What a screen reader calls a preview that plays a sound or a film. name: its file's name."
+                        )
+                        .say(),
+                    )
                 })
         })
         .flex()
@@ -6759,7 +6964,13 @@ pub(crate) fn content(
             .items_center()
             .justify_center()
             .text_color(theme.text_muted)
-            .child("Loading…")
+            .child(
+                words!(
+                    preview_loading_content = "Loading…",
+                    note = "In the preview's place while the file is read."
+                )
+                .say(),
+            )
             .into_any_element(),
         // On its way, before the wait has lasted: the room it will show
         // in, empty, so the area is laid out for it (`watch_area`).
@@ -6914,9 +7125,9 @@ pub(crate) fn content(
             ))
             .into_any_element()
         }
-        Some(PreviewContent::Error(error)) => failure(error, theme.error),
+        Some(PreviewContent::Error(error)) => failure(&error.say(), theme.error),
         // Not a fault: the bar's Full preview reads it.
-        Some(PreviewContent::TooLarge(why)) => failure(why, theme.text_muted),
+        Some(PreviewContent::TooLarge(why)) => failure(&why.say(), theme.text_muted),
     }
 }
 
@@ -7038,7 +7249,12 @@ fn header(
             if index == last {
                 fact
             } else {
-                format!("{fact} ·")
+                words!(
+                    preview_fact_then = "{ $fact } ·",
+                    fact = fact,
+                    note = "A fact on the preview's card (its type, its size, its date), before the next one."
+                )
+                .say()
             },
             mime.clone(),
         )
@@ -7110,15 +7326,24 @@ fn header(
         .child(card)
         .when(in_peek, |d| {
             d.child(
-                crate::toolbar::Button::new("properties", "info", "Properties", "ui.properties")
-                    .active(preview.properties_on)
-                    .render(shell, cx),
+                crate::toolbar::Button::new(
+                    "properties",
+                    "info",
+                    properties_name().say(),
+                    "ui.properties",
+                )
+                .active(preview.properties_on)
+                .render(shell, cx),
             )
             .child(
                 crate::toolbar::Button::new(
                     "preview-close",
                     "close",
-                    "Close preview",
+                    words!(
+                        preview_close = "Close preview",
+                        note = "A button of peek, the preview over the window: close it."
+                    )
+                    .say(),
                     "ui.preview_close",
                 )
                 .render(shell, cx),
@@ -7209,13 +7434,13 @@ pub(crate) fn said(shell: &Shell) -> Option<(gpui::SharedString, String)> {
 
 fn type_label(shell: &Shell, info: &Info) -> Option<String> {
     if info.is_dir {
-        return Some("Folder".into());
+        return Some(crate::typenames::folder().say());
     }
     let mime = info.mime.as_deref()?;
     // The type given to a link that leads nowhere (a link that resolves is
     // named as what it leads to).
     if mime == "inode/symlink" {
-        return Some(crate::typenames::BROKEN_LINK.into());
+        return Some(crate::typenames::broken_link().say());
     }
     Some(
         shell
@@ -7432,7 +7657,14 @@ pub(crate) fn shown_picture(
         .when_some(role, |d, (role, size)| {
             d.role(role).when_some(said(shell), |d, (name, _)| {
                 d.aria_label(name).when_some(size, |d, (width, height)| {
-                    d.aria_description(format!("{width} × {height} pixels"))
+                    d.aria_description(
+                        words!(
+                            preview_pixels_said = "{ $size } pixels",
+                            size = format!("{width} × {height}"),
+                            note = "What a screen reader hears of a picture shown: its size in pixels (4032 × 3024)."
+                        )
+                        .say(),
+                    )
                 })
             })
         })
@@ -7815,13 +8047,27 @@ pub fn render_panel(
     let panel = div()
         .id("preview-panel")
         .role(gpui::Role::Complementary)
-        .aria_label(if shell.preview.preview_on {
-            "Preview"
-        } else {
-            "Properties"
-        })
+        .aria_label(
+            if shell.preview.preview_on {
+                words!(
+                    preview_panel = "Preview",
+                    note = "What a screen reader calls the panel beside the files while it shows the file's preview."
+                )
+            } else {
+                properties_name()
+            }
+            .say(),
+        )
         .when_some(said(shell), |d, (name, facts)| {
-            d.aria_description(format!("{name}, {facts}"))
+            d.aria_description(
+                words!(
+                    preview_panel_said = "{ $name }, { $facts }",
+                    name = name.to_string(),
+                    facts = facts,
+                    note = "What a screen reader hears of the preview panel: the name of the file shown, then its type, size and date."
+                )
+                .say(),
+            )
         })
         .relative()
         .flex_none()
@@ -7940,11 +8186,23 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     let theme = cx.global::<Theme>().clone();
     let focus = shell.preview.peek_focus.clone()?;
     let hint = if shell.shows_player() {
-        "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit"
+        words!(
+            preview_peek_player_keys =
+                "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit",
+            note = "What a screen reader hears of peek playing a sound or a film: what its keys do. Space, M, F and Escape are keys."
+        )
     } else if shell.fullscreen_shows().is_some() {
-        "Space or Escape to close · arrows to move · F fullscreen"
+        words!(
+            preview_peek_fullscreen_keys =
+                "Space or Escape to close · arrows to move · F fullscreen",
+            note = "What a screen reader hears of peek: what its keys do. Space, Escape and F are keys."
+        )
     } else {
-        "Space or Escape to close · arrows to move"
+        words!(
+            preview_peek_keys = "Space or Escape to close · arrows to move",
+            note =
+                "What a screen reader hears of peek: what its keys do. Space and Escape are keys."
+        )
     };
     Some(
         div()
@@ -7967,8 +8225,15 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     .role(gpui::Role::Dialog)
                     .aria_modal()
                     .when_some(said(shell), |d, (name, facts)| {
-                        d.aria_label(name)
-                            .aria_description(format!("{facts}. {hint}"))
+                        d.aria_label(name).aria_description(
+                            words!(
+                                preview_peek_said = "{ $facts }. { $hint }",
+                                facts = facts,
+                                hint = hint.clone(),
+                                note = "What a screen reader hears of peek: the type, size and date of the file shown, then what its keys do."
+                            )
+                            .say(),
+                        )
                     })
                     .track_focus(&focus)
                     .key_context(keymap::PEEK)
@@ -8007,7 +8272,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                             .text_color(theme.text_muted)
                             .border_t_1()
                             .border_color(theme.border)
-                            .child(hint),
+                            .child(hint.say()),
                     ),
             )
             .into_any_element(),
@@ -8618,8 +8883,8 @@ mod tests {
         .unwrap();
         assert!(skwir_core::inspection::TooLarge::is(&error), "{error}");
         assert!(matches!(
-            super::failure_content(&error),
-            super::PreviewContent::TooLarge(why) if why.contains("8193 × 8193")
+            super::failure_content(error),
+            super::PreviewContent::TooLarge(why) if why.english().contains("8193 × 8193")
         ));
     }
 

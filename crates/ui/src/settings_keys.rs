@@ -7,6 +7,8 @@
 use serde_json::Value;
 use skwir_core::App;
 use skwir_core::keymap::UserBinding;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::keymap::{self, Bound, Layer};
 use crate::settings_records::{Record, new_id};
@@ -23,8 +25,15 @@ pub(crate) enum Show {
     Changed,
 }
 
-/// The group of the actions no key runs, listed on request.
-pub(crate) const NO_KEYS: &str = "Without keys";
+/// The group of the actions no key runs, listed on request: its caption,
+/// said as the keymap is read (`Keyboard::read`).
+pub(crate) fn no_keys() -> String {
+    words!(
+        keys_without_keys = "Without keys",
+        note = "The Keyboard page's caption over the actions no key runs, as a place's name stands over its keys."
+    )
+    .say()
+}
 
 /// One key of an action.
 #[derive(Clone, Debug, PartialEq)]
@@ -204,6 +213,7 @@ impl Keyboard {
         // Stable: the places in their order, each's actions as they were
         // bound.
         actions.sort_by(|a, b| (a.inside, a.rank, &a.place).cmp(&(b.inside, b.rank, &b.place)));
+        let no_keys = no_keys();
         let mut unkeyed: Vec<Action> = unkeyed(app, &specs)
             .filter(|(command, args)| {
                 !actions
@@ -211,7 +221,7 @@ impl Keyboard {
                     .any(|action| action.command == *command && action.args == *args)
             })
             .map(|(command, args)| Action {
-                place: NO_KEYS.to_owned(),
+                place: no_keys.clone(),
                 rank: usize::MAX,
                 inside: false,
                 title: keymap::title(app, &command, &args),
@@ -222,11 +232,13 @@ impl Keyboard {
             })
             // A command called as a keyed action is (the core's twin of a
             // shell command, Toggle hidden files) is that action to whoever
-            // reads the list.
+            // reads the list. Transitional: told by their titles until a
+            // twin is data of its command's (ADR-139, "Nothing reads words
+            // back").
             .filter(|candidate| !actions.iter().any(|action| action.title == candidate.title))
             .collect();
         // By title, each once: two commands called alike (the core's sort
-        // and the shell's) are one thing to do.
+        // and the shell's) are one thing to do (transitional, as above).
         unkeyed.sort_by_cached_key(|action| action.title.to_lowercase());
         unkeyed.dedup_by(|a, b| a.title == b.title);
         let first_inside = actions
@@ -545,10 +557,37 @@ fn running(app: &App, records: &[Record]) -> Vec<Running> {
 /// Keys another action would no longer run, where they ran.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Lost {
+    /// The action, by what it runs (`Does`): what tells it apart from
+    /// another, never its title.
+    pub does: Does,
     pub title: String,
     /// Where, with its conditions in words (`context_label`).
     pub place: String,
     pub keys: String,
+}
+
+/// What an action runs: its command and its arguments (as JSON text),
+/// which tell two actions apart wherever they are listed.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Does {
+    pub command: String,
+    pub args: String,
+}
+
+impl Does {
+    pub fn of(command: &str, args: &Value) -> Does {
+        Does {
+            command: command.to_owned(),
+            args: args.to_string(),
+        }
+    }
+}
+
+impl Action {
+    /// What it runs.
+    pub fn does(&self) -> Does {
+        Does::of(&self.command, &self.args)
+    }
 }
 
 /// What a change leaves of the other actions' keys, and whether it may be
@@ -561,7 +600,7 @@ pub(crate) struct Effects {
     pub lost: Vec<Lost>,
     /// Why it cannot be made: an action that keeps a key would have none
     /// left in a place (`CommandSpec::keeps_a_key`).
-    pub refused: Option<String>,
+    pub refused: Option<Words>,
 }
 
 /// What making `edit` to `records` (the user's, as the dialog holds them)
@@ -597,7 +636,8 @@ pub(crate) fn effects(
     for run in &before {
         if effects.refused.is_none() && kept.contains(&run.command) && !left.contains(&run.id) {
             let title = keymap::title(app, &run.command, &run.args);
-            effects.refused = Some(needs_a_key(&title, &run.id.place));
+            let anywhere = keymap::place_of(&run.context).rank == 0;
+            effects.refused = Some(needs_a_key(&title, &run.id.place, anywhere));
         }
         if Some(&run.id) == editing
             || still.contains(&(&run.id, run.normal.as_str(), run.context.as_str()))
@@ -605,6 +645,7 @@ pub(crate) fn effects(
             continue;
         }
         let lost = Lost {
+            does: Does::of(&run.command, &run.args),
             title: keymap::title(app, &run.command, &run.args),
             place: keymap::context_label(&run.context),
             keys: run.keys.clone(),
@@ -619,8 +660,13 @@ pub(crate) fn effects(
 /// What new keys would do where they work, said before they are saved.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Note {
-    /// They run this there now, and would no longer.
-    Replaces { title: String, place: String },
+    /// They run this there now, and would no longer: the action, by what
+    /// it runs, and as it is called.
+    Replaces {
+        does: Does,
+        title: String,
+        place: String,
+    },
     /// They keep running this where it is bound, as `why` says.
     Stays {
         title: String,
@@ -655,7 +701,7 @@ pub(crate) enum Stay {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Verdict {
     pub notes: Vec<Note>,
-    pub refused: Option<String>,
+    pub refused: Option<Words>,
 }
 
 /// What binding `keys` to `action` in `context`, in place of `replacing`
@@ -701,16 +747,20 @@ pub(crate) fn verdict(
         let place = keymap::context_label(&binding.context);
         let theirs = keymap::conditions(&binding.context);
         if mine.iter().all(|atom| theirs.contains(atom)) {
-            let at = keymap::place_of(&binding.context).place;
+            let at = keymap::place_of(&binding.context);
             let last = keyboard
                 .actions
                 .iter()
-                .find(|a| a.place == at && a.command == *command && a.args == *args)
+                .find(|a| a.place == at.place && a.command == *command && a.args == *args)
                 .is_some_and(|a| a.keeps_a_key && a.running().count() == 1);
             if last && verdict.refused.is_none() {
-                verdict.refused = Some(needs_a_key(&title, &at));
+                verdict.refused = Some(needs_a_key(&title, &at.place, at.rank == 0));
             }
-            verdict.notes.push(Note::Replaces { title, place });
+            verdict.notes.push(Note::Replaces {
+                does: Does::of(command, args),
+                title,
+                place,
+            });
         } else {
             // Keys of another place, neither anywhere, never meet these.
             let why = if context == keymap::ROOT {
@@ -750,18 +800,30 @@ pub(crate) fn verdict(
 
 /// Why removing `chip` cannot be kept, if it cannot: an action that keeps
 /// a key keeps its last.
-pub(crate) fn removal_refused(action: &Action, chip: &Chip) -> Option<String> {
+pub(crate) fn removal_refused(action: &Action, chip: &Chip) -> Option<Words> {
     (action.keeps_a_key && chip.runs() && action.running().count() == 1)
-        .then(|| needs_a_key(&action.title, &action.place))
+        .then(|| needs_a_key(&action.title, &action.place, action.rank == 0))
 }
 
-/// Why an action that keeps a key cannot lose its last in `place`.
-fn needs_a_key(title: &str, place: &str) -> String {
-    let title = title.trim_end_matches('…');
-    if place == "Anywhere" {
-        format!("{title} needs a key: give it another first")
+/// Why an action that keeps a key cannot lose its last in `place`, which
+/// is `anywhere` (`keymap::Where::rank` 0) or a place of its own.
+fn needs_a_key(title: &str, place: &str, anywhere: bool) -> Words {
+    // Transitional: the title without the `…` that says it asks more,
+    // until each title is a message that says it (PLAN.md, step E).
+    let title = title.trim_end_matches('…').to_owned();
+    if anywhere {
+        words!(
+            keys_needs_a_key = "{ $action } needs a key: give it another first",
+            action = title,
+            note = "Why a change of keys is refused: action is what the keys run (Command palette), which must keep one."
+        )
     } else {
-        format!("{title} needs a key in {place}: give it another first")
+        words!(
+            keys_needs_a_key_in = "{ $action } needs a key in { $place }: give it another first",
+            action = title,
+            place = place.to_owned(),
+            note = "Why a change of keys is refused: action is what the keys run (Command palette), which must keep one in place, where keys work (File list, Address field)."
+        )
     }
 }
 
@@ -851,11 +913,11 @@ mod tests {
         assert!(
             !folded
                 .iter()
-                .any(|row| matches!(row, Row::Place(p) if p == super::NO_KEYS)),
+                .any(|row| matches!(row, Row::Place(p) if *p == super::no_keys())),
             "nothing without keys unless asked"
         );
         let all = rows(&keyboard, Show::All, "", "", None, false);
-        assert!(all.contains(&Row::Place(super::NO_KEYS.into())));
+        assert!(all.contains(&Row::Place(super::no_keys())));
         let changed = rows(&keyboard, Show::Changed, "", "", None, false);
         let titles: Vec<&str> = changed
             .iter()
@@ -1305,8 +1367,8 @@ mod tests {
         assert!(
             restored
                 .refused
-                .as_deref()
-                .is_some_and(|why| why.contains("needs a key")),
+                .as_ref()
+                .is_some_and(|why| why.english().contains("needs a key")),
             "{restored:?}"
         );
         let reset = effects(&app, &records, &Edit::Reset(sidebar), Some(&sidebar.id()));

@@ -422,7 +422,14 @@ impl Shell {
     /// whole screen, from the one shown to the last, or pause.
     pub fn slideshow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.walks_pictures() {
-            return self.set_status("A slideshow shows pictures", false, cx);
+            return self.set_status(
+                skwir_core::words!(
+                    fullscreen_slideshow_pictures = "A slideshow shows pictures",
+                    note = "Said where a slideshow is asked of something that is no picture."
+                ),
+                false,
+                cx,
+            );
         }
         if self.preview.fullscreen.is_none() {
             self.preview_fullscreen(window, cx);
@@ -502,7 +509,14 @@ impl Shell {
             fullscreen.slideshow = None;
             fullscreen.controls_hidden = false;
         }
-        self.set_status("The slideshow ended at the last picture", false, cx);
+        self.set_status(
+            skwir_core::words!(
+                fullscreen_slideshow_ended = "The slideshow ended at the last picture",
+                note = "Said as a slideshow stops at the folder's last picture."
+            ),
+            false,
+            cx,
+        );
         self.arm_fullscreen_hide(window, cx);
         cx.notify();
     }
@@ -542,7 +556,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             div()
                 .id("preview-fullscreen-controls")
                 .role(gpui::Role::Toolbar)
-                .aria_label("Controls")
+                .aria_label(
+                    skwir_core::words!(
+                        fullscreen_controls = "Controls",
+                        note = "What a screen reader calls the bar of buttons over a preview shown on the whole screen."
+                    )
+                    .say(),
+                )
                 .flex_none()
                 .when(floats, |bar| bar.absolute().top_0().left_0().right_0())
                 // What is under the bar answers clicks too (a film plays):

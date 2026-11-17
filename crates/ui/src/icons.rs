@@ -40,7 +40,8 @@ use gpui::{
     Window, div, img, prelude::*, px, svg,
 };
 use skwir_core::thumbs::Image;
-use skwir_core::{App, Entry};
+use skwir_core::words::{Size, Words};
+use skwir_core::{App, Entry, words};
 use skwir_platform::system_icons::{self, SystemIcon};
 use skwir_platform::{icons, mime};
 
@@ -1117,8 +1118,13 @@ fn icon_file(path: &Path, side: u32) -> Option<skwir_platform::inspection::Decod
         return icons::rasterize(path, side).ok();
     }
     let cancel = skwir_core::CancelToken::new();
-    let bytes =
-        inspection::read_file(path, inspection::limits::Bounds::QUICK, "Icon", &cancel).ok()?;
+    let bounds = inspection::limits::Bounds::QUICK;
+    let refusal = words!(
+        icons_too_large = "Icon exceeds { $size } preview limit",
+        size = Size(bounds.binary_input() as u64),
+        note = "Why a theme's icon is not drawn: its file is larger than a preview reads. size: that bound."
+    );
+    let bytes = inspection::read_file_words(path, bounds, refusal, &cancel).ok()?;
     inspection::picture(&bytes, side).ok()
 }
 
@@ -1216,10 +1222,16 @@ pub enum Plays {
 
 impl Plays {
     /// What a screen reader hears of it with the entry's name.
-    pub fn said(self) -> &'static str {
+    pub fn said(self) -> Words {
         match self {
-            Plays::Playing => "playing",
-            Plays::Paused => "paused",
+            Plays::Playing => words!(
+                icons_plays_playing = "playing",
+                note = "What a screen reader hears after a file's name: the player plays it."
+            ),
+            Plays::Paused => words!(
+                icons_plays_paused = "paused",
+                note = "What a screen reader hears after a file's name: the player paused it."
+            ),
         }
     }
 }
@@ -1333,9 +1345,30 @@ fn playing_badge(plays: Plays, size: f32, theme: &crate::theme::Theme) -> gpui::
     // What a click does is its name: the badge is a button of its own,
     // the entry's description saying what plays (`entry::said`).
     let (glyph, tip, name) = match plays {
-        Plays::Playing => ("volume", "Playing · click to pause", "Pause"),
-        Plays::Paused => ("pause", "Paused · click to play", "Play"),
+        Plays::Playing => (
+            "volume",
+            words!(
+                icons_badge_playing_tip = "Playing · click to pause",
+                note = "Pointing at the badge on the picture of the file the player plays."
+            ),
+            words!(
+                icons_badge_pause = "Pause",
+                note = "The name a screen reader hears of the badge on the picture of the file the player plays: a button that pauses it."
+            ),
+        ),
+        Plays::Paused => (
+            "pause",
+            words!(
+                icons_badge_paused_tip = "Paused · click to play",
+                note = "Pointing at the badge on the picture of the file the player paused."
+            ),
+            words!(
+                icons_badge_play = "Play",
+                note = "The name a screen reader hears of the badge on the picture of the file the player paused: a button that plays it on."
+            ),
+        ),
     };
+    let tip: gpui::SharedString = tip.say().into();
     // The picture around it answers as the entry does: only the disc is
     // the player's.
     div()
@@ -1348,7 +1381,7 @@ fn playing_badge(plays: Plays, size: f32, theme: &crate::theme::Theme) -> gpui::
             div()
                 .id("playing-badge")
                 .role(gpui::Role::Button)
-                .aria_label(name)
+                .aria_label(name.say())
                 .size(px(disc))
                 .flex()
                 .items_center()
@@ -1374,7 +1407,7 @@ fn playing_badge(plays: Plays, size: f32, theme: &crate::theme::Theme) -> gpui::
                         cx,
                     );
                 })
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.into(), cx)),
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx)),
         )
 }
 

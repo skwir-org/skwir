@@ -25,13 +25,14 @@ use gpui::{
 use skwir_core::entry::keys;
 use skwir_core::fs::count::{self, Count};
 use skwir_core::op::{Change, PlanId};
+use skwir_core::words;
+use skwir_core::words::{Name, Size, Words};
 use skwir_core::{CancelToken, EntryKind, Plan};
 use skwir_platform::calendar::Calendar;
 
 use crate::controls;
 use crate::elements::adaptive::AdaptiveRow;
 use crate::elements::clip::clipped;
-use crate::format;
 use crate::icons::Pictured;
 use crate::modal::{ListMove, Rows};
 use crate::prompts::Confirmed;
@@ -260,7 +261,7 @@ impl Deleting {
     /// how many, the plan's other steps left out (what a trash command
     /// moves to the trash beside what it deletes on a remote); then what
     /// the plan's maker could tell of what stays.
-    fn question(&self, note: Option<&str>) -> String {
+    fn question(&self, note: Option<&str>) -> Words {
         let deleted: Vec<&Row> = self.rows.iter().filter(|r| !r.other).collect();
         let rows = if deleted.is_empty() {
             self.rows.iter().collect()
@@ -268,23 +269,69 @@ impl Deleting {
             deleted
         };
         let trash = !rows.is_empty() && rows.iter().all(|r| r.trashed);
-        let what = match rows.as_slice() {
-            [one] if !one.trashed && !one.other => format!("“{}”", one.name),
-            rows => format::items(rows.len()),
+        let named = match rows.as_slice() {
+            [one] if !one.trashed && !one.other => Some(Name(one.name.to_string())),
+            _ => None,
         };
-        let from = if trash { " from the trash" } else { "" };
-        let note = note.map_or(String::new(), |note| format!(" {note}."));
-        if let Some(kept_in) = &self.kept_in {
-            let (goes, back) = if rows.len() == 1 {
-                ("It goes", "it")
-            } else {
-                ("They go", "them")
-            };
-            return format!(
-                "Delete {what}? {goes} to {kept_in}; Skwir cannot put {back} back.{note}"
-            );
+        let count = rows.len();
+        let asked = match (&self.kept_in, named) {
+            (Some(kept_in), Some(name)) => words!(
+                deleting_kept_one = "Delete { $name }? It goes to { $trash }; Skwir cannot put \
+                                     it back.",
+                name = name,
+                trash = kept_in.clone(),
+                note = "Asked before deleting on a server that keeps what is deleted in a \
+                        trash of its own; trash: that trash, as the server names it (Google \
+                        Drive's trash)."
+            ),
+            (Some(kept_in), None) => words!(
+                deleting_kept = "{ $count ->
+                    [one] Delete { $count } item? It goes to { $trash }; Skwir cannot put it \
+                        back.
+                   *[other] Delete { $count } items? They go to { $trash }; Skwir cannot put \
+                        them back.
+                }",
+                count = count,
+                trash = kept_in.clone(),
+                note = "Asked before deleting on a server that keeps what is deleted in a \
+                        trash of its own; trash: that trash, as the server names it (Google \
+                        Drive's trash)."
+            ),
+            (None, Some(name)) => words!(
+                deleting_one = "Delete { $name } permanently? This cannot be undone.",
+                name = name,
+                note = "Asked before deleting a file or folder for good."
+            ),
+            (None, None) if trash => words!(
+                deleting_from_trash = "{ $count ->
+                    [one] Delete { $count } item from the trash permanently? This cannot be \
+                        undone.
+                   *[other] Delete { $count } items from the trash permanently? This cannot be \
+                        undone.
+                }",
+                count = count,
+                note = "Asked before deleting items of a trash for good."
+            ),
+            (None, None) => words!(
+                deleting_items = "{ $count ->
+                    [one] Delete { $count } item permanently? This cannot be undone.
+                   *[other] Delete { $count } items permanently? This cannot be undone.
+                }",
+                count = count,
+                note = "Asked before deleting items for good."
+            ),
+        };
+        // Transitional: a plan's note is said where it is made (ADR-139).
+        match note {
+            Some(note) => words!(
+                deleting_noted = "{ $asked } { $then }.",
+                asked = asked,
+                then = note.to_owned(),
+                note = "The question asked before deleting, then what the action could tell of \
+                        what stays (1 of these has other names: its file stays)."
+            ),
+            None => asked,
         }
-        format!("Delete {what}{from} permanently? This cannot be undone.{note}")
     }
 
     fn take(&mut self, found: Found) {
@@ -327,23 +374,62 @@ impl Deleting {
     }
 
     /// What a row weighs or holds, as it is known so far.
-    fn weight(&self, row: &Row) -> String {
+    fn weight(&self, row: &Row) -> Words {
         match row.kind {
-            None => String::new(),
-            Some(Kind::Gone) => "not there".into(),
-            Some(Kind::Link) => "link".into(),
-            Some(Kind::File(bytes)) => format::size(bytes),
+            None => Words::default(),
+            Some(Kind::Gone) => words!(
+                deleting_not_there = "not there",
+                note = "On a row of what a deletion takes: it is gone already."
+            ),
+            Some(Kind::Link) => words!(
+                deleting_link = "link",
+                note = "On a row of what a deletion takes: it is a link (the link goes, not \
+                        what it leads to)."
+            ),
+            Some(Kind::File(bytes)) => words!(
+                deleting_size = "{ $size }",
+                size = Size(bytes),
+                note = "On a row of what a deletion takes: the file's size, alone."
+            ),
             Some(Kind::Folder) => match row.count {
                 // Inside another folder listed: counted there.
-                None if self.counted => "folder".into(),
-                None => "…".into(),
-                Some(c) if !c.done => format!("{}…", format::files(c.files as usize)),
-                Some(c) if c.files == 0 && c.folders == 0 => "empty".into(),
-                Some(c) => format!(
-                    "{}{} · {}",
-                    if at_least(&c) { "at least " } else { "" },
-                    format::size(c.size),
-                    format::files(c.files as usize)
+                None if self.counted => words!(
+                    deleting_folder = "folder",
+                    note = "On a row of what a deletion takes: a folder counted with the \
+                            folder above it, also deleted."
+                ),
+                None => Words::as_written("…"),
+                Some(c) if !c.done => words!(
+                    deleting_folder_counting = "{ $count ->
+                        [one] 1 file
+                       *[other] { $count } files
+                    }…",
+                    count = c.files,
+                    note = "On a folder's row of what a deletion takes, while what it holds is \
+                            counted: how many files so far."
+                ),
+                Some(c) if c.files == 0 && c.folders == 0 => words!(
+                    deleting_folder_empty = "empty",
+                    note = "On a folder's row of what a deletion takes: it holds nothing."
+                ),
+                Some(c) if at_least(&c) => words!(
+                    deleting_folder_at_least = "at least { $size } · { $count ->
+                        [one] 1 file
+                       *[other] { $count } files
+                    }",
+                    size = Size(c.size),
+                    count = c.files,
+                    note = "On a folder's row of what a deletion takes: what it holds, of which \
+                            some could not be read or is on another drive."
+                ),
+                Some(c) => words!(
+                    deleting_folder_holds = "{ $size } · { $count ->
+                        [one] 1 file
+                       *[other] { $count } files
+                    }",
+                    size = Size(c.size),
+                    count = c.files,
+                    note = "On a folder's row of what a deletion takes: what it holds."
                 ),
             },
         }
@@ -356,65 +442,157 @@ impl Deleting {
         if row.companions.is_empty() {
             return None;
         }
-        let mut said = String::from("Deleted with it:");
-        for path in &row.companions {
-            said.push('\n');
-            said.push_str(&written(path, self.home.as_deref(), &self.remotes));
-        }
-        Some(said.into())
+        // Transitional: a list argument (ADR-139).
+        let paths: Vec<SharedString> = row
+            .companions
+            .iter()
+            .map(|path| written(path, self.home.as_deref(), &self.remotes))
+            .collect();
+        let said = words!(
+            deleting_deleted_with = "Deleted with it:
+                { $paths }",
+            paths = paths.join("\n"),
+            note = "When pointed at the mark after a name in what a deletion takes: the \
+                    companion files deleted with it (its notes, its sidecars), one path a \
+                    line."
+        );
+        Some(said.say().into())
     }
 
     /// Under the list: where the rows are, when one folder holds them all,
     /// and what they hold in all, or how far the count is.
-    fn summary(&self) -> String {
+    fn summary(&self) -> Words {
         let all_trashed = self.rows.iter().all(|r| r.trashed);
+        let in_trash = || {
+            words!(
+                deleting_in_trash = "In the trash",
+                note = "Under what a deletion takes: where its items are."
+            )
+        };
         let place = match self.rows.as_slice() {
             [one] if one.trashed => Some(match &one.folder {
-                Some(from) => format!("In the trash, from {from}"),
-                None => "In the trash".to_owned(),
+                Some(from) => words!(
+                    deleting_in_trash_from = "In the trash, from { $folder }",
+                    folder = from.to_string(),
+                    note = "Under what a deletion takes: an item of the trash, and the folder \
+                            it was put there from, as the address writes it (~/Documents)."
+                ),
+                None => in_trash(),
             }),
-            _ if all_trashed => Some("In the trash".to_owned()),
-            _ => self.one_folder.as_ref().map(|dir| format!("In {dir}")),
+            _ if all_trashed => Some(in_trash()),
+            _ => self.one_folder.as_ref().map(|dir| {
+                words!(
+                    deleting_in_folder = "In { $folder }",
+                    folder = dir.to_string(),
+                    note = "Under what a deletion takes: the folder all its items are in, as \
+                            the address writes it (~/Documents)."
+                )
+            }),
         };
-        let held = self.held();
-        match place {
-            Some(place) if held.is_empty() => place,
-            Some(place) => format!("{place} · {held}"),
-            None => held,
+        match (place, self.held()) {
+            (Some(place), None) => place,
+            (Some(place), Some(held)) => words!(
+                deleting_summary = "{ $place } · { $held }",
+                place = place,
+                held = held,
+                note = "Under what a deletion takes: where its items are (In ~/Documents), then \
+                        what they hold in all (2.6 kB in 4 files)."
+            ),
+            (None, held) => held.unwrap_or_default(),
         }
     }
 
     /// What the rows hold in all, once counted; how far the count is
-    /// until then.
-    fn held(&self) -> String {
+    /// until then. None where it holds nothing to say.
+    fn held(&self) -> Option<Words> {
         let total = &self.total;
         if !self.counted {
-            return if total.size > 0 {
-                format!("Counting… {} so far", format::size(total.size))
+            return Some(if total.size > 0 {
+                words!(
+                    deleting_counting_so_far = "Counting… { $size } so far",
+                    size = Size(total.size),
+                    note = "Under what a deletion takes, while what it holds is counted: how \
+                            much so far."
+                )
             } else {
-                "Counting…".to_owned()
-            };
+                words!(
+                    deleting_counting = "Counting…",
+                    note = "Under what a deletion takes, while what it holds is counted."
+                )
+            });
         }
         let folders = total.folders as usize + self.root_folders;
-        let said = match (total.files as usize, folders) {
-            (0, 0) if self.rows.iter().all(|r| r.kind == Some(Kind::Gone)) => {
-                return "Already gone".to_owned();
-            }
-            (0, 0) => return String::new(),
-            (0, folders) => format::count(folders, "empty folder"),
-            (files, 0) => format!("{} in {}", format::size(total.size), format::files(files)),
-            (files, folders) => format!(
-                "{} in {} and {}",
-                format::size(total.size),
-                format::files(files),
-                format::folders(folders)
+        let at_least = at_least(total);
+        Some(match (total.files as usize, folders) {
+            (0, 0) if self.rows.iter().all(|r| r.kind == Some(Kind::Gone)) => words!(
+                deleting_already_gone = "Already gone",
+                note = "Under what a deletion takes: none of it is there any more."
             ),
-        };
-        if at_least(total) {
-            format!("At least {said}")
-        } else {
-            said
-        }
+            (0, 0) => return None,
+            (0, folders) if at_least => words!(
+                deleting_at_least_empty_folders = "At least { $folders ->
+                    [one] 1 empty folder
+                   *[other] { $folders } empty folders
+                }",
+                folders = folders,
+                note = "Under what a deletion takes: what it holds in all, of which some could \
+                        not be read or is on another drive."
+            ),
+            (0, folders) => words!(
+                deleting_empty_folders = "{ $folders ->
+                    [one] 1 empty folder
+                   *[other] { $folders } empty folders
+                }",
+                folders = folders,
+                note = "Under what a deletion takes: what it holds in all."
+            ),
+            (files, 0) if at_least => words!(
+                deleting_at_least_files = "At least { $size } in { $files ->
+                    [one] 1 file
+                   *[other] { $files } files
+                }",
+                size = Size(total.size),
+                files = files,
+                note = "Under what a deletion takes: what it holds in all, of which some could \
+                        not be read or is on another drive."
+            ),
+            (files, 0) => words!(
+                deleting_files = "{ $size } in { $files ->
+                    [one] 1 file
+                   *[other] { $files } files
+                }",
+                size = Size(total.size),
+                files = files,
+                note = "Under what a deletion takes: what it holds in all."
+            ),
+            (files, folders) if at_least => words!(
+                deleting_at_least_files_folders = "At least { $size } in { $files ->
+                    [one] 1 file
+                   *[other] { $files } files
+                } and { $folders ->
+                    [one] 1 folder
+                   *[other] { $folders } folders
+                }",
+                size = Size(total.size),
+                files = files,
+                folders = folders,
+                note = "Under what a deletion takes: what it holds in all, of which some could \
+                        not be read or is on another drive."
+            ),
+            (files, folders) => words!(
+                deleting_files_folders = "{ $size } in { $files ->
+                    [one] 1 file
+                   *[other] { $files } files
+                } and { $folders ->
+                    [one] 1 folder
+                   *[other] { $folders } folders
+                }",
+                size = Size(total.size),
+                files = files,
+                folders = folders,
+                note = "Under what a deletion takes: what it holds in all."
+            ),
+        })
     }
 }
 
@@ -668,7 +846,14 @@ pub fn render(
         .flex_col()
         .gap_1()
         .child(list.role(gpui::Role::List).when(shell.a11y, |d| {
-            d.aria_label("What is deleted").aria_size_of_set(count)
+            d.aria_label(
+                words!(
+                    deleting_list = "What is deleted",
+                    note = "What a screen reader calls the list of what a deletion takes."
+                )
+                .say(),
+            )
+            .aria_size_of_set(count)
         }))
         .child(
             div()
@@ -676,7 +861,7 @@ pub fn render(
                 .text_body()
                 .text_color(theme.text_muted)
                 .truncate()
-                .child(listed.summary()),
+                .child(listed.summary().say()),
         )
         .into_any_element()
 }
@@ -700,21 +885,35 @@ fn rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<
             let folder = row.folder.clone().filter(|_| listed.folders);
             let said = shell.a11y.then(|| {
                 let with = (!row.companions.is_empty()).then(|| {
+                    // Transitional: a list argument (ADR-139).
                     let names: Vec<_> = row.companions.iter().map(|c| name_of(c)).collect();
-                    format!("deleted with it: {}", names.join(", "))
+                    words!(
+                        deleting_said_with = "deleted with it: { $names }",
+                        names = names.join(", "),
+                        note = "What a screen reader hears of a row of what a deletion takes, \
+                                after its name: the companion files deleted with it, by name. \
+                                Begins in lower case."
+                    )
                 });
-                [
-                    Some(row.name.to_string()),
-                    folder.as_ref().map(ToString::to_string),
+                let mut said = Words::as_written(row.name.to_string());
+                let facts = [
+                    folder.as_ref().map(|f| Words::as_written(f.to_string())),
                     with,
                     Some(weight.clone()),
-                ]
-                .into_iter()
-                .flatten()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(", ")
+                ];
+                for fact in facts.into_iter().flatten().filter(|w| !w.is_empty()) {
+                    said = words!(
+                        deleting_said_and = "{ $said }, { $fact }",
+                        said = said,
+                        fact = fact,
+                        note = "What a screen reader hears of a row of what a deletion takes, \
+                                fact after fact: what it said so far (notes.txt), then the next \
+                                (500 B)."
+                    );
+                }
+                said.say()
             });
+            let weight = weight.say();
             Some(
                 div()
                     .id(("deleting-row", at))
@@ -798,7 +997,7 @@ fn name(at: usize, name: &SharedString, with: Option<SharedString>, theme: &Them
             .child(named())
             .into_any_element();
     };
-    let marked = |mark: &'static str| {
+    let marked = |mark: SharedString| {
         let with = with.clone();
         div()
             .w_full()
@@ -818,7 +1017,19 @@ fn name(at: usize, name: &SharedString, with: Option<SharedString>, theme: &Them
         .flex_1()
         .min_w_0()
         .child(AdaptiveRow {
-            variants: vec![marked("+ metadata"), marked("+")],
+            variants: vec![
+                marked(
+                    words!(
+                        deleting_with_metadata = "+ metadata",
+                        note = "A mark after a name in what a deletion takes: companion files \
+                                (its notes, its sidecars) are deleted with it. Where room is \
+                                short, a bare + stands for it."
+                    )
+                    .say()
+                    .into(),
+                ),
+                marked("+".into()),
+            ],
             height: ROWS.height,
             chosen: None,
         })
@@ -894,17 +1105,22 @@ mod tests {
         let one = plan(vec![dir.join("notes  draft.txt")]);
         let (listed, paths) = Deleting::of(&one, Vec::new(), &[], CancelToken::new());
         assert_eq!(
-            listed.question(None),
+            listed.question(None).english(),
             "Delete “notes  draft.txt” permanently? This cannot be undone."
         );
         assert_eq!(paths.len(), 1);
-        assert_eq!(listed.summary(), "In /data/it's a café · Counting…");
+        assert_eq!(
+            listed.summary().english(),
+            "In /data/it's a café · Counting…"
+        );
         assert!(!listed.folders);
 
         let several = plan(vec![dir.join("a"), dir.join("b")]);
         let (listed, _) = Deleting::of(&several, Vec::new(), &[], CancelToken::new());
         assert_eq!(
-            listed.question(Some("1 of these has other names: its file stays")),
+            listed
+                .question(Some("1 of these has other names: its file stays"))
+                .english(),
             "Delete 2 items permanently? This cannot be undone. \
              1 of these has other names: its file stays."
         );
@@ -919,7 +1135,7 @@ mod tests {
         let trashed = plan(vec![trash.join("a.txt"), trash.join("b.txt")]);
         let (listed, _) = Deleting::of(&trashed, Vec::new(), &[], CancelToken::new());
         assert_eq!(
-            listed.question(None),
+            listed.question(None).english(),
             "Delete 2 items from the trash permanently? This cannot be undone."
         );
         assert!(listed.folders && listed.rows.iter().all(|r| r.folder.is_none()));
@@ -932,9 +1148,12 @@ mod tests {
         }));
         let (listed, _) = Deleting::of(&mixed, Vec::new(), &[], CancelToken::new());
         assert_eq!(
-            listed.question(Some(
-                "It is in a network folder, which keeps no trash; the other item goes to the trash"
-            )),
+            listed
+                .question(Some(
+                    "It is in a network folder, which keeps no trash; the other item goes to the \
+                     trash"
+                ))
+                .english(),
             "Delete “on the server.txt” permanently? This cannot be undone. \
              It is in a network folder, which keeps no trash; the other item goes to the trash."
         );
@@ -950,18 +1169,18 @@ mod tests {
         let one = plan(vec![dir.join("it's here.jpg")]);
         let (listed, _) = Deleting::of(&one, Vec::new(), &trashes, CancelToken::new());
         assert_eq!(
-            listed.question(None),
+            listed.question(None).english(),
             "Delete “it's here.jpg”? It goes to Google Drive's trash; Skwir cannot put it back."
         );
         let two = plan(vec![dir.join("a"), dir.join("b")]);
         let (listed, _) = Deleting::of(&two, Vec::new(), &trashes, CancelToken::new());
         assert_eq!(
-            listed.question(None),
+            listed.question(None).english(),
             "Delete 2 items? They go to Google Drive's trash; Skwir cannot put them back."
         );
         let mixed = plan(vec![dir.join("a"), PathBuf::from("/run/user/1/other/b")]);
         let (listed, _) = Deleting::of(&mixed, Vec::new(), &trashes, CancelToken::new());
-        assert!(listed.question(None).contains("permanently"));
+        assert!(listed.question(None).english().contains("permanently"));
     }
 
     /// What the worker reads: what each is, its companions, what the
@@ -985,7 +1204,7 @@ mod tests {
         let (mut listed, paths) = Deleting::of(&all, Vec::new(), &[], CancelToken::new());
         // Not all in one folder: each row says its own.
         assert!(listed.folders);
-        assert_eq!(listed.summary(), "Counting…");
+        assert_eq!(listed.summary().english(), "Counting…");
         let companions = Companions::default();
         companions.register("test", std::sync::Arc::new(Sidecar));
         let found = std::sync::Mutex::new(Vec::new());
@@ -1012,7 +1231,11 @@ mod tests {
         assert_eq!(pictured, [true, true, true, false, true]);
         let entry = skwir_core::fs::stat_path(&photo).unwrap();
         assert_eq!(listed.rows[1].picture, Some(Pictured::of(&entry, &photo)));
-        let weights: Vec<_> = listed.rows.iter().map(|r| listed.weight(r)).collect();
+        let weights: Vec<_> = listed
+            .rows
+            .iter()
+            .map(|r| listed.weight(r).english())
+            .collect();
         assert_eq!(
             weights,
             ["2.0 kB · 2 files", "500 B", "empty", "not there", "folder"]
@@ -1028,7 +1251,10 @@ mod tests {
         assert_eq!(listed.deleted_with(&listed.rows[0]), None);
         // The companion goes too; the gone one is not there to count, so
         // the sum is no lower bound.
-        assert_eq!(listed.summary(), "2.6 kB in 4 files and 3 folders");
+        assert_eq!(
+            listed.summary().english(),
+            "2.6 kB in 4 files and 3 folders"
+        );
         let place = written(tmp.path(), home.as_deref(), &[]);
         assert_eq!(listed.rows[1].folder.as_ref(), Some(&place));
         assert_eq!(listed.total.size, 2000 + 48 + 500 + 20);
@@ -1053,10 +1279,10 @@ mod tests {
         let (mut listed, paths) =
             Deleting::of(&plan(vec![item]), Vec::new(), &[], CancelToken::new());
         assert_eq!(
-            listed.question(None),
+            listed.question(None).english(),
             "Delete 1 item from the trash permanently? This cannot be undone."
         );
-        assert_eq!(listed.summary(), "In the trash · Counting…");
+        assert_eq!(listed.summary().english(), "In the trash · Counting…");
         let found = std::sync::Mutex::new(Vec::new());
         read(&paths, &Companions::default(), &CancelToken::new(), |f| {
             found.lock().unwrap().push(f);
@@ -1071,7 +1297,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            listed.summary(),
+            listed.summary().english(),
             format!("In the trash, from {from} · 4 B in 1 file")
         );
     }

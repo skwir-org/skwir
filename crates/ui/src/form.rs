@@ -26,6 +26,7 @@ use gpui::{
     relative,
 };
 use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Mark, Picture, Values};
+use skwir_core::words;
 use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
@@ -86,7 +87,9 @@ pub(crate) struct Item {
     id: usize,
     title: String,
     detail: String,
-    section: String,
+    /// The heading it is listed under: rows meet under one by its words
+    /// as data, never as said.
+    section: Words,
 }
 
 /// The form shown.
@@ -340,9 +343,12 @@ impl Shell {
                 Kind::Text | Kind::Integer { .. } | Kind::Secret { .. } => {
                     // Said as the form opens, for as long as it is open.
                     let placeholder = match field.kind {
-                        Kind::Secret { kept: true } => {
-                            "Kept: type another to replace it".to_owned()
-                        }
+                        Kind::Secret { kept: true } => words!(
+                            form_secret_kept = "Kept: type another to replace it",
+                            note = "In the empty field of a password or a key Skwir keeps \
+                                    already: typing one replaces it."
+                        )
+                        .say(),
                         _ => field.placeholder.say(),
                     };
                     let input = self.form_input(field, &placeholder, at, &mut subs, window, cx);
@@ -358,7 +364,13 @@ impl Shell {
                     input: open.then(|| self.form_input(field, "", at, &mut subs, window, cx)),
                 },
                 Kind::Pick { choices } => {
-                    let input = self.form_input(field, "Type to filter", at, &mut subs, window, cx);
+                    let filter = words!(
+                        form_type_to_filter = "Type to filter",
+                        note = "In the empty field above a list of choices: what is typed \
+                                narrows the list."
+                    )
+                    .say();
+                    let input = self.form_input(field, &filter, at, &mut subs, window, cx);
                     input.update(cx, |i, cx| i.set_text(String::new(), cx));
                     // A pick starts on the choice the asker gave.
                     let mut picker = Picker::default();
@@ -737,10 +749,10 @@ impl Shell {
         if !back && form.blocked(cx).is_some() {
             return;
         }
-        if !back && let Some(refusal) = form.form.refusal(&values) {
+        if !back && let Some(refusal) = form.form.refusal_words(&values) {
             // What it names may be folded: shown.
             form.more = true;
-            form.refusal = Some(Words::as_written(refusal));
+            form.refusal = Some(refusal);
             cx.notify();
             return;
         }
@@ -942,10 +954,19 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let folded = state.folded();
     if folded > 0 && form.waiting.is_none() {
         let label: SharedString = if state.more {
-            "Fewer options".into()
+            words!(
+                form_fewer_options = "Fewer options",
+                note = "A button at a form's end: fold its options again."
+            )
         } else {
-            format!("More options ({folded})").into()
-        };
+            words!(
+                form_more_options = "More options ({ $count })",
+                count = folded,
+                note = "A button at a form's end: unfold its other options; count: how many."
+            )
+        }
+        .say()
+        .into();
         body = body.child(
             div().flex().child(modal::pressed(
                 controls::button(
@@ -967,7 +988,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         buttons.push(modal::pressed(
             controls::button(
                 "form-back",
-                "Back",
+                words!(
+                    form_back = "Back",
+                    note = "A button of a form of several steps: go back to the step before."
+                )
+                .say(),
                 None,
                 ButtonStyle::Plain,
                 &state.back_focus,
@@ -980,7 +1005,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     buttons.push(modal::pressed(
         controls::button(
             "form-cancel",
-            "Cancel",
+            words!(
+                form_cancel = "Cancel",
+                note = "A button: close a form without answering it."
+            )
+            .say(),
             None,
             ButtonStyle::Plain,
             &state.cancel_focus,
@@ -996,7 +1025,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         if let Some(why) = state.blocked(cx) {
             buttons.push(modal::pressed(
                 controls::inert_button("form-accept", accept, &state.accept_focus, &theme)
-                    .when(shell.a11y, |d| d.aria_description(why)),
+                    .when(shell.a11y, |d| d.aria_description(why.say())),
                 |_, _, _| {},
                 cx,
             ));
@@ -1016,10 +1045,17 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         }
     }
     let hint = if form.waiting.is_some() {
-        "Escape to cancel"
+        words!(
+            form_waiting_keys = "Escape to cancel",
+            note = "The keys of a form while it waits (a sign-in in the browser)."
+        )
     } else {
-        "Enter to confirm, Escape to cancel"
-    };
+        words!(
+            form_keys = "Enter to confirm, Escape to cancel",
+            note = "The keys of a form."
+        )
+    }
+    .say();
     // As tall as the room below its top allows but a tenth: a dialog of
     // pictures (Print…'s) fits a window 800 pixels high whole.
     // Tab completes a folder typed while there is one to complete.
@@ -1065,7 +1101,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
 /// it is shown.
 fn inner_chevron(
     id: SharedString,
-    label: &str,
+    label: &Words,
     open: bool,
     focus: &FocusHandle,
     theme: &Theme,
@@ -1073,7 +1109,7 @@ fn inner_chevron(
     controls::icon_button(
         id,
         if open { "chevron-up" } else { "chevron" },
-        label.to_owned(),
+        label.say(),
         focus,
         theme,
     )
@@ -1099,7 +1135,12 @@ fn field_row(
         .text_body()
         .font_weight(gpui::FontWeight::MEDIUM)
         .child(if field.required {
-            format!("{} *", field.title.say())
+            words!(
+                form_required = "{ $field } *",
+                field = field.title.clone(),
+                note = "A form's field that must be filled in, by its label (Name), marked."
+            )
+            .say()
         } else {
             field.title.say()
         });
@@ -1122,7 +1163,7 @@ fn field_row(
                 } else {
                     theme.text_muted
                 })
-                .child(note.text),
+                .child(note.text.say()),
         ),
         None => (!field.help.is_empty()).then(|| {
             div()
@@ -1184,7 +1225,11 @@ fn field_row(
                         .child(modal::pressed(
                             inner_chevron(
                                 SharedString::from(format!("form-suggest-{at}")),
-                                "Suggestions",
+                                &words!(
+                                    form_suggestions = "Suggestions",
+                                    note = "The button at the end of a field that unfolds what \
+                                            it suggests."
+                                ),
                                 open,
                                 focus,
                                 theme,
@@ -1198,7 +1243,11 @@ fn field_row(
                     controls::dropdown(
                         SharedString::from(format!("form-choice-{at}")),
                         if shown.is_empty() {
-                            "Choose…".to_owned()
+                            words!(
+                                form_choose = "Choose…",
+                                note = "A form's list of choices, while none is chosen."
+                            )
+                            .say()
                         } else {
                             shown
                         },
@@ -1244,7 +1293,11 @@ fn field_row(
                             modal::pressed(
                                 inner_chevron(
                                     SharedString::from(format!("form-folders-{at}")),
-                                    "Folders",
+                                    &words!(
+                                        form_unfold_folders = "Folders",
+                                        note = "The button at the end of a field where a file \
+                                                is saved that unfolds the folders it offers."
+                                    ),
                                     open,
                                     focus,
                                     theme,
@@ -1491,7 +1544,7 @@ fn choice_list(
             id,
             title: choice.shown().say(),
             detail: choice.detail.say(),
-            section: choice.section.say(),
+            section: choice.section.clone(),
         })
         .collect();
     list_of(shell, state, at, &items, rows, theme, cx)
@@ -1535,14 +1588,23 @@ fn list_of(
         };
         (top, (top + rows).min(shown.len()))
     };
-    let mut list = modal::options("form-options", "Choices", shown.len(), shell.a11y)
-        .flex()
-        .flex_col()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.bg);
+    let mut list = modal::options(
+        "form-options",
+        words!(
+            form_choices = "Choices",
+            note = "What a screen reader calls the list of a form's choices."
+        )
+        .say(),
+        shown.len(),
+        shell.a11y,
+    )
+    .flex()
+    .flex_col()
+    .py_1()
+    .rounded_md()
+    .border_1()
+    .border_color(theme.border)
+    .bg(theme.bg);
     if shown.is_empty() {
         list = list.child(
             div()
@@ -1550,9 +1612,18 @@ fn list_of(
                 .py_1()
                 .text_body()
                 .text_color(theme.text_muted)
-                .child("Nothing matches"),
+                .child(
+                    words!(
+                        form_nothing_matches = "Nothing matches",
+                        note = "In a form's list of choices, when none matches what is typed."
+                    )
+                    .say(),
+                ),
         );
     }
+    // Transitional: rows meet under a heading by its words as data (the
+    // same message and arguments), until a section is known by an id
+    // (ADR-139).
     let mut section = None;
     for (row, choice) in shown.iter().enumerate().take(end).skip(start) {
         if !choice.section.is_empty() && section != Some(&choice.section) {
@@ -1563,7 +1634,7 @@ fn list_of(
                     .pt_1()
                     .text_small()
                     .text_color(theme.text_muted)
-                    .child(choice.section.clone()),
+                    .child(choice.section.say()),
             );
         }
         let highlighted = chosen_row == Some(row);
@@ -1597,16 +1668,18 @@ fn list_of(
     }
     if end < shown.len() || start > 0 {
         list = list.child(
-            div()
-                .px_2()
-                .text_body()
-                .text_color(theme.text_muted)
-                .child(format!(
-                    "{}–{} of {}: the arrows move further",
-                    start + 1,
-                    end,
-                    shown.len()
-                )),
+            div().px_2().text_body().text_color(theme.text_muted).child(
+                words!(
+                    form_rows_shown = "{ $first }–{ $last } of { $count }: the arrows move \
+                                           further",
+                    first = start + 1,
+                    last = end,
+                    count = shown.len(),
+                    note = "Under a form's list of choices that shows some of them: which \
+                                are in sight, of how many."
+                )
+                .say(),
+            ),
         );
     }
     let mut window = picker;

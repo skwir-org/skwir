@@ -32,6 +32,9 @@ use gpui::{
     WindowButton, WindowControlArea, WindowDecorations, div, prelude::*, px,
 };
 
+use skwir_core::words;
+use skwir_core::words::Words;
+
 use crate::shell::Shell;
 use crate::sizes::sized;
 use crate::theme::Theme;
@@ -92,6 +95,47 @@ impl TitleBar {
         ("compact", "Compact"),
         ("top_row", "In the top row"),
     ];
+
+    /// Its choices, each by its value and its words: what the setting
+    /// offers (`SettingSpec::choice_words`).
+    // Until settings.rs offers them in place of `VALUES` (ADR-139, E).
+    #[allow(dead_code)]
+    pub fn choices() -> Vec<(&'static str, Words)> {
+        vec![
+            (
+                "auto",
+                words!(
+                    title_bar_automatic = "Automatic",
+                    note = "A choice of the Title bar setting: the system's title bar where it \
+                            draws one, else the buttons in the top row."
+                ),
+            ),
+            (
+                "system",
+                words!(
+                    title_bar_system = "System",
+                    note = "A choice of the Title bar setting: the system's title bar, or one \
+                            of skwir's like it."
+                ),
+            ),
+            (
+                "compact",
+                words!(
+                    title_bar_compact = "Compact",
+                    note = "A choice of the Title bar setting: a slim bar of skwir's on its \
+                            frame."
+                ),
+            ),
+            (
+                "top_row",
+                words!(
+                    title_bar_top_row = "In the top row",
+                    note = "A choice of the Title bar setting: the window's buttons at the \
+                            ends of skwir's top row."
+                ),
+            ),
+        ]
+    }
 
     /// The setting's value read, Automatic for none or one unknown.
     pub fn read(value: Option<&str>) -> Self {
@@ -159,6 +203,31 @@ pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&
     }
     Some(
         "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
+    )
+}
+
+/// What a refusal means here (`refusal`), as words.
+// Until settings.rs says it in place of `refusal`'s text (ADR-139, E).
+#[allow(dead_code)]
+pub fn refusal_words(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<Words> {
+    refusal(asked, decorations, x11).map(|_| {
+        words!(
+            title_bar_refused = "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
+            note = "Said beside the Title bar setting where the desktop kept its frame when \
+                    asked for none. Compact, In the top row and Automatic are the setting's \
+                    choices."
+        )
+    })
+}
+
+/// Why Compact and In the top row do nothing (`UNSUPPORTED`), as words.
+// Until settings.rs says it in place of `UNSUPPORTED` (ADR-139, E).
+#[allow(dead_code)]
+pub fn unsupported() -> Words {
+    words!(
+        title_bar_unsupported = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir",
+        note = "Said beside the Title bar setting's Compact and In the top row where they \
+                cannot be had."
     )
 }
 
@@ -433,12 +502,57 @@ fn button_element(
 
 /// What a window's button is called, said and shown alike (a screen
 /// reader hears the window's, not another Close), and the command it runs.
-fn named(button: WindowButton, maximized: bool) -> (&'static str, &'static str) {
-    match button {
-        WindowButton::Close => ("Close window", "ui.close_window"),
-        WindowButton::Minimize => ("Minimize window", "ui.minimize_window"),
-        WindowButton::Maximize if maximized => ("Restore window", "ui.maximize_window"),
-        WindowButton::Maximize => ("Maximize window", "ui.maximize_window"),
+/// Said where it is drawn.
+fn named(button: WindowButton, maximized: bool) -> (String, &'static str) {
+    let (title, command) = match button {
+        WindowButton::Close => (
+            words!(
+                title_bar_close = "Close window",
+                note = "A button of the window's title bar, and what a screen reader calls it."
+            ),
+            "ui.close_window",
+        ),
+        WindowButton::Minimize => (
+            words!(
+                title_bar_minimize = "Minimize window",
+                note = "A button of the window's title bar, and what a screen reader calls it."
+            ),
+            "ui.minimize_window",
+        ),
+        WindowButton::Maximize if maximized => (
+            words!(
+                title_bar_restore = "Restore window",
+                note = "A button of the window's title bar, and what a screen reader calls \
+                        it: give a maximized window its size back."
+            ),
+            "ui.maximize_window",
+        ),
+        WindowButton::Maximize => (
+            words!(
+                title_bar_maximize = "Maximize window",
+                note = "A button of the window's title bar, and what a screen reader calls it."
+            ),
+            "ui.maximize_window",
+        ),
+    };
+    (title.say(), command)
+}
+
+/// The window's title: its active pane's location's (`place`, said),
+/// then skwir's name; skwir's alone where it has none.
+pub(crate) fn window_title(place: &str) -> String {
+    if place.is_empty() {
+        "skwir".to_owned()
+    } else {
+        // Transitional: the place's title said, until `trail::Shown::title`
+        // holds words (ADR-139).
+        words!(
+            title_bar_window_title = "{ $place } — skwir",
+            place = place,
+            note = "The window's title, in its title bar and the system's list of windows; \
+                    place: the title of where its active pane is (Downloads)."
+        )
+        .say()
     }
 }
 
@@ -517,11 +631,7 @@ pub fn bar(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let above = drawn == Drawn::System;
     let start = buttons(shell, End::Start, cx);
     let end = buttons(shell, End::End, cx);
-    let title = if shell.title.is_empty() {
-        "skwir".to_owned()
-    } else {
-        format!("{} — skwir", shell.title)
-    };
+    let title = window_title(&shell.title);
     let color = if shell.title_bar.active {
         theme.text
     } else {

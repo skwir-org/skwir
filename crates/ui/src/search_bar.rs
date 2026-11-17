@@ -33,6 +33,8 @@ use serde::Deserialize;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Crumb;
 use skwir_core::metadata::{TAG_SEPARATOR, TagRef};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 use crate::elements::popover::PopoverAnchor;
@@ -74,10 +76,20 @@ pub struct Choice {
 impl Chip {
     /// What the chip reads: its facet, and what it is set to.
     pub fn label(&self) -> String {
+        self.label_words().say()
+    }
+
+    /// What the chip reads, as words other words hold.
+    fn label_words(&self) -> Words {
         match (&self.value, self.title.is_empty()) {
-            (Some(value), true) => value.clone(),
-            (Some(value), false) => format!("{}: {value}", self.title),
-            (None, _) => self.title.clone(),
+            (Some(value), true) => Words::as_written(value.clone()),
+            (Some(value), false) => words!(
+                search_bar_chip = "{ $facet }: { $value }",
+                facet = self.title.as_str(),
+                value = value.as_str(),
+                note = "A pill of a search or a filter; facet: what it filters by (Name, Kind, Tag); value: what it is set to."
+            ),
+            (None, _) => Words::as_written(self.title.clone()),
         }
     }
 
@@ -356,7 +368,11 @@ fn own_chip(crumb: &Crumb) -> Chip {
     let (id, title, value, segments) = match &crumb.tag {
         Some(tag) if !tag.lacks => (
             "tag",
-            "Tag",
+            words!(
+                search_bar_tag = "Tag",
+                note = "A filter's pill: what it filters by, before the tag's name."
+            )
+            .say(),
             tag.name.clone(),
             tag.name
                 .split(TAG_SEPARATOR)
@@ -366,12 +382,21 @@ fn own_chip(crumb: &Crumb) -> Chip {
                 })
                 .collect(),
         ),
-        Some(tag) => ("not_tag", "Not tagged", tag.name.clone(), Vec::new()),
-        None => ("own", "", crumb.label.say(), Vec::new()),
+        Some(tag) => (
+            "not_tag",
+            words!(
+                search_bar_not_tagged = "Not tagged",
+                note = "A filter's pill leaving out the files of a tag, before the tag's name."
+            )
+            .say(),
+            tag.name.clone(),
+            Vec::new(),
+        ),
+        None => ("own", String::new(), crumb.label.say(), Vec::new()),
     };
     Chip {
         id: id.to_owned(),
-        title: title.to_owned(),
+        title,
         value: Some(value),
         icon: if crumb.tag.is_some() { "tag" } else { "filter" }.to_owned(),
         choices: Vec::new(),
@@ -388,10 +413,21 @@ fn typed_chip(text: &str) -> Chip {
     Chip {
         id: "typed".to_owned(),
         title: String::new(),
-        value: Some(format!("“{text}”")),
+        value: Some(
+            words!(
+                search_bar_typed = "“{ $text }”",
+                text = text,
+                note = "A filter's pill holding the words typed, as typed, in quotes."
+            )
+            .say(),
+        ),
         icon: "search".to_owned(),
         choices: vec![Choice {
-            label: "Edit…".to_owned(),
+            label: words!(
+                search_bar_edit = "Edit…",
+                note = "A choice of the pill of the words typed: type them again in the address field."
+            )
+            .say(),
             command: Invocation::with_args("ui.filter", &serde_json::json!({ "text": text })),
             active: false,
         }],
@@ -437,11 +473,14 @@ fn rest(shell: &Shell, folder: bool, least: f32, cx: &mut Context<Shell>) -> Any
     div()
         .id(("chip-rest", pane.0 as usize))
         .role(gpui::Role::Button)
-        .aria_label(if folder {
-            "Edit the address as text"
-        } else {
-            "Edit the search as text"
-        })
+        .aria_label(
+            if folder {
+                words!(search_bar_edit_address = "Edit the address as text")
+            } else {
+                words!(search_bar_edit_search = "Edit the search as text")
+            }
+            .say(),
+        )
         .flex_1()
         .min_w(px(least))
         .h_full()
@@ -569,14 +608,22 @@ fn pill_row(
         let tip = if chip.is_scope() {
             depth_tip(shell, chip, folder)
         } else if chip.lens {
-            format!(
-                "{} · kept as you go to other folders and searches, until taken off",
-                chip.label()
+            words!(
+                search_bar_lens_tip = "{ $pill } · kept as you go to other folders and searches, until taken off",
+                pill = chip.label_words(),
+                note = "The tooltip of a filter's pill that stays as the pane goes elsewhere; pill: what the pill reads."
             )
+            .say()
         } else if folder {
-            format!("{} · this folder only, not a search", chip.label())
+            words!(
+                search_bar_folder_tip = "{ $pill } · this folder only, not a search",
+                pill = chip.label_words(),
+                note =
+                    "The tooltip of a pill filtering the folder shown; pill: what the pill reads."
+            )
+            .say()
         } else if chip.title.is_empty() {
-            "Part of the search no chip holds".to_owned()
+            words!(search_bar_advanced_tip = "Part of the search no chip holds").say()
         } else if fit != Fit::Full {
             // Its icon or its value alone: the tooltip says it all.
             chip.label()
@@ -640,7 +687,13 @@ fn pill_row(
             Some(clear) => pill.child(crate::elements::pill::clear(
                 shell,
                 clear,
-                format!("Remove {}", chip.label()).into(),
+                words!(
+                    search_bar_remove_pill = "Remove { $pill }",
+                    pill = chip.label_words(),
+                    note = "The × of a search's or a filter's pill; pill: what the pill reads."
+                )
+                .say()
+                .into(),
                 ink,
                 cx,
             )),
@@ -653,15 +706,28 @@ fn pill_row(
             "chip-facets",
             "plus",
             if folder {
-                "Filter this folder by name, kind, date, size or tag"
+                words!(
+                    search_bar_facets_folder =
+                        "Filter this folder by name, kind, date, size or tag"
+                )
             } else {
-                "Narrow the search by name, kind, date, size, tag or contents"
-            },
+                words!(
+                    search_bar_facets_search =
+                        "Narrow the search by name, kind, date, size, tag or contents"
+                )
+            }
+            .say(),
             "ui.search_chip",
         )
         .args(serde_json::json!({ "pane": pane, "facets": true }));
         let facets = if matches!(fit, Fit::Full | Fit::Lean) {
-            facets.label("Filter")
+            facets.label(
+                words!(
+                    search_bar_filter = "Filter",
+                    note = "The button after the pills that adds a filter."
+                )
+                .say(),
+            )
         } else {
             facets
         };
@@ -682,28 +748,49 @@ fn pill_row(
 /// What a pill saying how deep words look tells: what it means, and the
 /// key that switches it from the address field.
 fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> String {
-    let keys = |command: &str| {
-        shell
-            .keys_for(command, &serde_json::json!({}))
-            .map(|keys| format!(" ({keys})"))
-            .unwrap_or_default()
-    };
+    let keys = |command: &str| shell.keys_for(command, &serde_json::json!({}));
     let here = chip.choices.first().is_some_and(|c| c.active);
     match () {
-        () if chip.choices.is_empty() => format!("{} · searched as it lists", chip.label()),
-        () if folder => format!(
-            "The words filter this folder only · its subfolders too are searched{}",
-            keys("ui.search")
+        () if chip.choices.is_empty() => words!(
+            search_bar_depth_listed = "{ $pill } · searched as it lists",
+            pill = chip.label_words(),
+            note = "The tooltip of the pill saying where a search looks, which cannot change; pill: what it reads."
         ),
-        () if here => format!(
-            "The search looks in this folder only · its subfolders too{}",
-            keys("ui.search")
-        ),
-        () => format!(
-            "The search looks in the subfolders too · this folder only{}",
-            keys("ui.filter")
-        ),
+        () if folder => match keys("ui.search") {
+            Some(keys) => words!(
+                search_bar_depth_folder_keys = "The words filter this folder only · its subfolders too are searched ({ $keys })",
+                keys = keys,
+                note = "The tooltip of the pill saying how deep the words typed look: before the dot, what they do; after it, what its other choice does, and the shortcut that chooses it."
+            ),
+            None => words!(
+                search_bar_depth_folder = "The words filter this folder only · its subfolders too are searched",
+                note = "The tooltip of the pill saying how deep the words typed look: before the dot, what they do; after it, what its other choice does."
+            ),
+        },
+        () if here => match keys("ui.search") {
+            Some(keys) => words!(
+                search_bar_depth_here_keys = "The search looks in this folder only · its subfolders too ({ $keys })",
+                keys = keys,
+                note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice, and the shortcut that chooses it."
+            ),
+            None => words!(
+                search_bar_depth_here = "The search looks in this folder only · its subfolders too",
+                note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice."
+            ),
+        },
+        () => match keys("ui.filter") {
+            Some(keys) => words!(
+                search_bar_depth_below_keys = "The search looks in the subfolders too · this folder only ({ $keys })",
+                keys = keys,
+                note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice, and the shortcut that chooses it."
+            ),
+            None => words!(
+                search_bar_depth_below = "The search looks in the subfolders too · this folder only",
+                note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice."
+            ),
+        },
     }
+    .say()
 }
 
 /// A tag's pill's segments: each category a link up to it, `›` between,
@@ -722,7 +809,13 @@ fn tag_segments(
         }
         pill = match segment.command.clone() {
             Some(up) => {
-                let tip: SharedString = format!("All of “{}”", segment.label).into();
+                let tip: SharedString = words!(
+                    search_bar_all_of = "All of { $category }",
+                    category = Name(segment.label.clone()),
+                    note = "A tag's category in its pill, which goes to every file tagged with what it holds; category: its name."
+                )
+                .say()
+                .into();
                 pill.child(
                     div()
                         .id(SharedString::from(format!("chip-{chip}-up-{j}")))
@@ -783,7 +876,11 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         Target::Chip(i) => {
             let chip = chips.get(i)?;
             let remove = chip.clear.as_ref().map(|clear| Choice {
-                label: "Remove".to_owned(),
+                label: words!(
+                    search_bar_remove = "Remove",
+                    note = "The last choice of a pill's menu: take that filter off."
+                )
+                .say(),
                 command: clear.clone(),
                 active: false,
             });

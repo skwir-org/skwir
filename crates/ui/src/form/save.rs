@@ -48,6 +48,8 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::form::path;
 use skwir_core::form::{Field, Kind};
 use skwir_core::scheduler::Priority;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use super::{Control, FormState};
 use crate::complete;
@@ -61,8 +63,9 @@ pub(super) struct Row {
     pub title: String,
     pub detail: String,
     /// The heading it is listed under ("Chosen before", "Places"), the
-    /// asker's `Choice::section`; empty for none.
-    pub section: String,
+    /// asker's `Choice::section`; empty for none. Rows meet under one
+    /// heading by its words as data, never as said.
+    pub section: Words,
     pub folder: PathBuf,
     /// Completed from what was typed (a folder within the one typed),
     /// not one the asker offers.
@@ -147,31 +150,31 @@ const POPOVER: f32 = 300.;
 /// What is said under the field: whether it warns, and whether it holds
 /// the form's answer back (a path no PDF can be saved at).
 pub(super) struct Note {
-    pub text: String,
+    pub text: Words,
     pub warns: bool,
     pub blocks: bool,
 }
 
 impl Note {
-    fn says(text: impl Into<String>) -> Note {
+    fn says(text: Words) -> Note {
         Note {
-            text: text.into(),
+            text,
             warns: false,
             blocks: false,
         }
     }
 
-    fn warns(text: impl Into<String>) -> Note {
+    fn warns(text: Words) -> Note {
         Note {
-            text: text.into(),
+            text,
             warns: true,
             blocks: false,
         }
     }
 
-    fn blocks(text: impl Into<String>) -> Note {
+    fn blocks(text: Words) -> Note {
         Note {
-            text: text.into(),
+            text,
             warns: true,
             blocks: true,
         }
@@ -309,7 +312,7 @@ impl FormState {
                 Some(Row {
                     title: choice.shown().say(),
                     detail: choice.detail.say(),
-                    section: choice.section.say(),
+                    section: choice.section.clone(),
                     folder,
                     completed: false,
                 })
@@ -334,7 +337,7 @@ impl FormState {
 
     /// Why the form's answer is held back: a Save field shown whose path
     /// no file can be saved at (`Note::blocks`).
-    pub(super) fn blocked(&self, cx: &gpui::App) -> Option<String> {
+    pub(super) fn blocked(&self, cx: &gpui::App) -> Option<Words> {
         let values = self.values(cx);
         self.form.fields.iter().enumerate().find_map(|(at, field)| {
             if !matches!(field.kind, Kind::Save { .. }) || !self.shows(field, &values) {
@@ -352,9 +355,7 @@ impl FormState {
         let Kind::Save { alone, beside, .. } = &field.kind else {
             return None;
         };
-        // Said as the note is drawn.
-        self.read
-            .note(&self.held(at, cx)?, &alone.say(), &beside.say())
+        self.read.note(&self.held(at, cx)?, alone, beside)
     }
 
     /// Take what the read under way found, if it answered: whether it did.
@@ -424,21 +425,25 @@ impl Reads {
     /// What is said under a Save field holding `held` (`Note`), `None` for
     /// its help; `alone` and `beside` are what its asker says of a folder
     /// alone and of a name with no folder.
-    fn note(&self, held: &Held, alone: &str, beside: &str) -> Option<Note> {
+    fn note(&self, held: &Held, alone: &Words, beside: &Words) -> Option<Note> {
         let text = held.text.as_str();
         let (dir, name) = split(text);
         if text.is_empty() || (dir.is_empty() && !held.alone) {
-            return (!beside.is_empty()).then(|| Note::says(beside));
+            return (!beside.is_empty()).then(|| Note::says(beside.clone()));
         }
         if folder_of(text).is_none() {
-            return Some(Note::blocks(
-                "Type the folder's whole path, from the top or from ~",
-            ));
+            return Some(Note::blocks(words!(
+                form_save_whole_path = "Type the folder's whole path, from the top or from ~",
+                note = "Under a field where a file is saved, when what is typed names no folder \
+                        from the top; ~ is the home folder, as it is typed."
+            )));
         }
         let missing = |path: &str| {
-            Some(Note::blocks(format!(
-                "There is no folder “{}”",
-                path.trim_end_matches(complete::is_separator)
+            Some(Note::blocks(words!(
+                form_save_no_folder = "There is no folder “{ $path }”",
+                path = path.trim_end_matches(complete::is_separator),
+                note = "Under a field where a file is saved: the folder typed is not there; \
+                        path: the folder as it was typed."
             )))
         };
         if self.folder_is(text) == Some(false) {
@@ -449,25 +454,43 @@ impl Reads {
             return match self.names_a_folder(text) {
                 // `.` and `..` are folders no listing names.
                 Some(false) if !name.is_empty() && !matches!(name, "." | "..") => missing(text),
-                _ => (!alone.is_empty()).then(|| Note::says(alone)),
+                _ => (!alone.is_empty()).then(|| Note::says(alone.clone())),
             };
         }
         if name.is_empty() {
-            return Some(Note::says(format!("Named “{}”", held.settled)));
+            return Some(Note::says(words!(
+                form_save_named = "Named { $name }",
+                name = Name(held.settled.clone()),
+                note = "Under a field where a file is saved, a folder typed: the name the file \
+                        gets there."
+            )));
         }
         if self.names_a_folder(text) == Some(true) {
-            return Some(Note::says(format!(
-                "Saved in the folder “{name}”, named “{}”",
-                held.settled
+            return Some(Note::says(words!(
+                form_save_in_folder = "Saved in the folder { $folder }, named { $name }",
+                folder = Name(name.to_owned()),
+                name = Name(held.settled.clone()),
+                note = "Under a field where a file is saved, a folder's name typed after the \
+                        folder: the file goes in that folder, under the name it gets."
             )));
         }
         let full = ended(name, &held.ending);
         if let Err(refused) = skwir_core::op::valid_file_name(std::ffi::OsStr::new(&full)) {
-            return Some(Note::blocks(format!("“{full}” cannot be saved: {refused}")));
+            return Some(Note::blocks(words!(
+                form_save_refused = "{ $name } cannot be saved: { $why }",
+                name = Name(full),
+                why = refused,
+                note = "Under a field where a file is saved: no file can have that name; why: \
+                        what makes it no name (it holds a /)."
+            )));
         }
         if self.known_of(text)?.names.as_ref()?.contains_key(&full) {
-            return Some(Note::warns(format!(
-                "“{full}” is there already: saving asks whether to replace it"
+            return Some(Note::warns(words!(
+                form_save_there_already = "{ $name } is there already: saving asks whether to \
+                                           replace it",
+                name = Name(full),
+                note = "Under a field where a file is saved: a file of that name is in that \
+                        folder."
             )));
         }
         None
@@ -502,7 +525,7 @@ impl Reads {
                     } else {
                         String::new()
                     },
-                    section: String::new(),
+                    section: Words::default(),
                     folder: holder.path.join(&name.exact),
                     completed: true,
                 }
@@ -843,16 +866,29 @@ pub(super) fn popover(
         Some(Control::Save { input, .. }) => input.read(cx).focus_handle(cx),
         _ => state.cancel_focus.clone(),
     };
-    let mut list = modal::options("form-folders", "Folders", rows.len(), shell.a11y)
-        .flex()
-        .flex_col()
-        .py_1()
-        .max_h(sized(POPOVER))
-        .overflow_y_scroll()
-        .track_scroll(&state.list_scroll);
-    let mut section: Option<&str> = None;
+    let mut list = modal::options(
+        "form-folders",
+        words!(
+            form_folders = "Folders",
+            note = "What a screen reader calls the list of folders under a field where a file \
+                    is saved."
+        )
+        .say(),
+        rows.len(),
+        shell.a11y,
+    )
+    .flex()
+    .flex_col()
+    .py_1()
+    .max_h(sized(POPOVER))
+    .overflow_y_scroll()
+    .track_scroll(&state.list_scroll);
+    // Transitional: rows meet under a heading by its words as data (the
+    // same message and arguments), until a section is known by an id
+    // (ADR-139).
+    let mut section: Option<&Words> = None;
     for (row, folder) in rows.iter().enumerate() {
-        if !folder.section.is_empty() && section != Some(folder.section.as_str()) {
+        if !folder.section.is_empty() && section != Some(&folder.section) {
             section = Some(&folder.section);
             list = list.child(
                 div()
@@ -860,7 +896,7 @@ pub(super) fn popover(
                     .pt_1()
                     .text_small()
                     .text_color(theme.text_muted)
-                    .child(folder.section.clone()),
+                    .child(folder.section.say()),
             );
         }
         let highlighted = chosen_row == Some(row);
@@ -1037,13 +1073,19 @@ mod tests {
         reads.answered(answer("/example/shut", shut));
         assert_eq!(reads.folder_is(text), None);
         assert_eq!(reads.names_a_folder(text), None);
-        assert!(reads.note(&held(text), "", "").is_none());
+        assert!(
+            reads
+                .note(&held(text), &Words::default(), &Words::default())
+                .is_none()
+        );
         assert!(reads.ask(folder), "not kept");
 
         reads.answered(answer("/example/shut", complete::Resolved::default()));
-        let note = reads.note(&held(text), "", "").expect("said");
+        let note = reads
+            .note(&held(text), &Words::default(), &Words::default())
+            .expect("said");
         assert!(note.blocks);
-        assert_eq!(note.text, "There is no folder “/example/shut”");
+        assert_eq!(note.text.english(), "There is no folder “/example/shut”");
         assert!(!reads.ask(folder), "kept");
     }
 
@@ -1093,7 +1135,13 @@ mod tests {
         ));
         assert_eq!(reads.names_a_folder("/example/a/drafts"), Some(true));
         assert_eq!(reads.names_a_folder("/example/a/notes.pdf"), Some(false));
-        let note = reads.note(&held("/example/a/notes"), "", "").expect("said");
+        let note = reads
+            .note(
+                &held("/example/a/notes"),
+                &Words::default(),
+                &Words::default(),
+            )
+            .expect("said");
         assert!(note.warns && !note.blocks, "there already");
 
         let text = "/example/a/dr";

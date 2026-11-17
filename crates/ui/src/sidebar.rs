@@ -30,12 +30,12 @@ use skwir_core::Location;
 use skwir_core::command::Invocation;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::{Opens, Place, Reorder};
-use skwir_core::words::Words;
+use skwir_core::words;
+use skwir_core::words::{Size, Words};
 use skwir_core::workspace::TabId;
 
 use crate::controls;
 use crate::dnd::DragPayload;
-use crate::format;
 use crate::menu::MenuHost;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -393,7 +393,11 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
     if let Some(home) = home.filter(|home| !roots.iter().any(|r| r.path == *home)) {
         roots.push(Root {
             path: home.to_path_buf(),
-            name: "Home".to_owned(),
+            name: words!(
+                sidebar_root_home = "Home",
+                note = "Where a folder's trail starts when the sidebar shows none of the folders above it: the home folder."
+            )
+            .say(),
         });
     }
     roots
@@ -510,9 +514,18 @@ impl Sections {
     }
 }
 
-/// The words a section's heading says: core's, by its id (ADR-139, 8).
-fn group_title(group: &str) -> String {
-    skwir_core::registry::groups::title_of(group).to_owned()
+/// What F9 or F6 says where the window has no room for the sidebar.
+fn too_narrow() -> Words {
+    words!(
+        sidebar_too_narrow = "The window is too narrow for the sidebar",
+        note = "Said when the sidebar is asked for (F9, F6) in a window too narrow to show it beside the files."
+    )
+}
+
+/// The words a section's heading says: core's, by its id (ADR-139, 8);
+/// none for a section core does not own.
+fn group_title(group: &str) -> Words {
+    skwir_core::registry::groups::words_of(group).unwrap_or_default()
 }
 
 /// A place being dragged: to another position in its group, if it moves
@@ -708,7 +721,15 @@ pub fn render(
     let mut column = div()
         .id("sidebar")
         .role(gpui::Role::Tree)
-        .when(a11y, |d| d.aria_label("Sidebar"))
+        .when(a11y, |d| {
+            d.aria_label(
+                words!(
+                    sidebar_name = "Sidebar",
+                    note = "What a screen reader calls the sidebar: the places, bookmarks, tags and devices at the window's left."
+                )
+                .say(),
+            )
+        })
         .size_full()
         .flex()
         .flex_col()
@@ -762,7 +783,7 @@ pub fn render(
             group_header(TABS, folded, None, at_cursor, cx)
                 .role(gpui::Role::TreeItem)
                 .when(a11y, |d| {
-                    d.aria_label(group_title(TABS))
+                    d.aria_label(group_title(TABS).say())
                         .aria_level(1)
                         .aria_expanded(!folded)
                 })
@@ -811,7 +832,7 @@ pub fn render(
                 group_header(&place.group, folded, Some(&groups), at_cursor, cx)
                     .role(gpui::Role::TreeItem)
                     .when(a11y, |d| {
-                        d.aria_label(group_title(&place.group))
+                        d.aria_label(group_title(&place.group).say())
                             .aria_level(1)
                             .aria_expanded(!folded)
                     })
@@ -947,7 +968,16 @@ pub fn render(
             );
         } else if let Some((free, total)) = place.space {
             let used = used_fraction(free, total);
-            tip = Some(format!("{} free of {}", format::size(free), format::size(total)).into());
+            tip = Some(
+                words!(
+                    sidebar_space = "{ $free } free of { $total }",
+                    free = Size(free),
+                    total = Size(total),
+                    note = "A volume's tooltip in the sidebar: the room left on it, of its size (12.3 GB free of 500 GB)."
+                )
+                .say()
+                .into(),
+            );
             texts = texts.child(
                 div()
                     .h(px(3.))
@@ -1055,7 +1085,16 @@ pub fn render(
                 div()
                     .id(crate::elements::known_by("eject", i))
                     .role(gpui::Role::Button)
-                    .when(a11y, |d| d.aria_label(format!("Eject {said}")))
+                    .when(a11y, |d| {
+                        d.aria_label(
+                            words!(
+                                sidebar_eject = "Eject { $place }",
+                                place = place.title.clone(),
+                                note = "What a screen reader calls a volume's eject button in the sidebar; place: the volume, as the sidebar names it."
+                            )
+                            .say(),
+                        )
+                    })
                     .flex_none()
                     .size(px(20.))
                     .flex()
@@ -1192,7 +1231,7 @@ fn group_header(
 ) -> gpui::Stateful<gpui::Div> {
     let theme = cx.global::<Theme>().clone();
     let hover = theme.hover;
-    let title = group_title(group);
+    let title = group_title(group).say();
     let fold = group.to_owned();
     let header = div()
         .id(SharedString::from(format!("sidebar-group-{group}")))
@@ -1342,8 +1381,13 @@ fn pill(
     // A tag in a category says its own name; the tooltip says where it is.
     let said = place.title.say();
     let title: SharedString = skwir_core::metadata::tag_leaf(&said).to_owned().into();
-    let tip: SharedString =
-        format!("{said} · Shift+click: only what has it too · Alt+click: in this folder").into();
+    let tip: SharedString = words!(
+        sidebar_tag_tip = "{ $tag } · Shift+click: only what has it too · Alt+click: in this folder",
+        tag = place.title.clone(),
+        note = "A tag's tooltip in the sidebar: its name, then what a click with Shift does (shows only what has this tag too) and with Alt (its files in the folder shown)."
+    )
+    .say()
+    .into();
     crate::tags::place_chip(color, !place.suggested, &theme)
         .id(crate::elements::known_by("place", i))
         .max_w_full()
@@ -1588,7 +1632,7 @@ impl Shell {
             self.ringed = None;
         }
         if !shown && !self.sidebar_shown(window) {
-            self.set_status("The window is too narrow for the sidebar", false, cx);
+            self.set_status(too_narrow(), false, cx);
         }
         self.remember_session();
         cx.notify();
@@ -1636,12 +1680,27 @@ impl Shell {
                     .places
                     .find(|p| p.group == place.group && p.key() == place.key())
                     .map_or_else(|| said.clone(), |p| p.title.say());
+                // Said once, as the question is asked: `ui.ask` takes text.
                 Some(Invocation::with_args(
                     "ui.ask",
                     &serde_json::json!({
-                        "title": format!("Rename “{said}” in the sidebar"),
-                        "accept": "Rename",
-                        "placeholder": format!("Name (empty: “{own}”)"),
+                        "title": words!(
+                            sidebar_rename_title = "Rename { $place } in the sidebar",
+                            place = words::Name(said.clone()),
+                            note = "The title of the question renaming a place the sidebar shows (Home, a volume) under a name of the user's, there only."
+                        )
+                        .say(),
+                        "accept": words!(
+                            sidebar_rename_accept = "Rename",
+                            note = "The button that renames a place in the sidebar."
+                        )
+                        .say(),
+                        "placeholder": words!(
+                            sidebar_rename_placeholder = "Name (empty: { $own })",
+                            own = words::Name(own),
+                            note = "The empty field of the question renaming a place in the sidebar: left empty, the place takes back its own name, own."
+                        )
+                        .say(),
                         "text": said,
                         "command": PLACE_COMMAND,
                         "args": { "group": place.group, "key": place.key() },
@@ -1709,14 +1768,23 @@ impl Shell {
             return;
         };
         let Some(arranged) = self.sidebar_place_of(&group, &key) else {
-            self.set_status("That place is no longer in the sidebar", true, cx);
+            self.set_status(
+                words!(
+                    sidebar_place_gone = "That place is no longer in the sidebar",
+                    note = "Said when a place of the sidebar was arranged (hidden, moved, renamed) as it went from the sidebar."
+                ),
+                true,
+                cx,
+            );
             return;
         };
         // A place the user keeps is its owner's to arrange: its menu says
         // how (Rename…, Remove from Bookmarks).
-        let kept = format!(
-            "“{}” is kept in the sidebar by its owner: its menu arranges it",
-            arranged.place.title.say()
+        let kept = words!(
+            sidebar_kept_by_owner =
+                "{ $place } is kept in the sidebar by its owner: its menu arranges it",
+            place = words::Name(arranged.place.title.say()),
+            note = "Said when a place the user keeps (a bookmark, a saved search) is arranged as the sidebar arranges the places it offers: its own menu renames, moves or removes it."
         );
         if let Some(hidden) = args.get("hidden").and_then(serde_json::Value::as_bool) {
             if !arranged.role.hides() {
@@ -1732,10 +1800,17 @@ impl Shell {
             if hidden && arranged.shown {
                 self.toast(
                     crate::toast::Toast::new(
-                        format!("Hid “{}” from the sidebar", arranged.place.title.say()),
+                        words!(
+                            sidebar_hid = "Hid { $place } from the sidebar",
+                            place = words::Name(arranged.place.title.say()),
+                            note = "Said after a place was hidden from the sidebar, with Undo."
+                        ),
                         crate::toast::Tone::Info,
                         vec![crate::toast::Action {
-                            label: "Undo".into(),
+                            label: words!(
+                                sidebar_hid_undo = "Undo",
+                                note = "The button showing again a place just hidden from the sidebar."
+                            ),
                             command: PLACE_COMMAND.into(),
                             args: serde_json::json!({
                                 "group": group, "key": key, "hidden": false,
@@ -1811,7 +1886,7 @@ impl Shell {
         }
         if !self.sidebar_shown(window) {
             if !self.sidebar_fits(f32::from(crate::title_bar::body(window).size.width)) {
-                self.set_status("The window is too narrow for the sidebar", false, cx);
+                self.set_status(too_narrow(), false, cx);
                 return;
             }
             self.sidebar_hidden = false;
@@ -2109,7 +2184,17 @@ impl Shell {
         if let Some(group) = group {
             let folded = sections.folded.contains(group);
             items.push(item(
-                if folded { "Unfold" } else { "Fold" }.into(),
+                if folded {
+                    words!(
+                        sidebar_unfold = "Unfold",
+                        note = "An item of a sidebar section's menu: show the places the folded section holds."
+                    )
+                } else {
+                    words!(
+                        sidebar_fold = "Fold",
+                        note = "An item of a sidebar section's menu: hide the places the section holds, its heading left."
+                    )
+                },
                 serde_json::json!({ "group": group, "fold": !folded }),
                 0,
                 Some(if folded { "unfold" } else { "fold" }),
@@ -2117,7 +2202,10 @@ impl Shell {
             if let Some(at) = shown.iter().position(|g| *g == group) {
                 if at > 0 {
                     items.push(item(
-                        "Move Up".into(),
+                        words!(
+                            sidebar_move_up = "Move Up",
+                            note = "An item of a sidebar section's menu: put the section before the one above it."
+                        ),
                         serde_json::json!({ "group": group, "before": shown[at - 1] }),
                         240,
                         Some("up"),
@@ -2125,7 +2213,10 @@ impl Shell {
                 }
                 if at + 1 < shown.len() {
                     items.push(item(
-                        "Move Down".into(),
+                        words!(
+                            sidebar_move_down = "Move Down",
+                            note = "An item of a sidebar section's menu: put the section after the one below it."
+                        ),
                         serde_json::json!({ "group": group, "before": shown.get(at + 2) }),
                         241,
                         Some("down"),
@@ -2168,7 +2259,11 @@ impl Shell {
             }
             if sections.places.get(group).is_some_and(|a| !a.is_empty()) {
                 items.push(place_item(
-                    format!("Reset {}", group_title(group)).into(),
+                    words!(
+                        sidebar_reset_section = "Reset { $section }",
+                        section = group_title(group),
+                        note = "An item of a sidebar section's menu: give the section back its places as their owners offer them, none hidden, moved or renamed; section: the section's heading (Places, Devices)."
+                    ),
                     serde_json::json!({ "group": group, "reset": true }),
                     290,
                     Some("revert"),
@@ -2198,7 +2293,7 @@ impl Shell {
             // of the menu's own (6xx).
             items.push(
                 item(
-                    group_title(g).into(),
+                    group_title(g),
                     serde_json::json!({ "group": g, "hidden": !hidden }),
                     600 + i32::try_from(i).unwrap_or_default(),
                     None,
@@ -2208,7 +2303,10 @@ impl Shell {
         }
         if sections.arranged_by_user() {
             items.push(item(
-                "Reset Sections".into(),
+                words!(
+                    sidebar_reset_sections = "Reset Sections",
+                    note = "An item of the sidebar sections' menu: every section back where it was, unfolded and shown."
+                ),
                 serde_json::json!({ "reset": true }),
                 690,
                 Some("revert"),
@@ -2514,7 +2612,7 @@ mod tests {
             drawn_items(&places, &Sections::default(), &[]),
             [group("places"), home, group("devices"), disk]
         );
-        assert_eq!(group_title(TABS), "Tabs");
+        assert_eq!(group_title(TABS).english(), "Tabs");
     }
 
     #[test]
@@ -2525,7 +2623,7 @@ mod tests {
             (used_fraction(200, 100)).abs() < f32::EPSILON,
             "never negative"
         );
-        assert_eq!(group_title("devices"), "Devices");
-        assert_eq!(group_title("searches"), "Saved");
+        assert_eq!(group_title("devices").english(), "Devices");
+        assert_eq!(group_title("searches").english(), "Saved");
     }
 }

@@ -18,13 +18,15 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use skwir_core::keymap::BINDINGS_KEY;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
 use crate::keymap::{self, Bound};
 use crate::settings::SettingsView;
 use crate::settings_keys::{
-    Action, ActionId, Chip, Edit, Effects, Keyboard, Note, Row, Show, Stay, Verdict, apply,
+    Action, ActionId, Chip, Does, Edit, Effects, Keyboard, Note, Row, Show, Stay, Verdict, apply,
     effects, removal_refused, rows, verdict,
 };
 use crate::settings_records::{Record, records};
@@ -47,6 +49,9 @@ pub(crate) struct KeysPage {
     /// keymap changes, not at each frame.
     rows: RefCell<Option<(Asked, Rc<Vec<Row>>)>>,
     generation: u64,
+    /// The words' revision the keymap was read in (`words::revision`): its
+    /// titles and places are said, read again when the language moves.
+    said_in: u64,
     pub list: UniformListScrollHandle,
     /// The list's: it walks the actions (`ui.settings_key`).
     pub focus: FocusHandle,
@@ -100,12 +105,22 @@ impl KeysPage {
             keyboard: Rc::default(),
             rows: RefCell::default(),
             generation: 0,
+            said_in: words::revision(),
             list: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
             show: Show::default(),
             inside: false,
             find: None,
-            filter: cx.new(|cx| TextInput::new("Filter by action or keys", cx)),
+            filter: cx.new(|cx| {
+                TextInput::new(
+                    words!(
+                        keys_filter = "Filter by action or keys",
+                        note = "The placeholder of the Keyboard page's filter: what it finds an action by."
+                    )
+                    .say(),
+                    cx,
+                )
+            }),
             cursor: None,
             editor: None,
             new: None,
@@ -161,11 +176,11 @@ pub(crate) struct Judged {
 
 impl Judged {
     /// Why the change cannot be made, if it cannot.
-    fn refused(&self) -> Option<&str> {
+    fn refused(&self) -> Option<&Words> {
         self.verdict
             .refused
-            .as_deref()
-            .or(self.effects.refused.as_deref())
+            .as_ref()
+            .or(self.effects.refused.as_ref())
     }
 }
 
@@ -179,6 +194,9 @@ pub(crate) struct KeyEditor {
     /// Keys typed instead, for those the desktop keeps.
     pub typed: Option<Entity<TextInput>>,
     pub error: Option<String>,
+    /// Why the last change asked was refused, where what the bar judges
+    /// now does not say it (`Judged::refused` comes first): said once.
+    pub refused: Option<Words>,
     /// Where the keyboard is while strokes are taken.
     pub focus: FocusHandle,
     intercept: Option<Subscription>,
@@ -252,8 +270,17 @@ impl SettingsView {
     pub(crate) fn read_keys(&mut self) {
         let user = skwir_core::keymap::user_bindings(&self.app.settings);
         self.keys.keyboard = Rc::new(Keyboard::read(&self.app, &self.keys.bound, &user));
+        self.keys.said_in = words::revision();
         self.keys.generation += 1;
         self.keys.rows.take();
+    }
+
+    /// The keymap read again where what it says was said in another
+    /// language than the one said now.
+    fn keys_said_now(&mut self) {
+        if self.keys.said_in != words::revision() {
+            self.read_keys();
+        }
     }
 
     /// The rows for `query`, the dialog's search, or else what the page
@@ -317,6 +344,7 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.keys_said_now();
         let changed = self
             .keys
             .keyboard
@@ -340,22 +368,41 @@ impl SettingsView {
             },
         ));
         for (choice, label) in [
-            (Show::Keyed, "With keys".to_owned()),
-            (Show::All, "All actions".to_owned()),
+            (
+                Show::Keyed,
+                words!(
+                    keys_show_keyed = "With keys",
+                    note = "A choice of what the Keyboard page lists: the actions that have keys."
+                ),
+            ),
+            (
+                Show::All,
+                words!(
+                    keys_show_all = "All actions",
+                    note = "A choice of what the Keyboard page lists: every action, those without keys too."
+                ),
+            ),
             (
                 Show::Changed,
                 if changed == 0 {
-                    "Changed by you".to_owned()
+                    words!(
+                        keys_show_changed = "Changed by you",
+                        note = "A choice of what the Keyboard page lists: the actions whose keys the user changed."
+                    )
                 } else {
-                    format!("Changed by you ({changed})")
+                    words!(
+                        keys_show_changed_count = "Changed by you ({ $count })",
+                        count = changed,
+                        note = "A choice of what the Keyboard page lists: the actions whose keys the user changed, and how many."
+                    )
                 },
             ),
         ] {
             let focus = show.clone();
             segmented = segmented.child(
                 controls::segment(
-                    SharedString::from(format!("keys-show-{label}")),
-                    label,
+                    SharedString::from(format!("keys-show-{choice:?}")),
+                    label.say(),
                     current == choice,
                     theme,
                 )
@@ -388,16 +435,31 @@ impl SettingsView {
                 .gap_1()
                 .child(caps(keys, false, theme))
                 .child(
-                    controls::icon_button("keys-find-clear", "close", "Clear", &find, theme)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.keys.find = None;
-                            cx.notify();
-                        })),
+                    controls::icon_button(
+                        "keys-find-clear",
+                        "close",
+                        words!(
+                            keys_find_clear = "Clear",
+                            note = "Clears the keys the Keyboard page's list was narrowed to."
+                        )
+                        .say(),
+                        &find,
+                        theme,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.keys.find = None;
+                        cx.notify();
+                    })),
                 )
                 .into_any_element(),
             None => controls::button(
                 "keys-find",
-                "Find by keys",
+                words!(
+                    keys_find = "Find by keys",
+                    note =
+                        "A button of the Keyboard page: press keys to list the actions they run."
+                )
+                .say(),
                 Some("keyboard"),
                 ButtonStyle::Plain,
                 &find,
@@ -417,14 +479,14 @@ impl SettingsView {
                 "plugin",
                 theme.text_muted,
                 13.,
-                if waiting == 1 {
-                    "One of your shortcuts waits for a plugin that is off: it comes back with it."
-                        .to_owned()
-                } else {
-                    format!(
-                        "{waiting} of your shortcuts wait for plugins that are off: they come back with them."
-                    )
-                },
+                words!(
+                    keys_waiting = "{ $count ->
+        [1] One of your shortcuts waits for a plugin that is off: it comes back with it.
+       *[other] { $count } of your shortcuts wait for plugins that are off: they come back with them.
+    }",
+                    count = waiting
+                )
+                .say(),
             )
             .flex_1()
             .min_w_0()
@@ -447,7 +509,11 @@ impl SettingsView {
                     .child(
                         controls::button(
                             "keys-new",
-                            "New shortcut…",
+                            words!(
+                                keys_new_shortcut = "New shortcut…",
+                                note = "A button of the Keyboard page: keys for an action no row lists (a folder to go to)."
+                            )
+                            .say(),
                             Some("plus"),
                             ButtonStyle::Plain,
                             &new,
@@ -490,11 +556,20 @@ impl SettingsView {
                             .focus(move |s| s.border_color(accent))
                             .cursor_pointer()
                             .hover(move |s| s.text_color(text))
-                            .child(if as_records {
-                                "Back to the list"
-                            } else {
-                                "Edit as records"
-                            })
+                            .child(
+                                if as_records {
+                                    words!(
+                                        keys_back_to_list = "Back to the list",
+                                        note = "Leaves the shortcuts as stored for the Keyboard page's list."
+                                    )
+                                } else {
+                                    words!(
+                                        keys_edit_as_records = "Edit as records",
+                                        note = "Shows the user's shortcuts as they are stored, each a record."
+                                    )
+                                }
+                                .say(),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.keys.as_records = !this.keys.as_records;
                                 this.keys.new = None;
@@ -528,13 +603,34 @@ impl SettingsView {
                 .py_6()
                 .track_focus(&focus)
                 .text_color(cx.global::<Theme>().text_muted)
-                .child(match (self.keys.show, filter.is_empty()) {
-                    (Show::Keyed, false) => format!("No shortcut matches “{filter}”."),
-                    (Show::All, false) => format!("No action matches “{filter}”."),
-                    (Show::Changed, false) => format!("No key you changed matches “{filter}”."),
-                    (Show::Changed, true) => "You changed no keys yet.".to_owned(),
-                    _ => "No action has these keys.".to_owned(),
-                })
+                .child(
+                    match (self.keys.show, filter.is_empty()) {
+                        (Show::Keyed, false) => words!(
+                            keys_no_shortcut_matches = "No shortcut matches “{ $filter }”.",
+                            filter = filter.to_owned(),
+                            note = "filter: what the user typed in the Keyboard page's filter."
+                        ),
+                        (Show::All, false) => words!(
+                            keys_no_action_matches = "No action matches “{ $filter }”.",
+                            filter = filter.to_owned(),
+                            note = "filter: what the user typed in the Keyboard page's filter."
+                        ),
+                        (Show::Changed, false) => words!(
+                            keys_no_changed_matches = "No key you changed matches “{ $filter }”.",
+                            filter = filter.to_owned(),
+                            note = "filter: what the user typed in the Keyboard page's filter."
+                        ),
+                        (Show::Changed, true) => {
+                            words!(keys_none_changed = "You changed no keys yet.")
+                        }
+                        _ => words!(
+                            keys_none_has_keys = "No action has these keys.",
+                            note =
+                                "The Keyboard page's list, narrowed to the keys pressed, is empty."
+                        ),
+                    }
+                    .say(),
+                )
                 .into_any_element();
         }
         let focused = focus.contains_focused(window, cx);
@@ -630,7 +726,12 @@ impl SettingsView {
             ))
             .child(crate::elements::clip::clipped(
                 div().id("keys-inside-title").min_w_0().truncate(),
-                format!("Keys inside dialogs and menus ({count})"),
+                words!(
+                    keys_inside = "Keys inside dialogs and menus ({ $count })",
+                    count = count,
+                    note = "A fold of the Keyboard page's list: the actions whose keys work inside dialogs and menus, and how many."
+                )
+                .say(),
             ))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.keys.inside = !this.keys.inside;
@@ -713,7 +814,17 @@ impl SettingsView {
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .child(controls::glyph("plus", theme.text_muted, 14.))
-            .tooltip(move |_, cx| crate::toolbar::tooltip("Add keys".into(), cx))
+            .tooltip(move |_, cx| {
+                crate::toolbar::tooltip(
+                    words!(
+                        keys_add_tip = "Add keys",
+                        note = "The tooltip of a row's + on the Keyboard page: more keys for its action."
+                    )
+                    .say()
+                    .into(),
+                    cx,
+                )
+            })
             .on_click(cx.listener({
                 let id = id.clone();
                 move |this, _, window, cx| {
@@ -737,7 +848,17 @@ impl SettingsView {
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover))
                 .child(controls::glyph("revert", theme.text_muted, 14.))
-                .tooltip(move |_, cx| crate::toolbar::tooltip("Back to skwir's keys".into(), cx))
+                .tooltip(move |_, cx| {
+                    crate::toolbar::tooltip(
+                        words!(
+                            keys_reset_tip = "Back to skwir's keys",
+                            note = "The tooltip of a row's revert button on the Keyboard page: its action's keys as skwir ships them."
+                        )
+                        .say()
+                        .into(),
+                        cx,
+                    )
+                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.reset_keys(&id, window, cx);
@@ -811,21 +932,40 @@ impl SettingsView {
     ) -> gpui::Stateful<gpui::Div> {
         let (accent, hover) = (theme.accent, theme.hover);
         let said = match (&chip.hidden_by, &chip.record) {
-            (Some(_), _) => "No longer runs it: your shortcut took these keys. Click to restore.",
-            (None, Some(_)) => "Yours. Click to change or remove.",
-            (None, None) => "Click to change or remove.",
+            (Some(_), _) => words!(
+                keys_chip_hidden =
+                    "No longer runs it: your shortcut took these keys. Click to restore.",
+                note = "The tooltip of a key of skwir's on the Keyboard page that a shortcut of the user's took."
+            ),
+            (None, Some(_)) => words!(
+                keys_chip_yours = "Yours. Click to change or remove.",
+                note = "The tooltip of a key the user gave an action on the Keyboard page."
+            ),
+            (None, None) => words!(
+                keys_chip_default = "Click to change or remove.",
+                note = "The tooltip of a key of skwir's on the Keyboard page."
+            ),
         };
         // Its conditions whole, which its row may cut short.
         let tip: SharedString = if chip.conditions.is_empty() {
-            said.into()
+            said.say().into()
         } else {
+            // Transitional: the keymap's conditions capitalised here,
+            // until the keymap says them as a sentence's start (ADR-139).
             let mut chars = chip.conditions.chars();
             let first: String = chars
                 .next()
                 .into_iter()
                 .flat_map(char::to_uppercase)
                 .collect();
-            format!("{first}{}. {said}", chars.as_str()).into()
+            words!(
+                keys_chip_conditions = "{ $conditions }. { $tip }",
+                conditions = format!("{first}{}", chars.as_str()),
+                tip = said,
+                note = "A key's tooltip on the Keyboard page: when its keys work (In a folder, with a selection), then what a click does."
+            )
+            .say()
+            .into()
         };
         let id = action.id();
         let target = chip.clone();
@@ -888,6 +1028,7 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> usize {
+        self.keys_said_now();
         let rows = self.key_rows(query, cx);
         let focus = self.keys.focus.clone();
         let focused = focus.contains_focused(window, cx);
@@ -902,7 +1043,14 @@ impl SettingsView {
                         .pb_2()
                         .text_small()
                         .text_color(theme.text_muted)
-                        .child(format!("Keyboard: {place}"))
+                        .child(
+                            words!(
+                                keys_found_place = "Keyboard: { $place }",
+                                place = place.clone(),
+                                note = "A caption over the actions the settings' search found on the Keyboard page: place is where their keys work (File list)."
+                            )
+                            .say(),
+                        )
                         .into_any_element(),
                 ),
                 Row::Inside { .. } => {}
@@ -956,6 +1104,7 @@ impl SettingsView {
             strokes: Vec::new(),
             typed: None,
             error: None,
+            refused: None,
             focus,
             intercept: None,
             subscriptions: Vec::new(),
@@ -992,6 +1141,7 @@ impl SettingsView {
         editor.recording = false;
         editor.intercept = None;
         editor.error = None;
+        editor.refused = None;
         if editor.target == Target::Find {
             let keys = keymap::normal_keys(&editor.strokes.join(" "));
             self.keys.find = Some(keys);
@@ -1023,6 +1173,7 @@ impl SettingsView {
         editor.typed = None;
         editor.recording = true;
         editor.error = None;
+        editor.refused = None;
         window.focus(&editor.focus.clone(), cx);
         self.listen_for_keys(cx);
         cx.notify();
@@ -1037,7 +1188,14 @@ impl SettingsView {
             .map(|e| e.strokes.join(" "))
             .unwrap_or_default();
         let input = cx.new(|cx| {
-            let mut input = TextInput::new("ctrl-shift-n, or g h for one key after another", cx);
+            let mut input = TextInput::new(
+                words!(
+                    keys_type_placeholder = "ctrl-shift-n, or g h for one key after another",
+                    note = "The placeholder of the field keys are typed in: ctrl-shift-n and g h are keys as the keymap writes them, kept as they are."
+                )
+                .say(),
+                cx,
+            );
             input.set_text(typed, cx);
             input
         });
@@ -1050,6 +1208,7 @@ impl SettingsView {
                 InputEvent::Changed => {
                     if let Some(editor) = this.keys.editor.as_mut() {
                         editor.error = None;
+                        editor.refused = None;
                     }
                     cx.notify();
                 }
@@ -1111,9 +1270,13 @@ impl SettingsView {
             }
             Target::Find => return None,
         };
+        // What it says is kept while its language is the one said.
         let asked = format!(
-            "{:?}\u{1f}{keys}\u{1f}{context}\u{1f}{}\u{1f}{}",
-            editor.target, action.command, action.args
+            "{:?}\u{1f}{keys}\u{1f}{context}\u{1f}{}\u{1f}{}\u{1f}{}",
+            editor.target,
+            action.command,
+            action.args,
+            words::revision()
         );
         if let Some((kept, judged)) = editor.judged.borrow().as_ref()
             && *kept == asked
@@ -1185,23 +1348,30 @@ impl SettingsView {
             self.close_key_editor(window, cx);
             return;
         }
-        let refused = if !target.takes_keys() {
+        let error = if !target.takes_keys() {
             None
         } else if keys.is_empty() {
-            Some("Press the keys first".to_owned())
+            Some(words!(
+                keys_press_first = "Press the keys first",
+                note = "Why the bar of the Keyboard page saves nothing: no keys were pressed or typed."
+            ))
         } else if let Err(error) = skwir_core::keymap::valid_keys(&keys) {
-            Some(format!("{error:#}"))
+            Some(Words::of_error(error))
         } else {
             None
-        }
-        .or_else(|| {
-            judged
-                .as_ref()
-                .and_then(|judged| judged.refused().map(str::to_owned))
-        });
-        if let Some(error) = refused {
+        };
+        if let Some(error) = error {
             if let Some(editor) = self.keys.editor.as_mut() {
-                editor.error = Some(error);
+                editor.error = Some(error.say());
+            }
+            cx.notify();
+            return;
+        }
+        // Refused: the bar says why (`key_notes`), once.
+        if let Some(why) = judged.as_ref().and_then(|judged| judged.refused()) {
+            let why = why.clone();
+            if let Some(editor) = self.keys.editor.as_mut() {
+                editor.refused = Some(why);
             }
             cx.notify();
             return;
@@ -1238,11 +1408,15 @@ impl SettingsView {
             }
             self.close_key_editor(window, cx);
         } else if let Some(editor) = self.keys.editor.as_mut() {
-            editor.error = self
-                .errors
-                .get(BINDINGS_KEY)
-                .cloned()
-                .or_else(|| Some("These keys cannot be kept".to_owned()));
+            editor.error = self.errors.get(BINDINGS_KEY).cloned().or_else(|| {
+                Some(
+                    words!(
+                        keys_not_kept = "These keys cannot be kept",
+                        note = "Why the user's new keys were not saved, where the setting gave no reason."
+                    )
+                    .say(),
+                )
+            });
             cx.notify();
         }
     }
@@ -1250,7 +1424,7 @@ impl SettingsView {
     /// Why freeing or removing `chip` of `action` cannot be done, if it
     /// cannot: an action that keeps a key keeps its last, its own or
     /// another's (`effects`).
-    fn removal_refusal(&self, action: &Action, chip: &Chip) -> Option<String> {
+    fn removal_refusal(&self, action: &Action, chip: &Chip) -> Option<Words> {
         removal_refused(action, chip).or_else(|| {
             effects(
                 &self.app,
@@ -1274,7 +1448,7 @@ impl SettingsView {
         };
         if let Some(why) = self.removal_refusal(&action, &chip) {
             if let Some(editor) = self.keys.editor.as_mut() {
-                editor.error = Some(why);
+                editor.refused = Some(why);
             }
             cx.notify();
             return;
@@ -1295,7 +1469,7 @@ impl SettingsView {
         let edit = Edit::Reset(&action);
         let judged = effects(&self.app, &self.key_records(), &edit, Some(id));
         if let Some(why) = judged.refused {
-            self.errors.insert(BINDINGS_KEY.to_owned(), why);
+            self.errors.insert(BINDINGS_KEY.to_owned(), why.say());
             cx.notify();
         } else if judged.lost.is_empty() {
             self.save_keys(&edit, cx);
@@ -1321,7 +1495,7 @@ impl SettingsView {
             editor.typed.clone(),
             editor.focus.clone(),
         );
-        let invalid = editor.error.is_some();
+        let invalid = editor.error.is_some() || editor.refused.is_some();
         let finding = editor.target == Target::Find;
         let shown: AnyElement = if let Some(input) = &typed {
             controls::field(
@@ -1360,15 +1534,27 @@ impl SettingsView {
                 pad = pad.child(
                     div()
                         .text_color(theme.text_muted)
-                        .child(if strokes.is_empty() {
-                            if finding {
-                                "Press the keys to find…"
+                        .child(
+                            if strokes.is_empty() {
+                                if finding {
+                                    words!(
+                                        keys_press_to_find = "Press the keys to find…",
+                                        note = "What the Keyboard page's recorder waits for: the keys whose actions to list."
+                                    )
+                                } else {
+                                    words!(
+                                        keys_press_prompt = "Press the keys…",
+                                        note = "What the Keyboard page's recorder waits for: the keys to give an action."
+                                    )
+                                }
                             } else {
-                                "Press the keys…"
+                                words!(
+                                    keys_press_next = "then the next key…",
+                                    note = "What the Keyboard page's recorder waits for after a first key: the next of a sequence (g then h)."
+                                )
                             }
-                        } else {
-                            "then the next key…"
-                        }),
+                            .say(),
+                        ),
                 );
             }
             pad.into_any_element()
@@ -1380,7 +1566,11 @@ impl SettingsView {
             row = row.child(
                 controls::button(
                     "keys-again",
-                    "Press again",
+                    words!(
+                        keys_press_again = "Press again",
+                        note = "A button of the Keyboard page's recorder: take the keys again from the first."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &again,
@@ -1394,7 +1584,11 @@ impl SettingsView {
                 row = row.child(
                     controls::button(
                         "keys-more",
-                        "Then another key",
+                        words!(
+                            keys_then_another = "Then another key",
+                            note = "A button of the Keyboard page's recorder: one key more after those taken, a sequence (g then h)."
+                        )
+                        .say(),
                         None,
                         ButtonStyle::Plain,
                         &more,
@@ -1412,7 +1606,11 @@ impl SettingsView {
             row = row.child(
                 controls::button(
                     "keys-type",
-                    "Type them",
+                    words!(
+                        keys_type_them = "Type them",
+                        note = "A button of the Keyboard page's recorder: write the keys rather than press them (those the desktop keeps)."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &typing,
@@ -1426,7 +1624,13 @@ impl SettingsView {
                 div()
                     .text_body()
                     .text_color(theme.text_muted)
-                    .child("Esc is a key here too: Cancel is a click away."),
+                    .child(
+                        words!(
+                            keys_esc_is_a_key = "Esc is a key here too: Cancel is a click away.",
+                            note = "Said while the Keyboard page's recorder takes keys: Escape is taken as a key, Cancel is the bar's button."
+                        )
+                        .say(),
+                    ),
             );
         }
         row
@@ -1465,22 +1669,35 @@ impl SettingsView {
                 })
                 .collect();
             if deeper.len() > 2 {
+                // Transitional: a list argument (ADR-139).
                 let some = deeper[..3].join(", ");
                 notes = notes.child(line(
                     "info",
                     theme.text_muted,
-                    format!(
-                        "{keys} still runs what it runs in {} places that bind it themselves ({some}…): a place's own keys come first.",
-                        deeper.len()
-                    ),
+                    words!(
+                        keys_note_deeper_many = "{ $count ->
+       *[other] { $keys } still runs what it runs in { $count } places that bind it themselves ({ $some }…): a place's own keys come first.
+    }",
+                        keys = keys.clone(),
+                        count = deeper.len(),
+                        some = some,
+                        note = "Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), count the places with keys of their own, some the first three of them (File list, Address field, Sidebar)."
+                    )
+                    .say(),
                 ));
             }
             for note in &verdict.notes {
                 let (icon, color, text) = match note {
-                    Note::Replaces { title, place } => (
+                    Note::Replaces { title, place, .. } => (
                         "warning",
                         theme.warning,
-                        format!("{keys} runs “{title}” now ({place}): yours replaces it there."),
+                        words!(
+                            keys_note_replaces = "{ $keys } runs “{ $action }” now ({ $place }): yours replaces it there.",
+                            keys = keys.clone(),
+                            action = title.clone(),
+                            place = place.clone(),
+                            note = "Said before new keys are saved: keys are the keys (Ctrl+Q), action what they run now (Quit), place where (Anywhere, File list)."
+                        ),
                     ),
                     Note::Stays {
                         why: Stay::Deeper, ..
@@ -1492,8 +1709,12 @@ impl SettingsView {
                     } => (
                         "info",
                         theme.text_muted,
-                        format!(
-                            "In {place}, {keys} still runs “{title}”: a place's own keys come first."
+                        words!(
+                            keys_note_deeper = "In { $place }, { $keys } still runs “{ $action }”: a place's own keys come first.",
+                            keys = keys.clone(),
+                            action = title.clone(),
+                            place = place.clone(),
+                            note = "Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), action what they keep running in place (File list)."
                         ),
                     ),
                     Note::Stays {
@@ -1503,7 +1724,12 @@ impl SettingsView {
                     } => (
                         "info",
                         theme.text_muted,
-                        format!("Elsewhere, {keys} still runs “{title}”."),
+                        words!(
+                            keys_note_elsewhere = "Elsewhere, { $keys } still runs “{ $action }”.",
+                            keys = keys.clone(),
+                            action = title.clone(),
+                            note = "Said before new keys for one place are saved: keys are the keys (Ctrl+Q), action what they keep running in the rest of the window."
+                        ),
                     ),
                     Note::Stays {
                         title,
@@ -1512,84 +1738,114 @@ impl SettingsView {
                     } => (
                         "info",
                         theme.text_muted,
-                        format!("{keys} still runs “{title}” in {place}."),
+                        words!(
+                            keys_note_besides = "{ $keys } still runs “{ $action }” in { $place }.",
+                            keys = keys.clone(),
+                            action = title.clone(),
+                            place = place.clone(),
+                            note = "Said before new keys are saved: keys are the keys (Ctrl+Q), action what they keep running in place, under conditions the new keys do not ask for (File list (with a selection))."
+                        ),
                     ),
                     Note::Waits { title, goes: true } => (
                         "plugin",
                         theme.warning,
-                        format!(
-                            "Your “{title}”, waiting on {keys} for its plugin, goes: yours takes these keys there."
+                        words!(
+                            keys_note_waiting_goes = "Your “{ $action }”, waiting on { $keys } for its plugin, goes: yours takes these keys there.",
+                            keys = keys.clone(),
+                            action = title.clone(),
+                            note = "Said before new keys are saved: a shortcut of the user's on the same keys (keys, Ctrl+Q) runs action, whose plugin is off; it is replaced."
                         ),
                     ),
                     Note::Waits { title, goes: false } => (
                         "plugin",
                         theme.text_muted,
-                        format!(
-                            "Your “{title}” waits on {keys} for its plugin: once it is back, the later of the two runs."
+                        words!(
+                            keys_note_waiting = "Your “{ $action }” waits on { $keys } for its plugin: once it is back, the later of the two runs.",
+                            keys = keys.clone(),
+                            action = title.clone(),
+                            note = "Said before new keys are saved: a shortcut of the user's on the same keys (keys, Ctrl+Q) runs action, whose plugin is off; it is kept."
                         ),
                     ),
                     Note::Typing => (
                         "info",
                         theme.text_muted,
-                        "A letter bound in the file list stops typing a name there to jump to it; / then finds a name.".to_owned(),
+                        words!(
+                            keys_note_typing = "A letter bound in the file list stops typing a name there to jump to it; / then finds a name.",
+                            note = "Said before a letter is bound in the file list: typing there no longer jumps to a name; the / key still finds one."
+                        ),
                     ),
                     Note::Fields => (
                         "info",
                         theme.text_muted,
-                        format!("In a text field, {keys} still types: a field keeps its characters."),
+                        words!(
+                            keys_note_fields = "In a text field, { $keys } still types: a field keeps its characters.",
+                            keys = keys.clone(),
+                            note = "Said before a key that types a character is bound: keys are the keys (Shift+A)."
+                        ),
                     ),
                     Note::Has => (
                         "check",
                         theme.text_muted,
-                        format!("It has {keys} here already."),
+                        words!(
+                            keys_note_has = "It has { $keys } here already.",
+                            keys = keys.clone(),
+                            note = "Said when the keys pressed for an action are already its keys there: keys are the keys (Ctrl+Q)."
+                        ),
                     ),
                 };
-                notes = notes.child(line(icon, color, text));
+                notes = notes.child(line(icon, color, text.say()));
             }
             // What the change leaves of other actions' keys, beside what
             // was said: what freeing keys in a place frees with them.
-            let replaced: Vec<&str> = verdict
+            // Told by what they run, never by their titles.
+            let replaced: std::collections::HashSet<&Does> = verdict
                 .notes
                 .iter()
                 .filter_map(|note| match note {
-                    Note::Replaces { title, .. } => Some(title.as_str()),
+                    Note::Replaces { does, .. } => Some(does),
                     _ => None,
                 })
                 .collect();
             let pressed = keymap::normal_keys(&judged.keys);
-            let hider = self.hider_title();
+            let hider = self.hider().map(Action::does);
             for lost in &judged.effects.lost {
-                let said = keymap::normal_keys(&lost.keys) == pressed
-                    && replaced.contains(&lost.title.as_str());
-                if said || hider.as_deref() == Some(lost.title.as_str()) {
+                let said =
+                    keymap::normal_keys(&lost.keys) == pressed && replaced.contains(&lost.does);
+                if said || hider.as_ref() == Some(&lost.does) {
                     continue;
                 }
                 notes = notes.child(line(
                     "warning",
                     theme.warning,
-                    format!(
-                        "{} also stops running “{}” ({}).",
-                        keymap::display_keys(&lost.keys),
-                        lost.title,
-                        lost.place
-                    ),
+                    words!(
+                        keys_note_lost = "{ $keys } also stops running “{ $action }” ({ $place }).",
+                        keys = keymap::display_keys(&lost.keys),
+                        action = lost.title.clone(),
+                        place = lost.place.clone(),
+                        note = "Said before a change of keys is saved: keys (Escape) no longer run action (Clear the filter) in place (File list)."
+                    )
+                    .say(),
                 ));
             }
         }
-        let error = self.keys.editor.as_ref().and_then(|e| e.error.clone());
+        // Why the change is refused, as judged now, else as the last change
+        // asked met it: said once.
+        let editor = self.keys.editor.as_ref();
         let refused = judged
             .as_ref()
-            .and_then(|judged| judged.refused().map(str::to_owned))
-            .filter(|why| error.as_ref() != Some(why));
+            .and_then(|judged| judged.refused().cloned())
+            .or_else(|| editor.and_then(|e| e.refused.clone()))
+            .map(|why| why.say());
+        let error = editor.and_then(|e| e.error.clone());
         for why in refused.into_iter().chain(error) {
             notes = notes.child(line("warning", theme.error, why));
         }
         notes
     }
 
-    /// The title of the action whose shortcut took the keys the Restore
-    /// bar gives back, if one did (none: the user freed them).
-    fn hider_title(&self) -> Option<String> {
+    /// The action whose shortcut took the keys the Restore bar gives
+    /// back, if one did (none: the user freed them).
+    fn hider(&self) -> Option<&Action> {
         let Some(Target::Restore(_, chip)) = self.keys.editor.as_ref().map(|e| &e.target) else {
             return None;
         };
@@ -1599,7 +1855,6 @@ impl SettingsView {
             .actions
             .iter()
             .find(|a| a.chips.iter().any(|c| c.record.as_ref() == Some(id)))
-            .map(|a| a.title.clone())
     }
 
     /// The bar under the list, while keys are edited.
@@ -1619,28 +1874,41 @@ impl SettingsView {
             .and_then(|id| self.keys.keyboard.find(id))
             .cloned();
         let heading: String = match (&target, &action) {
-            (Target::Find, _) => "Find the actions of a key".to_owned(),
-            (Target::Add(_), Some(action)) => {
-                format!("New keys for “{}” · {}", action.title, action.place)
-            }
-            (Target::Change(_, chip), Some(action)) => format!(
-                "{} for “{}” · {}",
-                keymap::display_keys(&chip.keys),
-                action.title,
-                action.place
-            ),
-            (Target::Restore(_, chip), Some(action)) => format!(
-                "{} no longer runs “{}” · {}",
-                keymap::display_keys(&chip.keys),
-                action.title,
-                action.place
-            ),
-            (Target::Reset(_), Some(action)) => {
-                format!(
-                    "Back to skwir's keys for “{}” · {}",
-                    action.title, action.place
-                )
-            }
+            (Target::Find, _) => words!(
+                keys_heading_find = "Find the actions of a key",
+                note = "The heading of the Keyboard page's bar while it takes the keys whose actions to list."
+            )
+            .say(),
+            (Target::Add(_), Some(action)) => words!(
+                keys_heading_add = "New keys for “{ $action }” · { $place }",
+                action = action.title.clone(),
+                place = action.place.clone(),
+                note = "The heading of the Keyboard page's bar: new keys for action (Quit), working in place (Anywhere, File list)."
+            )
+            .say(),
+            (Target::Change(_, chip), Some(action)) => words!(
+                keys_heading_change = "{ $keys } for “{ $action }” · { $place }",
+                keys = keymap::display_keys(&chip.keys),
+                action = action.title.clone(),
+                place = action.place.clone(),
+                note = "The heading of the Keyboard page's bar: keys (Ctrl+Q) of action (Quit) changed, in place (Anywhere)."
+            )
+            .say(),
+            (Target::Restore(_, chip), Some(action)) => words!(
+                keys_heading_restore = "{ $keys } no longer runs “{ $action }” · { $place }",
+                keys = keymap::display_keys(&chip.keys),
+                action = action.title.clone(),
+                place = action.place.clone(),
+                note = "The heading of the Keyboard page's bar: keys of skwir's (Ctrl+Q) a shortcut of the user's took from action (Quit), in place."
+            )
+            .say(),
+            (Target::Reset(_), Some(action)) => words!(
+                keys_heading_reset = "Back to skwir's keys for “{ $action }” · { $place }",
+                action = action.title.clone(),
+                place = action.place.clone(),
+                note = "The heading of the Keyboard page's bar: action's keys as skwir ships them, in place."
+            )
+            .say(),
             _ => String::new(),
         };
         let mut bar = div()
@@ -1661,20 +1929,32 @@ impl SettingsView {
             Target::Restore(..) => {
                 bar = bar
                     .child(div().text_body().text_color(theme.text_muted).child(
-                        match self.hider_title() {
-                            Some(title) => format!(
-                                "Your shortcut for “{title}” took these keys. Restoring removes it."
+                        match self.hider() {
+                            Some(hider) => words!(
+                                keys_restore_hider = "Your shortcut for “{ $action }” took these keys. Restoring removes it.",
+                                action = hider.title.clone(),
+                                note = "Said in the Keyboard page's bar before keys of skwir's are restored: a shortcut of the user's for action (Quit) has them."
                             ),
-                            None => "You freed these keys. Restoring gives them back.".to_owned(),
-                        },
+                            None => words!(
+                                keys_restore_freed = "You freed these keys. Restoring gives them back.",
+                                note = "Said in the Keyboard page's bar before keys of skwir's the user freed are restored."
+                            ),
+                        }
+                        .say(),
                     ))
                     .child(self.key_notes(theme, cx));
             }
             Target::Reset(_) => {
                 bar = bar
-                    .child(div().text_body().text_color(theme.text_muted).child(
-                        "Its keys go back to skwir's, and your shortcuts that took them go.",
-                    ))
+                    .child(
+                        div().text_body().text_color(theme.text_muted).child(
+                            words!(
+                                keys_reset_detail = "Its keys go back to skwir's, and your shortcuts that took them go.",
+                                note = "Said in the Keyboard page's bar before an action's keys go back to those skwir ships."
+                            )
+                            .say(),
+                        ),
+                    )
                     .child(self.key_notes(theme, cx));
             }
             _ => {
@@ -1689,10 +1969,17 @@ impl SettingsView {
             let remove = self.handle("keys-remove", cx);
             self.stop(&remove, None, None);
             let what = if chip.record.is_some() {
-                "Remove these keys"
+                words!(
+                    keys_remove = "Remove these keys",
+                    note = "A button of the Keyboard page's bar: the user's keys for an action go."
+                )
             } else {
-                "Free these keys"
-            };
+                words!(
+                    keys_free = "Free these keys",
+                    note = "A button of the Keyboard page's bar: keys of skwir's no longer run their action."
+                )
+            }
+            .say();
             buttons = buttons.child(
                 controls::button(
                     "keys-remove",
@@ -1708,7 +1995,11 @@ impl SettingsView {
         buttons = buttons.child(div().flex_1()).child(
             controls::button(
                 "keys-cancel",
-                "Cancel",
+                words!(
+                    keys_cancel = "Cancel",
+                    note = "A button of the Keyboard page's bar: close it, nothing changed."
+                )
+                .say(),
                 None,
                 ButtonStyle::Plain,
                 &cancel,
@@ -1723,10 +2014,20 @@ impl SettingsView {
                 controls::button(
                     "keys-save",
                     match target {
-                        Target::Restore(..) => "Restore",
-                        Target::Reset(_) => "Back to skwir's keys",
-                        _ => "Save",
-                    },
+                        Target::Restore(..) => words!(
+                            keys_restore = "Restore",
+                            note = "A button of the Keyboard page's bar: keys of skwir's run their action again."
+                        ),
+                        Target::Reset(_) => words!(
+                            keys_reset_save = "Back to skwir's keys",
+                            note = "A button of the Keyboard page's bar: an action's keys as skwir ships them."
+                        ),
+                        _ => words!(
+                            keys_save = "Save",
+                            note = "A button of the Keyboard page's bar: keep the keys pressed."
+                        ),
+                    }
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &save,
@@ -1808,7 +2109,7 @@ impl SettingsView {
                         Some(&id),
                     );
                     if let Some(why) = removal_refused(action, chip).or(freed.refused) {
-                        self.errors.insert(BINDINGS_KEY.to_owned(), why);
+                        self.errors.insert(BINDINGS_KEY.to_owned(), why.say());
                     } else if freed.lost.is_empty() {
                         self.save_keys(&Edit::Remove(chip), cx);
                     } else {

@@ -77,6 +77,8 @@ use skwir_core::location::{Completions, Location, PATH_SCHEME};
 use skwir_core::os_path::PathArg;
 use skwir_core::scheduler::Lane;
 use skwir_core::suggest::{Answer, Ask, Section, Span, SpanKind, Suggestion, Typed};
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 
 use crate::complete::{self, Resolved};
 use crate::elements::popover::PopoverAnchor;
@@ -488,7 +490,7 @@ fn pieces(rows: &[Row]) -> Vec<Piece> {
                 rows: i..i + 1,
                 title: under
                     .map(|h| gpui::SharedString::from(h.to_owned()))
-                    .or_else(|| sec.title().map(gpui::SharedString::from))
+                    .or_else(|| sec.words().map(|words| words.say().into()))
                     .filter(|_| first),
                 strip: sec.is_strip(),
             }),
@@ -637,9 +639,17 @@ pub fn path_suggestions(
 /// What a scope is called on its token and in the rows, as the window
 /// says it: the root of the file system is the whole disk.
 pub fn scope_name(app: &skwir_core::App, scope: &Location) -> String {
+    scope_words(app, scope).say()
+}
+
+/// What a scope is called, as words other words hold.
+fn scope_words(app: &skwir_core::App, scope: &Location) -> Words {
     match scope.path() {
-        Some(path) if path.parent().is_none() => "Whole disk".to_owned(),
-        _ => app.location_title(scope).say(),
+        Some(path) if path.parent().is_none() => words!(
+            omnibox_whole_disk = "Whole disk",
+            note = "Where a search looks, the root of the file system: every folder."
+        ),
+        _ => app.location_title(scope),
     }
 }
 
@@ -1307,16 +1317,26 @@ impl Shell {
     fn placeholder(&self) -> String {
         let here = self.filters_here();
         match self.ui().omni.as_ref().and_then(|o| o.scope.as_ref()) {
-            Some(scope) if here => {
-                format!("Filter {}, or type a path", scope_name(&self.app, scope))
-            }
-            Some(scope) => format!(
-                "Search {} and below, or type a path",
-                scope_name(&self.app, scope)
+            Some(scope) if here => words!(
+                omnibox_placeholder_filter = "Filter { $scope }, or type a path",
+                scope = scope_words(&self.app, scope),
+                note = "The empty address field, while words filter a place; scope: the place (a folder's name)."
             ),
-            None if here => "A path, a place, or words to filter".to_owned(),
-            None => "A path, a place, or words to search".to_owned(),
+            Some(scope) => words!(
+                omnibox_placeholder_search = "Search { $scope } and below, or type a path",
+                scope = scope_words(&self.app, scope),
+                note = "The empty address field, while words search a place and its folders; scope: the place."
+            ),
+            None if here => words!(
+                omnibox_placeholder_filter_any = "A path, a place, or words to filter",
+                note = "The empty address field: what it takes."
+            ),
+            None => words!(
+                omnibox_placeholder_search_any = "A path, a place, or words to search",
+                note = "The empty address field: what it takes."
+            ),
         }
+        .say()
     }
 
     /// Ctrl+F in the field on a highlighted folder or place: it becomes
@@ -2241,9 +2261,14 @@ impl Shell {
                 // tag, the trash) is never the process's working folder's.
                 None if complete::is_path(&text) => {
                     let why = if text.starts_with('~') {
-                        "The home folder is not known".to_owned()
+                        words!(omnibox_no_home = "The home folder is not known")
                     } else {
-                        format!("“{text}” starts from the folder shown, and no folder is shown")
+                        words!(
+                            omnibox_no_folder =
+                                "“{ $path }” starts from the folder shown, and no folder is shown",
+                            path = text.as_str(),
+                            note = "A path typed in the address that starts from the folder shown (./, ../) where none is (a search, the trash); path: as typed."
+                        )
                     };
                     self.set_status(why, true, cx);
                 }
@@ -2525,11 +2550,16 @@ impl Shell {
                     cx,
                 ),
                 Err(_) => {
-                    let name = path.file_name().map_or_else(
-                        || path.display().to_string(),
-                        |n| n.to_string_lossy().into_owned(),
+                    shell.set_status(
+                        words!(
+                            omnibox_not_there = "{ $name } is not there",
+                            name = Name::of(&path),
+                            note =
+                                "A path typed in the address names nothing; name: its last part."
+                        ),
+                        true,
+                        cx,
                     );
-                    shell.set_status(format!("“{name}” is not there"), true, cx);
                 }
             },
             window,
@@ -2793,7 +2823,11 @@ impl Shell {
         }
         let mut rows = vec![Row::Help {
             label: format!("{home}   /   ./"),
-            detail: "A path; Tab completes its names".into(),
+            detail: words!(
+                omnibox_help_path = "A path; Tab completes its names",
+                note = "A row of what the address field takes, beside the beginnings of a path (~/ / ./)."
+            )
+            .say(),
             icon: "folder",
             example: home.into(),
         }];
@@ -2805,7 +2839,11 @@ impl Shell {
                     .cloned()
                     .collect::<Vec<_>>()
                     .join("   "),
-                detail: "A place, by its address".into(),
+                detail: words!(
+                    omnibox_help_place = "A place, by its address",
+                    note = "A row of what the address field takes, beside addresses of places (trash:, recent:)."
+                )
+                .say(),
                 icon: "open",
                 example: first,
             });
@@ -2813,19 +2851,35 @@ impl Shell {
         rows.extend([
             Row::Help {
                 label: "@".into(),
-                detail: "Where words search: the folder above, home, a tag…".into(),
+                detail: words!(
+                    omnibox_help_scope = "Where words search: the folder above, home, a tag…",
+                    note = "A row of what the address field takes, beside @, which lists where words search."
+                )
+                .say(),
                 icon: "layers",
                 example: "@".into(),
             },
             Row::Help {
-                label: "words".into(),
-                detail: "Search where the scope says; they filter the folder at once".into(),
+                label: words!(
+                    omnibox_help_words_label = "words",
+                    note = "A row of what the address field takes, in place of an example: any words typed."
+                )
+                .say(),
+                detail: words!(
+                    omnibox_help_words = "Search where the scope says; they filter the folder at once",
+                    note = "A row of what the address field takes, beside words."
+                )
+                .say(),
                 icon: "search",
                 example: String::new(),
             },
             Row::Help {
                 label: ">".into(),
-                detail: "A command, by its name, in the palette".into(),
+                detail: words!(
+                    omnibox_help_command = "A command, by its name, in the palette",
+                    note = "A row of what the address field takes, beside >, which opens the palette."
+                )
+                .say(),
                 icon: "command",
                 example: ">".into(),
             },
@@ -2863,9 +2917,29 @@ impl Shell {
         };
         let shown = self.app.pane_dir(self.pane).ok();
         if let Some(dir) = &shown {
-            add(Location::from_path(dir), Some("The folder shown".into()), 0);
+            add(
+                Location::from_path(dir),
+                Some(
+                    words!(
+                        omnibox_scope_shown = "The folder shown",
+                        note = "Under a folder's name in the list of where words search."
+                    )
+                    .say(),
+                ),
+                0,
+            );
             if let Some(up) = dir.parent() {
-                add(Location::from_path(up), Some("The folder above".into()), 1);
+                add(
+                    Location::from_path(up),
+                    Some(
+                        words!(
+                            omnibox_scope_above = "The folder above",
+                            note = "Under a folder's name in the list of where words search: the one that holds the folder shown."
+                        )
+                        .say(),
+                    ),
+                    1,
+                );
             }
         }
         if let Some(home) = home() {
@@ -2873,7 +2947,13 @@ impl Shell {
         }
         add(
             Location::from_path(PathBuf::from(std::path::MAIN_SEPARATOR_STR)),
-            Some("Every folder, by the system's index where it has one".into()),
+            Some(
+                words!(
+                    omnibox_scope_disk = "Every folder, by the system's index where it has one",
+                    note = "Under Whole disk in the list of where words search."
+                )
+                .say(),
+            ),
             3,
         );
         let mut rank = 10;
@@ -3092,11 +3172,22 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             .text_color(fg)
             .cursor_pointer()
             .when(shell.a11y, |d| {
-                d.role(gpui::Role::Button).aria_label(if filters {
-                    format!("Filtering {name}")
-                } else {
-                    format!("Searching {name} and below")
-                })
+                d.role(gpui::Role::Button).aria_label(
+                    if filters {
+                        words!(
+                            omnibox_token_filtering = "Filtering { $scope }",
+                            scope = name.clone(),
+                            note = "What a screen reader calls the token before the address field's text while words filter a place; scope: the place."
+                        )
+                    } else {
+                        words!(
+                            omnibox_token_searching = "Searching { $scope } and below",
+                            scope = name.clone(),
+                            note = "What a screen reader calls the token before the address field's text while words search a place and its folders; scope: the place."
+                        )
+                    }
+                    .say(),
+                )
             })
             // The field keeps the keyboard: the token acts on the press.
             .on_mouse_down(
@@ -3152,7 +3243,16 @@ fn drawn(shell: &Shell, row: &Row, text: &str) -> Drawn {
         error: false,
     };
     match row {
-        Row::Go => plain("open", format!("Go to {text}"), None),
+        Row::Go => plain(
+            "open",
+            words!(
+                omnibox_go_to = "Go to { $text }",
+                text = text,
+                note = "A row of the address field's list: go where what is typed leads; text: as typed."
+            )
+            .say(),
+            None,
+        ),
         Row::Name {
             dir, label, folder, ..
         } => plain(
@@ -3200,30 +3300,68 @@ fn drawn(shell: &Shell, row: &Row, text: &str) -> Drawn {
 /// is not said). Enter and Escape are the field's own.
 fn keys_of(shell: &Shell, row: &Row) -> String {
     let key = |command: &str, args: serde_json::Value| shell.keys_for(command, &args);
-    let and = |keys: Option<String>, does: &str| match keys {
-        Some(keys) if does.is_empty() => format!("Enter · {keys}"),
-        Some(keys) => format!("Enter · {keys} {does}"),
-        None => "Enter".to_owned(),
+    // Enter, and what other keys do: none bound, Enter alone.
+    let enter = || {
+        words!(
+            omnibox_keys_enter = "Enter",
+            note = "At the end of the highlighted row of the address field's list: the key that runs it."
+        )
     };
+    let and = |keys: Option<String>, does: fn(String) -> Words| keys.map_or_else(enter, does);
     let tab = || key("ui.omnibox_complete", serde_json::json!({}));
+    let completes = |keys: String| {
+        words!(
+            omnibox_keys_completes = "Enter · { $keys }",
+            keys = keys,
+            note = "At the end of the highlighted row of the address field's list: Enter runs it, and the key that completes it (Tab)."
+        )
+    };
     match row {
-        Row::Help { .. } => and(tab(), "writes it"),
+        Row::Help { .. } => and(tab(), |keys| {
+            words!(
+                omnibox_keys_writes = "Enter · { $keys } writes it",
+                keys = keys,
+                note = "At the end of a row of what the address field takes: Enter, or the key named (Tab), writes its example."
+            )
+        }),
         Row::Name { dir: false, .. } => and(
             key("ui.omnibox_submit", serde_json::json!({ "open": true })),
-            "opens",
+            |keys| {
+                words!(
+                    omnibox_keys_opens = "Enter · { $keys } opens",
+                    keys = keys,
+                    note = "At the end of a file's row in the address field's list: Enter shows it, the key named opens it."
+                )
+            },
         ),
-        Row::Source(s) if s.error => "Enter waits".to_owned(),
+        Row::Source(s) if s.error => words!(
+            omnibox_keys_waits = "Enter waits",
+            note = "At the end of a search's row that cannot run yet: Enter waits for it."
+        ),
         Row::Source(s) if s.forget.is_some() => and(
             key("ui.omnibox_forget", serde_json::json!({})),
-            "forgets it",
+            |keys| {
+                words!(
+                    omnibox_keys_forgets = "Enter · { $keys } forgets it",
+                    keys = keys,
+                    note = "At the end of a recent search's row: the key named forgets it."
+                )
+            },
         ),
-        Row::Source(s) if s.run.is_none() && s.completion.is_some() => and(tab(), ""),
+        Row::Source(s) if s.run.is_none() && s.completion.is_some() => and(tab(), completes),
         _ if row.scope(&shell.app).is_some() && !matches!(row, Row::Scope { .. }) => {
-            and(key("ui.search", serde_json::json!({})), "searches in it")
+            and(key("ui.search", serde_json::json!({})), |keys| {
+                words!(
+                    omnibox_keys_searches = "Enter · { $keys } searches in it",
+                    keys = keys,
+                    note = "At the end of a folder's or a place's row: the key named searches in it."
+                )
+            })
         }
-        _ if row.completion().is_some() => and(tab(), ""),
-        _ => "Enter".to_owned(),
+        _ if row.completion().is_some() => and(tab(), completes),
+        _ => enter(),
     }
+    .say()
 }
 
 /// What the line under the rows says the keys do, for what is typed: the
@@ -3235,18 +3373,37 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
     // for what only a search can tell.
     let depths = shell.place_depths().is_some();
     let here = shell.filters_here();
-    let key = |command: &str, args: serde_json::Value, does: &str| {
-        shell
-            .keys_for(command, &args)
-            .map(|keys| format!("{keys} {does}"))
+    // A phrase naming the keys bound to `command` with `args`, as `does`
+    // says it: none bound, no phrase.
+    let key = |command: &str, args: serde_json::Value, does: fn(String) -> Words| {
+        shell.keys_for(command, &args).map(does)
     };
-    let search = |does: &str| key("ui.search", serde_json::json!({}), does);
-    let tab = || key("ui.omnibox_complete", serde_json::json!({}), "completes");
-    let said = |phrases: Vec<Option<String>>| {
-        let phrases: Vec<String> = phrases.into_iter().flatten().collect();
-        format!("{}.", phrases.join("; "))
+    let search = |does: fn(String) -> Words| key("ui.search", serde_json::json!({}), does);
+    let tab = || {
+        key("ui.omnibox_complete", serde_json::json!({}), |keys| {
+            words!(
+                omnibox_hint_completes = "{ $keys } completes",
+                keys = keys,
+                note = "A hint under the address field's list; keys: the key that completes what is typed (Tab)."
+            )
+        })
     };
-    let plain = |text: &str| Some(text.to_owned());
+    // Transitional: a list argument (ADR-139): the hints that apply, each
+    // its own words.
+    let said = |phrases: Vec<Option<Words>>| {
+        let phrases: Vec<String> = phrases.into_iter().flatten().map(|p| p.say()).collect();
+        words!(
+            omnibox_hints = "{ $hints }.",
+            hints = phrases.join("; "),
+            note = "The line under the address field's list: what the keys do, each hint apart."
+        )
+    };
+    let escape = || {
+        Some(words!(
+            omnibox_hint_escape = "Escape goes back",
+            note = "A hint under the address field's list: Escape leaves the field."
+        ))
+    };
     // What the folder alone cannot tell: a search's, below it.
     let waits = shell
         .app
@@ -3256,68 +3413,141 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         .and_then(|p| p.read_filter().map(|r| r.waits.clone()))
         .filter(|w| !w.is_empty() && typed == Typed::Words && here)
         .map(|w| {
+            // Transitional: a list argument (ADR-139), its first letter
+            // capital where it begins the sentence, until what waits is
+            // data (`ReadFilter::waits`).
             let what = cap(&w.join(" and "));
             match shell.keys_for("ui.search", &serde_json::json!({})) {
-                Some(keys) if !depths => format!("{what} need a search: {keys}. "),
-                _ => format!("{what} need a search. "),
+                Some(keys) if !depths => words!(
+                    omnibox_waits_keys = "{ $what } need a search: { $keys }.",
+                    what = what,
+                    keys = keys,
+                    note = "Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), and the key that searches."
+                ),
+                _ => words!(
+                    omnibox_waits = "{ $what } need a search.",
+                    what = what,
+                    note = "Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken)."
+                ),
             }
         });
     let keys = match typed {
-        _ if listing_scopes => "Enter searches there; Escape keeps the scope.".to_owned(),
-        Typed::Nothing if scoped && depths => {
-            "Words filter what is shown; Backspace takes the scope away, @ lists others; > for a command."
-                .to_owned()
-        }
-        Typed::Nothing if scoped && here => {
-            "Words filter this folder; Backspace takes the scope away, @ lists others; > for a command."
-                .to_owned()
-        }
-        Typed::Nothing if scoped => {
-            "Words search there and below; Backspace takes the scope away, @ lists others; > for a command."
-                .to_owned()
-        }
+        _ if listing_scopes => words!(
+            omnibox_footer_scopes = "Enter searches there; Escape keeps the scope.",
+            note = "Under the list of where words search."
+        ),
+        Typed::Nothing if scoped && depths => words!(
+            omnibox_footer_scoped_depths = "Words filter what is shown; Backspace takes the scope away, @ lists others; > for a command.",
+            note = "Under the address field's list, nothing typed after the scope (a tag's place)."
+        ),
+        Typed::Nothing if scoped && here => words!(
+            omnibox_footer_scoped_here = "Words filter this folder; Backspace takes the scope away, @ lists others; > for a command.",
+            note = "Under the address field's list, nothing typed after the scope (a folder, filtered)."
+        ),
+        Typed::Nothing if scoped => words!(
+            omnibox_footer_scoped_below = "Words search there and below; Backspace takes the scope away, @ lists others; > for a command.",
+            note = "Under the address field's list, nothing typed after the scope (a folder, searched below)."
+        ),
         Typed::Nothing => said(vec![
-            plain("A path (/ or ~), a place, or words to filter"),
-            search("searches below"),
-            plain("> for a command"),
+            Some(words!(
+                omnibox_hint_takes = "A path (/ or ~), a place, or words to filter",
+                note = "A hint under the address field's list, nothing typed: what it takes."
+            )),
+            search(|keys| {
+                words!(
+                    omnibox_hint_searches_below = "{ $keys } searches below",
+                    keys = keys,
+                    note = "A hint under the address field's list; keys: the key that searches the folders below."
+                )
+            }),
+            Some(words!(
+                omnibox_hint_command = "> for a command",
+                note = "A hint under the address field's list: > begins a command's name."
+            )),
         ]),
         Typed::Path | Typed::Place => said(vec![
             tab(),
             key(
                 "ui.omnibox_submit",
                 serde_json::json!({ "open": true }),
-                "opens a file",
+                |keys| {
+                    words!(
+                        omnibox_hint_opens = "{ $keys } opens a file",
+                        keys = keys,
+                        note = "A hint under the address field's list while a path is typed; keys: the key that opens the file."
+                    )
+                },
             ),
-            search("on a folder searches in it"),
+            search(|keys| {
+                words!(
+                    omnibox_hint_searches_folder = "{ $keys } on a folder searches in it",
+                    keys = keys,
+                    note = "A hint under the address field's list while a path is typed; keys: the key that searches the folder named."
+                )
+            }),
         ]),
-        Typed::Scope => "Enter searches there.".to_owned(),
+        Typed::Scope => words!(
+            omnibox_footer_scope = "Enter searches there.",
+            note = "Under the address field's list while a scope is typed (@)."
+        ),
         Typed::Help => said(vec![
-            plain("Enter writes it"),
-            key("ui.omnibox_complete", serde_json::json!({}), "too"),
-            plain("Escape goes back"),
+            Some(words!(
+                omnibox_hint_writes = "Enter writes it",
+                note = "A hint under the list of what the address field takes: Enter writes the example."
+            )),
+            key("ui.omnibox_complete", serde_json::json!({}), |keys| {
+                words!(
+                    omnibox_hint_too = "{ $keys } too",
+                    keys = keys,
+                    note = "A hint after Enter writes it: the key named (Tab) writes it too."
+                )
+            }),
+            escape(),
         ]),
         Typed::Words if here && depths && waits.is_some() => said(vec![
-            plain("Enter searches"),
+            Some(words!(
+                omnibox_hint_searches = "Enter searches",
+                note = "A hint under the address field's list while words are typed."
+            )),
             tab(),
-            plain("Escape goes back"),
+            escape(),
         ]),
-        Typed::Words if here => said(vec![
-            plain("Enter goes to the files"),
-            tab(),
-            plain("Escape goes back"),
-        ]),
+        Typed::Words if here => said(vec![Some(goes_to_files()), tab(), escape()]),
         Typed::Words => said(vec![
-            plain("Enter goes to the files"),
+            Some(goes_to_files()),
             tab(),
             key(
                 "ui.omnibox_submit",
                 serde_json::json!({ "everywhere": true }),
-                "searches the home folder",
+                |keys| {
+                    words!(
+                        omnibox_hint_home = "{ $keys } searches the home folder",
+                        keys = keys,
+                        note = "A hint under the address field's list while words are typed; keys: the key that searches the whole home folder."
+                    )
+                },
             ),
-            plain("Escape goes back"),
+            escape(),
         ]),
     };
-    waits.map_or_else(|| keys.clone(), |w| w + &keys)
+    match waits {
+        Some(waits) => words!(
+            omnibox_footer_waits = "{ $waits } { $hints }",
+            waits = waits,
+            hints = keys,
+            note = "The line under the address field's list: what only a search can tell, then what the keys do."
+        ),
+        None => keys,
+    }
+    .say()
+}
+
+/// The hint that Enter leaves the field for the files.
+fn goes_to_files() -> Words {
+    words!(
+        omnibox_hint_files = "Enter goes to the files",
+        note = "A hint under the address field's list while words are typed: Enter goes to the files they keep."
+    )
 }
 
 /// `text` with its first letter capital.
@@ -3356,19 +3586,31 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
     let say = if shell.filters_here() {
         let ws = shell.app.workspace.read();
         ws.pane(pane).filter(|p| p.filter().is_some()).map(|p| {
-            format!(
-                "As you type: {} of {}",
-                crate::format::thousands(shell.ui().list.sorted.len()),
-                crate::format::items(p.listing.order_shown(p.sorting()).len())
+            words!(
+                omnibox_as_you_type_of = "As you type: { $shown } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }",
+                shown = shell.ui().list.sorted.len(),
+                count = p.listing.order_shown(p.sorting()).len(),
+                note = "The address field's card while words filter a folder; shown: how many items they keep; count: how many the folder lists."
             )
+            .say()
         })
     } else if words.is_empty() {
         None
     } else if shown {
-        Some(format!(
-            "{} found",
-            crate::format::thousands(shell.ui().list.sorted.len())
-        ))
+        Some(
+            words!(
+                omnibox_found = "{ $count ->
+                    [one] { $count } found
+                   *[other] { $count } found
+                }",
+                count = shell.ui().list.sorted.len(),
+                note = "The address field's card: how many files the search as typed found."
+            )
+            .say(),
+        )
     } else {
         omni.answers
             .iter()
@@ -3377,8 +3619,20 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             .find(|row| row.section == Section::Run)
             .and_then(|row| match () {
                 () if row.error => None,
-                () if row.live.is_some() => Some("As you type".to_owned()),
-                () => Some("Enter searches".to_owned()),
+                () if row.live.is_some() => Some(
+                    words!(
+                        omnibox_as_you_type = "As you type",
+                        note = "The address field's card: the search runs as words are typed."
+                    )
+                    .say(),
+                ),
+                () => Some(
+                    words!(
+                        omnibox_enter_searches = "Enter searches",
+                        note = "The address field's card: the search runs once Enter is pressed."
+                    )
+                    .say(),
+                ),
             })
     };
     let segment = |depth: Depth, icon: &str, label: &str, command: &str| {
@@ -3400,15 +3654,28 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             })
             .when(a11y, |d| {
                 let name = match depth {
-                    _ if depths.is_some() => label,
-                    Depth::Here => "This folder only",
-                    Depth::Below => "This folder and its subfolders",
+                    _ if depths.is_some() => Words::as_written(label.to_owned()),
+                    Depth::Here => words!(
+                        omnibox_depth_here = "This folder only",
+                        note = "What a screen reader calls a side of the switch of how deep words look: the folder shown alone."
+                    ),
+                    Depth::Below => words!(
+                        omnibox_depth_below = "This folder and its subfolders",
+                        note = "What a screen reader calls a side of the switch of how deep words look: the folder shown and every folder in it."
+                    ),
                 };
-                d.role(gpui::Role::Button).aria_label(if on {
-                    format!("{name}, chosen")
-                } else {
-                    name.to_owned()
-                })
+                d.role(gpui::Role::Button).aria_label(
+                    if on {
+                        words!(
+                            omnibox_depth_chosen = "{ $depth }, chosen",
+                            depth = name,
+                            note = "What a screen reader calls the side of the switch of how deep words look that is chosen; depth: that side."
+                        )
+                    } else {
+                        name
+                    }
+                    .say(),
+                )
             })
             // The field keeps the keyboard: the switch acts on the press.
             .on_mouse_down(
@@ -3468,13 +3735,31 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                     .child(segment(
                         Depth::Here,
                         "filter",
-                        depths.as_ref().map_or("This folder", |d| &d.here_label),
+                        &depths.as_ref().map_or_else(
+                            || {
+                                words!(
+                                    omnibox_depth_here_label = "This folder",
+                                    note = "A side of the switch of how deep words look, on the address field's card: the folder shown alone."
+                                )
+                                .say()
+                            },
+                            |d| d.here_label.clone(),
+                        ),
                         "ui.filter",
                     ))
                     .child(match &depths {
                         // Both filter: the one below holds what is within.
                         Some(d) => segment(Depth::Below, "layers", &d.below_label, "ui.search"),
-                        None => segment(Depth::Below, "search", "And subfolders", "ui.search"),
+                        None => segment(
+                            Depth::Below,
+                            "search",
+                            &words!(
+                                omnibox_depth_below_label = "And subfolders",
+                                note = "A side of the switch of how deep words look, on the address field's card: the folders in it too."
+                            )
+                            .say(),
+                            "ui.search",
+                        ),
                     }),
             )
             .child(div().flex_1())
@@ -3525,7 +3810,14 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
         let highlighted = omni.highlighted == Some(i);
         let hover = theme.hover;
         let named = a11y.then(|| match &d.detail {
-            Some(detail) => format!("{}, {detail}", d.title).into(),
+            Some(detail) => words!(
+                omnibox_row_named = "{ $title }, { $detail }",
+                title = d.title.as_str(),
+                detail = detail.as_str(),
+                note = "What a screen reader calls a row of the address field's list: its title, then what is said under it."
+            )
+            .say()
+            .into(),
             None => d.title.clone().into(),
         });
         // Drawn in the selection's ink while highlighted (`Chosen`).
@@ -3760,17 +4052,33 @@ pub fn dropdown(
     // was drawn at, kept from one opening to the next (`PaneUi::card_rows`).
     .w_full()
     .min_h_0();
-    let list = crate::modal::options("omnibox-rows", "Suggestions", rows.len(), shell.a11y)
-        .flex()
-        .flex_col()
-        .min_h_0()
-        .child(list);
+    let list = crate::modal::options(
+        "omnibox-rows",
+        words!(
+            omnibox_suggestions = "Suggestions",
+            note = "What a screen reader calls the list under the address field."
+        )
+        .say(),
+        rows.len(),
+        shell.a11y,
+    )
+    .flex()
+    .flex_col()
+    .min_h_0()
+    .child(list);
     // A folder that takes a moment to read (a disk asleep) says so.
     let reading = omni
         .reading
         .as_ref()
         .filter(|(_, since, _)| since.elapsed() >= READING_SAID)
-        .map(|(folder, ..)| format!("Reading {}…", folder.display()));
+        .map(|(folder, ..)| {
+            words!(
+                omnibox_reading = "Reading { $folder }…",
+                folder = folder.display().to_string(),
+                note = "The address field's card while a folder takes a moment to read (a disk asleep); folder: its path."
+            )
+            .say()
+        });
     // How deep words look, and what they keep there.
     let depth = depth_line(shell, typed, cx);
     // The field's card: its top is the field, which draws itself above it

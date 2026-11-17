@@ -32,6 +32,8 @@ use skwir_core::metadata::{
     tag_parent,
 };
 use skwir_core::op::EntryRef;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
@@ -263,7 +265,17 @@ pub fn more_chip(n: usize, color: gpui::Hsla) -> Div {
         .px(sized(3.))
         .text_body()
         .text_color(color)
-        .child(format!("+{n}"))
+        .child(more_said(n))
+}
+
+/// How many tags a line left out, as its chip says it: `+3`.
+fn more_said(n: usize) -> String {
+    words!(
+        tag_editor_more = "+{ $count }",
+        count = n,
+        note = "A chip at the end of a row's tags: how many more tags it has than the row has room for."
+    )
+    .say()
 }
 
 /// Where a strip of tags is drawn (`strip`).
@@ -380,6 +392,7 @@ pub fn strip_acting(
             .iter()
             .map(|(t, _)| t.as_str())
             .collect();
+        // Transitional: a list argument (ADR-139).
         let tip: gpui::SharedString = names.join(", ").into();
         let n = left.len();
         match on {
@@ -399,7 +412,7 @@ pub fn strip_acting(
                     .whitespace_nowrap(),
                 zoom,
             )
-            .child(format!("+{n}")),
+            .child(more_said(n)),
         }
         .id("tag-more")
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
@@ -582,12 +595,27 @@ pub fn stars(rating: u64, size: f32, theme: &Theme) -> Div {
         .children((1..=5).map(|n| star(n, rating, size, theme)))
 }
 
-/// A rating in words: "4 stars", "3½ stars".
+/// A rating in words, said: "4 stars", "3½ stars" (`stars_said`).
 pub fn stars_words(rating: u64) -> String {
-    let whole = rating / 2;
-    let half = if rating % 2 == 1 { "½" } else { "" };
-    let plural = if rating <= 2 { "" } else { "s" };
-    format!("{whole}{half} star{plural}").replacen("0½", "½", 1)
+    stars_said(rating).say()
+}
+
+/// A rating in half stars, in words: "4 stars", "3½ stars".
+pub fn stars_said(rating: u64) -> Words {
+    words!(
+        tag_editor_stars = "{ $halves ->
+            [1] ½ star
+            [2] 1 star
+            [3] 1½ stars
+            [5] 2½ stars
+            [7] 3½ stars
+            [9] 4½ stars
+           *[other] { $stars } stars
+        }",
+        halves = rating,
+        stars = rating / 2,
+        note = "A file's rating, of five stars: halves is the rating in half stars (1 to 10), stars the whole stars (halves / 2)."
+    )
 }
 
 impl Shell {
@@ -637,15 +665,30 @@ impl Shell {
 /// their chips name them, and its stars ("Tagged print, Paris; 4
 /// stars"). `None` with neither.
 pub fn said(tags: &[(String, usize)], rating: Option<u64>) -> Option<String> {
-    let mut parts = Vec::new();
-    if !tags.is_empty() {
-        let names: Vec<&str> = tags.iter().map(|(tag, _)| tag_leaf(tag)).collect();
-        parts.push(format!("Tagged {}", names.join(", ")));
-    }
-    if let Some(rating) = rating.filter(|stars| *stars > 0) {
-        parts.push(stars_words(rating));
-    }
-    (!parts.is_empty()).then(|| parts.join("; "))
+    // Transitional: a list argument (ADR-139).
+    let names = (!tags.is_empty()).then(|| {
+        tags.iter()
+            .map(|(tag, _)| tag_leaf(tag))
+            .collect::<Vec<_>>()
+            .join(", ")
+    });
+    let stars = rating.filter(|stars| *stars > 0).map(stars_said);
+    let said = match (names, stars) {
+        (Some(tags), None) => words!(
+            tag_editor_said_tagged = "Tagged { $tags }",
+            tags = tags,
+            note = "What a screen reader hears of a file after its name: its tags, by their own names (print, Paris)."
+        ),
+        (None, Some(stars)) => stars,
+        (Some(tags), Some(stars)) => words!(
+            tag_editor_said_tagged_rated = "Tagged { $tags }; { $stars }",
+            tags = tags,
+            stars = stars,
+            note = "What a screen reader hears of a file after its name: its tags, by their own names (print, Paris), then its rating (4 stars)."
+        ),
+        (None, None) => return None,
+    };
+    Some(said.say())
 }
 
 /// Where a tag is, or will be, among the entries edited.
@@ -833,7 +876,7 @@ pub struct TagEditor {
     /// The entries edited, as they were selected when it opened.
     entries: Vec<EntryRef>,
     pane: PaneId,
-    title: String,
+    title: Words,
     items: usize,
     rows: Vec<TagRow>,
     /// The tags arrived from the files.
@@ -877,7 +920,10 @@ impl Shell {
         static REQUESTS: AtomicU64 = AtomicU64::new(0);
         if self.app.commands.get("tags.selected").is_none() {
             self.set_status(
-                "tags are off: turn the Tags plugin on in Settings",
+                words!(
+                    tag_editor_tags_off = "tags are off: turn the Tags plugin on in Settings",
+                    note = "Said when the tag editor is asked for while the Tags plugin is off."
+                ),
                 true,
                 cx,
             );
@@ -888,17 +934,24 @@ impl Shell {
         if entries.is_empty() {
             return;
         }
-        let title = match entries.as_slice() {
-            [one] => format!(
-                "Tags of “{}”",
-                one.path
-                    .file_name()
-                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-            ),
-            many => format!("Tags of {}", crate::format::items(many.len())),
-        };
+        let title = words!(
+            tag_editor_title = "{ $count ->
+                [1] Tags of { $name }
+               *[other] Tags of { $count } items
+            }",
+            count = entries.len(),
+            name = Name::of(&entries[0].path),
+            note = "The tag editor's title: the file whose tags it edits, or how many."
+        );
         let back = FocusReturn::capture(window, cx);
-        let input = cx.new(|cx| TextInput::new("Filter, or type a new tag", cx));
+        // Said as the editor opens, the field keeping it while it is open.
+        let placeholder = words!(
+            tag_editor_placeholder = "Filter, or type a new tag",
+            note =
+                "The tag editor's empty field: typing filters the tags listed, or names a new one."
+        )
+        .say();
+        let input = cx.new(|cx| TextInput::new(placeholder, cx));
         let sub = cx.subscribe_in(
             &input,
             window,
@@ -961,9 +1014,19 @@ impl Shell {
                     return;
                 }
                 let selected = match result {
-                    Ok(Outcome::Value(value)) => serde_json::from_value::<Selected>(value)
-                        .map_err(|e| anyhow::anyhow!("unreadable tags: {e}")),
-                    Ok(_) => Err(anyhow::anyhow!("no tags")),
+                    Ok(Outcome::Value(value)) => {
+                        serde_json::from_value::<Selected>(value).map_err(|e| {
+                            anyhow::Error::from(e).context(words!(
+                                tag_editor_unreadable = "unreadable tags",
+                                note = "Why the tag editor closed: the tags read from the files came in a form it could not read. Followed by why."
+                            ))
+                        })
+                    }
+                    Ok(_) => Err(words!(
+                        tag_editor_no_tags = "no tags",
+                        note = "Why the tag editor closed: reading the files' tags gave no answer."
+                    )
+                    .into()),
                     Err(e) => Err(e),
                 };
                 match selected {
@@ -977,7 +1040,7 @@ impl Shell {
                     }
                     Err(error) => {
                         this.close_tag_editor(window, cx);
-                        this.report_error(&error, cx);
+                        this.report_error(error, cx);
                     }
                 }
                 cx.notify();
@@ -1153,18 +1216,36 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     let e = shell.tag_editor.as_ref()?;
     let a11y = shell.a11y;
     let typing = gpui::Focusable::focus_handle(e.input.read(cx), cx);
-    let mut list = modal::options("tag-rows", "Tags", e.shown.len(), a11y)
-        .flex()
-        .flex_col()
-        .py_1()
-        .overflow_hidden();
+    let mut list = modal::options(
+        "tag-rows",
+        words!(
+            tag_editor_list = "Tags",
+            note = "What a screen reader calls the list of tags in the tag editor."
+        )
+        .say(),
+        e.shown.len(),
+        a11y,
+    )
+    .flex()
+    .flex_col()
+    .py_1()
+    .overflow_hidden();
     for row in e.picker.shown(e.shown.len()) {
         let hl = row == e.picker.highlighted;
         let shown = e.shown[row].clone();
         // A tag says whether the files have it: all, some, none.
         let (named, marked) = match &shown {
             Shown::New(tags) => (
-                a11y.then(|| format!("Add {}", tags.join(", ")).into()),
+                a11y.then(|| {
+                    words!(
+                        tag_editor_add_named = "Add { $tags }",
+                        // Transitional: a list argument (ADR-139).
+                        tags = tags.join(", "),
+                        note = "What a screen reader calls the tag editor's row adding the tags typed (print, Paris)."
+                    )
+                    .say()
+                    .into()
+                }),
                 None,
             ),
             Shown::Row(i) => (
@@ -1210,23 +1291,48 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child(controls::glyph("plus", muted, 14.))
                 .child(clipped(
                     div().id("tag-new").flex_1().min_w_0().truncate(),
-                    format!(
-                        "Add {}",
-                        tags.iter()
-                            .map(|t| format!("“{t}”"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
+                    match tags.as_slice() {
+                        [tag] => words!(
+                            tag_editor_add = "Add { $tag }",
+                            tag = Name(tag.clone()),
+                            note = "The tag editor's row adding the tag typed, which no file has yet."
+                        ),
+                        tags => words!(
+                            tag_editor_add_several = "Add { $tags }",
+                            // Transitional: a list argument (ADR-139).
+                            tags = tags
+                                .iter()
+                                .map(|t| format!("“{t}”"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            note = "The tag editor's row adding the tags typed, each quoted (“print”, “Paris”)."
+                        ),
+                    }
+                    .say(),
                 )),
             Shown::Row(i) => {
                 let tag = &e.rows[*i];
                 let color = colors.of_or(&tag.name, tag.given);
                 let index = *i;
                 let detail = match (tag.mark, tag.was(e.items)) {
-                    (Mark::Some, _) => format!("on {} of {}", tag.count, e.items),
+                    (Mark::Some, _) => words!(
+                        tag_editor_on_some = "on { $count } of { $items }",
+                        count = tag.count,
+                        items = e.items,
+                        note = "After a tag in the tag editor: how many of the files edited have it, of all (on 2 of 5)."
+                    )
+                    .say(),
                     (Mark::All, Mark::All) | (Mark::None, Mark::None) => String::new(),
-                    (Mark::All, _) => "added".into(),
-                    (Mark::None, _) => "removed".into(),
+                    (Mark::All, _) => words!(
+                        tag_editor_added = "added",
+                        note = "After a tag in the tag editor: Apply gives it to every file edited, which did not all have it."
+                    )
+                    .say(),
+                    (Mark::None, _) => words!(
+                        tag_editor_removed = "removed",
+                        note = "After a tag in the tag editor: Apply takes it from the files edited that have it."
+                    )
+                    .say(),
                 };
                 line.child(mark_box(tag.mark, hl, &theme))
                     .child(
@@ -1290,11 +1396,13 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     }
     if e.loaded && e.shown.is_empty() {
         list = list.child(
-            div()
-                .px_3()
-                .py_2()
-                .text_color(theme.text_muted)
-                .child("No tags yet: type one and press Enter"),
+            div().px_3().py_2().text_color(theme.text_muted).child(
+                words!(
+                    tag_editor_none_yet = "No tags yet: type one and press Enter",
+                    note = "The tag editor's list while no file has a tag."
+                )
+                .say(),
+            ),
         );
     }
     let list = modal::scrolled(
@@ -1308,12 +1416,20 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         cx,
     );
     let footer = modal::footer(
-        "Enter on an empty field applies",
+        words!(
+            tag_editor_enter_applies = "Enter on an empty field applies",
+            note = "The tag editor's footer: Enter with nothing typed applies what was changed."
+        )
+        .say(),
         [
             modal::pressed(
                 controls::button(
                     "tags-cancel",
-                    "Cancel",
+                    words!(
+                        tag_editor_cancel = "Cancel",
+                        note = "The tag editor's button closing it, nothing changed."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &e.cancel_focus,
@@ -1325,7 +1441,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             modal::pressed(
                 controls::button(
                     "tags-apply",
-                    "Apply",
+                    words!(
+                        tag_editor_apply = "Apply",
+                        note = "The tag editor's button giving the files their tags as changed."
+                    )
+                    .say(),
                     Some("check"),
                     ButtonStyle::Plain,
                     &e.apply_focus,
@@ -1333,7 +1453,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 )
                 .when_some(apply_keys, |d, keys| {
                     d.tooltip(move |_, cx| {
-                        crate::toolbar::tooltip(format!("Apply ({keys})").into(), cx)
+                        crate::toolbar::tooltip(
+                            words!(
+                                tag_editor_apply_tip = "Apply ({ $keys })",
+                                keys = keys.clone(),
+                                note = "The tooltip of the tag editor's Apply button: its shortcut (Ctrl+Enter)."
+                            )
+                            .say()
+                            .into(),
+                            cx,
+                        )
                     })
                 }),
                 Shell::tag_editor_apply,
@@ -1347,7 +1476,13 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     .border_t_1()
     .border_color(theme.border);
     let panel = modal::panel("tag-editor", 440., &theme)
-        .aria_label("Tag editor")
+        .aria_label(
+            words!(
+                tag_editor_name = "Tag editor",
+                note = "What a screen reader calls the dialog editing the selected files' tags."
+            )
+            .say(),
+        )
         .key_context(keymap::TAG_EDITOR)
         .child(
             div()
@@ -1366,7 +1501,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .text_ellipsis_middle()
                         .text_body()
                         .text_color(theme.text_muted),
-                    e.title.clone(),
+                    e.title.say(),
                 ))
                 .child(e.input.clone()),
         )
@@ -1450,7 +1585,13 @@ fn color_strip(
                     e.input.update(cx, |i, cx| i.focus(window, cx));
                 }
             }))
-            .child("Automatic"),
+            .child(
+                words!(
+                    tag_editor_color_automatic = "Automatic",
+                    note = "Under a tag in the tag editor, after its colors: the color its name gives it, none chosen."
+                )
+                .say(),
+            ),
     )
 }
 

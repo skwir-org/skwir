@@ -553,15 +553,34 @@ impl Shapes {
     pub fn point_words(&self, index: usize) -> Option<(String, String)> {
         let marker = self.markers.get(index)?;
         let name = if marker.label.is_empty() {
+            use skwir_core::words;
             match marker.kind {
-                MarkerKind::Place => "Place",
-                MarkerKind::Stop => "Stop",
-                MarkerKind::Start => "Start",
-                MarkerKind::End => "End",
-                MarkerKind::Picture => "Picture",
-                MarkerKind::Track => "Track",
+                MarkerKind::Place => words!(
+                    map_point_place = "Place",
+                    note = "What a screen reader calls a point of the map that has no name: a place."
+                ),
+                MarkerKind::Stop => words!(
+                    map_point_stop = "Stop",
+                    note = "What a screen reader calls a point of the map that has no name: a stop along a track."
+                ),
+                MarkerKind::Start => words!(
+                    map_point_start = "Start",
+                    note = "What a screen reader calls a point of the map that has no name: where a track starts."
+                ),
+                MarkerKind::End => words!(
+                    map_point_end = "End",
+                    note = "What a screen reader calls a point of the map that has no name: where a track ends."
+                ),
+                MarkerKind::Picture => words!(
+                    map_point_picture = "Picture",
+                    note = "What a screen reader calls a point of the map that has no name: where a picture was taken."
+                ),
+                MarkerKind::Track => words!(
+                    map_point_track = "Track",
+                    note = "What a screen reader calls a point of the map that has no name: a recorded track (GPX)."
+                ),
             }
-            .to_owned()
+            .say()
         } else {
             marker.label.to_string()
         };
@@ -597,10 +616,25 @@ impl Shapes {
         }
         if let Some((name, at)) = point.and_then(|index| {
             let (name, at) = self.point_words(index)?;
-            Some((format!("{name}, {} of {count}", index + 1), at))
+            let named = skwir_core::words!(
+                map_point_of = "{ $name }, { $index } of { $count }",
+                name = name,
+                index = index + 1,
+                count = count,
+                note = "What a screen reader hears of the point of the map reached: its name, then which of how many it is."
+            );
+            Some((named.say(), at))
         }) {
             let mut said = gpui::accesskit::Node::new(gpui::Role::Status);
-            said.set_label(format!("{name}, {at}"));
+            said.set_label(
+                skwir_core::words!(
+                    map_point_said = "{ $point }, { $at }",
+                    point = name,
+                    at = at,
+                    note = "What a screen reader hears as the map reaches a point: the point (its name, which of how many), then where it is (45.0000° N, 5.0000° E)."
+                )
+                .say(),
+            );
             said.set_live(gpui::Live::Polite);
             builder.push_child(builder.synthetic_node_id("point"), said);
         }

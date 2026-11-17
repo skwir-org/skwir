@@ -198,7 +198,7 @@ fn the_bulk_rename_offers_the_cases_its_plugin_reads() {
     words(case, &mut read);
     let (unchanged, offered) = skwir_ui::renamebulk::CASES.split_first().expect("cases");
     let offered: std::collections::BTreeSet<String> =
-        offered.iter().map(|&(value, _)| value.to_owned()).collect();
+        offered.iter().map(|&value| value.to_owned()).collect();
     assert_eq!(offered, read, "the window's cases and the plugin's");
-    assert!(!read.contains(unchanged.0), "Unchanged asks no case");
+    assert!(!read.contains(*unchanged), "Unchanged asks no case");
 }

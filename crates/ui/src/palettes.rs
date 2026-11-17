@@ -17,15 +17,19 @@
 //! look (Nord's light, Dracula's Alucard), that look keeps Skwir's.
 
 use gpui::{Hsla, rgb};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::theme::{Base, Contrast, Desktop, Schemes};
 
 /// A palette: its id (the value of `ui.colors_from`), its name, who made
 /// it, and its looks.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Palette {
     pub id: &'static str,
-    pub name: &'static str,
+    /// Its name, said where it is drawn: Skwir's own names are messages,
+    /// the community's as their makers write them (`name`).
+    pub name: fn() -> Words,
     /// Who made it and under what licence; `None` for Skwir's own.
     pub by: Option<(&'static str, &'static str)>,
     pub light: Option<Look>,
@@ -76,7 +80,22 @@ impl Look {
     }
 }
 
+/// Palettes are told apart by their id: its name is words, made where
+/// they are said.
+impl PartialEq for Palette {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Palette {}
+
 impl Palette {
+    /// Its name, as a person knows it.
+    pub fn name(&self) -> Words {
+        (self.name)()
+    }
+
     /// Its look `dark` names, if it has one.
     pub fn look(&self, dark: bool) -> Option<&Look> {
         if dark {
@@ -131,7 +150,12 @@ pub static SKWIR: &Palette = &PALETTES[0];
 pub static PALETTES: [Palette; 12] = [
     Palette {
         id: "skwir",
-        name: "Skwir",
+        name: || {
+            words!(
+                palettes_skwir = "Skwir",
+                note = "The palette of Skwir's own colors, a choice of Colors from."
+            )
+        },
         by: None,
         light: Some(Look {
             bg: 0xfafafa,
@@ -164,7 +188,12 @@ pub static PALETTES: [Palette; 12] = [
     // from the error's red.
     Palette {
         id: "paper",
-        name: "Paper",
+        name: || {
+            words!(
+                palettes_paper = "Paper",
+                note = "A palette of Skwir's own, its look in warm tints, as paper: a choice of Colors from."
+            )
+        },
         by: None,
         light: Some(Look {
             bg: 0xfbf8f2,
@@ -196,7 +225,12 @@ pub static PALETTES: [Palette; 12] = [
     // Cool blue-gray grounds, an indigo accent.
     Palette {
         id: "slate",
-        name: "Slate",
+        name: || {
+            words!(
+                palettes_slate = "Slate",
+                note = "A palette of Skwir's own, its look in cool tints, as slate: a choice of Colors from."
+            )
+        },
         by: None,
         light: Some(Look {
             bg: 0xf8fafc,
@@ -229,7 +263,12 @@ pub static PALETTES: [Palette; 12] = [
     // dark rooms.
     Palette {
         id: "black",
-        name: "Black",
+        name: || {
+            words!(
+                palettes_black = "Black",
+                note = "A palette of Skwir's own, its look in white and true black: a choice of Colors from."
+            )
+        },
         by: None,
         light: Some(Look {
             bg: 0xffffff,
@@ -261,7 +300,7 @@ pub static PALETTES: [Palette; 12] = [
     // Its README's sixteen; one set of terminal colors for both looks.
     Palette {
         id: "solarized",
-        name: "Solarized",
+        name: || Words::as_written("Solarized"),
         by: Some(("Ethan Schoonover", "MIT")),
         light: Some(Look {
             bg: 0xfdf6e3,
@@ -301,7 +340,7 @@ pub static PALETTES: [Palette; 12] = [
     // colors or code theme of its own.
     Palette {
         id: "nord",
-        name: "Nord",
+        name: || Words::as_written("Nord"),
         by: Some(("Sven Greb", "MIT")),
         light: Some(Look {
             bg: 0xeceff4,
@@ -337,7 +376,7 @@ pub static PALETTES: [Palette; 12] = [
     // bright for the dark, its terminal colors its own.
     Palette {
         id: "gruvbox",
-        name: "Gruvbox",
+        name: || Words::as_written("Gruvbox"),
         by: Some(("Pavel Pertsev", "MIT")),
         light: Some(Look {
             bg: 0xfbf1c7,
@@ -376,7 +415,7 @@ pub static PALETTES: [Palette; 12] = [
     // Subtext 0); the terminal colors palette.json's.
     Palette {
         id: "catppuccin",
-        name: "Catppuccin",
+        name: || Words::as_written("Catppuccin"),
         by: Some(("Catppuccin", "MIT")),
         light: Some(Look {
             bg: 0xeff1f5,
@@ -416,7 +455,7 @@ pub static PALETTES: [Palette; 12] = [
     // is for errors.
     Palette {
         id: "dracula",
-        name: "Dracula",
+        name: || Words::as_written("Dracula"),
         by: Some(("Dracula Theme", "MIT")),
         light: Some(Look {
             bg: 0xfffbeb,
@@ -456,7 +495,7 @@ pub static PALETTES: [Palette; 12] = [
     // is `surface`. Pine, its "terminal green", is success in both looks.
     Palette {
         id: "rose-pine",
-        name: "Rosé Pine",
+        name: || Words::as_written("Rosé Pine"),
         by: Some(("Rosé Pine", "MIT")),
         light: Some(Look {
             bg: 0xfaf4ed,
@@ -495,7 +534,7 @@ pub static PALETTES: [Palette; 12] = [
     // its `bg_dark` the chrome, its `error` role the errors.
     Palette {
         id: "tokyo-night",
-        name: "Tokyo Night",
+        name: || Words::as_written("Tokyo Night"),
         by: Some(("Enkia (MIT) and Folke Lemaitre", "Apache-2.0")),
         light: Some(Look {
             bg: 0xe1e2e7,
@@ -534,7 +573,7 @@ pub static PALETTES: [Palette; 12] = [
     // own, the bright as the others.
     Palette {
         id: "everforest",
-        name: "Everforest",
+        name: || Words::as_written("Everforest"),
         by: Some(("Sainnhe Park", "MIT")),
         light: Some(Look {
             bg: 0xfdf6e3,

@@ -15,6 +15,8 @@ use gpui::{
 };
 use serde_json::Value;
 use skwir_core::command::{CommandSpec, Invocation};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -80,14 +82,17 @@ type Candidate = (CommandSpec, Option<Value>, String);
 /// The form of a new shortcut.
 pub(crate) struct NewShortcut {
     search: Entity<TextInput>,
-    /// Every command a shortcut may run, read once when the form opens.
+    /// Every command a shortcut may run, read once when the form opens,
+    /// and again when the language their titles are said in moves.
     candidates: Rc<Vec<Candidate>>,
+    /// The words' revision the candidates were said in.
+    said_in: u64,
     /// Those the search finds, for the search they were found for.
     found: RefCell<Option<(String, Rc<Vec<usize>>)>>,
     picked: Option<Picked>,
     /// The arguments the fields say, or why they cannot be run: worked out
     /// again when a field changes, not at each frame.
-    args: RefCell<Option<Result<(String, Value), String>>>,
+    args: RefCell<Option<Result<(String, Value), Words>>>,
     /// Where the keys work: an index in `places()`.
     place: usize,
     /// The file list's conditions asked for.
@@ -113,7 +118,7 @@ fn field_at(view: &mut SettingsView, i: usize) -> Option<&mut Field> {
 }
 
 /// The arguments `fields` say, or why they cannot be run.
-fn args_of(fields: &[Field], cx: &App) -> Result<Value, String> {
+fn args_of(fields: &[Field], cx: &App) -> Result<Value, Words> {
     let mut args = serde_json::Map::new();
     for field in fields {
         let text = field
@@ -126,11 +131,22 @@ fn args_of(fields: &[Field], cx: &App) -> Result<Value, String> {
             Kind::Number if !text.is_empty() => Some(
                 serde_json::from_str::<serde_json::Number>(&text)
                     .map(Value::Number)
-                    .map_err(|_| format!("{} is a number", field.name))?,
+                    .map_err(|_| {
+                        words!(
+                            keys_arg_is_a_number = "{ $argument } is a number",
+                            argument = field.name.clone(),
+                            note = "Why a new shortcut's command cannot run: argument is the name of one of its arguments, as its schema writes it (depth)."
+                        )
+                    })?,
             ),
-            Kind::Json if !text.is_empty() => Some(
-                serde_json::from_str(&text).map_err(|error| format!("{}: {error}", field.name))?,
-            ),
+            Kind::Json if !text.is_empty() => Some(serde_json::from_str(&text).map_err(|error| {
+                words!(
+                    keys_arg_unreadable = "{ $argument }: { $error }",
+                    argument = field.name.clone(),
+                    error = anyhow::Error::new(error),
+                    note = "Why a new shortcut's command cannot run: argument is the name of one of its arguments, as its schema writes it; error why what was typed is no JSON."
+                )
+            })?),
             Kind::Switch if field.on => Some(Value::Bool(true)),
             Kind::Choice(values) => field
                 .chosen
@@ -143,7 +159,11 @@ fn args_of(fields: &[Field], cx: &App) -> Result<Value, String> {
                 args.insert(field.name.clone(), value);
             }
             None if field.required => {
-                return Err(format!("{} is needed", field.name));
+                return Err(words!(
+                    keys_arg_needed = "{ $argument } is needed",
+                    argument = field.name.clone(),
+                    note = "Why a new shortcut's command cannot run: argument is the name of one of its arguments, as its schema writes it (location)."
+                ));
             }
             None => {}
         }
@@ -153,14 +173,26 @@ fn args_of(fields: &[Field], cx: &App) -> Result<Value, String> {
 
 /// Where a new shortcut's keys may work: anywhere, then each place once,
 /// by its `when` token and what it is called.
-fn places() -> Vec<(Option<&'static str>, &'static str)> {
-    let mut places = vec![(None, "Anywhere")];
-    for place in keymap::PLACES {
-        if !places.iter().any(|(_, label)| *label == place.label) {
-            places.push((Some(place.token), place.label));
+fn places() -> Vec<(Option<&'static str>, String)> {
+    let mut places = vec![(None, anywhere())];
+    // Transitional: the places sharing their keys are told by their
+    // labels, as the keymap tells them (`keymap::place_of`), until a place
+    // names the one it shares them with.
+    for (at, place) in keymap::PLACES.iter().enumerate() {
+        if !keymap::PLACES[..at].iter().any(|p| p.label == place.label) {
+            places.push((Some(place.token), place.label.to_owned()));
         }
     }
     places
+}
+
+/// Where keys work in every place.
+fn anywhere() -> String {
+    words!(
+        keys_anywhere = "Anywhere",
+        note = "Where a new shortcut's keys work: in every place of the window."
+    )
+    .say()
 }
 
 /// Every command a shortcut may run: each form, and each command as it
@@ -314,7 +346,17 @@ fn kind_of(root: &Value, schema: &Value) -> Kind {
 impl SettingsView {
     /// Open the form, the command looked for first.
     pub(crate) fn open_new_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let search = cx.new(|cx| TextInput::new("Search commands", cx));
+        let search = cx.new(|cx| {
+            TextInput::new(
+                words!(
+                    keys_search_commands = "Search commands",
+                    note =
+                        "The placeholder of the field a new shortcut's command is looked for in."
+                )
+                .say(),
+                cx,
+            )
+        });
         let subscription = cx.subscribe_in(
             &search,
             window,
@@ -339,6 +381,7 @@ impl SettingsView {
         self.keys.new = Some(NewShortcut {
             search,
             candidates: Rc::new(candidates(&self.app)),
+            said_in: words::revision(),
             found: RefCell::default(),
             picked: None,
             args: RefCell::default(),
@@ -468,20 +511,19 @@ impl SettingsView {
 
     /// The arguments the form says, or why they cannot be run: read from
     /// the fields and checked again only once one of them changed.
-    fn new_shortcut_args(&self, cx: &App) -> Result<(String, Value), String> {
-        let new = self
-            .keys
-            .new
-            .as_ref()
-            .ok_or("Choose what the keys run first")?;
+    fn new_shortcut_args(&self, cx: &App) -> Result<(String, Value), Words> {
+        let choose_first = || {
+            words!(
+                keys_choose_first = "Choose what the keys run first",
+                note = "Why a new shortcut cannot be saved: no command was chosen for it."
+            )
+        };
+        let new = self.keys.new.as_ref().ok_or_else(choose_first)?;
         if let Some(said) = new.args.borrow().as_ref() {
             return said.clone();
         }
         let said = (|| {
-            let picked = new
-                .picked
-                .as_ref()
-                .ok_or("Choose what the keys run first")?;
+            let picked = new.picked.as_ref().ok_or_else(choose_first)?;
             let args = if let Some(args) = &picked.args {
                 args.clone()
             } else {
@@ -493,7 +535,7 @@ impl SettingsView {
                     name: picked.command.as_str().into(),
                     args: args.clone(),
                 })
-                .map_err(|error| format!("{error}"))?;
+                .map_err(|error| error.words())?;
             Ok((picked.command.clone(), args))
         })();
         *new.args.borrow_mut() = Some(said.clone());
@@ -538,7 +580,7 @@ impl SettingsView {
     pub(crate) fn save_new_shortcut(&mut self, keys: &str, cx: &mut Context<Self>) -> bool {
         if let Err(why) = self.new_shortcut_args(cx) {
             if let Some(editor) = self.keys.editor.as_mut() {
-                editor.error = Some(why);
+                editor.error = Some(why.say());
             }
             return false;
         }
@@ -562,6 +604,14 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // The commands said again where the language moved.
+        if let Some(new) = self.keys.new.as_mut()
+            && new.said_in != words::revision()
+        {
+            new.candidates = Rc::new(candidates(&self.app));
+            new.said_in = words::revision();
+            new.found.borrow_mut().take();
+        }
         let Some(new) = &self.keys.new else {
             return div().into_any_element();
         };
@@ -572,13 +622,13 @@ impl SettingsView {
             new.flags.clone(),
             new.places_open,
         );
-        let section = |title: &str| {
+        let section = |title: Words| {
             div()
                 .pt_4()
                 .pb_2()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(title.to_owned())
+                .child(title.say())
         };
         let mut page = div()
             .id("new-shortcut")
@@ -589,7 +639,10 @@ impl SettingsView {
             .pb_6()
             .flex()
             .flex_col()
-            .child(section("What the keys run"));
+            .child(section(words!(
+                keys_new_runs = "What the keys run",
+                note = "A heading of the new shortcut's form: the command its keys run."
+            )));
         match picked_title {
             None => {
                 page = page.child(div().flex().child(controls::field(
@@ -636,7 +689,11 @@ impl SettingsView {
                         .child(
                             controls::button(
                                 "new-change",
-                                "Another command",
+                                words!(
+                                    keys_new_another = "Another command",
+                                    note = "A button of the new shortcut's form: choose another command for its keys."
+                                )
+                                .say(),
                                 None,
                                 ButtonStyle::Plain,
                                 &change,
@@ -656,7 +713,10 @@ impl SettingsView {
                         ),
                 );
                 page = self.new_shortcut_fields(page, theme, window, cx);
-                page = page.child(section("Where they work"));
+                page = page.child(section(words!(
+                    keys_new_where = "Where they work",
+                    note = "A heading of the new shortcut's form: the place its keys work in."
+                )));
                 let all = places();
                 let open = self.handle("new-place", cx);
                 self.stop(&open, None, None);
@@ -666,7 +726,7 @@ impl SettingsView {
                         chooser = chooser.child(
                             controls::segment(
                                 SharedString::from(format!("new-place-{i}")),
-                                *label,
+                                label.clone(),
                                 i == place,
                                 theme,
                             )
@@ -687,7 +747,7 @@ impl SettingsView {
                     chooser = chooser.child(
                         controls::dropdown(
                             "new-place",
-                            all.get(place).map_or("Anywhere", |p| p.1),
+                            all.get(place).map_or_else(anywhere, |p| p.1.clone()),
                             &open,
                             theme,
                         )
@@ -730,7 +790,10 @@ impl SettingsView {
                     }
                     page = page.child(conditions);
                 }
-                page = page.child(section("The keys"));
+                page = page.child(section(words!(
+                    keys_new_keys = "The keys",
+                    note = "A heading of the new shortcut's form: the keys it binds."
+                )));
                 if self
                     .keys
                     .editor
@@ -747,7 +810,11 @@ impl SettingsView {
                         div().flex().child(
                             controls::button(
                                 "new-press",
-                                "Press the keys…",
+                                words!(
+                                    keys_new_press = "Press the keys…",
+                                    note = "A button of the new shortcut's form: take the keys it binds."
+                                )
+                                .say(),
                                 Some("keyboard"),
                                 ButtonStyle::Plain,
                                 &press,
@@ -766,7 +833,7 @@ impl SettingsView {
                                 .pt_2()
                                 .text_body()
                                 .text_color(theme.text_muted)
-                                .child(why),
+                                .child(why.say()),
                         );
                     }
                 }
@@ -786,7 +853,11 @@ impl SettingsView {
                 .child(
                     controls::button(
                         "new-cancel",
-                        "Cancel",
+                        words!(
+                            keys_new_cancel = "Cancel",
+                            note = "A button of the new shortcut's form: close it, nothing saved."
+                        )
+                        .say(),
                         None,
                         ButtonStyle::Plain,
                         &cancel,
@@ -800,14 +871,25 @@ impl SettingsView {
                     })),
                 )
                 .child(
-                    controls::button("new-save", "Save", None, ButtonStyle::Plain, &save, theme)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if this.keys.editor.is_none() {
-                                this.open_key_editor(Target::New, window, cx);
-                            } else {
-                                this.save_key_editor(window, cx);
-                            }
-                        })),
+                    controls::button(
+                        "new-save",
+                        words!(
+                            keys_new_save = "Save",
+                            note = "A button of the new shortcut's form: keep the shortcut."
+                        )
+                        .say(),
+                        None,
+                        ButtonStyle::Plain,
+                        &save,
+                        theme,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.keys.editor.is_none() {
+                            this.open_key_editor(Target::New, window, cx);
+                        } else {
+                            this.save_key_editor(window, cx);
+                        }
+                    })),
                 ),
         );
         page.into_any_element()
@@ -864,7 +946,13 @@ impl SettingsView {
                 .pb_2()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child("Its arguments"),
+                .child(
+                    words!(
+                        keys_new_arguments = "Its arguments",
+                        note = "A heading of the new shortcut's form: what its command is given, as its schema asks."
+                    )
+                    .say(),
+                ),
         );
         for (i, one) in shown.into_iter().enumerate() {
             let mut row = div().py_1().flex().flex_col().gap_1().child(
@@ -878,7 +966,13 @@ impl SettingsView {
                             div()
                                 .text_small()
                                 .text_color(theme.text_muted)
-                                .child("optional"),
+                                .child(
+                                    words!(
+                                        keys_new_optional = "optional",
+                                        note = "Said beside an argument of a new shortcut's command that may be left out."
+                                    )
+                                    .say(),
+                                ),
                         )
                     }),
             );

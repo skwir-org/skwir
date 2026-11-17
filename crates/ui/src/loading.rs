@@ -8,6 +8,8 @@ use crate::toolbar::Button;
 use gpui::{AnyElement, Context, Task, div, prelude::*};
 use skwir_core::command::Invocation;
 use skwir_core::location::{Location, OpenLocation};
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 use std::path::Path;
 use std::{sync::Arc, time::Duration};
@@ -169,16 +171,16 @@ pub struct Way {
     /// What it is known by within its pane (`elements::known_by`).
     id: &'static str,
     icon: &'static str,
-    label: &'static str,
+    label: Words,
     /// Its tooltip, after which its keys are said.
-    title: &'static str,
+    title: Words,
     command: Invocation,
 }
 
 impl Banner {
-    fn said(text: impl Into<String>) -> Self {
+    fn said(text: &Words) -> Self {
         Banner {
-            text: text.into(),
+            text: text.say(),
             ways: Vec::new(),
         }
     }
@@ -192,25 +194,25 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
     if let Some(error) = pane_state.listing.error()
         && !pane_state.listing.is_empty()
     {
-        return Some(Banner::said(format!(
-            "Some of this location could not be read: {error}"
+        return Some(Banner::said(&words!(
+            loading_partly_failed = "Some of this location could not be read: { $error }",
+            error = error,
+            note = "A banner above a folder listed in part: what stopped the rest. error: why, as the system said it."
         )));
     }
     if !pending(shell, pane) {
         return None;
     }
     if shell.ui().place.search {
-        return Some(Banner::said("Searching…"));
+        return Some(Banner::said(&words!(
+            loading_searching = "Searching…",
+            note = "A banner above a search while it is still looking."
+        )));
     }
     let location = pane_state.location()?.clone();
     let back = pane_state.history_pos > 0;
     // A folder filled elsewhere says how far it is (ADR-120).
-    let read = pane_state
-        .listing
-        .filling_count()
-        .filter(|&n| n > 0)
-        .map(|n| format!(" {}", crate::format::items(n)))
-        .unwrap_or_default();
+    let read = pane_state.listing.filling_count().filter(|&n| n > 0);
     drop(ws);
     // A remote's folder whose server stopped answering says so (ADR-077):
     // its lane has run a job that long. The pane may leave it, or let go
@@ -227,17 +229,41 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
         let mut ways: Vec<Way> = leave(back).into_iter().collect();
         ways.extend(disconnect(shell, &remote.point));
         return Some(Banner {
-            text: format!("{name} is not answering…"),
+            text: words!(
+                loading_not_answering = "{ $name } is not answering…",
+                name = name,
+                note = "A banner above a remote folder whose server stopped answering. name: the server's or the place's name."
+            )
+            .say(),
             ways,
         });
     }
     // What is no folder says what it opens (an address connecting), and
     // may be left: what opens it is the pane's, and stops.
     Some(if location.is_path() {
-        Banner::said(format!("Loading location…{read}"))
+        Banner::said(&match read {
+            Some(count) => words!(
+                loading_location_read = "Loading location… { $count ->
+                    [one] 1 item
+                   *[other] { $count } items
+                }",
+                count = count,
+                note =
+                    "A banner above a folder being read: how many of its items were read so far."
+            ),
+            None => words!(
+                loading_location = "Loading location…",
+                note = "A banner above a folder being read."
+            ),
+        })
     } else {
         Banner {
-            text: format!("Opening {}…", shell.app.location_title(&location).say()),
+            text: words!(
+                loading_opening = "Opening { $place }…",
+                place = shell.app.location_title(&location),
+                note = "A banner above a location being opened that is no folder (an address connecting). place: its title."
+            )
+            .say(),
             ways: cancel(back).into_iter().collect(),
         }
     })
@@ -250,16 +276,28 @@ fn leave(back: bool) -> Option<Way> {
         return Some(Way {
             id: "back",
             icon: "back",
-            label: "Go Back",
-            title: "Back",
+            label: words!(
+                loading_go_back = "Go Back",
+                note = "A button of the banner above a location that takes long: leave it for the one before."
+            ),
+            title: words!(
+                loading_go_back_tip = "Back",
+                note = "Pointing at the Go Back button of the banner above a location that takes long."
+            ),
             command: Invocation::new("back"),
         });
     }
     Some(Way {
         id: "home",
         icon: "home",
-        label: "Go Home",
-        title: "Go to the home folder",
+        label: words!(
+            loading_go_home = "Go Home",
+            note = "A button of the banner above a location that takes long: leave it for the home folder."
+        ),
+        title: words!(
+            loading_go_home_tip = "Go to the home folder",
+            note = "Pointing at the Go Home button of the banner above a location that takes long."
+        ),
         command: home()?,
     })
 }
@@ -270,19 +308,32 @@ fn cancel(back: bool) -> Option<Way> {
         Way {
             id: "cancel",
             icon: "close",
-            label: "Cancel",
-            title: "Stop opening it and go back",
+            label: cancel_label(),
+            title: words!(
+                loading_cancel_back = "Stop opening it and go back",
+                note = "Pointing at the Cancel button of the banner above a location being opened."
+            ),
             command: Invocation::new("back"),
         }
     } else {
         Way {
             id: "cancel",
             icon: "close",
-            label: "Cancel",
-            title: "Stop opening it and go to the home folder",
+            label: cancel_label(),
+            title: words!(
+                loading_cancel_home = "Stop opening it and go to the home folder",
+                note = "Pointing at the Cancel button of the banner above a location being opened."
+            ),
             command: home()?,
         }
     })
+}
+
+fn cancel_label() -> Words {
+    words!(
+        loading_cancel = "Cancel",
+        note = "A button of the banner above a location being opened: stop opening it."
+    )
 }
 
 fn home() -> Option<Invocation> {
@@ -302,8 +353,15 @@ fn disconnect(shell: &Shell, point: &Path) -> Option<Way> {
     Some(Way {
         id: "disconnect",
         icon: "eject",
-        label: "Disconnect",
-        title: "Let go of the server, as the sidebar's Eject does",
+        label: words!(
+            loading_disconnect = "Disconnect",
+            note = "A button of the banner above a remote folder whose server stopped answering."
+        ),
+        title: words!(
+            loading_disconnect_tip = "Let go of the server, as the sidebar's Eject does",
+            note =
+                "Pointing at the Disconnect button. Eject is the button of a place in the sidebar."
+        ),
         command: eject,
     })
 }
@@ -331,11 +389,11 @@ pub fn render(banner: Banner, shell: &Shell, cx: &mut Context<Shell>) -> AnyElem
             Button::new(
                 format!("banner-{}-{}", way.id, pane.0),
                 way.icon,
-                way.title,
+                way.title.say(),
                 way.command.name.to_string(),
             )
             .args(way.command.args)
-            .label(way.label)
+            .label(way.label.say())
             .render(shell, cx),
         );
     }
@@ -351,11 +409,23 @@ mod tests {
     fn a_wait_is_left_back_where_the_pane_was_else_home() {
         let named = |way: Option<super::Way>| {
             let way = way.expect("a way out");
-            (way.label, way.command.name.to_string())
+            (way.label.english(), way.command.name.to_string())
         };
-        assert_eq!(named(leave(true)), ("Go Back", "back".to_owned()));
-        assert_eq!(named(leave(false)), ("Go Home", "navigate".to_owned()));
-        assert_eq!(named(cancel(true)), ("Cancel", "back".to_owned()));
-        assert_eq!(named(cancel(false)), ("Cancel", "navigate".to_owned()));
+        assert_eq!(
+            named(leave(true)),
+            ("Go Back".to_owned(), "back".to_owned())
+        );
+        assert_eq!(
+            named(leave(false)),
+            ("Go Home".to_owned(), "navigate".to_owned())
+        );
+        assert_eq!(
+            named(cancel(true)),
+            ("Cancel".to_owned(), "back".to_owned())
+        );
+        assert_eq!(
+            named(cancel(false)),
+            ("Cancel".to_owned(), "navigate".to_owned())
+        );
     }
 }

@@ -20,6 +20,8 @@ use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
 use skwir_core::EntryId;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::reference::Reference;
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::reference::FieldHelp;
 use skwir_core::workspace::PaneId;
@@ -33,27 +35,88 @@ use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The cases a rename gives names: the value the plugin knows, and the
-/// label, written as the case leaves a name. The first asks for none.
-pub const CASES: [(&str, &str); 5] = [
-    ("none", "Unchanged"),
-    ("lower", "lowercase"),
-    ("upper", "UPPERCASE"),
-    ("title", "Title Case"),
-    ("sentence", "Sentence case"),
-];
-/// Each field: the key the plugin knows it by, its label, and what it
-/// shows while empty.
-const FIELDS: [(&str, &str, &str); 4] = [
-    ("template", "Template", "{name}-{n:02}{.ext}"),
-    ("regex", "Regex", "Optional: a pattern over the whole name"),
-    (
-        "replacement",
-        "Replacement",
-        "Optional: what each match becomes, $1 for its first group",
-    ),
-    ("start", "Start", "1"),
-];
+/// The cases a rename gives names: the value the plugin knows, labelled
+/// by `case_label`. The first asks for none.
+pub const CASES: [&str; 5] = ["none", "lower", "upper", "title", "sentence"];
+
+/// The label of the case at `at` of `CASES`, written as the case leaves a
+/// name.
+fn case_label(at: usize) -> Words {
+    match at {
+        0 => words!(
+            renamebulk_case_unchanged = "Unchanged",
+            note = "A case the bulk rename gives names: it leaves them as they are."
+        ),
+        1 => words!(
+            renamebulk_case_lower = "lowercase",
+            note = "A case the bulk rename gives names, written as it leaves them: every \
+                    letter small."
+        ),
+        2 => words!(
+            renamebulk_case_upper = "UPPERCASE",
+            note = "A case the bulk rename gives names, written as it leaves them: every \
+                    letter a capital."
+        ),
+        3 => words!(
+            renamebulk_case_title = "Title Case",
+            note = "A case the bulk rename gives names, written as it leaves them: each word \
+                    begins with a capital."
+        ),
+        _ => words!(
+            renamebulk_case_sentence = "Sentence case",
+            note = "A case the bulk rename gives names, written as it leaves them: only the \
+                    first word begins with a capital."
+        ),
+    }
+}
+
+/// Each field, by the key the plugin knows it by; `field_words` says its
+/// label and what it shows while empty.
+const FIELDS: [&str; 4] = ["template", "regex", "replacement", "start"];
+
+/// The label of the field at `at` of `FIELDS`, and what it shows while
+/// empty.
+fn field_words(at: usize) -> (Words, Words) {
+    match at {
+        0 => (
+            words!(
+                renamebulk_template = "Template",
+                note = "The bulk rename's field of what each new name is made of."
+            ),
+            // A template as it is typed.
+            Words::as_written("{name}-{n:02}{.ext}"),
+        ),
+        1 => (
+            words!(
+                renamebulk_regex = "Regex",
+                note = "The bulk rename's field of a regular expression matched in each name."
+            ),
+            words!(
+                renamebulk_regex_placeholder = "Optional: a pattern over the whole name",
+                note = "In the bulk rename's empty Regex field."
+            ),
+        ),
+        2 => (
+            words!(
+                renamebulk_replacement = "Replacement",
+                note = "The bulk rename's field of what each match of the regex becomes."
+            ),
+            words!(
+                renamebulk_replacement_placeholder = "Optional: what each match becomes, $1 \
+                                                      for its first group",
+                note = "In the bulk rename's empty Replacement field; $1 is written as it is \
+                        typed."
+            ),
+        ),
+        _ => (
+            words!(
+                renamebulk_start = "Start",
+                note = "The bulk rename's field of the number the names' counter starts at."
+            ),
+            Words::as_written("1"),
+        ),
+    }
+}
 
 /// How many of `FIELDS`, from the first, say what they take.
 const SAID: usize = 3;
@@ -108,7 +171,7 @@ pub struct BulkState {
     /// with the dialog, gone with it.
     kept_for: Option<String>,
     renamed: usize,
-    pub error: Option<String>,
+    pub error: Option<Words>,
     /// Advances with each change; only the latest preview is shown, and
     /// the one asked before is cancelled (`pending`): not worked out if
     /// it has not begun, stopped where it is if it has.
@@ -180,7 +243,7 @@ impl crate::reference::Helps for Shell {
         if !b.inputs.iter().any(|input| input.entity_id() == field) {
             return None;
         }
-        let at = FIELDS.iter().position(|(named, ..)| *named == key)?;
+        let at = FIELDS.iter().position(|named| *named == key)?;
         b.inputs.get(at).cloned()
     }
 }
@@ -211,7 +274,7 @@ impl Shell {
     pub fn open_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.selection_ctx().count;
         if count == 0 {
-            self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
+            self.set_status(crate::shell::nothing_selected(), false, cx);
             return;
         }
         let back = FocusReturn::capture(window, cx);
@@ -224,10 +287,11 @@ impl Shell {
         };
         let mut inputs = Vec::new();
         let mut subs = Vec::new();
-        for (i, &(_, label, placeholder)) in FIELDS.iter().enumerate() {
+        for i in 0..FIELDS.len() {
+            let (label, placeholder) = field_words(i);
             let input = cx.new(|cx| {
-                let mut input = TextInput::new(placeholder, cx);
-                input.set_label(label);
+                let mut input = TextInput::new(placeholder.say(), cx);
+                input.set_label(label.say());
                 input
             });
             if i == 0 {
@@ -269,7 +333,7 @@ impl Shell {
             case_anchor: PopoverAnchor::default(),
             focused: 0,
             preview: Vec::new(),
-            helps: std::array::from_fn(|i| FieldHelp::new(FIELDS[i].0, None)),
+            helps: std::array::from_fn(|i| FieldHelp::new(FIELDS[i], None)),
             kept_for: None,
             renamed: 0,
             error: None,
@@ -396,7 +460,7 @@ impl Shell {
                             (shown, count, None, first)
                         }
                         Ok(_) => (Vec::new(), 0, None, None),
-                        Err(e) => (Vec::new(), 0, Some(format!("{e:#}")), None),
+                        Err(e) => (Vec::new(), 0, Some(Words::of_error(e)), None),
                     };
                 // What each field takes, given the first item as the rename
                 // stands; one the plugin could not say keeps the last. The
@@ -408,12 +472,12 @@ impl Shell {
                         return None;
                     }
                     let mut asked = said.clone();
-                    asked["field"] = FIELDS[i].0.into();
+                    asked["field"] = FIELDS[i].into();
                     match app.dispatch(&Invocation::with_args("rename_bulk.reference", &asked)) {
                         Ok(Outcome::Value(v)) => serde_json::from_value(v).ok(),
                         Ok(_) => None,
                         Err(e) => {
-                            tracing::warn!("rename_bulk.reference ({}): {e:#}", FIELDS[i].0);
+                            tracing::warn!("rename_bulk.reference ({}): {e:#}", FIELDS[i]);
                             None
                         }
                     }
@@ -471,7 +535,11 @@ impl Shell {
         b.asked += 1;
         b.preview.clear();
         b.renamed = 0;
-        b.error = Some("The selection changed since this opened: open it again".into());
+        b.error = Some(words!(
+            renamebulk_selection_changed = "The selection changed since this opened: open it \
+                                            again",
+            note = "In the bulk rename, when what it was opened for is no longer selected."
+        ));
         b.current = true;
         cx.notify();
     }
@@ -514,7 +582,7 @@ fn spec_of(texts: &[String; 4], case: usize, pane: PaneId) -> serde_json::Value 
     };
     let start: u64 = start.trim().parse().unwrap_or(1);
     let case = match CASES.get(case) {
-        Some(&(value, _)) if case > 0 => serde_json::Value::String(value.into()),
+        Some(&value) if case > 0 => serde_json::Value::String(value.into()),
         _ => serde_json::Value::Null,
     };
     serde_json::json!({
@@ -555,7 +623,7 @@ fn case_segments(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
         }
     });
     let mut frame = controls::segmented("bulk-case", &b.case_focus, theme)
-        .aria_label("Case")
+        .aria_label(case_title().say())
         .key_context(keymap::BULK_CASE)
         .on_click(keyboard);
     // Drawn as segments, the dropdown's list has nothing to hang from (the
@@ -577,8 +645,9 @@ fn case_segments(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
             .absolute(),
         );
     }
-    for (at, &(_, label)) in CASES.iter().enumerate() {
+    for at in 0..CASES.len() {
         let focus = b.case_focus.clone();
+        let label = case_label(at).say();
         frame = frame.child(
             controls::segment(format!("bulk-case-{at}"), label, at == b.case, theme).on_click(
                 cx.listener(move |this, _, window, cx| {
@@ -595,8 +664,8 @@ fn case_segments(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
 /// Space opens, Escape, a press outside or a value taken closes.
 fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let open = b.case_open;
-    let control = controls::dropdown("bulk-case", CASES[b.case].1, &b.case_focus, theme)
-        .aria_label("Case")
+    let control = controls::dropdown("bulk-case", case_label(b.case).say(), &b.case_focus, theme)
+        .aria_label(case_title().say())
         .aria_expanded(open)
         .key_context(keymap::BULK_CASE)
         .child(b.case_anchor.marker())
@@ -624,11 +693,11 @@ fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
         b.case_anchor
             .outside(cx.listener(|this, _, _, cx| this.bulk_case_list(false, cx))),
     );
-    for (at, &(_, label)) in CASES.iter().enumerate() {
+    for at in 0..CASES.len() {
         let focus = b.case_focus.clone();
         list = list.child(
             controls::dropdown_row(format!("bulk-case-row-{at}"), at == b.case, theme)
-                .child(label)
+                .child(case_label(at).say())
                 .on_click(cx.listener(move |this, _, window, cx| {
                     window.focus(&focus, cx);
                     this.bulk_case_list(false, cx);
@@ -658,7 +727,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let b = shell.bulk.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let mut form = div().flex().flex_col().gap_2();
-    for (i, (_, label, _)) in FIELDS.iter().enumerate() {
+    for i in 0..FIELDS.len() {
+        let (label, _) = field_words(i);
         // Where the keyboard is, whether Tab or a click put it there.
         let focused = b.inputs[i].read(cx).is_focused(window);
         let frame = div()
@@ -696,7 +766,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .w(sized(100.))
                         .text_body()
                         .text_color(theme.text_muted)
-                        .child(*label),
+                        .child(label.say()),
                 )
                 .child(frame),
         );
@@ -712,7 +782,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     .w(sized(100.))
                     .text_body()
                     .text_color(theme.text_muted)
-                    .child("Case"),
+                    .child(case_title().say()),
             )
             .child(case_control(b, &theme, cx)),
     );
@@ -781,32 +851,54 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             ));
     // Nothing to rename is said where the renames would be.
     let unchanged = b.changes_nothing().then(|| {
-        div()
-            .text_body()
-            .text_color(theme.text_muted)
-            .child("No name changes")
+        div().text_body().text_color(theme.text_muted).child(
+            words!(
+                renamebulk_no_changes = "No name changes",
+                note = "Where the bulk rename lists its renames, when it would rename \
+                            nothing."
+            )
+            .say(),
+        )
     });
     let more = (b.renamed > b.preview.len()).then(|| {
-        div()
-            .text_small()
-            .text_color(theme.text_muted)
-            .child(format!("… {} more", b.renamed - b.preview.len()))
+        div().text_small().text_color(theme.text_muted).child(
+            words!(
+                renamebulk_more = "… { $count } more",
+                count = b.renamed - b.preview.len(),
+                note = "Under the renames the bulk rename lists: how many more it makes."
+            )
+            .say(),
+        )
     });
     let panel = modal::panel("bulk-rename", 720., &theme)
-        .aria_label("Bulk rename")
+        .aria_label(
+            words!(
+                renamebulk_dialog = "Bulk rename",
+                note = "What a screen reader calls the dialog renaming several files at once."
+            )
+            .say(),
+        )
         .p_3()
         .gap_2()
         .key_context(keymap::BULK)
         .child(
-            div()
-                .text_title()
-                .child(format!("Rename {}", crate::format::items(b.count))),
+            div().text_title().child(
+                words!(
+                    renamebulk_title = "{ $count ->
+                            [one] Rename 1 item
+                           *[other] Rename { $count } items
+                        }",
+                    count = b.count,
+                    note = "The title of the dialog renaming several files at once."
+                )
+                .say(),
+            ),
         )
         .child(form)
         .children(
             b.error
-                .clone()
-                .map(|e| div().text_body().text_color(theme.error).child(e)),
+                .as_ref()
+                .map(|e| div().text_body().text_color(theme.error).child(e.say())),
         )
         .child(list)
         .children(unchanged)
@@ -817,7 +909,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 modal::pressed(
                     controls::button(
                         "bulk-cancel",
-                        "Cancel",
+                        words!(
+                            renamebulk_cancel = "Cancel",
+                            note = "A button: close the bulk rename, renaming nothing."
+                        )
+                        .say(),
                         None,
                         ButtonStyle::Plain,
                         &b.cancel_focus,
@@ -833,7 +929,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     if b.applies() {
                         controls::button(
                             "bulk-apply",
-                            "Rename",
+                            rename().say(),
                             Some("check"),
                             ButtonStyle::Plain,
                             &b.apply_focus,
@@ -842,7 +938,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     } else {
                         controls::inert_button_with(
                             "bulk-apply",
-                            "Rename",
+                            rename().say(),
                             Some("check"),
                             &b.apply_focus,
                             &theme,
@@ -857,20 +953,57 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     Some(modal::modal(panel, 60., 4, Shell::close_bulk, &theme, cx))
 }
 
+/// The label of the case's control.
+fn case_title() -> Words {
+    words!(
+        renamebulk_case = "Case",
+        note = "The bulk rename's choice of the case it gives names."
+    )
+}
+
+/// The bulk rename's button that renames.
+fn rename() -> Words {
+    words!(
+        renamebulk_rename = "Rename",
+        note = "A button: rename the files as the bulk rename lists."
+    )
+}
+
 /// The dialog's keys, as the keymap binds them: those it has no key for
 /// are left out.
 fn footer_hint(shell: &Shell) -> String {
     let none = serde_json::Value::Null;
-    let mut said = vec!["Tab switches fields".to_owned()];
-    if let Some(keys) = shell.keys_for("ui.rename_bulk_case", &none) {
-        said.push(format!("{keys} changes case"));
+    let case = shell.keys_for("ui.rename_bulk_case", &none);
+    let reference = shell.keys_for("ui.field_reference", &none);
+    match (case, reference) {
+        (Some(case), Some(reference)) => words!(
+            renamebulk_keys_case_reference = "Tab switches fields · { $case } changes case · \
+                                              { $reference } says what one takes · Enter \
+                                              renames (undoable) · Escape cancels",
+            case = case,
+            reference = reference,
+            note = "The bulk rename's keys. case: the keys that change the case (Ctrl+K); \
+                    reference: the keys that say what a field takes (F1)."
+        ),
+        (Some(case), None) => words!(
+            renamebulk_keys_case = "Tab switches fields · { $case } changes case · Enter \
+                                    renames (undoable) · Escape cancels",
+            case = case,
+            note = "The bulk rename's keys. case: the keys that change the case (Ctrl+K)."
+        ),
+        (None, Some(reference)) => words!(
+            renamebulk_keys_reference = "Tab switches fields · { $reference } says what one \
+                                         takes · Enter renames (undoable) · Escape cancels",
+            reference = reference,
+            note = "The bulk rename's keys. reference: the keys that say what a field takes \
+                    (F1)."
+        ),
+        (None, None) => words!(
+            renamebulk_keys = "Tab switches fields · Enter renames (undoable) · Escape cancels",
+            note = "The bulk rename's keys."
+        ),
     }
-    if let Some(keys) = shell.keys_for("ui.field_reference", &none) {
-        said.push(format!("{keys} says what one takes"));
-    }
-    said.push("Enter renames (undoable)".to_owned());
-    said.push("Escape cancels".to_owned());
-    said.join(" · ")
+    .say()
 }
 
 #[cfg(test)]
@@ -922,7 +1055,7 @@ mod tests {
         assert_eq!(case_stepped(0, None), 1);
         assert_eq!(case_stepped(last, None), 0, "round the last");
         let texts = ["{full}", "", "", ""].map(str::to_owned);
-        for (at, &(value, _)) in CASES.iter().enumerate().skip(1) {
+        for (at, &value) in CASES.iter().enumerate().skip(1) {
             assert_eq!(spec_of(&texts, at, PaneId(1))["case"], value);
         }
     }

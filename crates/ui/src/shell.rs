@@ -16,6 +16,8 @@ use skwir_core::app::NotifyLevel;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::os_path::PathArg;
 use skwir_core::scheduler::Lane;
+use skwir_core::words;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_core::{App, Location, Plan};
 
@@ -40,7 +42,12 @@ use crate::{
 };
 
 /// What the shell says when a command needs a selection and there is none.
-pub const NOTHING_SELECTED: &str = "Select a file or folder first";
+pub fn nothing_selected() -> Words {
+    words!(
+        shell_nothing_selected = "Select a file or folder first",
+        note = "Said when a command needs a selection and there is none."
+    )
+}
 
 /// UI state of one pane: focus, address bar, cached order, views.
 pub struct PaneUi {
@@ -1260,8 +1267,22 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> PaneUi {
         let address = cx.new(|cx| {
-            let mut input = TextInput::new("Path, query:… or location", cx);
-            input.set_label("Address");
+            let mut input = TextInput::new(
+                words!(
+                    shell_address_placeholder = "Path, query:… or location",
+                    note = "What the address field shows while it is empty; query: is a word of \
+                            the search language, as typed."
+                )
+                .say(),
+                cx,
+            );
+            input.set_label(
+                words!(
+                    shell_address = "Address",
+                    note = "What a screen reader calls the address field."
+                )
+                .say(),
+            );
             input
         });
         let sub = cx.subscribe_in(
@@ -1634,7 +1655,10 @@ impl Shell {
                 }
                 let Some(is_dir) = is_dir else {
                     this.set_status(
-                        "Skwir follows no link to another machine or a drive not mounted yet",
+                        words!(
+                            shell_reveal_not_here = "Skwir follows no link to another machine or \
+                                                     a drive not mounted yet"
+                        ),
                         true,
                         cx,
                     );
@@ -1649,11 +1673,15 @@ impl Shell {
                     Err(_) => None,
                 };
                 let Some((folder, name)) = found else {
-                    let name = path.file_name().map_or_else(
-                        || path.display().to_string(),
-                        |name| name.to_string_lossy().into_owned(),
+                    this.set_status(
+                        words!(
+                            shell_reveal_gone = "{ $name } is not there",
+                            name = Name::of(&path),
+                            note = "Said where a link asked to show a file that is gone."
+                        ),
+                        true,
+                        cx,
                     );
-                    this.set_status(format!("“{name}” is not there"), true, cx);
                     return;
                 };
                 let pane = if at.tab {
@@ -1661,7 +1689,7 @@ impl Shell {
                     match this.app.new_tab(Some(pane), Some(location), true) {
                         Ok((_, opened)) => opened,
                         Err(error) => {
-                            this.set_status(format!("{error:#}"), true, cx);
+                            this.set_status(Words::of_error(error), true, cx);
                             return;
                         }
                     }
@@ -1673,7 +1701,7 @@ impl Shell {
                         == Some(skwir_core::Location::from_path(&folder));
                     if here {
                         if let Err(error) = this.app.step_here(pane) {
-                            this.set_status(format!("{error:#}"), true, cx);
+                            this.set_status(Words::of_error(error), true, cx);
                             return;
                         }
                     } else {
@@ -1821,11 +1849,7 @@ impl Shell {
             _ => self.reveal = None,
         }
         if let Some(name) = hidden {
-            let joined = self.say_with(
-                answer,
-                format!("Hidden files are shown, “{name}” among them").into(),
-                cx,
-            );
+            let joined = self.say_with(answer, hidden_shown(name), cx);
             if let Some(reveal) = self.reveal.as_mut() {
                 reveal.answer = joined.or(reveal.answer);
             }
@@ -2211,7 +2235,7 @@ impl Shell {
         };
         if let Some(said) = said {
             let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
-            let joined = self.say_with(answer, said.into(), cx);
+            let joined = self.say_with(answer, said, cx);
             if let Some(reveal) = self.reveal.as_mut() {
                 reveal.answer = joined.or(reveal.answer);
             }
@@ -2313,7 +2337,7 @@ impl Shell {
         if let Some(loc) = here
             && let Err(e) = self.app.navigate(id, &loc)
         {
-            self.set_status(format!("{e:#}"), true, cx);
+            self.set_status(Words::of_error(e), true, cx);
         }
         self.remember_session();
         cx.notify();
@@ -2373,7 +2397,15 @@ impl Shell {
     /// says.
     fn send_to_other_pane(&mut self, cmd: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(other) = self.other_pane() else {
-            self.set_status("There is no other pane: split the window first", false, cx);
+            self.set_status(
+                words!(
+                    shell_no_other_pane = "There is no other pane: split the window first",
+                    note = "Said where Shift+F5 or Shift+F6 gives the selection to the other \
+                            pane and the window is not split."
+                ),
+                false,
+                cx,
+            );
             return;
         };
         let how = if cmd == "move" {
@@ -2582,7 +2614,7 @@ impl Shell {
                 });
                 cx.notify();
             }
-            None => self.set_status(format!("unknown view `{id}`"), true, cx),
+            None => self.set_status(unknown_view(id), true, cx),
         }
     }
 
@@ -2590,7 +2622,7 @@ impl Shell {
     /// address (`on`), take it away, or, without `on`, the other.
     fn set_view_button(&mut self, id: &str, on: Option<bool>, cx: &mut Context<Self>) {
         let Some(spec) = self.available_views().into_iter().find(|s| &*s.id == id) else {
-            self.set_status(format!("unknown view `{id}`"), true, cx);
+            self.set_status(unknown_view(id), true, cx);
             return;
         };
         let on = on.unwrap_or(!self.view_buttons.pinned(&spec));
@@ -2800,8 +2832,17 @@ impl Shell {
         if next != now {
             crate::settings::remember(self, part.key(), next.to_string(), cx);
         }
-        let label = crate::sizes::step_label(next);
-        self.set_status(format!("{}: {label}", part.title()), false, cx);
+        self.set_status(
+            words!(
+                shell_text_size = "{ $part }: { $size }",
+                part = part.title(),
+                size = crate::sizes::step_label(next),
+                note = "Said as a part's text is made larger or smaller: the part (Files text), \
+                        then its size (120%)."
+            ),
+            false,
+            cx,
+        );
         cx.notify();
     }
 
@@ -2937,7 +2978,7 @@ impl Shell {
         match self.app.dispatch_args(name, args) {
             Ok(Outcome::Done | Outcome::Value(_)) => {}
             Ok(_) => tracing::warn!(name, "an answer only `run` follows"),
-            Err(e) => self.report_error(&e, cx),
+            Err(e) => self.report_error(e, cx),
         }
         cx.notify();
     }
@@ -3015,7 +3056,7 @@ impl Shell {
                 args: args.clone(),
             });
             if let Err(error) = checked {
-                self.set_status(error.to_string(), true, cx);
+                self.set_status(error.words(), true, cx);
                 return;
             }
             self.run_ui(ui, &args, window, cx);
@@ -3069,7 +3110,7 @@ impl Shell {
             Err(e) if skwir_core::command::wants_clipboard(&e) => {
                 self.run_with_clipboard(inv, window, cx);
             }
-            Err(e) => self.report_error(&e, cx),
+            Err(e) => self.report_error(e, cx),
         }
         cx.notify();
     }
@@ -3165,19 +3206,29 @@ impl Shell {
         if running.is_none() && waiting == 0 && work.waits_for_server() {
             // Nothing runs nor waits its turn: what keeps it waits for
             // its server, the one the strip says stopped when it is that.
-            let what = work
+            let stopped = work
                 .stopped
                 .as_ref()
-                .filter(|stopped| self.app.executor.waits_for_server(stopped.plan))
-                .map_or_else(
-                    || "An action".to_owned(),
-                    |stopped| crate::toast::capitalized(&stopped.title.say()),
-                );
-            return format!(
-                "{what} waits for its server to answer again, to go on by itself. \
-                 Skwir can wait for it without its window, then quit. Or stop now: it \
-                 does not go on, and what it finished stays."
-            );
+                .filter(|stopped| self.app.executor.waits_for_server(stopped.plan));
+            let question = match stopped {
+                Some(stopped) => words!(
+                    shell_quit_waits_for_server = "{ $action } waits for its server to answer \
+                        again, to go on by itself. Skwir can wait for it without its window, \
+                        then quit. Or stop now: it does not go on, and what it finished stays.",
+                    // Transitional: a plan's title capitalised (ADR-139).
+                    action = crate::toast::capitalized(&stopped.title.say()),
+                    note = "What Quit asks while an action waits for its server to go on. \
+                            action: the action, by its title, capitalised (Copy to stick)."
+                ),
+                None => words!(
+                    shell_quit_one_waits_for_server = "An action waits for its server to \
+                        answer again, to go on by itself. Skwir can wait for it without its \
+                        window, then quit. Or stop now: it does not go on, and what it \
+                        finished stays.",
+                    note = "What Quit asks while an action waits for its server to go on."
+                ),
+            };
+            return question.say();
         }
         let others = (work.running.len() + tasks.len()).saturating_sub(1);
         crate::toast::quit_question(
@@ -3310,7 +3361,7 @@ impl Shell {
             Ok(Outcome::Value(v)) => Some(v),
             Ok(_) => None,
             Err(e) => {
-                self.set_status(format!("{e:#}"), true, cx);
+                self.set_status(Words::of_error(e), true, cx);
                 None
             }
         }
@@ -3446,7 +3497,14 @@ impl Shell {
                         Some(rename) => {
                             self.run(&rename.command.name, rename.command.args, window, cx);
                         }
-                        None => self.set_status("This cannot be renamed", true, cx),
+                        None => self.set_status(
+                            words!(
+                                shell_cannot_rename = "This cannot be renamed",
+                                note = "Said where F2 asks to rename a place that cannot be."
+                            ),
+                            true,
+                            cx,
+                        ),
                     }
                     return;
                 }
@@ -3456,9 +3514,22 @@ impl Shell {
                         let stem = name.rfind('.').filter(|&i| i > 0).unwrap_or(name.len());
                         let pane = self.pane;
                         let ask = serde_json::json!({
-                            "title": "Rename",
-                            "accept": "Rename",
-                            "placeholder": "New name",
+                            "title": words!(
+                                shell_rename_title = "Rename",
+                                note = "The title of the dialog renaming a file."
+                            )
+                            .say(),
+                            "accept": words!(
+                                shell_rename_accept = "Rename",
+                                note = "The button of the dialog renaming a file that renames it."
+                            )
+                            .say(),
+                            "placeholder": words!(
+                                shell_rename_placeholder = "New name",
+                                note = "What the field of the dialog renaming a file shows while \
+                                        empty."
+                            )
+                            .say(),
                             "text": name,
                             "select": [0, stem],
                             "command": "rename",
@@ -3467,15 +3538,35 @@ impl Shell {
                         });
                         self.open_ask(&ask, window, cx);
                     }
-                    None => self.set_status("select exactly one entry to rename", true, cx),
+                    None => self.set_status(
+                        words!(
+                            shell_rename_one = "select exactly one entry to rename",
+                            note = "Said where F2 asks to rename and not one entry is selected."
+                        ),
+                        true,
+                        cx,
+                    ),
                 }
             }
             "new_file_prompt" => {
                 let pane = self.pane;
                 let ask = serde_json::json!({
-                    "title": "New file",
-                    "accept": "Create",
-                    "placeholder": "File name, or a folder name ending in /",
+                    "title": words!(
+                        shell_new_file_title = "New file",
+                        note = "The title of the dialog making a new file."
+                    )
+                    .say(),
+                    "accept": words!(
+                        shell_new_file_accept = "Create",
+                        note = "The button of the dialog making a new file that makes it."
+                    )
+                    .say(),
+                    "placeholder": words!(
+                        shell_new_file_placeholder = "File name, or a folder name ending in /",
+                        note = "What the field of the dialog making a new file shows while empty: \
+                                a name ending in / makes a folder."
+                    )
+                    .say(),
                     "command": "new_file",
                     "args": { "pane": pane },
                     "field": "name",
@@ -3488,10 +3579,20 @@ impl Shell {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false);
                 let origin = self.cursor_id();
-                let title = if backward { "Find before" } else { "Find" };
+                let title = if backward {
+                    words!(
+                        shell_find_before = "Find before",
+                        note = "The title of the prompt finding a name before the cursor."
+                    )
+                } else {
+                    words!(
+                        shell_find = "Find",
+                        note = "The title of the prompt finding a name after the cursor."
+                    )
+                };
                 self.open_prompt(
                     PromptKind::Find { origin, backward },
-                    title,
+                    &title.say(),
                     "",
                     None,
                     window,
@@ -3506,9 +3607,25 @@ impl Shell {
                 match self.last_find.clone() {
                     Some((pattern, _)) => match self.find_from(None, &pattern, delta < 0) {
                         Some(ix) => self.cursor_to(ix as isize, Step::Follow, window, cx),
-                        None => self.set_status(format!("No name holds “{pattern}”"), false, cx),
+                        None => self.set_status(
+                            words!(
+                                shell_find_none = "No name holds “{ $pattern }”",
+                                pattern = pattern,
+                                note = "Said where Find again finds no name holding what was \
+                                        typed (pattern, as typed)."
+                            ),
+                            false,
+                            cx,
+                        ),
                     },
-                    None => self.set_status("Nothing to find again: press / first", false, cx),
+                    None => self.set_status(
+                        words!(
+                            shell_find_nothing = "Nothing to find again: press / first",
+                            note = "Said where Find again is asked before anything was found."
+                        ),
+                        false,
+                        cx,
+                    ),
                 }
             }
             "cursor" => self.cursor_command(args, window, cx),
@@ -3522,9 +3639,22 @@ impl Shell {
             "mkdir_prompt" => {
                 let pane = self.pane;
                 let ask = serde_json::json!({
-                    "title": "New folder",
-                    "accept": "Create",
-                    "placeholder": "Folder name",
+                    "title": words!(
+                        shell_new_folder_title = "New folder",
+                        note = "The title of the dialog making a new folder."
+                    )
+                    .say(),
+                    "accept": words!(
+                        shell_new_folder_accept = "Create",
+                        note = "The button of the dialog making a new folder that makes it."
+                    )
+                    .say(),
+                    "placeholder": words!(
+                        shell_new_folder_placeholder = "Folder name",
+                        note = "What the field of the dialog making a new folder shows while \
+                                empty."
+                    )
+                    .say(),
                     "command": "mkdir",
                     "args": { "pane": pane },
                     "field": "name",
@@ -3535,7 +3665,15 @@ impl Shell {
             // the one shown), as it says (`Verbs::create`).
             "create_here" => match self.ui().place.verbs.create.clone() {
                 Some(create) => self.run(&create.command.name, create.command.args, window, cx),
-                None => self.set_status("Nothing new can be made here", true, cx),
+                None => self.set_status(
+                    words!(
+                        shell_nothing_new = "Nothing new can be made here",
+                        note = "Said where a new place is asked for where the location shown \
+                                makes none."
+                    ),
+                    true,
+                    cx,
+                ),
             },
             // The address field, in search: where it looks as a pill, and a
             // text to start from (`content:`) typed after.
@@ -3572,8 +3710,21 @@ impl Shell {
             "copy_text" => {
                 if let Some(text) = arg("text") {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    let what = arg("what").unwrap_or_else(|| "text".into());
-                    self.set_status(format!("Copied {what}"), false, cx);
+                    // Transitional: what it is comes as text in the
+                    // command's arguments, as its caller wrote it (ADR-139).
+                    let said = match arg("what") {
+                        Some(what) => words!(
+                            shell_copied_what = "Copied { $what }",
+                            what = what,
+                            note = "Said once a value is copied; what: what it is, as the \
+                                    link that copied it says it (the SHA-256)."
+                        ),
+                        None => words!(
+                            shell_copied_text = "Copied text",
+                            note = "Said once a text is copied from a link beside it."
+                        ),
+                    };
+                    self.set_status(said, false, cx);
                 }
             }
             "compare_copied" => {
@@ -3582,8 +3733,7 @@ impl Shell {
                         .read_from_clipboard()
                         .and_then(|item| item.text())
                         .unwrap_or_default();
-                    let what = arg("what").unwrap_or_else(|| "text".into());
-                    let (said, wrong) = compared(&text, &copied, &what);
+                    let (said, wrong) = compared(&text, &copied, arg("what").as_deref());
                     self.set_status(said, wrong, cx);
                 }
             }
@@ -3812,7 +3962,12 @@ impl Shell {
                     Some(part) => self.text_size_step(part, &dir, cx),
                     None => {
                         self.set_status(
-                            format!("No part of the window is called {part}"),
+                            words!(
+                                shell_no_such_part = "No part of the window is called { $part }",
+                                part = part,
+                                note = "Said where ui.text_size names a part that is none; part: \
+                                        as given (files, reading)."
+                            ),
                             true,
                             cx,
                         );
@@ -4014,7 +4169,16 @@ impl Shell {
             "minimize_window" => window.minimize_window(),
             // Declared (`commands.rs`) but carried out nowhere: a mistake
             // the test of the declarations catches.
-            other => self.set_status(format!("ui.{other} is not carried out here"), true, cx),
+            other => self.set_status(
+                words!(
+                    shell_not_carried_out = "ui.{ $command } is not carried out here",
+                    command = other,
+                    note = "Said where the window is asked a command it declares but does not \
+                            carry out; ui.{ $command } is the command's id."
+                ),
+                true,
+                cx,
+            ),
         }
     }
 
@@ -4157,8 +4321,7 @@ impl Shell {
                             crate::toast::Tone::Success
                         },
                         vec![crate::toast::Action {
-                            // Said as the toast is made, as its own are.
-                            label: action.label.say(),
+                            label: action.label,
                             command: action.command.name.to_string(),
                             args: action.command.args,
                         }],
@@ -4524,7 +4687,7 @@ impl Shell {
         if place.is_empty() {
             window.set_window_title("skwir");
         } else {
-            window.set_window_title(&format!("{place} — skwir"));
+            window.set_window_title(&crate::title_bar::window_title(&place));
         }
     }
 
@@ -4581,13 +4744,21 @@ impl Shell {
             .flatten();
         // What it says in place of the entries, said to assistive
         // technology as the pane's description.
-        let said = placeholder
-            .as_ref()
-            .filter(|_| self.a11y)
-            .map(|p| match p.detail.as_str() {
-                "" => p.title.clone(),
-                detail => format!("{}. {detail}", p.title),
-            });
+        let said = placeholder.as_ref().filter(|_| self.a11y).map(|p| {
+            if p.detail.is_empty() {
+                Words::from(p.title.clone())
+            } else {
+                words!(
+                    shell_placeholder_said = "{ $title }. { $detail }",
+                    title = p.title.clone(),
+                    detail = p.detail.clone(),
+                    note = "What a screen reader hears of what a pane shows in place of its \
+                                files: what it says, then more of it (This folder is empty. \
+                                Drop files here)."
+                )
+            }
+            .say()
+        });
         let body = if let Some(placeholder) = placeholder {
             let focus = self.ui().placeholder_focus.clone();
             crate::placeholder::render(placeholder, &focus, cx)
@@ -4602,7 +4773,14 @@ impl Shell {
                 }
                 None => div()
                     .flex_1()
-                    .child("no view registered")
+                    .child(
+                        words!(
+                            shell_no_view = "no view registered",
+                            note = "What a pane shows where no view can draw it (none is \
+                                    registered)."
+                        )
+                        .say(),
+                    )
                     .into_any_element(),
             }
         };
@@ -5196,16 +5374,77 @@ impl Shell {
 /// clipboard or one of its words (`sha256sum` writes the name after it),
 /// in words, and whether that is wrong. One word as long as it, but
 /// another, differs; nothing of its length is nothing to compare.
-fn compared(text: &str, copied: &str, what: &str) -> (String, bool) {
+/// `what` it is, as the link comparing it says it (`SHA-256`), else a
+/// text.
+// Transitional: `what` comes as text in the command's arguments, as its
+// caller wrote it (ADR-139).
+fn compared(text: &str, copied: &str, what: Option<&str>) -> (Words, bool) {
     let same = |word: &str| word.eq_ignore_ascii_case(text);
     let words = || copied.split_whitespace();
     if same(copied.trim()) || words().any(same) {
-        (format!("The {what} is the one copied"), false)
+        let said = match what {
+            Some(what) => words!(
+                shell_compared_same = "The { $what } is the one copied",
+                what = what.to_owned(),
+                note = "Said where a value is compared with the clipboard and it is the same; \
+                        what: what it is, as the link says it (SHA-256)."
+            ),
+            None => words!(
+                shell_compared_same_text = "The text is the one copied",
+                note = "Said where a text is compared with the clipboard and it is the same."
+            ),
+        };
+        (said, false)
     } else if words().any(|word| word.len() == text.len()) {
-        (format!("The {what} differs from the one copied"), true)
+        let said = match what {
+            Some(what) => words!(
+                shell_compared_differs = "The { $what } differs from the one copied",
+                what = what.to_owned(),
+                note = "Said where a value is compared with the clipboard and differs; what: \
+                        what it is, as the link says it (SHA-256)."
+            ),
+            None => words!(
+                shell_compared_differs_text = "The text differs from the one copied",
+                note = "Said where a text is compared with the clipboard and differs."
+            ),
+        };
+        (said, true)
     } else {
-        (format!("No {what} is copied to compare with"), true)
+        let said = match what {
+            Some(what) => words!(
+                shell_compared_nothing = "No { $what } is copied to compare with",
+                what = what.to_owned(),
+                note = "Said where a value is compared with the clipboard, which holds none \
+                        like it; what: what it is, as the link says it (SHA-256)."
+            ),
+            None => words!(
+                shell_compared_nothing_text = "No text is copied to compare with",
+                note = "Said where a text is compared with the clipboard, which holds none \
+                        like it."
+            ),
+        };
+        (said, true)
     }
+}
+
+/// What `ui.view` and `ui.view_button` say of a view that is none.
+fn unknown_view(id: &str) -> Words {
+    words!(
+        shell_unknown_view = "unknown view `{ $view }`",
+        view = id.to_owned(),
+        note = "Said to a command naming a view that is not registered; view: its id, as given."
+    )
+}
+
+/// What the window says where hidden files were turned on to show a
+/// renamed or revealed entry, `name`.
+fn hidden_shown(name: String) -> Words {
+    words!(
+        shell_hidden_shown = "Hidden files are shown, { $name } among them",
+        name = Name(name),
+        note = "Said where a file renamed or revealed is hidden: hidden files were turned on \
+                to show it."
+    )
 }
 
 /// The window shows what is behind it where its grounds let it through
@@ -5324,25 +5563,42 @@ fn renamed_to(changes: &[skwir_core::op::Change]) -> Vec<std::path::PathBuf> {
 /// What the window says of renamed entries it shows otherwise than they
 /// were: hidden files turned on for `unhid`, and those still `left_out`,
 /// by the filter where the pane is `filtered`.
-fn renamed_said(unhid: Option<String>, left_out: &[String], filtered: bool) -> Option<String> {
-    let mut said = Vec::new();
-    if let Some(name) = unhid {
-        said.push(format!("Hidden files are shown, “{name}” among them"));
-    }
-    match (left_out, filtered) {
-        ([], _) => {}
-        ([one], true) => said.push(format!("“{one}” is renamed, but the filter leaves it out")),
-        ([one], false) => said.push(format!("“{one}” is renamed, but not shown here")),
-        (many, true) => said.push(format!(
-            "{} are left out by the filter",
-            crate::format::count(many.len(), "renamed item")
+fn renamed_said(unhid: Option<String>, left_out: &[String], filtered: bool) -> Option<Words> {
+    let unhid = unhid.map(hidden_shown);
+    let left = match (left_out, filtered) {
+        ([], _) => None,
+        (left, true) => Some(words!(
+            shell_renamed_filtered = "{ $count ->
+                [1] { $name } is renamed, but the filter leaves it out
+               *[other] { $count } renamed items are left out by the filter
+            }",
+            count = left.len(),
+            name = Name(left[0].clone()),
+            note = "Said where what was renamed is not shown, as the pane's filter leaves it \
+                    out; name: the one renamed."
         )),
-        (many, false) => said.push(format!(
-            "{} are not shown here",
-            crate::format::count(many.len(), "renamed item")
+        (left, false) => Some(words!(
+            shell_renamed_not_shown = "{ $count ->
+                [1] { $name } is renamed, but not shown here
+               *[other] { $count } renamed items are not shown here
+            }",
+            count = left.len(),
+            name = Name(left[0].clone()),
+            note = "Said where what was renamed is not shown in the pane; name: the one \
+                    renamed."
         )),
+    };
+    match (unhid, left) {
+        (Some(unhid), Some(left)) => Some(words!(
+            shell_renamed_both = "{ $unhid }. { $left }",
+            unhid = unhid,
+            left = left,
+            note = "Two sentences said of renamed entries: hidden files turned on to show one \
+                    (Hidden files are shown, “.a” among them), then what is still not shown \
+                    (2 renamed items are not shown here)."
+        )),
+        (said, None) | (None, said) => said,
     }
-    (!said.is_empty()).then(|| said.join(". "))
 }
 
 #[cfg(test)]
@@ -5408,17 +5664,21 @@ mod tests {
     #[test]
     fn what_a_rename_moved_out_of_sight_is_said() {
         let names = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-        assert_eq!(super::renamed_said(None, &[], true), None);
+        let said = |unhid: Option<&str>, left: &[&str], filtered: bool| {
+            super::renamed_said(unhid.map(str::to_owned), &names(left), filtered)
+                .map(|said| said.english())
+        };
+        assert_eq!(said(None, &[], true), None);
         assert_eq!(
-            super::renamed_said(Some(".l'été".into()), &[], false).as_deref(),
+            said(Some(".l'été"), &[], false).as_deref(),
             Some("Hidden files are shown, “.l'été” among them")
         );
         assert_eq!(
-            super::renamed_said(None, &names(&["draft"]), true).as_deref(),
+            said(None, &["draft"], true).as_deref(),
             Some("“draft” is renamed, but the filter leaves it out")
         );
         assert_eq!(
-            super::renamed_said(Some(".a".into()), &names(&["b", "c"]), false).as_deref(),
+            said(Some(".a"), &["b", "c"], false).as_deref(),
             Some("Hidden files are shown, “.a” among them. 2 renamed items are not shown here")
         );
     }
@@ -5458,7 +5718,10 @@ mod tests {
     #[test]
     fn a_checksum_is_compared_with_what_is_copied() {
         let sum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-        let said = |copied: &str| super::compared(sum, copied, "SHA-256");
+        let said = |copied: &str| {
+            let (said, wrong) = super::compared(sum, copied, Some("SHA-256"));
+            (said.english(), wrong)
+        };
         assert_eq!(
             said(&sum.to_uppercase()),
             ("The SHA-256 is the one copied".into(), false)

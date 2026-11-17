@@ -259,9 +259,11 @@ pub trait PaneView {
 /// What a view's `ViewSpec::factory` holds: a constructor.
 pub type ViewFactory = Arc<dyn Fn() -> Box<dyn PaneView> + Send + Sync>;
 
+/// `title` is said once where it is made, until `ViewSpec::title` holds
+/// words (ADR-139): a literal or `words!(…).say()`.
 pub fn spec(
     id: &'static str,
-    title: &'static str,
+    title: impl Into<String>,
     order: i32,
     f: impl Fn() -> Box<dyn PaneView> + Send + Sync + 'static,
 ) -> ViewSpec {

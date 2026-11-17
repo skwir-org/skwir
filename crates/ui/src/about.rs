@@ -24,6 +24,9 @@ use gpui::{
     prelude::*,
 };
 
+use skwir_core::words;
+use skwir_core::words::Words;
+
 use crate::controls::{self, ButtonStyle};
 use crate::keymap::RunCommand;
 use crate::modal::{self, FocusReturn};
@@ -31,9 +34,14 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 
 /// What every package says of skwir, in the words of
-/// `crates/skwir/Cargo.toml` (a test holds them to it), without the full
-/// stop About draws after them.
-const SUMMARY: &str = "An augmented file manager, for humans and agents";
+/// `crates/skwir/Cargo.toml` (a test holds the English to it), with the
+/// full stop About draws.
+fn summary() -> Words {
+    words!(
+        about_summary = "An augmented file manager, for humans and agents.",
+        note = "What skwir is, under its name in About."
+    )
+}
 const LICENCE: &str = env!("CARGO_PKG_LICENSE");
 const WEBSITE: &str = env!("CARGO_PKG_HOMEPAGE");
 const SOURCE: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/source");
@@ -46,12 +54,16 @@ const PADDING: f32 = 20.;
 /// The version as `skwir --version` says it, with the commit a build that
 /// is not a release was made from (`skwir_platform::process::build`), and
 /// whether it is a build for development, slower than a release.
-fn version() -> String {
+fn version() -> Words {
     let version = skwir_platform::process::build().unwrap_or(env!("CARGO_PKG_VERSION"));
     if cfg!(debug_assertions) {
-        format!("{version} (debug build)")
+        words!(
+            about_debug_build = "{ $version } (debug build)",
+            version = version,
+            note = "skwir's version, in a build made for development, slower than a release: version is its number (0.5.1)."
+        )
     } else {
-        version.to_owned()
+        Words::as_written(version.to_owned())
     }
 }
 
@@ -65,8 +77,9 @@ pub struct About {
     source: FocusHandle,
     close: FocusHandle,
     previous: FocusReturn,
-    /// What a report says of where skwir runs: a label and its value.
-    facts: Vec<(&'static str, String)>,
+    /// What a report says of where skwir runs: a label and its value,
+    /// said in the window, in English on the clipboard (`details`).
+    facts: Vec<(Words, Words)>,
     /// What shows the licences this installation keeps, if it keeps any.
     licences: Option<PathBuf>,
 }
@@ -89,7 +102,7 @@ impl About {
 }
 
 /// The graphics as Vulkan names them: the device, then its driver.
-fn graphics(specs: &gpui::GpuSpecs) -> String {
+fn graphics(specs: &gpui::GpuSpecs) -> Words {
     let driver = format!("{} {}", specs.driver_name.trim(), specs.driver_info.trim());
     let said = [specs.device_name.trim(), driver.trim()]
         .into_iter()
@@ -97,56 +110,91 @@ fn graphics(specs: &gpui::GpuSpecs) -> String {
         .collect::<Vec<_>>()
         .join(" · ");
     if specs.is_software_emulated {
-        format!("{said} (drawn by the processor)")
+        words!(
+            about_graphics_software = "{ $graphics } (drawn by the processor)",
+            graphics = said,
+            note = "In About, the graphics where no graphics card draws the window: graphics is the device and its driver as they name themselves (llvmpipe · llvmpipe)."
+        )
     } else {
-        said
+        Words::as_written(said)
     }
 }
 
 /// The interface's font and size, where they were read, and each part's
 /// step (ADR-117): `Noto Sans 13.3 px (10 pt) from GTK, text scaling 1.25;
 /// sizes: interface 100%, files 110%, reading 100%, code 100%`.
-fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes) -> String {
+fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes) -> Words {
     use crate::sizes::Part;
     let body = theme.sizes.of(Part::Interface);
-    let from = desktop.from.as_deref().map_or_else(
-        || "skwir's own size".to_owned(),
-        |from| format!("from {from}"),
+    let source = desktop.from.as_deref().map_or_else(
+        || {
+            words!(
+                about_text_own_size = "skwir's own size",
+                note = "In About, where the text's size comes from when no desktop says one."
+            )
+        },
+        |from| {
+            words!(
+                about_text_from = "from { $desktop }",
+                desktop = from,
+                note = "In About, where the text's size was read: desktop is where (GTK, Plasma)."
+            )
+        },
     );
-    let scaling = desktop
+    let step = |part| crate::sizes::step_words(theme.sizes.step(part));
+    let (font, px, pt) = (
+        theme.font.to_string(),
+        // Transitional: a decimal number, said as English writes it
+        // until numbers are arguments of their own (ADR-139, step F).
+        format!("{body:.1}"),
+        crate::settings::points(body),
+    );
+    match desktop
         .scaling
         .filter(|factor| (factor - 1.).abs() > f32::EPSILON)
-        .map(|factor| format!(", text scaling {factor}"))
-        .unwrap_or_default();
-    let steps = [
-        ("interface", Part::Interface),
-        ("files", Part::Files),
-        ("reading", Part::Reading),
-        ("code", Part::Code),
-    ]
-    .map(|(name, part)| {
-        format!(
-            "{name} {}",
-            crate::sizes::step_label(theme.sizes.step(part))
-        )
-    })
-    .join(", ");
-    format!(
-        "{} {body:.1} px ({} pt) {from}{scaling}; sizes: {steps}",
-        theme.font,
-        crate::settings::points(body)
-    )
+    {
+        Some(factor) => words!(
+            about_text_scaled = "{ $font } { $px } px ({ $pt } pt) { $source }, text scaling { $scaling }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }",
+            font = font,
+            px = px,
+            pt = pt,
+            source = source,
+            scaling = factor.to_string(),
+            interface = step(Part::Interface),
+            files = step(Part::Files),
+            reading = step(Part::Reading),
+            code = step(Part::Code),
+            note = "In About, the interface's font and size, where they were read and the desktop's text scaling (1.25), then each part's text size (100%)."
+        ),
+        None => words!(
+            about_text = "{ $font } { $px } px ({ $pt } pt) { $source }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }",
+            font = font,
+            px = px,
+            pt = pt,
+            source = source,
+            interface = step(Part::Interface),
+            files = step(Part::Files),
+            reading = step(Part::Reading),
+            code = step(Part::Code),
+            note = "In About, the interface's font and size and where they were read, then each part's text size (100%)."
+        ),
+    }
 }
 
 /// What Copy details puts on the clipboard: the version as `skwir
-/// --version` says it, then each fact on a line.
-fn details(facts: &[(&str, String)]) -> String {
-    std::iter::once(format!("skwir {}", version()))
-        .chain(
-            facts
-                .iter()
-                .map(|(label, value)| format!("{label}: {value}")),
-        )
+/// --version` says it, then each fact on a line, in English, as a report
+/// of a problem is written (`.github/ISSUE_TEMPLATE/problem.yml`).
+fn details(facts: &[(Words, Words)]) -> String {
+    std::iter::once(format!("skwir {}", version().english()))
+        .chain(facts.iter().map(|(label, value)| {
+            words!(
+                about_detail = "{ $label }: { $value }",
+                label = label.clone(),
+                value = value.clone(),
+                note = "A line of what Copy details puts on the clipboard, for a report: label is what it is (System), value what it says."
+            )
+            .english()
+        }))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -175,23 +223,60 @@ impl Shell {
                 }
                 let arch = std::env::consts::ARCH;
                 let system = system.unwrap_or_else(|| skwir_core::system::NAME.to_owned());
-                let mut facts = vec![("System", format!("{system} ({arch})"))];
+                let mut facts = vec![(
+                    words!(
+                        about_system = "System",
+                        note = "In About, the label of the system skwir runs on."
+                    ),
+                    Words::as_written(format!("{system} ({arch})")),
+                )];
                 let display = cx.compositor_name();
                 if !display.is_empty() {
                     // Its scale, which gpui follows (ADR-117): for a report
                     // of text too small or too large.
-                    let scale = window.scale_factor();
-                    let forced = std::env::var("GPUI_X11_SCALE_FACTOR")
-                        .ok()
-                        .map(|said| format!(", GPUI_X11_SCALE_FACTOR={said}"))
-                        .unwrap_or_default();
-                    facts.push(("Display", format!("{display}, scale {scale}{forced}")));
+                    // Transitional: a decimal number, as English writes it
+                    // (ADR-139, step F).
+                    let scale = window.scale_factor().to_string();
+                    let said = match std::env::var("GPUI_X11_SCALE_FACTOR") {
+                        Ok(forced) => words!(
+                            about_display_forced = "{ $display }, scale { $scale }, GPUI_X11_SCALE_FACTOR={ $forced }",
+                            display = display.to_string(),
+                            scale = scale,
+                            forced = forced,
+                            note = "In About, the display server (Wayland), the window's scale (1.5), and the scale the variable forces."
+                        ),
+                        Err(_) => words!(
+                            about_display_is = "{ $display }, scale { $scale }",
+                            display = display.to_string(),
+                            scale = scale,
+                            note = "In About, the display server (Wayland) and the window's scale (1.5)."
+                        ),
+                    };
+                    facts.push((
+                        words!(
+                            about_display = "Display",
+                            note = "In About, the label of the display server skwir draws on."
+                        ),
+                        said,
+                    ));
                 }
                 let theme = cx.global::<crate::theme::Theme>();
                 let desktop = crate::desktop_style::sizes(&this.app.settings);
-                facts.push(("Text", text_fact(theme, &desktop)));
+                facts.push((
+                    words!(
+                        about_text_label = "Text",
+                        note = "In About, the label of the text's font and sizes."
+                    ),
+                    text_fact(theme, &desktop),
+                ));
                 if let Some(specs) = window.gpu_specs() {
-                    facts.push(("Graphics", graphics(&specs)));
+                    facts.push((
+                        words!(
+                            about_graphics = "Graphics",
+                            note = "In About, the label of the graphics card and driver that draw the window."
+                        ),
+                        graphics(&specs),
+                    ));
                 }
                 // A menu opened while it was read closes.
                 this.close_popups_for_dialog(window, cx);
@@ -227,7 +312,14 @@ impl Shell {
     fn copy_about(&mut self, cx: &mut Context<Self>) {
         let Some(about) = &self.about else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(details(&about.facts)));
-        self.set_status("Copied skwir’s version and what it runs on", false, cx);
+        self.set_status(
+            words!(
+                about_copied = "Copied skwir’s version and what it runs on",
+                note = "Said once Copy details in About put them on the clipboard."
+            ),
+            false,
+            cx,
+        );
     }
 
     /// The licences in a tab of their own, the third-party notices
@@ -273,11 +365,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         .w(sized(64.))
                         .flex_none()
                         .text_color(theme.text_muted)
-                        .child(*label),
+                        .child(label.say()),
                 )
                 .child(crate::elements::clip::clipped(
                     div().id(("about-fact", row)).flex_1().min_w_0().truncate(),
-                    value.clone(),
+                    value.say(),
                 )),
         );
     }
@@ -288,7 +380,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let mut buttons = div().flex().flex_wrap().justify_end().gap_2().child(
         controls::button(
             "about-copy",
-            "Copy details",
+            words!(
+                about_copy_details = "Copy details",
+                note = "The button in About putting skwir's version and what it runs on on the clipboard, for a report."
+            )
+            .say(),
             Some("copy"),
             ButtonStyle::Plain,
             &about.copy,
@@ -300,7 +396,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         buttons = buttons.child(
             controls::button(
                 "about-licences",
-                "Licences",
+                words!(
+                    about_licences = "Licences",
+                    note = "The button in About showing the licences installed with skwir."
+                )
+                .say(),
                 Some("folder"),
                 ButtonStyle::Plain,
                 &about.licences_button,
@@ -313,7 +413,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         buttons = buttons.child(
             controls::button(
                 "about-website",
-                "Website",
+                words!(
+                    about_website = "Website",
+                    note = "The button in About opening skwir's website."
+                )
+                .say(),
                 Some("external"),
                 ButtonStyle::Plain,
                 &about.website,
@@ -327,7 +431,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         buttons = buttons.child(
             controls::button(
                 "about-source",
-                "Source code",
+                words!(
+                    about_source = "Source code",
+                    note = "The button in About opening where skwir's source code is."
+                )
+                .say(),
                 Some("code"),
                 ButtonStyle::Plain,
                 &about.source,
@@ -341,7 +449,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     // most the panel's share of the window).
     let panel = modal::panel("about", WIDTH, &theme)
         .w_auto()
-        .aria_label("About skwir")
+        .aria_label(
+            words!(
+                about_named = "About skwir",
+                note = "What the About dialog is named to a screen reader."
+            )
+            .say(),
+        )
         .p(sized(PADDING))
         .gap_4()
         .line_height(sized(20.))
@@ -372,19 +486,30 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                                 .flex_col()
                                 .child(div().text_title().child("skwir"))
                                 .child(div().text_color(theme.text_muted).child(
-                                    SharedString::from(format!(
-                                        "Version {} · {LICENCE}",
-                                        version()
-                                    )),
+                                    SharedString::from(
+                                        words!(
+                                            about_version = "Version { $version } · { $licence }",
+                                            version = version(),
+                                            licence = LICENCE,
+                                            note = "Under skwir's name in About: version is its number (0.5.1), licence its licence's identifier (GPL-3.0-or-later)."
+                                        )
+                                        .say(),
+                                    ),
                                 )),
                         ),
                 )
                 .child(
-                    controls::icon_button("about-close", "close", "Close", &about.close, &theme)
+                    controls::icon_button(
+                        "about-close",
+                        "close",
+                        words!(about_close = "Close", note = "The button closing About.").say(),
+                        &about.close,
+                        &theme,
+                    )
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_about(window, cx))),
                 ),
         )
-        .child(SharedString::from(format!("{SUMMARY}.")))
+        .child(SharedString::from(summary().say()))
         .child(facts)
         .child(buttons);
     Some(
@@ -407,7 +532,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SOURCE, SUMMARY, WEBSITE, details, graphics};
+    use super::{SOURCE, WEBSITE, details, graphics, summary};
+    use skwir_core::words::Words;
 
     #[test]
     fn the_website_is_the_projects_own_domain() {
@@ -424,23 +550,25 @@ mod tests {
     fn about_and_every_package_say_skwir_in_the_same_words() {
         // The .deb, the .rpm and Nix read the binary's manifest; the AUR's
         // files cannot.
+        let said = summary().english();
+        let summary = said.strip_suffix('.').unwrap();
         let manifest = include_str!("../../skwir/Cargo.toml");
         let package = manifest
             .lines()
             .find_map(|line| line.strip_prefix("description = \"")?.strip_suffix('"'));
-        assert_eq!(package, Some(SUMMARY), "crates/skwir/Cargo.toml");
+        assert_eq!(package, Some(summary), "crates/skwir/Cargo.toml");
         let pkgbuild = include_str!("../../../tools/package/aur/PKGBUILD");
         assert!(
             pkgbuild
                 .lines()
-                .any(|line| line == format!("pkgdesc='{SUMMARY}'")),
+                .any(|line| line == format!("pkgdesc='{summary}'")),
             "tools/package/aur/PKGBUILD"
         );
         let srcinfo = include_str!("../../../tools/package/aur/.SRCINFO");
         assert!(
             srcinfo
                 .lines()
-                .any(|line| line == format!("\tpkgdesc = {SUMMARY}")),
+                .any(|line| line == format!("\tpkgdesc = {summary}")),
             "tools/package/aur/.SRCINFO"
         );
     }
@@ -454,21 +582,24 @@ mod tests {
             driver_info: info.into(),
         };
         assert_eq!(
-            graphics(&specs("Radeon 780M", "radv", "Mesa 25.1", false)),
+            graphics(&specs("Radeon 780M", "radv", "Mesa 25.1", false)).english(),
             "Radeon 780M · radv Mesa 25.1"
         );
         assert_eq!(
-            graphics(&specs("llvmpipe", "llvmpipe", "", true)),
+            graphics(&specs("llvmpipe", "llvmpipe", "", true)).english(),
             "llvmpipe · llvmpipe (drawn by the processor)"
         );
-        assert_eq!(graphics(&specs("", "", "", false)), "");
+        assert_eq!(graphics(&specs("", "", "", false)).english(), "");
     }
 
     #[test]
     fn the_details_start_with_the_version_as_the_command_line_says_it() {
         let text = details(&[
-            ("System", "Fedora Linux 42 (x86_64)".into()),
-            ("Display", "Wayland".into()),
+            (
+                Words::as_written("System"),
+                Words::as_written("Fedora Linux 42 (x86_64)"),
+            ),
+            (Words::as_written("Display"), Words::as_written("Wayland")),
         ]);
         let mut lines = text.lines();
         assert!(

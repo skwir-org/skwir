@@ -14,6 +14,8 @@ use gpui::{
 use skwir_core::collate;
 use skwir_core::plugin::{Category, PluginInfo};
 use skwir_core::settings::{SettingKind, SettingSpec};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
@@ -83,8 +85,14 @@ pub(crate) const FILTERED: usize = 12;
 const LONG_ROWS: usize = 12;
 const CHOICE_ROW: f32 = 26.;
 /// What a font's specimen writes (ADR-073): letters and figures, and for
-/// code the shapes that tell characters apart.
-const SPECIMEN: &str = "Sphinx of black quartz, judge my vow. 0123456789";
+/// code the shapes that tell characters apart (code, the same in every
+/// language).
+fn specimen() -> Words {
+    words!(
+        settings_specimen = "Sphinx of black quartz, judge my vow. 0123456789",
+        note = "Written in each font offered, under the list of fonts, to show its letters and figures: a short sentence using most letters of the language (a pangram), then the figures."
+    )
+}
 const SPECIMEN_CODE: &str = "if (x != 0O) { l1 = I[i]; } // => <=";
 
 /// Whether `spec`'s dropdown opens as a list that narrows
@@ -313,6 +321,22 @@ impl Snapshot {
     }
 }
 
+/// What the list of the dialog's pages is named to a screen reader.
+fn pages_named() -> Words {
+    words!(
+        settings_pages = "Pages",
+        note = "What the list of the settings' pages is named to a screen reader."
+    )
+}
+
+/// The caption over plugins a search found or that were changed.
+fn plugins_caption() -> Words {
+    words!(
+        settings_plugins_caption = "Plugins",
+        note = "A caption over the plugins the settings' search found or that differ from how skwir comes."
+    )
+}
+
 /// Plugins as the settings list them: by name, as file names are
 /// (`collate`).
 fn by_name(plugins: &mut [PluginInfo]) {
@@ -370,6 +394,23 @@ fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -
     words.found_in(&texts)
 }
 
+/// The choice `value` as `SettingSpec::choice_shown` says it, as words to
+/// place in a sentence: its label, and for the default, while its owner
+/// says what it comes to, that too.
+fn choice_shown(spec: &SettingSpec, value: &str) -> Words {
+    let label = spec.choice_label(value);
+    match spec.now_of(value) {
+        Some(now) => words!(
+            settings_choice_now = "{ $choice } ({ $now })",
+            choice = label,
+            now = now,
+            note =
+                "A setting's default choice and what it comes to here and now: Automatic (Dark)."
+        ),
+        None => label,
+    }
+}
+
 impl SettingsView {
     pub(crate) fn stop(
         &mut self,
@@ -397,7 +438,7 @@ impl SettingsView {
         let list = div()
             .id("settings-nav")
             .role(gpui::Role::TabList)
-            .aria_label("Pages")
+            .aria_label(pages_named().say())
             .track_focus(&self.nav)
             .key_context("SettingsNav")
             .flex_1()
@@ -466,7 +507,13 @@ impl SettingsView {
                         .pb_1()
                         .text_small()
                         .text_color(theme.text_muted)
-                        .child("Plugin settings")
+                        .child(
+                            words!(
+                                settings_plugin_pages = "Plugin settings",
+                                note = "A caption in the list of the settings' pages, above the plugins' own pages."
+                            )
+                            .say(),
+                        )
                         .into_any_element(),
                 );
             }
@@ -490,7 +537,7 @@ impl SettingsView {
             let hover = theme.hover;
             entries.push(
                 div()
-                    .id(SharedString::from(format!("settings-page-{title}")))
+                    .id(SharedString::from(format!("settings-page-{}", page.word())))
                     .role(if menu {
                         gpui::Role::ListBoxOption
                     } else {
@@ -535,7 +582,14 @@ impl SettingsView {
                             div()
                                 .text_small()
                                 .text_color(theme.accent)
-                                .child(modified.to_string()),
+                                .child(
+                                    words!(
+                                        settings_page_modified = "{ $count }",
+                                        count = modified,
+                                        note = "How many of a page's settings differ from their defaults, after its name in the list of pages."
+                                    )
+                                    .say(),
+                                ),
                         )
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -570,7 +624,13 @@ impl SettingsView {
         let mut button = div()
             .id("settings-page-menu")
             .role(gpui::Role::ComboBox)
-            .aria_label("Page")
+            .aria_label(
+                words!(
+                    settings_page_named = "Page",
+                    note = "What the button naming the page shown, which drops the pages down in a narrow dialog, is named to a screen reader."
+                )
+                .say(),
+            )
             .aria_value(title.clone())
             .aria_expanded(open)
             .track_focus(&self.nav)
@@ -601,7 +661,7 @@ impl SettingsView {
             let panel = div()
                 .id("settings-pages")
                 .role(gpui::Role::ListBox)
-                .aria_label("Pages")
+                .aria_label(pages_named().say())
                 .min_w(sized(PAGES_WIDTH))
                 .min_h_0()
                 .overflow_y_scroll()
@@ -773,7 +833,15 @@ impl SettingsView {
                     .map(|source| source.add.clone());
                 controls::button(
                     format!("add-{key}"),
-                    format!("Add {}", row.spec.constraints.record_name),
+                    // Transitional: the record's name arrives said
+                    // (`SettingConstraints::record_name`); its owner's own
+                    // words for the button wait for core (ADR-139).
+                    words!(
+                        settings_add_record = "Add { $record }",
+                        record = row.spec.constraints.record_name.clone(),
+                        note = "The button adding a record to a list in the settings: record is what one is called (server, remote)."
+                    )
+                    .say(),
                     Some("plus"),
                     ButtonStyle::Plain,
                     &focus,
@@ -785,8 +853,10 @@ impl SettingsView {
                     if let Some(add) = &add {
                         let invocation = skwir_core::command::Invocation::new(add.as_str());
                         if let Err(error) = this.app.dispatch(&invocation) {
-                            this.app
-                                .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                            this.app.notify(
+                                skwir_core::app::NotifyLevel::Error,
+                                Words::of_error(error),
+                            );
                         }
                     } else if !this.drafts.contains_key(&key) {
                         this.edit_record(&key, None, window, cx);
@@ -832,7 +902,12 @@ impl SettingsView {
                             controls::icon_button(
                                 format!("less-{key}"),
                                 "minus",
-                                "Less",
+                                words!(
+                                    settings_less = "Less",
+                                    note =
+                                        "The button lowering a number in the settings by a step."
+                                )
+                                .say(),
                                 &less_focus,
                                 theme,
                             )
@@ -854,7 +929,11 @@ impl SettingsView {
                             controls::icon_button(
                                 format!("more-{key}"),
                                 "plus",
-                                "More",
+                                words!(
+                                    settings_more = "More",
+                                    note = "The button raising a number in the settings by a step."
+                                )
+                                .say(),
                                 &more_focus,
                                 theme,
                             )
@@ -885,7 +964,11 @@ impl SettingsView {
                     group = group.child(
                         controls::button(
                             format!("browse-{key}"),
-                            "Browse…",
+                            words!(
+                                settings_browse = "Browse…",
+                                note = "The button choosing a file or a folder for a setting."
+                            )
+                            .say(),
                             None,
                             ButtonStyle::Plain,
                             &browse,
@@ -1036,12 +1119,21 @@ impl SettingsView {
         let automatic = row.spec.default.as_str() == Some(row.value.as_str());
         let now = &row.spec.constraints.now;
         for (index, choice) in choices.into_iter().enumerate() {
-            let label = row.spec.choice_label(&choice).say();
+            let choice_words = row.spec.choice_label(&choice);
+            let label = choice_words.say();
             // Said while Automatic is chosen: what it gives is the now.
             let said = automatic
                 .then(|| row.spec.now_of(&choice))
                 .flatten()
-                .map(|now| format!("{label}, now {}", now.say()));
+                .map(|now| {
+                    words!(
+                        settings_choice_now_said = "{ $choice }, now { $now }",
+                        choice = choice_words,
+                        now = now,
+                        note = "A setting's default choice as a screen reader names it, with what it comes to here and now: Automatic, now Dark."
+                    )
+                    .say()
+                });
             let key = key.clone();
             let focus = focus.clone();
             let segment = controls::segment(
@@ -1311,7 +1403,16 @@ impl SettingsView {
         // Up to `LONG_ROWS` rows, fewer where the popover leaves less
         // under the row (`popover::hang`): the list gives way, never the
         // field nor the specimen, which would run past the window's foot.
-        let list = crate::modal::options("choices-list", "Choices", count, a11y)
+        let list = crate::modal::options(
+            "choices-list",
+            words!(
+                settings_choices = "Choices",
+                note = "What the list of a setting's choices is named to a screen reader."
+            )
+            .say(),
+            count,
+            a11y,
+        )
             .relative()
             .h(px(row_height * count.clamp(1, LONG_ROWS) as f32))
             .min_h_0()
@@ -1326,7 +1427,13 @@ impl SettingsView {
                         .flex()
                         .items_center()
                         .text_color(theme.text_muted)
-                        .child("None holds what is typed"),
+                        .child(
+                            words!(
+                                settings_choices_none = "None holds what is typed",
+                                note = "Said in a setting's list of choices when what is typed in its field keeps none."
+                            )
+                            .say(),
+                        ),
                 )
             });
         let specimen = font_role(&key, theme).map(|role| {
@@ -1335,9 +1442,9 @@ impl SettingsView {
                 _ => role,
             };
             let text = if key == crate::settings::CODE_FONT_KEY {
-                SPECIMEN_CODE
+                SPECIMEN_CODE.to_owned()
             } else {
-                SPECIMEN
+                specimen().say()
             };
             // Asked whether it loads before it is drawn: a family the
             // index lists may still fail to, and gpui would search a
@@ -1363,7 +1470,13 @@ impl SettingsView {
                 } else {
                     div()
                         .text_color(theme.text_muted)
-                        .child("This font cannot be drawn")
+                        .child(
+                            words!(
+                                settings_font_not_drawn = "This font cannot be drawn",
+                                note = "Said under a list of fonts in place of the specimen, where the font highlighted fails to load."
+                            )
+                            .say(),
+                        )
                 })
         });
         Some(
@@ -1426,11 +1539,17 @@ impl SettingsView {
             // Beneath the switch it is under.
             .when(!row.spec.under.is_empty(), |d| d.pl(sized(24.)));
         if row.spec.restart_required {
-            texts = texts.child(div().flex().child(controls::badge(
-                "Applies after restart",
-                theme.text_muted,
-                theme,
-            )));
+            texts = texts.child(
+                div().flex().child(controls::badge(
+                    words!(
+                        settings_after_restart = "Applies after restart",
+                        note = "A badge on a setting whose change takes effect at the next start."
+                    )
+                    .say(),
+                    theme.text_muted,
+                    theme,
+                )),
+            );
         }
         if let Some(error) = error {
             texts = texts.child(Self::error_line(error, theme));
@@ -1443,7 +1562,14 @@ impl SettingsView {
                     "warning",
                     theme.warning,
                     13.,
-                    format!("Does nothing here. {why}."),
+                    // Transitional: why arrives said
+                    // (`Unavailable::why`, ADR-139).
+                    words!(
+                        settings_does_nothing = "Does nothing here. { $why }.",
+                        why = why,
+                        note = "Under a setting whose value does nothing on this system: why is the reason, a sentence without its full stop (X11's window manager keeps its frame)."
+                    )
+                    .say(),
                 )
                 .text_body()
                 .text_color(theme.text_muted),
@@ -1538,20 +1664,39 @@ impl SettingsView {
         let focus = self.handle(&format!("revert:{key}"), cx);
         self.stop(&focus, Some(item), None);
         let tip: SharedString = if row.default_text.is_empty() {
-            "Restore the default (not set)".into()
-        } else {
-            format!(
-                "Restore the default: {}",
-                row.spec.choice_shown(&row.default_text)
+            words!(
+                settings_restore_unset = "Restore the default (not set)",
+                note =
+                    "The tooltip of a setting's revert button where its default is to be not set."
             )
+            .say()
+            .into()
+        } else {
+            words!(
+                settings_restore_default = "Restore the default: { $default }",
+                default = choice_shown(&row.spec, &row.default_text),
+                note =
+                    "The tooltip of a setting's revert button: default is the value it gives back."
+            )
+            .say()
             .into()
         };
         Some(
-            controls::icon_button(format!("revert-{key}"), "revert", "Revert", &focus, theme)
-                .when(self.a11y, |d| d.aria_description(row.label.clone()))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-                .on_click(cx.listener(move |this, _, _, cx| this.reset(&key, cx)))
-                .into_any_element(),
+            controls::icon_button(
+                format!("revert-{key}"),
+                "revert",
+                words!(
+                    settings_revert = "Revert",
+                    note = "The button restoring a setting's default value."
+                )
+                .say(),
+                &focus,
+                theme,
+            )
+            .when(self.a11y, |d| d.aria_description(row.label.clone()))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+            .on_click(cx.listener(move |this, _, _, cx| this.reset(&key, cx)))
+            .into_any_element(),
         )
     }
 
@@ -1688,9 +1833,22 @@ impl SettingsView {
         // it folds back (never right, which in a settings window opens a
         // page of its own).
         let (label, icon) = if folded {
-            (format!("More settings ({hidden})"), "chevron")
+            (
+                words!(
+                    settings_more_settings = "More settings ({ $count })",
+                    count = hidden,
+                    note = "The button at a page's end showing the settings it folds: count is how many."
+                ),
+                "chevron",
+            )
         } else {
-            ("Fewer settings".to_owned(), "chevron-up")
+            (
+                words!(
+                    settings_fewer_settings = "Fewer settings",
+                    note = "The button at a page's end folding its settings back to the few most people come for."
+                ),
+                "chevron-up",
+            )
         };
         let page = page.clone();
         items.push(
@@ -1701,7 +1859,7 @@ impl SettingsView {
                 .child(
                     controls::button(
                         format!("settings-fold-{word}"),
-                        label,
+                        label.say(),
                         Some(icon),
                         ButtonStyle::Plain,
                         &focus,
@@ -1759,7 +1917,16 @@ impl SettingsView {
                             .iter()
                             .map(|row| {
                                 let mut cell = rows[*row].clone();
-                                cell.label = format!("{title}: {}", cell.spec.title.say()).into();
+                                // Transitional: a table's line names its
+                                // section said (`Block::Table`, ADR-139).
+                                cell.label = words!(
+                                    settings_table_cell = "{ $section }: { $setting }",
+                                    section = title.clone(),
+                                    setting = cell.spec.title.clone(),
+                                    note = "A control on a line of a table of settings, as a screen reader names it: section is the line's, setting the column's (Read: Tags in attributes)."
+                                )
+                                .say()
+                                .into();
                                 cell
                             })
                             .collect();
@@ -1790,10 +1957,16 @@ impl SettingsView {
             }
         }
         for ((page, _), rows) in groups {
-            let section = rows[0].spec.section_title.say();
+            let section = &rows[0].spec.section_title;
             let mut caption = self.page_title(&page);
             if !section.is_empty() {
-                caption = format!("{caption} › {section}");
+                caption = words!(
+                    settings_found_on = "{ $page } › { $section }",
+                    page = caption,
+                    section = section.clone(),
+                    note = "The caption over settings found or changed: the page they are on, then their section."
+                )
+                .say();
             }
             Self::caption(items, caption, theme);
             for (index, row) in rows.iter().enumerate() {
@@ -1822,19 +1995,33 @@ impl SettingsView {
         let title = if link {
             plugin.title.say()
         } else {
-            "Enabled".to_owned()
+            words!(
+                settings_plugin_enabled = "Enabled",
+                note = "The switch atop a plugin's own page, turning the plugin on or off."
+            )
+            .say()
         };
         let texts = {
             let mut texts = Self::texts(title, plugin.description.say(), theme);
             // What it may do (ADR-044), and where one from outside skwir is.
-            let may = plugin
-                .capabilities
-                .words()
-                .map(|words| format!("May: {words}"));
-            let from = plugin
-                .origin
-                .as_ref()
-                .map(|origin| format!("From {origin}"));
+            // Transitional: a list argument (ADR-139).
+            let may = plugin.capabilities.words().map(|may| {
+                words!(
+                    settings_plugin_may = "May: { $what }",
+                    what = may,
+                    note = "Under a plugin from outside skwir: what it is allowed to do, a list (read files, run programs)."
+                )
+                .say()
+            });
+            let from = plugin.origin.as_ref().map(|origin| {
+                words!(
+                    settings_plugin_from = "From { $origin }",
+                    origin = origin.clone(),
+                    note =
+                        "Under a plugin from outside skwir: where it was installed from, a path."
+                )
+                .say()
+            });
             for (icon, text) in [("lock", may), ("plugin", from)] {
                 if let Some(text) = text {
                     texts = texts.child(
@@ -1847,7 +2034,16 @@ impl SettingsView {
             if let Some(requirements) = &self.requirements {
                 for status in requirements.iter().filter(|status| status.plugin == id) {
                     let (icon, color, text) = if status.found {
-                        ("check", theme.text_muted, format!("{} found", status.name))
+                        (
+                            "check",
+                            theme.text_muted,
+                            words!(
+                                settings_plugin_requirement_found = "{ $program } found",
+                                program = status.name.clone(),
+                                note = "Under a plugin: a program or library it uses was found; program is its name (ffmpeg)."
+                            )
+                            .say(),
+                        )
                     } else {
                         (
                             "warning",
@@ -1856,7 +2052,13 @@ impl SettingsView {
                                 (true, false) => theme.warning,
                                 (false, _) => theme.text_muted,
                             },
-                            format!("{} not found — {}", status.name, status.purpose.say()),
+                            words!(
+                                settings_plugin_requirement_missing = "{ $program } not found — { $purpose }",
+                                program = status.name.clone(),
+                                purpose = status.purpose.clone(),
+                                note = "Under a plugin: a program or library it uses is missing; program is its name (ffmpeg), purpose what it is needed for."
+                            )
+                            .say(),
                         )
                     };
                     texts = texts.child(
@@ -1878,7 +2080,11 @@ impl SettingsView {
             end = end.child(
                 controls::button(
                     format!("plugin-settings-{id}"),
-                    "Settings",
+                    words!(
+                        settings_plugin_settings = "Settings",
+                        note = "The button on a plugin's row going to where its settings are."
+                    )
+                    .say(),
                     None,
                     ButtonStyle::Plain,
                     &focus,
@@ -1967,7 +2173,16 @@ impl SettingsView {
             }
         }
         if shown == 0 && !words.is_empty() {
-            Self::note(items, format!("No plugin matches “{typed}”."), theme);
+            Self::note(
+                items,
+                words!(
+                    settings_no_plugin = "No plugin matches “{ $typed }”.",
+                    typed = typed,
+                    note = "Said on the Plugins page when its filter keeps none: typed is what was typed."
+                )
+                .say(),
+                theme,
+            );
         }
     }
 
@@ -1979,16 +2194,36 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         self.page_rows(&Page::General, items, theme, window, cx);
-        Self::caption(items, "Settings file", theme);
+        Self::caption(
+            items,
+            words!(
+                settings_file = "Settings file",
+                note = "A caption on the General page, above where the settings file is."
+            )
+            .say(),
+            theme,
+        );
         let item = items.len();
         let location = self.app.settings.path().map_or_else(
-            || "Settings are kept in memory for this session.".to_owned(),
-            |path| {
-                format!(
-                    "{}. It lists only what differs from the defaults.",
-                    crate::settings::home_shown(path)
+            || {
+                words!(
+                    settings_in_memory = "Settings are kept in memory for this session.",
+                    note = "Said where the settings file would be named, when there is none."
                 )
+                .say()
             },
+            |path| {
+                words!(
+                    settings_file_at = "{ $path }. It lists only what differs from the defaults.",
+                    path = crate::settings::home_shown(path),
+                    note = "Where the settings file is, from ~ where it is under the home folder."
+                )
+                .say()
+            },
+        );
+        let edit_as_text = words!(
+            settings_edit_as_text = "Edit as text",
+            note = "The row opening the settings file in an editor."
         );
         let open = self.handle("open-file", cx);
         self.stop(&open, Some(item), None);
@@ -2000,17 +2235,21 @@ impl SettingsView {
                     last: true,
                 },
             )
-            .child(Self::texts("Edit as text", location, theme))
+            .child(Self::texts(edit_as_text.say(), location, theme))
             .child(
                 controls::button(
                     "settings-open-file",
-                    "Open",
+                    words!(
+                        settings_open_file = "Open",
+                        note = "The button opening the settings file in an editor."
+                    )
+                    .say(),
                     Some("external"),
                     ButtonStyle::Plain,
                     &open,
                     theme,
                 )
-                .aria_description("Edit as text")
+                .aria_description(edit_as_text.say())
                 .on_click(cx.listener(|this, _, _, _| this.open_file())),
             )
             .into_any_element(),
@@ -2043,14 +2282,19 @@ impl SettingsView {
         if rows.is_empty() && plugins.is_empty() {
             Self::note(
                 items,
-                "Every setting has its default value, and every plugin is as skwir comes.",
+                words!(
+                    settings_nothing_changed =
+                        "Every setting has its default value, and every plugin is as skwir comes.",
+                    note = "Said on Changed by you when nothing differs from how skwir comes."
+                )
+                .say(),
                 theme,
             );
             return;
         }
         self.grouped_rows(rows, items, theme, window, cx);
         if !plugins.is_empty() {
-            Self::caption(items, "Plugins", theme);
+            Self::caption(items, plugins_caption().say(), theme);
             for (index, plugin) in plugins.iter().enumerate() {
                 let edge = Edge {
                     first: index == 0,
@@ -2064,15 +2308,20 @@ impl SettingsView {
         let modified = self.rows.iter().filter(|row| row.modified()).count();
         let reset = self.handle("reset-all", cx);
         let description = match modified {
-            0 => "Every setting already has its default value.".to_owned(),
-            1 => {
-                "1 setting differs from its default. Plugins stay enabled or disabled as they are."
-                    .to_owned()
-            }
-            n => format!(
-                "{n} settings differ from their defaults. Plugins stay enabled or disabled as they are."
+            0 => words!(
+                settings_all_default = "Every setting already has its default value.",
+                note = "Beside Restore all, when no setting differs from its default."
             ),
-        };
+            n => words!(
+                settings_differ = "{ $count ->
+        [one] { $count } setting differs from its default. Plugins stay enabled or disabled as they are.
+       *[other] { $count } settings differ from their defaults. Plugins stay enabled or disabled as they are.
+    }",
+                count = n,
+                note = "Beside Restore all: count is how many settings it gives back their defaults."
+            ),
+        }
+        .say();
         let mut row = card_row(
             theme,
             Edge {
@@ -2080,17 +2329,33 @@ impl SettingsView {
                 last: true,
             },
         )
-        .child(Self::texts("Restore defaults", description, theme));
+        .child(Self::texts(
+            words!(
+                settings_restore_defaults = "Restore defaults",
+                note =
+                    "The row at the end of Changed by you giving every setting back its default."
+            )
+            .say(),
+            description,
+            theme,
+        ));
         if modified > 0 {
             self.stop(&reset, Some(item), None);
             row = row.child(
                 controls::button(
                     "settings-reset-all",
                     if self.reset_armed {
-                        "Click again to restore"
+                        words!(
+                            settings_restore_confirm = "Click again to restore",
+                            note = "Restore all, once clicked, asking to be clicked again to give every setting back its default."
+                        )
                     } else {
-                        "Restore all…"
-                    },
+                        words!(
+                            settings_restore_all = "Restore all…",
+                            note = "The button giving every setting back its default, after a second click."
+                        )
+                    }
+                    .say(),
                     None,
                     ButtonStyle::Danger,
                     &reset,
@@ -2111,7 +2376,15 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         let Some(plugin) = self.plugins.iter().find(|plugin| plugin.id == id).cloned() else {
-            Self::note(items, "This plugin is not part of this build.", theme);
+            Self::note(
+                items,
+                words!(
+                    settings_plugin_absent = "This plugin is not part of this build.",
+                    note = "Said on a plugin's page when skwir was built without it."
+                )
+                .say(),
+                theme,
+            );
             return;
         };
         self.plugin_row(
@@ -2126,7 +2399,15 @@ impl SettingsView {
             cx,
         );
         if !plugin.enabled {
-            Self::note(items, "Turn the plugin on to change its settings.", theme);
+            Self::note(
+                items,
+                words!(
+                    settings_plugin_off = "Turn the plugin on to change its settings.",
+                    note = "Said on a plugin's page while the plugin is off."
+                )
+                .say(),
+                theme,
+            );
             return;
         }
         items.push(div().flex_none().h(sized(16.)).into_any_element());
@@ -2166,7 +2447,7 @@ impl SettingsView {
         by_name(&mut plugins);
         if !plugins.is_empty() {
             found += plugins.len();
-            Self::caption(items, "Plugins", theme);
+            Self::caption(items, plugins_caption().say(), theme);
             for (index, plugin) in plugins.iter().enumerate() {
                 let edge = Edge {
                     first: index == 0,
@@ -2178,7 +2459,16 @@ impl SettingsView {
         found += self.keys_found(query, items, theme, window, cx);
         found += self.exclusions_found(query, items, theme, cx);
         if found == 0 {
-            Self::note(items, format!("Nothing matches “{query}”."), theme);
+            Self::note(
+                items,
+                words!(
+                    settings_nothing_found = "Nothing matches “{ $typed }”.",
+                    typed = query,
+                    note = "Said when the settings' search finds nothing: typed is what was typed."
+                )
+                .say(),
+                theme,
+            );
         }
     }
 }
@@ -2224,8 +2514,11 @@ impl Render for SettingsView {
                     "lock",
                     theme.warning,
                     14.,
-                    "Your settings file is read-only (Home Manager links it, say): \
-                     a change here is not kept. Change them where they are declared.",
+                    words!(
+                        settings_read_only = "Your settings file is read-only (Home Manager links it, say): a change here is not kept. Change them where they are declared.",
+                        note = "Above every page of the settings when the settings file cannot be written."
+                    )
+                    .say(),
                 )
                 .flex_none()
                 .mt_4()
@@ -2236,7 +2529,7 @@ impl Render for SettingsView {
         }
         let (title, subtitle): (String, String) = if query.is_empty() {
             let page = self.page.clone();
-            let subtitle = page.builtin().map_or("", |b| b.intro);
+            let subtitle = page.builtin().map_or_else(String::new, |b| b.intro().say());
             match &page {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
                 Page::Changed => self.page_changed(&mut items, &theme, window, cx),
@@ -2266,14 +2559,29 @@ impl Render for SettingsView {
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),
                 page => {
                     if self.page_rows(page, &mut items, &theme, window, cx) == 0 {
-                        Self::note(&mut items, "Nothing to adjust here now.", &theme);
+                        Self::note(
+                            &mut items,
+                            words!(
+                                settings_page_empty = "Nothing to adjust here now.",
+                                note = "Said on a page of the settings that has none to show."
+                            )
+                            .say(),
+                            &theme,
+                        );
                     }
                 }
             }
-            (self.page_title(&page), subtitle.to_owned())
+            (self.page_title(&page), subtitle)
         } else {
             self.search_results(&query, &mut items, &theme, window, cx);
-            ("Search results".to_owned(), String::new())
+            (
+                words!(
+                    settings_search_results = "Search results",
+                    note = "The title of the settings while their search shows what it found."
+                )
+                .say(),
+                String::new(),
+            )
         };
 
         if let Some(key) = self.take_scroll_target()
@@ -2294,9 +2602,21 @@ impl Render for SettingsView {
         // The save's status follows the title, in the line it already
         // takes: a save never narrows the subtitle.
         let status = if self.saving() {
-            Some((None, "Saving…"))
+            Some((
+                None,
+                words!(
+                    settings_saving = "Saving…",
+                    note = "After a page's title while a change of the settings is being saved."
+                ),
+            ))
         } else if self.saved_flash {
-            Some((Some("check"), "Saved"))
+            Some((
+                Some("check"),
+                words!(
+                    settings_saved = "Saved",
+                    note = "After a page's title, for a moment, once a change of the settings is saved."
+                ),
+            ))
         } else {
             None
         }
@@ -2309,7 +2629,7 @@ impl Render for SettingsView {
                 .text_small()
                 .text_color(theme.text_muted)
                 .children(icon.map(|name| controls::glyph(name, theme.text_muted, 13.)))
-                .child(text)
+                .child(text.say())
         });
         let header = div()
             .flex_none()
@@ -2348,8 +2668,18 @@ impl Render for SettingsView {
                     }),
             )
             .child(
-                controls::icon_button("settings-close", "close", "Close", &close, &theme)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
+                controls::icon_button(
+                    "settings-close",
+                    "close",
+                    words!(
+                        settings_close = "Close",
+                        note = "The button closing the settings."
+                    )
+                    .say(),
+                    &close,
+                    &theme,
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
             );
         let search = (!lists).then(|| {
             div()
@@ -2398,7 +2728,13 @@ impl Render for SettingsView {
             .id("settings")
             .role(gpui::Role::Dialog)
             .aria_modal()
-            .aria_label("Settings")
+            .aria_label(
+                words!(
+                    settings_dialog = "Settings",
+                    note = "What the settings dialog is named to a screen reader."
+                )
+                .say(),
+            )
             .w(relative(DIALOG_SHARE))
             .max_w(sized(DIALOG_MAX))
             .h(relative(0.9))

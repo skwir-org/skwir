@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 use serde::Deserialize;
 use skwir_core::command::{Invocation, Outcome};
+use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -63,8 +65,8 @@ struct Answer {
 pub struct ChooseState {
     pub input: Entity<TextInput>,
     pub title: String,
-    /// Said when no choice matches.
-    pub empty: String,
+    /// Said when no choice matches, where it is drawn.
+    pub empty: Words,
     pub choices: Vec<Choice>,
     /// Indices into `choices`, in the order shown.
     pub filtered: Vec<usize>,
@@ -108,11 +110,23 @@ impl Shell {
             .get("source")
             .and_then(|s| serde_json::from_value(s.clone()).ok());
         if choices.is_none() && source.is_none() {
-            self.set_status("ui.choose needs choices or a source", true, cx);
+            self.set_status(
+                words!(
+                    choose_needs = "{ $command } needs choices or a source",
+                    command = "ui.choose",
+                    note =
+                        "A command asked to offer a list without one; command: the command's id."
+                ),
+                true,
+                cx,
+            );
             return;
         }
         let back = FocusReturn::capture(window, cx);
-        let placeholder = text("placeholder").unwrap_or("Type to filter").to_owned();
+        let placeholder = text("placeholder").map_or_else(
+            || words!(choose_placeholder = "Type to filter").say(),
+            str::to_owned,
+        );
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         let sub = cx.subscribe_in(
             &input,
@@ -132,7 +146,10 @@ impl Shell {
         self.choose = Some(ChooseState {
             input,
             title: text("title").unwrap_or_default().to_owned(),
-            empty: "Nothing to choose from".to_owned(),
+            empty: words!(
+                choose_empty = "Nothing to choose from",
+                note = "Said in a list to choose from (Open With's applications) where nothing matches what is typed."
+            ),
             choices: choices.unwrap_or_default(),
             filtered: Vec::new(),
             picker: Picker::default(),
@@ -160,8 +177,17 @@ impl Shell {
                     }
                     let answer = match result {
                         Ok(Outcome::Value(value)) => serde_json::from_value::<Answer>(value)
-                            .map_err(|e| anyhow::anyhow!("unreadable choices: {e}")),
-                        Ok(_) => Err(anyhow::anyhow!("nothing to choose from")),
+                            .map_err(|e| {
+                                anyhow::Error::new(e).context(words!(
+                                    choose_unreadable = "unreadable choices",
+                                    note = "What a list to choose from says when the choices a plugin gave cannot be read; the reason follows."
+                                ))
+                            }),
+                        Ok(_) => Err(words!(
+                            choose_nothing = "nothing to choose from",
+                            note = "Said when a plugin asked to offer choices gave none."
+                        )
+                        .into()),
                         Err(e) => Err(e),
                     };
                     match answer {
@@ -171,7 +197,7 @@ impl Shell {
                                     c.title = title;
                                 }
                                 if let Some(empty) = answer.empty {
-                                    c.empty = empty;
+                                    c.empty = Words::as_written(empty);
                                 }
                                 if answer.option.is_some() {
                                     c.option = answer.option;
@@ -289,11 +315,20 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     let c = shell.choose.as_ref()?;
     let a11y = shell.a11y;
     let typing = gpui::Focusable::focus_handle(c.input.read(cx), cx);
-    let mut list = modal::options("choose-results", "Choices", c.filtered.len(), a11y)
-        .flex()
-        .flex_col()
-        .py_1()
-        .overflow_hidden();
+    let mut list = modal::options(
+        "choose-results",
+        words!(
+            choose_choices = "Choices",
+            note = "What a screen reader calls a list to choose from."
+        )
+        .say(),
+        c.filtered.len(),
+        a11y,
+    )
+    .flex()
+    .flex_col()
+    .py_1()
+    .overflow_hidden();
     let mut previous: Option<&str> = None;
     for (row, icon) in c.picker.shown(c.filtered.len()).zip(icons) {
         let choice = &c.choices[c.filtered[row]];
@@ -368,7 +403,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .px_3()
                 .py_2()
                 .text_color(theme.text_muted)
-                .child(c.empty.clone()),
+                .child(c.empty.say()),
         );
     }
     let list = modal::scrolled(

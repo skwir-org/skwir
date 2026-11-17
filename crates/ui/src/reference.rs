@@ -46,6 +46,7 @@ use gpui::{
     ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
 use skwir_core::reference::Reference;
+use skwir_core::words;
 
 use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
@@ -278,8 +279,19 @@ pub(crate) fn question<V: 'static>(
 /// What a field takes, as its `?` and F1 say it: with its keys.
 pub(crate) fn tip(keys: Option<String>) -> SharedString {
     match keys {
-        Some(keys) => format!("What it takes · {keys}").into(),
-        None => "What it takes".into(),
+        Some(keys) => words!(
+            reference_tip_keys = "What it takes · { $keys }",
+            keys = keys,
+            note = "The tooltip of a field's ? button, which lists what the field takes; keys: its shortcut."
+        )
+        .say()
+        .into(),
+        None => words!(
+            reference_tip = "What it takes",
+            note = "The tooltip of a field's ? button, which lists what the field takes."
+        )
+        .say()
+        .into(),
     }
 }
 
@@ -563,12 +575,22 @@ fn list<V: Helps>(
                 let lit = listed.lit == Some(row);
                 let hover = theme.hover;
                 let named = a11y.then(|| {
-                    let mut named = format!("{}, {}", item.written, item.says.say());
-                    if let Some(gives) = &item.gives {
-                        named.push_str(", ");
-                        named.push_str(gives);
-                    }
-                    SharedString::from(named)
+                    let named = match &item.gives {
+                        Some(gives) => words!(
+                            reference_item_gives = "{ $written }, { $says }, { $gives }",
+                            written = item.written.as_str(),
+                            says = item.says.clone(),
+                            gives = gives.as_str(),
+                            note = "What a screen reader calls an item of a field's list of what it takes; written: the item as it is written (a pattern); says: what it means; gives: what it gives for the first file."
+                        ),
+                        None => words!(
+                            reference_item = "{ $written }, { $says }",
+                            written = item.written.as_str(),
+                            says = item.says.clone(),
+                            note = "What a screen reader calls an item of a field's list of what it takes; written: the item as it is written (a pattern); says: what it means."
+                        ),
+                    };
+                    SharedString::from(named.say())
                 });
                 crate::modal::option(
                     div().id(crate::elements::known_by(

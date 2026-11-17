@@ -39,19 +39,146 @@ use skwir_core::registry::MenuItem;
 
 /// The labels every preview uses for the actions they share.
 pub mod label {
-    pub const FIT: &str = "Fit";
-    pub const FIT_WIDTH: &str = "Fit width";
-    pub const CONTENTS: &str = "Contents";
-    pub const FIND: &str = "Find";
-    pub const SOURCE: &str = "Source";
+    use skwir_core::words;
+    use skwir_core::words::Words;
+
+    pub fn fit() -> Words {
+        words!(
+            preview_fit = "Fit",
+            note =
+                "A preview's button: show the whole picture, page or model in the room there is."
+        )
+    }
+    pub fn fit_width() -> Words {
+        words!(
+            preview_fit_width = "Fit width",
+            note = "A preview's button: show the picture or page as wide as the room there is."
+        )
+    }
+    pub fn contents() -> Words {
+        words!(
+            preview_contents = "Contents",
+            note = "A preview's button and its drawer's heading: a document's table of contents, a text's outline."
+        )
+    }
+    pub fn find() -> Words {
+        words!(
+            preview_find = "Find",
+            note = "A preview's button: find words in what it shows."
+        )
+    }
+    pub fn source() -> Words {
+        words!(
+            preview_source = "Source",
+            note = "A preview's button: show the file's own text (an HTML page's, a drawing's) instead of what it draws."
+        )
+    }
     /// A model turned in 3D (ADR-067).
-    pub const TURN: &str = "3D";
-    pub const HEX: &str = "View as hex";
+    pub fn turn() -> Words {
+        words!(
+            preview_turn = "3D",
+            note = "A preview's button: turn a 3D model in its view, instead of its still picture."
+        )
+    }
+    pub fn hex() -> Words {
+        words!(
+            preview_hex = "View as hex",
+            note = "A preview's menu row: show the file's bytes in hexadecimal."
+        )
+    }
     /// All of a file a preview cut short or refused to stay quick.
-    pub const WHOLE: &str = "Full preview";
-    pub const ZOOM: &str = "Zoom and fit";
-    pub const FULLSCREEN: &str = "Fullscreen";
-    pub const MORE: &str = "More";
+    pub fn whole() -> Words {
+        words!(
+            preview_whole = "Full preview",
+            note = "A preview's button: read all of a file past the size a quick preview keeps to."
+        )
+    }
+    pub fn zoom() -> Words {
+        words!(
+            preview_zoom = "Zoom and fit",
+            note = "A preview's button that opens its zoom levels and its ways of fitting."
+        )
+    }
+    pub fn fullscreen() -> Words {
+        words!(
+            preview_fullscreen = "Fullscreen",
+            note = "A preview's button: show it on the whole screen."
+        )
+    }
+    pub fn more() -> Words {
+        words!(
+            preview_more = "More",
+            note = "A preview's last button, the menu of what has no button of its own."
+        )
+    }
+    pub fn zoom_out() -> Words {
+        words!(
+            preview_zoom_out = "Zoom out",
+            note = "A preview's button: show the picture, page, map or model smaller."
+        )
+    }
+    pub fn zoom_in() -> Words {
+        words!(
+            preview_zoom_in = "Zoom in",
+            note = "A preview's button: show the picture, page, map or model larger."
+        )
+    }
+    pub fn smaller_text() -> Words {
+        words!(
+            preview_smaller_text = "Smaller text",
+            note = "A preview's button: draw the text it shows smaller."
+        )
+    }
+    /// The placeholder of the field a page's or a chapter's number is
+    /// typed in.
+    pub fn page_field() -> Words {
+        words!(
+            preview_page_field = "Page",
+            note = "The placeholder of the field a document's page or a book's chapter number is typed in."
+        )
+    }
+    pub fn count_by() -> Words {
+        words!(
+            preview_count_by = "Count by",
+            note = "Pointing at the count of a document's pages or a book's chapters, which chooses how they are counted: in order, or by the numbers printed on them."
+        )
+    }
+    pub fn go_to_page() -> Words {
+        words!(
+            preview_go_to_page = "Go to page",
+            note = "Pointing at the page number between a preview's previous and next buttons: a click lets one be typed."
+        )
+    }
+    pub fn continuous() -> Words {
+        words!(
+            preview_continuous = "Continuous scrolling",
+            note = "A preview's button: its pages one under the other, scrolled through, rather than a screen at a time."
+        )
+    }
+    pub fn previous_match() -> Words {
+        words!(
+            preview_previous_match = "Previous match",
+            note = "A button beside a preview's find field."
+        )
+    }
+    pub fn next_match() -> Words {
+        words!(
+            preview_next_match = "Next match",
+            note = "A button beside a preview's find field."
+        )
+    }
+    pub fn close_find() -> Words {
+        words!(
+            preview_close_find = "Close find",
+            note = "A button beside a preview's find field."
+        )
+    }
+    pub fn larger_text() -> Words {
+        words!(
+            preview_larger_text = "Larger text",
+            note = "A preview's button: draw the text it shows larger."
+        )
+    }
 }
 
 /// How tall the bar is.
@@ -255,7 +382,7 @@ impl Bar {
 /// makes the count the picker of that unit, opening the popup it names.
 pub fn number_tool(
     bar: &mut Bar,
-    (id, title): (&'static str, &'static str),
+    (id, title): (&'static str, skwir_core::words::Words),
     edit: (&'static str, serde_json::Value),
     (value, total): (String, String),
     editor: fn(&Shell) -> Option<&Field>,
@@ -278,7 +405,7 @@ pub fn number_tool(
                 .bg(paper)
                 .child(field.input.clone())
                 .into_any_element(),
-            None => Button::new(id, "", title, edit.0)
+            None => Button::new(id, "", title.say(), edit.0)
                 .args(edit.1.clone())
                 .label(value.clone())
                 .render(shell, cx)
@@ -287,8 +414,16 @@ pub fn number_tool(
                 .into_any_element(),
         },
     ));
+    let of_total = move || {
+        skwir_core::words!(
+            preview_of_total = "/ { $total }",
+            total = total.clone(),
+            note = "After the page or chapter shown, between a preview's previous and next buttons: how many there are (3 / 12)."
+        )
+        .say()
+    };
     if let Some((button, popup)) = unit {
-        bar.push(Item::button(Slot::Navigate, 1, button.label(format!("/ {total}"))).opens(popup));
+        bar.push(Item::button(Slot::Navigate, 1, button.label(of_total())).opens(popup));
         return;
     }
     bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
@@ -297,7 +432,7 @@ pub fn number_tool(
             .text_body()
             .text_color(muted)
             .whitespace_nowrap()
-            .child(format!("/ {total}"))
+            .child(of_total())
             .into_any_element()
     }));
 }
@@ -305,16 +440,20 @@ pub fn number_tool(
 /// The count's own picker (`number_tool`): count by the document's own
 /// unit (`plain`: chapters of a book, pages of a document) or by the pages
 /// of its printed edition (`ui.printed_pages`).
-pub fn unit_popup(plain: &'static str) -> Popup {
+pub fn unit_popup(plain: skwir_core::words::Words) -> Popup {
     Rc::new(move |shell, theme, cx| {
         let popup = shell.preview.menu.as_ref()?;
         let mut choices = div().flex().flex_col().gap_1();
+        let printed = skwir_core::words!(
+            preview_printed_pages = "Printed pages",
+            note = "A choice of how a document's pages are counted: by the numbers printed on them (a book's iv, 12), not by their order in the file."
+        );
         for (id, label, on) in [
-            ("unit-plain", plain, false),
-            ("unit-printed", "Printed pages", true),
+            ("unit-plain", plain.say(), false),
+            ("unit-printed", printed.say(), true),
         ] {
             choices = choices.child(
-                Button::new(id, "", label, "ui.printed_pages")
+                Button::new(id, "", label.clone(), "ui.printed_pages")
                     .label(label)
                     .args(serde_json::json!({"on":on}))
                     .active(shell.prefs.printed_pages == on)
@@ -362,7 +501,16 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     }
     // Its tooltip names Escape where Escape does the same (`keymap::MEMBER`).
     bar.close = Some(
-        Button::new("preview-close", "close", "Close", "ui.inspect")
+        Button::new(
+            "preview-close",
+            "close",
+            skwir_core::words!(
+                preview_close_member = "Close",
+                note = "The button at the end of a preview's bar that leaves a file shown inside another (an archive's member)."
+            )
+            .say(),
+            "ui.inspect",
+        )
             .args(serde_json::json!({"action":"back"})),
     );
     // The file shown for its folder, whatever it turns out to be, says
@@ -372,7 +520,11 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
             Button::new(
                 "preview-stand-ins",
                 "settings",
-                "Files shown for folders…",
+                skwir_core::words!(
+                    preview_stand_ins = "Files shown for folders…",
+                    note = "A preview's menu row, opening the setting that names the files a folder's preview shows (README, cover)."
+                )
+                .say(),
                 "ui.settings",
             )
             .args(serde_json::json!({ "key": crate::settings::FOLDER_PREVIEW_NAMES_KEY })),
@@ -541,9 +693,13 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
             tool(
                 "preview-source",
                 "code",
-                "The file's own text, as written",
+                skwir_core::words!(
+                    preview_source_tip = "The file's own text, as written",
+                    note = "Pointing at a preview's Source button."
+                )
+                .say(),
                 serde_json::json!({"action":"source","on":!on}),
-                label::SOURCE,
+                label::source().say(),
                 on,
             ),
         ));
@@ -555,9 +711,13 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
             tool(
                 "preview-turn",
                 "cube",
-                "The model turned in 3D, or its picture",
+                skwir_core::words!(
+                    preview_turn_tip = "The model turned in 3D, or its picture",
+                    note = "Pointing at a preview's 3D button, which shows a 3D model turned in its view or its still picture."
+                )
+                .say(),
                 serde_json::json!({"action":"turn"}),
-                label::TURN,
+                label::turn().say(),
                 on,
             ),
         ));
@@ -569,9 +729,13 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
             tool(
                 "preview-whole",
                 "down",
-                "All of this file, past the size a preview keeps to",
+                skwir_core::words!(
+                    preview_whole_tip = "All of this file, past the size a preview keeps to",
+                    note = "Pointing at a preview's Full preview button."
+                )
+                .say(),
                 serde_json::json!({"action":"whole","on":!on}),
-                label::WHOLE,
+                label::whole().say(),
                 on,
             )
             .enabled(enabled),
@@ -582,9 +746,9 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
         let button = tool(
             "preview-hex",
             "grid",
-            label::HEX,
+            label::hex().say(),
             serde_json::json!({"action": if on { "auto" } else { "hex" }}),
-            label::HEX,
+            label::hex().say(),
             on,
         );
         match hex {
@@ -609,7 +773,7 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         Button::new(
             "preview-fullscreen",
             "fullscreen",
-            label::FULLSCREEN,
+            label::fullscreen().say(),
             "ui.preview_fullscreen",
         )
         .active(on),
@@ -834,12 +998,17 @@ fn row(
     // More in every bar, so what stands before it keeps its place:
     // disabled where it holds nothing.
     row.child(
-        Button::new("preview-more", "more", label::MORE, "ui.preview_menu")
-            .active(active == Some(MORE))
-            .enabled(has_more(bar, mode))
-            // A popup whose own button this variant dropped opens here.
-            .anchor_if(anchor, active.is_some() && !anchored)
-            .render(shell, cx),
+        Button::new(
+            "preview-more",
+            "more",
+            label::more().say(),
+            "ui.preview_menu",
+        )
+        .active(active == Some(MORE))
+        .enabled(has_more(bar, mode))
+        // A popup whose own button this variant dropped opens here.
+        .anchor_if(anchor, active.is_some() && !anchored)
+        .render(shell, cx),
     )
     .children(bar.close.clone().map(|close| close.render(shell, cx)))
     .into_any_element()
@@ -939,22 +1108,24 @@ pub struct Field {
     /// what the preview shows under it.
     pub drawn: Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// What the last thing asked of it came to, and whether that is a
-    /// failure (`say`), until its text changes.
-    said: Rc<std::cell::RefCell<Option<(String, bool)>>>,
+    /// failure (`say`), until its text changes: said where it is drawn.
+    said: Rc<std::cell::RefCell<Option<(skwir_core::words::Words, bool)>>>,
     _subscription: gpui::Subscription,
 }
 
 impl Field {
+    /// Transitional: the input keeps its placeholder said (`TextInput`),
+    /// so it is said once here (ADR-139).
     pub fn new(
-        placeholder: &'static str,
+        placeholder: &skwir_core::words::Words,
         submit: &'static str,
         cancel: &'static str,
         window: &mut gpui::Window,
         cx: &mut Context<Shell>,
     ) -> Self {
         use crate::input::{InputEvent, TextInput};
-        let input = cx.new(|cx| TextInput::new(placeholder, cx));
-        let said: Rc<std::cell::RefCell<Option<(String, bool)>>> = Rc::default();
+        let input = cx.new(|cx| TextInput::new(placeholder.say(), cx));
+        let said: Rc<std::cell::RefCell<Option<(skwir_core::words::Words, bool)>>> = Rc::default();
         let heard = Rc::clone(&said);
         let subscription = cx.subscribe_in(
             &input,
@@ -987,7 +1158,7 @@ impl Field {
     /// Say in its popup what the last thing asked came to instead of what
     /// was looked for (no match, why it was not looked for, a failure):
     /// the answer stays where the question was (shell.md, "Feedback").
-    pub fn say(&self, text: impl Into<String>, error: bool) {
+    pub fn say(&self, text: impl Into<skwir_core::words::Words>, error: bool) {
         *self.said.borrow_mut() = Some((text.into(), error));
     }
 
@@ -1027,21 +1198,24 @@ pub fn find_popup(
     let line = match field.said.borrow().clone() {
         // Announced as a toast is: a failure at once, the rest after what
         // is being said (accessibility.md).
-        Some((said, error)) => div()
-            .id("preview-find-status")
-            .role(if error {
-                gpui::Role::Alert
-            } else {
-                gpui::Role::Status
-            })
-            .aria_live(if error {
-                gpui::Live::Assertive
-            } else {
-                gpui::Live::Polite
-            })
-            .when(shell.a11y, |d| d.aria_label(said.clone()))
-            .text_color(if error { theme.error } else { theme.text })
-            .child(said),
+        Some((said, error)) => {
+            let said = said.say();
+            div()
+                .id("preview-find-status")
+                .role(if error {
+                    gpui::Role::Alert
+                } else {
+                    gpui::Role::Status
+                })
+                .aria_live(if error {
+                    gpui::Live::Assertive
+                } else {
+                    gpui::Live::Polite
+                })
+                .when(shell.a11y, |d| d.aria_label(said.clone()))
+                .text_color(if error { theme.error } else { theme.text })
+                .child(said)
+        }
         None => div()
             .id("preview-find-status")
             .text_color(theme.text_muted)
