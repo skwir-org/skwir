@@ -69,6 +69,12 @@ query_chip_tag = Tag
 # A search's chip: when its pictures and videos were taken.
 query_chip_taken = Taken
 
+# The value of a search's Modified, Created, Accessed or Taken chip set to a year, a month or a day: when, as the reader's locale writes it (2026, May 2026, May 3, 2026).
+query_chip_when = { $when }
+
+# The value of a search's Modified, Created, Accessed or Taken chip set to days: the first and the last (Mar 3, 2026 → Mar 9, 2026).
+query_chip_when_days = { $first } → { $last }
+
 query_complete = Complete a search
 
 # shape: what it answers, written as JSON.

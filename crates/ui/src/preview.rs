@@ -7792,9 +7792,10 @@ pub(crate) fn shown_picture(
                 d.aria_label(name).when_some(size, |d, (width, height)| {
                     d.aria_description(
                         words!(
-                            preview_pixels_said = "{ $size } pixels",
-                            size = format!("{width} × {height}"),
-                            note = "What a screen reader hears of a picture shown: its size in pixels (4032 × 3024)."
+                            preview_pixels_said = "{ $width } × { $height } pixels",
+                            width = width,
+                            height = height,
+                            note = "What a screen reader hears of a picture shown: its size in pixels, width by height (4032 × 3024)."
                         )
                         .say(),
                     )

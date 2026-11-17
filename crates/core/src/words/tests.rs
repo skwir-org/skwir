@@ -585,6 +585,68 @@ fn moments_are_written_as_the_locale_writes_dates() {
     crate::locale::set_formats(None, None);
 }
 
+/// A period's day, year and month are written on Skwir's calendar in the
+/// reader's words, the day given whatever the zone: a Persian reader's
+/// March 2024 is the Gregorian month, named in Persian, never the Persian
+/// month it began in; a Thai reader's year keeps its own count.
+#[test]
+fn periods_are_written_on_the_calendar_that_counts_them() {
+    // Fourteen hours ahead of UTC: noon there is still the day given.
+    // SAFETY: a test of its own process, before any thread reads TZ.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("TZ", "Pacific/Kiritimati");
+    }
+    let on = |shape| super::Moment::on(2024, 3, 1, shape).unwrap();
+    let en = |shape| dates::written("en", on(shape));
+    assert_eq!(en(super::Shape::Date), "Mar 1, 2024");
+    assert_eq!(en(super::Shape::DateLong), "March 1, 2024");
+    assert_eq!(en(super::Shape::MonthYear), "March 2024");
+    assert_eq!(en(super::Shape::Month), "March");
+    assert_eq!(en(super::Shape::MonthShort), "Mar");
+    assert_eq!(en(super::Shape::Year), "2024");
+    assert_eq!(en(super::Shape::Day), "1");
+    assert_eq!(
+        dates::written("en-GB", on(super::Shape::DateLong)),
+        "1 March 2024"
+    );
+    assert_eq!(
+        dates::written("fr", on(super::Shape::DateLong)),
+        "1 mars 2024"
+    );
+    assert_eq!(dates::written("fr", on(super::Shape::MonthShort)), "mars");
+    // Persian: the Gregorian month in its words, not Esfand 1402.
+    for shape in [
+        super::Shape::MonthYear,
+        super::Shape::Year,
+        super::Shape::Day,
+    ] {
+        assert_eq!(
+            dates::written("fa", on(shape)),
+            dates::written("fa-u-ca-gregory", on(shape)),
+            "{shape:?}"
+        );
+    }
+    // A date is a date in any calendar: the locale's own, the Persian
+    // (11 Esfand 1402), which is not the Gregorian.
+    assert_eq!(
+        dates::written("fa", on(super::Shape::Date)),
+        dates::written("fa-u-ca-persian", on(super::Shape::Date))
+    );
+    assert_ne!(
+        dates::written("fa", on(super::Shape::Date)),
+        dates::written("fa-u-ca-gregory", on(super::Shape::Date))
+    );
+    // Thai: Buddhist years begin with the Gregorian's, counted from 543 BC.
+    assert!(
+        dates::written("th-TH", on(super::Shape::Year)).contains("2567"),
+        "{}",
+        dates::written("th-TH", on(super::Shape::Year))
+    );
+    // A date there is not is none.
+    assert_eq!(super::Moment::on(2026, 2, 31, super::Shape::Date), None);
+}
+
 /// Shipped catalogs are registered by their crate's owner: the program's
 /// at once, a plugin's by its crate's name either way it is spelt, and
 /// taken back with the plugin.

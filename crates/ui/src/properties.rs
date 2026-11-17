@@ -2237,9 +2237,10 @@ fn measure(shell: &Shell) -> Option<Row> {
             Row::new(
                 label::dimensions().say(),
                 words!(
-                    properties_dimensions_value = "{ $size } px",
-                    size = format!("{width} × {height}"),
-                    note = "A picture's size in Properties, in pixels (4032 × 3024 px)."
+                    properties_dimensions_value = "{ $width } × { $height } px",
+                    width = *width,
+                    height = *height,
+                    note = "A picture's size in Properties, in pixels, width by height (4032 × 3024 px)."
                 )
                 .say(),
             )

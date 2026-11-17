@@ -19290,3 +19290,66 @@ once more (14 → 93 GB free) and the formats worktree's own target/
   - numbers still formatted in code (`{:.1}`, `{:.0}%`);
   - a gender selector for the search's "Did you mean" reading;
   - a dozen ungrammatical or elliptical descriptions.
+
+## 2026-11-17 (early morning): Step E complete, the English sweep (ADR-139)
+
+- **The transitional `From<&str>` is removed** (`efb47681`): an English
+  literal no longer compiles where words are wanted. What is not
+  Skwir's to translate says so with `Words::as_written` (19 sites
+  outside tests, about 470 in tests); text said early only to be handed
+  back as words now travels whole (a dozen buttons and titles). The
+  zoom's percentage and the slideshow's pace became messages.
+  `just check-cross` found three Windows-only tests and an import:
+  fixed.
+- **The English sweep** (`bfd78edd`). Three agents fixed what the French
+  translators listed:
+  - counts given selectors (the footer's, the timeline's, exclusions',
+    tags');
+  - selectors moved onto the number a noun follows;
+  - lists joined in code made `List` arguments (English lists now take
+    CLDR's comma before "and");
+  - numbers formatted in code made `Decimal`s and counts;
+  - the search's "Did you mean" reading selecting on its subject's
+    kind;
+  - a remote's trash carrying its own determiner;
+  - ungrammatical and elliptical English reworded;
+  - "Skwir" capitalised in prose.
+
+  Every changed English has its French re-drafted. 18 tests expected
+  the old English; none showed a bug.
+- **Properties' labels** share one width, the widest word of any label
+  (84 at 100 % at least, 168 at most), measured from text and font: «
+  Commentaire » is no longer cut. The preview header's facts are one
+  message, its date following the dates setting.
+- **`Words::say_apart`** (`7080bd92`) cuts a sentence around several
+  arguments in core; the header no longer cuts said text itself.
+
+**Checked:** at each commit, check and clippy `-D warnings` on the
+default members, their tests (3,468 + 234), `just check-cross` after the
+sweep, `cargo fmt --check`, `just words --check`, the translators'
+frcheck (0 errors in every `fr.ftl`).
+
+**Disk:** the root fell to 4 GB during the sweepers' test runs; a prune
+with no build running freed it to 26 GB.
+
+**Owed:** idle memory and the first frame with the ICU data and the
+catalogs (`just idle-pss` measures on the session's display, so the user
+runs it). Expected: nearly nothing for an English window, which never
+reads a French catalog; for a French window, about the size of the
+catalogs it reads.
+- **Step F's headings** (an agent): the timeline's months and bars, the
+  query's year headings and date chips, quick filters' years are
+  moments (new shapes: `DateLong`, `MonthShort`, `Year`, `Day`;
+  `Moment::on` a civil day); periods are written on the Gregorian
+  calendar that counts them, dates on the locale's own; a picture's
+  dimensions are one message of two counts ("4,032 × 3,024"). Left: the
+  ISO dates choice is the window's, so the plugins' dates cannot follow
+  it (a decision for the user: a core knob, and what ISO writes for a
+  month).
+
+**Two more questions for the user**, found in the morning's work:
+- The query plugin is titled "Query" but called "Search" elsewhere
+  ("the Search plugin"): which name?
+- Should the ISO dates choice move into core, so every date follows it,
+  the plugins' too? If so, what should ISO write for a month label
+  ("2026-03" for "Mar 2026")?

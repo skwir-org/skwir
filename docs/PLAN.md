@@ -3714,11 +3714,15 @@ is not Skwir's to translate). Left, from
   date locale (`Moment`: « mardi à 08:00 », « 12 mars 2024 », a US
   locale's "2:02 PM"), lists by the language's patterns, a type's name
   from shared-mime-info's translations; agents read English formats. The
-  dates setting's ISO choice stays ISO. Left: the timeline's months and
-  the groups' and facets' date headings, the numbers still formatted in
-  code (`{:.1}`, `{:.0}%`), the boundary tests in `de`, and idle memory
-  with the data (ICU4X's compiled data holds every locale: a data export
-  for the languages shipped is the lighter way).
+  timeline's months and bars, the groups' years and the facets' dates
+  are moments (periods on the Gregorian calendar the counting uses), a
+  picture's dimensions grouped counts. The dates setting's ISO choice
+  stays ISO in the window. Left: the ISO choice is the window's, so the
+  plugins' dates (the query's chips, geo's, print's, git's) cannot follow
+  it (a core knob `Moment` reads, to decide with the user: what ISO
+  writes for a month); idle memory with the data (ICU4X's compiled data
+  holds every locale: a data export for the languages shipped is the
+  lighter way).
   - ICU4X's decimal, list and datetime, with data for English and the
     languages shipped. `Count`, `Size`, `Instant` and `Span` are
     formatted by them: `format.rs`'s dates, the timeline's months, the

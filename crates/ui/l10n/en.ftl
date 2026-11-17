@@ -2776,6 +2776,9 @@ form_unfold_folders = Folders
 # The keys of a form while it waits (a sign-in in the browser).
 form_waiting_keys = Escape to cancel
 
+# A picture's size in pixels, width by height, alone: the list's Dimensions column, a preview's caption (4032 × 3024).
+format_dimensions = { $width } × { $height }
+
 # How long an action has left, under its bar. Begins in lower case.
 format_left_few_seconds = a few seconds left
 
@@ -4797,8 +4800,8 @@ preview_peek_said = { $facts }. { $hint }
 # Why a film's or a track's picture is not shown: what read it stopped unexpectedly.
 preview_picture_reader_failed = the picture's reader failed
 
-# What a screen reader hears of a picture shown: its size in pixels (4032 × 3024).
-preview_pixels_said = { $size } pixels
+# What a screen reader hears of a picture shown: its size in pixels, width by height (4032 × 3024).
+preview_pixels_said = { $width } × { $height } pixels
 
 # What a screen reader calls a preview that plays a sound or a film. name: its file's name.
 preview_player_said = Player: { $name }
@@ -4869,8 +4872,8 @@ preview_turn_tip = The model turned in 3D, or its picture
 # A preview's caption where reading the file failed.
 preview_unavailable = Preview unavailable
 
-# A preview's caption while it shows a picture of a film: its size in pixels (1920 × 1080).
-preview_video_still = Video still · { $size }
+# A preview's caption while it shows a picture of a film: its size in pixels, width by height (1920 × 1080).
+preview_video_still = Video still · { $width } × { $height }
 
 # A row's label in Properties' Volume: the device a drive is (/dev/sda1), or where it is mounted from.
 preview_volume_device = Device
@@ -5142,8 +5145,8 @@ properties_differs_in = Differs in
 # A row's label in Properties: a picture's size in pixels.
 properties_dimensions = Dimensions
 
-# A picture's size in Properties, in pixels (4032 × 3024 px).
-properties_dimensions_value = { $size } px
+# A picture's size in Properties, in pixels, width by height (4032 × 3024 px).
+properties_dimensions_value = { $width } × { $height } px
 
 # A row's label in Properties: the web address a file was downloaded from.
 properties_downloaded_from = Downloaded from
@@ -7448,6 +7451,9 @@ timeline_dated = { $count ->
         [one] { $count } dated
        *[other] { $count } dated
     }
+
+# Beside the timeline's buttons: the days the bars span, or the bar pointed at, first to last (3 Mar 2025 → 9 Mar 2025).
+timeline_days = { $first } → { $last }
 
 # Beside the timeline's buttons: how many files are dated before the bars shown.
 timeline_earlier_files = { $count ->

@@ -194,12 +194,15 @@ fn caption(shell: &Shell) -> String {
             detail: Some(PreviewInfo::Video { .. }),
             ..
         }) => words!(
-            preview_video_still = "Video still · { $size }",
-            size = format!("{width} × {height}"),
-            note = "A preview's caption while it shows a picture of a film: its size in pixels (1920 × 1080)."
+            preview_video_still = "Video still · { $width } × { $height }",
+            width = *width,
+            height = *height,
+            note = "A preview's caption while it shows a picture of a film: its size in pixels, width by height (1920 × 1080)."
         )
         .say(),
-        Some(PreviewContent::Image { width, height, .. }) => format!("{width} × {height}"),
+        Some(PreviewContent::Image { width, height, .. }) => {
+            crate::format::dimensions(u64::from(*width), u64::from(*height))
+        }
         Some(PreviewContent::Error(_)) => words!(
             preview_unavailable = "Preview unavailable",
             note = "A preview's caption where reading the file failed."

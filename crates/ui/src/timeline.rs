@@ -31,7 +31,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{Arg, Moment, Shape, Words};
 use skwir_platform::calendar::{Calendar, Period, civil_from_days};
 
 use crate::elements::bars::{self, BarColors, bar_chart};
@@ -109,23 +109,6 @@ fn date_title(date: usize) -> Words {
 pub const DATES_MENU: &str = "timeline_dates";
 /// The chart under the strip's controls: bars, their counts and labels.
 const CHART_H: f32 = 84.0;
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-const MONTH_NAMES: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Bar {
@@ -336,10 +319,11 @@ fn epoch(seconds: u64) -> std::time::SystemTime {
 
 /// Each bar's label and the coarsest level it is labelled at (`bars::Bar`),
 /// from the civil date its period begins on: where a year begins the year,
-/// where a month does its name, else the day of the month. The levels: 0
-/// every bar, 1 the 1st, 8th, 15th and 22nd of a month (bars of days), 2
-/// months, 3 quarters, 4 years, 5 to 10 the years that are multiples of 2,
-/// 5, 10, 20, 50 and 100.
+/// where a month does its name, shortened, else the day of the month, each
+/// as the reader's locale writes it. The levels: 0 every bar, 1 the 1st,
+/// 8th, 15th and 22nd of a month (bars of days), 2 months, 3 quarters, 4
+/// years, 5 to 10 the years that are multiples of 2, 5, 10, 20, 50 and
+/// 100.
 fn labels(bucket: usize, starts: &[(i64, u32, u32)]) -> Vec<(String, u8)> {
     starts
         .iter()
@@ -353,35 +337,48 @@ fn labels(bucket: usize, starts: &[(i64, u32, u32)]) -> Vec<(String, u8)> {
                     .into_iter()
                     .find(|(n, _)| y % n == 0)
                     .map_or(4, |(_, rank)| rank);
-                (y.to_string(), rank)
+                (written((y, m, d), Shape::Year), rank)
             } else if new_month {
-                (MONTHS[month(m)].to_owned(), if m % 3 == 1 { 3 } else { 2 })
+                (
+                    written((y, m, d), Shape::MonthShort),
+                    if m % 3 == 1 { 3 } else { 2 },
+                )
             } else {
                 let weekly = bucket == DAY && matches!(d, 8 | 15 | 22);
-                (d.to_string(), u8::from(weekly))
+                (written((y, m, d), Shape::Day), u8::from(weekly))
             }
         })
         .collect()
 }
 
-/// A month's index into `MONTHS`.
-fn month(m: u32) -> usize {
-    (m as usize).clamp(1, 12) - 1
+/// The civil day a bar begins on, as a moment written as `shape` says.
+fn moment((y, m, d): (i64, u32, u32), shape: Shape) -> Option<Moment> {
+    Moment::on(y, m, d, shape)
 }
 
-/// What a bar is to a screen reader: its period in words.
-fn period_words(bucket: usize, (y, m, d): (i64, u32, u32)) -> String {
-    let name = MONTH_NAMES[month(m)];
+/// The civil day a bar begins on, written as `shape` says for the window.
+fn written(day: (i64, u32, u32), shape: Shape) -> String {
+    moment(day, shape).map_or_else(|| "—".to_owned(), Moment::said)
+}
+
+/// What a bar is to a screen reader: its period in words, its months
+/// named whole ("9 March 2026", "March 2026").
+fn period_words(bucket: usize, day: (i64, u32, u32)) -> String {
     match bucket {
-        DAY => format!("{d} {name} {y}"),
-        1 => words!(
-            timeline_week_of = "Week of { $date }",
-            date = format!("{d} {name} {y}"),
-            note = "What a screen reader calls a bar of the timeline counting a week: the day it begins (3 March 2025)."
-        )
-        .say(),
-        2 => format!("{name} {y}"),
-        _ => y.to_string(),
+        DAY => written(day, Shape::DateLong),
+        1 => moment(day, Shape::DateLong).map_or_else(
+            || "—".to_owned(),
+            |date| {
+                words!(
+                    timeline_week_of = "Week of { $date }",
+                    date = date,
+                    note = "What a screen reader calls a bar of the timeline counting a week: the day it begins (3 March 2025)."
+                )
+                .say()
+            },
+        ),
+        2 => written(day, Shape::MonthYear),
+        _ => written(day, Shape::Year),
     }
 }
 
@@ -969,7 +966,7 @@ impl Shell {
 
 /// What the strip says beside its controls: the bar under the pointer (or
 /// the keys'), or what the bars show.
-fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
+fn info(t: &TimelineState, focused_bar: Option<usize>, friendly: bool) -> String {
     let counting = || {
         words!(
             timeline_counting = "counting…",
@@ -989,16 +986,30 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
         };
     };
     // `end` is the first instant of the day after a bar's last: its last
-    // day holds the instant before.
+    // day holds the instant before. A day as the dates setting writes
+    // them (`friendly`): the reader's dates, else ISO 8601's in every
+    // language.
+    let cal = Calendar::system();
+    let dated = |at: u64| {
+        friendly
+            .then(|| Moment::of(epoch(at), Shape::Date))
+            .flatten()
+    };
+    let alone = |at: u64| dated(at).map_or_else(|| format::day(epoch(at)), Moment::said);
+    let arg =
+        |at: u64| -> Arg { dated(at).map_or_else(|| format::day(epoch(at)).into(), Arg::from) };
     let days = |start: u64, end: u64| {
-        let (first, last) = (
-            format::day(epoch(start)),
-            format::day(epoch(end.saturating_sub(1).max(start))),
-        );
-        if first == last {
-            first
+        let last = end.saturating_sub(1).max(start);
+        if cal.day_of(epoch(start)) == cal.day_of(epoch(last)) {
+            alone(start)
         } else {
-            format!("{first} → {last}")
+            words!(
+                timeline_days = "{ $first } → { $last }",
+                first = arg(start),
+                last = arg(last),
+                note = "Beside the timeline's buttons: the days the bars span, or the bar pointed at, first to last (3 Mar 2025 → 9 Mar 2025)."
+            )
+            .say()
         }
     };
     if let Some(b) = t.hover.or(focused_bar).and_then(|i| h.bars.get(i)) {
@@ -1299,7 +1310,7 @@ fn controls(
                 .id("timeline-info")
                 .text_color(theme.text_muted)
                 .truncate(),
-            info(t, focused_bar),
+            info(t, focused_bar, shell.prefs.friendly_dates),
         ))
 }
 
@@ -1474,7 +1485,7 @@ pub fn render(
                             }, { $info }. Left and Right go from bar to bar, Shift extends, Enter lists the files",
                         date = date_title(t.date),
                         bucket = BUCKETS[bucket],
-                        info = info(t, None),
+                        info = info(t, None, shell.prefs.friendly_dates),
                         note = "What a screen reader hears of the timeline's bars: which time they count (When modified), what each bar counts, what the strip says beside its buttons, then what the keys do."
                     )
                     .say(),
@@ -1576,12 +1587,44 @@ mod tests {
         assert_eq!(said[2], ("2020".into(), 8), "a multiple of 20");
         // A first bar that begins mid-month says its day.
         assert_eq!(labels(DAY, &[(2026, 3, 9)])[0], ("9".into(), 0));
+        // As the reader's locale writes them: French shortens April so.
+        skwir_core::locale::set_formats(None, Some("fr".into()));
+        assert_eq!(labels(1, &weeks)[2], ("avr.".into(), 3));
+        assert_eq!(period_words(2, (2026, 4, 1)), "avril 2026");
+        skwir_core::locale::set_formats(None, None);
+    }
+
+    /// The days beside the controls are written as the dates setting
+    /// says: the reader's dates, else ISO 8601's; a bar of one day says it
+    /// once, by its day on the calendar, never by its words.
+    #[test]
+    fn the_days_beside_the_bars_follow_the_dates_setting() {
+        let cal = Calendar::system();
+        let at = |d: u32| {
+            cal.day_start(skwir_platform::calendar::days_from_civil(2026, 3, d))
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        };
+        let t = TimelineState {
+            histogram: Some(Histogram {
+                bars: vec![bar(at(9), at(16)), bar(at(16), at(17))],
+                ..Histogram::default()
+            }),
+            ..TimelineState::default()
+        };
+        let first = |said: String| said.split(" · ").next().unwrap().to_owned();
+        assert_eq!(first(info(&t, Some(0), true)), "Mar 9, 2026 → Mar 15, 2026");
+        assert_eq!(first(info(&t, Some(0), false)), "2026-03-09 → 2026-03-15");
+        assert_eq!(first(info(&t, Some(1), true)), "Mar 16, 2026");
+        assert_eq!(first(info(&t, Some(1), false)), "2026-03-16");
+        assert_eq!(first(info(&t, None, true)), "Mar 9, 2026 → Mar 16, 2026");
     }
 
     #[test]
     fn a_bar_said_in_words() {
-        assert_eq!(period_words(DAY, (2026, 3, 9)), "9 March 2026");
-        assert_eq!(period_words(1, (2026, 3, 9)), "Week of 9 March 2026");
+        assert_eq!(period_words(DAY, (2026, 3, 9)), "March 9, 2026");
+        assert_eq!(period_words(1, (2026, 3, 9)), "Week of March 9, 2026");
         assert_eq!(period_words(2, (2026, 3, 1)), "March 2026");
         assert_eq!(period_words(3, (2026, 1, 1)), "2026");
         let b = Bar {

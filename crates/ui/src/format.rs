@@ -30,6 +30,18 @@ pub fn day(t: SystemTime) -> String {
     local(t, "%Y-%m-%d")
 }
 
+/// A year of the calendar, as an argument a message places: written as
+/// the reader's locale writes years ("2024", « 2024年 »).
+pub fn year(year: i64) -> skwir_core::words::Arg {
+    Moment::on(year, 1, 1, Shape::Year).map_or_else(|| year.to_string().into(), Into::into)
+}
+
+/// A year of the calendar, written for the window as the reader's locale
+/// writes years: a heading, a filter's pill.
+pub fn year_said(year: i64) -> String {
+    Moment::on(year, 1, 1, Shape::Year).map_or_else(|| year.to_string(), Moment::said)
+}
+
 fn local(t: SystemTime, format: &str) -> String {
     jiff::Timestamp::try_from(t).map_or_else(
         |_| "—".into(),
@@ -107,6 +119,18 @@ fn friendly(t: SystemTime, now: &jiff::Zoned) -> Friendly {
     } else {
         Friendly::Date(moment(Shape::Date))
     }
+}
+
+/// `4032 × 3024`: a picture's size in pixels, as every place that says it
+/// alone writes it, its numbers grouped as the reader's are.
+pub fn dimensions(width: u64, height: u64) -> String {
+    skwir_core::words!(
+        format_dimensions = "{ $width } × { $height }",
+        width = width,
+        height = height,
+        note = "A picture's size in pixels, width by height, alone: the list's Dimensions column, a preview's caption (4032 × 3024)."
+    )
+    .say()
 }
 
 /// `1 item`, `3 items`, said in the user's language (ADR-139).
@@ -364,6 +388,25 @@ mod tests {
         assert_eq!(super::count(1, "item"), "1 item");
         assert_eq!(super::count(0, "item"), "0 items");
         assert_eq!(super::count(1200, "item"), "1,200 items");
+    }
+
+    /// A picture's size groups its digits as every count does, as the
+    /// reader's numbers are grouped.
+    #[test]
+    fn dimensions_group_their_digits_as_counts_do() {
+        assert_eq!(super::dimensions(4032, 3024), "4,032 × 3,024");
+        skwir_core::locale::set_formats(Some("fr".into()), None);
+        assert_eq!(super::dimensions(4032, 3024), "4\u{202f}032 × 3\u{202f}024");
+        skwir_core::locale::set_formats(None, None);
+    }
+
+    /// A year is written as the reader's locale writes years.
+    #[test]
+    fn years_are_written_as_the_locale_writes_them() {
+        assert_eq!(super::year_said(2024), "2024");
+        skwir_core::locale::set_formats(None, Some("ja".into()));
+        assert_eq!(super::year_said(2024), "2024\u{5e74}");
+        skwir_core::locale::set_formats(None, None);
     }
 
     #[test]

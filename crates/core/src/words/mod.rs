@@ -225,6 +225,14 @@ pub struct Moment {
 }
 
 /// What of a moment is written, each as the reader's locale writes it.
+///
+/// A year, a month and a day of the month (`Year`, `MonthYear`, `Month`,
+/// `MonthShort`, `Day`) name a period of the calendar Skwir counts in
+/// (`skwir_platform::calendar`, the Gregorian): they are written on a
+/// calendar whose months and years are its own, the locale's where they
+/// are (the Buddhist counts its years from elsewhere), else the
+/// Gregorian, in the locale's words. A Persian month is not a Gregorian
+/// one: "March 2024" is never written as the Persian month it began in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
     /// The time of day: "14:02" (or "2:02 PM" where the locale says so).
@@ -236,6 +244,9 @@ pub enum Shape {
     DayMonth,
     /// The date: "12 Mar 2024".
     Date,
+    /// The date with its month's whole name, as it is said aloud: "12
+    /// March 2024", "March 12, 2024" (what a screen reader hears).
+    DateLong,
     /// The date and the time: "12 Mar 2024, 14:02".
     DateTime,
     /// The date and the time to the second.
@@ -244,6 +255,13 @@ pub enum Shape {
     MonthYear,
     /// The month: "March".
     Month,
+    /// The month, shortened as the locale shortens it: "Mar", « mars »
+    /// (a label in the room of a bar).
+    MonthShort,
+    /// The year: "2024" (« 2024年 » in Japanese).
+    Year,
+    /// The day of the month: "12" (« 12日 » in Japanese).
+    Day,
 }
 
 impl Shape {
@@ -253,22 +271,38 @@ impl Shape {
             Shape::Weekday => "weekday",
             Shape::DayMonth => "day_month",
             Shape::Date => "date",
+            Shape::DateLong => "date_long",
             Shape::DateTime => "date_time",
             Shape::DateTimeSeconds => "date_time_seconds",
             Shape::MonthYear => "month_year",
             Shape::Month => "month",
+            Shape::MonthShort => "month_short",
+            Shape::Year => "year",
+            Shape::Day => "day",
         }
     }
 
-    const ALL: [Shape; 8] = [
+    /// Whether it names a period of Skwir's calendar (`Shape`).
+    fn is_period(self) -> bool {
+        matches!(
+            self,
+            Shape::MonthYear | Shape::Month | Shape::MonthShort | Shape::Year | Shape::Day
+        )
+    }
+
+    const ALL: [Shape; 12] = [
         Shape::Time,
         Shape::Weekday,
         Shape::DayMonth,
         Shape::Date,
+        Shape::DateLong,
         Shape::DateTime,
         Shape::DateTimeSeconds,
         Shape::MonthYear,
         Shape::Month,
+        Shape::MonthShort,
+        Shape::Year,
+        Shape::Day,
     ];
 }
 
@@ -279,6 +313,28 @@ impl Moment {
         let at = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
         Some(Moment {
             at: i64::try_from(at).ok()?,
+            shape,
+        })
+    }
+
+    /// The civil day `year`-`month`-`day` (a period's first, a bar's, a
+    /// group's), written as `shape` says: its noon in the zone moments
+    /// are written in, so the day written is the one given whatever that
+    /// zone, and whatever calendar counted it. `None` for a date there is
+    /// not, or past what a date can say.
+    pub fn on(year: i64, month: u32, day: u32, shape: Shape) -> Option<Self> {
+        let date = jiff::civil::Date::new(
+            i16::try_from(year).ok()?,
+            i8::try_from(month).ok()?,
+            i8::try_from(day).ok()?,
+        )
+        .ok()?;
+        let noon = date
+            .at(12, 0, 0, 0)
+            .to_zoned(jiff::tz::TimeZone::system())
+            .ok()?;
+        Some(Moment {
+            at: noon.timestamp().as_second(),
             shape,
         })
     }
@@ -823,6 +879,8 @@ mod dates {
         DateTime(DateTimeFormatter<fieldsets::YMDT>),
         MonthYear(DateTimeFormatter<fieldsets::YM>),
         Month(DateTimeFormatter<fieldsets::M>),
+        Year(DateTimeFormatter<fieldsets::Y>),
+        Day(DateTimeFormatter<fieldsets::D>),
     }
 
     thread_local! {
@@ -830,13 +888,38 @@ mod dates {
             RefCell::new(HashMap::new());
     }
 
+    /// What `locale` writes `shape` with: its own preferences; for a
+    /// period of Skwir's calendar, on the Gregorian calendar where the
+    /// locale's months or years begin elsewhere (`Shape`).
+    fn prefs_of(
+        locale: &icu_locale_core::Locale,
+        shape: Shape,
+    ) -> icu_datetime::DateTimeFormatterPreferences {
+        use icu_calendar::AnyCalendarKind;
+        let mut prefs: icu_datetime::DateTimeFormatterPreferences = locale.into();
+        let kind = AnyCalendarKind::try_new(locale.into()).unwrap_or(AnyCalendarKind::Gregorian);
+        // Months and years that begin where the Gregorian's do, their
+        // years counted from elsewhere or not.
+        let gregorian_months = matches!(
+            kind,
+            AnyCalendarKind::Gregorian
+                | AnyCalendarKind::Iso
+                | AnyCalendarKind::Buddhist
+                | AnyCalendarKind::Roc
+        );
+        if shape.is_period() && !gregorian_months {
+            prefs.calendar_algorithm = Some(icu_calendar::preferences::CalendarAlgorithm::Gregory);
+        }
+        prefs
+    }
+
     fn made(locale: &str, shape: Shape) -> Option<Formatter> {
         let locale: icu_locale_core::Locale = locale.parse().ok()?;
-        let prefs = || (&locale).into();
+        let prefs = || prefs_of(&locale, shape);
         Some(match shape {
-            Shape::Time => {
-                Formatter::Time(NoCalendarFormatter::try_new(prefs(), fieldsets::T::hm()).ok()?)
-            }
+            Shape::Time => Formatter::Time(
+                NoCalendarFormatter::try_new((&locale).into(), fieldsets::T::hm()).ok()?,
+            ),
             Shape::Weekday => {
                 Formatter::Weekday(DateTimeFormatter::try_new(prefs(), fieldsets::E::long()).ok()?)
             }
@@ -845,6 +928,9 @@ mod dates {
             ),
             Shape::Date => {
                 Formatter::Date(DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium()).ok()?)
+            }
+            Shape::DateLong => {
+                Formatter::Date(DateTimeFormatter::try_new(prefs(), fieldsets::YMD::long()).ok()?)
             }
             Shape::DateTime => Formatter::DateTime(
                 DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium().with_time_hm())
@@ -859,6 +945,15 @@ mod dates {
             ),
             Shape::Month => {
                 Formatter::Month(DateTimeFormatter::try_new(prefs(), fieldsets::M::long()).ok()?)
+            }
+            Shape::MonthShort => {
+                Formatter::Month(DateTimeFormatter::try_new(prefs(), fieldsets::M::medium()).ok()?)
+            }
+            Shape::Year => {
+                Formatter::Year(DateTimeFormatter::try_new(prefs(), fieldsets::Y::medium()).ok()?)
+            }
+            Shape::Day => {
+                Formatter::Day(DateTimeFormatter::try_new(prefs(), fieldsets::D::medium()).ok()?)
             }
         })
     }
@@ -900,6 +995,8 @@ mod dates {
                 Some(Formatter::DateTime(f)) => f.format(&both).to_string(),
                 Some(Formatter::MonthYear(f)) => f.format(&both).to_string(),
                 Some(Formatter::Month(f)) => f.format(&both).to_string(),
+                Some(Formatter::Year(f)) => f.format(&both).to_string(),
+                Some(Formatter::Day(f)) => f.format(&both).to_string(),
             }
         })
     }

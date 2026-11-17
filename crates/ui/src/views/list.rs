@@ -1439,7 +1439,7 @@ fn dimensions(value: Option<&skwir_core::Value>) -> String {
         sides.first().and_then(skwir_core::Value::as_u64),
         sides.get(1).and_then(skwir_core::Value::as_u64),
     ) {
-        (Some(width), Some(height)) => format!("{width} × {height}"),
+        (Some(width), Some(height)) => format::dimensions(width, height),
         _ => "—".to_owned(),
     }
 }

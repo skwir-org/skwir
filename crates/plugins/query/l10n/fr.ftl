@@ -73,6 +73,12 @@ query_chip_tag = Étiquette
 query_chip_taken = Prise de vue
 
 # draft
+query_chip_when = { $when }
+
+# draft
+query_chip_when_days = { $first } → { $last }
+
+# draft
 query_complete = Compléter une recherche
 
 # draft

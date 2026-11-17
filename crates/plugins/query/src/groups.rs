@@ -22,6 +22,7 @@ use skwir_core::grouping::{Group, Keyer, Keys, Of};
 use skwir_core::location::{SortKey, extension_of, tags_of};
 use skwir_core::scheduler::Priority;
 use skwir_core::words;
+use skwir_core::words::{Moment, Shape};
 use skwir_platform::calendar::{Calendar, Period, date_string};
 use skwir_platform::mime::{self, Kind, Mime};
 
@@ -984,10 +985,13 @@ impl Dates {
                 } else {
                     self.term(first, earliest)
                 };
+                // The year as the reader's locale writes it (`2024年`).
+                let heading = Moment::on(year, 1, 1, Shape::Year)
+                    .map_or_else(|| year.to_string(), Moment::said);
                 Group {
                     key: Arc::from([1u8]),
                     term: term.map(Arc::from),
-                    ..Group::ranked(day_rank(first), &year.to_string())
+                    ..Group::ranked(day_rank(first), &heading)
                 }
             });
         };
@@ -1124,6 +1128,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(keys.next_change, Some(at(&cal, (2026, 11, 12), 0, 0)));
+    }
+
+    /// A year before this one is headed as the reader's locale writes its
+    /// years, its term the query language's, in every language.
+    #[test]
+    fn a_year_is_headed_as_the_locale_writes_years() {
+        let cal = Calendar::utc();
+        let now = at(&cal, (2026, 11, 11), 15, 0);
+        // Its last instant on the calendar the groups count on.
+        let late = Some(at(&cal, (2024, 12, 31), 23, 59));
+        skwir_core::locale::set_formats(None, Some("ja".into()));
+        let got = date_groups(&cal, now, &[late]);
+        skwir_core::locale::set_formats(None, None);
+        assert_eq!(
+            got[0].0.as_str(),
+            "2024\u{5e74}",
+            "2024年, its term {:?}",
+            got[0].1
+        );
+        assert_eq!(got[0].1.as_deref(), Some("modified:2024"));
     }
 
     /// On a Monday, yesterday was last week: Earlier this week holds

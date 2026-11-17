@@ -84,10 +84,11 @@ sentence, never a sentence assembled from pieces.
   naming it; the marks (U+200E, U+200F, U+061C) are left as they are.
   What is drawn never changes the name: a search, a copy and an
   operation see it as it is.
-- **A count is a `Count`, a size a `Size`, a moment an `Instant`, a
-  length of time a `Span`**: each formatted for the reader's language
-  and the user's settings, never with `format!`, `{:.1}` or `to_string`
-  in the code.
+- **A count is a count, a size a `Size`, a number with digits after the
+  point a `Decimal`, a moment a `Moment`** (its `Shape`: a time, a date,
+  a month…): each formatted for the system's number or date locale and
+  the user's settings, never with `format!`, `{:.1}`, `strftime` or
+  `to_string` in the code. A length of time is counts in a message.
 - **Words in words are a `Words` argument** (a plan's title in a
   toast). A message never receives another message already said as a
   string.

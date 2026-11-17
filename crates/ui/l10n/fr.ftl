@@ -3283,6 +3283,9 @@ form_unfold_folders = Dossiers
 form_waiting_keys = Échap pour annuler
 
 # draft
+format_dimensions = { $width } × { $height }
+
+# draft
 format_left_few_seconds = encore quelques secondes
 
 # draft
@@ -5501,7 +5504,7 @@ preview_peek_said = { $facts }. { $hint }
 preview_picture_reader_failed = la lecture de l’image a échoué
 
 # draft
-preview_pixels_said = { $size } pixels
+preview_pixels_said = { $width } × { $height } pixels
 
 # draft
 preview_player_said = Lecteur : { $name }
@@ -5573,7 +5576,7 @@ preview_turn_tip = Le modèle à faire tourner en 3D, ou son image
 preview_unavailable = Aperçu indisponible
 
 # draft
-preview_video_still = Image fixe de la vidéo · { $size }
+preview_video_still = Image fixe de la vidéo · { $width } × { $height }
 
 # draft
 preview_volume_device = Périphérique
@@ -5846,7 +5849,7 @@ properties_differs_in = Différentes dans
 properties_dimensions = Dimensions
 
 # draft
-properties_dimensions_value = { $size } px
+properties_dimensions_value = { $width } × { $height } px
 
 # draft
 properties_downloaded_from = Téléchargé depuis
@@ -8257,6 +8260,9 @@ timeline_dated = { $count ->
         [one] { $count } daté
        *[other] { $count } datés
     }
+
+# draft
+timeline_days = { $first } → { $last }
 
 # draft
 timeline_earlier_files = { $count ->

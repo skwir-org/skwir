@@ -30,7 +30,8 @@ use serde::Serialize;
 use skwir_core::command::Invocation;
 use skwir_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_within};
 use skwir_core::words;
-use skwir_core::words::{List, Name, Words};
+use skwir_core::words::{List, Moment, Name, Shape, Words};
+use skwir_platform::calendar::{Calendar, Period, civil_day, civil_from_days};
 use skwir_platform::mime::Kind;
 
 use crate::lang::{self, ContentPat, Expr, Query, Term, quote};
@@ -182,8 +183,9 @@ pub struct Chip {
     pub value: Option<Words>,
     /// What it is set to as data, where that is not words: a tag's full
     /// name (`tag`, `not_tag`), a part as the search writes it
-    /// (`advanced`). What reads the tags of a search reads it, never
-    /// `value` (ADR-139).
+    /// (`advanced`), days a time is set to as the search writes them
+    /// (`2026-05`, its value saying May 2026). What reads the tags of a
+    /// search reads it, never `value` (ADR-139).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub written: Option<String>,
     /// A bundled symbolic icon.
@@ -716,6 +718,85 @@ fn label_of(term: &str, key: &str, presets: &[(Words, String)]) -> Words {
         )
 }
 
+/// The days a time term spans, `[first, end)`, where it names days of the
+/// calendar from midnight to midnight (`2026-05`, `2026-01-01..2026-03-31`,
+/// `2026`), never a period that moves (`today`) nor one end open or an
+/// instant (`<30d`, `>=2026-03-01`).
+fn days_of(t: &Term) -> Option<(i64, i64)> {
+    match t {
+        Term::Time {
+            after: Some(after),
+            before: Some(before),
+            changes: None,
+            ..
+        } => {
+            // The days of the user's calendar, as the search counted them.
+            let cal = Calendar::system();
+            let (first, end) = (cal.day_of(*after), cal.day_of(*before));
+            (cal.day_start(first) == *after && cal.day_start(end) == *before)
+                .then_some((first, end))
+        }
+        Term::Taken {
+            after: Some(after),
+            before: Some(before),
+            changes: None,
+            ..
+        } => {
+            // A camera's clock at a midnight (`20260301000000`), in no zone.
+            let day = |clock: u64| {
+                let part = |by: u64| u32::try_from(clock / by % 100).ok();
+                clock.is_multiple_of(1_000_000).then_some(())?;
+                civil_day(
+                    i64::try_from(clock / 10_000_000_000).ok()?,
+                    part(100_000_000)?,
+                    part(1_000_000)?,
+                )
+            };
+            Some((day(*after)?, day(*before)?))
+        }
+        _ => None,
+    }
+    .filter(|(first, end)| end > first)
+}
+
+/// What a time chip says it is set to, where its term names days of the
+/// calendar (`days_of`): a year, a month, a day or the days from one to
+/// another, as the reader's locale writes them (`2026-05` is May 2026).
+fn when_said(term: &str) -> Option<Words> {
+    let q = lang::parse(term).ok()?;
+    let Some(Expr::Term(t)) = &q.expr else {
+        return None;
+    };
+    let (first, end) = days_of(t)?;
+    let cal = Calendar::system();
+    let (_, m, d) = civil_from_days(first);
+    let moment = |day: i64, shape| {
+        let (y, m, d) = civil_from_days(day);
+        Moment::on(y, m, d, shape)
+    };
+    let alone = |when: Moment| {
+        words!(
+            query_chip_when = "{ $when }",
+            when = when,
+            note = "The value of a search's Modified, Created, Accessed or Taken chip set to a year, a month or a day: when, as the reader's locale writes it (2026, May 2026, May 3, 2026)."
+        )
+    };
+    if (m, d) == (1, 1) && Period::Year.next(first, &cal) == end {
+        moment(first, Shape::Year).map(alone)
+    } else if d == 1 && Period::Month.next(first, &cal) == end {
+        moment(first, Shape::MonthYear).map(alone)
+    } else if end == first + 1 {
+        moment(first, Shape::Date).map(alone)
+    } else {
+        Some(words!(
+            query_chip_when_days = "{ $first } → { $last }",
+            first = moment(first, Shape::Date)?,
+            last = moment(end - 1, Shape::Date)?,
+            note = "The value of a search's Modified, Created, Accessed or Taken chip set to days: the first and the last (Mar 3, 2026 → Mar 9, 2026)."
+        ))
+    }
+}
+
 /// A chip of presets, one active when the term is it, and Custom…, which
 /// asks for a value with `custom`'s title and placeholder.
 fn preset_chip(
@@ -1009,7 +1090,7 @@ pub fn describe_for(
             continue;
         }
         let title = when_title(facet);
-        chips.push(preset_chip(
+        let mut chip = preset_chip(
             r,
             facet,
             &title,
@@ -1019,11 +1100,23 @@ pub fn describe_for(
             (
                 &title,
                 &words!(
-                    query_when_placeholder = "A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d",
+                    query_when_placeholder =
+                        "A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d",
                     note = "What the field asking for a date holds while empty; the examples are written as the search language writes them: keep them."
                 ),
             ),
-        ));
+        );
+        // Set to days of the calendar, no preset's: in the reader's words,
+        // the value as the search writes it carried as data.
+        if let Some(term) = term
+            && !chip.choices.iter().any(|c| c.active)
+            && let Some(said) = when_said(term)
+        {
+            chip.value = Some(said);
+            let rest = term.strip_prefix(facet).unwrap_or(term);
+            chip.written = Some(rest.strip_prefix(':').unwrap_or(rest).to_owned());
+        }
+        chips.push(chip);
     }
     let [_, k, m, ..] = skwir_core::fs::size_units().names();
     let size = words!(
@@ -1302,6 +1395,60 @@ mod tests {
         chip.value.as_ref().map(Words::english)
     }
 
+    /// A time set to days of the calendar says them as the reader's
+    /// locale writes dates, its term carried as the search writes it; a
+    /// preset says its words, and any other time is as written.
+    #[test]
+    fn a_time_set_to_days_says_them_in_the_reader_s_words() {
+        let said = |expr: &str, id: &str| {
+            let d = describe(&format!("{expr} in:/d"), false, None).unwrap();
+            let c = chip(&d, id);
+            (value(c), c.written.clone())
+        };
+        let both = |value: &str, written: &str| (Some(value.to_owned()), Some(written.to_owned()));
+        assert_eq!(said("modified:2026", "modified"), both("2026", "2026"));
+        assert_eq!(
+            said("modified:2026-05", "modified"),
+            both("May 2026", "2026-05")
+        );
+        assert_eq!(
+            said("created:2026-03-09", "created"),
+            both("Mar 9, 2026", "2026-03-09")
+        );
+        assert_eq!(
+            said("modified:2026-03-09..2026-03-15", "modified"),
+            both("Mar 9, 2026 → Mar 15, 2026", "2026-03-09..2026-03-15")
+        );
+        // Days across a year's end, and February of a leap year.
+        assert_eq!(
+            said("modified:2025-12-29..2026-01-04", "modified")
+                .0
+                .as_deref(),
+            Some("Dec 29, 2025 → Jan 4, 2026")
+        );
+        assert_eq!(
+            said("modified:2024-02", "modified").0.as_deref(),
+            Some("February 2024")
+        );
+        assert_eq!(
+            said("taken:2023-04-01", "taken"),
+            both("Apr 1, 2023", "2023-04-01")
+        );
+        // A preset, an open end and a time back from now: as they are.
+        assert_eq!(
+            said("modified:this-week", "modified"),
+            (Some("This week".into()), None)
+        );
+        assert_eq!(
+            said("modified>=2026-03-01", "modified"),
+            (Some(">=2026-03-01".into()), None)
+        );
+        assert_eq!(
+            said("accessed<30d", "accessed"),
+            (Some("<30d".into()), None)
+        );
+    }
+
     /// A lens over a folder reads as a search's chips, its tags as tags,
     /// and its choices change it: no where, nothing read from the files
     /// offered.
@@ -1554,13 +1701,15 @@ mod tests {
         // A value is a time of the facet's own key, nothing else.
         assert!(refine("in:/d", "taken", Some("kind:image")).is_err());
         assert!(refine("in:/d", "created", Some("2026-02-30")).is_err());
-        // Their pills: “Taken: 2023-04” in the address field.
+        // Their pills: “Taken: April 2023” in the address field, the term
+        // as the search writes it carried beside.
         let d = describe(&april, false, None).unwrap();
         let taken = chip(&d, "taken");
         assert_eq!(
             (taken.title.english().as_str(), value(taken).as_deref()),
-            ("Taken", Some("2023-04"))
+            ("Taken", Some("April 2023"))
         );
+        assert_eq!(taken.written.as_deref(), Some("2023-04"));
         assert_eq!(
             taken.clear,
             Some(refine_invocation(Refines::Search, "taken", None))

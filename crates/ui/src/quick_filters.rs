@@ -109,13 +109,13 @@ impl Alike {
                 ),
                 (None, Some(year)) => words!(
                     quick_filters_alike_one_year = "one file ({ $year })",
-                    year = year.to_string(),
+                    year = crate::format::year(year),
                     note = "Quick filters have nothing to offer: there is one file, modified that year (2024)."
                 ),
                 (Some(kind), Some(year)) => words!(
                     quick_filters_alike_one_kind_year = "one file ({ $kind }, { $year })",
                     kind = kind_of_one(kind),
-                    year = year.to_string(),
+                    year = crate::format::year(year),
                     note = "Quick filters have nothing to offer: there is one file, of this kind (image), modified that year (2024)."
                 ),
             };
@@ -127,7 +127,7 @@ impl Alike {
                 }",
                 count = self.files,
                 kind = kind_of_all(kind),
-                year = year.to_string(),
+                year = crate::format::year(year),
                 note = "Quick filters have nothing to offer: every file is of this kind (images), modified that year (2024)."
             ),
             (Some(kind), None) => words!(
@@ -143,7 +143,7 @@ impl Alike {
                    *[other] all { $count } files are from { $year }
                 }",
                 count = self.files,
-                year = year.to_string(),
+                year = crate::format::year(year),
                 note = "Quick filters have nothing to offer: every file was modified that year (2024)."
             ),
             (None, None) => words!(
@@ -993,12 +993,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         ));
         for c in &offer.years {
             row = row.child(pill(
-                c.value.to_string(),
+                crate::format::year_said(c.value),
                 c.files,
                 None,
                 words!(
                     quick_filters_modified_in = "Modified in { $year }",
-                    year = c.value.to_string(),
+                    year = crate::format::year(c.value),
                     note = "Pointing at a year of the Quick filters bar."
                 )
                 .say(),
