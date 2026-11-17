@@ -94,8 +94,13 @@ pub enum Arg {
     /// A folder's name where it is a destination ("to Docs"): unquoted,
     /// its bidirectional controls shown, never obeyed.
     Folder(String),
-    /// A count: chooses the plural, written with its groups.
+    /// A count: chooses the plural, written with its groups as the
+    /// reader's language writes them ("1,234", « 1 234 »).
     Count(i64),
+    /// A number with digits after the point (`Decimal`): the reader's
+    /// decimal sign and groups ("1.5", « 1,5 »). It chooses no plural: a
+    /// selector on it says its default.
+    Decimal(i64, u8),
     /// A size, as the size setting counts it (`fs::size_said`).
     Size(u64),
     /// What something is (`Kind`): a selector chooses by it, so a
@@ -171,6 +176,30 @@ impl Folder {
 
 /// A size, for `Arg::Size`.
 pub struct Size(pub u64);
+
+/// A number with `digits` after the point, for `Arg::Decimal`: `value` is
+/// the number times ten to the `digits` (`Decimal::of(1.5, 1)`).
+pub struct Decimal {
+    pub value: i64,
+    pub digits: u8,
+}
+
+impl Decimal {
+    /// `number` rounded to `digits` after the point.
+    pub fn of(number: f64, digits: u8) -> Self {
+        let scaled = (number * 10f64.powi(i32::from(digits))).round();
+        // Rounded first: a size or a ratio, far inside i64.
+        #[allow(clippy::cast_possible_truncation)]
+        let value = scaled as i64;
+        Decimal { value, digits }
+    }
+}
+
+impl From<Decimal> for Arg {
+    fn from(decimal: Decimal) -> Self {
+        Arg::Decimal(decimal.value, decimal.digits)
+    }
+}
 
 /// What a message's subject is, for a language to make its words agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -483,8 +512,9 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
         Arg::Folder(name) => out.push_str(&shown_controls(name)),
-        Arg::Count(n) => out.push_str(&grouped(*n)),
-        Arg::Size(bytes) => out.push_str(&crate::fs::size_said(*bytes)),
+        Arg::Count(n) => out.push_str(&numbers::grouped(language, *n)),
+        Arg::Decimal(value, digits) => out.push_str(&numbers::decimal(language, *value, *digits)),
+        Arg::Size(bytes) => crate::fs::size_words(*bytes).say_into(out, languages),
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
         Arg::Error(failure) => say_error(failure, languages, out),
@@ -579,19 +609,49 @@ pub fn shown_controls(name: &str) -> Cow<'_, str> {
 
 /// A count with its thousands grouped, as English groups them (`1,234`):
 /// each language's groups arrive with its numbers (PLAN.md, step F).
-fn grouped(n: i64) -> String {
-    let digits = n.unsigned_abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-    if n < 0 {
-        out.push('-');
+/// Numbers as each language writes them (ICU4X, CLDR's data): its digits,
+/// its groups, its decimal sign. Made once a language on each thread that
+/// asks, as the plurals are.
+mod numbers {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use icu_decimal::DecimalFormatter;
+    use icu_decimal::input::Decimal;
+    use icu_decimal::options::DecimalFormatterOptions;
+
+    thread_local! {
+        static FORMATTERS: RefCell<HashMap<String, Option<DecimalFormatter>>> =
+            RefCell::new(HashMap::new());
     }
-    for (at, digit) in digits.chars().enumerate() {
-        if at > 0 && (digits.len() - at).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
+
+    fn formatted(language: &str, number: &Decimal) -> String {
+        FORMATTERS.with_borrow_mut(|formatters| {
+            let formatter = formatters.entry(language.to_owned()).or_insert_with(|| {
+                let locale: icu_locale_core::Locale = language.parse().ok()?;
+                DecimalFormatter::try_new(locale.into(), DecimalFormatterOptions::default()).ok()
+            });
+            match formatter {
+                Some(formatter) => formatter.format_to_string(number),
+                None => number.to_string(),
+            }
+        })
     }
-    out
+
+    /// `n` with its groups in `language`: "1,234", « 1 234 ».
+    pub fn grouped(language: &str, n: i64) -> String {
+        formatted(language, &Decimal::from(n))
+    }
+
+    /// `value` divided by ten to the `digits`, with that many digits after
+    /// the point, in `language`: "1.5", « 1,5 ».
+    pub fn decimal(language: &str, value: i64, digits: u8) -> String {
+        let mut number = Decimal::from(value);
+        let digits = i16::from(digits);
+        number.multiply_pow10(-digits);
+        number.pad_end(-digits);
+        formatted(language, &number)
+    }
 }
 
 /// English made strange but readable: each letter accented, its vowels
@@ -777,6 +837,7 @@ pub mod data {
             Arg::Name(name) => json!({ "name": name }),
             Arg::Folder(folder) => json!({ "folder": folder }),
             Arg::Count(n) => json!({ "count": n }),
+            Arg::Decimal(value, digits) => json!({ "decimal": [value, digits] }),
             Arg::Size(n) => json!({ "size": n }),
             Arg::Kind(word) => json!({ "kind": word }),
             Arg::Words(words) => json!({ "words": of(words) }),
@@ -819,6 +880,7 @@ pub mod data {
         Name(String),
         Folder(String),
         Count(i64),
+        Decimal((i64, u8)),
         Size(u64),
         Kind(String),
         Words(Data),
@@ -853,6 +915,7 @@ pub mod data {
                 ArgData::Name(name) => Arg::Name(name),
                 ArgData::Folder(folder) => Arg::Folder(folder),
                 ArgData::Count(n) => Arg::Count(n),
+                ArgData::Decimal((value, digits)) => Arg::Decimal(value, digits),
                 ArgData::Size(n) => Arg::Size(n),
                 ArgData::Kind(word) => Arg::Kind(
                     [Kind::File, Kind::Folder, Kind::Link, Kind::Item]

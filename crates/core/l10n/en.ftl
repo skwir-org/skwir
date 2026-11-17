@@ -1185,6 +1185,31 @@ fs_not_regular = not a regular file
 # Why tags or notes kept in a file's attributes are not read or written on a network folder. Begins in lower case: said after other words.
 fs_server_no_xattrs = this server keeps no extended attributes
 
+# A size in bytes, as a file's size is shown (999 B). B is the symbol of a byte.
+fs_size_bytes = { $n } B
+
+fs_size_gb = { $n } GB
+
+fs_size_gib = { $n } GiB
+
+# A size in kilobytes (1000 bytes): n has one digit after the decimal sign (1.5 kB). Symbols of 1000-based units: kB, MB, GB, TB, PB.
+fs_size_kb = { $n } kB
+
+# A size in kibibytes (1024 bytes): n has one digit after the decimal sign (1.5 KiB). Symbols of 1024-based units: KiB, MiB, GiB, TiB, PiB.
+fs_size_kib = { $n } KiB
+
+fs_size_mb = { $n } MB
+
+fs_size_mib = { $n } MiB
+
+fs_size_pb = { $n } PB
+
+fs_size_pib = { $n } PiB
+
+fs_size_tb = { $n } TB
+
+fs_size_tib = { $n } TiB
+
 # Why a copy could not wait for the drive to write what it holds (before a drive is ejected): the system's name.
 fs_sync_not_yet = Writing through to a drive is not available on { $system } yet
 

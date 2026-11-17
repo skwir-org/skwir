@@ -2,7 +2,7 @@ use std::borrow::Cow::Borrowed as B;
 
 use super::{
     Arg, Catalog, Element, Join, Key, Kind, List, Message, Name, PSEUDO, Size, Variant, Words,
-    casing, lists, register, withdraw,
+    casing, lists, numbers, register, withdraw,
 };
 
 // English as `words!` writes it: each array a static of its own.
@@ -373,4 +373,29 @@ fn words_sent_as_data_come_back_as_themselves() {
     assert_eq!(heading.english(), "Hello “Ana”, 3 files");
     let text: Words = serde_json::from_value(serde_json::json!("as an agent wrote it")).unwrap();
     assert_eq!(text.english(), "as an agent wrote it");
+}
+
+/// Counts, decimals and sizes are written as the reader's language writes
+/// numbers: English groups with commas, French with narrow spaces and a
+/// decimal comma.
+#[test]
+fn numbers_are_written_as_the_language_writes_them() {
+    assert_eq!(numbers::grouped("en", 1_234_567), "1,234,567");
+    assert_eq!(numbers::grouped("fr", 1_234_567), "1\u{202f}234\u{202f}567");
+    assert_eq!(numbers::grouped("de", 1_234), "1.234");
+    assert_eq!(numbers::decimal("en", 15, 1), "1.5");
+    assert_eq!(numbers::decimal("fr", 15, 1), "1,5");
+    assert_eq!(numbers::decimal("en", 10, 1), "1.0");
+    let size = |bytes| crate::fs::size_words_in(bytes, crate::fs::SizeUnits::Decimal);
+    assert_eq!(size(999).english(), "999 B");
+    assert_eq!(size(1_500).english(), "1.5 kB");
+    assert_eq!(size(5_242_880).english(), "5.2 MB");
+    assert_eq!(
+        crate::fs::size_words_in(1_536, crate::fs::SizeUnits::Binary).english(),
+        "1.5 KiB"
+    );
+    // A message French has not is said whole in English, its numbers too:
+    // never an English sentence with French numbers.
+    let moved = crate::words!(test_moved_n = "Moved { $count } files", count = 12_345);
+    assert_eq!(moved.say_in(&langs(&["fr", "en"])), "Moved 12,345 files");
 }

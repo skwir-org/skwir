@@ -182,6 +182,7 @@ unicode-segmentation = "1"
 # What Skwir says (ADR-139): Fluent's parser, CLDR's plural rules.
 fluent-syntax = "0.12"
 icu_plurals = "2.4"
+icu_decimal = { version = "2.4", features = ["alloc"] }
 icu_casemap = "2.4"
 icu_list = { version = "2.4", features = ["alloc"] }
 icu_locale_core = "2.4"
