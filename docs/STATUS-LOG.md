@@ -19649,3 +19649,32 @@ plugins: newly unmaintained, no update), unrelated to this work.
 
 **Disk:** `target/debug/incremental` deleted twice (61 and 29 GB) with no
 build running; the root fell to 7 GB once during the agents' builds.
+
+## 2026-11-18: chrono and humantime out of Skwir's own crates
+
+RUSTSEC-2026-0543 (2026-11-17) marked chrono unmaintained, its
+maintainer recommending jiff; RUSTSEC-2026-0542 marked humantime with it.
+`just deny` failed on both. `deny.toml` counts an unmaintained crate only
+where Skwir's own crates name it (`unmaintained = "workspace"`): the
+crates' authors whose dependency it is replace it in theirs.
+
+- **humantime** was named by the jump plugin (a bookmark's RFC 3339 time,
+  now `jiff::Timestamp`) and the query plugin (a duration jiff's span
+  could not read). The query's fallback is gone: jiff reads every unit
+  humantime did written out (`1month`, `2hours`), the same instant as the
+  short forms and on the calendar, where humantime counted a month as
+  30.44 days; humantime's uppercase `M` for months alone is refused now
+  (ADR-017 amended). humantime left the lock.
+- **chrono** was named by core only, for the Trash's deletion dates (a
+  `.trashinfo`'s local time, written and read): now jiff, the earlier
+  instant where the clocks went back, none where they skipped, as chrono
+  read it (tested in Paris's zone across both changes of 2026).
+- chrono stays in the lock through gpui and Zed's scheduler, `rmcp` (even
+  3.11.0, of 2026-11-17) and `pdfium-render` (0.9.5); each has an
+  upstream change opened on 2026-11-17 (Zed PR #67089, rust-sdk issue
+  #1469, pdfium-render PR #287). Zed's goes with the next re-vendoring
+  once merged.
+
+**Checked:** `cargo deny check` (advisories, bans, licences and sources
+ok), clippy `-D warnings` and the tests of core, the query and jump
+plugins (the new two by name), `just notices`.

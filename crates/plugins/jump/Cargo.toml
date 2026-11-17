@@ -20,7 +20,7 @@ tracing.workspace = true
 dirs.workspace = true
 nucleo-matcher.workspace = true
 roxmltree.workspace = true
-humantime.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 skwir-core = { workspace = true, features = ["testing"] }

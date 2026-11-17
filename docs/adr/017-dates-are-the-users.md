@@ -31,8 +31,11 @@ and every writer would have to invent a zone.
   instant: local midnight, or the first instant after a gap that skips it.
   A day is 23, 24 or 25 hours.
 - **Durations count on the calendar:** `7d` is this time of day seven days
-  ago whatever the clocks did, `1mo` the same day last month; what jiff
-  cannot read falls back to humantime's exact lengths.
+  ago whatever the clocks did, `1mo` the same day last month, as jiff
+  reads a span (the units written out too: `1month`, `2hours`); what jiff
+  cannot read is refused (amended 2026-11-17: the fallback to humantime's
+  exact lengths is gone with humantime, unmaintained, RUSTSEC-2026-0542;
+  it alone read an uppercase `M` for months).
 - **Named periods move on:** a query knows when (`Query::next_change`) and
   a location showing it lists again then. The waiting thread checks the
   wall clock at least every ten minutes: the monotonic clock stops during

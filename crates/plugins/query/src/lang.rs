@@ -84,7 +84,7 @@ use std::cell::OnceCell;
 use std::ffi::OsStr;
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
@@ -1310,13 +1310,11 @@ fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, P
     if let Some((days, changes)) = named_period(s, cal.day_of(now), cal) {
         return Ok(TimeLit::Period(days, Some(changes)));
     }
-    // On the calendar (`7d` across a clock change is seven days), else as
-    // humantime reads it (`1month`), an exact length.
+    // On the calendar (`7d` across a clock change is seven days), as jiff
+    // reads a span: the reference's units, and their names written out
+    // (`1month`, `2hours`, `15days 2min`).
     if let Some(t) = cal.ago(now, s) {
         return Ok(TimeLit::Ago(t));
-    }
-    if let Ok(d) = humantime::parse_duration(s) {
-        return Ok(TimeLit::Ago(now.checked_sub(d).unwrap_or(UNIX_EPOCH)));
     }
     Err(ParseError::new(words!(
         query_bad_time = "bad date or duration `{ $value }` (try 2026-05-01, this-week or 7d)",
@@ -2169,7 +2167,7 @@ mod tests {
     use super::*;
     use skwir_core::entry::Provenance;
     use skwir_platform::calendar::{Weekday, days_from_civil};
-    use std::time::Duration;
+    use std::time::{Duration, UNIX_EPOCH};
 
     /// Parse on a UTC calendar with weeks from Monday: what these tests
     /// are about is not the zone, which the ones below vary.
@@ -2629,6 +2627,35 @@ mod tests {
             parse_at("content:/usr/bin", now()).is_err(),
             "unknown flags"
         );
+    }
+
+    /// A duration's units written out (`1month`, `2hours`) are read as jiff
+    /// reads a span, on the calendar, the same instant as their short
+    /// forms; what no span says is refused (humantime's `M`, gone with it).
+    #[test]
+    fn durations_written_out_count_as_their_short_forms() {
+        let now = civil_to_time(2026, 9, 20) + Duration::from_hours(12);
+        let cal = Calendar::utc();
+        let ago = |s: &str| match parse_time_lit(s, now, &cal) {
+            Ok(TimeLit::Ago(t)) => Some(t),
+            _ => None,
+        };
+        for (long, short) in [
+            ("1month", "1mo"),
+            ("2hours", "2h"),
+            ("15days2min", "15d2m"),
+            ("3weeks", "3w"),
+            ("1year", "1y"),
+            ("90min", "90m"),
+        ] {
+            assert!(ago(long).is_some(), "{long} is read");
+            assert_eq!(ago(long), ago(short), "{long} as {short}");
+        }
+        assert!(
+            parse_time_lit("1M", now, &cal).is_err(),
+            "humantime's month"
+        );
+        assert!(parse_time_lit("soon", now, &cal).is_err());
     }
 
     #[test]

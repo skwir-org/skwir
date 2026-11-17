@@ -55,7 +55,6 @@ inotify.workspace = true
 libc = "0.2"
 # The local time a trash record says, as the `trash` crate, which brings
 # it, writes it (`op::put_trash`).
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # macOS's own calls rustix lacks there (clonefile, mkfifo), and its trash
 # (`trashItemAtURL`, which says where an item went): ADR-035. The objc2

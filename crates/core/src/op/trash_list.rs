@@ -169,21 +169,42 @@ fn read(trash: &Path, top: Option<&Path>) -> Vec<trash::TrashItem> {
     items
 }
 
-/// `2026-10-21T15:04:05`, a local time, in seconds since the epoch.
+/// `2026-10-21T15:04:05`, a local time, in seconds since the epoch: the
+/// earlier instant where the clocks went back over it, none where they
+/// skipped it.
 fn local_seconds(date: &str) -> Option<i64> {
-    use chrono::TimeZone;
-    let naive = chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S").ok()?;
-    Some(
-        chrono::Local
-            .from_local_datetime(&naive)
-            .earliest()?
-            .timestamp(),
-    )
+    let local = jiff::civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S", date).ok()?;
+    let zoned = jiff::tz::TimeZone::system().to_ambiguous_zoned(local);
+    if matches!(zoned.offset(), jiff::tz::AmbiguousOffset::Gap { .. }) {
+        return None;
+    }
+    Some(zoned.earlier().ok()?.timestamp().as_second())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `.trashinfo`'s deletion date is a local time: read in the system's
+    /// zone, the earlier instant where the clocks went back over it, none
+    /// where they skipped it, nothing for what is not that form.
+    #[test]
+    fn a_deletion_date_is_read_as_a_local_time() {
+        // SAFETY: a test of its own process (nextest), before threads read TZ.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("TZ", "Europe/Paris");
+        }
+        // 2026-07-01 12:00 is 10:00 UTC (summer time).
+        assert_eq!(local_seconds("2026-07-01T12:00:00"), Some(1_782_900_000));
+        // The clocks went back at 03:00 on 2026-10-25: 02:30 came twice,
+        // first at 00:30 UTC.
+        assert_eq!(local_seconds("2026-10-25T02:30:00"), Some(1_792_888_200));
+        // They skipped 02:00 to 03:00 on 2026-03-29.
+        assert_eq!(local_seconds("2026-03-29T02:30:00"), None);
+        assert_eq!(local_seconds("2026-07-01 12:00:00"), None);
+        assert_eq!(local_seconds("2026-07-01T12:00:00.5"), None);
+    }
 
     fn mounted(point: &str, fstype: &str, source: &str) -> Mounted {
         crate::fs::volume::mountinfo(
