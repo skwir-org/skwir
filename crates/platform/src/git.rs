@@ -596,6 +596,13 @@ fn run(
         &[],
     )?;
     let input = serde_json::to_vec(&ask(&untrusted.work))?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        untrusted.command.creation_flags(CREATE_NO_WINDOW);
+    }
     let finished = crate::process::run_capped(
         &mut untrusted.command,
         Some(&input),
