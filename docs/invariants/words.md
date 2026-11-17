@@ -23,6 +23,18 @@ sentence, never a sentence assembled from pieces.
   adding a letter, no list joined with commas or "and", no quotes or
   brackets around a name, no punctuation or space added (French puts a
   space before `:`).
+  - One exception, the user's choice (2026-11-17): words written to be
+    said inside sentences (a plan's title, a step's tenses: "copy 3 items
+    to Docs") that begin what is shown (a toast, a row) are
+    `Words::heading()`. Their first letter is cased as the reader's
+    language begins a sentence (ICU4X: a Turkish i takes its dot, a
+    script without case is left as it is). Nothing else is cased in
+    code.
+  - A list of items is a `List` argument (`List::and`, `List::or`):
+    joined by the language's patterns ("a, b et c").
+  - A link inside a sentence is drawn from `Words::say_around(name)`:
+    what comes before the argument and after it, the language placing
+    it.
 - **The same words in another role are another message**: a menu
   item's "Copy" and a toast's "Copied" are two.
 - **A message an agent or a log reads is still a message**: the reader

@@ -1,8 +1,8 @@
 use std::borrow::Cow::Borrowed as B;
 
 use super::{
-    Arg, Catalog, Element, Key, Kind, Message, Name, PSEUDO, Size, Variant, Words, register,
-    withdraw,
+    Arg, Catalog, Element, Join, Key, Kind, List, Message, Name, PSEUDO, Size, Variant, Words,
+    casing, lists, register, withdraw,
 };
 
 // English as `words!` writes it: each array a static of its own.
@@ -286,4 +286,53 @@ fn an_error_in_words_in_an_error_is_said() {
         said.say_in(&langs(&[PSEUDO, "en"])),
         "trying the next: [tĥéé tööööļ fááííļééd: ‹[péérmííššííööñ dééñííééd]›]"
     );
+}
+
+/// A heading's first letter is cased by the reader's language, past what
+/// is no letter, the rest as it is.
+#[test]
+fn a_heading_begins_as_its_language_begins_a_sentence() {
+    let title = crate::words!(
+        test_title = "copy { $what } to Docs",
+        what = Name("a.txt".into())
+    );
+    assert_eq!(title.heading().english(), "Copy “a.txt” to Docs");
+    assert_eq!(casing::heading("tr", "istanbul"), "İstanbul");
+    assert_eq!(casing::heading("en", "istanbul"), "Istanbul");
+    assert_eq!(casing::heading("en", "“quoted” first"), "“Quoted” first");
+    assert_eq!(casing::heading("ja", "ファイル"), "ファイル");
+    // In the pseudo-language, past its bracket.
+    let said = title.heading().say_in(&langs(&[PSEUDO, "en"]));
+    assert!(said.starts_with("[Ç"), "{said}");
+}
+
+/// A list is joined as its language joins one.
+#[test]
+fn a_list_is_joined_by_its_language() {
+    let names = || List::and(["a", "b", "c"].map(|n| Arg::Name(n.into())));
+    let said = crate::words!(test_list = "Tagged { $names }", names = names());
+    assert_eq!(said.english(), "Tagged “a”, “b”, and “c”");
+    assert_eq!(
+        lists::joined("fr", Join::And, &["a".into(), "b".into(), "c".into()]),
+        "a, b et c"
+    );
+    assert_eq!(
+        lists::joined("en", Join::Or, &["a".into(), "b".into()]),
+        "a or b"
+    );
+    assert_eq!(lists::joined("en", Join::And, &["a".into()]), "a");
+}
+
+/// A sentence is cut around one of its arguments, the language placing it.
+#[test]
+fn a_sentence_is_cut_around_an_argument() {
+    let held = crate::words!(
+        test_held = "Held by “{ $title }” until it ends",
+        title = Words::as_written("copy")
+    );
+    assert_eq!(
+        held.say_around("title"),
+        Some(("Held by “".to_owned(), "” until it ends".to_owned()))
+    );
+    assert_eq!(held.say_around("nothing"), None);
 }

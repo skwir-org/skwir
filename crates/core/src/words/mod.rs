@@ -49,6 +49,9 @@ enum Inner {
     /// An error, each link of its chain said in the reader's language
     /// where it is words (`Words::of_error`).
     Error(Failure),
+    /// Words that begin what is shown (a toast, a row), their first letter
+    /// cased as the reader's language begins a sentence (`Words::heading`).
+    Heading(Box<Words>),
 }
 
 /// An error held as words: its chain, said link by link where it is said
@@ -91,6 +94,40 @@ pub enum Arg {
     /// An error, said link by link in the reader's language (what a step
     /// could not do, then why).
     Error(Failure),
+    /// Items joined as the reader's language joins a list ("a, b and c",
+    /// "a, b et c"): `List::and`, `List::or`.
+    List(Join, Vec<Arg>),
+}
+
+/// How a list's items are joined.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Join {
+    /// All of them: "a, b and c".
+    And,
+    /// One of them: "a, b or c".
+    Or,
+}
+
+/// A list of items, for `Arg::List`: each item an argument of its own (a
+/// `Name`, a count, words), joined in the reader's language.
+pub struct List(Join, Vec<Arg>);
+
+impl List {
+    /// "a, b and c".
+    pub fn and<A: Into<Arg>>(items: impl IntoIterator<Item = A>) -> Self {
+        List(Join::And, items.into_iter().map(Into::into).collect())
+    }
+
+    /// "a, b or c".
+    pub fn or<A: Into<Arg>>(items: impl IntoIterator<Item = A>) -> Self {
+        List(Join::Or, items.into_iter().map(Into::into).collect())
+    }
+}
+
+impl From<List> for Arg {
+    fn from(list: List) -> Self {
+        Arg::List(list.0, list.1)
+    }
 }
 
 /// A name, for `Arg::Name`.
@@ -247,8 +284,50 @@ impl Words {
     pub fn message_of(&self) -> Option<&'static Message> {
         match &self.0 {
             Inner::Message(message, _) => Some(message),
+            Inner::Heading(words) => words.message_of(),
             Inner::Written(_) | Inner::Error(_) => None,
         }
+    }
+
+    /// These words where they begin what is shown (a toast's text, a row's
+    /// first words): their first letter cased as the reader's language
+    /// begins a sentence. Words written to be said inside sentences (a
+    /// plan's title, "copy 3 items to Docs") begin in lower case; this is
+    /// the one casing done in code (ADR-139, the user's choice of
+    /// 2026-11-17), by the language's own rules (ICU4X: a Turkish i takes
+    /// its dot, a script without case is left as it is).
+    #[must_use]
+    pub fn heading(&self) -> Words {
+        Words(Inner::Heading(Box::new(self.clone())))
+    }
+
+    /// Said in the reader's languages, cut around its argument `name`: what
+    /// comes before it and what comes after, the language choosing where it
+    /// goes (a link inside a sentence: the caller draws the argument
+    /// itself). `None` where these words are no message placing `name`
+    /// once.
+    pub fn say_around(&self, name: &str) -> Option<(String, String)> {
+        const MARK: &str = "\u{F8FF}";
+        let Inner::Message(message, args) = &self.0 else {
+            return None;
+        };
+        let marked: Arc<[(&'static str, Arg)]> = args
+            .iter()
+            .map(|(n, a)| {
+                if *n == name {
+                    (*n, Arg::Text(Cow::Borrowed(MARK)))
+                } else {
+                    (*n, a.clone())
+                }
+            })
+            .collect();
+        let said = Words(Inner::Message(message, marked)).say();
+        let mut parts = said.split(MARK);
+        let (before, after) = (parts.next()?, parts.next()?);
+        parts
+            .next()
+            .is_none()
+            .then(|| (before.to_owned(), after.to_owned()))
     }
 
     /// Said in the languages Skwir speaks to the user (`locale::languages`):
@@ -286,6 +365,12 @@ impl Words {
         let (message, args) = match &self.0 {
             Inner::Written(text) => return out.push_str(text),
             Inner::Error(failure) => return say_error(failure, languages, out),
+            Inner::Heading(words) => {
+                let mut said = String::new();
+                words.say_into(&mut said, languages);
+                let language = languages.first().map_or(ENGLISH, String::as_str);
+                return out.push_str(&casing::heading(language, &said));
+            }
             Inner::Message(message, args) => (*message, args),
         };
         if languages.first().is_some_and(|first| first == PSEUDO) {
@@ -376,6 +461,17 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
         Arg::Error(failure) => say_error(failure, languages, out),
+        Arg::List(join, items) => {
+            let said: Vec<String> = items
+                .iter()
+                .map(|item| {
+                    let mut one = String::new();
+                    said_arg(item, language, languages, &mut one);
+                    one
+                })
+                .collect();
+            out.push_str(&lists::joined(language, *join, &said));
+        }
     }
 }
 
@@ -630,6 +726,62 @@ mod plurals {
             PluralCategory::Many => "many",
             PluralCategory::Other => "other",
         }
+    }
+}
+
+/// A sentence's first letter, cased by its language's rules (ICU4X).
+mod casing {
+    use icu_casemap::TitlecaseMapper;
+    use icu_casemap::options::{TitlecaseOptions, TrailingCase};
+    use icu_locale_core::LanguageIdentifier;
+
+    /// `said` with its first letter (past what is not one: a quote, a
+    /// bracket) in its title case in `language`, the rest as it is.
+    pub fn heading(language: &str, said: &str) -> String {
+        let language: LanguageIdentifier = language.parse().unwrap_or(LanguageIdentifier::UNKNOWN);
+        let mut options = TitlecaseOptions::default();
+        options.trailing_case = Some(TrailingCase::Unchanged);
+        TitlecaseMapper::new()
+            .titlecase_segment_to_string(said, &language, options)
+            .into_owned()
+    }
+}
+
+/// Lists joined by each language's patterns (ICU4X, CLDR's data), made
+/// once a language on each thread that asks, as the plurals are.
+mod lists {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use icu_list::ListFormatter;
+    use icu_list::options::{ListFormatterOptions, ListLength};
+
+    use super::Join;
+
+    thread_local! {
+        static FORMATTERS: RefCell<HashMap<(String, bool), Option<ListFormatter>>> =
+            RefCell::new(HashMap::new());
+    }
+
+    /// `items` joined as `language` joins them; with ", " where its
+    /// patterns are unknown.
+    pub fn joined(language: &str, join: Join, items: &[String]) -> String {
+        FORMATTERS.with_borrow_mut(|formatters| {
+            let formatter = formatters
+                .entry((language.to_owned(), join == Join::And))
+                .or_insert_with(|| {
+                    let locale: icu_locale_core::Locale = language.parse().ok()?;
+                    let options = ListFormatterOptions::default().with_length(ListLength::Wide);
+                    match join {
+                        Join::And => ListFormatter::try_new_and(locale.into(), options).ok(),
+                        Join::Or => ListFormatter::try_new_or(locale.into(), options).ok(),
+                    }
+                });
+            match formatter {
+                Some(formatter) => formatter.format_to_string(items.iter().map(String::as_str)),
+                None => items.join(", "),
+            }
+        })
     }
 }
 
