@@ -213,8 +213,16 @@ pub fn connect_unc(
     _user: Option<&str>,
     _password: Option<&str>,
 ) -> Result<(), Refused> {
-    Err(Refused::Other(
-        skwir_core::system::not_yet("A Windows share").into(),
+    Err(Refused::Other(windows_share_not_yet().into()))
+}
+
+/// A Windows share, where Windows' own calls are not.
+#[cfg(not(windows))]
+fn windows_share_not_yet() -> std::io::Error {
+    skwir_core::system::not_yet_words(skwir_core::words!(
+        shares_windows_not_yet = "A Windows share is not available on { $system } yet",
+        system = skwir_core::system::named(),
+        note = "Why a Windows share is not connected to. system: the system's name (macOS)."
     ))
 }
 
@@ -224,7 +232,7 @@ pub fn connect_unc(
 /// Always: not this system's.
 #[cfg(not(windows))]
 pub fn disconnect_unc(_unc: &Path) -> anyhow::Result<()> {
-    Err(skwir_core::system::not_yet("A Windows share").into())
+    Err(windows_share_not_yet().into())
 }
 
 /// [`mount_url`] where `NetFS` is not.
@@ -238,6 +246,12 @@ pub fn mount_url(
     _password: Option<&str>,
 ) -> Result<PathBuf, Refused> {
     Err(Refused::Other(
-        skwir_core::system::not_yet("Mounting a share through NetFS").into(),
+        skwir_core::system::not_yet_words(skwir_core::words!(
+            shares_netfs_not_yet =
+                "Mounting a share through NetFS is not available on { $system } yet",
+            system = skwir_core::system::named(),
+            note = "Why a share is not mounted the Mac's way. NetFS is the Mac's name for it; system: the system's name (Windows)."
+        ))
+        .into(),
     ))
 }

@@ -914,7 +914,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Button::new(
             "reader-outline",
             "contents",
-            label::contents().say(),
+            label::contents(),
             "ui.preview_contents",
         )
         .active(reader.outlines)
@@ -937,8 +937,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             words!(
                 reader_previous_page = "Previous page",
                 note = "A document preview's button."
-            )
-            .say(),
+            ),
             "ui.preview_page",
         )
         .args(serde_json::json!({"delta":-1}))
@@ -975,7 +974,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             Button::new(
                 "reader-unit",
                 "",
-                label::count_by().say(),
+                label::count_by(),
                 "ui.preview_menu",
             )
                 .args(serde_json::json!({"kind":"unit"})),
@@ -1000,8 +999,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             words!(
                 reader_next_page = "Next page",
                 note = "A document preview's button."
-            )
-            .say(),
+            ),
             "ui.preview_page",
         )
         .args(serde_json::json!({"delta":1}))
@@ -1015,7 +1013,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Button::new(
             "reader-continuous",
             "continuous",
-            label::continuous().say(),
+            label::continuous(),
             "ui.reader_continuous",
         )
         .active(reader.scroll.continuous)
@@ -1026,14 +1024,9 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Item::button(
             Slot::Tools,
             1,
-            Button::new(
-                "reader-find",
-                "search",
-                label::find().say(),
-                "ui.preview_find",
-            )
-            .enabled(native)
-            .active(reader.find.is_some()),
+            Button::new("reader-find", "search", label::find(), "ui.preview_find")
+                .enabled(native)
+                .active(reader.find.is_some()),
         )
         .opens("find"),
     );
@@ -1103,7 +1096,7 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         Button::new(
             "reader-close-find",
             "close",
-            crate::preview_bar::label::close_find().say(),
+            crate::preview_bar::label::close_find(),
             "ui.preview_find_close",
         ),
     ];

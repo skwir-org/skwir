@@ -188,9 +188,9 @@ impl<K: FnMut(&str, &[u8])> rich_preview::Resources for Media<'_, K> {
     fn picture(&mut self, src: &str) -> Option<Picture> {
         let name = media_name(src)?;
         let file = self.work.join(&name);
+        let refusal = inspection::image_too_large(limits::BINARY_INPUT);
         let bytes =
-            inspection::read_bounded(&file, limits::BINARY_INPUT, "Embedded image", self.cancel)
-                .ok()?;
+            inspection::read_bounded(&file, limits::BINARY_INPUT, refusal, self.cancel).ok()?;
         let (width, height) = inspection::picture_size(&bytes)?;
         (self.keep)(&name, &bytes);
         Some(Picture::Later {

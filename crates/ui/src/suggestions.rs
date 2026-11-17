@@ -10,6 +10,7 @@ use skwir_core::location::Location;
 use skwir_core::registry::Opens;
 use skwir_core::suggest::{Answer, Ask, Section, SuggestSource, Suggester, Suggestion, Typed};
 use skwir_core::words;
+use skwir_core::words::Words;
 
 /// The most rows a source of places or commands gives for words.
 const PLACES: usize = 4;
@@ -113,14 +114,11 @@ impl SuggestSource for Tabs {
                 } else {
                     Section::Tabs
                 };
-                let mut row = Suggestion::new(section, title)
-                    .detail(
-                        words!(
-                            suggestions_switch_tab = "Switch to tab",
-                            note = "Under a tab's title in the address field's card: Enter shows that tab."
-                        )
-                        .say(),
-                    )
+                let mut row = Suggestion::new(section, tab.title.clone())
+                    .detail(words!(
+                        suggestions_switch_tab = "Switch to tab",
+                        note = "Under a tab's title in the address field's card: Enter shows that tab."
+                    ))
                     .icon("tab-new")
                     .rank(rank)
                     .runs(Invocation::with_args(
@@ -168,16 +166,18 @@ impl SuggestSource for History {
             .into_iter()
             .enumerate()
             .map(|(i, location)| {
-                let mut row =
-                    Suggestion::new(Section::History, app.location_title(&location).say())
-                        .icon("back")
-                        .rank(i32::try_from(i).unwrap_or(i32::MAX))
-                        .runs(Invocation::with_args(
-                            "back",
-                            &serde_json::json!({ "steps": i + 1, "pane": ask.pane }),
-                        ));
+                let mut row = Suggestion::new(Section::History, app.location_title(&location))
+                    .icon("back")
+                    .rank(i32::try_from(i).unwrap_or(i32::MAX))
+                    .runs(Invocation::with_args(
+                        "back",
+                        &serde_json::json!({ "steps": i + 1, "pane": ask.pane }),
+                    ));
                 // A folder says where it is; a search's title says it all.
-                row.detail = location.path().is_some().then(|| said(&location));
+                row.detail = location
+                    .path()
+                    .is_some()
+                    .then(|| Words::as_written(said(&location)));
                 row.scope = scope_of(app, &location);
                 row
             })
@@ -217,8 +217,8 @@ impl SuggestSource for Places {
                 let title = app
                     .registry
                     .user_title(&place)
-                    .unwrap_or_else(|| place.title.say());
-                let rank = rank_of(&title, words)?;
+                    .map_or_else(|| place.title.clone(), Words::as_written);
+                let rank = rank_of(&title.say(), words)?;
                 // A saved search or place opens as it was kept, a place
                 // saying its filter (ADR-109).
                 let leads = (said(&place.location), place.filter().map(str::to_owned));
@@ -228,9 +228,8 @@ impl SuggestSource for Places {
                         location = leads.0.clone(),
                         filter = filter,
                         note = "Under a kept place's name in the address field's card; location: where it is (a path); filter: what it is filtered by, as typed."
-                    )
-                    .say(),
-                    None => leads.0.clone(),
+                    ),
+                    None => Words::as_written(leads.0.clone()),
                 };
                 let runs = match place.opens {
                     Opens::Lensed => navigate(&place.location, ask),
@@ -280,7 +279,7 @@ impl SuggestSource for Commands {
                 let rank = rank_of(&offer.title, words)?;
                 Some((
                     rank,
-                    Suggestion::new(Section::Actions, offer.title)
+                    Suggestion::new(Section::Actions, offer.words)
                         .icon("command")
                         .rank(rank)
                         .runs(Invocation {

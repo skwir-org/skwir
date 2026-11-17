@@ -28,10 +28,10 @@ fn pending(reversible: bool) -> StepStatus {
     StepStatus::Pending { reversible }
 }
 
-/// A step's conflict, said here: its reason is text (`StepStatus`).
+/// A step's conflict: why, in words.
 fn conflict(reason: impl Into<Words>) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.into().say(),
+        reason: reason.into(),
     }
 }
 
@@ -1417,17 +1417,6 @@ pub fn made_stays(
     made_as: Option<&str>,
     beside: &[MadeBeside],
     ctx: &StepContext,
-) -> Option<String> {
-    made_stays_words(path, was_at, made_as, beside, ctx).map(|why| why.say())
-}
-
-/// [`made_stays`] in words.
-pub fn made_stays_words(
-    path: &Path,
-    was_at: &Path,
-    made_as: Option<&str>,
-    beside: &[MadeBeside],
-    ctx: &StepContext,
 ) -> Option<Words> {
     if let Some(why) = mounted_there(path) {
         return Some(why);
@@ -1525,7 +1514,7 @@ pub struct Uncopy {
 impl Uncopy {
     /// Why the copy, now at `path`, stays ([`made_stays`]).
     pub(super) fn stays(&self, path: &Path, ctx: &StepContext) -> Option<Words> {
-        made_stays_words(
+        made_stays(
             path,
             &self.entry.path,
             self.made_as.as_deref(),

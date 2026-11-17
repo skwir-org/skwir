@@ -534,7 +534,7 @@ enum Ran {
 }
 
 impl Ran {
-    /// What to do without the helper, as `Worker::require_words` says it.
+    /// What to do without the helper, as `Worker::require` says it.
     fn missing(self) -> skwir_core::words::Words {
         match self {
             Ran::History => skwir_core::words!(
@@ -581,7 +581,7 @@ fn run(
     cancel: &CancelToken,
     ask: impl FnOnce(&Path) -> Ask,
 ) -> anyhow::Result<Vec<u8>> {
-    let worker = WORKER.require_words(ran.missing())?;
+    let worker = WORKER.require(ran.missing())?;
     let readable: Vec<&Path> = repo
         .readable
         .iter()

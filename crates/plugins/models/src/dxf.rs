@@ -37,9 +37,9 @@ const CIRCLE_SEGMENTS: f64 = 96.;
 /// What a drawing holds, drawn.
 pub struct Drawing {
     pub svg: Option<String>,
-    pub details: Vec<(String, String)>,
+    pub details: Vec<(skwir_core::words::Words, String)>,
     /// What was left out, and why.
-    pub notice: Option<String>,
+    pub notice: Option<skwir_core::words::Words>,
 }
 
 type Point = (f64, f64);
@@ -1319,8 +1319,7 @@ pub fn draw(text: &str, cancel: &CancelToken) -> anyhow::Result<Drawing> {
             skwir_core::words!(
                 models_detail_entities = "Entities",
                 note = "A label in the preview's Properties: how many entities (lines, arcs, texts…) a DXF drawing holds."
-            )
-            .say(),
+            ),
             entities.to_string(),
         ));
     }
@@ -1329,8 +1328,7 @@ pub fn draw(text: &str, cancel: &CancelToken) -> anyhow::Result<Drawing> {
             skwir_core::words!(
                 models_detail_blocks = "Blocks",
                 note = "A label in the preview's Properties: how many blocks (named groups of entities, placed again and again) a DXF drawing defines."
-            )
-            .say(),
+            ),
             block_count.to_string(),
         ));
     }
@@ -1339,7 +1337,6 @@ pub fn draw(text: &str, cancel: &CancelToken) -> anyhow::Result<Drawing> {
             models_dxf_drawn_in_part = "Drawn in part: the drawing holds more than is drawn here",
             note = "Said under a DXF drawing too large to draw whole: what is past the preview's bounds is left out."
         )
-        .say()
     });
     Ok(Drawing {
         svg: write(&scene),
@@ -1512,13 +1509,14 @@ mod tests {
         let drawing = draw(&text, &CancelToken::new()).unwrap();
         let svg = drawing.svg.unwrap();
         // The hidden layer's line would have made it 500 wide.
-        assert_eq!(
-            drawing.details[0],
-            ("Size".to_owned(), "100 × 50 mm".to_owned())
-        );
+        let fact = |at: usize| {
+            let (label, value) = &drawing.details[at];
+            (label.english(), value.clone())
+        };
+        assert_eq!(fact(0), ("Size".to_owned(), "100 × 50 mm".to_owned()));
         // The hidden line counts: it is in the drawing.
-        assert_eq!(drawing.details[1], ("Entities".to_owned(), "5".to_owned()));
-        assert_eq!(drawing.details[2], ("Blocks".to_owned(), "1".to_owned()));
+        assert_eq!(fact(1), ("Entities".to_owned(), "5".to_owned()));
+        assert_eq!(fact(2), ("Blocks".to_owned(), "1".to_owned()));
         assert!(
             svg.contains("#ff0000"),
             "red from the layer, through layer 0"

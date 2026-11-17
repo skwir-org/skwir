@@ -341,7 +341,7 @@ impl Shell {
             quick_filters: self.ui().quick_filters_on,
             timeline: self.timeline().open,
             timeline_size: self.timeline().measure == crate::timeline::Measure::Size,
-            timeline_date: crate::timeline::DATES[self.timeline().date].0.to_owned(),
+            timeline_date: crate::timeline::DATES[self.timeline().date].to_owned(),
             player_height: self.player.height,
             terminal: self.terminal.open,
             terminal_height: self.terminal.height.unwrap_or(0.),

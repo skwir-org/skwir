@@ -662,7 +662,10 @@ fn a_wake_says_what_it_is_for() {
     // What says nothing, the tasks' included: every window.
     app.wake();
     assert!(app.take_woken().all);
-    let task = app.tasks.start("a task", skwir_core::CancelToken::new());
+    let task = app.tasks.start(
+        skwir_core::words::Words::as_written("a task"),
+        skwir_core::CancelToken::new(),
+    );
     assert!(app.take_woken().all);
     drop(task);
 

@@ -66,7 +66,7 @@ impl PreviewProvider for Provider {
         let bounds = Bounds::of(view);
         let (text, encoding) = inspection::read_text(&held, bounds, cancel)?;
         let mut data = code(&text, &language, view.source, bounds, cancel)?;
-        data.notice = encoding.notice().unwrap_or_default();
+        data.notices = encoding.notice().into_iter().collect();
         Ok(Some(data))
     }
 }
@@ -260,8 +260,7 @@ fn code(
                         }",
                         count = bounds.code_nodes(),
                         note = "Why a JSON file is not shown formatted: it holds more values (objects, arrays, numbers, strings…) than count."
-                    )
-                    .say(),
+                    ),
                 ));
             }
             anyhow::ensure!(depth <= limits::NESTING, too_deep());
@@ -280,27 +279,21 @@ fn code(
         source.to_owned()
     };
     if text.len() > bounds.text_input() {
-        return Err(bounds.refuse(
-            words!(
-                structured_data_formatted_too_large = "Formatted preview exceeds { $size }",
-                size = words::Size(bounds.text_input() as u64),
-                note = "Why a file is not shown formatted: the text formatted is larger than size."
-            )
-            .say(),
-        ));
+        return Err(bounds.refuse(words!(
+            structured_data_formatted_too_large = "Formatted preview exceeds { $size }",
+            size = words::Size(bounds.text_input() as u64),
+            note = "Why a file is not shown formatted: the text formatted is larger than size."
+        )));
     }
     let lines: Vec<_> = text.split('\n').collect();
     if lines.len() > bounds.code_lines() {
-        return Err(bounds.refuse(
-            words!(
-                structured_data_too_many_lines = "{ $count ->
+        return Err(bounds.refuse(words!(
+            structured_data_too_many_lines = "{ $count ->
                    *[other] Code preview exceeds { $count } lines
                 }",
-                count = bounds.code_lines(),
-                note = "Why a file is not shown as structured data: it has more lines than count."
-            )
-            .say(),
-        ));
+            count = bounds.code_lines(),
+            note = "Why a file is not shown as structured data: it has more lines than count."
+        )));
     }
     anyhow::ensure!(
         lines.iter().all(|line| line.len() <= limits::LINE_BYTES),
@@ -338,9 +331,9 @@ fn code(
                 format = language.to_ascii_uppercase(),
                 note = "The title of a JSON file's preview printed again, indented: format is the format's name (JSON)."
             )
-            .say()
         } else {
-            language.to_ascii_uppercase()
+            // A format's name, the same in every language.
+            words::Words::as_written(language.to_ascii_uppercase())
         },
         blocks,
         folds,
@@ -380,11 +373,11 @@ mod tests {
         );
         assert_eq!(data.folds.len(), 3);
         assert_eq!(data.folds[0], 0..data.blocks.len() - 1);
-        assert_eq!(data.title, "JSON · formatted");
+        assert_eq!(data.title.english(), "JSON · formatted");
         let raw = code(source, "json", true, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(raw.plain_text(), source);
         assert!(raw.folds.is_empty());
-        assert_eq!(raw.title, "JSON");
+        assert_eq!(raw.title.english(), "JSON");
         assert!(data.source_available && raw.source_available);
     }
 
@@ -452,7 +445,7 @@ mod tests {
         let data = code(source, "toml", false, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.plain_text(), source);
         assert_eq!(data.folds, [1..11, 2..5, 6..9, 11..13, 13..16]);
-        assert_eq!(data.title, "TOML");
+        assert_eq!(data.title.english(), "TOML");
         assert!(
             !data.source_available,
             "shown as written: no source to switch to"
@@ -497,13 +490,13 @@ mod tests {
             let data = inspect(&empty, source);
             assert_eq!(data.kind, InspectionKind::Code);
             assert!(data.plain_text().is_empty());
-            assert!(data.notice.is_empty(), "{}", data.notice);
+            assert!(data.notices.is_empty(), "{:?}", data.notices);
         }
         // A byte order mark is not JSON's business: the value still folds.
         let marked = dir.path().join("it's marked.json");
         std::fs::write(&marked, "\u{feff}{\"a\": [1, 2]}".as_bytes()).unwrap();
         let data = inspect(&marked, false);
-        assert!(data.notice.is_empty(), "{}", data.notice);
+        assert!(data.notices.is_empty(), "{:?}", data.notices);
         assert!(!data.folds.is_empty());
         assert!(!data.plain_text().contains('\u{feff}'));
         // A legacy encoding is read, and said.
@@ -511,7 +504,10 @@ mod tests {
         std::fs::write(&legacy, b"name: caf\xe9\n").unwrap();
         let data = inspect(&legacy, false);
         assert_eq!(data.plain_text(), "name: caf\u{e9}\n");
-        assert_eq!(data.notice, "Read as Windows-1252");
+        assert_eq!(
+            data.notice().map(|said| said.english()).as_deref(),
+            Some("Read as Windows-1252")
+        );
     }
 
     /// The file is read from what the preview holds (ADR-101), never from
@@ -533,7 +529,7 @@ mod tests {
             br#"{"name":"caf\u00e9","items":[1,2]}"#,
             "application/json",
         );
-        assert_eq!(json.title, "JSON · formatted");
+        assert_eq!(json.title.english(), "JSON · formatted");
         assert_eq!(json.blocks[1].text, r#"  "name": "caf\u00e9","#);
         assert!(!json.folds.is_empty());
         let toml = shown(
@@ -542,7 +538,10 @@ mod tests {
             "application/toml",
         );
         assert_eq!(toml.plain_text(), "# caf\u{e9}\n[a]\nb = 1\n");
-        assert_eq!(toml.notice, "Read as Windows-1252");
+        assert_eq!(
+            toml.notice().map(|said| said.english()).as_deref(),
+            Some("Read as Windows-1252")
+        );
     }
 
     #[test]

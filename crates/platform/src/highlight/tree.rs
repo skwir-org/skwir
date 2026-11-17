@@ -48,26 +48,22 @@ pub enum First {
 }
 
 impl First {
-    /// The setting's choices, `(value, label)`, the default first.
-    ///
-    /// Transitional: English; [`First::choices_words`] gives the labels as
-    /// words (ADR-139).
-    pub const CHOICES: [(&'static str, &'static str); 2] =
-        [("bat", "bat first"), ("tree_sitter", "Tree-sitter first")];
+    /// The setting's values, the default first.
+    pub const CHOICES: [&'static str; 2] = ["bat", "tree_sitter"];
 
-    /// [`First::CHOICES`], each label a message (for
+    /// [`First::CHOICES`], each with its label, a message (for
     /// `SettingSpec::choice_words`).
     pub fn choices_words() -> Vec<(&'static str, skwir_core::words::Words)> {
         vec![
             (
-                Self::CHOICES[0].0,
+                Self::CHOICES[0],
                 skwir_core::words!(
                     highlight_bat_first = "bat first",
                     note = "A choice of which grammars color code: bat's (bat is a program's name, written in lower case), unless only a tree-sitter grammar knows the language."
                 ),
             ),
             (
-                Self::CHOICES[1].0,
+                Self::CHOICES[1],
                 skwir_core::words!(
                     highlight_tree_sitter_first = "Tree-sitter first",
                     note = "A choice of which grammars color code: the tree-sitter grammars found, unless only bat's know the language."
@@ -856,7 +852,8 @@ mod tests {
             lent_from: Vec::new(),
             file_types: file_types.iter().map(|&t| t.to_owned()).collect(),
             first_line: None,
-            problem: problem.map(str::to_owned),
+            problem: problem
+                .map(|said| skwir_core::words::Words::as_written(said.to_owned()).into()),
             checking: false,
             unchecked: None,
         }
@@ -928,7 +925,7 @@ mod tests {
         assert_eq!(First::of(Some("tree_sitter")), First::TreeSitter);
         assert_eq!(First::of(Some("bat")), First::Bat);
         assert_eq!(First::of(None), First::Bat);
-        assert_eq!(First::CHOICES[0].0, "bat", "the default first");
+        assert_eq!(First::CHOICES[0], "bat", "the default first");
     }
 
     /// bat's set as a table of grammars and the files they color.

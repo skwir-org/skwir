@@ -30,6 +30,9 @@ fonts_detail_variable = Variable
 # A label in the preview's Properties: the font's version, as the font states it.
 fonts_detail_version = Version
 
+# Why a font is not previewed: it is larger than the preview reads. size: that bound (16 MB).
+fonts_file_too_large = Font exceeds { $size } preview limit
+
 # A note under a font's specimen: glyphs too large to draw were left out.
 fonts_glyphs_skipped = { $count ->
         [one] { $count } oversized glyph was not drawn

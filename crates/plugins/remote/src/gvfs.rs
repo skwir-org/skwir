@@ -584,11 +584,11 @@ fn answer(
         Asked::Password { message } => {
             // What GVfs asked, as it said it; else Skwir's own question.
             let title = if message.is_empty() {
-                crate::connector::password_for(&top.label()).say()
+                crate::connector::password_for(top.label())
             } else {
-                message.clone()
+                Words::as_written(message.clone())
             };
-            let connect = crate::connector::connect_button().say();
+            let connect = crate::connector::connect_button();
             // A key's passphrase is asked each time; a server's password
             // may be kept (ADR-082). GVfs's own words, read in English.
             if message.to_lowercase().contains("passphrase") {
@@ -607,7 +607,7 @@ fn answer(
                 note = "A question asked where the server cannot be vouched for; host: its name \
                         or address. What GVfs said is shown under it."
             );
-            ask.confirm(&title.say(), message, cancel)
+            ask.confirm(&title, &Words::as_written(message.clone()), cancel)
                 .then(|| go_on.to_string())
         }
     }

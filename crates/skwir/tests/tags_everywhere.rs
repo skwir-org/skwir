@@ -116,7 +116,7 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
         4,
         "a, b, d and the hidden one, as the tag's place counts them; not one in a folder searches leave out"
     );
-    let note = plan.note.clone().unwrap();
+    let note = plan.note.clone().unwrap().english();
     assert!(note.starts_with("4 files in"), "{note}");
     assert!(note.contains("1 already had “Job”"), "{note}");
     // Nothing changed before it was applied.

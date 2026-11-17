@@ -29,12 +29,23 @@ use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::EntryArg;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
-use skwir_core::registry::{PlaceOf, PropertyPlace, PropertySource};
+use skwir_core::registry::{PlaceOf, Property, PropertyAction, PropertyPlace, PropertySource};
 use skwir_core::scheduler::Priority;
 use skwir_core::words;
-use skwir_core::words::Name;
+use skwir_core::words::{Name, Words};
 
 const ID: &str = "checksums";
+/// Properties' group of the checksums, by key: the same in every language,
+/// as the window remembers it folded (ADR-139, 8).
+const GROUP: &str = "Checksums";
+
+/// The heading of the checksums' group in Properties.
+fn heading() -> Words {
+    words!(
+        checksums_group = "Checksums",
+        note = "A group's heading in Properties: the file's SHA-256, MD5 and BLAKE3, each computed when asked."
+    )
+}
 /// Checksums kept, the oldest let go past it.
 const KEPT: usize = 256;
 /// Files waiting for the lane, at most: past it the oldest asked is let
@@ -354,36 +365,45 @@ impl ChecksumsPlugin {
     fn properties(&self, args: EntryArgs) -> anyhow::Result<Outcome> {
         let file = Named::of(args.entries)?;
         let Some(version) = Version::of(&file.path) else {
-            return Ok(Outcome::Value(serde_json::json!({ "rows": [] })));
+            return Ok(Property::answer(&[]));
         };
         let entries = [file.arg()];
         let state = self.state.lock();
-        let rows: Vec<serde_json::Value> = Algorithm::ALL
+        let action = |words: Words, name: &str, args: &serde_json::Value| PropertyAction {
+            words,
+            command: Invocation::with_args(name, args),
+        };
+        let rows: Vec<Property> = Algorithm::ALL
             .into_iter()
             .map(|algorithm| {
                 let asked = serde_json::json!({ "entries": entries, "algorithm": algorithm });
                 let computing = state.computing(&file, algorithm);
                 let done = state.done.get(&(version, algorithm));
                 // Folded, the group says each digest's start, as short hashes go.
-                let gist = done.map(|digest| format!("{} {}", algorithm.label(), short(digest)));
+                let gist = done.map(|digest| {
+                    words!(
+                        checksums_gist = "{ $algorithm } { $digest }",
+                        algorithm = algorithm.label(),
+                        digest = short(digest),
+                        note = "What a folded Checksums group says of a checksum computed: the algorithm's name (SHA-256), then the checksum's first digits, as written."
+                    )
+                });
                 let (value, actions) = if let Some(digest) = done {
                     let said = serde_json::json!({ "text": digest, "what": algorithm.label() });
                     let copy = words!(
                         checksums_copy = "Copy",
                         note = "A link after a checksum in Properties: puts it on the clipboard."
-                    )
-                    .say();
+                    );
                     let compare = words!(
                         checksums_compare = "Compare with copied",
                         note = "A link after a checksum in Properties: says whether the checksum on the clipboard is the same."
-                    )
-                    .say();
+                    );
                     (
-                        digest.clone(),
-                        serde_json::json!([
-                            { "words": copy, "command": { "name": "ui.copy_text", "args": said } },
-                            { "words": compare, "command": { "name": "ui.compare_copied", "args": said } },
-                        ]),
+                        Words::as_written(digest.clone()),
+                        vec![
+                            action(copy, "ui.copy_text", &said),
+                            action(compare, "ui.compare_copied", &said),
+                        ],
                     )
                 } else if let Some(reading) = computing {
                     let doing = if reading {
@@ -400,41 +420,31 @@ impl ChecksumsPlugin {
                     let stop = words!(
                         checksums_stop_link = "Stop",
                         note = "A link after a checksum being computed, in Properties."
-                    )
-                    .say();
-                    (
-                        doing.say(),
-                        serde_json::json!([
-                            { "words": stop, "command": { "name": "checksums.stop", "args": asked } },
-                        ]),
-                    )
+                    );
+                    (doing, vec![action(stop, "checksums.stop", &asked)])
                 } else {
                     let compute = words!(
                         checksums_compute_link = "Compute",
                         note = "A link in Properties: computes the checksum named on its row."
-                    )
-                    .say();
+                    );
                     (
-                        String::new(),
-                        serde_json::json!([
-                            { "words": compute, "command": { "name": "checksums.compute", "args": asked } },
-                        ]),
+                        Words::default(),
+                        vec![action(compute, "checksums.compute", &asked)],
                     )
                 };
-                serde_json::json!({
-                    "group": "Checksums",
-                    "label": algorithm.label(),
-                    "value": value,
-                    "actions": actions,
+                Property {
+                    heading: Some(heading()),
+                    actions,
                     // Stop shows without the pointer on the row.
-                    "actions_shown": computing.is_some(),
+                    actions_shown: computing.is_some(),
                     // Seldom looked at: the group ships folded.
-                    "folded": true,
-                    "gist": gist,
-                })
+                    folded: true,
+                    gist,
+                    ..Property::new(GROUP, Words::as_written(algorithm.label()), value)
+                }
             })
             .collect();
-        Ok(Outcome::Value(serde_json::json!({ "rows": rows })))
+        Ok(Property::answer(&rows))
     }
 
     /// `checksums.compute`: from the window, in the lane, Properties saying
@@ -783,8 +793,9 @@ impl Plugin for ChecksumsPlugin {
                 places: Algorithm::ALL
                     .into_iter()
                     .map(|algorithm| PropertyPlace {
-                        group: "Checksums".into(),
-                        label: algorithm.label().into(),
+                        group: GROUP.into(),
+                        heading: Some(heading()),
+                        label: Words::as_written(algorithm.label()),
                         folded: true,
                         of: PlaceOf::Files,
                     })
@@ -862,6 +873,7 @@ mod tests {
         );
     }
 
+    /// The rows as the window reads them, their words in English.
     fn rows(app: &App, entries: &serde_json::Value) -> serde_json::Value {
         let Outcome::Value(answer) = app
             .dispatch(&Invocation::with_args(
@@ -872,7 +884,21 @@ mod tests {
         else {
             panic!("rows are a value")
         };
-        answer["rows"].clone()
+        let rows: Vec<Property> = serde_json::from_value(answer["rows"].clone()).unwrap();
+        rows.iter()
+            .map(|row| {
+                serde_json::json!({
+                    "label": row.label.english(),
+                    "value": row.value.english(),
+                    "actions": row.actions.iter().map(|action| serde_json::json!({
+                        "words": action.words.english(),
+                        "command": action.command,
+                    })).collect::<Vec<_>>(),
+                    "folded": row.folded,
+                    "gist": row.gist.as_ref().map(skwir_core::words::Words::english),
+                })
+            })
+            .collect()
     }
 
     #[test]

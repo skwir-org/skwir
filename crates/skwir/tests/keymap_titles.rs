@@ -29,7 +29,7 @@ fn no_place_lists_two_actions_under_one_title() {
     // arguments no declaration names.
     let mut called: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     let mut unnamed: Vec<String> = Vec::new();
-    // What `keymap::title` works out from what an argument names.
+    // What `keymap::title_words` works out from what an argument names.
     let named_elsewhere = ["navigate", "ui.view", "ui.choose", "ui.preview_invoke"];
     for bound in skwir_ui::keymap::bindings(&app, &[]) {
         let Some((command, args)) = &bound.command else {
@@ -48,8 +48,9 @@ fn no_place_lists_two_actions_under_one_title() {
                 unnamed.push(action);
             }
         }
-        let place = skwir_ui::keymap::place_of(&bound.context).place;
-        let title = skwir_ui::keymap::title(&app, command, args);
+        // The place by what it is (its id), the title in English.
+        let place = skwir_ui::keymap::place_of(&bound.context).id;
+        let title = skwir_ui::keymap::title_words(&app, command, args).english();
         let action = format!("{command} {args}");
         let actions = called.entry((place, title)).or_default();
         if !actions.contains(&action) {

@@ -61,6 +61,17 @@ fn try_inspect(app: &App, path: &Path, view: &InspectRequest) -> Option<Inspecti
 fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
     try_inspect(app, path, view).expect("a provider answers")
 }
+/// What its notices say together, in English; empty for none.
+fn notice(data: &Inspection) -> String {
+    data.notice().map(|said| said.english()).unwrap_or_default()
+}
+/// Its columns' headers, in English.
+fn columns(data: &Inspection) -> Vec<String> {
+    data.columns
+        .iter()
+        .map(skwir_core::words::Words::english)
+        .collect()
+}
 #[test]
 fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
     let tmp = tempfile::tempdir().unwrap();
@@ -82,11 +93,21 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
         provider: Some("hex".into()),
         ..InspectRequest::default()
     };
-    assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
+    assert!(
+        inspect(&app, &path, &explicit)
+            .title
+            .english()
+            .starts_with("Hex")
+    );
     assert!(app.plugins.set_enabled("media", false, &app));
     // Nothing else takes a film; its bytes are still there to ask for.
     assert!(try_inspect(&app, &path, &default).is_none());
-    assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
+    assert!(
+        inspect(&app, &path, &explicit)
+            .title
+            .english()
+            .starts_with("Hex")
+    );
     assert!(app.plugins.set_enabled("media", true, &app));
     assert!(
         app.previews
@@ -107,7 +128,7 @@ fn markdown_styles_source_and_plugin_fallback() {
     .unwrap();
     let app = app(tmp.path());
     let rendered = inspect(&app, &path, &InspectRequest::default());
-    assert_eq!(rendered.title, "Markdown");
+    assert_eq!(rendered.title.english(), "Markdown");
     assert_eq!(rendered.kind, InspectionKind::Markdown);
     assert!(rendered.blocks.iter().any(|b| b.heading == 1));
     assert!(
@@ -151,7 +172,7 @@ fn markdown_styles_source_and_plugin_fallback() {
     );
     assert!(source.plain_text().contains("**bold**"));
     // Said as any text is: the lit Source says it is the source.
-    assert_eq!(source.title, "12 lines");
+    assert_eq!(source.title.english(), "12 lines");
     assert!(source.source_available, "and switches back");
     assert!(app.plugins.set_enabled("markdown", false, &app));
     // Text is never the byte view's: with Markdown off, nothing claims the
@@ -160,7 +181,9 @@ fn markdown_styles_source_and_plugin_fallback() {
     assert!(app.plugins.set_enabled("markdown", true, &app));
     // Registry order cannot let the fallback claim a known format on re-enable.
     assert_eq!(
-        inspect(&app, &path, &InspectRequest::default()).title,
+        inspect(&app, &path, &InspectRequest::default())
+            .title
+            .english(),
         "Markdown"
     );
 }
@@ -177,12 +200,12 @@ fn a_csv_is_read_by_the_separator_it_uses() {
     )
     .unwrap();
     let table = inspect(&app, &csv, &InspectRequest::default());
-    assert_eq!(table.columns, ["nom", "adresse", "total"]);
+    assert_eq!(columns(&table), ["nom", "adresse", "total"]);
     assert_eq!(table.rows[0].cells, ["Éa", "1, rue d'ici", "12,50"]);
     let named = tmp.path().join("named.csv");
     std::fs::write(&named, "sep=|\r\na|b\r\n1,5|2\r\n").unwrap();
     let table = inspect(&app, &named, &InspectRequest::default());
-    assert_eq!(table.columns, ["a", "b"]);
+    assert_eq!(columns(&table), ["a", "b"]);
     assert_eq!(table.rows.len(), 1);
     assert_eq!(table.rows[0].cells, ["1,5", "2"]);
 }
@@ -254,7 +277,7 @@ fn csv_quoted_newlines_and_structured_code() {
     )
     .unwrap();
     let table = inspect(&app, &csv, &InspectRequest::default());
-    assert_eq!(table.columns, ["name", "note"]);
+    assert_eq!(columns(&table), ["name", "note"]);
     assert_eq!(table.rows[0].cells[1], "line one\nline two");
     assert_eq!(table.rows[1].cells[1], "a,b");
     for (name, source) in [
@@ -295,14 +318,14 @@ fn structured_source_toggle_and_invalid_input_remain_readable() {
     std::fs::write(&path, "{incomplete").unwrap();
     let invalid = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(invalid.plain_text(), "{incomplete");
-    assert!(invalid.notice.starts_with("Shown as written:"));
+    assert!(notice(&invalid).starts_with("Shown as written:"));
     assert!(!invalid.source_available, "nothing else to switch to");
     // Too long a line for the code view: the source, read where it is
     // shown, the line cut into bounded rows (ADR-051).
     let large = format!("\"{}\"", "a".repeat(40000));
     std::fs::write(&path, &large).unwrap();
     let source = inspect(&app, &path, &InspectRequest::default());
-    assert!(source.notice.starts_with("Shown as written:"));
+    assert!(notice(&source).starts_with("Shown as written:"));
     assert!(source.text.as_ref().is_some_and(|file| file.whole));
     assert!(source.blocks.iter().all(|row| row.text.len() <= 4096));
     assert_eq!(
@@ -313,7 +336,10 @@ fn structured_source_toggle_and_invalid_input_remain_readable() {
             .collect::<String>(),
         large
     );
-    assert_eq!((source.next, source.title.as_str()), (None, "1 line"));
+    assert_eq!(
+        (source.next, source.title.english().as_str()),
+        (None, "1 line")
+    );
 }
 
 #[test]
@@ -341,7 +367,7 @@ fn hex_ranges_search_and_truncation() {
     );
     assert_eq!(found.position, 4094, "the exact match byte, for find-next");
     assert_eq!(found.rows[0].cells[0], "0000000000000FF0");
-    assert!(found.notice.contains("FFE"));
+    assert!(notice(&found).contains("FFE"));
     std::fs::write(&path, [1, 2]).unwrap();
     let truncated = inspect(
         &app,
@@ -509,7 +535,7 @@ fn fb2_chapters_contents_notes_and_source() {
     std::fs::copy(books.join("synthetic.fb2"), &path).unwrap();
     let first = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(first.kind, InspectionKind::Book);
-    assert_eq!(first.title, "FB2 · chapter 1 / 3");
+    assert_eq!(first.title.english(), "FB2 · chapter 1 / 3");
     assert!(first.plain_text().contains("The needle is here"));
     let titles: Vec<&str> = first.rows.iter().map(|row| row.cells[0].as_str()).collect();
     assert_eq!(
@@ -579,7 +605,8 @@ fn mobipocket_books_read_as_chapters() {
         std::fs::copy(books.join(fixture), &path).unwrap();
         let first = inspect(&app, &path, &InspectRequest::default());
         assert_eq!(first.kind, InspectionKind::Book, "{name}");
-        assert!(first.title.starts_with(title), "{name}: {}", first.title);
+        let said = first.title.english();
+        assert!(said.starts_with(title), "{name}: {said}");
         let all: String = (0..first.sections)
             .map(|offset| {
                 inspect(
@@ -643,7 +670,9 @@ fn a_type_shown_as_its_source_opens_on_it_where_the_file_has_one() {
     assert!(shown.is_none() && !source, "bytes have no source");
     // Asked so, it is what it is without: never its bytes as text.
     assert_eq!(
-        inspect(&app, &bytes, &InspectRequest::default()).title,
+        inspect(&app, &bytes, &InspectRequest::default())
+            .title
+            .english(),
         "Markdown"
     );
     // Asked for by hand, the source is the file's text, whatever it holds.
@@ -667,7 +696,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
     let shown = inspect(&app, &page, &InspectRequest::default());
     assert_eq!(shown.kind, InspectionKind::Code);
     assert_eq!(
-        shown.notice,
+        notice(&shown),
         "Shown as written: Text exceeds 2.1 MB preview limit"
     );
     assert!(!shown.source_available);
@@ -690,7 +719,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
         ..InspectRequest::default()
     };
     let source = inspect(&app, &page, &asked);
-    assert!(source.notice.is_empty() && source.source_available);
+    assert!(source.notices.is_empty() && source.source_available);
     // Bytes that are not text keep the failure: never shown as text.
     let bytes = tmp.path().join("Synthetic bytes.html");
     let mut binary = vec![0u8; 2 * 1024 * 1024 + 1];
@@ -984,7 +1013,7 @@ fn archive_members_are_written_out_under_our_names() {
         listing.kind,
         skwir_core::inspection::InspectionKind::Archive
     );
-    assert!(listing.notice.is_empty(), "{}", listing.notice);
+    assert!(listing.notices.is_empty(), "{:?}", listing.notices);
     assert!(
         listing
             .rows
@@ -1072,9 +1101,9 @@ fn compressed_files_and_long_archives_are_listed() {
         skwir_platform::inspection::limits::CONTAINER_MEMBERS
     );
     assert!(
-        listing.notice.starts_with("First 4,000 members"),
+        notice(&listing).starts_with("First 4,000 members"),
         "{}",
-        listing.notice
+        notice(&listing)
     );
 }
 

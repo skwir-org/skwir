@@ -27,13 +27,12 @@ const ANSWER: u64 = 64 << 20;
 const HELP_TIMEOUT: Duration = Duration::from_secs(5);
 const HELP: u64 = 64 << 10;
 
-/// What answered, in the user's words (`AsOf::by`).
-pub fn by() -> String {
+/// What answered (`AsOf::by`).
+pub fn by() -> skwir_core::words::Words {
     skwir_core::words!(
         query_plocate_database = "plocate's database",
         note = "What a search's answer rests on, said in its footer: the index plocate keeps of every file's name."
     )
-    .say()
 }
 
 /// What `plocate` answered: the paths it names, and when its databases

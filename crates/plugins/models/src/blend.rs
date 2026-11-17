@@ -211,8 +211,7 @@ pub fn read<S: FileSource + ?Sized>(
         title: words!(
             models_blend_title = "Blender file",
             note = "The title of a Blender file's preview."
-        )
-        .say(),
+        ),
         // The program's name and version, as Blender writes them.
         details: vec![(crate::saved_by(), format!("Blender {}", version(number)))],
         ..Found::default()
@@ -269,16 +268,14 @@ pub fn read<S: FileSource + ?Sized>(
                 }",
                 count = scenes.len(),
                 note = "A label in the preview's Properties: the names of the scenes a Blender file holds. count: how many."
-            )
-            .say(),
+            ),
             names.join(", "),
         ));
         found.details.push((
             words!(
                 models_detail_frames = "Frames",
                 note = "A label in the preview's Properties: the first and last frame of a Blender file's first scene."
-            )
-            .say(),
+            ),
             words!(
                 models_frames = "{ $first }–{ $last }",
                 first = first.frames.0.to_string(),
@@ -404,7 +401,7 @@ mod tests {
 
     fn check(found: &Found, version: &str) {
         assert_eq!(
-            found.details[0],
+            found.english_details()[0],
             ("Saved by".into(), format!("Blender {version}"))
         );
         let picture = found.picture.as_ref().expect("the stored picture");
@@ -422,8 +419,9 @@ mod tests {
         let path = write(dir.path(), "a scene’s file.blend", &blender4());
         let found = read(&path, 256, &CancelToken::new()).unwrap();
         check(&found, "4.2");
-        assert_eq!(found.details[1], ("Scene".into(), "Scène café".into()));
-        assert_eq!(found.details[2], ("Frames".into(), "1–250".into()));
+        let details = found.english_details();
+        assert_eq!(details[1], ("Scene".into(), "Scène café".into()));
+        assert_eq!(details[2], ("Frames".into(), "1–250".into()));
     }
 
     #[test]

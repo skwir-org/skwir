@@ -18,7 +18,7 @@ use crate::registry::OwnerGate;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tally {
     /// What it counts, as the footer says it: "Shelf".
-    pub label: String,
+    pub label: crate::words::Words,
     pub count: u64,
     /// What a click on it runs: opening what it counts.
     pub open: Option<crate::command::Invocation>,
@@ -73,13 +73,14 @@ impl Tallies {
         self.counts.read().get(name).map(|(_, tally)| tally.count)
     }
 
-    /// The tallies that count something, by name: what the footer shows.
-    pub fn shown(&self) -> Vec<Tally> {
+    /// The tallies that count something, each with its name (what the
+    /// footer knows it by), in their names' order: what the footer shows.
+    pub fn shown(&self) -> Vec<(String, Tally)> {
         self.counts
             .read()
-            .values()
-            .filter(|(_, tally)| tally.count > 0)
-            .map(|(_, tally)| tally.clone())
+            .iter()
+            .filter(|(_, (_, tally))| tally.count > 0)
+            .map(|(name, (_, tally))| (name.clone(), tally.clone()))
             .collect()
     }
 
@@ -105,7 +106,7 @@ mod tests {
 
     fn tally(count: u64) -> Tally {
         Tally {
-            label: "Shelf".into(),
+            label: crate::words::Words::as_written("Shelf"),
             count,
             open: None,
         }

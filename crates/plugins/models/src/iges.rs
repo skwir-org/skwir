@@ -12,7 +12,7 @@ const PREPROCESSOR: usize = 6;
 const VERSION: usize = 23;
 
 /// What the global section says: the program and the IGES version.
-pub fn header(text: &str) -> Vec<(String, String)> {
+pub fn header(text: &str) -> Vec<(skwir_core::words::Words, String)> {
     let global: Vec<u8> = text
         .lines()
         .filter_map(|line| {
@@ -120,7 +120,13 @@ fn delimited(global: &[u8]) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    /// What the global section says, its labels in English.
+    fn header(text: &str) -> Vec<(String, String)> {
+        super::header(text)
+            .into_iter()
+            .map(|(label, value)| (label.english(), value))
+            .collect()
+    }
 
     /// A start line, then `global` in lines of 72 columns marked `G`.
     fn file(global: &str) -> String {

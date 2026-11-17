@@ -63,10 +63,10 @@ fn each_kind_of_mobipocket_book_reads_whole_with_its_contents() {
     for (name, format) in BOOKS {
         let path = fixture(name);
         let first = inspect(&path, &InspectRequest::default()).unwrap();
+        let title = first.title.english();
         assert!(
-            first.title.starts_with(&format!("{format} · chapter 1 / ")),
-            "{name}: {}",
-            first.title
+            title.starts_with(&format!("{format} · chapter 1 / ")),
+            "{name}: {title}"
         );
         let all = whole(&path);
         for words in [
@@ -119,10 +119,11 @@ fn each_kind_of_mobipocket_book_reads_whole_with_its_contents() {
             "{name}: {:?}",
             first.rows
         );
-        let details: Vec<(&str, &str)> = first
-            .details
+        let labels: Vec<String> = first.details.iter().map(|d| d.label.english()).collect();
+        let details: Vec<(&str, &str)> = labels
             .iter()
-            .map(|d| (d.label.as_str(), d.value.as_str()))
+            .zip(&first.details)
+            .map(|(label, d)| (label.as_str(), d.value.as_str()))
             .collect();
         for fact in [
             ("Title", "Synthetic Book"),
@@ -291,7 +292,7 @@ fn a_palmdoc_text_reads_as_paragraphs() {
         .inspect(&req, &InspectRequest::default(), &CancelToken::new())
         .unwrap()
         .unwrap();
-    assert_eq!(shown.title, "PalmDOC · chapter 1 / 1");
+    assert_eq!(shown.title.english(), "PalmDOC · chapter 1 / 1");
     let read = text(&shown);
     assert!(
         read.contains("The needle is here, in a plain PalmDOC text."),
@@ -302,7 +303,7 @@ fn a_palmdoc_text_reads_as_paragraphs() {
         shown
             .details
             .iter()
-            .any(|d| d.label == "Title" && d.value == "Synthetic Text")
+            .any(|d| d.label.english() == "Title" && d.value == "Synthetic Text")
     );
 }
 
@@ -609,6 +610,6 @@ fn mupdf_leaves_kf8_to_the_built_in_engine() {
     };
     assert!(read("synthetic.mobi").is_none());
     let azw3 = read("synthetic.azw3").expect("the built-in engine's");
-    assert!(azw3.title.starts_with("AZW3"));
+    assert!(azw3.title.english().starts_with("AZW3"));
     assert!(read("synthetic.fb2.zip").is_some());
 }

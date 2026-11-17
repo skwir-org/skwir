@@ -1401,8 +1401,14 @@ pub(crate) fn register(app: &App) {
         SettingSpec::toggle(
             SLEEP_KEY,
             crate::words!(tabs_sleep = "Free the memory of hidden tabs"),
-            crate::words!(
-                tabs_sleep_description = "A tab you are not looking at lets go of its list of files and lists it again when shown. Turn this off to keep every tab listed and up to date, which uses more memory and background work."
+            (
+                crate::words!(
+                    tabs_sleep_description = "A tab you are not looking at lets go of its list of files and lists it again when shown."
+                ),
+                crate::words!(
+                    tabs_sleep_description_more = "Turn this off to keep every tab listed and up to date, which uses more memory and background work.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             true,
         )
@@ -1572,10 +1578,13 @@ pub(crate) fn register(app: &App) {
             // A tab by its number, the last included, is one row of keys.
             let form = Form::new(args, title);
             if form.args.get("index").is_some() {
-                form.in_family(crate::words!(
-                    tabs_go_to_family = "Go to a tab",
-                    note = "One row in the list of keys for the keys that show a tab by its number."
-                ))
+                form.in_family(
+                    "tab.by_number",
+                    crate::words!(
+                        tabs_go_to_family = "Go to a tab",
+                        note = "One row in the list of keys for the keys that show a tab by its number."
+                    ),
+                )
             } else {
                 form
             }
@@ -1627,12 +1636,12 @@ pub(crate) fn register(app: &App) {
             serde_json::json!({ "delta": -1 }),
             crate::words!(tabs_move_left = "Move the tab left"),
         )
-        .in_family(move_family()),
+        .in_family("tab.move_by_step", move_family()),
         Form::new(
             serde_json::json!({ "delta": 1 }),
             crate::words!(tabs_move_right = "Move the tab right"),
         )
-        .in_family(move_family()),
+        .in_family("tab.move_by_step", move_family()),
         Form::new(
             serde_json::json!({ "new_window": true }),
             crate::words!(tabs_move_to_window = "Move the tab to a new window"),
@@ -1670,7 +1679,7 @@ pub(crate) fn register(app: &App) {
     )
     .shows();
 
-    c.register::<WindowArg, _>(
+    let close = c.register::<WindowArg, _>(
         "core",
         Topic::Tabs,
         "window.close",
@@ -1691,8 +1700,11 @@ pub(crate) fn register(app: &App) {
                 )),
             }
         },
-    )
-    .shows();
+    );
+    // The window's own closes it too, the last one included: one action
+    // to a person.
+    close.same_as("ui.close_window");
+    close.shows();
 
     c.register::<WindowArg, _>(
         "core",

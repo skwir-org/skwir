@@ -175,10 +175,10 @@ impl Connector for Sshfs {
         let source = remote.source.to_string_lossy();
         let address = of_source(&source);
         Some(Recognised {
-            label: remote.point.file_name().map_or_else(
+            label: Words::as_written(remote.point.file_name().map_or_else(
                 || source.clone().into_owned(),
                 |name| name.to_string_lossy().into_owned(),
-            ),
+            )),
             address,
             ours: false,
             device: None,

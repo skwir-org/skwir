@@ -2358,7 +2358,7 @@ impl Shell {
                 matches!(role, gpui::Role::ListBox | gpui::Role::Tree),
                 StatefulInteractiveElement::aria_multiselectable,
             )
-            .when(self.a11y, |d| d.aria_label(self.ui().place.title.clone()))
+            .when(self.a11y, |d| d.aria_label(self.ui().place.title.say()))
             .when_some(count, StatefulInteractiveElement::aria_size_of_set)
             .when_some(said, StatefulInteractiveElement::aria_description)
             .relative()

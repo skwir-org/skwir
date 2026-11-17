@@ -202,7 +202,7 @@ struct PreviewResult {
     placeholder: bool,
     /// Why the links of what is shown are not followed: a plugin from
     /// outside made it, and may not use the network (ADR-047).
-    closed_links: Option<String>,
+    closed_links: Option<Words>,
     /// A picture written as text (an SVG drawing): the type its Source is
     /// kept by (`SourceTypes`), which the picture's bar offers.
     picture_source: Option<String>,
@@ -973,7 +973,7 @@ pub struct PreviewState {
     /// Why the links of what the panel shows are not followed
     /// (`PreviewResult::closed_links`): `Shell::follow_document_link`
     /// says it instead.
-    pub closed_links: Option<String>,
+    pub closed_links: Option<Words>,
     /// The type a picture written as text offers its Source by
     /// (`PreviewResult::picture_source`).
     pub picture_source: Option<String>,
@@ -1836,7 +1836,7 @@ fn decode_image(
     let reader = || skwir_platform::picture::open(held);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
-        return Err(bounds.refuse_words(words!(
+        return Err(bounds.refuse(words!(
             preview_too_many_pixels = "Too large to preview ({ $size } pixels, more than { $megapixels } megapixels)",
             size = format!("{w} × {h}"),
             megapixels = (bounds.picture_pixels() / (1024 * 1024)).to_string(),
@@ -2038,18 +2038,14 @@ pub fn source_instead(
         return Err(error);
     };
     let whole = TooLarge::is(&error);
-    // Transitional: the notice is said text (ADR-139).
-    data.notice = std::iter::once(
+    data.notices.insert(
+        0,
         words!(
             preview_shown_as_written = "Shown as written: { $error }",
             error = error,
             note = "Over a file shown as its own text where it could not be presented (an SVG not drawn). error: why."
-        )
-        .say(),
-    )
-    .chain((!data.notice.is_empty()).then_some(data.notice))
-    .collect::<Vec<_>>()
-    .join(" · ");
+        ),
+    );
     data.source_available = false;
     data.whole_available = whole;
     Ok(data)
@@ -2896,7 +2892,10 @@ impl Shell {
             self.preview.properties = crate::properties::entry_groups(
                 &entry,
                 &key.path,
-                notes.then_some(self.tag_fields.as_slice()),
+                notes.then_some(crate::properties::Noting {
+                    fields: self.tag_fields.as_slice(),
+                    stores: &self.app.notes,
+                }),
                 &user,
             );
             if here && let Some(volume) = self.preview.here.as_ref().and_then(|h| h.volume.clone())
@@ -3775,7 +3774,7 @@ impl Shell {
                 // What the bytes said, once they were asked.
                 let sniffed = std::cell::RefCell::new(None::<String>);
                 // Why the links of what is shown are closed, if they are.
-                let closed_links = std::cell::RefCell::new(None::<String>);
+                let closed_links = std::cell::RefCell::new(None::<Words>);
                 // The type a picture written as text offers its Source by.
                 let picture_source = std::cell::RefCell::new(None::<String>);
                 // The side a document's page was asked at.
@@ -4182,7 +4181,7 @@ impl Shell {
                 };
                 match reader {
                     Ok(Some(session)) => {
-                        closed_links.replace(session.closed_links().map(str::to_owned));
+                        closed_links.replace(session.closed_links().cloned());
                         // Before any page was shown, the side the content's
                         // area says, laid out for this preview meanwhile.
                         let side = page_side.unwrap_or_else(|| area.side(generation, &cancel));
@@ -4335,9 +4334,8 @@ impl Shell {
                     PreviewContent::Error(error) if !is_dir => {
                         instead(anyhow::Error::from(error)).unwrap_or_else(failure_content)
                     }
-                    // Transitional: `TooLarge` holds text (ADR-139).
                     PreviewContent::TooLarge(error) if !is_dir => {
-                        instead(TooLarge(error.say()).into()).unwrap_or_else(failure_content)
+                        instead(TooLarge(error).into()).unwrap_or_else(failure_content)
                     }
                     // A picture written as text offers its source.
                     PreviewContent::Image { detail: None, .. } => {
@@ -4846,13 +4844,11 @@ impl Shell {
                 let rows: Vec<crate::properties::Row> = shown
                     .into_iter()
                     .filter_map(|(key, label)| {
-                        let text = match fields.get(key, &path, &cancel)? {
-                            skwir_core::entry::Value::Text(text) => text.to_string(),
-                            _ => return None,
-                        };
+                        let value = fields.get(key, &path, &cancel)?;
+                        let said = fields.said(key, &name, &value)?;
                         Some(crate::properties::Row {
                             source: fields.credit(key, &name).map(Into::into),
-                            ..crate::properties::Row::new(label, text)
+                            ..crate::properties::Row::new(label.say(), said.say())
                         })
                     })
                     .collect();
@@ -7329,7 +7325,7 @@ fn header(
                 crate::toolbar::Button::new(
                     "properties",
                     "info",
-                    properties_name().say(),
+                    properties_name(),
                     "ui.properties",
                 )
                 .active(preview.properties_on)
@@ -7342,8 +7338,7 @@ fn header(
                     words!(
                         preview_close = "Close preview",
                         note = "A button of peek, the preview over the window: close it."
-                    )
-                    .say(),
+                    ),
                     "ui.preview_close",
                 )
                 .render(shell, cx),
@@ -8786,7 +8781,12 @@ mod tests {
             skwir_platform::inspection::limits::Bounds::QUICK,
             &cancel,
         ) {
-            PreviewContent::Inspection(display) => Some(display.data.notice.clone()),
+            PreviewContent::Inspection(display) => Some(
+                display
+                    .data
+                    .notice()
+                    .map_or_else(String::new, |n| n.english()),
+            ),
             PreviewContent::Generic => None,
             _ => panic!("text or nothing"),
         };

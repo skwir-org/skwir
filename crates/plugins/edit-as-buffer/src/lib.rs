@@ -524,7 +524,7 @@ pub fn diff_buffer(
         RenameOrderError::InvalidName { item, reason } => BufferError::InvalidName {
             line: request_line[item],
             name: requests[item].new_name.to_string_lossy().into_owned(),
-            reason: Words::from(reason),
+            reason,
         },
         RenameOrderError::Duplicate { target, .. } => BufferError::DuplicateTarget {
             name: target.to_string_lossy().into_owned(),

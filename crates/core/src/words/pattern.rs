@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 /// A part of a message.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Element {
     /// Words as they are.
     Text(Cow<'static, str>),
@@ -23,14 +23,14 @@ pub enum Element {
 }
 
 /// A selector's variant: what chooses it, and what it says.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Variant {
     pub key: Key,
     pub value: Cow<'static, [Element]>,
 }
 
 /// What chooses a variant.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
     /// A plural category (`one`, `few`, `other`), or a kind's word
     /// (`folder`).

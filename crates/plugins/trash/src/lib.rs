@@ -992,7 +992,13 @@ fn register_commands(app: &App, trashes: &Trashes) {
                 .map(|entry| Box::new(Trash { entry }) as Box<dyn Operation>)
                 .collect();
             anyhow::ensure!(!steps.is_empty(), "These are in the trash already");
-            Ok(Outcome::Plan(Plan::with_steps("move to trash", steps)))
+            Ok(Outcome::Plan(Plan::with_steps(
+                words!(
+                    trash_move_title = "move to trash",
+                    note = "An action's title: moving files to the trash. Begins in lower case: said inside other words too."
+                ),
+                steps,
+            )))
         },
     )
         .plans();
@@ -1027,7 +1033,13 @@ fn register_commands(app: &App, trashes: &Trashes) {
                 anyhow::ensure!(!named, "These are not in the trash");
                 return Err(skwir_core::command::NothingSelected.into());
             }
-            Ok(Outcome::Plan(Plan::with_steps("restore from the trash", steps)))
+            Ok(Outcome::Plan(Plan::with_steps(
+                words!(
+                    trash_restore_title = "restore from the trash",
+                    note = "An action's title: putting files of the trash back where they came from. Begins in lower case: said inside other words too."
+                ),
+                steps,
+            )))
         },
     )
         .plans();
@@ -1072,7 +1084,13 @@ fn register_commands(app: &App, trashes: &Trashes) {
                         }) as Box<dyn Operation>
                     })
                     .collect();
-                let plan = Plan::with_steps("empty the trash", steps);
+                let plan = Plan::with_steps(
+                    words!(
+                        trash_empty_title = "empty the trash",
+                        note = "An action's title: deleting for good what the trash holds. Begins in lower case: said inside other words too."
+                    ),
+                    steps,
+                );
                 // What stays on the disk (names of its files elsewhere),
                 // said where the items are read whole: while a listing of
                 // the trash shows them, as when its button is pressed.
@@ -1081,7 +1099,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
                         skwir_core::entry::kept_by_other_names(s.items.iter().map(|i| &i.entry))
                     })
                     .flatten()
-                    .and_then(|kept| kept.said());
+                    .and_then(|kept| kept.words());
                 Ok(Outcome::Plan(match kept {
                     Some(note) => plan.with_note(note),
                     None => plan,

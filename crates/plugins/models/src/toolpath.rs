@@ -467,7 +467,7 @@ fn grow(bounds: &mut [[f64; 3]; 2], p: [f64; 3]) {
 /// What was drawn, and its facts.
 pub struct Drawn {
     pub picture: Image,
-    pub details: Vec<(String, String)>,
+    pub details: Vec<(skwir_core::words::Words, String)>,
 }
 
 /// The program `source` holds drawn at most `side` pixels on its longer

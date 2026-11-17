@@ -61,7 +61,10 @@ shell_plugin_title = Shell
 
 shell_program = Program for commands
 
-shell_program_description = The shell that runs a command on the selection: a POSIX shell or fish. Leave empty for yours ($SHELL) when it is one of them, else sh.
+shell_program_description = The shell that runs a command on the selection: a POSIX shell or fish.
+
+# What a setting's description says after its first sentence, in its tooltip.
+shell_program_description_more = Leave empty for yours ($SHELL) when it is one of them, else sh.
 
 # The title of what Run Command…'s field takes.
 shell_reference_title = Command

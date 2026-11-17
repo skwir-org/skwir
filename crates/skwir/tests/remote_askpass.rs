@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use skwir_core::cancel::CancelToken;
+use skwir_core::words::Words;
 use skwir_plugin_remote::connector::Ask;
 use skwir_plugin_remote::rclone::Rclone;
 use skwir_plugin_remote::rclone_config::{self, Session};
@@ -41,12 +42,20 @@ impl Window {
     }
 }
 
+/// What `Window::asked` says of a question asked with no prompt
+/// (`Ask::unprompted`): rclone's, run with Skwir as its password command.
+const UNPROMPTED: &str = "(no prompt)";
+
 impl Ask for Window {
-    fn secret(&self, title: &str, _: &str, _: &CancelToken) -> Option<String> {
-        self.asked.lock().unwrap().push(title.to_owned());
+    fn secret(&self, title: &Words, _: &Words, _: &CancelToken) -> Option<String> {
+        self.asked.lock().unwrap().push(title.english());
         self.answer.map(str::to_owned)
     }
-    fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+    fn unprompted(&self, _: &Words, _: &CancelToken) -> Option<String> {
+        self.asked.lock().unwrap().push(UNPROMPTED.to_owned());
+        self.answer.map(str::to_owned)
+    }
+    fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
         false
     }
 }
@@ -86,7 +95,7 @@ fn an_encrypted_configuration_s_password_is_asked_of_the_window_through_skwir() 
     let session = Session::start(&rclone, &with, &ask, &cancel).unwrap();
     assert_eq!(session.remotes(&cancel).unwrap(), ["nas"]);
     drop(session);
-    assert_eq!(window.asked(), [rclone_config::PROMPT]);
+    assert_eq!(window.asked(), [UNPROMPTED]);
 
     // Cancelled in the window, it does not open; nor with a wrong one.
     for answer in [None, Some("not it")] {
@@ -95,6 +104,6 @@ fn an_encrypted_configuration_s_password_is_asked_of_the_window_through_skwir() 
         let opened = Session::start(&rclone, &with, &ask, &cancel)
             .and_then(|session| session.remotes(&cancel));
         assert!(opened.is_err(), "{answer:?}: {opened:?}");
-        assert_eq!(window.asked(), [rclone_config::PROMPT], "{answer:?}");
+        assert_eq!(window.asked(), [UNPROMPTED], "{answer:?}");
     }
 }

@@ -25,10 +25,10 @@ pub struct RenameRequest {
 /// Why a batch of renames cannot be ordered. `item` indexes the requests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenameOrderError {
-    /// `reason`: why the name is refused, said where it was found.
+    /// `reason`: why the name is refused.
     InvalidName {
         item: usize,
-        reason: String,
+        reason: crate::words::Words,
     },
     Duplicate {
         items: Vec<usize>,
@@ -44,9 +44,7 @@ impl RenameOrderError {
     /// Why the renames cannot be ordered, in words.
     pub fn words(&self) -> crate::words::Words {
         match self {
-            RenameOrderError::InvalidName { reason, .. } => {
-                crate::words::Words::as_written(reason.clone())
-            }
+            RenameOrderError::InvalidName { reason, .. } => reason.clone(),
             RenameOrderError::Duplicate { target, .. } => crate::words!(
                 op_renames_duplicate = "several items would be named { $path }",
                 path = target.display().to_string(),
@@ -135,7 +133,7 @@ pub fn order_renames(
     for (i, r) in requests.iter().enumerate() {
         valid_file_name(&r.new_name).map_err(|e| RenameOrderError::InvalidName {
             item: i,
-            reason: crate::words::Words::of_error(e).say(),
+            reason: crate::words::Words::of_error(e),
         })?;
         claimed.entry(key(&targets[i])).or_default().push(i);
     }

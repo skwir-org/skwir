@@ -60,7 +60,7 @@ pub(crate) struct Pages {
     mime: Option<String>,
     info: DocumentInfo,
     /// Why its links are not followed: the plugin may not use the network.
-    closed_links: Option<String>,
+    closed_links: Option<skwir_core::words::Words>,
 }
 
 /// A page's picture as kept: its own size, then its PNG.
@@ -90,7 +90,6 @@ impl Pages {
                 plugin = runner.title.clone(),
                 note = "Under pages a plugin from outside Skwir (its title, as its author wrote it) drew, which may not use the network: their links are not followed."
             )
-            .say()
         });
         let mut pages = Pages {
             runner,
@@ -344,8 +343,8 @@ impl DocumentSession for Pages {
         Ok(hits)
     }
 
-    fn closed_links(&self) -> Option<&str> {
-        self.closed_links.as_deref()
+    fn closed_links(&self) -> Option<&skwir_core::words::Words> {
+        self.closed_links.as_ref()
     }
 }
 
@@ -479,7 +478,7 @@ mod tests {
             .collect();
         assert_eq!(outline, [("Start", 0, Some(1)), ("Beyond", 16, None)]);
         // A plugin that may not use the network: its links closed.
-        assert!(pages.closed_links().unwrap().contains("network"));
+        assert!(pages.closed_links().unwrap().english().contains("network"));
         let cancel = CancelToken::new();
         let first = pages.render(1, 256, &cancel).unwrap();
         assert_eq!((first.width, first.height), (1, 1));

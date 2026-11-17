@@ -109,7 +109,7 @@ impl Operation for Steps {
         for step in &self.0 {
             let applied = match step.check(ctx) {
                 StepStatus::AlreadyDone => continue,
-                StepStatus::Conflict { reason } => Err(anyhow::anyhow!(reason)),
+                StepStatus::Conflict { reason } => Err(anyhow::Error::new(reason)),
                 StepStatus::Pending { .. } => step.apply(ctx),
             };
             match applied {

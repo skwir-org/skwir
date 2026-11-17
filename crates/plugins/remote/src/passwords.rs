@@ -336,15 +336,19 @@ impl Keyed {
 }
 
 impl Ask for Keyed {
-    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+    fn secret(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<String> {
         self.inner.secret(title, accept, cancel)
     }
 
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn unprompted(&self, accept: &Words, cancel: &CancelToken) -> Option<String> {
+        self.inner.unprompted(accept, cancel)
+    }
+
+    fn confirm(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool {
         self.inner.confirm(title, detail, cancel)
     }
 
-    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+    fn password(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<Password> {
         if let Some(kept) = self.kept() {
             return Some(Password {
                 text: kept,
@@ -374,6 +378,11 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    /// Words a test asks with, as written.
+    fn w(text: &'static str) -> Words {
+        Words::as_written(text)
+    }
 
     /// A keyring in memory: Skwir's own by key, the desktop's by the
     /// attributes asked, and what was asked of the window.
@@ -418,13 +427,13 @@ mod tests {
     }
 
     impl Ask for Window {
-        fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+        fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
             Some("a secret".to_owned())
         }
-        fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+        fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
             true
         }
-        fn password(&self, _: &str, _: &str, _: &CancelToken) -> Option<Password> {
+        fn password(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<Password> {
             *self.asked.lock() += 1;
             Some(Password {
                 text: self.typed.clone(),
@@ -480,7 +489,11 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(200));
             cancelling.cancel();
         });
-        assert!(keyed.password("Password", "Connect", &cancel).is_none());
+        assert!(
+            keyed
+                .password(&w("Password"), &w("Connect"), &cancel)
+                .is_none()
+        );
         assert!(began.elapsed() < std::time::Duration::from_secs(2));
         assert_eq!(*typed.asked.lock(), 0, "the window not asked");
     }
@@ -524,7 +537,11 @@ mod tests {
             cancelling.cancel();
         });
         let began = std::time::Instant::now();
-        assert!(keyed.password("Password", "Connect", &cancel).is_none());
+        assert!(
+            keyed
+                .password(&w("Password"), &w("Connect"), &cancel)
+                .is_none()
+        );
         assert!(began.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(*typed.asked.lock(), 0, "the window not asked");
         // Left open, the prompt is the keyring's: dismissed here.
@@ -654,7 +671,10 @@ mod tests {
         );
         let cancel = CancelToken::new();
         // Nothing kept: asked, remembered once the connection served.
-        assert_eq!(keyed.password("t", "a", &cancel).unwrap().text, "typed");
+        assert_eq!(
+            keyed.password(&w("t"), &w("a"), &cancel).unwrap().text,
+            "typed"
+        );
         assert_eq!(keyed.served(), Some(Noted::Kept("smb://me@nas".into())));
         assert_eq!(*typed.asked.lock(), 1);
         // Kept: given, nothing asked.
@@ -676,8 +696,14 @@ mod tests {
             address.clone(),
             CancelToken::new(),
         );
-        assert_eq!(keyed.password("t", "a", &cancel).unwrap().text, "typed");
-        assert_eq!(keyed.password("t", "a", &cancel).unwrap().text, "other");
+        assert_eq!(
+            keyed.password(&w("t"), &w("a"), &cancel).unwrap().text,
+            "typed"
+        );
+        assert_eq!(
+            keyed.password(&w("t"), &w("a"), &cancel).unwrap().text,
+            "other"
+        );
         assert_eq!(keyed.served(), Some(Noted::Forgot("smb://me@nas".into())));
         assert!(keyring.own.lock().is_empty());
     }
@@ -698,7 +724,7 @@ mod tests {
         let keyed = Keyed::new(typed.clone(), keyring.clone(), address, CancelToken::new());
         let cancel = CancelToken::new();
         assert_eq!(
-            keyed.password("t", "a", &cancel).unwrap().text,
+            keyed.password(&w("t"), &w("a"), &cancel).unwrap().text,
             "nautilus kept it"
         );
         assert_eq!(keyed.served(), None, "kept nowhere, forgotten nowhere");

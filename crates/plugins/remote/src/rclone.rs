@@ -471,10 +471,10 @@ impl Connector for Rclone {
                 Address::rclone(name, path.as_bytes()).ok()
             });
         Some(Recognised {
-            label: remote.point.file_name().map_or_else(
+            label: Words::as_written(remote.point.file_name().map_or_else(
                 || source.clone().into_owned(),
                 |name| name.to_string_lossy().into_owned(),
-            ),
+            )),
             address,
             ours: false,
             device: None,
@@ -907,9 +907,14 @@ fn remotes(listed: &str) -> Vec<Server> {
             let kind = kind.trim();
             Some(Server {
                 label: if kind.is_empty() {
-                    name.to_owned()
+                    Words::as_written(name.to_owned())
                 } else {
-                    format!("{name} ({kind})")
+                    words!(
+                        remote_rclone_server_label = "{ $name } ({ $kind })",
+                        name = name,
+                        kind = kind,
+                        note = "What a remote of rclone's configuration is called: name is its name, kind rclone's type of storage (drive, sftp), both as written."
+                    )
                 },
                 address,
                 kind: kind.to_owned(),
@@ -1033,9 +1038,8 @@ fn logged_in(
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<String>> {
-    // Said for the window that asks it.
-    let title = crate::connector::password_for(&top.label()).say();
-    let connect = crate::connector::connect_button().say();
+    let title = crate::connector::password_for(top.label());
+    let connect = crate::connector::connect_button();
     let mut password = ask.kept_password();
     let mut asked = 0;
     loop {
@@ -1629,7 +1633,7 @@ mod tests {
         let servers = remotes("gdrive:     drive\nnas:        sftp\n");
         assert_eq!(servers.len(), 2);
         assert_eq!(servers[0].address.to_string(), "rclone://gdrive/");
-        assert_eq!(servers[0].label, "gdrive (drive)");
+        assert_eq!(servers[0].label.english(), "gdrive (drive)");
     }
 
     #[test]

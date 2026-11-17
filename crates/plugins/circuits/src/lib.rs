@@ -162,7 +162,12 @@ impl Format {
         cancel: &CancelToken,
     ) -> anyhow::Result<Found> {
         let most = bounds.choose(INPUT, WHOLE_INPUT);
-        let bytes = inspection::read_within(source, most, bounds, "The file", cancel)?;
+        let refusal = words!(
+            circuits_file_exceeds = "The file exceeds { $size } preview limit",
+            size = words::Size(most as u64),
+            note = "Why a board, schematic or layer is not drawn: it grew past what is drawn while it was read. size: that bound."
+        );
+        let bytes = inspection::read_within(source, most, bounds, refusal, cancel)?;
         let text = String::from_utf8_lossy(&bytes);
         match self {
             Format::Board => board::board(&text, cancel),
@@ -184,7 +189,6 @@ impl Format {
                             circuits_gerber_drawn_in_part = "Drawn in part: the layer holds more than is drawn here",
                             note = "A notice under a Gerber layer's picture: some of its shapes were left out."
                         )
-                        .say()
                     }),
                 })
             }
@@ -206,49 +210,44 @@ fn too_large<S: FileSource + ?Sized>(source: &S, bounds: Bounds) -> anyhow::Resu
 }
 
 /// Properties' label for the program a file was made with.
-fn made_with() -> String {
+fn made_with() -> Words {
     words!(
         circuits_detail_made_with = "Made with",
         note = "A label in the preview's Properties: the program, and its version, that wrote the file (KiCad 9.0)."
     )
-    .say()
 }
 
 /// A title block's fields, by their keys in the file, each with its label
 /// in Properties.
-fn title_block() -> [(&'static str, String); 4] {
+fn title_block() -> [(&'static str, Words); 4] {
     [
         (
             "title",
             words!(
                 circuits_detail_title = "Title",
                 note = "A label in the preview's Properties: the title the board or schematic gives itself in its title block."
-            )
-            .say(),
+            ),
         ),
         (
             "rev",
             words!(
                 circuits_detail_revision = "Revision",
                 note = "A label in the preview's Properties: the revision of the design, from its title block."
-            )
-            .say(),
+            ),
         ),
         (
             "company",
             words!(
                 circuits_detail_company = "Company",
                 note = "A label in the preview's Properties: the company the design is from, in its title block."
-            )
-            .say(),
+            ),
         ),
         (
             "date",
             words!(
                 circuits_detail_date = "Date",
                 note = "A label in the preview's Properties: the date in the design's title block, as written there."
-            )
-            .say(),
+            ),
         ),
     ]
 }
@@ -278,9 +277,21 @@ fn millimetres_by(width: f64, height: f64) -> String {
 /// What a file holds: its drawing, and facts in the order shown.
 struct Found {
     svg: Option<String>,
-    details: Vec<(String, String)>,
+    /// Facts, each label and its value.
+    details: Vec<(Words, String)>,
     /// What was left out, and why.
-    notice: Option<String>,
+    notice: Option<Words>,
+}
+
+#[cfg(test)]
+impl Found {
+    /// Its facts, each label in English.
+    fn english_details(&self) -> Vec<(String, String)> {
+        self.details
+            .iter()
+            .map(|(label, value)| (label.english(), value.clone()))
+            .collect()
+    }
 }
 
 /// A drawing rasterized `side` pixels on its longer side.
@@ -336,8 +347,7 @@ impl PreviewProvider for Provider {
                     circuits_too_large = "Too large to draw (more than { $size })",
                     size = words::Size(bounds.choose(INPUT, WHOLE_INPUT) as u64),
                     note = "Why a board or schematic is shown as its text rather than drawn. size: the largest file drawn."
-                )
-                .say(),
+                ),
             ));
         }
         let found = format.read(&held, bounds, cancel)?;
@@ -345,17 +355,16 @@ impl PreviewProvider for Provider {
             Some(svg) => Some(raster(svg, PANEL_SIDE, cancel)?),
             None => None,
         };
-        let notice = match (&image, found.notice) {
-            (None, _) => words!(
+        let notices = match (&image, found.notice) {
+            (None, _) => vec![words!(
                 circuits_nothing_drawn = "Nothing is drawn in this file",
                 note = "A notice in the preview of a board, schematic or layer that holds nothing to draw."
-            )
-            .say(),
-            (Some(_), notice) => notice.unwrap_or_default(),
+            )],
+            (Some(_), notice) => notice.into_iter().collect(),
         };
         Ok(Some(Inspection {
             kind: InspectionKind::Text,
-            title: format.title().say(),
+            title: format.title(),
             image,
             details: found
                 .details
@@ -363,7 +372,7 @@ impl PreviewProvider for Provider {
                 .map(|(label, value)| Detail::new(label, value))
                 .collect(),
             source_available: true,
-            notice,
+            notices,
             ..Inspection::default()
         }))
     }
@@ -452,7 +461,7 @@ mod tests {
         let image = data.image.expect("the board drawn");
         assert_eq!(image.width, PANEL_SIDE);
         assert!(data.source_available);
-        assert_eq!(data.details[0].label, "Made with");
+        assert_eq!(data.details[0].label.english(), "Made with");
         let source = InspectRequest {
             source: true,
             ..InspectRequest::default()
@@ -495,7 +504,7 @@ mod tests {
             .inspect(&board, &InspectRequest::default(), &CancelToken::new())
             .unwrap()
             .unwrap();
-        assert_eq!(data.title, "KiCad board");
+        assert_eq!(data.title.english(), "KiCad board");
         assert!(data.image.is_some(), "the board drawn");
         // A name another format shares is settled by what is held.
         let layer = PreviewRequest::holding(
@@ -509,7 +518,7 @@ mod tests {
             .inspect(&layer, &InspectRequest::default(), &CancelToken::new())
             .unwrap()
             .unwrap();
-        assert_eq!(data.title, "Gerber layer");
+        assert_eq!(data.title.english(), "Gerber layer");
         assert!(data.image.is_some(), "the layer drawn");
         let brush = PreviewRequest::holding(
             gone("pencil.gbr"),
@@ -533,7 +542,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.image.is_none());
-        assert_eq!(data.notice, "Nothing is drawn in this file");
+        assert_eq!(
+            data.notice().map(|said| said.english()).as_deref(),
+            Some("Nothing is drawn in this file")
+        );
         // Larger than what is drawn: refused, for the panel to show the
         // source instead. The file is sparse, nothing is written.
         let large = dir.path().join("large.kicad_pcb");

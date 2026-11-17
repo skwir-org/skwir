@@ -24,9 +24,8 @@ pub struct Shown {
     location: String,
     /// What it is called, as its tab says it (`App::location_title`):
     /// the window's title and the name assistive technology gives the
-    /// pane's entries. Said when read: read again when what words say
-    /// moves, as `names` does (`Roots`, keyed on `words::revision`).
-    pub title: gpui::SharedString,
+    /// pane's entries, said where it is drawn.
+    pub title: Words,
     pub trail: Option<Trail>,
     pub verbs: Verbs,
     /// The glyph that stands for it (`LocationProvider::icon`).
@@ -116,9 +115,8 @@ pub fn sync(shell: &mut Shell) {
         .unwrap_or_default();
     let title = location
         .as_ref()
-        .map(|location| shell.app.location_title(location).say())
-        .unwrap_or_default()
-        .into();
+        .map(|location| shell.app.location_title(location))
+        .unwrap_or_default();
     shell.ui_mut().place = Shown {
         folder: location.as_ref().is_none_or(Location::is_path),
         search,

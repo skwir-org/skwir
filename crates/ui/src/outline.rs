@@ -141,8 +141,7 @@ pub fn contents(
                         skwir_core::words!(
                             outline_pin = "Keep contents open",
                             note = "A button of the drawer of a preview's contents: keep it open from file to file."
-                        )
-                        .say(),
+                        ),
                         "ui.contents_pin",
                     )
                     .active(pinned)
@@ -155,8 +154,7 @@ pub fn contents(
                         skwir_core::words!(
                             outline_close = "Close contents",
                             note = "A button of the drawer of a preview's contents."
-                        )
-                        .say(),
+                        ),
                         close.0,
                     )
                         .args(close.1)

@@ -21,9 +21,8 @@ use gpui::{
     AnyElement, Context, Entity, FocusHandle, Focusable, MouseButton, ScrollHandle, Subscription,
     Window, div, prelude::*, px,
 };
-use skwir_core::command::Topic;
+use skwir_core::command::{Family, Topic};
 use skwir_core::words;
-use skwir_core::words::Words;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::columns::{self, Block, Columns, Metrics};
@@ -58,7 +57,7 @@ struct Item {
     title: String,
     topic: Topic,
     /// Its family (`Form::family`), and where it stands in it.
-    family: Option<(Words, usize)>,
+    family: Option<(Family, usize)>,
     /// Its place alone, which a filter's words find: not its conditions
     /// ("not in the trash" is no answer to "trash").
     place: String,
@@ -118,23 +117,27 @@ impl Row {
             .iter()
             .filter_map(|(_, keys)| keys.first().cloned())
             .collect();
-        let caps: Vec<Vec<Vec<String>>> =
-            firsts.iter().map(|keys| keymap::key_caps(keys)).collect();
+        // Told apart by their keys as the notation names them, never by
+        // the caps' words; said once drawn.
+        let strokes: Vec<Vec<Vec<String>>> = firsts
+            .iter()
+            .map(|keys| keymap::key_strokes(keys))
+            .collect();
         let held = |strokes: &Vec<Vec<String>>| match strokes.as_slice() {
             [stroke] if !stroke.is_empty() => Some(stroke[..stroke.len() - 1].to_vec()),
             _ => None,
         };
-        match held(&caps[0]) {
+        match held(&strokes[0]) {
             Some(first)
-                if caps
+                if strokes
                     .iter()
                     .all(|strokes| held(strokes).as_ref() == Some(&first)) =>
             {
                 Shown::Held {
-                    held: first,
-                    keys: caps
+                    held: first.iter().map(|key| keymap::key_cap(key)).collect(),
+                    keys: strokes
                         .iter()
-                        .filter_map(|strokes| strokes[0].last().cloned())
+                        .filter_map(|strokes| strokes[0].last().map(|key| keymap::key_cap(key)))
                         .collect(),
                 }
             }
@@ -155,12 +158,11 @@ enum Shown {
     },
 }
 
-/// What makes items one row: a command's family, by its words as data
-/// (the same message, or the same text as written; never what they say),
-/// else a command run with its arguments.
+/// What makes items one row: a command's family, by its id (never by its
+/// words), else a command run with its arguments.
 #[derive(PartialEq)]
 enum RowKey {
-    Family(String, Words),
+    Family(String, String),
     Action(String, String),
 }
 
@@ -170,7 +172,7 @@ fn merge(items: Vec<Item>) -> Vec<Row> {
     let mut keyed: Vec<(RowKey, Row)> = Vec::new();
     for item in items {
         let key = match &item.family {
-            Some((family, _)) => RowKey::Family(item.command.clone(), family.clone()),
+            Some((family, _)) => RowKey::Family(item.command.clone(), family.id.clone()),
             None => RowKey::Action(item.command.clone(), item.args.to_string()),
         };
         let at = if let Some(at) = keyed.iter().position(|(known, _)| *known == key) {
@@ -182,7 +184,7 @@ fn merge(items: Vec<Item>) -> Vec<Row> {
                     title: item
                         .family
                         .as_ref()
-                        .map_or_else(|| item.title.clone(), |(family, _)| family.say()),
+                        .map_or_else(|| item.title.clone(), |(family, _)| family.title.say()),
                     topic: item.topic,
                     actions: Vec::new(),
                     runs: Vec::new(),
@@ -341,7 +343,9 @@ impl Shell {
                 keys: hint.keys.clone(),
                 command: hint.command.clone(),
                 args: hint.args.clone(),
-                title: keymap::title_of(&self.app, hint),
+                // Said once, as the overview opens (its rows are titled
+                // then).
+                title: keymap::title_of(&self.app, hint).say(),
                 topic,
                 family,
                 place: keymap::place_of(&hint.context).place,
@@ -384,8 +388,7 @@ impl Shell {
                 words!(
                     shortcuts_filter = "Filter by action or keys",
                     note = "The field of the overview of shortcuts (F1), before anything is typed."
-                )
-                .say(),
+                ),
                 cx,
             )
         });
@@ -459,6 +462,7 @@ impl Shell {
         // Transitional: the title without the `…` that says it asks more,
         // until each title is a message that says it (PLAN.md, step E).
         let action = keymap::title_of(&self.app, &hint)
+            .say()
             .trim_end_matches('…')
             .to_owned();
         self.toast(
@@ -825,9 +829,18 @@ fn row_element(row: &Row, id: &gpui::ElementId, theme: &Theme) -> columns::Row {
 
 #[cfg(test)]
 mod tests {
-    use skwir_core::command::Topic;
+    use skwir_core::command::{Family, Topic};
+    use skwir_core::words::Words;
 
     use super::{Item, Shown, applies, by_topic, merge};
+
+    /// A family known by `id`, its row saying it.
+    fn family(id: &str) -> Family {
+        Family {
+            id: id.into(),
+            title: Words::as_written(id.to_owned()),
+        }
+    }
 
     fn item(keys: &str, command: &str, title: &str, topic: Topic, depth: usize) -> Item {
         Item {
@@ -849,7 +862,7 @@ mod tests {
             .unwrap();
         Item {
             args: serde_json::json!({ "to": to, "step": family }),
-            family: Some((family.into(), rank)),
+            family: Some((self::family(family), rank)),
             ..item(keys, "ui.cursor", title, Topic::Select, 2)
         }
     }
@@ -880,7 +893,7 @@ mod tests {
                 "Extend the selection",
             ),
             Item {
-                family: Some(("Zoom".into(), 0)),
+                family: Some((family("Zoom"), 0)),
                 ..item("ctrl-=", "ui.zoom", "Zoom in", Topic::View, 0)
             },
         ]);
@@ -905,12 +918,12 @@ mod tests {
         // Keys that hold different modifiers are said whole.
         let tabs = merge(vec![
             Item {
-                family: Some(("Go".into(), 1)),
+                family: Some((family("Go"), 1)),
                 ..item("ctrl-tab", "tab.select", "Next tab", Topic::Tabs, 0)
             },
             Item {
                 args: serde_json::json!({ "delta": -1 }),
-                family: Some(("Go".into(), 0)),
+                family: Some((family("Go"), 0)),
                 ..item(
                     "ctrl-shift-tab",
                     "tab.select",

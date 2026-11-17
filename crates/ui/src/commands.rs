@@ -33,6 +33,7 @@ mod args {
     use serde::Deserialize;
     use skwir_core::op::EntryRef;
     use skwir_core::os_path::PathArg;
+    use skwir_core::words::Words;
 
     /// Arguments that depend on what the command is asked to do (its
     /// `action`, its `key`): any object.
@@ -351,9 +352,10 @@ mod args {
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct CopyText {
         text: String,
-        /// What it is, for the message ("the path").
+        /// What it is, for the message ("the path"): words as text, or as
+        /// their data (the window's own, said in its language).
         #[serde(default)]
-        what: Option<String>,
+        what: Option<Words>,
     }
 
     #[derive(Deserialize, JsonSchema)]
@@ -552,10 +554,12 @@ mod args {
 
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Ask {
+        /// Words as text, or as their data (the window's own questions,
+        /// said in its language).
         #[serde(default)]
-        title: Option<String>,
+        title: Option<Words>,
         #[serde(default)]
-        placeholder: Option<String>,
+        placeholder: Option<Words>,
         /// The answer to start from.
         #[serde(default)]
         text: Option<String>,
@@ -565,10 +569,10 @@ mod args {
         /// The verb on the button that answers (Rename, Create); OK when
         /// absent.
         #[serde(default)]
-        accept: Option<String>,
+        accept: Option<Words>,
         /// A line under the field: what the answer may be.
         #[serde(default)]
-        note: Option<String>,
+        note: Option<Words>,
         /// What the field takes (ADR-137), opened from the `?` inside it
         /// or F1: its groups of items, each as written, what it means, what
         /// it gives, and what choosing it writes.
@@ -1524,9 +1528,16 @@ fn cursor_forms() -> impl Iterator<Item = Form> {
                 None => serde_json::json!({ "to": to }),
             };
             // A page at a time is a row of its own: with the arrows and
-            // the ends, one row would be too long to read.
-            let (title, family) = cursor_words(step, to, to.contains("page"));
-            Form::new(args, title).in_family(family)
+            // the ends, one row would be too long to read. Its family is
+            // known by the step and by whether it pages, as data.
+            let paged = to.contains("page");
+            let (title, family) = cursor_words(step, to, paged);
+            let id = format!(
+                "cursor.{}{}",
+                step.unwrap_or("go"),
+                if paged { ".paged" } else { "" }
+            );
+            Form::new(args, title).in_family(id, family)
         })
     })
 }
@@ -1692,8 +1703,9 @@ fn forms_of(name: &str) -> Vec<Form> {
     let mut forms: Vec<Form> = Vec::new();
     for form in offered.chain(keys).chain(moves) {
         if !forms.iter().any(|known| known.args == form.args) {
+            // One family a command, known by the command's name.
             forms.push(match &family {
-                Some(family) => form.in_family(family.clone()),
+                Some(family) => form.in_family(name, family.clone()),
                 None => form,
             });
         }

@@ -341,17 +341,15 @@ impl Shell {
         for (at, field) in asked.form.fields.iter().enumerate() {
             let control = match &field.kind {
                 Kind::Text | Kind::Integer { .. } | Kind::Secret { .. } => {
-                    // Said as the form opens, for as long as it is open.
                     let placeholder = match field.kind {
                         Kind::Secret { kept: true } => words!(
                             form_secret_kept = "Kept: type another to replace it",
                             note = "In the empty field of a password or a key Skwir keeps \
                                     already: typing one replaces it."
-                        )
-                        .say(),
-                        _ => field.placeholder.say(),
+                        ),
+                        _ => field.placeholder.clone(),
                     };
-                    let input = self.form_input(field, &placeholder, at, &mut subs, window, cx);
+                    let input = self.form_input(field, placeholder, at, &mut subs, window, cx);
                     Control::Input(input)
                 }
                 Kind::Toggle => Control::Toggle {
@@ -361,16 +359,17 @@ impl Shell {
                 Kind::Choice { open, .. } => Control::Choice {
                     value: field.value.clone(),
                     focus: cx.focus_handle(),
-                    input: open.then(|| self.form_input(field, "", at, &mut subs, window, cx)),
+                    input: open.then(|| {
+                        self.form_input(field, Words::default(), at, &mut subs, window, cx)
+                    }),
                 },
                 Kind::Pick { choices } => {
                     let filter = words!(
                         form_type_to_filter = "Type to filter",
                         note = "In the empty field above a list of choices: what is typed \
                                 narrows the list."
-                    )
-                    .say();
-                    let input = self.form_input(field, &filter, at, &mut subs, window, cx);
+                    );
+                    let input = self.form_input(field, filter, at, &mut subs, window, cx);
                     input.update(cx, |i, cx| i.set_text(String::new(), cx));
                     // A pick starts on the choice the asker gave.
                     let mut picker = Picker::default();
@@ -401,8 +400,14 @@ impl Shell {
                 // Its name put there once every field is (`save_open`).
                 Kind::Save { .. } => {
                     use gpui::Focusable as _;
-                    let input =
-                        self.form_input(field, &field.placeholder.say(), at, &mut subs, window, cx);
+                    let input = self.form_input(
+                        field,
+                        field.placeholder.clone(),
+                        at,
+                        &mut subs,
+                        window,
+                        cx,
+                    );
                     // Its popover folded, its name given back, once it is
                     // left.
                     let text = input.read(cx).focus_handle(cx);
@@ -475,17 +480,16 @@ impl Shell {
     fn form_input(
         &self,
         field: &Field,
-        placeholder: &str,
+        placeholder: Words,
         at: usize,
         subs: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<TextInput> {
         let input = cx.new(|cx| {
-            let mut input = TextInput::new(placeholder.to_owned(), cx);
-            // Named by its label, as assistive technology reads it, said
-            // as the form opens.
-            input.set_label(field.title.say());
+            let mut input = TextInput::new(placeholder, cx);
+            // Named by its label, as assistive technology reads it.
+            input.set_label(field.title.clone());
             input.set_masked(field.secret());
             if !field.secret() {
                 input.set_text(field.value.clone(), cx);

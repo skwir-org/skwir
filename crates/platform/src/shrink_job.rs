@@ -28,7 +28,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::document::DocumentSession;
 use skwir_core::op::EntryRef;
 use skwir_core::preview::{HeldSlot, PreviewRequest};
-use skwir_core::shrink::{Changed, Job, Kind, Made};
+use skwir_core::shrink::{Changed, Job, Kind, Made, Note};
 use skwir_core::words;
 use skwir_core::words::Words;
 
@@ -76,7 +76,7 @@ pub fn run(
     cancel: &CancelToken,
     follow: &Follow<'_>,
 ) -> Result<Made> {
-    let program = crate::print_job::WORKER.require_words(words!(
+    let program = crate::print_job::WORKER.require(words!(
         shrink_install = "Install { $program } to make smaller copies",
         program = crate::print_job::WORKER.executable,
         note =
@@ -127,11 +127,11 @@ pub fn made(
             Looked::Images(keep) if pass < PASSES => keep,
             Looked::Images(_) => {
                 tracing::info!("a smaller copy looked different with its images put back");
-                return Ok((None, not_kept(size, &still_unlike())));
+                return Ok((None, not_kept(size, Note::StillUnlike)));
             }
             Looked::Unlike => {
                 tracing::info!("a smaller copy looked different beyond its images");
-                return Ok((None, not_kept(size, &unlike())));
+                return Ok((None, not_kept(size, Note::Unlike)));
             }
         };
         tracing::info!(
@@ -145,36 +145,11 @@ pub fn made(
         made = run(&mut job, work, name, cancel, &follow.part(0.0, MAKING))?;
         pass += 1;
         if !made.written {
-            return Ok((None, not_kept(size, &put_back())));
+            return Ok((None, not_kept(size, Note::PutBack)));
         }
     }
     follow.went(1.0);
     kept(&job, made, size)
-}
-
-/// Why a PDF's copy was not kept, said after "No smaller copy was made".
-fn unlike() -> Words {
-    words!(
-        shrink_unlike = "a copy made looked different from it beyond its images, so none was kept",
-        note = "Why no smaller copy of a PDF was kept, said after “No smaller copy was made”: its pages, drawn, did not look the same."
-    )
-}
-
-/// [`unlike`], after its images were put back.
-fn still_unlike() -> Words {
-    words!(
-        shrink_still_unlike =
-            "a copy made still looked different from it with its images put back, so none was kept",
-        note = "Why no smaller copy of a PDF was kept, said after “No smaller copy was made”."
-    )
-}
-
-/// Why a PDF's copy was not kept once its images were all put back.
-fn put_back() -> Words {
-    words!(
-        shrink_put_back = "its images made smaller looked different in a copy and were put back as they were, which left it no smaller",
-        note = "Why no smaller copy of a PDF was kept, said after “No smaller copy was made”."
-    )
 }
 
 /// What a file at `path` that could not be read is said as.
@@ -187,13 +162,12 @@ fn unread(path: &Path) -> Words {
 }
 
 /// Nothing kept of a file of `size` bytes, `why`.
-fn not_kept(size: u64, why: &Words) -> Made {
+fn not_kept(size: u64, why: Note) -> Made {
     Made {
         before: size,
         after: size,
         written: false,
-        // Transitional: `Made::notes` is text, said once here (ADR-139).
-        notes: vec![why.say()],
+        notes: vec![why],
         ..Made::default()
     }
 }

@@ -244,9 +244,9 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .children(crate::media::flash(Flash::Dock, shell, 1.));
         let figure = crate::media::audio_figure(
             state,
-            title.clone(),
+            Words::as_written(title.clone()),
             square.into_any_element(),
-            Some(REVEAL_TIP),
+            Some(reveal_tip()),
             &theme,
         );
         reveal("dock-figure", figure, cx).into_any_element()
@@ -489,8 +489,7 @@ fn transport(
                 words!(
                     dock_more = "More",
                     note = "The pinned player's button opening what its transport left out."
-                )
-                .say(),
+                ),
                 "ui.toolbar_menu",
             )
             .args(serde_json::json!({ "kind": MENU }))
@@ -567,7 +566,7 @@ fn fullscreen(id: &'static str) -> Button {
 /// A button asking the pinned player `what`, as `player::request` makes
 /// one, its tip said where it is drawn.
 fn request(id: &'static str, icon: &'static str, tip: Words, what: &str) -> Button {
-    Button::new(id, icon, tip.say(), "ui.player").args(serde_json::json!({ "request": what }))
+    Button::new(id, icon, tip.clone(), "ui.player").args(serde_json::json!({ "request": what }))
 }
 
 /// The dock's More, above its button (the dock is at the window's foot):
@@ -599,7 +598,7 @@ fn menu(
         );
         return Some(anchor.popup_above_for(chosen, vec![panel.into_any_element()]));
     }
-    let send = |id: String, title: String, action: &str, value: serde_json::Value| {
+    let send = |id: String, title: Words, action: &str, value: serde_json::Value| {
         let mut request = serde_json::Map::new();
         request.insert(action.to_owned(), value);
         Button::new(id, "", title, "ui.player").args(serde_json::json!({ "request": request }))
@@ -653,23 +652,20 @@ fn menu(
     Some(anchor.popup_above_for(chosen, panels))
 }
 
-/// What a click on the dock's text does, said by its tooltip.
-pub(crate) const REVEAL_TIP: &str = "Show this track";
-
-/// `REVEAL_TIP` as words, said where it is drawn.
-pub(crate) fn reveal_tip() -> String {
+/// What a click on the dock's text does, said by its tooltip where it is
+/// drawn.
+pub(crate) fn reveal_tip() -> Words {
     words!(
         dock_reveal = "Show this track",
         note = "The tooltip of the pinned player's title: a click shows the file it plays, \
                 selected in its folder."
     )
-    .say()
 }
 
 /// A line of the dock's text inside `reveal`: cut, it says itself whole
 /// before what a click does.
 fn revealed(el: gpui::Stateful<gpui::Div>, text: String) -> gpui::Stateful<gpui::Div> {
-    crate::elements::clip::clipped_with(el, text, Some(reveal_tip().into()))
+    crate::elements::clip::clipped_with(el, text, Some(reveal_tip().say().into()))
 }
 
 /// Something of the dock that shows the track when clicked: what is not
@@ -684,7 +680,7 @@ fn reveal(
         .id(id)
         .cursor_pointer()
         .hover(move |d| d.bg(theme.hover))
-        .tooltip(move |_, cx| crate::toolbar::tooltip(reveal_tip().into(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(reveal_tip().say().into(), cx))
         .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
 }
 

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use skwir_core::app::App;
 use skwir_core::settings::SettingSpec;
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Server, Source};
@@ -93,8 +93,14 @@ pub fn declare(app: &App) {
         SettingSpec::choice_words(
             KEPT_IN,
             words!(remote_servers_kept_in = "Where servers are kept"),
-            words!(
-                remote_servers_kept_in_description = "Where a server added by its address is kept. Automatic: in KDE's network folders on KDE's desktop, where Dolphin lists them too, and in Skwir's own list elsewhere; a kind KIO does not open (FTPS, AFP) always in Skwir's."
+            (
+                words!(
+                    remote_servers_kept_in_description = "Where a server added by its address is kept."
+                ),
+                words!(
+                    remote_servers_kept_in_description_more = "Automatic: in KDE's network folders on KDE's desktop, where Dolphin lists them too, and in Skwir's own list elsewhere; a kind KIO does not open (FTPS, AFP) always in Skwir's.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             "automatic",
             vec![
@@ -164,7 +170,7 @@ pub fn listed(app: &App) -> Vec<Server> {
         .into_iter()
         .filter_map(|entry| {
             Some(server(
-                entry.name,
+                &entry.name,
                 Address::parse(&entry.address).ok()?,
                 Kept::Skwir,
             ))
@@ -186,7 +192,10 @@ pub fn find(app: &App, address: &Address) -> Option<Server> {
     listed(app).into_iter().find(|s| s.address == *address)
 }
 
-/// Keep the server at `address` under `name`, where [`keeper`] says.
+/// Keep the server at `address` under `name`, where [`keeper`] says: empty,
+/// it goes by its address's (`Address::label`), said where it is shown in
+/// Skwir's list, in English in KDE's network folders, which other programs
+/// read.
 ///
 /// # Errors
 /// When a server is kept at that address already, or it could not be
@@ -195,10 +204,17 @@ pub fn add(app: &App, name: &str, address: &Address) -> anyhow::Result<Kept> {
     if let Some(kept) = find(app, address) {
         anyhow::bail!(words!(
             remote_servers_taken = "{ $name } is a server already, at that address",
-            name = Name(kept.label),
+            name = crate::address::named(&kept.label),
             note = "name: the server's, as the Network section shows it."
         ));
     }
+    let english;
+    let named = if name.is_empty() {
+        english = address.label().english();
+        english.as_str()
+    } else {
+        name
+    };
     let kept = keeper(app, address.scheme);
     match kept {
         Kept::Kde => {
@@ -209,7 +225,7 @@ pub fn add(app: &App, name: &str, address: &Address) -> anyhow::Result<Kept> {
                 ))
             })?;
             std::fs::create_dir_all(&folder)?;
-            write_entry(&free_name(&folder, name), name, address)?;
+            write_entry(&free_name(&folder, named), named, address)?;
             tell_kde();
         }
         Kept::Skwir | Kept::Tool(_) => {
@@ -224,8 +240,8 @@ pub fn add(app: &App, name: &str, address: &Address) -> anyhow::Result<Kept> {
     Ok(kept)
 }
 
-/// The server kept at `old` named `name` and at `new` from now on, where it
-/// is kept.
+/// The server kept at `old` named `name` (empty: its address's, as `add`
+/// keeps it) and at `new` from now on, where it is kept.
 ///
 /// # Errors
 /// When no server is kept at `old`, another is at `new`, or it could not
@@ -246,7 +262,11 @@ pub fn change(app: &App, old: &Address, name: &str, new: &Address) -> anyhow::Re
         return keep_own(app, &all);
     }
     let file = kde_file_of(old).ok_or_else(|| anyhow::anyhow!(none_kept(old)))?;
-    write_entry(&file, name, new)?;
+    if name.is_empty() {
+        write_entry(&file, &new.label().english(), new)?;
+    } else {
+        write_entry(&file, name, new)?;
+    }
     tell_kde();
     Ok(())
 }
@@ -286,13 +306,19 @@ fn keep_own(app: &App, all: &[Entry]) -> anyhow::Result<()> {
     app.settings.save()
 }
 
-fn server(label: String, address: Address, kept: Kept) -> Server {
+/// What a server kept under `name` is called: that name, as written, else
+/// (empty) its address's.
+pub fn label_of(name: &str, address: &Address) -> Words {
+    if name.is_empty() {
+        address.label()
+    } else {
+        Words::as_written(name.to_owned())
+    }
+}
+
+fn server(label: &str, address: Address, kept: Kept) -> Server {
     Server {
-        label: if label.is_empty() {
-            address.label()
-        } else {
-            label
-        },
+        label: label_of(label, &address),
         address,
         kind: String::new(),
         kept,
@@ -408,12 +434,12 @@ fn network_folder(entry: &str) -> Option<Server> {
         return None;
     }
     let address = Address::parse(&url?).ok()?;
-    Some(server(name.unwrap_or_default(), address, Kept::Kde))
+    Some(server(&name.unwrap_or_default(), address, Kept::Kde))
 }
 
 /// Write the desktop entry `file` of KDE's network folders, linking to
 /// `address` under `name`, as KDE's Add Network Folder writes one: a file
-/// KDE shares, replaced whole (`file::rewrite`).
+/// KDE shares, replaced whole (`file::rewrite_words`).
 fn write_entry(file: &Path, name: &str, address: &Address) -> anyhow::Result<()> {
     let url = crate::kio::kio_url(address).ok_or_else(|| {
         anyhow::anyhow!(words!(
@@ -427,7 +453,12 @@ fn write_entry(file: &Path, name: &str, address: &Address) -> anyhow::Result<()>
         escaped(name),
         escaped(&url)
     );
-    skwir_platform::file::rewrite(file, "KDE's network folder", |_| Some((text, ())))?;
+    let read_only = words!(
+        remote_servers_kde_read_only =
+            "KDE's network folder is read-only; change it where it is managed",
+        note = "Why a server was not added to KDE's network folders: its file is a link to one that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it."
+    );
+    skwir_platform::file::rewrite_words(file, read_only, |_| Some((text, ())))?;
     Ok(())
 }
 
@@ -536,7 +567,7 @@ mod tests {
         std::fs::write(folder.path().join("notes.txt"), "URL=ftp://x\n").unwrap();
         let said: Vec<(String, String, Kept)> = network_folders(folder.path())
             .into_iter()
-            .map(|(_, s)| (s.label, s.address.to_string(), s.kept))
+            .map(|(_, s)| (s.label.english(), s.address.to_string(), s.kept))
             .collect();
         assert_eq!(
             said,
@@ -580,7 +611,7 @@ mod tests {
         );
         let read = network_folders(folder.path());
         assert_eq!(read.len(), 1);
-        assert_eq!(read[0].1.label, name);
+        assert_eq!(read[0].1.label.english(), name);
         assert_eq!(read[0].1.address, address);
         // A second of the same name is a file of its own.
         std::fs::write(free_name(folder.path(), name), "").unwrap();

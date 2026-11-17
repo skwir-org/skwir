@@ -187,12 +187,18 @@ impl NotesStore for NameStore {
     fn holds(&self) -> Holds {
         Holds {
             tags: true,
-            limits: match self.convention {
-                Convention::Tagspaces => {
-                    "tags without spaces, brackets or categories, no rating, no comment"
-                }
-                Convention::Filetags => "tags without spaces or categories, no rating, no comment",
-            },
+            limits: Some(match self.convention {
+                Convention::Tagspaces => words!(
+                    name_tags_tagspaces_limits =
+                        "tags without spaces, brackets or categories, no rating, no comment",
+                    note = "What tags written in a file's name as TagSpaces writes them cannot hold, placed after \"What it cannot hold:\" in its settings."
+                ),
+                Convention::Filetags => words!(
+                    name_tags_filetags_limits =
+                        "tags without spaces or categories, no rating, no comment",
+                    note = "What tags written in a file's name as filetags writes them cannot hold, placed after \"What it cannot hold:\" in its settings."
+                ),
+            }),
             ..Holds::default()
         }
     }
@@ -395,8 +401,7 @@ fn tag_names(
                 name_tags_left_out = "Left out, as a name cannot hold them: { $tags }.",
                 tags = left_out.join(", "),
                 note = "A note in the review of a plan putting tags in names. tags: the tags left out, as written, separated by commas."
-            )
-            .say(),
+            ),
         );
     }
     Ok(plan)
@@ -468,7 +473,7 @@ fn ordered(requests: &[RenameRequest]) -> anyhow::Result<Vec<Rename>> {
             name = Name(name(&requests[item].entry.path)),
             target = Name(name(&target))
         )),
-        RenameOrderError::InvalidName { reason, .. } => anyhow::anyhow!(reason),
+        RenameOrderError::InvalidName { reason, .. } => anyhow::Error::new(reason),
     })
 }
 
@@ -483,7 +488,7 @@ fn menu_item(title: Words, command: &str, order: i32, icon: &str) -> MenuItem {
         icon: Some(icon.into()),
         // With the tags they write, in the context menu's Tags submenu
         // (ADR-099).
-        submenu: Some(skwir_core::registry::submenus::TAGS),
+        submenu: Some(skwir_core::registry::submenus::tags()),
         checked: None,
         choice: None,
         color: None,

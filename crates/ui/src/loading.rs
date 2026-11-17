@@ -196,7 +196,7 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
     {
         return Some(Banner::said(&words!(
             loading_partly_failed = "Some of this location could not be read: { $error }",
-            error = error,
+            error = error.clone(),
             note = "A banner above a folder listed in part: what stopped the rest. error: why, as the system said it."
         )));
     }
@@ -225,7 +225,10 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
             .stalled(remote.lane())
             .is_some_and(|ran| ran >= skwir_core::fs::reach::NOT_ANSWERING)
     {
-        let name = known.map_or_else(|| remote.point.display().to_string(), |known| known.label);
+        let name = known.map_or_else(
+            || Words::as_written(remote.point.display().to_string()),
+            |known| known.label,
+        );
         let mut ways: Vec<Way> = leave(back).into_iter().collect();
         ways.extend(disconnect(shell, &remote.point));
         return Some(Banner {
@@ -389,11 +392,11 @@ pub fn render(banner: Banner, shell: &Shell, cx: &mut Context<Shell>) -> AnyElem
             Button::new(
                 format!("banner-{}-{}", way.id, pane.0),
                 way.icon,
-                way.title.say(),
+                way.title.clone(),
                 way.command.name.to_string(),
             )
             .args(way.command.args)
-            .label(way.label.say())
+            .label(way.label.clone())
             .render(shell, cx),
         );
     }

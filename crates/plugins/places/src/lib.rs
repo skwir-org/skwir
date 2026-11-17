@@ -151,7 +151,7 @@ fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
                 is_place(&place.location, &b.location, cleartext)
                     || b.device.as_ref() == Some(&place.location)
             })
-            .map(|b| b.what.say());
+            .map(|b| b.what.clone());
     }
 }
 
@@ -329,7 +329,7 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
     };
     Place {
         activate: Some(activate),
-        unavailable: Some(unavailable.say()),
+        unavailable: Some(unavailable),
         key: volume_key(&identity, Path::new("/")),
         hidden: identity.ignored.unwrap_or(volume.system),
         ..Place::new(
@@ -388,9 +388,9 @@ fn bookmark_rename(title: &str, which: &serde_json::Value, own: &Words) -> Invoc
     Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": asked.say(),
-            "accept": accept.say(),
-            "placeholder": own.say(),
+            "title": asked.to_data(),
+            "accept": accept.to_data(),
+            "placeholder": own.to_data(),
             "text": title,
             "command": "places.rename_bookmark",
             "args": which,
@@ -503,14 +503,16 @@ pub fn scan() -> Vec<Place> {
         // through Windows' own dialog (ADR-088).
         if m.locked {
             out.push(Place {
+                // No title: Windows asks in its own dialog, which names
+                // the drive (`places::SYSTEM_ASKS`).
                 activate: Some(Invocation::with_args(
                     "places.open_locked",
-                    &serde_json::json!({ "device": m.source, "title": m.label }),
+                    &serde_json::json!({ "device": m.source }),
                 )),
-                unavailable: Some(locked().say()),
+                unavailable: Some(locked()),
                 ..Place::new(
                     skwir_core::registry::groups::DEVICES.id,
-                    Words::as_written(m.label),
+                    m.label,
                     "drive-harddisk-encrypted",
                     device_location(&m.source),
                 )
@@ -536,7 +538,7 @@ pub fn scan() -> Vec<Place> {
                 )
             }),
             ..folder(
-                Words::as_written(m.label),
+                m.label,
                 m.path,
                 icon,
                 skwir_core::registry::groups::DEVICES.id,
@@ -683,13 +685,10 @@ impl Places {
                                 skwir_core::fs::reach::of(&path).is_none() && !path.is_dir()
                             })
                         {
-                            place.unavailable = Some(
-                                words!(
-                                    places_bookmark_missing = "Not found. It may have moved, or be on a volume that is not mounted.",
-                                    note = "The tooltip of a bookmark whose folder is not there."
-                                )
-                                .say(),
-                            );
+                            place.unavailable = Some(words!(
+                                places_bookmark_missing = "Not found. It may have moved, or be on a volume that is not mounted.",
+                                note = "The tooltip of a bookmark whose folder is not there."
+                            ));
                         }
                         place
                     })
@@ -1797,6 +1796,9 @@ impl Plugin for PlacesPlugin {
                 let lifetime = places.lifetime();
                 places.spawn(app, "places-unmount", move |app| {
                     use skwir_core::app::NotifyLevel;
+                    // A volume the user mounted is called by its folder's
+                    // name, its label as written.
+                    let named = || Name::of(&mount.path);
                     // Written first, while still mounted: the row stays busy
                     // until the drive has it all, and a write that fails is
                     // reported instead of lost.
@@ -1807,7 +1809,7 @@ impl Plugin for PlacesPlugin {
                             NotifyLevel::Error,
                             words!(
                                 places_unmount_unwritten = "{ $name } was not unmounted: not everything could be written to it ({ $error })",
-                                name = Name(mount.label.clone()),
+                                name = named(),
                                 error = error,
                                 note = "The volume's label; the error: why the system could not write it."
                             ),
@@ -1834,7 +1836,7 @@ impl Plugin for PlacesPlugin {
                             NotifyLevel::Info,
                             words!(
                                 places_unmounted = "{ $name } can be removed",
-                                name = Name(mount.label.clone()),
+                                name = named(),
                                 note = "The volume's label: it was unmounted and can be unplugged."
                             ),
                         ),
@@ -1843,7 +1845,7 @@ impl Plugin for PlacesPlugin {
                             NotifyLevel::Error,
                             words!(
                                 places_unmount_busy = "{ $name } was not unmounted: another program is using it",
-                                name = Name(mount.label.clone()),
+                                name = named(),
                                 note = "The volume's label."
                             ),
                         ),
@@ -1851,7 +1853,7 @@ impl Plugin for PlacesPlugin {
                             NotifyLevel::Error,
                             words!(
                                 places_unmount_failed = "{ $name } was not unmounted: { $error }",
-                                name = Name(mount.label.clone()),
+                                name = named(),
                                 error = error,
                                 note = "The volume's label; the error: why, as the system said it."
                             ),
@@ -2007,13 +2009,11 @@ impl Plugin for PlacesPlugin {
                 save_title: words!(
                     places_bookmark_this_folder = "Bookmark this folder",
                     note = "The pane's button (and Ctrl+D) that bookmarks the folder shown."
-                )
-                .say(),
+                ),
                 forget_title: words!(
                     places_unbookmark_this_folder = "Remove from bookmarks",
                     note = "The pane's button that removes the folder shown from the bookmarks."
-                )
-                .say(),
+                ),
                 keeps: None,
             },
         );
@@ -2186,7 +2186,10 @@ mod tests {
         };
         let mut places = vec![volume_place(&volume)];
         mark_busy(&mut places, &busy, &[]);
-        assert_eq!(places[0].busy.as_deref(), Some("Unmounting…"));
+        assert_eq!(
+            places[0].busy.as_ref().map(Words::english).as_deref(),
+            Some("Unmounting…")
+        );
         let mut other = vec![volume_place(&skwir_platform::places::Volume {
             device: "/dev/sdy1".into(),
             ..volume
@@ -2391,12 +2394,13 @@ mod tests {
         // Refused.
         std::fs::write(&refuse, b"").unwrap();
         unlock(false);
+        let busy = |place: Place| place.busy.as_ref().map(Words::english);
         // At once, before the worker has asked udisks anything.
-        assert_eq!(volume().unwrap().busy.as_deref(), Some("Unlocking…"));
+        assert_eq!(busy(volume().unwrap()).as_deref(), Some("Unlocking…"));
         // A rescan meanwhile (a disk plugged) keeps saying so.
         app.dispatch(&Invocation::new("places.refresh")).unwrap();
         std::thread::sleep(Duration::from_millis(100));
-        assert_eq!(volume().unwrap().busy.as_deref(), Some("Unlocking…"));
+        assert_eq!(busy(volume().unwrap()).as_deref(), Some("Unlocking…"));
         std::fs::write(&gate, b"").unwrap();
         let notice = next_notice(&app);
         assert!(
@@ -2418,7 +2422,7 @@ mod tests {
         wait(&|| opened().is_some());
         assert!(volume().is_none(), "listed as its cleartext volume");
         assert_eq!(
-            opened().unwrap().busy.as_deref(),
+            busy(opened().unwrap()).as_deref(),
             Some("Unlocking…"),
             "not offered for mounting while it is being mounted"
         );
@@ -2603,8 +2607,8 @@ mod tests {
         // Typed, Remember on: kept once it served.
         open();
         let question = asked();
-        assert_eq!(question.title, "Unlock “Backup”");
-        assert_eq!(question.placeholder, "Passphrase");
+        assert_eq!(question.title.english(), "Unlock “Backup”");
+        assert_eq!(question.placeholder.english(), "Passphrase");
         assert!(
             question.remember && question.keeping.is_some(),
             "offered, with what it means"
@@ -2627,7 +2631,7 @@ mod tests {
         open();
         let question = asked();
         assert!(
-            question.title.contains("not accepted"),
+            question.title.english().contains("not accepted"),
             "{}",
             question.title
         );

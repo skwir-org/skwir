@@ -24,7 +24,10 @@ media_continue_stop = Stop
 # A setting's title: whether what plays goes on when another file is selected.
 media_keep_playing = Keep playing while you browse
 
-media_keep_playing_description = What you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves.
+media_keep_playing_description = What you play goes on when you select another file, in a player at the foot of the preview.
+
+# What a setting's description says after its first sentence, in its tooltip.
+media_keep_playing_description_more = Off, it stops when the selection moves.
 
 # A context menu's item: plays the music selected, or the video, in the preview.
 media_play = Play
@@ -40,7 +43,10 @@ media_replay_gain = Even out loudness
 media_replay_gain_album = Per album
 
 # ReplayGain is a standard's name; Per album is one of the setting's choices.
-media_replay_gain_description = Use the ReplayGain values in a track's tags so that songs mastered at different levels sound equally loud. Per album keeps an album's own quiet and loud songs as they are. Tracks without the tags play unchanged; it applies from the next track.
+media_replay_gain_description = Use the ReplayGain values in a track's tags so that songs mastered at different levels sound equally loud.
+
+# ReplayGain is a standard's name; Per album is one of the setting's choices.
+media_replay_gain_description_more = Per album keeps an album's own quiet and loud songs as they are. Tracks without the tags play unchanged; it applies from the next track.
 
 # A choice of the Even out loudness setting: tracks play as they are.
 media_replay_gain_off = Off
@@ -61,7 +67,10 @@ media_video_engine = Video engine
 media_video_engine_auto = Automatic
 
 # Automatic is the setting's first choice; GStreamer and FFmpeg are programs' names; the media worker is Skwir's helper program that plays.
-media_video_engine_description = Automatic plays with GStreamer and falls back to a still frame from FFmpeg. Playback needs the media worker and GStreamer plugins.
+media_video_engine_description = Automatic plays with GStreamer and falls back to a still frame from FFmpeg.
+
+# Automatic is the setting's first choice; GStreamer and FFmpeg are programs' names; the media worker is Skwir's helper program that plays.
+media_video_engine_description_more = Playback needs the media worker and GStreamer plugins.
 
 # A choice of the Video engine setting: a still frame of the video, made by FFmpeg, instead of playing it.
 media_video_engine_stills = Still frames

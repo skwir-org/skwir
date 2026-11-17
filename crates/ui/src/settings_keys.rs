@@ -25,6 +25,9 @@ pub(crate) enum Show {
     Changed,
 }
 
+/// The place of the actions no key runs, as data (`Action::place_id`).
+pub(crate) const NO_KEYS: &str = "without_keys";
+
 /// The group of the actions no key runs, listed on request: its caption,
 /// said as the keymap is read (`Keyboard::read`).
 pub(crate) fn no_keys() -> String {
@@ -62,7 +65,11 @@ impl Chip {
 /// place.
 #[derive(Clone, Debug)]
 pub(crate) struct Action {
+    /// Where its keys work, as the page says it (`keymap::Where::place`).
     pub place: String,
+    /// Which place that is, as data (`keymap::Where::id`): what the page
+    /// groups by and knows the action by, never its words.
+    pub place_id: String,
     pub rank: usize,
     pub inside: bool,
     pub command: String,
@@ -73,7 +80,8 @@ pub(crate) struct Action {
     pub keeps_a_key: bool,
 }
 
-/// An action, known again once the keymap is read anew.
+/// An action, known again once the keymap is read anew: by its place as
+/// data (`keymap::Where::id`), its command and its arguments.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ActionId {
     pub place: String,
@@ -84,7 +92,7 @@ pub(crate) struct ActionId {
 impl Action {
     pub fn id(&self) -> ActionId {
         ActionId {
-            place: self.place.clone(),
+            place: self.place_id.clone(),
             command: self.command.clone(),
             args: self.args.to_string(),
         }
@@ -172,18 +180,21 @@ impl Keyboard {
             };
             let place = keymap::place_of(&binding.context);
             let id = ActionId {
-                place: place.place.clone(),
+                place: place.id.clone(),
                 command: command.clone(),
                 args: args.to_string(),
             };
             let index = *at.entry(id).or_insert_with(|| {
                 actions.push(Action {
                     place: place.place.clone(),
+                    place_id: place.id.clone(),
                     rank: place.rank,
                     inside: place.inside,
                     command: command.clone(),
                     args: args.clone(),
-                    title: keymap::title(app, command, args),
+                    // Said as the keymap is read, as the page reads it
+                    // again when the language moves.
+                    title: keymap::title_words(app, command, args).say(),
                     chips: Vec::new(),
                     keeps_a_key: false,
                 });
@@ -212,35 +223,59 @@ impl Keyboard {
         }
         // Stable: the places in their order, each's actions as they were
         // bound.
-        actions.sort_by(|a, b| (a.inside, a.rank, &a.place).cmp(&(b.inside, b.rank, &b.place)));
+        actions
+            .sort_by(|a, b| (a.inside, a.rank, &a.place_id).cmp(&(b.inside, b.rank, &b.place_id)));
         let no_keys = no_keys();
+        // Two commands that do one thing for a person (the core's
+        // `window.close` and the window's `ui.close_window`) are one action
+        // to whoever reads the list, as their commands say
+        // (`CommandSpec::same_as`), never as their titles do.
+        let twin_of: std::collections::HashMap<&str, &str> = specs
+            .iter()
+            .filter_map(|spec| Some((&*spec.name, spec.same_as.as_deref()?)))
+            .collect();
+        let keyed: std::collections::HashSet<&str> = actions
+            .iter()
+            .map(|action| action.command.as_str())
+            .collect();
+        // The commands whose twin, either way, is a keyed action.
+        let twin_keyed: std::collections::HashSet<&str> = twin_of
+            .iter()
+            .flat_map(|(command, twin)| [(*command, *twin), (*twin, *command)])
+            .filter(|(_, twin)| keyed.contains(twin))
+            .map(|(command, _)| command)
+            .collect();
         let mut unkeyed: Vec<Action> = unkeyed(app, &specs)
             .filter(|(command, args)| {
                 !actions
                     .iter()
                     .any(|action| action.command == *command && action.args == *args)
+                    && !twin_keyed.contains(command.as_str())
             })
             .map(|(command, args)| Action {
                 place: no_keys.clone(),
+                place_id: NO_KEYS.to_owned(),
                 rank: usize::MAX,
                 inside: false,
-                title: keymap::title(app, &command, &args),
+                title: keymap::title_words(app, &command, &args).say(),
                 command,
                 args,
                 chips: Vec::new(),
                 keeps_a_key: false,
             })
-            // A command called as a keyed action is (the core's twin of a
-            // shell command, Toggle hidden files) is that action to whoever
-            // reads the list. Transitional: told by their titles until a
-            // twin is data of its command's (ADR-139, "Nothing reads words
-            // back").
-            .filter(|candidate| !actions.iter().any(|action| action.title == candidate.title))
             .collect();
-        // By title, each once: two commands called alike (the core's sort
-        // and the shell's) are one thing to do (transitional, as above).
+        // Each once: of twins both listed, the one that names the other is
+        // left out.
+        let listed: std::collections::HashSet<String> = unkeyed
+            .iter()
+            .map(|action| action.command.clone())
+            .collect();
+        unkeyed.retain(|action| {
+            twin_of
+                .get(action.command.as_str())
+                .is_none_or(|twin| !listed.contains(*twin))
+        });
         unkeyed.sort_by_cached_key(|action| action.title.to_lowercase());
-        unkeyed.dedup_by(|a, b| a.title == b.title);
         let first_inside = actions
             .iter()
             .position(|action| action.inside)
@@ -368,8 +403,10 @@ pub(crate) fn rows(
                 continue;
             }
         }
-        if place != Some(action.place.as_str()) {
-            place = Some(&action.place);
+        // A heading where the place changes, as data: two places called
+        // alike are still two.
+        if place != Some(action.place_id.as_str()) {
+            place = Some(&action.place_id);
             rows.push(Row::Place(action.place.clone()));
         }
         rows.push(Row::Action(index));
@@ -540,7 +577,7 @@ fn running(app: &App, records: &[Record]) -> Vec<Running> {
             let (command, args) = binding.command?;
             Some(Running {
                 id: ActionId {
-                    place: keymap::place_of(&binding.context).place,
+                    place: keymap::place_of(&binding.context).id,
                     command: command.clone(),
                     args: args.to_string(),
                 },
@@ -635,9 +672,9 @@ pub(crate) fn effects(
     let mut effects = Effects::default();
     for run in &before {
         if effects.refused.is_none() && kept.contains(&run.command) && !left.contains(&run.id) {
-            let title = keymap::title(app, &run.command, &run.args);
-            let anywhere = keymap::place_of(&run.context).rank == 0;
-            effects.refused = Some(needs_a_key(&title, &run.id.place, anywhere));
+            let title = keymap::title_words(app, &run.command, &run.args).say();
+            let at = keymap::place_of(&run.context);
+            effects.refused = Some(needs_a_key(&title, &at.place, at.rank == 0));
         }
         if Some(&run.id) == editing
             || still.contains(&(&run.id, run.normal.as_str(), run.context.as_str()))
@@ -646,7 +683,7 @@ pub(crate) fn effects(
         }
         let lost = Lost {
             does: Does::of(&run.command, &run.args),
-            title: keymap::title(app, &run.command, &run.args),
+            title: keymap::title_words(app, &run.command, &run.args).say(),
             place: keymap::context_label(&run.context),
             keys: run.keys.clone(),
         };
@@ -743,7 +780,7 @@ pub(crate) fn verdict(
             }
             continue;
         }
-        let title = keymap::title(app, command, args);
+        let title = keymap::title_words(app, command, args).say();
         let place = keymap::context_label(&binding.context);
         let theirs = keymap::conditions(&binding.context);
         if mine.iter().all(|atom| theirs.contains(atom)) {
@@ -751,7 +788,7 @@ pub(crate) fn verdict(
             let last = keyboard
                 .actions
                 .iter()
-                .find(|a| a.place == at.place && a.command == *command && a.args == *args)
+                .find(|a| a.place_id == at.id && a.command == *command && a.args == *args)
                 .is_some_and(|a| a.keeps_a_key && a.running().count() == 1);
             if last && verdict.refused.is_none() {
                 verdict.refused = Some(needs_a_key(&title, &at.place, at.rank == 0));
@@ -767,7 +804,7 @@ pub(crate) fn verdict(
                 Stay::Deeper
             } else if binding.context == keymap::ROOT {
                 Stay::Elsewhere
-            } else if keymap::place_of(&binding.context).place == keymap::place_of(context).place {
+            } else if keymap::place_of(&binding.context).id == keymap::place_of(context).id {
                 Stay::Besides
             } else {
                 continue;
@@ -784,7 +821,7 @@ pub(crate) fn verdict(
             let theirs = keymap::context_of(waiting.when.as_deref());
             let theirs = keymap::conditions(&theirs);
             verdict.notes.push(Note::Waits {
-                title: keymap::title(app, &command.name, &command.args),
+                title: keymap::title_words(app, &command.name, &command.args).say(),
                 goes: mine.iter().all(|atom| theirs.contains(atom)),
             });
         }
@@ -1323,8 +1360,8 @@ mod tests {
         let escape = none.chips.iter().find(|c| c.keys == "escape").unwrap();
         let freed = effects(&app, &[], &Edit::Remove(escape), Some(&none.id()));
         let lost: Vec<&str> = freed.lost.iter().map(|lost| lost.title.as_str()).collect();
-        let filter = crate::keymap::title(&app, "filter", &serde_json::json!({}));
-        let up = crate::keymap::title(&app, "up", &serde_json::json!({}));
+        let filter = crate::keymap::title_words(&app, "filter", &serde_json::json!({})).english();
+        let up = crate::keymap::title_words(&app, "up", &serde_json::json!({})).english();
         assert!(lost.contains(&filter.as_str()), "{lost:?}");
         assert!(lost.contains(&up.as_str()), "{lost:?}");
         assert!(freed.refused.is_none());

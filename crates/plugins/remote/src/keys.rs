@@ -31,6 +31,7 @@ use std::time::Duration;
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::process;
 
 use crate::address::{Address, Scheme};
@@ -398,18 +399,22 @@ impl Typed {
 }
 
 impl Ask for Typed {
-    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+    fn secret(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<String> {
         self.ask.secret(title, accept, cancel)
     }
 
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn unprompted(&self, accept: &Words, cancel: &CancelToken) -> Option<String> {
+        self.ask.unprompted(accept, cancel)
+    }
+
+    fn confirm(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool {
         self.ask.confirm(title, detail, cancel)
     }
 
     fn password(
         &self,
-        title: &str,
-        accept: &str,
+        title: &Words,
+        accept: &Words,
         cancel: &CancelToken,
     ) -> Option<connector::Password> {
         if let (Some(text), true) = &*self.password.lock() {

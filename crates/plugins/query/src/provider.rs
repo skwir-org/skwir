@@ -931,8 +931,7 @@ impl Shared {
                             path = query.root.display().to_string(),
                             error = skwir_core::op::io_words(&error),
                             note = "A search's pane whose folder cannot be opened. path: the folder; error: why (permission denied)."
-                        )
-                        .say(),
+                        ),
                         ..skwir_core::ListingError::of_io(&error)
                     }));
                 }
@@ -970,7 +969,7 @@ impl Shared {
             Err(e) => {
                 this.tx
                     .send(ListingEvent::Error(skwir_core::ListingError::new(
-                        Words::of_error(crate::query_error(e)).say(),
+                        Words::of_error(crate::query_error(e)),
                     )));
                 return;
             }

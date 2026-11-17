@@ -84,7 +84,7 @@ pub struct Ask {
     pub command: Invocation,
     pub field: String,
     /// The button's verb (Rename, Create), OK when the asker named none.
-    pub accept: Option<String>,
+    pub accept: Option<Words>,
 }
 
 /// What a prompt is opened with beside its kind and text: `ui.ask`'s
@@ -93,13 +93,13 @@ pub struct Ask {
 #[derive(Default)]
 struct Prompted {
     ask: Option<Ask>,
-    accept: Option<String>,
-    note: Option<String>,
+    accept: Option<Words>,
+    note: Option<Words>,
     /// A server's password, a volume's passphrase: offer to keep it in the
     /// keyring (ADR-082, ADR-088).
     remember: bool,
     /// What keeping it means, said under Remember while it is on.
-    keeping: Option<String>,
+    keeping: Option<Words>,
     /// What the field takes (ADR-137).
     reference: Option<Reference>,
     /// What says what the text comes to as it is typed.
@@ -207,16 +207,16 @@ impl Describe {
 pub struct Remember {
     pub on: bool,
     focus: FocusHandle,
-    keeping: Option<String>,
+    keeping: Option<Words>,
 }
 
 pub struct PromptState {
-    pub title: String,
+    pub title: Words,
     pub kind: PromptKind,
     pub input: Entity<TextInput>,
     ask: Option<Ask>,
     /// A line under the field, muted: what the answer may be.
-    note: Option<String>,
+    note: Option<Words>,
     /// What the field takes (ADR-137): `ui.ask`'s `reference`, its `?`,
     /// F1 and the list under it (`reference.rs`).
     help: Option<FieldHelp>,
@@ -381,12 +381,13 @@ impl Shell {
     pub fn open_prompt(
         &mut self,
         kind: PromptKind,
-        title: &str,
+        title: impl Into<Words>,
         initial: &str,
         select: Option<std::ops::Range<usize>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let title = title.into();
         let placeholder = match kind {
             PromptKind::InspectJump { .. } => words!(
                 prompt_offset_placeholder = "Offset (decimal or 0x hexadecimal)",
@@ -407,7 +408,7 @@ impl Shell {
         self.open_prompt_with(
             kind,
             title,
-            &placeholder.say(),
+            &placeholder,
             initial,
             select,
             Prompted::default(),
@@ -438,7 +439,7 @@ impl Shell {
         self.secret_shown = Some(question.clone());
         self.open_prompt_with(
             PromptKind::Secret { id: question.id },
-            &question.title,
+            question.title,
             &question.placeholder,
             "",
             None,
@@ -570,21 +571,27 @@ impl Shell {
                 wait: None,
             })
         });
+        // What its asker wrote: text as written (an agent's, a script's),
+        // or words as their data (the window's own, said in its language).
+        let words = |key: &str| {
+            args.get(key)
+                .and_then(|said| serde_json::from_value::<Words>(said.clone()).ok())
+        };
         let ask = Ask {
             command,
             field: field.to_owned(),
-            accept: text("accept").map(str::to_owned),
+            accept: words("accept"),
         };
         self.open_prompt_with(
             PromptKind::Ask,
-            text("title").unwrap_or_default(),
-            text("placeholder").unwrap_or_default(),
+            words("title").unwrap_or_default(),
+            &words("placeholder").unwrap_or_default(),
             text("text").unwrap_or_default(),
             select,
             Prompted {
                 accept: ask.accept.clone(),
                 ask: Some(ask),
-                note: text("note").map(str::to_owned),
+                note: words("note"),
                 remember: false,
                 keeping: None,
                 reference: args
@@ -601,8 +608,8 @@ impl Shell {
     fn open_prompt_with(
         &mut self,
         kind: PromptKind,
-        title: &str,
-        placeholder: &str,
+        title: Words,
+        placeholder: &Words,
         initial: &str,
         select: Option<std::ops::Range<usize>>,
         prompted: Prompted,
@@ -613,7 +620,7 @@ impl Shell {
         if let Some(old) = &self.prompt {
             self.give_up_secret(old.kind);
         }
-        let placeholder = placeholder.to_owned();
+        let placeholder = placeholder.clone();
         let Prompted {
             ask,
             accept,
@@ -623,13 +630,12 @@ impl Shell {
             reference,
             describe,
         } = prompted;
-        // Transitional: an asker's verb is said as it wrote it (ADR-139).
-        let accept = accept.map_or_else(|| kind.accept(), Words::from);
+        let accept = accept.unwrap_or_else(|| kind.accept());
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
             // The field is named by what is asked.
-            i.set_label(title.to_owned());
+            i.set_label(title.clone());
             i.set_masked(kind.secret());
             i.set_text(initial.to_owned(), cx);
             match select {
@@ -675,7 +681,7 @@ impl Shell {
         );
         input.update(cx, |i, cx| i.focus(window, cx));
         self.prompt = Some(PromptState {
-            title: title.to_owned(),
+            title,
             kind,
             input,
             ask,
@@ -739,11 +745,13 @@ impl Shell {
                     worker.dispatch(&invocation)
                 };
                 let said = match said {
+                    // Words as their data (`Words::to_data`), or text.
                     Ok(Outcome::Value(v)) => Ok(said_bounded(
                         v.get("says")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
+                            .and_then(|says| serde_json::from_value::<Words>(says.clone()).ok())
+                            .as_ref()
+                            .map(Words::say)
+                            .unwrap_or_default(),
                     )),
                     Ok(_) => Ok(String::new()),
                     Err(e) => Err(said_bounded(Words::of_error(e).say())),
@@ -1009,10 +1017,10 @@ pub fn render_prompt(
         None => frame,
     };
     let panel = modal::panel("prompt", 560., &theme)
-        .when(shell.a11y, |d| d.aria_label(p.title.clone()))
+        .when(shell.a11y, |d| d.aria_label(p.title.say()))
         .p_3()
         .gap_2()
-        .child(div().text_title().child(p.title.clone()))
+        .child(div().text_title().child(p.title.say()))
         .child(frame)
         .children(waited.then(|| {
             let said = working_out().say();
@@ -1050,11 +1058,12 @@ pub fn render_prompt(
                 )
             })
         }))
-        .children(
-            p.note
-                .clone()
-                .map(|note| div().text_body().text_color(theme.text_muted).child(note)),
-        )
+        .children(p.note.as_ref().map(|note| {
+            div()
+                .text_body()
+                .text_color(theme.text_muted)
+                .child(note.say())
+        }))
         .children(p.remember.as_ref().map(|remember| {
             let label = words!(
                 prompt_remember = "Remember in the keyring",
@@ -1076,8 +1085,8 @@ pub fn render_prompt(
                         &theme,
                     )
                     .aria_label(label.clone())
-                    .when_some(remember.keeping.clone(), |d, keeping| {
-                        d.aria_description(keeping)
+                    .when_some(remember.keeping.as_ref(), |d, keeping| {
+                        d.aria_description(keeping.say())
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.prompt_toggle_remember(cx))),
                 )
@@ -1092,13 +1101,13 @@ pub fn render_prompt(
             // What keeping it means, once the user means to.
             let keeping = remember
                 .keeping
-                .clone()
+                .as_ref()
                 .filter(|_| remember.on)
                 .map(|keeping| {
                     div()
                         .text_body()
                         .text_color(theme.text_muted)
-                        .child(keeping)
+                        .child(keeping.say())
                 });
             div()
                 .flex()

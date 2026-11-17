@@ -31,22 +31,24 @@ use crate::modal::{self, FocusReturn, Picker};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
+/// A choice, its words as text or as their data (`Words::to_data`: the
+/// window's own and its plugins', said in its language), said where drawn.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Choice {
-    pub title: String,
+    pub title: Words,
     #[serde(default)]
-    pub detail: Option<String>,
+    pub detail: Option<Words>,
     #[serde(default)]
     pub icon: Option<String>,
     #[serde(default)]
-    pub section: Option<String>,
+    pub section: Option<Words>,
     pub command: Invocation,
 }
 
 /// A switch that adds `field: true` to the chosen command.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ChoiceOption {
-    pub title: String,
+    pub title: Words,
     pub field: String,
 }
 
@@ -54,9 +56,9 @@ pub struct ChoiceOption {
 #[derive(Debug, Default, Deserialize)]
 struct Answer {
     #[serde(default)]
-    title: Option<String>,
+    title: Option<Words>,
     #[serde(default)]
-    empty: Option<String>,
+    empty: Option<Words>,
     #[serde(default)]
     option: Option<ChoiceOption>,
     choices: Vec<Choice>,
@@ -64,7 +66,8 @@ struct Answer {
 
 pub struct ChooseState {
     pub input: Entity<TextInput>,
-    pub title: String,
+    /// Said where it is drawn.
+    pub title: Words,
     /// Said when no choice matches, where it is drawn.
     pub empty: Words,
     pub choices: Vec<Choice>,
@@ -97,7 +100,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         static REQUESTS: AtomicU64 = AtomicU64::new(0);
-        let text = |key: &str| args.get(key).and_then(serde_json::Value::as_str);
         let choices: Option<Vec<Choice>> = args
             .get("choices")
             .map(|c| serde_json::from_value(c.clone()))
@@ -123,10 +125,13 @@ impl Shell {
             return;
         }
         let back = FocusReturn::capture(window, cx);
-        let placeholder = text("placeholder").map_or_else(
-            || words!(choose_placeholder = "Type to filter").say(),
-            str::to_owned,
-        );
+        // Words as text, or as their data (the window's own).
+        let words = |key: &str| {
+            args.get(key)
+                .and_then(|said| serde_json::from_value::<Words>(said.clone()).ok())
+        };
+        let placeholder =
+            words("placeholder").unwrap_or_else(|| words!(choose_placeholder = "Type to filter"));
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         let sub = cx.subscribe_in(
             &input,
@@ -145,7 +150,7 @@ impl Shell {
         let loaded = choices.is_some();
         self.choose = Some(ChooseState {
             input,
-            title: text("title").unwrap_or_default().to_owned(),
+            title: words("title").unwrap_or_default(),
             empty: words!(
                 choose_empty = "Nothing to choose from",
                 note = "Said in a list to choose from (Open With's applications) where nothing matches what is typed."
@@ -197,7 +202,7 @@ impl Shell {
                                     c.title = title;
                                 }
                                 if let Some(empty) = answer.empty {
-                                    c.empty = Words::as_written(empty);
+                                    c.empty = empty;
                                 }
                                 if answer.option.is_some() {
                                     c.option = answer.option;
@@ -210,7 +215,7 @@ impl Shell {
                         // Nothing to pick from: the picker goes and says why.
                         Err(e) => {
                             this.close_choose(window, cx);
-                            this.report_error(&e, cx);
+                            this.report_error(e, cx);
                         }
                     }
                     cx.notify();
@@ -282,9 +287,10 @@ impl Shell {
 /// Indices of the choices matching `query`, best first; all of them in
 /// their order for an empty query.
 fn filter(choices: &[Choice], query: &str) -> Vec<usize> {
+    // Found by its words as they are shown.
     crate::modal::fuzzy(choices, query, |c| match &c.detail {
-        Some(detail) => format!("{} {detail}", c.title),
-        None => c.title.clone(),
+        Some(detail) => format!("{} {}", c.title.say(), detail.say()),
+        None => c.title.say(),
     })
 }
 
@@ -329,11 +335,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     .flex_col()
     .py_1()
     .overflow_hidden();
-    let mut previous: Option<&str> = None;
+    let mut previous: Option<&Words> = None;
     for (row, icon) in c.picker.shown(c.filtered.len()).zip(icons) {
         let choice = &c.choices[c.filtered[row]];
         let hl = row == c.picker.highlighted;
-        let section = choice.section.as_deref();
+        let section = choice.section.as_ref();
         if section.is_some() && section != previous {
             list = list.child(
                 div()
@@ -342,13 +348,14 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .pb_1()
                     .text_small()
                     .text_color(theme.text_muted)
-                    .children(section.map(str::to_owned)),
+                    .children(section.map(Words::say)),
             );
         }
         previous = section;
         // Drawn in the selection's ink where chosen (`Chosen`).
         let muted = theme.text_muted;
-        let named = a11y.then(|| choice.title.clone().into());
+        let title = choice.title.say();
+        let named = a11y.then(|| title.clone().into());
         list = list.child(
             modal::option(
                 div().id(crate::elements::known_by("choice", c.filtered[row])),
@@ -383,7 +390,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .flex_none()
                     .max_w(sized(260.))
                     .truncate(),
-                choice.title.clone(),
+                title,
             ))
             .child(crate::elements::clip::clipped(
                 div()
@@ -393,7 +400,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .truncate()
                     .text_small()
                     .text_color(muted),
-                choice.detail.clone().unwrap_or_default(),
+                choice.detail.as_ref().map(Words::say).unwrap_or_default(),
             )),
         );
     }
@@ -440,12 +447,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .flex_1()
                     .min_w_0()
                     .truncate(),
-                option.title.clone(),
+                option.title.say(),
             ))
             .children(option_keys.map(|keys| crate::controls::keycap(keys, &theme)))
     });
     let panel = modal::panel("choose", 520., &theme)
-        .when(shell.a11y, |d| d.aria_label(c.title.clone()))
+        .when(shell.a11y, |d| d.aria_label(c.title.say()))
         .key_context(keymap::CHOOSE)
         .child(
             div()
@@ -466,7 +473,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .text_ellipsis_middle()
                         .text_body()
                         .text_color(theme.text_muted),
-                    c.title.clone(),
+                    c.title.say(),
                 ))
                 .child(c.input.clone()),
         )
@@ -494,7 +501,7 @@ mod tests {
     fn choice(title: &str, detail: Option<&str>) -> Choice {
         Choice {
             title: title.into(),
-            detail: detail.map(str::to_owned),
+            detail: detail.map(Words::from),
             icon: None,
             section: None,
             command: Invocation::new("x"),

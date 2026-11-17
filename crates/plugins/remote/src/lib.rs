@@ -74,7 +74,7 @@ use skwir_core::registry::Place;
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connector, Offered, Password, Recognised, Server};
@@ -145,8 +145,9 @@ struct State {
     servers: Vec<Server>,
     /// Whether each host is on the local network, as found out.
     local: HashMap<String, Option<bool>>,
-    /// Mounts being connected or let go of, by point (or address).
-    busy: HashMap<String, String>,
+    /// Mounts being connected or let go of, by point (or address), and
+    /// what their places say meanwhile.
+    busy: HashMap<String, Words>,
     /// Points whose program is gone (`ENOTCONN`): drawn unavailable.
     lost: std::collections::HashSet<PathBuf>,
     /// What reads proved of the mounts when last published
@@ -543,9 +544,9 @@ impl Remotes {
     /// What the user calls `address`: a device by the name its program
     /// gives it ("Example Phone"), not by its serial; a server by its
     /// address.
-    pub fn label_of(&self, address: &Address) -> String {
+    pub fn label_of(&self, address: &Address) -> Words {
         self.offered_at(address)
-            .map_or_else(|| address.label(), |offered| offered.name)
+            .map_or_else(|| address.label(), |offered| offered.label())
     }
 
     /// Follow the devices the tools offer (ADR-096, ADR-097): each tool's
@@ -783,7 +784,7 @@ impl Remotes {
                             .iter()
                             .find(|o| a.scheme.device().is_some() && o.address.same_server(a))
                     }) {
-                        recognised.label.clone_from(&offered.name);
+                        recognised.label = offered.label();
                     }
                     Some((Arc::clone(c), recognised))
                 });
@@ -798,10 +799,10 @@ impl Remotes {
                     None if remote.fstype == kio::BRIDGE => return None,
                     None => Mounted {
                         recognised: Recognised {
-                            label: remote.point.file_name().map_or_else(
+                            label: Words::as_written(remote.point.file_name().map_or_else(
                                 || remote.source.to_string_lossy().into_owned(),
                                 |n| n.to_string_lossy().into_owned(),
-                            ),
+                            )),
                             address: None,
                             ours: false,
                             device: None,
@@ -1556,17 +1557,15 @@ impl Remotes {
                 }),
             });
             let mut place = match m.recognised.device {
-                // A server's or a device's label is as the system or the
-                // user wrote it.
                 Some(device) => Place::new(
                     DEVICES,
-                    Words::as_written(m.recognised.label.clone()),
+                    m.recognised.label.clone(),
                     device.icon(),
                     Location::from_path(point),
                 ),
                 None => Place::new(
                     GROUP,
-                    Words::as_written(m.recognised.label.clone()),
+                    m.recognised.label.clone(),
                     "folder-remote",
                     Location::from_path(point),
                 ),
@@ -1581,11 +1580,10 @@ impl Remotes {
                         .with("path", PathArg::from(point.as_path())),
                 );
             }
-            // Said for the sidebar: a place's state is text.
             if state.lost.contains(point) {
-                place.unavailable = Some(
-                    words!(remote_lost = "The connection is lost: open it to connect again").say(),
-                );
+                place.unavailable = Some(words!(
+                    remote_lost = "The connection is lost: open it to connect again"
+                ));
                 if let Some(address) = address {
                     place.activate = Some(Invocation::navigate(&address.location()));
                 }
@@ -1599,7 +1597,7 @@ impl Remotes {
                         .waiting
                         .get(point)
                         .filter(|files| **files > 0)
-                        .map(|files| sending(*files).say())
+                        .map(|files| sending(*files))
                 });
             place.space = state.space.get(point).copied();
             place.menu = thumbnail_items(&key, rule);
@@ -1658,15 +1656,14 @@ impl Remotes {
             }
             let mut place = Place::new(
                 DEVICES,
-                Words::as_written(offered.name.clone()),
+                offered.label(),
                 offered.device.icon(),
                 offered.address.location(),
             );
             place.key = Some(format!("remote:{}", offered.address));
-            place.unavailable = Some(
-                words!(remote_device_not_mounted = "Not mounted. Click to mount and open it.")
-                    .say(),
-            );
+            place.unavailable = Some(words!(
+                remote_device_not_mounted = "Not mounted. Click to mount and open it."
+            ));
             places.push(place);
         }
         for server in &state.servers {
@@ -1680,12 +1677,7 @@ impl Remotes {
                 continue;
             }
             let location = server.address.location();
-            let mut place = Place::new(
-                GROUP,
-                Words::as_written(server.label.clone()),
-                "network-server",
-                location,
-            );
+            let mut place = Place::new(GROUP, server.label.clone(), "network-server", location);
             place.key = Some(format!("remote:{}", server.address));
             place.busy = state.busy.get(&server.address.to_string()).cloned();
             place.menu.extend(forget_item(&server.address, &remembered));
@@ -1702,15 +1694,13 @@ impl Remotes {
                 ));
                 // Drawn as not ready, saying why, opened all the same.
                 if half_made {
-                    place.unavailable = Some(
-                        words!(
-                            remote_half_made = "{ $name } is not finished setting up: Finish Setting Up… in its menu",
-                            name = name,
-                            note = "name: a remote of rclone's, as its configuration names it. \
-                                    Finish Setting Up… is the item of its menu."
-                        )
-                        .say(),
-                    );
+                    place.unavailable = Some(words!(
+                        remote_half_made =
+                            "{ $name } is not finished setting up: Finish Setting Up… in its menu",
+                        name = name,
+                        note = "name: a remote of rclone's, as its configuration names it. \
+                                Finish Setting Up… is the item of its menu."
+                    ));
                 }
             } else if server.kept.by_address() {
                 place.menu.extend(configure::kept_items(&server.address));
@@ -1775,12 +1765,10 @@ fn thumbnails(rule: &str, near: Option<bool>, whole: bool, fast: Option<bool>) -
 
 /// The place's menu: its thumbnails, as chosen for it.
 fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem> {
-    // The choice's name, said for the menu: a choice's name is text.
     let named = words!(
         remote_thumbnails_choice = "Thumbnails",
         note = "A place's menu: when its files show thumbnails."
-    )
-    .say();
+    );
     [
         (
             "automatic",
@@ -1807,13 +1795,17 @@ fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem>
         )
         // In words: rows, the submenu's own row saying the rule set.
         .value_of(
-            &named,
+            "remote.thumbnails",
+            named.clone(),
             skwir_core::registry::ChoiceLook::Icons,
             value == rule,
         );
         item.submenu = Some(skwir_core::registry::Submenu::new(
             "remote.thumbnails",
-            "Thumbnails",
+            words!(
+                remote_thumbnails_submenu = "Thumbnails",
+                note = "A place's menu: the row of the submenu choosing when its files show thumbnails."
+            ),
         ));
         item
     })
@@ -2112,9 +2104,15 @@ impl Plugin for RemotePlugin {
             SettingSpec::text(
                 CONNECTORS,
                 words!(remote_connectors = "Tools that open addresses"),
-                words!(
-                    remote_connectors_description = "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
-                    note = "sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated."
+                (
+                    words!(
+                        remote_connectors_description = "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab.",
+                        note = "sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated."
+                    ),
+                    words!(
+                        remote_connectors_description_more = "On KDE's desktop, kio comes before gvfs.",
+                        note = "sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated."
+                    ),
                 ),
                 default_order(),
             )
@@ -2490,7 +2488,7 @@ impl Remotes {
         app: &App,
         point: &Path,
         force: bool,
-    ) -> anyhow::Result<(String, impl FnOnce() -> anyhow::Result<()> + Send + 'static)> {
+    ) -> anyhow::Result<(Words, impl FnOnce() -> anyhow::Result<()> + Send + 'static)> {
         let mounted = self
             .mounted()
             .into_iter()
@@ -2517,8 +2515,7 @@ impl Remotes {
             words!(
                 remote_disconnecting = "Disconnecting…",
                 note = "Said on a remote folder's place while it is let go of."
-            )
-            .say(),
+            ),
         );
         self.refresh(app);
         let this = self.clone();
@@ -2571,7 +2568,7 @@ impl Remotes {
                             this.state
                                 .lock()
                                 .busy
-                                .insert(key.clone(), sending(left.files).say());
+                                .insert(key.clone(), sending(left.files));
                             this.refresh(&app);
                         }
                     };
@@ -2599,7 +2596,7 @@ impl Remotes {
                             NotifyLevel::Info,
                             words!(
                                 remote_disconnected = "Disconnected from { $name }",
-                                name = Name(said.clone()),
+                                name = crate::address::named(&said),
                                 note = "name: a remote folder's, as its place names it."
                             ),
                         );
@@ -2611,7 +2608,7 @@ impl Remotes {
                                 [one] { $count } file
                                *[other] { $count } files
                             } not sent yet stay in rclone's cache, sent when it next connects",
-                            name = Name(said.clone()),
+                            name = crate::address::named(&said),
                             count = kept,
                             note = "name: a remote folder's, as its place names it; count: the \
                                     files other programs wrote there that its server has not \
@@ -2667,38 +2664,19 @@ fn sending(files: usize) -> Words {
 }
 
 /// The mount `label` names was not let go of, and why.
-fn not_disconnected(label: &str, error: anyhow::Error) -> Words {
+fn not_disconnected(label: &Words, error: anyhow::Error) -> Words {
     words!(
         remote_not_disconnected = "{ $name } was not disconnected: { $error }",
-        name = Name(label.to_owned()),
+        name = crate::address::named(label),
         error = error,
         note = "name: a remote folder's, as its place names it."
     )
 }
 
-/// `items` said as a list: “a”, “b” and “c”. Core has no list argument
-/// yet: the list is made of messages, each joining one more item.
-fn listed(mut items: Vec<Words>) -> Words {
-    let Some(mut list) = items.pop() else {
-        return Words::default();
-    };
-    if let Some(before) = items.pop() {
-        list = words!(
-            remote_list_last = "{ $first } and { $last }",
-            first = before,
-            last = list,
-            note = "The last two of a list (of programs, of actions): “a” and “b”."
-        );
-    }
-    while let Some(item) = items.pop() {
-        list = words!(
-            remote_list_more = "{ $first }, { $rest }",
-            first = item,
-            rest = list,
-            note = "An item of a list before the others: “a”, then the rest of it."
-        );
-    }
-    list
+/// `items` as a list argument: “a”, “b” and “c”, joined as the reader's
+/// language joins a list.
+fn listed(items: Vec<Words>) -> skwir_core::words::Arg {
+    skwir_core::words::List::and(items).into()
 }
 
 /// Sentences said one after the other, each in the reader's language
@@ -2787,13 +2765,16 @@ impl Heard {
 }
 
 impl Ask for Heard {
-    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+    fn secret(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<String> {
         self.noted().secret(title, accept, cancel)
     }
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn unprompted(&self, accept: &Words, cancel: &CancelToken) -> Option<String> {
+        self.noted().unprompted(accept, cancel)
+    }
+    fn confirm(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool {
         self.noted().confirm(title, detail, cancel)
     }
-    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+    fn password(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<Password> {
         self.noted().password(title, accept, cancel)
     }
     // Asked of no one.
@@ -2809,12 +2790,12 @@ pub struct WindowAsk {
 }
 
 impl Ask for WindowAsk {
-    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+    fn secret(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<String> {
         self.asked(title, accept, false, cancel)
             .map(|answer| answer.text)
     }
 
-    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+    fn password(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<Password> {
         self.asked(title, accept, true, cancel)
             .map(|answer| Password {
                 text: answer.text,
@@ -2822,7 +2803,7 @@ impl Ask for WindowAsk {
             })
     }
 
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn confirm(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool {
         self.confirmed(title, detail, cancel)
     }
 }
@@ -2831,8 +2812,8 @@ impl WindowAsk {
     /// Ask the window's masked prompt, offering Remember where `password`.
     fn asked(
         &self,
-        title: &str,
-        accept: &str,
+        title: &Words,
+        accept: &Words,
         password: bool,
         cancel: &CancelToken,
     ) -> Option<skwir_core::app::SecretAnswer> {
@@ -2841,9 +2822,9 @@ impl WindowAsk {
             return None;
         }
         let (id, answer) = if password {
-            app.ask_password(title, accept)
+            app.ask_password(title.clone(), accept.clone())
         } else {
-            app.ask_secret(title, accept)
+            app.ask_secret(title.clone(), accept.clone())
         };
         drop(app);
         loop {
@@ -2861,14 +2842,18 @@ impl WindowAsk {
         }
     }
 
-    fn confirmed(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn confirmed(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool {
         let Some(app) = self.app.upgrade() else {
             return false;
         };
         if !app.window_shown() {
             return false;
         }
-        let (id, answer) = app.ask_as(skwir_core::app::Asker::Connection, title, detail);
+        let (id, answer) = app.ask_as(
+            skwir_core::app::Asker::Connection,
+            title.clone(),
+            detail.clone(),
+        );
         drop(app);
         loop {
             match answer.recv_timeout(LOOK) {
@@ -3019,10 +3004,10 @@ mod tests {
     struct Nobody;
 
     impl Ask for Nobody {
-        fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+        fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
             None
         }
-        fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+        fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
             false
         }
     }
@@ -3067,7 +3052,7 @@ mod tests {
         ) -> anyhow::Result<Connected> {
             self.tried.fetch_add(1, Ordering::SeqCst);
             if self.asks {
-                ask.confirm("Trust it?", "", cancel);
+                ask.confirm(&Words::as_written("Trust it?"), &Words::default(), cancel);
             }
             if let Some(why) = self.fails {
                 anyhow::bail!("{why}");

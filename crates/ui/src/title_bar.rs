@@ -16,7 +16,7 @@
 //! skwir draws none. Where the system draws no frame (GNOME, Weston),
 //! skwir draws its frame and the bar the setting says, Automatic's being
 //! the top row, as GNOME's own applications have it. Beside the setting,
-//! what a refusal means here (`refusal`).
+//! what a refusal means here (`refused`, `refusal`).
 //!
 //! Drawn by skwir, the window keeps what the system's frame gave it: its
 //! buttons, from the desktop's layout (`App::button_layout`, GNOME's
@@ -89,17 +89,8 @@ pub enum TitleBar {
 }
 
 impl TitleBar {
-    pub const VALUES: [(&'static str, &'static str); 4] = [
-        ("auto", "Automatic"),
-        ("system", "System"),
-        ("compact", "Compact"),
-        ("top_row", "In the top row"),
-    ];
-
     /// Its choices, each by its value and its words: what the setting
     /// offers (`SettingSpec::choice_words`).
-    // Until settings.rs offers them in place of `VALUES` (ADR-139, E).
-    #[allow(dead_code)]
     pub fn choices() -> Vec<(&'static str, Words)> {
         vec![
             (
@@ -190,44 +181,21 @@ pub fn drawn(setting: TitleBar, decorations: Decorations, fullscreen: bool, x11:
     }
 }
 
-/// What a refusal means here, said beside the setting: asked for no frame,
-/// the system kept its own.
-pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&'static str> {
+/// Whether the system refused here what was asked, said beside the
+/// setting (`refusal`): asked for no frame, it kept its own.
+pub fn refused(asked: TitleBar, decorations: Decorations, x11: bool) -> bool {
     // On X11 the window manager keeps its frame where no compositor runs,
-    // said before anything is asked (`UNSUPPORTED`).
-    if x11
-        || asked.asks() != WindowDecorations::Client
-        || !matches!(decorations, Decorations::Server)
-    {
-        return None;
-    }
-    Some(
-        "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
-    )
+    // said before anything is asked (`unsupported`).
+    !x11 && asked.asks() == WindowDecorations::Client && matches!(decorations, Decorations::Server)
 }
 
-/// What a refusal means here (`refusal`), as words.
-// Until settings.rs says it in place of `refusal`'s text (ADR-139, E).
-#[allow(dead_code)]
-pub fn refusal_words(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<Words> {
-    refusal(asked, decorations, x11).map(|_| {
-        words!(
-            title_bar_refused = "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
-            note = "Said beside the Title bar setting where the desktop kept its frame when \
-                    asked for none. Compact, In the top row and Automatic are the setting's \
-                    choices."
-        )
-    })
-}
-
-/// Why Compact and In the top row do nothing (`UNSUPPORTED`), as words.
-// Until settings.rs says it in place of `UNSUPPORTED` (ADR-139, E).
-#[allow(dead_code)]
-pub fn unsupported() -> Words {
+/// What a refusal means here (`refused`), said beside the setting.
+pub fn refusal() -> Words {
     words!(
-        title_bar_unsupported = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir",
-        note = "Said beside the Title bar setting's Compact and In the top row where they \
-                cannot be had."
+        title_bar_refused = "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
+        note = "Said beside the Title bar setting where the desktop kept its frame when \
+                asked for none. Compact, In the top row and Automatic are the setting's \
+                choices."
     )
 }
 
@@ -235,7 +203,13 @@ pub fn unsupported() -> Words {
 /// decorations cannot be had (`Window::client_decorations_supported`: X11
 /// with no compositor, or a window manager that cannot leave its frame to
 /// the application, as seen when skwir started), said as they are offered.
-pub const UNSUPPORTED: &str = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir";
+pub fn unsupported() -> Words {
+    words!(
+        title_bar_unsupported = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir",
+        note = "Said beside the Title bar setting's Compact and In the top row where they \
+                cannot be had."
+    )
+}
 
 /// What Automatic comes to, said beside the setting (`.now`): above where
 /// the system drew its bar when asked, the top row where it drew none.
@@ -538,21 +512,18 @@ fn named(button: WindowButton, maximized: bool) -> (String, &'static str) {
     (title.say(), command)
 }
 
-/// The window's title: its active pane's location's (`place`, said),
-/// then skwir's name; skwir's alone where it has none.
-pub(crate) fn window_title(place: &str) -> String {
+/// The window's title: its active pane's location's (`place`), then
+/// skwir's name; skwir's alone where it has none.
+pub(crate) fn window_title(place: &Words) -> Words {
     if place.is_empty() {
-        "skwir".to_owned()
+        Words::as_written("skwir")
     } else {
-        // Transitional: the place's title said, until `trail::Shown::title`
-        // holds words (ADR-139).
         words!(
             title_bar_window_title = "{ $place } — skwir",
-            place = place,
+            place = place.clone(),
             note = "The window's title, in its title bar and the system's list of windows; \
                     place: the title of where its active pane is (Downloads)."
         )
-        .say()
     }
 }
 
@@ -631,7 +602,7 @@ pub fn bar(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let above = drawn == Drawn::System;
     let start = buttons(shell, End::Start, cx);
     let end = buttons(shell, End::End, cx);
-    let title = window_title(&shell.title);
+    let title = shell.title.clone();
     let color = if shell.title_bar.active {
         theme.text
     } else {
@@ -940,16 +911,12 @@ mod tests {
     /// none, as what it means there.
     #[test]
     fn a_refusal_is_said_as_what_it_means_here() {
-        assert_eq!(
-            refusal(TitleBar::Automatic, Decorations::Server, false),
-            None
-        );
-        assert_eq!(refusal(TitleBar::Compact, CLIENT, false), None, "granted");
-        let wayland = refusal(TitleBar::TopRow, Decorations::Server, false).unwrap();
-        assert!(wayland.contains("inside it"), "{wayland}");
-        assert_eq!(
-            refusal(TitleBar::Compact, Decorations::Server, true),
-            None,
+        assert!(!refused(TitleBar::Automatic, Decorations::Server, false));
+        assert!(!refused(TitleBar::Compact, CLIENT, false), "granted");
+        assert!(refused(TitleBar::TopRow, Decorations::Server, false));
+        assert!(refusal().english().contains("inside it"));
+        assert!(
+            !refused(TitleBar::Compact, Decorations::Server, true),
             "X11's said as the choices are offered"
         );
     }
@@ -983,7 +950,7 @@ mod tests {
         assert_eq!(TitleBar::Compact.asks(), WindowDecorations::Client);
         assert_eq!(TitleBar::TopRow.asks(), WindowDecorations::Client);
         assert_eq!(TitleBar::read(Some("sideways")), TitleBar::Automatic);
-        for (value, _) in TitleBar::VALUES {
+        for (value, _) in TitleBar::choices() {
             let read = TitleBar::read(Some(value));
             assert!(value == "auto" || read != TitleBar::Automatic, "{value}");
         }

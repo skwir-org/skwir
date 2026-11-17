@@ -79,8 +79,14 @@ impl Plugin for PreviewPlugin {
                 books_engine = "Book engine",
                 note = "A setting: what reads books, the built-in engine or MuPDF."
             ),
-            words!(
-                books_engine_description = "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others."
+            (
+                words!(
+                    books_engine_description = "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out."
+                ),
+                words!(
+                    books_engine_description_more = "MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             "auto",
             vec![
@@ -437,7 +443,7 @@ impl skwir_core::document::DocumentSession for Holding {
     fn locate(&self, text: &str, near: u32, cancel: &CancelToken) -> anyhow::Result<Option<u32>> {
         self.session.locate(text, near, cancel)
     }
-    fn closed_links(&self) -> Option<&str> {
+    fn closed_links(&self) -> Option<&skwir_core::words::Words> {
         self.session.closed_links()
     }
     fn draws_small_quickly(&self) -> bool {

@@ -430,9 +430,9 @@ impl Row {
     }
 
     /// The heading it stands under within its section, if any.
-    fn heading(&self) -> Option<&str> {
+    fn heading(&self) -> Option<&Words> {
         match self {
-            Row::Source(s) => s.heading.as_deref(),
+            Row::Source(s) => s.heading.as_ref(),
             _ => None,
         }
     }
@@ -454,7 +454,8 @@ impl Row {
             | Row::Offered { label, .. }
             | Row::Scope { label, .. }
             | Row::Help { label, .. } => label.clone(),
-            Row::Source(s) => s.title.clone(),
+            // By its English, which no language chosen changes.
+            Row::Source(s) => s.title.english(),
         };
         (self.section(), title)
     }
@@ -489,7 +490,7 @@ fn pieces(rows: &[Row]) -> Vec<Piece> {
             _ => pieces.push(Piece {
                 rows: i..i + 1,
                 title: under
-                    .map(|h| gpui::SharedString::from(h.to_owned()))
+                    .map(|h| gpui::SharedString::from(h.say()))
                     .or_else(|| sec.words().map(|words| words.say().into()))
                     .filter(|_| first),
                 strip: sec.is_strip(),
@@ -1314,7 +1315,7 @@ impl Shell {
     }
 
     /// What the empty field says: where words search, or what it takes.
-    fn placeholder(&self) -> String {
+    fn placeholder(&self) -> Words {
         let here = self.filters_here();
         match self.ui().omni.as_ref().and_then(|o| o.scope.as_ref()) {
             Some(scope) if here => words!(
@@ -1336,7 +1337,6 @@ impl Shell {
                 note = "The empty address field: what it takes."
             ),
         }
-        .say()
     }
 
     /// Ctrl+F in the field on a highlighted folder or place: it becomes
@@ -3285,8 +3285,8 @@ fn drawn(shell: &Shell, row: &Row, text: &str) -> Drawn {
         Row::Source(s) => Drawn {
             icon: s.icon.clone().unwrap_or_else(|| "search".to_owned()),
             tag: s.tag.clone(),
-            title: s.title.clone(),
-            detail: s.detail.clone(),
+            title: s.title.say(),
+            detail: s.detail.as_ref().map(Words::say),
             typed: s.typed,
             detail_typed: s.detail_typed,
             keys: s.keys.clone(),
@@ -3413,22 +3413,22 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         .and_then(|p| p.read_filter().map(|r| r.waits.clone()))
         .filter(|w| !w.is_empty() && typed == Typed::Words && here)
         .map(|w| {
-            // Transitional: a list argument (ADR-139), its first letter
-            // capital where it begins the sentence, until what waits is
-            // data (`ReadFilter::waits`).
-            let what = cap(&w.join(" and "));
+            // A list, its first letter cased where it begins the sentence.
+            let what = words::List::and(w);
             match shell.keys_for("ui.search", &serde_json::json!({})) {
                 Some(keys) if !depths => words!(
                     omnibox_waits_keys = "{ $what } need a search: { $keys }.",
                     what = what,
                     keys = keys,
-                    note = "Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), and the key that searches."
-                ),
+                    note = "Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), a list, and the key that searches."
+                )
+                .heading(),
                 _ => words!(
                     omnibox_waits = "{ $what } need a search.",
                     what = what,
-                    note = "Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken)."
-                ),
+                    note = "Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken), a list."
+                )
+                .heading(),
             }
         });
     let keys = match typed {
@@ -3548,14 +3548,6 @@ fn goes_to_files() -> Words {
         omnibox_hint_files = "Enter goes to the files",
         note = "A hint under the address field's list while words are typed: Enter goes to the files they keep."
     )
-}
-
-/// `text` with its first letter capital.
-fn cap(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
 }
 
 /// The card's first line while words are typed, or about to be: how deep
@@ -3743,13 +3735,13 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                                 )
                                 .say()
                             },
-                            |d| d.here_label.clone(),
+                            |d| d.here_label.say(),
                         ),
                         "ui.filter",
                     ))
                     .child(match &depths {
                         // Both filter: the one below holds what is within.
-                        Some(d) => segment(Depth::Below, "layers", &d.below_label, "ui.search"),
+                        Some(d) => segment(Depth::Below, "layers", &d.below_label.say(), "ui.search"),
                         None => segment(
                             Depth::Below,
                             "search",

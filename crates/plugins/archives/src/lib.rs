@@ -96,8 +96,7 @@ pub(crate) fn not_placed(
             name = words::Name::of(name),
             folder = words::Name::of(folder),
             note = "What an archive extracted or made could not be put in place; why follows."
-        )
-        .say(),
+        ),
     )
 }
 
@@ -217,20 +216,18 @@ impl PreviewProvider for Provider {
         let members = &listing.members;
         let rows = member_rows(members, cancel)?;
         let details = facts(members, &rows);
-        // What was left out is the one thing the strip has to say. Said
-        // here: the preview keeps an inspection as text.
-        let notice = if listing.complete {
-            String::new()
+        // What was left out is the one thing the strip has to say.
+        let notices = if listing.complete {
+            Vec::new()
         } else {
-            words!(
+            vec![words!(
                 archives_first_members = "{ $count ->
                     [one] First { $count } member · open it in an archive application for the rest
                    *[other] First { $count } members · open it in an archive application for the rest
                 }",
                 count = members.len(),
                 note = "Above an archive's listing cut short: how many of its members are listed."
-            )
-            .say()
+            )]
         };
         Ok(Some(Inspection {
             details,
@@ -242,26 +239,22 @@ impl PreviewProvider for Provider {
                 }",
                 count = members.len(),
                 note = "The title of an archive's preview: how many members it lists."
-            )
-            .say(),
-            notice,
+            ),
+            notices,
             rows,
             columns: vec![
                 words!(
                     archives_column_name = "Name",
                     note = "A column's header in an archive's listing."
-                )
-                .say(),
+                ),
                 words!(
                     archives_column_size = "Size",
                     note = "A column's header in an archive's listing."
-                )
-                .say(),
+                ),
                 words!(
                     archives_column_status = "Status",
                     note = "A column's header in an archive's listing: whether a member is encrypted, a link or special."
-                )
-                .say(),
+                ),
             ],
             whole_available: !listing.complete && bounds.cut(),
             ..Inspection::default()
@@ -280,42 +273,35 @@ fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<skwir_core::inspectio
         .filter_map(|member| u64::try_from(member.size).ok())
         .fold(0u64, u64::saturating_add);
     let encrypted = members.iter().filter(|member| member.encrypted).count();
-    // Said here: the preview keeps an inspection as text.
     inspection::details([
         (
             words!(
                 archives_detail_files = "Files",
-                note = "A label of an archive's Properties in its preview: how many files it holds."
-            )
-            .say()
-            .as_str(),
+                note =
+                    "A label of an archive's Properties in its preview: how many files it holds."
+            ),
             inspection::count(rows.len() - folders),
         ),
         (
             words!(
                 archives_detail_folders = "Folders",
-                note = "A label of an archive's Properties in its preview: how many folders it holds."
-            )
-            .say()
-            .as_str(),
+                note =
+                    "A label of an archive's Properties in its preview: how many folders it holds."
+            ),
             inspection::count(folders),
         ),
         (
             words!(
                 archives_detail_unpacked = "Unpacked",
                 note = "A label of an archive's Properties in its preview: the size of what it holds, unpacked."
-            )
-            .say()
-            .as_str(),
+            ),
             (unpacked > 0).then(|| inspection::size(unpacked)),
         ),
         (
             words!(
                 archives_detail_encrypted = "Encrypted",
                 note = "A label of an archive's Properties in its preview: how many of its members are encrypted."
-            )
-            .say()
-            .as_str(),
+            ),
             (encrypted > 0).then(|| {
                 words!(
                     archives_encrypted_members = "{ $count ->
@@ -657,9 +643,15 @@ mod tests {
             .collect();
         let rows = member_rows(&members, &CancelToken::new()).unwrap();
         let facts = facts(&members, &rows);
-        let unpacked = facts.iter().find(|f| f.label == "Unpacked").unwrap();
+        let unpacked = facts
+            .iter()
+            .find(|f| f.label.english() == "Unpacked")
+            .unwrap();
         assert_eq!(unpacked.value, inspection::size(u64::MAX));
-        assert_eq!(facts[0], skwir_core::inspection::Detail::new("Files", "3"));
-        assert!(facts.iter().all(|f| f.label != "Folders"));
+        assert_eq!(
+            (facts[0].label.english(), facts[0].value.as_str()),
+            ("Files".to_owned(), "3")
+        );
+        assert!(facts.iter().all(|f| f.label.english() != "Folders"));
     }
 }

@@ -44,7 +44,7 @@ fn write(dir: &Path, name: &str, text: &str) -> std::path::PathBuf {
 #[test]
 fn a_fictionbook_reads_as_chapters_with_its_contents() {
     let shown = inspect(&fixture("synthetic.fb2"), &InspectRequest::default()).unwrap();
-    assert_eq!(shown.title, "FB2 · chapter 1 / 3");
+    assert_eq!(shown.title.english(), "FB2 · chapter 1 / 3");
     assert_eq!(shown.sections, 3);
     let rows: Vec<(&str, usize, Option<u64>)> = shown
         .rows
@@ -86,10 +86,11 @@ fn a_fictionbook_reads_as_chapters_with_its_contents() {
     assert!(second.runs.iter().any(|run| run.italic));
     assert!(second.runs.iter().any(|run| run.bold));
     assert!(second.runs.iter().any(|run| run.strikethrough));
-    let details: Vec<(&str, &str)> = shown
-        .details
+    let labels: Vec<String> = shown.details.iter().map(|d| d.label.english()).collect();
+    let details: Vec<(&str, &str)> = labels
         .iter()
-        .map(|d| (d.label.as_str(), d.value.as_str()))
+        .zip(&shown.details)
+        .map(|(label, d)| (label.as_str(), d.value.as_str()))
         .collect();
     assert_eq!(
         details,
@@ -242,11 +243,11 @@ fn search_wraps_and_the_source_is_the_book_s_xml() {
 fn a_declared_encoding_and_a_zipped_book_read_as_the_book() {
     let shown = inspect(&fixture("synthetic-1251.fb2"), &InspectRequest::default()).unwrap();
     assert!(text(&shown).contains("Глава первая"), "{}", text(&shown));
-    assert!(
-        shown.notice.contains("Read as windows-1251"),
-        "{}",
-        shown.notice
-    );
+    let notice = shown
+        .notice()
+        .map(|said| said.english())
+        .unwrap_or_default();
+    assert!(notice.contains("Read as windows-1251"), "{notice}");
     assert_eq!(shown.rows[0].cells[0], "Глава первая");
     let zipped = inspect(&fixture("synthetic.fb2.zip"), &InspectRequest::default()).unwrap();
     let plain = inspect(&fixture("synthetic.fb2"), &InspectRequest::default()).unwrap();
@@ -546,18 +547,22 @@ fn a_chapter_past_what_is_read_is_cut() {
     ));
     let held = Arc::new(Held::of_bytes("/nowhere/Synthetic.fb2", book.into_bytes()));
     let book = Fb2::open(&held, false, &CancelToken::new()).unwrap();
-    let (xhtml, notice) = Reading(&book)
+    let (xhtml, notices) = Reading(&book)
         .text("chapter-1", &CancelToken::new())
         .unwrap();
     assert!(inspection::xml_document(&xhtml).is_ok());
-    assert!(notice.is_some_and(|notice| notice.contains("cut")));
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.english().contains("cut"))
+    );
     let small = fb2("<body><section><p>Start.</p></section></body>");
     let held = Arc::new(Held::of_bytes("/nowhere/Synthetic.fb2", small.into_bytes()));
     let book = Fb2::open(&held, false, &CancelToken::new()).unwrap();
-    let (_, notice) = Reading(&book)
+    let (_, notices) = Reading(&book)
         .text("chapter-1", &CancelToken::new())
         .unwrap();
-    assert_eq!(notice, None);
+    assert!(notices.is_empty());
 }
 
 /// An anchor given to a section without an id is named apart from the

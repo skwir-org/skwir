@@ -802,7 +802,7 @@ fn a_merge_placing_two_items_under_one_name_is_refused() {
     let diff = plan.diff(&app.companions);
     assert!(
         matches!(&diff.steps[..], [(_, StepStatus::Conflict { reason })]
-            if reason.contains("two items")),
+            if reason.english().contains("two items")),
         "{:?}",
         diff.steps
     );
@@ -900,7 +900,7 @@ fn a_merge_never_places_through_a_link() {
     let diff = plan.diff(&app.companions);
     assert!(
         matches!(&diff.steps[..], [(_, StepStatus::Conflict { reason })]
-            if reason.contains("is a link")),
+            if reason.english().contains("is a link")),
         "{:?}",
         diff.steps
     );

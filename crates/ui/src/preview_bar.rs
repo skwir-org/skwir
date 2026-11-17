@@ -36,6 +36,7 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::{self, Button};
 use skwir_core::registry::MenuItem;
+use skwir_core::words::Words;
 
 /// The labels every preview uses for the actions they share.
 pub mod label {
@@ -405,7 +406,7 @@ pub fn number_tool(
                 .bg(paper)
                 .child(field.input.clone())
                 .into_any_element(),
-            None => Button::new(id, "", title.say(), edit.0)
+            None => Button::new(id, "", title.clone(), edit.0)
                 .args(edit.1.clone())
                 .label(value.clone())
                 .render(shell, cx)
@@ -507,8 +508,7 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
             skwir_core::words!(
                 preview_close_member = "Close",
                 note = "The button at the end of a preview's bar that leaves a file shown inside another (an archive's member)."
-            )
-            .say(),
+            ),
             "ui.inspect",
         )
             .args(serde_json::json!({"action":"back"})),
@@ -523,8 +523,7 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
                 skwir_core::words!(
                     preview_stand_ins = "Files shown for folders…",
                     note = "A preview's menu row, opening the setting that names the files a folder's preview shows (README, cover)."
-                )
-                .say(),
+                ),
                 "ui.settings",
             )
             .args(serde_json::json!({ "key": crate::settings::FOLDER_PREVIEW_NAMES_KEY })),
@@ -660,9 +659,9 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
     fn tool(
         id: &'static str,
         icon: &'static str,
-        title: impl Into<gpui::SharedString>,
+        title: impl Into<Words>,
         args: serde_json::Value,
-        label: impl Into<gpui::SharedString>,
+        label: impl Into<Words>,
         on: bool,
     ) -> Button {
         Button::new(id, icon, title, "ui.inspect")
@@ -671,16 +670,16 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
             .active(on)
     }
     for WayLook { id, way, on } in looks.ways {
-        // Its provider's words, said as the bar is built.
+        // Its provider's words.
         bar.push(Item::button(
             Slot::Look,
             2,
             tool(
                 id,
                 way.icon,
-                way.tip.say(),
+                way.tip.clone(),
                 serde_json::json!({"action":"way","provider":id,"on":!on}),
-                way.label.say(),
+                way.label.clone(),
                 on,
             ),
         ));
@@ -696,10 +695,9 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
                 skwir_core::words!(
                     preview_source_tip = "The file's own text, as written",
                     note = "Pointing at a preview's Source button."
-                )
-                .say(),
+                ),
                 serde_json::json!({"action":"source","on":!on}),
-                label::source().say(),
+                label::source(),
                 on,
             ),
         ));
@@ -714,10 +712,9 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
                 skwir_core::words!(
                     preview_turn_tip = "The model turned in 3D, or its picture",
                     note = "Pointing at a preview's 3D button, which shows a 3D model turned in its view or its still picture."
-                )
-                .say(),
+                ),
                 serde_json::json!({"action":"turn"}),
-                label::turn().say(),
+                label::turn(),
                 on,
             ),
         ));
@@ -732,10 +729,9 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
                 skwir_core::words!(
                     preview_whole_tip = "All of this file, past the size a preview keeps to",
                     note = "Pointing at a preview's Full preview button."
-                )
-                .say(),
+                ),
                 serde_json::json!({"action":"whole","on":!on}),
-                label::whole().say(),
+                label::whole(),
                 on,
             )
             .enabled(enabled),
@@ -746,9 +742,9 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
         let button = tool(
             "preview-hex",
             "grid",
-            label::hex().say(),
+            label::hex(),
             serde_json::json!({"action": if on { "auto" } else { "hex" }}),
-            label::hex().say(),
+            label::hex(),
             on,
         );
         match hex {
@@ -773,7 +769,7 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         Button::new(
             "preview-fullscreen",
             "fullscreen",
-            label::fullscreen().say(),
+            label::fullscreen(),
             "ui.preview_fullscreen",
         )
         .active(on),
@@ -849,7 +845,7 @@ fn item_button(item: &MenuItem) -> Button {
         // Its element's id, the same in every language.
         format!("preview-entry-{}", item.title.english()),
         item.icon.clone().unwrap_or_default(),
-        item.title.say(),
+        item.title.clone(),
         item.command.name.to_string(),
     )
     .args(item.command.args.clone())
@@ -882,17 +878,15 @@ fn submenu_row(
     )
 }
 
-/// More's submenu `name`'s rows: its items, called by their title's first
-/// part.
+/// More's submenu `name`'s rows: its items, called by their titles.
 pub(crate) fn sub_rows(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
     shell
         .preview_sub_items(name)
         .into_iter()
         .map(|item| {
             let button = item_button(item);
-            let title = button.title();
-            let label = title.split(" · ").next().unwrap_or(&title).to_owned();
-            toolbar::FlyRow::Row(button.label(label))
+            let title = button.title().clone();
+            toolbar::FlyRow::Row(button.label(title))
         })
         .collect()
 }
@@ -998,17 +992,12 @@ fn row(
     // More in every bar, so what stands before it keeps its place:
     // disabled where it holds nothing.
     row.child(
-        Button::new(
-            "preview-more",
-            "more",
-            label::more().say(),
-            "ui.preview_menu",
-        )
-        .active(active == Some(MORE))
-        .enabled(has_more(bar, mode))
-        // A popup whose own button this variant dropped opens here.
-        .anchor_if(anchor, active.is_some() && !anchored)
-        .render(shell, cx),
+        Button::new("preview-more", "more", label::more(), "ui.preview_menu")
+            .active(active == Some(MORE))
+            .enabled(has_more(bar, mode))
+            // A popup whose own button this variant dropped opens here.
+            .anchor_if(anchor, active.is_some() && !anchored)
+            .render(shell, cx),
     )
     .children(bar.close.clone().map(|close| close.render(shell, cx)))
     .into_any_element()
@@ -1114,8 +1103,6 @@ pub struct Field {
 }
 
 impl Field {
-    /// Transitional: the input keeps its placeholder said (`TextInput`),
-    /// so it is said once here (ADR-139).
     pub fn new(
         placeholder: &skwir_core::words::Words,
         submit: &'static str,
@@ -1124,7 +1111,7 @@ impl Field {
         cx: &mut Context<Shell>,
     ) -> Self {
         use crate::input::{InputEvent, TextInput};
-        let input = cx.new(|cx| TextInput::new(placeholder.say(), cx));
+        let input = cx.new(|cx| TextInput::new(placeholder.clone(), cx));
         let said: Rc<std::cell::RefCell<Option<(skwir_core::words::Words, bool)>>> = Rc::default();
         let heard = Rc::clone(&said);
         let subscription = cx.subscribe_in(

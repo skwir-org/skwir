@@ -87,20 +87,8 @@ ops_basic_pane_shows_nothing = the pane shows nothing
 # A command's title, in the list of actions: what was cut or copied is put in the folder shown.
 ops_basic_paste = Paste
 
-# A plan's title: files copied, pasted in a folder (by its name). One by its name, or how many. Begins in lower case.
-ops_basic_paste_copy = { $count ->
-        [1] copy { $name } to { $folder }
-       *[other] copy { $count } items to { $folder }
-    }
-
 # Read by agents and in F1's list of actions. clipboard is an argument's name, as typed.
 ops_basic_paste_description = Copy or move the clipboard into the current directory (plan): Skwir's, or the files given as `clipboard`
-
-# A plan's title: files cut, pasted in a folder (by its name). One by its name, or how many. Begins in lower case.
-ops_basic_paste_move = { $count ->
-        [1] move { $name } to { $folder }
-       *[other] move { $count } items to { $folder }
-    }
 
 # An error of Copy Path: a file's name is bytes no text spells (not UTF-8).
 ops_basic_path_not_text = The path of { $name } is not text the clipboard can hold

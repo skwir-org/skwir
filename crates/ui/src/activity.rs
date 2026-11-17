@@ -39,9 +39,7 @@ use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toast::{
-    Action, Running, Toast, Tone, amount, capitalized, pace, sending, share, waiting_words,
-};
+use crate::toast::{Action, Running, Toast, Tone, amount, pace, sending, share, waiting_words};
 
 /// What `Earlier` keeps: the answers of this session the History does not
 /// hold, newest first.
@@ -274,7 +272,7 @@ pub(crate) struct Under {
     /// The first action waiting, what it is and what it waits for, said
     /// after it (`toast::waiting_next`): what the strip says while only
     /// that waits.
-    pub next: Option<(String, Words)>,
+    pub next: Option<(Words, Words)>,
 }
 
 impl Under {
@@ -413,8 +411,7 @@ pub(crate) fn announced(
     plan: PlanId,
 ) -> Option<Announced> {
     if let Some((running, t)) = under.plans.iter().find(|(r, _)| r.plan == plan) {
-        // Transitional: a plan's title capitalised (ADR-139).
-        let title = capitalized(&running.title.say());
+        let title = running.title.heading();
         let doing = if getting_ready(running, t) {
             words!(
                 activity_getting_ready = "getting ready…",
@@ -470,11 +467,6 @@ pub(crate) fn announced(
 }
 
 /// `fraction` as the strip says it: "42 %", never 100 before the end.
-pub(crate) fn percent(fraction: f32) -> String {
-    percent_words(fraction).say()
-}
-
-/// `fraction` in words, as `percent` says it.
 pub(crate) fn percent_words(fraction: f32) -> Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let percent = (fraction.clamp(0., 1.) * 100.).floor() as u32;
@@ -589,10 +581,9 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [Words; 3] {
     let how_after = how(summary, sending_files, false);
     let how_alone = how(summary, sending_files, true);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        // Transitional: a plan's title capitalised (ADR-139).
-        ([(running, _)], []) => Some(Words::as_written(capitalized(&running.title.say()))),
+        ([(running, _)], []) => Some(running.title.heading()),
         // A task's title begins a sentence already (`task::Running`).
-        ([], [task]) => Some(Words::as_written(task.title.clone())),
+        ([], [task]) => Some(task.title.clone()),
         // Only waiting: what waits first, and what for (never silent).
         ([], []) => under.next.as_ref().map(|(what, why)| {
             words!(
@@ -1493,8 +1484,7 @@ pub fn strip(
             // Stopped by an error, nothing else under way: said until
             // seen, retried or dismissed.
             Some(stopped) => {
-                // Transitional: a plan's title capitalised (ADR-139).
-                let title = capitalized(&stopped.title.say());
+                let title = stopped.title.heading();
                 let alone = words!(
                     activity_stopped = "Stopped",
                     note = "What the strip says of an action an error stopped, where its title \
@@ -2214,6 +2204,7 @@ fn waiting_row(
 ) -> AnyElement {
     let asked = waiting.asked;
     let (what, why) = waiting_words(waiting);
+    let (what, why) = (what.say(), why.say());
     let focus = shell
         .activity
         .waiting
@@ -2522,9 +2513,8 @@ fn progress_card(
     div()
         .id(("activity-card", plan.0))
         .role(gpui::Role::ProgressIndicator)
-        // Transitional: a plan's title capitalised (ADR-139).
         .when(a11y, |d| {
-            d.aria_label(capitalized(&running.title.say()))
+            d.aria_label(running.title.heading().say())
                 .aria_numeric_value(f64::from(fraction) * 100.)
                 .aria_min_numeric_value(0.)
                 .aria_max_numeric_value(100.)
@@ -2550,8 +2540,7 @@ fn progress_card(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis(),
-                    // Transitional: a plan's title capitalised (ADR-139).
-                    capitalized(&running.title.say()),
+                    running.title.heading().say(),
                     into,
                 ))
                 .child(
@@ -2660,13 +2649,15 @@ fn task_card(
     #[allow(clippy::cast_possible_truncation)]
     let fraction = task.went.unwrap_or(0.0) as f32;
     let id = task.id;
-    let amount = task.went.map_or_else(String::new, |_| percent(fraction));
+    let amount = task
+        .went
+        .map_or_else(String::new, |_| percent_words(fraction).say());
     div()
         .id(("activity-task", id))
         .role(gpui::Role::ProgressIndicator)
         // A task's title begins a sentence already (`task::Running`).
         .when(a11y, |d| {
-            d.aria_label(task.title.clone())
+            d.aria_label(task.title.say())
                 .aria_numeric_value(f64::from(fraction) * 100.)
                 .aria_min_numeric_value(0.)
                 .aria_max_numeric_value(100.)
@@ -2692,7 +2683,7 @@ fn task_card(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis(),
-                    task.title.clone(),
+                    task.title.say(),
                 ))
                 .when(!amount.is_empty(), |d| {
                     d.child(div().text_body().text_color(theme.text_muted).child(amount))
@@ -2813,7 +2804,7 @@ impl Shell {
 mod tests {
     use super::{
         EARLIER, Ended, Offers, Summary, Under, announced, cancel_all_said, how, keep, offers,
-        percent, segments, showing, summary, waiting_said, words,
+        percent_words, segments, showing, summary, waiting_said, words,
     };
     use crate::toast::{Running, waiting_next};
     use skwir_core::op::{PlanId, RunKind, Transfer};
@@ -3067,6 +3058,7 @@ mod tests {
 
     #[test]
     fn a_share_is_said_whole_and_never_full_before_the_end() {
+        let percent = |fraction| percent_words(fraction).english();
         assert_eq!(percent(0.0), "0 %");
         assert_eq!(percent(0.429), "42 %");
         assert_eq!(percent(0.999), "99 %");

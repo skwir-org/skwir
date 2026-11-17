@@ -978,7 +978,7 @@ fn values(
             found
                 .into_iter()
                 .filter(|k| !listed.contains(&k.name()))
-                .map(|k| item(Words::as_written(k.title()), k.name(), None))
+                .map(|k| item(k.words(), k.name(), None))
                 .collect()
         }
         "type" => values_of(vec![

@@ -55,8 +55,11 @@ fn seen(page: &Inspection) -> String {
     format!(
         "{:?} {} {:?} {:?} prev={:?} next={:?} at={} {:?}",
         page.kind,
-        page.title,
-        page.columns,
+        page.title.english(),
+        page.columns
+            .iter()
+            .map(skwir_core::words::Words::english)
+            .collect::<Vec<_>>(),
         page.rows
             .iter()
             .map(|row| (
@@ -70,7 +73,7 @@ fn seen(page: &Inspection) -> String {
         page.previous,
         page.next,
         page.position,
-        page.notice,
+        page.notice().map(|said| said.english()),
     )
 }
 
@@ -244,9 +247,15 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
         .fields
         .get("word-count.words", &note, &CancelToken::new());
     assert_eq!(words, Some(skwir_core::Value::UInt(7)));
+    let shown: Vec<(&str, String)> = app
+        .fields
+        .shown_for(std::ffi::OsStr::new("a note.txt"))
+        .into_iter()
+        .map(|(key, label)| (key, label.english()))
+        .collect();
     assert_eq!(
-        app.fields.shown_for(std::ffi::OsStr::new("a note.txt")),
-        [("word-count.words", "Words")],
+        shown,
+        [("word-count.words", "Words".to_owned())],
         "Properties shows it, labelled"
     );
     let other = tmp.path().join("other.md");
@@ -414,7 +423,7 @@ fn a_picture_from_outside_is_previewed_as_the_png_it_makes() {
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     assert_eq!(&png[16..24], &[0, 0, 0, 40, 0, 0, 0, 10], "its size");
     // A module may not use the network: what it made keeps its links.
-    assert!(made.closed_links.unwrap().contains("network"));
+    assert!(made.closed_links.unwrap().english().contains("network"));
     // Shown again, even with its helper ended: the file kept, the plugin
     // not asked, no helper started.
     assert!(app.plugins.set_enabled("netpbm", false, &app));

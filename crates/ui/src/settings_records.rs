@@ -231,7 +231,7 @@ impl SettingsView {
         &mut self,
         key: &str,
         text: String,
-        placeholder: String,
+        placeholder: Words,
         masked: bool,
         subscriptions: &mut Vec<Subscription>,
         window: &mut Window,
@@ -284,11 +284,10 @@ impl SettingsView {
         let mut inputs = Vec::with_capacity(fields.len());
         for field in fields {
             let input = match &field.kind {
-                // Said as the record is opened for editing.
                 FieldKind::Text { placeholder } => FieldInput::Text(self.draft_input(
                     key,
                     text_of(&record, &field.key),
-                    placeholder.say(),
+                    placeholder.clone(),
                     false,
                     &mut subscriptions,
                     window,
@@ -297,7 +296,7 @@ impl SettingsView {
                 FieldKind::Integer { .. } => FieldInput::Text(self.draft_input(
                     key,
                     text_of(&record, &field.key),
-                    String::new(),
+                    Words::default(),
                     false,
                     &mut subscriptions,
                     window,
@@ -334,9 +333,8 @@ impl SettingsView {
                                     records_secret_kept = "Kept in the keyring: type to replace",
                                     note = "The placeholder of a secret's field (a password) whose value the desktop's keyring keeps."
                                 )
-                                .say()
                             } else {
-                                String::new()
+                                Words::default()
                             },
                             true,
                             &mut subscriptions,
@@ -380,13 +378,11 @@ impl SettingsView {
             words!(
                 records_pair_name = "Name",
                 note = "The placeholder of the first field of a name and value pair (an HTTP header's name)."
-            )
-            .say(),
+            ),
             words!(
                 records_pair_value = "Value",
                 note = "The placeholder of the second field of a name and value pair (an HTTP header's value)."
-            )
-            .say(),
+            ),
         );
         Pair {
             name: self.draft_input(key, name, name_said, false, subscriptions, window, cx),
@@ -449,8 +445,7 @@ impl SettingsView {
                 records_secret_not_set = "Not set",
                 note =
                     "The placeholder of a secret's field (a password) the keyring no longer keeps."
-            )
-            .say();
+            );
             input.update(cx, |input, cx| input.set_placeholder(unset, cx));
         }
         cx.notify();
@@ -953,17 +948,13 @@ impl SettingsView {
                 words!(
                     records_filter = "Filter",
                     note = "The placeholder of a long list's filter in the settings."
-                )
-                .say(),
+                ),
                 cx,
             );
-            input.set_label(
-                words!(
-                    records_filter_label = "Filter the list",
-                    note = "What a screen reader calls a long list's filter in the settings."
-                )
-                .say(),
-            );
+            input.set_label(words!(
+                records_filter_label = "Filter the list",
+                note = "What a screen reader calls a long list's filter in the settings."
+            ));
             input
         });
         let sub = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {

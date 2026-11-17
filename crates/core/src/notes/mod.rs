@@ -183,7 +183,7 @@ pub enum Kept {
 }
 
 /// What a store can hold, and what it cannot, in words.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "one switch per field of the model"
@@ -194,8 +194,10 @@ pub struct Holds {
     pub rating: bool,
     pub comment: bool,
     pub origin: bool,
-    /// What it cannot hold that the others can ("no comma in a tag").
-    pub limits: &'static str,
+    /// What it cannot hold that the others can, a phrase its settings
+    /// place in a sentence ("no comma in a tag"); `None` where it holds
+    /// all.
+    pub limits: Option<crate::words::Words>,
 }
 
 /// How a store is written.
@@ -218,16 +220,6 @@ pub enum Write {
 }
 
 impl Write {
-    /// The words the settings show.
-    pub fn title(self) -> &'static str {
-        match self {
-            Write::Off => "Off",
-            Write::Update => "Update existing",
-            Write::Fallback => "Where attributes are missing",
-            Write::Create => "Create",
-        }
-    }
-
     /// The words the settings show, said where they are drawn.
     pub fn words(self) -> crate::words::Words {
         match self {
@@ -264,7 +256,7 @@ pub enum Wrote {
     /// It writes nothing for this file, for a reason of its own (a `._`
     /// file there that it does not rewrite): said, in a phrase following
     /// the file's path, when no store keeps the notes.
-    Refused(String),
+    Refused(crate::words::Words),
 }
 
 /// A file of a batch, as a store is handed it: its path and name, and the
@@ -555,7 +547,7 @@ impl NoteStores {
     /// rating or a comment anywhere, for the surfaces that show one. From
     /// memory, cheap enough to ask as they are drawn.
     pub fn held(&self) -> Holds {
-        *self.held.read()
+        self.held.read().clone()
     }
 
     fn together(list: &[(Arc<str>, Arc<dyn NotesStore>)]) -> Holds {
@@ -567,7 +559,7 @@ impl NoteStores {
                 rating: all.rating || holds.rating,
                 comment: all.comment || holds.comment,
                 origin: all.origin || holds.origin,
-                limits: "",
+                limits: None,
             }
         })
     }

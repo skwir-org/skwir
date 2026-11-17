@@ -43,6 +43,9 @@ print_booklet_one_side = A booklet is printed on both sides: on one side, print 
 
 print_cancelled = Printing was cancelled
 
+# A PDF being saved found its name taken, asked what becomes of it, and the user cancelled it.
+print_cancelled_save = Cancelled: nothing was saved as PDF
+
 # A heading of the folders Save as offers: those chosen for earlier PDFs.
 print_chosen_before = Chosen before
 
@@ -242,6 +245,9 @@ print_not_there = { $name } is not there
 # Why a file was not printed: its preview shows nothing to print (a song, a program).
 print_nothing_printable = { $name } shows nothing that can be printed
 
+# Under the title of the question asking what becomes of the name a PDF being saved finds taken.
+print_nothing_saved = Nothing is saved as PDF until you choose.
+
 # An error an agent or a script reads: it asked what is selected in the preview, and nothing is.
 print_nothing_selected = Nothing of it is selected
 
@@ -417,6 +423,9 @@ print_save_together = { $count ->
            *[pdf] save { $count } files as one PDF
         }
     }
+
+# The button of the question asking what becomes of the name a PDF being saved finds taken: save it, once that is answered.
+print_save_verb = Save as PDF
 
 # What a step did, said once its plan ran. Begins in lower case.
 print_saved_step = { $what ->

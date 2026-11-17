@@ -53,7 +53,7 @@ pub struct Look {
     /// Black, red, green, yellow, blue, magenta, cyan, white, then their
     /// bright kin: the palette's own terminal colors.
     pub terminal: Option<[u32; 16]>,
-    /// The code theme its makers publish (`highlight::choices`' value),
+    /// The code theme its makers publish (`highlight::choices_words`' value),
     /// drawn while the Reading page says Default.
     pub code: Option<&'static str>,
 }
@@ -653,11 +653,12 @@ mod tests {
                 let Some(name) = palette.code(dark) else {
                     continue;
                 };
-                let choices = crate::code_preview::choices(dark, name, Some(none));
+                let choices = crate::code_preview::choices_words(dark, name, Some(none));
                 assert!(
                     choices
                         .iter()
-                        .any(|(value, label)| value == name && !label.contains("not found")),
+                        .any(|(value, label)| value == name
+                            && !label.english().contains("not found")),
                     "{name}, for {} dark: {dark}",
                     palette.id
                 );

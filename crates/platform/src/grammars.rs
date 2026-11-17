@@ -81,34 +81,9 @@ impl Source {
         Source::ALL.into_iter().find(|source| source.key() == key)
     }
 
-    /// Its name at the head of a choice ("Zed", "Skwir's folder").
-    pub fn short(self) -> &'static str {
-        match self {
-            Source::Skwir => "Skwir's folder",
-            Source::TreeSitter => "tree-sitter CLI",
-            Source::Zed => "Zed",
-            Source::Helix => "Helix",
-            Source::Neovim => "Neovim",
-            Source::System => "System",
-            Source::Emacs => "Emacs",
-        }
-    }
-
-    /// Its name, as the Reading page says it.
-    pub fn label(self) -> &'static str {
-        match self {
-            Source::Skwir => "Skwir",
-            Source::TreeSitter => "the tree-sitter CLI",
-            Source::Zed => "Zed",
-            Source::Helix => "Helix",
-            Source::Neovim => "Neovim",
-            Source::System => "the system",
-            Source::Emacs => "Emacs",
-        }
-    }
-
-    /// [`Source::short`] as words: a message choosing by the source's
-    /// key (`key`), its editors' names as they write them.
+    /// Its name at the head of a choice ("Zed", "Skwir's folder"): a
+    /// message choosing by the source's key (`key`), its editors' names
+    /// as they write them.
     pub fn short_words(self) -> skwir_core::words::Words {
         skwir_core::words!(
             grammars_source_short = "{ $source ->
@@ -125,7 +100,8 @@ impl Source {
         )
     }
 
-    /// [`Source::label`] as words, as [`Source::short_words`] makes them.
+    /// Its name, as the Reading page says it ("the tree-sitter CLI"), as
+    /// [`Source::short_words`] makes it.
     pub fn label_words(self) -> skwir_core::words::Words {
         skwir_core::words!(
             grammars_source_label = "{ $source ->
@@ -142,28 +118,30 @@ impl Source {
         )
     }
 
-    /// Its library, as a combined grammar names it after its queries'
-    /// source ("tree-sitter CLI, with Emacs's library", ADR-110).
-    ///
-    /// Transitional: a fragment for a sentence; a message names a source's
-    /// library by a selector on its `key` (`library_refused`).
-    pub fn library(self) -> &'static str {
-        match self {
-            Source::Skwir => "a library in Skwir's folder",
-            Source::TreeSitter => "the tree-sitter CLI's library",
-            Source::Zed => "Zed's library",
-            Source::Helix => "Helix's library",
-            Source::Neovim => "Neovim's library",
-            Source::System => "the system's library",
-            Source::Emacs => "Emacs's library",
-        }
-    }
-
     /// Whose queries may color another source's library: the grammar's
     /// own repository's (Skwir's folder, the CLI's) and the system's, as
     /// its package ships them; never an editor's (ADR-110, amended).
     fn lends(self) -> bool {
         matches!(self, Source::Skwir | Source::TreeSitter | Source::System)
+    }
+}
+
+/// What makes a grammar unusable, and what to do: its words, and whether
+/// they name the grammar's source already ("Emacs keeps no colors…"),
+/// which a list naming each by its source then leaves out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub said: skwir_core::words::Words,
+    pub names_source: bool,
+}
+
+impl From<skwir_core::words::Words> for Problem {
+    /// Words that do not name the source.
+    fn from(said: skwir_core::words::Words) -> Self {
+        Problem {
+            said,
+            names_source: false,
+        }
     }
 }
 
@@ -185,7 +163,8 @@ pub struct Found {
     pub file_types: Vec<String>,
     /// What a file's first line says when its name says nothing.
     pub first_line: Option<String>,
-    pub problem: Option<String>,
+    /// What makes it unusable, said where it is shown.
+    pub problem: Option<Problem>,
     /// A grammar combined from two sources, its library and its queries,
     /// not yet checked to fit (`check_combined`): colors as it is, offered
     /// on the Reading page once checked.
@@ -193,7 +172,8 @@ pub struct Found {
     /// Why its check could not be made (the helper did not start, did not
     /// answer, ended): no answer about the grammar, so never kept. It
     /// waits, asked again once the grammars are found again (`find`).
-    pub unchecked: Option<String>,
+    /// Said where it is shown, link by link (`Words::of_error`).
+    pub unchecked: Option<skwir_core::words::Words>,
 }
 
 impl Found {
@@ -280,7 +260,7 @@ enum Fit {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Answer {
     Fit(Fit),
-    Failed(String),
+    Failed(skwir_core::words::Words),
 }
 
 impl Answer {
@@ -288,8 +268,7 @@ impl Answer {
     fn of(checked: anyhow::Result<crate::tree_sitter::Checked>) -> Answer {
         let checked = match checked {
             Ok(checked) => checked,
-            // Transitional: said once here, kept as text (ADR-139).
-            Err(error) => return Answer::Failed(skwir_core::words::Words::of_error(error).say()),
+            Err(error) => return Answer::Failed(skwir_core::words::Words::of_error(error)),
         };
         Answer::Fit(match (checked.refused, checked.colorless) {
             (Some(why), _) => Fit::Library(why),
@@ -399,7 +378,7 @@ fn fitted(
     all: &mut [Found],
     keys: &[(usize, FitKey)],
     fits: &HashMap<FitKey, Fit>,
-    failed: &HashMap<FitKey, String>,
+    failed: &HashMap<FitKey, skwir_core::words::Words>,
 ) -> bool {
     let mut any = false;
     for (at, key) in keys {
@@ -416,7 +395,7 @@ fn fitted(
             }
             any = true;
         } else if let Some(why) = failed.get(key) {
-            found.unchecked = Some(home_in(why));
+            found.unchecked = Some(why.clone());
             any = true;
         }
     }
@@ -425,10 +404,9 @@ fn fitted(
 
 /// Why a combined grammar's library cannot be used, the helper's reason
 /// with its paths from `~/`: "Emacs's library cannot be used (its ABI is
-/// 16, …)". Its queries are not the matter.
-fn library_refused(found: &Found, why: &str) -> String {
-    // Transitional: a grammar's problem is text, said once here (ADR-139).
-    skwir_core::words!(
+/// 16, …)", naming whose it is. Its queries are not the matter.
+fn library_refused(found: &Found, why: &str) -> Problem {
+    let said = skwir_core::words!(
         grammars_library_refused = "{ $source ->
                 [skwir] a library in Skwir's folder
                 [tree-sitter] the tree-sitter CLI's library
@@ -441,19 +419,22 @@ fn library_refused(found: &Found, why: &str) -> String {
         source = found.source.key(),
         why = home_in(why),
         note = "Why a grammar made of one program's library and another's queries is not offered. source: whose library it is; why: what the tree-sitter helper said, as it wrote it."
-    )
-    .say()
+    );
+    Problem {
+        said,
+        names_source: true,
+    }
 }
 
 /// Why none of a combined grammar's queries colors its library, and what
 /// makes them fit, by whose they are: a repository's is checked out at
 /// the revision the library was built from; the system's are for its own
-/// library, so the repository goes in Skwir's folder.
-fn queries_refused(found: &Found, why: &str) -> String {
+/// library, so the repository goes in Skwir's folder. It names whose
+/// library it is.
+fn queries_refused(found: &Found, why: &str) -> Problem {
     let source = found.source.key();
     let why = home_in(why);
-    // Transitional: a grammar's problem is text, said once here (ADR-139).
-    match found.queries_from {
+    let said = match found.queries_from {
         Some(Source::Skwir | Source::TreeSitter) => skwir_core::words!(
             grammars_repository_queries_refused = "its repository's queries do not fit { $source ->
                     [skwir] a library in Skwir's folder
@@ -482,8 +463,11 @@ fn queries_refused(found: &Found, why: &str) -> String {
             why = why,
             note = "Why a grammar made of one program's library and the system's queries is not offered. source: whose library it is; why: what the tree-sitter helper said, as it wrote it."
         ),
+    };
+    Problem {
+        said,
+        names_source: true,
     }
-    .say()
 }
 
 /// `found` colored by the set of its queries at `set` of
@@ -1137,7 +1121,7 @@ struct Candidate {
     file_types: Vec<String>,
     first_line: Option<String>,
     injection_regex: Option<String>,
-    problem: Option<String>,
+    problem: Option<Problem>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1285,12 +1269,15 @@ pub struct Looked {
 }
 
 /// What was nearly found: the file or folder it is about, and what is
-/// wrong with it and what to do, said.
+/// wrong with it and what to do, said where it is shown; whether that
+/// names its source already ("Emacs keeps no colors…"), which a list
+/// naming each by its source then leaves out.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Nearly {
     pub source: Source,
     pub what: PathBuf,
-    pub said: String,
+    pub said: skwir_core::words::Words,
+    pub names_source: bool,
 }
 
 /// Every folder each source is read in, in the sources' order: the CLI's
@@ -1352,8 +1339,8 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
         nearly.push(Nearly {
             source: Source::TreeSitter,
             what: config.clone(),
-            // Transitional: `Nearly::said` is text (ADR-139).
-            said: error.say(),
+            said: error,
+            names_source: false,
         });
     }
     let parser_dirs = roots
@@ -1369,8 +1356,8 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
                 said: skwir_core::words!(
                     grammars_parser_dir_missing = "a parser directory its configuration names, not there",
                     note = "Said of a folder on the Reading page: the tree-sitter CLI's configuration names it, and it does not exist."
-                )
-                .say(),
+                ),
+                names_source: false,
             });
         }
     }
@@ -1392,13 +1379,12 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
                     inner = shown(&folder),
                     note = "Said of a grammar's repository on the Reading page: the tree-sitter CLI does not look this deep. folder: the folder it reads, a path; inner: the folder between, a path; parser-directories is its setting's name."
                 ),
-            }
-            // Transitional: `Nearly::said` is text (ADR-139).
-            .say();
+            };
             nearly.push(Nearly {
                 source,
                 what: repository,
                 said,
+                names_source: false,
             });
         }
     }
@@ -1414,7 +1400,10 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
             .entry((held.source, key_of(&held.name)))
             .or_insert(held);
     }
-    for found in all.iter().filter(|found| found.problem.is_some()) {
+    for (found, problem) in all
+        .iter()
+        .filter_map(|found| Some((found, found.problem.as_ref()?)))
+    {
         let what = Some(found.grammar.library.clone())
             .filter(|library| !library.as_os_str().is_empty())
             .or_else(|| {
@@ -1426,7 +1415,8 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
         nearly.push(Nearly {
             source: found.source,
             what,
-            said: found.problem.clone().unwrap_or_default(),
+            said: problem.said.clone(),
+            names_source: problem.names_source,
         });
     }
     let folders = folders_looked(roots);
@@ -1604,14 +1594,12 @@ impl Confined {
                         Some(real) => candidate.library = Some(real),
                         None => {
                             candidate.problem.get_or_insert_with(|| {
-                                // Transitional: a grammar's problem is
-                                // text, said once here (ADR-139).
                                 skwir_core::words!(
                                     grammars_library_outside = "its library { $library } lies outside its folder",
                                     library = library.display().to_string(),
                                     note = "Why a grammar is not offered: its library, a path, is not in the folder it was found in, which is all its helper may read."
                                 )
-                                .say()
+                                .into()
                             });
                         }
                     }
@@ -1805,7 +1793,7 @@ fn alternative(
                     grammars_no_library = "no library: build the grammar (`tree-sitter build`)",
                     note = "Why a grammar is not offered: its repository holds no compiled library. `tree-sitter build` is a command, as written."
                 )
-                .say(),
+                .into(),
             ),
             (Some(_), true) => Some(no_highlights(source, unlent)),
             (Some(_), false) => None,
@@ -1843,13 +1831,18 @@ fn alternative(
 /// queries color it, built or not. Emacs keeps none (its modes color in
 /// Lisp); a repository of Skwir's or the CLI's has none of its own; an
 /// editor's queries of it, `unlent`, are not lent to another's library.
-fn no_highlights(source: Source, unlent: Option<Source>) -> String {
-    // Transitional: a grammar's problem is text, said once here (ADR-139).
-    match (source, unlent) {
-        (Source::Emacs, _) => skwir_core::words!(
-            grammars_emacs_no_colors = "Emacs keeps no colors with its grammars: put the grammar's repository in Skwir's grammars folder (it need not be built)",
-            note = "Why a grammar of Emacs's is not offered: Emacs colors code otherwise. Emacs is an editor's name."
-        ),
+/// Emacs's names its source.
+fn no_highlights(source: Source, unlent: Option<Source>) -> Problem {
+    let said = match (source, unlent) {
+        (Source::Emacs, _) => {
+            return Problem {
+                said: skwir_core::words!(
+                    grammars_emacs_no_colors = "Emacs keeps no colors with its grammars: put the grammar's repository in Skwir's grammars folder (it need not be built)",
+                    note = "Why a grammar of Emacs's is not offered: Emacs colors code otherwise. Emacs is an editor's name."
+                ),
+                names_source: true,
+            };
+        }
         (Source::Skwir | Source::TreeSitter, _) => skwir_core::words!(
             grammars_no_highlights_repository = "no highlights query in its repository, nor in the system's",
             note = "Why a grammar is not offered: nothing says how its language is colored (a highlights query, a file of tree-sitter's)."
@@ -1868,8 +1861,8 @@ fn no_highlights(source: Source, unlent: Option<Source>) -> String {
             grammars_no_highlights = "no highlights query found for its language: put the grammar's repository in Skwir's grammars folder (it need not be built)",
             note = "Why a grammar is not offered: nothing says how its language is colored (a highlights query, a file of tree-sitter's)."
         ),
-    }
-    .say()
+    };
+    said.into()
 }
 
 /// The key a language is known by: its name in lower case, `-` read as
@@ -2446,6 +2439,16 @@ mod tests {
         std::fs::write(path, text).unwrap();
     }
 
+    /// What makes `found` unusable, in English.
+    fn why(found: &Found) -> String {
+        found
+            .problem
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} is usable", found.grammar.name))
+            .said
+            .english()
+    }
+
     fn names(found: &[Found]) -> Vec<(&str, Source, Option<Source>)> {
         found
             .iter()
@@ -2596,11 +2599,7 @@ mod tests {
             .find(|found| found.grammar.name == "nix" && found.source == Source::Neovim)
             .unwrap();
         assert!(
-            neovim_nix
-                .problem
-                .as_deref()
-                .unwrap()
-                .contains("Zed's are not lent"),
+            why(neovim_nix).contains("Zed's are not lent"),
             "{:?}",
             neovim_nix.problem
         );
@@ -2663,13 +2662,8 @@ mod tests {
         assert_eq!(get("lua").file_types, ["lua"], "its name");
         // Usable or not, and why: Emacs's library alone says where its
         // colors would come from.
-        assert!(
-            get("zig")
-                .problem
-                .as_deref()
-                .unwrap()
-                .starts_with("Emacs keeps no colors")
-        );
+        assert!(why(get("zig")).starts_with("Emacs keeps no colors"));
+        assert!(get("zig").problem.as_ref().unwrap().names_source);
         // Its repository unbuilt in Skwir's folder lends its queries: one
         // row, Emacs's library, the repository's colors.
         let heex = get("heex");
@@ -2722,11 +2716,7 @@ mod tests {
             [root.join("system-queries/json/highlights.scm")]
         );
         assert!(
-            get("yaml")
-                .problem
-                .as_deref()
-                .unwrap()
-                .starts_with("no highlights query found"),
+            why(get("yaml")).starts_with("no highlights query found"),
             "the system's, not Emacs's"
         );
         assert!(get("gleam").problem.is_none());
@@ -2807,10 +2797,7 @@ mod tests {
         );
         assert!(get("hostile").problem.is_none());
         let away = get("away");
-        assert!(
-            away.problem.as_deref().unwrap().contains("outside"),
-            "{away:?}"
-        );
+        assert!(why(away).contains("outside"), "{away:?}");
         assert!(away.grammar.library.as_os_str().is_empty());
         assert_eq!(
             get("lua").grammar.library,
@@ -2989,16 +2976,16 @@ mod tests {
             ..Roots::default()
         };
         let (_, _, report) = find_all(&roots, &HashMap::new());
-        let nearly: Vec<(Source, &Path, &str)> = report
+        let nearly: Vec<(Source, &Path, String)> = report
             .nearly
             .iter()
-            .map(|n| (n.source, n.what.as_path(), n.said.as_str()))
+            .map(|n| (n.source, n.what.as_path(), n.said.english()))
             .collect();
         let said = |what: &Path| {
             let Some((_, _, said)) = nearly.iter().find(|(_, at, _)| *at == what) else {
                 panic!("{} not said: {nearly:#?}", what.display())
             };
-            *said
+            said.clone()
         };
         assert!(said(&root.join("gone")).contains("not there"));
         assert!(said(&projects.join("gleam-mode/tree-sitter-gleam")).contains("add "));
@@ -3007,6 +2994,14 @@ mod tests {
         assert!(
             said(&root.join("emacs/libtree-sitter-quint.so")).starts_with("Emacs keeps no colors")
         );
+        // What names its source says so, and the others do not.
+        let naming: Vec<&Path> = report
+            .nearly
+            .iter()
+            .filter(|n| n.names_source)
+            .map(|n| n.what.as_path())
+            .collect();
+        assert_eq!(naming, [root.join("emacs/libtree-sitter-quint.so")]);
         assert_eq!(nearly.len(), 5, "Helix's markup is not: {nearly:#?}");
         // Each folder, with what it held; one not there held nothing.
         let held = |folder: &Path| {
@@ -3030,7 +3025,7 @@ mod tests {
                 .nearly
                 .iter()
                 .any(|n| n.what == root.join("ts-config/config.json")
-                    && n.said.contains("does not read")),
+                    && n.said.english().contains("does not read")),
             "{:#?}",
             report.nearly
         );
@@ -3085,15 +3080,13 @@ mod tests {
         assert_eq!(held(&root.join("usr/lib64")), None, "the same folder");
         let nix = named(&all, "nix").unwrap();
         assert_eq!(nix.source, Source::Zed);
-        assert!(
-            nix.problem.as_deref().unwrap().contains("outside"),
-            "{nix:?}"
-        );
+        assert!(why(nix).contains("outside"), "{nix:?}");
         assert!(
             report
                 .nearly
                 .iter()
-                .any(|nearly| nearly.source == Source::Zed && nearly.said.contains("outside")),
+                .any(|nearly| nearly.source == Source::Zed
+                    && nearly.said.english().contains("outside")),
             "{:#?}",
             report.nearly
         );
@@ -3198,12 +3191,13 @@ mod tests {
         let mut refused = vec![combined(root)];
         fits.insert(keys[0].1.clone(), Fit::Queries("no node `x`".into()));
         assert!(fitted(&mut refused, &keys, &fits, &none));
-        let why = refused[0].problem.as_deref().unwrap();
+        let said = why(&refused[0]);
         assert!(
-            why.starts_with("its repository's queries do not fit Emacs's library (no node `x`)")
-                && why.contains("revision its library was built from"),
-            "{why}"
+            said.starts_with("its repository's queries do not fit Emacs's library (no node `x`)")
+                && said.contains("revision its library was built from"),
+            "{said}"
         );
+        assert!(refused[0].problem.as_ref().unwrap().names_source, "whose");
         // Its library refused: said of the library, never of its queries,
         // nor under the name the helper was told.
         let mut library = vec![combined(root)];
@@ -3211,8 +3205,8 @@ mod tests {
         fits.insert(keys[0].1.clone(), Fit::Library(abi.into()));
         assert!(fitted(&mut library, &keys, &fits, &none));
         assert_eq!(
-            library[0].problem.as_deref(),
-            Some(format!("Emacs's library cannot be used ({abi})").as_str())
+            why(&library[0]),
+            format!("Emacs's library cannot be used ({abi})")
         );
         // Its queries written again: another key, checked again.
         std::fs::remove_file(root.join("repo/queries/highlights.scm")).unwrap();
@@ -3339,7 +3333,7 @@ mod tests {
             std::slice::from_ref(&checked)
         ));
         let refused = Found {
-            problem: Some("no".into()),
+            problem: Some(skwir_core::words::Words::as_written("no").into()),
             ..checked.clone()
         };
         assert!(!colors_alike(&[checked], &[refused]));
@@ -3434,7 +3428,7 @@ mod tests {
         assert!(for_file(&found, "setup", Some("#!/usr/bin/env fish")).is_some());
         // Unusable, it is no grammar to color with, but still the file's.
         let broken = [Found {
-            problem: Some("no library".into()),
+            problem: Some(skwir_core::words::Words::as_written("no library").into()),
             ..found[0].clone()
         }];
         assert!(for_file(&broken, "config.fish", None).is_none());

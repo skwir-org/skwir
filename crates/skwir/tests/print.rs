@@ -309,7 +309,7 @@ fn a_booklet_of_four_a_side_is_saved_on_the_paper_asked() {
         .expect("the plan's end was told");
     assert!(
         said.iter()
-            .any(|note| note.starts_with("Fold each sheet in half twice")),
+            .any(|note| note.english().starts_with("Fold each sheet in half twice")),
         "{said:?}"
     );
     let booklet = dir.join("short (booklet).pdf");

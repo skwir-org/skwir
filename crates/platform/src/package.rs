@@ -29,36 +29,15 @@ pub struct Package {
 }
 
 impl Package {
-    /// The package `file` (what a preview holds of it, or its path),
-    /// `what` naming it in the message of a package with too many members
-    /// ("The document"); its names compared without case when `folded`.
-    ///
-    /// Transitional: `what` is a fragment the refusal is written around;
-    /// [`Package::open_words`] takes the refusal whole (ADR-139).
+    /// The package `file` (what a preview holds of it, or its path), its
+    /// names compared without case when `folded`; refused past
+    /// `limits::CONTAINER_MEMBERS` members saying `too_many`: a whole
+    /// message, the bound an argument of it ("The document holds more than
+    /// { $count } members").
     ///
     /// # Errors
     /// When it cannot be read, is no zip, or holds too many members.
     pub fn open<S: FileSource + ?Sized>(
-        file: &S,
-        what: &str,
-        folded: bool,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<Self> {
-        Self::opened(file, folded, cancel, || {
-            anyhow::anyhow!(
-                "{what} holds more than {} members",
-                limits::CONTAINER_MEMBERS
-            )
-        })
-    }
-
-    /// [`Package::open`], refused past `limits::CONTAINER_MEMBERS` members
-    /// saying `too_many`: a whole message, the bound an argument of it
-    /// ("The document holds more than { $count } members").
-    ///
-    /// # Errors
-    /// When it cannot be read, is no zip, or holds too many members.
-    pub fn open_words<S: FileSource + ?Sized>(
         file: &S,
         too_many: impl Into<Words>,
         folded: bool,
@@ -126,35 +105,14 @@ impl Package {
         names.into_iter().map(|(name, _)| name)
     }
 
-    /// Member `name`, whole within `bound` bytes inflated; `what` names it
-    /// in the messages.
-    ///
-    /// Transitional: [`Package::read_words`] takes what it says whole
-    /// (ADR-139).
+    /// Member `name`, whole within `bound` bytes inflated; saying `missing`
+    /// when it has no member `name` and `too_large` when the member
+    /// inflates past `bound`: whole messages, the bound an argument of the
+    /// second (`words::Size`).
     ///
     /// # Errors
     /// When it is missing, damaged, longer than `bound` or cancelled.
     pub fn read(
-        &mut self,
-        name: &str,
-        bound: usize,
-        what: &str,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<Vec<u8>> {
-        let index = self
-            .index(name)
-            .ok_or_else(|| anyhow::anyhow!("{what} is missing"))?;
-        let file = self.archive.by_index(index)?;
-        inspection::copy_bounded(file, bound, what, cancel)
-    }
-
-    /// [`Package::read`], saying `missing` when it has no member `name`
-    /// and `too_large` when the member inflates past `bound`: whole
-    /// messages, the bound an argument of the second (`words::Size`).
-    ///
-    /// # Errors
-    /// When it is missing, damaged, longer than `bound` or cancelled.
-    pub fn read_words(
         &mut self,
         name: &str,
         bound: usize,
@@ -166,7 +124,7 @@ impl Package {
             .index(name)
             .ok_or_else(|| anyhow::Error::from(Into::<Words>::into(missing)))?;
         let file = self.archive.by_index(index)?;
-        inspection::copy_bounded_words(file, bound, too_large, cancel)
+        inspection::copy_bounded(file, bound, too_large, cancel)
     }
 
     /// The start of member `name`, at most `limit` bytes of it: enough to

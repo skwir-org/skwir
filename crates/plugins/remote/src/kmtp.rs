@@ -111,11 +111,7 @@ impl Kmtp {
             held.push(Held {
                 udi,
                 offered: Offered {
-                    name: if name.trim().is_empty() {
-                        address.label()
-                    } else {
-                        name.trim().to_owned()
-                    },
+                    name: name.trim().to_owned(),
                     address,
                     device: crate::connector::Device::Phone,
                     node,

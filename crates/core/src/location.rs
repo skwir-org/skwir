@@ -199,8 +199,8 @@ impl fmt::Display for Location {
 /// update, so what was made, renamed or removed since is not in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AsOf {
-    /// What answered, in the user's words: "plocate's database".
-    pub by: String,
+    /// What answered: "plocate's database", said where it is shown.
+    pub by: Words,
     /// When it was last brought up to date; `None` when that cannot be
     /// told.
     pub updated: Option<std::time::SystemTime>,
@@ -679,7 +679,8 @@ impl EmptyState {
 /// whether it does now, and where it leads switched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Toggle {
-    pub label: String,
+    /// What its menu item says, said where it is drawn.
+    pub label: Words,
     pub on: bool,
     pub location: Location,
 }
@@ -698,13 +699,14 @@ impl Trail {
 /// A gesture's words and command (`Verbs`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Verb {
-    /// What a menu item says: "Remove from “France”".
-    pub title: String,
+    /// What a menu item says: "Remove from “France”", said where it is
+    /// drawn.
+    pub title: Words,
     pub command: crate::command::Invocation,
 }
 
 impl Verb {
-    pub fn new(title: impl Into<String>, command: crate::command::Invocation) -> Self {
+    pub fn new(title: impl Into<Words>, command: crate::command::Invocation) -> Self {
         Verb {
             title: title.into(),
             command,
@@ -811,9 +813,10 @@ pub struct Depths {
     /// The place holding everything within it (a tag's: every file of
     /// every tag within it too).
     pub below: Location,
-    /// What the switch says of each (`This tag`, `With sub-tags`).
-    pub here_label: String,
-    pub below_label: String,
+    /// What the switch says of each (`This tag`, `With sub-tags`), said
+    /// where it is drawn.
+    pub here_label: Words,
+    pub below_label: Words,
 }
 
 /// What Quick filters offer within a location by itself (a tag's place):
@@ -1007,84 +1010,8 @@ impl SortKey {
         )
     }
 
-    /// What a menu or a column calls it: `Modified`.
-    pub fn title(self) -> &'static str {
-        match self {
-            SortKey::Name => "Name",
-            SortKey::Kind => "Kind",
-            SortKey::Type => "Type",
-            SortKey::Extension => "Extension",
-            SortKey::Size => "Size",
-            SortKey::Modified => "Modified",
-            SortKey::Created => "Created",
-            SortKey::Accessed => "Accessed",
-            SortKey::Deleted => "Deleted",
-            SortKey::Rating => "Rating",
-            SortKey::Tags => "Tags",
-            SortKey::Owner => "Owner",
-            SortKey::Folder => "Folder",
-            SortKey::Taken => "Taken",
-            SortKey::Dimensions => "Dimensions",
-            SortKey::Duration => "Duration",
-            SortKey::Vcs => "Git",
-        }
-    }
-
-    /// What a sentence calls it ("Sort by date modified"): `date
-    /// modified`.
-    pub fn words(self) -> &'static str {
-        match self {
-            SortKey::Name => "name",
-            SortKey::Kind => "kind",
-            SortKey::Type => "type",
-            SortKey::Extension => "extension",
-            SortKey::Size => "size",
-            SortKey::Modified => "date modified",
-            SortKey::Created => "date created",
-            SortKey::Accessed => "date accessed",
-            SortKey::Deleted => "date deleted",
-            SortKey::Rating => "rating",
-            SortKey::Tags => "tags",
-            SortKey::Owner => "owner",
-            SortKey::Folder => "folder",
-            SortKey::Taken => "date taken",
-            SortKey::Dimensions => "dimensions",
-            SortKey::Duration => "duration",
-            SortKey::Vcs => "Git state",
-        }
-    }
-
-    /// Its directions in its own words, going up then going down, short
-    /// (a menu's buttons: `Oldest`, `Newest`) and whole (`oldest
-    /// first`).
-    pub fn directions(self) -> [(&'static str, &'static str); 2] {
-        match self {
-            SortKey::Size | SortKey::Dimensions => {
-                [("Smallest", "smallest first"), ("Largest", "largest first")]
-            }
-            SortKey::Duration => [("Shortest", "shortest first"), ("Longest", "longest first")],
-            SortKey::Modified
-            | SortKey::Created
-            | SortKey::Accessed
-            | SortKey::Deleted
-            | SortKey::Taken => [("Oldest", "oldest first"), ("Newest", "newest first")],
-            SortKey::Rating => [("Lowest", "lowest first"), ("Highest", "highest first")],
-            SortKey::Vcs => [
-                ("Changes first", "changes first"),
-                ("Changes last", "changes last"),
-            ],
-            SortKey::Name
-            | SortKey::Kind
-            | SortKey::Type
-            | SortKey::Extension
-            | SortKey::Tags
-            | SortKey::Owner
-            | SortKey::Folder => [("A to Z", "A to Z"), ("Z to A", "Z to A")],
-        }
-    }
-
-    /// What a menu or a column calls it, as words: `Modified` (`title`
-    /// for what reads it as an identifier until every caller says words).
+    /// What a menu or a column calls it, said where it is drawn:
+    /// `Modified`.
     pub fn title_words(self) -> Words {
         use crate::words;
         match self {
@@ -1162,7 +1089,7 @@ impl SortKey {
     }
 
     /// What a sentence calls it ("Sort by date modified"), as words:
-    /// `date modified` (`words` for what reads it as an identifier).
+    /// `date modified`.
     pub fn phrase_words(self) -> Words {
         use crate::words;
         match self {
@@ -1240,7 +1167,7 @@ impl SortKey {
 
     /// Its directions in its own words, going up then going down, short
     /// (a menu's buttons: `Oldest`, `Newest`) and whole (`oldest first`),
-    /// as words (`directions` for what reads them as identifiers).
+    /// as words.
     pub fn direction_words(self) -> [(Words, Words); 2] {
         use crate::words;
         match self {
@@ -2873,12 +2800,12 @@ impl FillJob {
 }
 
 /// Why a listing failed (`ListingEvent::Error`): its kind, which what shows
-/// it reads, and its message, the system's or its provider's, shown as it
-/// is (ADR-139, 8: nothing reads the kind back from the words).
+/// it reads, and its message, the system's or its provider's, said where
+/// it is shown (ADR-139, 8: nothing reads the kind back from the words).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListingError {
     pub kind: Failure,
-    pub message: String,
+    pub message: Words,
 }
 
 /// What kind of failure a listing's was.
@@ -2894,30 +2821,32 @@ pub enum Failure {
 
 impl ListingError {
     /// A failure its provider says in its own words.
-    pub fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<Words>) -> Self {
         ListingError {
             kind: Failure::Other,
             message: message.into(),
         }
     }
 
-    /// The system's `error`, of the kind its code says.
+    /// The system's `error`, of the kind its code says, said by its kind
+    /// (`op::io_words`).
     pub fn of_io(error: &std::io::Error) -> Self {
         ListingError {
             kind: Failure::of(error.kind()),
-            message: error.to_string(),
+            message: crate::op::io_words(error),
         }
     }
 
-    /// `error`, of the kind the first system error in its chain says.
-    pub fn of(error: &anyhow::Error) -> Self {
+    /// `error`, of the kind the first system error in its chain says, its
+    /// chain said link by link (`Words::of_error`).
+    pub fn of(error: anyhow::Error) -> Self {
         let kind = error
             .chain()
             .find_map(|cause| cause.downcast_ref::<std::io::Error>())
             .map_or(Failure::Other, |io| Failure::of(io.kind()));
         ListingError {
             kind,
-            message: error.to_string(),
+            message: Words::of_error(error),
         }
     }
 }
@@ -2935,8 +2864,9 @@ impl Failure {
 }
 
 impl std::fmt::Display for ListingError {
+    /// Its message in English, for logs (`Words`' `Display`).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        fmt::Display::fmt(&self.message, f)
     }
 }
 
@@ -4604,8 +4534,8 @@ impl Listing {
     }
 
     /// What its failure says, the system's message or its provider's.
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_ref().map(|error| error.message.as_str())
+    pub fn error(&self) -> Option<&Words> {
+        self.error.as_ref().map(|error| &error.message)
     }
 
     /// What kind of failure it was, which what shows it reads (a
@@ -4895,7 +4825,7 @@ mod tests {
             .unwrap();
         failed.fill_job(&rx, spec).unwrap().run();
         failed.drain(&rx, long);
-        assert!(!failed.is_held() && failed.error() == Some("gone"));
+        assert!(!failed.is_held() && failed.error().map(Words::english).as_deref() == Some("gone"));
         assert_eq!(names(&failed), ["a"], "a failure shows what came");
 
         let mut elsewhere = Listing::default().filled_elsewhere();

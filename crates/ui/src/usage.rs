@@ -53,13 +53,6 @@ pub const DEFAULT_LEVELS: u32 = 3;
 
 /// What the zoom's steps say here (`ui.zoom` in, out and reset), each
 /// with its tooltip: in the View menu and on the toolbar.
-pub const STEPS: [(&str, &str); 3] = [
-    ("More levels", "More levels (or Ctrl and the wheel)"),
-    ("Fewer levels", "Fewer levels (or Ctrl and the wheel)"),
-    ("Default levels", "Default levels"),
-];
-
-/// [`STEPS`], as words (`STEPS` until every caller says words).
 pub fn steps_words() -> [(Words, Words); 3] {
     [
         (
@@ -1813,11 +1806,11 @@ fn tools(
             Button::new(
                 format!("usage-mode-{}-{}", each.name(), pane.0),
                 "",
-                each.title().say(),
+                each.title(),
                 "ui.usage_mode",
             )
             .args(serde_json::json!({ "mode": each.name() }))
-            .label(each.label().say())
+            .label(each.label())
             .active(each == mode)
             .render(shell, cx),
         );
@@ -1833,8 +1826,7 @@ fn tools(
                 words!(
                     usage_recalculate = "Recalculate sizes",
                     note = "A button of Usage: count again what the folder holds."
-                )
-                .say(),
+                ),
                 "ui.usage_refresh",
             )
             .enabled(shell.ui().usage.root.is_some())
@@ -1844,7 +1836,7 @@ fn tools(
 }
 
 /// The zoom's steps, for whoever never tries Ctrl and the wheel: the View
-/// menu's (`STEPS`), each greyed at its end, around how many levels the map
+/// menu's (`steps_words`), each greyed at its end, around how many levels the map
 /// draws when `count`. The count keeps the room of the widest, so neither
 /// step moves under the pointer as it changes.
 fn levels(shell: &Shell, theme: &Theme, count: bool, cx: &mut Context<Shell>) -> gpui::Div {
@@ -1865,7 +1857,7 @@ fn levels(shell: &Shell, theme: &Theme, count: bool, cx: &mut Context<Shell>) ->
         Button::new(
             format!("usage-levels-{dir}-{}", shell.pane.0),
             icon,
-            title.say(),
+            title,
             "ui.zoom",
         )
         .args(serde_json::json!({ "dir": dir }))

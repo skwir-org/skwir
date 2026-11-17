@@ -139,13 +139,14 @@ proptest! {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &input).unwrap();
         let cancel = skwir_core::cancel::CancelToken::new();
+        let said = skwir_core::words::Words::as_written;
         if let Ok(mut package) =
-            crate::package::Package::open(file.path(), "This package", false, &cancel)
+            crate::package::Package::open(file.path(), said("too many"), false, &cancel)
         {
             let names: Vec<String> = package.names().map(str::to_owned).collect();
             for name in names {
                 let _ = package.head(&name, 64);
-                let _ = package.read(&name, 4096, "This member", &cancel);
+                let _ = package.read(&name, 4096, said("missing"), said("too large"), &cancel);
             }
         }
     }

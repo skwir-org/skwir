@@ -152,7 +152,7 @@ impl Facts {
         }
     }
 
-    fn into_details(self) -> Vec<(String, String)> {
+    fn into_details(self) -> Vec<(words::Words, String)> {
         [
             (crate::print_time(), self.time),
             (crate::filament(), self.grams),
@@ -160,48 +160,42 @@ impl Facts {
                 words!(
                     models_detail_filament_length = "Filament length",
                     note = "A label in the preview's Properties: how much plastic filament a 3D print uses, in metres."
-                )
-                .say(),
+                ),
                 self.length,
             ),
             (
                 words!(
                     models_detail_material = "Material",
                     note = "A label in the preview's Properties: the filament's material a 3D print is sliced for (PLA, PETG)."
-                )
-                .say(),
+                ),
                 self.material,
             ),
             (
                 words!(
                     models_detail_layer_height = "Layer height",
                     note = "A label in the preview's Properties: how thick each layer of a 3D print is."
-                )
-                .say(),
+                ),
                 self.layer_height,
             ),
             (
                 words!(
                     models_detail_layers = "Layers",
                     note = "A label in the preview's Properties: how many layers a 3D print has."
-                )
-                .say(),
+                ),
                 self.layers,
             ),
             (
                 words!(
                     models_detail_printer = "Printer",
                     note = "A label in the preview's Properties: the 3D printer the print was sliced for."
-                )
-                .say(),
+                ),
                 self.printer,
             ),
             (
                 words!(
                     models_detail_sliced_with = "Sliced with",
                     note = "A label in the preview's Properties: the program (a slicer) that turned the model into this print's G-code."
-                )
-                .say(),
+                ),
                 self.slicer,
             ),
         ]
@@ -326,7 +320,7 @@ pub fn text<S: FileSource + ?Sized>(
     }
     Ok(Found {
         // The format's name, the same in every language.
-        title: "G-code".into(),
+        title: words::Words::as_written("G-code"),
         picture,
         details,
         ..Found::default()
@@ -414,8 +408,7 @@ pub fn binary<S: FileSource + ?Sized>(
         title: words!(
             models_bgcode_title = "Binary G-code",
             note = "The title of the preview of Prusa's binary G-code (.bgcode), a 3D print's instructions."
-        )
-        .say(),
+        ),
         picture: best.and_then(|(_, bytes)| crate::decoded(&bytes, side)),
         details: facts.into_details(),
         ..Found::default()
@@ -467,10 +460,10 @@ mod tests {
         text.push_str("; filament_type = PLA\n; layer_height = 0.20\n");
         std::fs::write(&path, &text).unwrap();
         let found = super::text(&path, 256, &CancelToken::new()).unwrap();
-        let picture = found.picture.expect("the largest picture");
+        let picture = found.picture.clone().expect("the largest picture");
         assert_eq!((picture.width, picture.height), (32, 18));
-        let details: Vec<(&str, &str)> = found
-            .details
+        let details = found.english_details();
+        let details: Vec<(&str, &str)> = details
             .iter()
             .map(|(l, v)| (l.as_str(), v.as_str()))
             .collect();
@@ -502,7 +495,7 @@ mod tests {
             found
                 .details
                 .iter()
-                .find(|(l, _)| l == label)
+                .find(|(l, _)| l.english() == label)
                 .map(|(_, v)| v.clone())
         };
         assert_eq!(get(&found, "Print time").as_deref(), Some("1h 2m 5s"));
@@ -592,7 +585,7 @@ mod tests {
         let found = binary(&path, 256, &CancelToken::new()).unwrap();
         let picture = found.picture.expect("the largest picture");
         assert_eq!((picture.width, picture.height), (48, 27));
-        let labels: Vec<&str> = found.details.iter().map(|(l, _)| l.as_str()).collect();
+        let labels: Vec<String> = found.details.iter().map(|(l, _)| l.english()).collect();
         assert_eq!(
             labels,
             [

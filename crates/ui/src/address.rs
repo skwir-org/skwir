@@ -162,7 +162,7 @@ fn view_button(shell: &Shell, spec: &ViewSpec, prefix: &str) -> Button {
     Button::new(
         format!("{prefix}-{}", spec.id),
         view_icon(spec),
-        keymap::view_title(spec.title.clone()).say(),
+        keymap::view_title(spec.title.clone()),
         "ui.view",
     )
     .args(serde_json::json!({"id": spec.id}))
@@ -194,7 +194,7 @@ fn view_control(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let choosing = open == Some(VIEW_BUTTONS);
-    let menu = |id: &'static str, icon: gpui::SharedString, title: String| {
+    let menu = |id: &'static str, icon: gpui::SharedString, title: Words| {
         Button::new(id, icon, title, "ui.toolbar_menu")
             .args(serde_json::json!({"kind": VIEW_OPTIONS}))
             .anchor_if(anchor, !(wide && choosing))
@@ -239,13 +239,11 @@ fn view_control(
                             address_view_menu_of = "{ $view } view, sort, hidden files and zoom",
                             view = spec.title.clone(),
                             note = "The tooltip of the button that opens the View menu where the pane's row is narrow; view: the view shown (List, Grid)."
-                        )
-                        .say(),
+                        ),
                         None => words!(
                             address_view_menu_views = "Views, sort, hidden files and zoom",
                             note = "The tooltip of the button that opens the View menu."
-                        )
-                        .say(),
+                        ),
                     },
                 )
                 .render(shell, cx),
@@ -293,8 +291,7 @@ fn view_control(
                 words!(
                     address_view_menu = "Sort, hidden files and zoom",
                     note = "The tooltip of the button beside the view buttons that opens the View menu."
-                )
-                .say(),
+                ),
             )
             .render(shell, cx),
         )
@@ -302,7 +299,7 @@ fn view_control(
 }
 
 /// A menu row: the shared button, full width, with its state as a check.
-fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
+fn menu_item(button: Button, label: impl Into<Words>) -> Button {
     button.label(label).menu()
 }
 
@@ -325,11 +322,11 @@ fn directions(
                     if going_up { "ascending" } else { "descending" }
                 ),
                 icon,
-                direction_said(key, going_up).0.say(),
+                direction_said(key, going_up).0,
                 command.to_owned(),
             )
             .args(serde_json::json!({ "ascending": going_up }))
-            .label(label.say())
+            .label(label)
             .active(ascending == going_up)
             .enabled(enabled)
             .segment()
@@ -587,7 +584,7 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                 directions(spec.key, spec.ascending, "sort", true),
             ));
             rows.push(FlyRow::Line);
-            let keys = shell.sort_keys().into_iter().map(|(_, key)| key).collect();
+            let keys = shell.sort_keys();
             by(&mut rows, keys, &|key| {
                 let current = spec.key == key;
                 let args = if current {
@@ -603,14 +600,13 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                             address_sort_by = "Sort by { $key }",
                             key = key.phrase_words(),
                             note = "The tooltip of a criterion of the View menu's Sort by; key: the criterion inside a sentence (name, date modified)."
-                        )
-                        .say(),
+                        ),
                         "sort",
                     )
                     .args(args)
                     .active(current)
                     .keeps_open(),
-                    key.title_words().say(),
+                    key.title_words(),
                 )
             });
         }
@@ -621,13 +617,13 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                     Button::new(
                         format!("group-{by:?}"),
                         if current { "check" } else { "" },
-                        tip.say(),
+                        tip,
                         "group",
                     )
                     .args(serde_json::json!({ "by": by }))
                     .active(current)
                     .keeps_open(),
-                    label.say(),
+                    label,
                 )
             };
             let mut values = match spec.group {
@@ -671,14 +667,13 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                             address_group_by = "Group by { $key }",
                             key = key.phrase_words(),
                             note = "The tooltip of a criterion of the View menu's Group by; key: the criterion inside a sentence (name, date modified)."
-                        )
-                        .say(),
+                        ),
                         "group",
                     )
                     .args(args)
                     .active(current)
                     .keeps_open(),
-                    key.title_words().say(),
+                    key.title_words(),
                 )
             });
         }
@@ -698,13 +693,13 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                     Button::new(
                         format!("menu-caption-{i}"),
                         if on { "check" } else { "" },
-                        caption_tip(key).say(),
+                        caption_tip(key),
                         "ui.grid_caption",
                     )
                     .args(serde_json::json!({ "key": spec.setting }))
                     .active(on)
                     .keeps_open(),
-                    spec.label_words().say(),
+                    spec.label_words(),
                 )));
             }
         }
@@ -781,8 +776,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         "",
         words!(
             address_buttons_tip = "Choose the buttons beside the address: which views have one, and whether Up stands after Back and Forward"
-        )
-        .say(),
+        ),
         "ui.toolbar_menu",
     )
     .args(serde_json::json!({ "kind": VIEW_BUTTONS }))
@@ -790,8 +784,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         words!(
             address_buttons = "Buttons…",
             note = "At the end of the View menu's Views heading: choose the buttons beside the address."
-        )
-        .say(),
+        ),
     );
     let spec = shell.sort_spec();
     // The sort and the groups each one row saying how they are ("Name, A
@@ -865,11 +858,11 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             args["view"] = serde_json::json!(view);
         }
         order.push(MenuPart::Row(menu_item(
-            Button::new("menu-remember-order", "", tooltip.say(), "remember_order")
+            Button::new("menu-remember-order", "", tooltip, "remember_order")
                 .args(args)
                 .active(remembers)
                 .enabled(!search),
-            label.say(),
+            label,
         )));
     }
     // Folders before files, or sorted with them, within each group: the
@@ -883,8 +876,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             words!(
                 address_folders_first_tip =
                     "List folders before files, in every pane; off, sort them together"
-            )
-            .say(),
+            ),
             "settings.apply",
         )
         .args(serde_json::json!({
@@ -896,23 +888,21 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         words!(
             address_folders_first = "Folders first",
             note = "A switch of the View menu: folders are listed before files."
-        )
-        .say(),
+        ),
     )));
     // What is listed.
     let mut show = vec![menu_item(
         Button::new(
             "menu-hidden",
             "",
-            words!(address_hidden_tip = "Show hidden files").say(),
+            words!(address_hidden_tip = "Show hidden files"),
             "toggle_hidden",
         )
         .active(spec.show_hidden),
         words!(
             address_hidden = "Hidden files",
             note = "A switch of the View menu: whether hidden files (their names begin with a dot) are listed."
-        )
-        .say(),
+        ),
     )];
     // With hidden files, the files that keep another's notes beside it
     // (ADR-028): the same setting as Tags and notes', where one looks for
@@ -925,8 +915,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
                 "",
                 words!(
                     address_companions_tip = "Also list the files that keep another file's notes beside it (a Mac's ._ files, sidecars)"
-                )
-                .say(),
+                ),
                 "settings.apply",
             )
             .args(serde_json::json!({
@@ -936,8 +925,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             words!(
                 address_companions = "Companion files",
                 note = "A switch of the View menu: whether the files that keep another file's notes beside it are listed."
-            )
-            .say(),
+            ),
         ));
     }
     // How the location shown can show otherwise (a tag location's
@@ -973,16 +961,14 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
                 "",
                 words!(
                     address_quick_filters_tip = "Offer the kinds, years and tags of this pane's files above them, each with how many files, to show only those until taken off"
-                )
-                .say(),
+                ),
                 "ui.quick_filters",
             )
             .active(shell.ui().quick_filters_on),
             words!(
                 address_quick_filters = "Quick filters",
                 note = "A switch of the View menu: a row above the files offering their kinds, years and tags to filter by."
-            )
-            .say(),
+            ),
         ));
     }
     if shell.app.commands.get("timeline.histogram").is_some() {
@@ -992,16 +978,14 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
                 "",
                 words!(
                     address_timeline_tip = "Show when this pane's files changed under them, a bar for each day, week, month or year; a bar pressed shows only its files"
-                )
-                .say(),
+                ),
                 "ui.timeline",
             )
             .active(shell.timeline().open),
             words!(
                 address_timeline = "Timeline",
                 note = "A switch of the View menu: a strip under the files showing when they changed."
-            )
-            .say(),
+            ),
         ));
     }
     // Only the grid draws thumbnails in a box.
@@ -1010,8 +994,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             Button::new(
                 "menu-grid-fill",
                 "",
-                words!(address_grid_fill_tip = "Crop thumbnails in the grid to fill their box")
-                    .say(),
+                words!(address_grid_fill_tip = "Crop thumbnails in the grid to fill their box"),
                 "ui.grid_fill",
             )
             .active(shell.prefs.grid_fill),
@@ -1019,8 +1002,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
                 address_grid_fill = "Fill thumbnails",
                 note =
                     "A switch of the View menu, in the grid: pictures cropped to fill their tiles."
-            )
-            .say(),
+            ),
         ));
     }
     // The tree closes what it opened in one go.
@@ -1029,15 +1011,14 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             Button::new(
                 "menu-collapse-all",
                 "fold",
-                words!(address_collapse_all_tip = "Close every folder opened in place").say(),
+                words!(address_collapse_all_tip = "Close every folder opened in place"),
                 "expand",
             )
             .args(serde_json::json!({"mode": "collapse_all"})),
             words!(
                 address_collapse_all = "Collapse all",
                 note = "An item of the View menu, in the tree: close every folder opened in place."
-            )
-            .say(),
+            ),
         ));
     }
     let mut parts = vec![
@@ -1131,11 +1112,11 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         ]
         .into_iter()
         .map(|(dir, icon, label, tip)| {
-            let button = Button::new(format!("zoom-{dir}"), icon, tip.say(), "ui.zoom")
+            let button = Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
                 .args(serde_json::json!({"dir": dir}))
                 .segment();
             match label {
-                Some(label) => button.label(label.say()),
+                Some(label) => button.label(label),
                 None => button,
             }
         })
@@ -1172,7 +1153,7 @@ fn under_names(
         .iter()
         .enumerate()
         .filter(|(_, spec)| shell.caption_applies(spec.caption))
-        .filter_map(|(i, spec)| Some((i, spec, spec.sorts_by()?)))
+        .map(|(i, spec)| (i, spec, spec.sorts_by()))
         .collect();
     captions.sort_by_key(|(_, _, key)| SortKey::ALL.iter().position(|k| k == key));
     captions
@@ -1196,8 +1177,7 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
         "",
         words!(
             address_view_buttons_tip = "Whether the views have buttons beside the address; off, one button, the view shown, opens the View menu"
-        )
-        .say(),
+        ),
         "ui.view_buttons_shown",
     )
     .args(serde_json::json!({ "on": !shown }))
@@ -1206,8 +1186,7 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
         words!(
             address_view_buttons = "View buttons",
             note = "A heading with a switch, in the menu of the buttons beside the address: whether the views have buttons."
-        )
-        .say(),
+        ),
     )
     .switch();
     let mut parts = vec![MenuPart::Heading(all)];
@@ -1239,14 +1218,13 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
                 Button::new(
                     "view-buttons-reset",
                     "revert",
-                    words!(address_default_buttons_tip = "Back to the buttons skwir comes with").say(),
+                    words!(address_default_buttons_tip = "Back to the buttons skwir comes with"),
                     "ui.view_buttons_reset",
                 ),
                 words!(
                     address_default_buttons = "Default buttons",
                     note = "An item of the menu of the buttons beside the address: the buttons as they first were."
-                )
-                .say(),
+                ),
             )
             .enabled(shown),
         ));
@@ -1268,8 +1246,7 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
                 if up { "check" } else { "" },
                 words!(
                     address_up_button_tip = "Whether Up stands after Back and Forward: it goes to the folder that holds this one, as Alt+Up does"
-                )
-                .say(),
+                ),
                 "ui.up_button",
             )
             .args(serde_json::json!({ "on": !up }))
@@ -1278,8 +1255,7 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
             words!(
                 address_up_button = "Up",
                 note = "An item of the menu of the buttons beside the address: whether the Up button is there."
-            )
-            .say(),
+            ),
         )),
     ]);
     parts
@@ -1301,9 +1277,9 @@ fn layout_parts(shell: &Shell) -> Vec<MenuPart> {
                     note = "An item of the More menu: open or close the terminal panel."
                 );
                 menu_item(
-                    Button::new("menu-terminal", "", terminal.say(), "ui.terminal")
+                    Button::new("menu-terminal", "", terminal.clone(), "ui.terminal")
                         .active(shell.terminal.open),
-                    terminal.say(),
+                    terminal,
                 )
             }),
             MenuPart::Line,
@@ -1442,14 +1418,13 @@ fn layout_values(shell: &Shell, what: &'static str) -> Vec<Button> {
     };
     let auto = !values.iter().any(|(_, _, _, chosen, _)| *chosen);
     let mut buttons = vec![
-        Button::new(format!("layout-{what}-auto"), "", automatic.say(), "ui.layout")
+        Button::new(format!("layout-{what}-auto"), "", automatic.clone(), "ui.layout")
             .args(serde_json::json!({ what: "auto" }))
             .label(
                 words!(
                     address_auto = "Auto",
                     note = "The first choice of where a panel goes, in the More menu: chosen by the window's shape."
-                )
-                .say(),
+                ),
             )
             .active(auto)
             .segment(),
@@ -1458,7 +1433,7 @@ fn layout_values(shell: &Shell, what: &'static str) -> Vec<Button> {
         Button::new(
             format!("layout-{what}-{value}"),
             icon,
-            words.say(),
+            words.clone(),
             "ui.layout",
         )
         .args(serde_json::json!({ what: value }))
@@ -1520,27 +1495,26 @@ fn undo_rows(shell: &Shell) -> Vec<MenuPart> {
     let (undo_said, redo_said) = undo_words(undo.as_ref(), redo.as_ref());
     [
         menu_item(
-            Button::new("menu-undo", "revert", undo_verb().say(), "undo"),
-            undo_said.say(),
+            Button::new("menu-undo", "revert", undo_verb(), "undo"),
+            undo_said,
         )
         .enabled(undo.is_some()),
         menu_item(
-            Button::new("menu-redo", "redo", redo_verb().say(), "redo"),
-            redo_said.say(),
+            Button::new("menu-redo", "redo", redo_verb(), "redo"),
+            redo_said,
         )
         .enabled(redo.is_some()),
         menu_item(
             Button::new(
                 "menu-undo-history",
                 "recent",
-                words!(address_undo_history_tip = "Undo history").say(),
+                words!(address_undo_history_tip = "Undo history"),
                 "ui.undo_history",
             ),
             words!(
                 address_undo_history = "Undo history…",
                 note = "An item of the More menu: the list of what was done, to undo or redo."
-            )
-            .say(),
+            ),
         ),
     ]
     .into_iter()
@@ -1568,7 +1542,7 @@ fn more_panel(
                 Button::new(
                     "menu-new-tab",
                     "tab-new",
-                    words!(address_new_tab = "New tab").say(),
+                    words!(address_new_tab = "New tab"),
                     "tab.new",
                 ),
                 words!(address_new_tab = "New tab"),
@@ -1577,7 +1551,7 @@ fn more_panel(
                 Button::new(
                     "menu-new-window",
                     "window-new",
-                    words!(address_new_window = "New window").say(),
+                    words!(address_new_window = "New window"),
                     "window.new",
                 ),
                 words!(address_new_window = "New window"),
@@ -1586,7 +1560,7 @@ fn more_panel(
                 Button::new(
                     "menu-palette",
                     "command",
-                    words!(address_palette_tip = "Command palette").say(),
+                    words!(address_palette_tip = "Command palette"),
                     "ui.palette",
                 ),
                 words!(address_palette = "Command palette…"),
@@ -1598,8 +1572,7 @@ fn more_panel(
                     words!(
                         address_shortcuts_tip = "Shortcuts here",
                         note = "The tooltip of the More menu's Shortcuts…: the keys that work where one is."
-                    )
-                    .say(),
+                    ),
                     "ui.shortcuts",
                 ),
                 words!(address_shortcuts = "Shortcuts…"),
@@ -1608,7 +1581,7 @@ fn more_panel(
                 Button::new(
                     "menu-settings",
                     "settings",
-                    words!(address_settings_tip = "Settings").say(),
+                    words!(address_settings_tip = "Settings"),
                     "ui.settings",
                 ),
                 words!(address_settings = "Settings…"),
@@ -1617,14 +1590,14 @@ fn more_panel(
                 Button::new(
                     "menu-about",
                     "info",
-                    words!(address_about = "About skwir").say(),
+                    words!(address_about = "About skwir"),
                     "ui.about",
                 ),
                 words!(address_about = "About skwir"),
             ),
         ]
         .into_iter()
-        .map(|(button, label)| MenuPart::Row(menu_item(button, label.say()))),
+        .map(|(button, label)| MenuPart::Row(menu_item(button, label))),
     );
     // Quit, last: it asks while something runs; closing the window stops
     // nothing (ADR-115).
@@ -1633,14 +1606,13 @@ fn more_panel(
         Button::new(
             "menu-quit",
             "power",
-            words!(address_quit_tip = "Quit skwir").say(),
+            words!(address_quit_tip = "Quit skwir"),
             "ui.quit",
         ),
         words!(
             address_quit = "Quit",
             note = "The last item of the More menu: end skwir, every window."
-        )
-        .say(),
+        ),
     )));
     toolbar::menu_parts(panel, parts, shell, theme, cx).into_any_element()
 }
@@ -1668,8 +1640,7 @@ pub fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
             words!(
                 address_sidebar = "Sidebar",
                 note = "The tooltip of the button that shows or hides the sidebar."
-            )
-            .say(),
+            ),
             "ui.toggle_sidebar",
         )
             .active(!shell.sidebar_hidden)
@@ -1681,8 +1652,7 @@ pub fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
             words!(
                 address_more = "More",
                 note = "The tooltip of the button of the window's menu (layout, undo, settings, quit)."
-            )
-            .say(),
+            ),
             "ui.toolbar_menu",
         )
             .args(serde_json::json!({"kind": MORE}))
@@ -1714,26 +1684,23 @@ pub fn panel_toggles(shell: &Shell, labeled: bool, cx: &mut Context<Shell>) -> [
     let properties = Button::new(
         "properties-toggle",
         "info",
-        properties_said.say(),
+        properties_said.clone(),
         "ui.properties",
     );
     let preview = Button::new(
         "preview-toggle",
         shell.layout.preview_icon(),
-        preview_said.say(),
+        preview_said.clone(),
         "ui.toggle_preview",
     );
     let (split, properties, preview) = if labeled {
         (
-            split.label(
-                words!(
-                    address_split = "Split",
-                    note = "A button's label: split the pane in two, or close the split."
-                )
-                .say(),
-            ),
-            properties.label(properties_said.say()),
-            preview.label(preview_said.say()),
+            split.label(words!(
+                address_split = "Split",
+                note = "A button's label: split the pane in two, or close the split."
+            )),
+            properties.label(properties_said),
+            preview.label(preview_said),
         )
     } else {
         (split, properties, preview)
@@ -2131,7 +2098,7 @@ fn history_button(
     };
     let open = row.nav == Some(crate::nav_menu::NavWhat::History { forward });
     let pane = shell.pane;
-    Button::new(id, id, title.say(), command)
+    Button::new(id, id, title, command)
         .on_hold("ui.history_menu", serde_json::json!({ "forward": forward }))
         .enabled(enabled)
         .active(open)
@@ -2342,7 +2309,6 @@ fn pane_row(
                             address_remove_kept = "Remove from sidebar",
                             note = "The tooltip of the button at the address's end while what is shown is kept in the sidebar."
                         )
-                        .say()
                     },
                     |k| k.forget_title,
                 );
@@ -2428,8 +2394,7 @@ fn pane_row(
                     words!(
                         address_up_tip = "Up one level",
                         note = "The tooltip of the Up button: the folder that holds this one."
-                    )
-                    .say(),
+                    ),
                     "up",
                 )
                 .enabled(above)
@@ -2459,7 +2424,7 @@ fn pane_row(
             Button::new(
                 format!("location-tool-{}-{i}", shell.pane.0),
                 tool.icon,
-                tool.title.say(),
+                tool.title.clone(),
                 tool.command.name.to_string(),
             )
             .args(args)

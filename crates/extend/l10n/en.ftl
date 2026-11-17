@@ -30,6 +30,9 @@ extend_failed_before = the plugin could not start a moment ago
 # An error: a plugin from outside Skwir answered the file it made of another, not written as base64 as the protocol asks. In lower case.
 extend_file_not_base64 = the plugin's file is no base64
 
+# Why a plugin from outside Skwir written as a WebAssembly module does not start. program: the helper's name (skwir-module-worker).
+extend_install_module_worker = Install { $program } to run plugins that are WebAssembly modules
+
 # An error: a plugin from outside Skwir answered a plan, but did not declare it changes files. In lower case.
 extend_may_not_write = this plugin may not change files
 

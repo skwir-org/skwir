@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use skwir_core::app::App;
 use skwir_core::form::{Choice, Field, Form, Kind, Values};
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme};
 
@@ -155,7 +155,7 @@ pub fn form(top: &Address, now: &MountOptions, automatic: (&str, &str)) -> Form 
     let mut form = Form::new(
         words!(
             remote_options_title = "Mount Options of { $server }",
-            server = Name(top.label()),
+            server = crate::address::named(&top.label()),
             note = "The title of a server's mount options; server: its login and name (me@nas)."
         ),
         words!(remote_options_save = "Save"),

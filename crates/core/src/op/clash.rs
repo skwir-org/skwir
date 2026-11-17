@@ -176,19 +176,17 @@ impl Side {
 }
 
 /// What a plan does with an item whose name is taken.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Act {
     Copy,
     Move,
     Link,
-    /// Makes something new there ([`Made`]): the verb on the question's
-    /// button and what nothing is until it is answered ("Extract",
-    /// "extracted"), and whether a folder it makes is merged into a folder
-    /// there, as the step says what it makes item by item
-    /// (`Operation::made_tree`).
+    /// Makes something new there ([`Made`]): what the question says of it
+    /// (the verb on its button, what nothing is until it is answered), and
+    /// whether a folder it makes is merged into a folder there, as the
+    /// step says what it makes item by item (`Operation::made_tree`).
     Make {
-        verb: &'static str,
-        done: &'static str,
+        words: std::sync::Arc<super::MakeWords>,
         merges: bool,
     },
 }
@@ -603,7 +601,7 @@ impl Walk<'_> {
         if status.is_none_or(|status| status == StepStatus::AlreadyDone) {
             return self.push(op.clone_box());
         }
-        let (verb, done) = made.words;
+        let words = std::sync::Arc::new(made.words.clone());
         let there = Side::of(target);
         // A folder onto a folder is merged where the step says all it
         // makes.
@@ -619,8 +617,7 @@ impl Walk<'_> {
             step,
             inside: None,
             act: Act::Make {
-                verb,
-                done,
+                words,
                 merges: tree.is_some(),
             },
             source: Side {
@@ -677,7 +674,7 @@ impl Walk<'_> {
         index: usize,
     ) {
         let target = &made.target;
-        let (verb, done) = made.words;
+        let words = std::sync::Arc::new(made.words.clone());
         let same = tree.sames(target, self.ctx.cancel_token());
         let children = tree.children();
         let none: &[&Path] = &[];
@@ -720,8 +717,7 @@ impl Walk<'_> {
                 step,
                 inside: Some(inside),
                 act: Act::Make {
-                    verb,
-                    done,
+                    words: std::sync::Arc::clone(&words),
                     merges: true,
                 },
                 source: Side {

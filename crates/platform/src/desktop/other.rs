@@ -17,9 +17,10 @@ pub(super) struct Backend;
 impl Backend {
     pub(super) fn new(setup: &Setup) -> Backend {
         let _ = (&setup.app_id, &setup.app_name, &setup.asked, &setup.icon);
+        // A log, in English (ADR-139, "What stays English").
         tracing::debug!(
-            "{}",
-            skwir_core::system::not_yet("Telling the desktop of long actions")
+            "Telling the desktop of long actions is not available on {} yet",
+            skwir_core::system::NAME
         );
         Backend
     }

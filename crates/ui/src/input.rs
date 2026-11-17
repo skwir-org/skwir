@@ -15,6 +15,7 @@ use gpui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::theme::Theme;
+use skwir_core::words::Words;
 
 actions!(
     text_input,
@@ -294,10 +295,11 @@ fn typed_at(range: &Range<usize>, text: &str) -> Option<Range<usize>> {
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
-    placeholder: SharedString,
+    /// What an empty field shows, said where it is drawn.
+    placeholder: Words,
     /// What assistive technology calls it, when the placeholder does not
-    /// name it (`set_label`).
-    label: Option<SharedString>,
+    /// name it (`set_label`), said where it is drawn.
+    label: Option<Words>,
     /// Show a bullet per character, and keep the text off the clipboard.
     masked: bool,
     selected_range: Range<usize>,
@@ -334,7 +336,7 @@ impl EventEmitter<HintTaken> for TextInput {}
 impl EventEmitter<AtStart> for TextInput {}
 
 impl TextInput {
-    pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
+    pub fn new(placeholder: impl Into<Words>, cx: &mut Context<Self>) -> Self {
         TextInput {
             focus_handle: cx.focus_handle(),
             content: "".into(),
@@ -387,7 +389,7 @@ impl TextInput {
 
     /// Its name for assistive technology, where its placeholder is a hint
     /// rather than a name ("Address" for "Path, query:… or location").
-    pub fn set_label(&mut self, label: impl Into<SharedString>) {
+    pub fn set_label(&mut self, label: impl Into<Words>) {
         self.label = Some(label.into());
     }
 
@@ -422,13 +424,12 @@ impl TextInput {
     }
 
     /// What an empty field shows.
-    pub fn set_placeholder(
-        &mut self,
-        placeholder: impl Into<SharedString>,
-        cx: &mut Context<Self>,
-    ) {
-        self.placeholder = placeholder.into();
-        cx.notify();
+    pub fn set_placeholder(&mut self, placeholder: impl Into<Words>, cx: &mut Context<Self>) {
+        let placeholder = placeholder.into();
+        if placeholder != self.placeholder {
+            self.placeholder = placeholder;
+            cx.notify();
+        }
     }
 
     pub fn text(&self) -> &str {
@@ -1226,7 +1227,10 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), theme.text_muted)
+            (
+                SharedString::from(input.placeholder.say()),
+                theme.text_muted,
+            )
         } else {
             (content, style.color)
         };
@@ -1424,13 +1428,11 @@ impl TextInput {
         let anchor = unit_at(&lengths, self.shown_offset(anchor));
         let focus = unit_at(&lengths, self.shown_offset(focus));
         let named = self.label.is_some();
-        el.aria_label(
-            self.label
-                .clone()
-                .unwrap_or_else(|| self.placeholder.clone()),
-        )
+        el.aria_label(SharedString::from(
+            self.label.as_ref().unwrap_or(&self.placeholder).say(),
+        ))
         .when(named && !self.placeholder.is_empty(), |d| {
-            d.aria_placeholder(self.placeholder.clone())
+            d.aria_placeholder(SharedString::from(self.placeholder.say()))
         })
         .aria_value(SharedString::from(shown.clone()))
         .a11y_synthetic_children(move |builder| {

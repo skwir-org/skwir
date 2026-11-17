@@ -694,8 +694,9 @@ pub struct Shell {
     pub last_find: Option<(String, bool)>,
     /// Keys typed that wait for the next, and what can follow.
     pub(crate) sequence: Option<crate::sequence::Sequence>,
-    /// What plugins count for the footer (`App::tallies`).
-    pub tallies: Vec<skwir_core::tally::Tally>,
+    /// What plugins count for the footer (`App::tallies`), each by its
+    /// name.
+    pub tallies: Vec<(String, skwir_core::tally::Tally)>,
     /// The `App::tallies` revision they were read at.
     tallies_revision: Option<u64>,
     /// A plain press on a row of a multi-selection, waiting for its
@@ -759,8 +760,8 @@ pub struct Shell {
     /// model's preview then asks for its mesh, else for its still. Read at
     /// each render: the renderer may come after the shell.
     pub(crate) draws_meshes: bool,
-    /// What the window's title was last set from: the active pane's
-    /// location's title.
+    /// The window's title as last set, said: its active pane's location's
+    /// title, then skwir's name (`title_bar::window_title`).
     pub(crate) title: gpui::SharedString,
     /// What of Skwir's the system's clipboard may hold (ADR-062).
     pub(crate) clipboard_holds: crate::clipboard::Held,
@@ -1188,7 +1189,7 @@ impl Shell {
         // one showed it; a pane made later takes the active one's.
         let date = timeline::DATES
             .iter()
-            .position(|(word, _)| *word == session.timeline_date)
+            .position(|word| *word == session.timeline_date)
             .unwrap_or(0);
         for pane in &mut self.panes {
             pane.quick_filters_on = session.quick_filters || former == Some(true);
@@ -1272,17 +1273,13 @@ impl Shell {
                     shell_address_placeholder = "Path, query:… or location",
                     note = "What the address field shows while it is empty; query: is a word of \
                             the search language, as typed."
-                )
-                .say(),
+                ),
                 cx,
             );
-            input.set_label(
-                words!(
-                    shell_address = "Address",
-                    note = "What a screen reader calls the address field."
-                )
-                .say(),
-            );
+            input.set_label(words!(
+                shell_address = "Address",
+                note = "What a screen reader calls the address field."
+            ));
             input
         });
         let sub = cx.subscribe_in(
@@ -2835,8 +2832,8 @@ impl Shell {
         self.set_status(
             words!(
                 shell_text_size = "{ $part }: { $size }",
-                part = part.title(),
-                size = crate::sizes::step_label(next),
+                part = part.title_words(),
+                size = crate::sizes::step_words(next),
                 note = "Said as a part's text is made larger or smaller: the part (Files text), \
                         then its size (120%)."
             ),
@@ -3197,11 +3194,7 @@ impl Shell {
                 let paused = self.app.executor.is_paused(running.plan);
                 (running.title.clone(), paused)
             })
-            .or_else(|| {
-                tasks
-                    .first()
-                    .map(|task| (skwir_core::words::Words::from(task.title.clone()), false))
-            });
+            .or_else(|| tasks.first().map(|task| (task.title.clone(), false)));
         let waiting = self.app.executor.queued();
         if running.is_none() && waiting == 0 && work.waits_for_server() {
             // Nothing runs nor waits its turn: what keeps it waits for
@@ -3215,8 +3208,7 @@ impl Shell {
                     shell_quit_waits_for_server = "{ $action } waits for its server to answer \
                         again, to go on by itself. Skwir can wait for it without its window, \
                         then quit. Or stop now: it does not go on, and what it finished stays.",
-                    // Transitional: a plan's title capitalised (ADR-139).
-                    action = crate::toast::capitalized(&stopped.title.say()),
+                    action = stopped.title.heading(),
                     note = "What Quit asks while an action waits for its server to go on. \
                             action: the action, by its title, capitalised (Copy to stick)."
                 ),
@@ -3592,7 +3584,7 @@ impl Shell {
                 };
                 self.open_prompt(
                     PromptKind::Find { origin, backward },
-                    &title.say(),
+                    title,
                     "",
                     None,
                     window,
@@ -3710,9 +3702,9 @@ impl Shell {
             "copy_text" => {
                 if let Some(text) = arg("text") {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    // Transitional: what it is comes as text in the
-                    // command's arguments, as its caller wrote it (ADR-139).
-                    let said = match arg("what") {
+                    // What it is: words as their data (the window's own,
+                    // said in its language), or text as its caller wrote it.
+                    let said = match copied_what(args) {
                         Some(what) => words!(
                             shell_copied_what = "Copied { $what }",
                             what = what,
@@ -3733,7 +3725,7 @@ impl Shell {
                         .read_from_clipboard()
                         .and_then(|item| item.text())
                         .unwrap_or_default();
-                    let (said, wrong) = compared(&text, &copied, arg("what").as_deref());
+                    let (said, wrong) = compared(&text, &copied, copied_what(args));
                     self.set_status(said, wrong, cx);
                 }
             }
@@ -4679,16 +4671,15 @@ impl Shell {
     /// system's list of windows and a screen reader name it by its active
     /// pane's location. Set when that changed, after the panes read it.
     fn sync_title(&mut self, window: &mut Window) {
-        let place = self.ui().place.title.clone();
-        if place == self.title {
+        // Said now, so that a language chosen since shows too.
+        let title: gpui::SharedString = crate::title_bar::window_title(&self.ui().place.title)
+            .say()
+            .into();
+        if title == self.title {
             return;
         }
-        self.title = place.clone();
-        if place.is_empty() {
-            window.set_window_title("skwir");
-        } else {
-            window.set_window_title(&crate::title_bar::window_title(&place));
-        }
+        window.set_window_title(&title);
+        self.title = title;
     }
 
     /// What plugins count for the footer (`App::tallies`: the shelf's
@@ -5043,7 +5034,7 @@ impl Render for Shell {
             crate::settings::show_title_bar(
                 &self.app,
                 crate::title_bar::automatic_now(asked, decorations),
-                crate::title_bar::refusal(asked, decorations, crate::title_bar::is_x11(cx)),
+                crate::title_bar::refused(asked, decorations, crate::title_bar::is_x11(cx)),
                 window.client_decorations_supported(),
             );
         }
@@ -5370,22 +5361,28 @@ impl Shell {
     }
 }
 
+/// What `ui.copy_text` and `ui.compare_copied` say they copy or compare
+/// (`what`): words as their data, or text as its caller wrote it.
+fn copied_what(args: &serde_json::Value) -> Option<Words> {
+    args.get("what")
+        .filter(|what| !what.is_null())
+        .and_then(|what| serde_json::from_value(what.clone()).ok())
+}
+
 /// Whether `copied` holds `text` (a checksum), ignoring case: the whole
 /// clipboard or one of its words (`sha256sum` writes the name after it),
 /// in words, and whether that is wrong. One word as long as it, but
 /// another, differs; nothing of its length is nothing to compare.
 /// `what` it is, as the link comparing it says it (`SHA-256`), else a
 /// text.
-// Transitional: `what` comes as text in the command's arguments, as its
-// caller wrote it (ADR-139).
-fn compared(text: &str, copied: &str, what: Option<&str>) -> (Words, bool) {
+fn compared(text: &str, copied: &str, what: Option<Words>) -> (Words, bool) {
     let same = |word: &str| word.eq_ignore_ascii_case(text);
     let words = || copied.split_whitespace();
     if same(copied.trim()) || words().any(same) {
         let said = match what {
             Some(what) => words!(
                 shell_compared_same = "The { $what } is the one copied",
-                what = what.to_owned(),
+                what = what,
                 note = "Said where a value is compared with the clipboard and it is the same; \
                         what: what it is, as the link says it (SHA-256)."
             ),
@@ -5399,7 +5396,7 @@ fn compared(text: &str, copied: &str, what: Option<&str>) -> (Words, bool) {
         let said = match what {
             Some(what) => words!(
                 shell_compared_differs = "The { $what } differs from the one copied",
-                what = what.to_owned(),
+                what = what,
                 note = "Said where a value is compared with the clipboard and differs; what: \
                         what it is, as the link says it (SHA-256)."
             ),
@@ -5413,7 +5410,7 @@ fn compared(text: &str, copied: &str, what: Option<&str>) -> (Words, bool) {
         let said = match what {
             Some(what) => words!(
                 shell_compared_nothing = "No { $what } is copied to compare with",
-                what = what.to_owned(),
+                what = what,
                 note = "Said where a value is compared with the clipboard, which holds none \
                         like it; what: what it is, as the link says it (SHA-256)."
             ),
@@ -5719,7 +5716,7 @@ mod tests {
     fn a_checksum_is_compared_with_what_is_copied() {
         let sum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
         let said = |copied: &str| {
-            let (said, wrong) = super::compared(sum, copied, Some("SHA-256"));
+            let (said, wrong) = super::compared(sum, copied, Some("SHA-256".into()));
             (said.english(), wrong)
         };
         assert_eq!(

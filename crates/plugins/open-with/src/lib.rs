@@ -27,7 +27,9 @@ use skwir_core::fs::reach;
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
-use skwir_core::registry::{KeyBinding, MenuItem, MenuSource};
+use skwir_core::registry::{
+    KeyBinding, MenuItem, MenuSource, Property, PropertyAction, property_groups,
+};
 use skwir_core::scheduler::{Lane, Priority, on_window_thread};
 use skwir_core::words;
 use skwir_core::words::{Kind, Name, Words};
@@ -509,24 +511,23 @@ fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
         .iter()
         .find(|(_, _, is_default)| *is_default)
         .map(|(application, _, _)| *application);
-    // A menu's answer reaches the window as text (JSON): its words are
-    // said here, in the window's language.
-    let said = |words: Words| Words::as_written(words.say());
+    // A menu's answer carries its words as data (`menu_answer`): the
+    // window says them in its language.
     let mut items = match default {
         Some(default) => vec![MenuItem::new(
             owner,
-            said(words!(
+            words!(
                 open_with_open_with_app = "Open With { $app }",
                 app = default.name.clone(),
                 note = "A menu item opening the selection with its default application, named as its desktop entry names it."
-            )),
+            ),
             "open",
             0,
             open_with(default),
         )],
         None if owner == "context" => vec![MenuItem::new(
             owner,
-            said(open_title()),
+            open_title(),
             "open",
             0,
             Invocation::new("open"),
@@ -550,18 +551,18 @@ fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
                     5,
                     open_with(application),
                 )
-                .submenu(OPEN_WITH)
+                .submenu(open_with_submenu())
             }),
     );
     // The context menu's chooser is its own (`register`), for the
     // selection; the preview's names its files.
     if owner == "preview" {
         items.push(
-            MenuItem::new(owner, said(other_application()), "open", 8, choose(&target))
-                .submenu(OPEN_WITH),
+            MenuItem::new(owner, other_application(), "open", 8, choose(&target))
+                .submenu(open_with_submenu()),
         );
     }
-    Ok(Outcome::Value(serde_json::json!({ "items": items })))
+    Ok(Outcome::Value(skwir_core::registry::menu_answer(&items)))
 }
 
 /// The menu item that opens the selection: enters a folder, or opens the
@@ -583,11 +584,14 @@ fn other_application() -> Words {
 
 /// The context menu's submenu of what opens the selection (ADR-099), which
 /// the shell's Run Command joins.
-const OPEN_WITH: skwir_core::registry::Submenu = skwir_core::registry::submenus::OPEN_WITH;
+fn open_with_submenu() -> skwir_core::registry::Submenu {
+    skwir_core::registry::submenus::open_with()
+}
 
 /// The same, on the folder's background, for the folder.
-const OPEN_FOLDER_WITH: skwir_core::registry::Submenu =
-    skwir_core::registry::submenus::OPEN_FOLDER_WITH;
+fn open_folder_with_submenu() -> skwir_core::registry::Submenu {
+    skwir_core::registry::submenus::open_folder_with()
+}
 
 /// The most applications the Open With submenu names; the chooser has
 /// them all.
@@ -896,15 +900,21 @@ enum Fit {
     Related,
 }
 
-/// One entry of the picker, as `ui.choose` reads it.
+/// One entry of the picker, as `ui.choose` reads it: its words as their
+/// data, said in the window's language.
 #[derive(Debug, serde::Serialize)]
 struct Choice {
-    title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<String>,
+    #[serde(with = "skwir_core::words::data")]
+    title: Words,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "skwir_core::words::data::optional"
+    )]
+    detail: Option<Words>,
     #[serde(skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
-    section: String,
+    #[serde(with = "skwir_core::words::data")]
+    section: Words,
     command: Invocation,
 }
 
@@ -1007,17 +1017,15 @@ fn properties(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Out
                         open_with_no_application = "No application",
                         note = "Properties' Opens with, for a file no application opens."
                     )
-                    .say()
                 },
-                |a| a.name.clone(),
+                |a| Words::as_written(a.name.clone()),
             );
-            // Said here: the window reads Properties' rows and the
-            // chooser's arguments as text.
+            // As data: the window says the chooser's words.
             let change = Invocation::with_args(
                 "ui.choose",
                 &serde_json::json!({
-                    "title": open_files_with(m.as_str()).say(),
-                    "placeholder": search_applications().say(),
+                    "title": open_files_with(m.as_str()).to_data(),
+                    "placeholder": search_applications().to_data(),
                     "source": {
                         "name": "open_with.choices",
                         "args": { "entries": named, "defaults": true },
@@ -1027,19 +1035,19 @@ fn properties(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Out
             let change_words = words!(
                 open_with_change = "Change…",
                 note = "A link after Properties' Opens with: chooses another application for the file's type."
-            )
-            .say();
-            vec![serde_json::json!({
-                // The window's own group, met by its name.
-                "group": "General",
-                "label": opens_with().say(),
-                "value": value,
-                "actions": [{ "words": change_words, "command": change }],
-            })]
+            );
+            vec![Property {
+                actions: vec![PropertyAction {
+                    words: change_words,
+                    command: change,
+                }],
+                // The window's own group, met by its key.
+                ..Property::new(property_groups::GENERAL, opens_with(), value)
+            }]
         }
         _ => Vec::new(),
     };
-    Ok(Outcome::Value(serde_json::json!({ "rows": rows })))
+    Ok(Property::answer(&rows))
 }
 
 fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
@@ -1088,36 +1096,30 @@ fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outco
                 args["ids"] = serde_json::to_value(&ids).unwrap_or_default();
             }
             let detail = match (is_default, &application.generic_name) {
-                (true, Some(generic)) => Some(
-                    words!(
-                        open_with_default_generic = "Default · { $generic }",
-                        generic = generic.clone(),
-                        note = "Under an application's name in the chooser: it is the default, and what it is, as its desktop entry says (Image Viewer)."
-                    )
-                    .say(),
-                ),
-                (true, None) => Some(
-                    words!(
-                        open_with_default = "Default",
-                        note = "Under an application's name in the chooser: it is the default."
-                    )
-                    .say(),
-                ),
-                (false, generic) => generic.clone(),
+                (true, Some(generic)) => Some(words!(
+                    open_with_default_generic = "Default · { $generic }",
+                    generic = generic.clone(),
+                    note = "Under an application's name in the chooser: it is the default, and what it is, as its desktop entry says (Image Viewer)."
+                )),
+                (true, None) => Some(words!(
+                    open_with_default = "Default",
+                    note = "Under an application's name in the chooser: it is the default."
+                )),
+                (false, generic) => generic.clone().map(Words::as_written),
             };
             Choice {
-                title: application.name.clone(),
+                title: Words::as_written(application.name.clone()),
                 detail,
                 icon: application.icon.clone(),
-                section: section(fit).say(),
+                section: section(fit),
                 command: Invocation::with_args("open_with", &args),
             }
         })
         .collect();
-    // Said here: the chooser reads its answer as text.
+    // As data: the chooser says its words in the window's language.
     let mut answer = serde_json::json!({
-        "title": title.say(),
-        "empty": no_applications().say(),
+        "title": title.to_data(),
+        "empty": no_applications().to_data(),
         "choices": choices,
     });
     // One type: the chosen application can become its default.
@@ -1133,7 +1135,7 @@ fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outco
                 description = of,
                 note = "A check in the chooser: makes the application chosen the default for the type. The type is as the system describes it (PNG image, plain text document)."
             )
-            .say(),
+            .to_data(),
             "field": "set_default",
         });
     }
@@ -1146,18 +1148,17 @@ fn default_choices(catalog: &Catalog, only: &Mime) -> serde_json::Value {
     let choices: Vec<Choice> = rank(catalog, std::slice::from_ref(only))
         .into_iter()
         .map(|(application, fit, is_default)| Choice {
-            title: application.name.clone(),
+            title: Words::as_written(application.name.clone()),
             detail: is_default
                 .then(|| {
                     words!(
                         open_with_now = "Now",
                         note = "Under an application's name in the chooser of a default: the one that opens the type now."
                     )
-                    .say()
                 })
-                .or_else(|| application.generic_name.clone()),
+                .or_else(|| application.generic_name.clone().map(Words::as_written)),
             icon: application.icon.clone(),
-            section: section(fit).say(),
+            section: section(fit),
             command: Invocation::with_args(
                 "open_with.set_default",
                 &serde_json::json!({ "mime": only.as_str(), "app": application.id }),
@@ -1165,8 +1166,8 @@ fn default_choices(catalog: &Catalog, only: &Mime) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({
-        "title": open_files_with(only.as_str()).say(),
-        "empty": no_applications().say(),
+        "title": open_files_with(only.as_str()).to_data(),
+        "empty": no_applications().to_data(),
         "choices": choices,
     })
 }
@@ -1443,8 +1444,8 @@ fn choose(args: &serde_json::Value) -> Invocation {
                 open_with_chooser = "Open with",
                 note = "The title of the chooser of applications for the selection."
             )
-            .say(),
-            "placeholder": search_applications().say(),
+            .to_data(),
+            "placeholder": search_applications().to_data(),
             "source": { "name": "open_with.choices", "args": args },
         }),
     )
@@ -1546,9 +1547,10 @@ impl Plugin for OpenWithPlugin {
                 typed: true,
                 // Every file has one, "No application" where none opens it.
                 places: vec![skwir_core::registry::PropertyPlace {
-                    // The window's own group, met by its name.
-                    group: "General".into(),
-                    label: opens_with().say(),
+                    // The window's own group, met by its key.
+                    group: property_groups::GENERAL.into(),
+                    heading: None,
+                    label: opens_with(),
                     folded: false,
                     of: skwir_core::registry::PlaceOf::Files,
                 }],
@@ -1625,7 +1627,7 @@ impl Plugin for OpenWithPlugin {
                 choose(&serde_json::json!({})),
             )
             .when("selection !place")
-            .submenu(OPEN_WITH),
+            .submenu(open_with_submenu()),
         );
         app.registry.menus.add(
             ID,
@@ -1637,7 +1639,7 @@ impl Plugin for OpenWithPlugin {
                 choose(&serde_json::json!({ "here": true })),
             )
             .when("empty folder")
-            .submenu(OPEN_FOLDER_WITH),
+            .submenu(open_folder_with_submenu()),
         );
 
         let cache = Arc::clone(&self.catalog);
@@ -1699,6 +1701,13 @@ mod tests {
     use super::*;
     use skwir_core::app::AppConfig;
     use std::time::Duration;
+
+    /// Words carried as data (or text) in JSON, read back in English.
+    fn english(value: &serde_json::Value) -> String {
+        serde_json::from_value::<Words>(value.clone())
+            .map(|words| words.english())
+            .unwrap_or_default()
+    }
 
     struct BlockedWorkers(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
 
@@ -2128,19 +2137,25 @@ mod tests {
         else {
             panic!("choices are a value")
         };
-        assert_eq!(answer["title"], format!("Open “{photo}” with"));
+        assert_eq!(english(&answer["title"]), format!("Open “{photo}” with"));
         let first = &answer["choices"][0];
-        assert_eq!(first["title"], "Viewer");
-        assert_eq!(first["detail"], "Default · Image Viewer");
-        assert_eq!(first["section"], "Recommended");
+        assert_eq!(english(&first["title"]), "Viewer");
+        assert_eq!(english(&first["detail"]), "Default · Image Viewer");
+        assert_eq!(english(&first["section"]), "Recommended");
         assert_eq!(first["command"]["name"], "open_with");
         let args = &first["command"]["args"];
         assert_eq!(args["app"], "viewer.desktop");
         assert_eq!(args["pane"], serde_json::to_value(pane).unwrap());
         assert_eq!(args["ids"], serde_json::json!([id]));
         assert_eq!(
-            answer["option"],
-            serde_json::json!({ "title": "Always use for PNG image files", "field": "set_default" }),
+            (
+                english(&answer["option"]["title"]),
+                &answer["option"]["field"]
+            ),
+            (
+                "Always use for PNG image files".to_owned(),
+                &serde_json::json!("set_default")
+            ),
             "one type: the choice can become its default"
         );
 
@@ -2149,7 +2164,7 @@ mod tests {
         else {
             panic!("choices are a value")
         };
-        assert_eq!(answer["title"], "Open 2 items with");
+        assert_eq!(english(&answer["title"]), "Open 2 items with");
         assert!(
             answer.get("option").is_none(),
             "no one default for two types"
@@ -2165,7 +2180,7 @@ mod tests {
         else {
             panic!("choices are a value")
         };
-        assert_eq!(answer["title"], "Open “root” with");
+        assert_eq!(english(&answer["title"]), "Open “root” with");
         assert_eq!(
             answer["choices"][0]["command"]["args"]["app"],
             "browser.desktop"
@@ -2213,17 +2228,14 @@ mod tests {
             answer["items"].as_array().unwrap().clone()
         };
         let photos = items(&[photo, "b.png"]);
-        let titles: Vec<&str> = photos
-            .iter()
-            .map(|item| item["title"].as_str().unwrap())
-            .collect();
+        let titles: Vec<String> = photos.iter().map(|item| english(&item["title"])).collect();
         assert_eq!(
             titles,
             ["Open With Viewer", "Editor", "Hex"],
             "the default first, the others in Open With"
         );
         for other in &photos[1..] {
-            assert_eq!(other["submenu"]["id"], &*OPEN_WITH.id);
+            assert_eq!(other["submenu"]["id"], &*open_with_submenu().id);
             assert_eq!(other["command"]["name"], "open_with");
         }
         let args = &photos[0]["command"]["args"];
@@ -2232,18 +2244,20 @@ mod tests {
         assert_eq!(args["pane"], serde_json::to_value(pane).unwrap());
         let text = items(&["notes.txt"]);
         assert_eq!(
-            text[0]["title"], "Open With Editor",
+            english(&text[0]["title"]),
+            "Open With Editor",
             "no default named: the first application that declares the type"
         );
         let mixed = items(&[photo, "notes.txt"]);
         assert_eq!(
-            mixed[0]["title"], "Open",
+            english(&mixed[0]["title"]),
+            "Open",
             "no default shared: Open stays, said again"
         );
         assert!(
             mixed[1..]
                 .iter()
-                .all(|item| item["submenu"]["id"] == *OPEN_WITH.id),
+                .all(|item| item["submenu"]["id"] == *open_with_submenu().id),
             "what opens both, in Open With"
         );
         assert!(items(&[photo, "no-type-9q"]).is_empty(), "a type not known");
@@ -2274,10 +2288,7 @@ mod tests {
             answer["items"].as_array().unwrap().clone()
         };
         let answer = preview(&photo_shown);
-        let titles: Vec<&str> = answer
-            .iter()
-            .map(|item| item["title"].as_str().unwrap())
-            .collect();
+        let titles: Vec<String> = answer.iter().map(|item| english(&item["title"])).collect();
         assert_eq!(
             titles,
             ["Open With Viewer", "Editor", "Hex", "Other Application…"],
@@ -2287,7 +2298,7 @@ mod tests {
         assert_eq!(answer[0]["command"]["args"]["entries"], photo_shown);
         assert_eq!(answer[1]["command"]["args"]["entries"], photo_shown);
         let chooser = &answer[3];
-        assert_eq!(chooser["submenu"]["id"], &*OPEN_WITH.id);
+        assert_eq!(chooser["submenu"]["id"], &*open_with_submenu().id);
         assert_eq!(
             chooser["command"]["args"]["source"]["args"]["entries"],
             photo_shown
@@ -2557,7 +2568,7 @@ mod tests {
         };
         assert_eq!(answer["rows"][0]["value"], "Editor");
         assert_eq!(
-            answer["rows"][0]["actions"][0]["command"]["args"]["title"],
+            english(&answer["rows"][0]["actions"][0]["command"]["args"]["title"]),
             "Open plain text document files with"
         );
     }
@@ -2594,11 +2605,15 @@ mod tests {
         };
         let rows = ask(&photo);
         assert_eq!(rows[0]["group"], "General");
-        assert_eq!(rows[0]["label"], "Opens with");
+        let row: Property = serde_json::from_value(rows[0].clone()).unwrap();
+        assert_eq!(row.label.english(), "Opens with", "carried as words");
         assert_eq!(rows[0]["value"], "Viewer");
         let change = &rows[0]["actions"][0]["command"];
         assert_eq!(change["name"], "ui.choose");
-        assert_eq!(change["args"]["title"], "Open PNG image files with");
+        assert_eq!(
+            english(&change["args"]["title"]),
+            "Open PNG image files with"
+        );
         let source_args = &change["args"]["source"];
         let Outcome::Value(choices) = app
             .dispatch(&Invocation::with_args(
@@ -2613,9 +2628,9 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|c| c["title"] == "Editor")
+            .find(|c| english(&c["title"]) == "Editor")
             .unwrap();
-        assert_eq!(choices["choices"][0]["detail"], "Now");
+        assert_eq!(english(&choices["choices"][0]["detail"]), "Now");
         assert_eq!(editor["command"]["name"], "open_with.set_default");
         assert!(choices.get("option").is_none(), "choosing is the change");
         let before = source[0]

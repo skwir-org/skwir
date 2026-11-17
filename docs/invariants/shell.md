@@ -1159,7 +1159,7 @@ draws none, Compact; below).
   once the cards are drawn gives the keyboard to that plan's Pause, or
   to its Cancel while it waits, which scrolls it into view. A card's
   title names the folder it brings into by its name
-  (`op::transfer_title`); pointed at, it says each folder's whole path
+  (`op::transfer_words`); pointed at, it says each folder's whole path
   (`Executor::brings_into`). The latest answer is said above it while
   it is drawn (`toast::AnswerAt::Activity`, drawn by the panel), never
   held back for it: one place a frame (`Shell::answer_at`: the whole
@@ -1651,7 +1651,7 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Picker::scroll`): what Enter takes is always in sight. A row is one
   line, a title too long cut and said whole when pointed at.
 - **A proposal says once the folder its steps share** ("In ~/Projects"),
-  and its lines say their paths from there (`Change::within`: `rename
+  and its lines say their paths from there (`Change::words`: `rename
   a.txt -> b.txt`, `move c.txt -> archive/c.txt`); a path outside it
   stays whole. The folder is the deepest holding each path's own folder
   (a step on a folder is said from the one above), none at a drive's
@@ -1711,7 +1711,7 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   press the system repeated closes it when let go (the root's key-up),
   unless peek was used meanwhile (a command other than `ui.cursor`, a
   click in it). Opening or closing peek any other way forgets the press.
-- **Titles.** An action is called by `keymap::title`: its command's form
+- **Titles.** An action is called by `keymap::title_words`: its command's form
   for its arguments (`Declared::forms`), never by its command's title
   alone. A key bound with arguments gets a form where its command is
   declared (the shell's in `commands::KEY_FORMS`); `keymap_titles.rs`

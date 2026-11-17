@@ -78,14 +78,10 @@ impl Book for EpubBook {
     fn chapters(&self) -> &[ChapterRef] {
         &self.chapters
     }
-    fn text(
-        &mut self,
-        href: &str,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<(String, Option<String>)> {
+    fn text(&mut self, href: &str, cancel: &CancelToken) -> anyhow::Result<(String, Vec<Words>)> {
         let bytes = self.container.read(href, Part::Chapter, cancel)?;
         let (text, encoding) = inspection::decode(&bytes);
-        Ok((text.into_owned(), encoding.notice()))
+        Ok((text.into_owned(), encoding.notice().into_iter().collect()))
     }
     fn resources<'a>(
         &'a mut self,
@@ -268,8 +264,8 @@ impl rich_preview::Resources for Chapter<'_> {
     }
 }
 
-/// What a read of the container is for: named so by the package's reader
-/// where it fails (`Part::what`), said whole where the book encrypts it
+/// What a read of the container is for: said whole where it unpacks too
+/// far (`Part::too_large`) and where the book encrypts it
 /// (`Part::protected`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
@@ -290,18 +286,55 @@ pub(crate) enum Part {
 }
 
 impl Part {
-    /// What the package's reader names it by in its errors.
-    fn what(self) -> &'static str {
+    /// The refusal of a part that unpacks past `limits::BINARY_INPUT`.
+    fn too_large(self) -> Words {
+        let size = words::Size(limits::BINARY_INPUT as u64);
         match self {
-            Part::Chapter => "Chapter",
-            Part::Page => "Page",
-            Part::Picture => "Embedded image",
-            Part::Stylesheet => "Stylesheet",
-            Part::Encryption => "EPUB encryption",
-            Part::Resource => "EPUB resource",
-            Part::Container => "EPUB container",
-            Part::Package => "EPUB package",
-            Part::Contents => "EPUB contents",
+            Part::Chapter => words!(
+                books_epub_too_large_chapter = "Chapter exceeds { $size } preview limit",
+                size = size,
+                note = "Why a book is not shown: a chapter of an EPUB book unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Page => words!(
+                books_epub_too_large_page = "Page exceeds { $size } preview limit",
+                size = size,
+                note = "Why a book is not shown: a page of a fixed-layout EPUB book unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Picture => words!(
+                books_epub_too_large_picture = "Embedded image exceeds { $size } preview limit",
+                size = size,
+                note = "Why a picture of an EPUB book is not shown: it unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Stylesheet => words!(
+                books_epub_too_large_stylesheet = "Stylesheet exceeds { $size } preview limit",
+                size = size,
+                note = "Why a stylesheet of an EPUB book is not read: it unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Encryption => words!(
+                books_epub_too_large_encryption = "EPUB encryption exceeds { $size } preview limit",
+                size = size,
+                note = "Why a book is not shown: its list of what it encrypts (META-INF/encryption.xml) unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Resource => words!(
+                books_epub_too_large_resource = "EPUB resource exceeds { $size } preview limit",
+                size = size,
+                note = "Why what a chapter of an EPUB book names (a font, a file) is not read: it unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Container => words!(
+                books_epub_too_large_container = "EPUB container exceeds { $size } preview limit",
+                size = size,
+                note = "Why a book is not shown: the file that names its package (META-INF/container.xml) unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Package => words!(
+                books_epub_too_large_package = "EPUB package exceeds { $size } preview limit",
+                size = size,
+                note = "Why a book is not shown: its package document (the OPF), which lists its chapters, unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
+            Part::Contents => words!(
+                books_epub_too_large_contents = "EPUB contents exceeds { $size } preview limit",
+                size = size,
+                note = "Why a book's contents are not shown: its table of contents unpacks past what the preview reads. size: that bound (16 MB)."
+            ),
         }
     }
 
@@ -421,7 +454,18 @@ impl Container {
         // video are never read unless a chapter shows them, and `read`
         // bounds the bytes each read actually produces.
         let mut container = Self {
-            package: skwir_platform::package::Package::open(file, "This EPUB", false, cancel)?,
+            package: skwir_platform::package::Package::open(
+                file,
+                words!(
+                    books_epub_members = "{ $count ->
+                       *[other] This EPUB holds more than { $count } members
+                    }",
+                    count = limits::CONTAINER_MEMBERS,
+                    note = "Why a book is not shown: its package holds more files than the preview reads (4,000)."
+                ),
+                false,
+                cancel,
+            )?,
             encrypted: HashMap::new(),
             identifier: None,
         };
@@ -505,8 +549,13 @@ impl Container {
         if self.protected(&name) {
             anyhow::bail!(what.protected());
         }
-        self.package
-            .read(&name, limits::BINARY_INPUT, what.what(), cancel)
+        self.package.read(
+            &name,
+            limits::BINARY_INPUT,
+            missing(href),
+            what.too_large(),
+            cancel,
+        )
     }
 }
 

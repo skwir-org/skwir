@@ -690,7 +690,7 @@ fn row(
             cx,
         ));
     }
-    let new = crate::toolbar::Button::new("tab-strip-new", "plus", new_tab().say(), "tab.new")
+    let new = crate::toolbar::Button::new("tab-strip-new", "plus", new_tab(), "tab.new")
         .render(shell, cx);
     strip = strip.child(div().flex_none().h_full().flex().items_center().child(new));
     // Split, Properties and Preview end the strip while the panel is not

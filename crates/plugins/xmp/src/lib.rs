@@ -201,7 +201,10 @@ impl NotesStore for XmpStore {
             rating: true,
             comment: true,
             origin: false,
-            limits: "whole stars; a tag's color only as a color label",
+            limits: Some(skwir_core::words!(
+                xmp_limits = "whole stars; a tag's color only as a color label",
+                note = "What XMP sidecars cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings."
+            )),
         }
     }
     fn default_write(&self) -> Write {
@@ -363,8 +366,18 @@ impl FieldProvider for Embedded {
     fn keys(&self) -> &'static [&'static str] {
         &["xmp.embedded"]
     }
-    fn label(&self, _key: &str) -> Option<&'static str> {
-        Some("XMP in the file")
+    /// 2: the notes kept as data (`Shown`), said where they are shown.
+    fn version(&self) -> u32 {
+        2
+    }
+    fn label(&self, _key: &str) -> Option<skwir_core::words::Words> {
+        Some(skwir_core::words!(
+            xmp_embedded_label = "XMP in the file",
+            note = "A row's label in Properties: the keywords, rating and description written inside a picture (its XMP)."
+        ))
+    }
+    fn said(&self, _key: &str, value: &Value) -> Option<skwir_core::words::Words> {
+        summary(&Shown::of(value)?)
     }
     fn accepts(&self, _key: &str, name: &OsStr) -> bool {
         Path::new(name)
@@ -382,23 +395,103 @@ impl FieldProvider for Embedded {
         let Some(notes) = packet::packet_in(&bytes).and_then(packet::notes_of) else {
             return Ok(None);
         };
-        Ok(summary(&notes).map(|s| Value::Text(s.into())))
+        // Kept as data, by the file's identity: said where it is shown.
+        let shown = Shown {
+            keywords: notes.tag_names(),
+            rating: notes.rating,
+            comment: notes.comment,
+        };
+        let says_nothing =
+            shown.keywords.is_empty() && shown.rating.is_none() && shown.comment.is_none();
+        Ok((!says_nothing).then(|| shown.to_value()))
     }
 }
 
-/// XMP's notes in words: "Keywords a, b · 4 stars · “the description”".
-pub fn summary(notes: &Notes) -> Option<String> {
+/// What Properties shows of the XMP inside a file: its keywords, its rating
+/// and its description, kept as the field's value (`to_value`) and
+/// said where they are shown (`summary`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Shown {
+    pub keywords: Vec<String>,
+    pub rating: Option<u64>,
+    pub comment: Option<String>,
+}
+
+impl Shown {
+    /// As a field's value: three lists, the keywords, the rating (none or
+    /// one) and the description (none or one).
+    fn to_value(&self) -> Value {
+        Value::List(vec![
+            Value::List(
+                self.keywords
+                    .iter()
+                    .map(|keyword| Value::Text(keyword.as_str().into()))
+                    .collect(),
+            ),
+            Value::List(self.rating.map(Value::UInt).into_iter().collect()),
+            Value::List(
+                self.comment
+                    .iter()
+                    .map(|comment| Value::Text(comment.as_str().into()))
+                    .collect(),
+            ),
+        ])
+    }
+
+    /// What `to_value` made; `None` for anything else.
+    fn of(value: &Value) -> Option<Self> {
+        let Value::List(parts) = value else {
+            return None;
+        };
+        let [
+            Value::List(keywords),
+            Value::List(rating),
+            Value::List(comment),
+        ] = parts.as_slice()
+        else {
+            return None;
+        };
+        Some(Shown {
+            keywords: keywords
+                .iter()
+                .filter_map(|keyword| keyword.as_str().map(str::to_owned))
+                .collect(),
+            rating: rating.first().and_then(Value::as_u64),
+            comment: comment.first().and_then(Value::as_str).map(str::to_owned),
+        })
+    }
+}
+
+/// XMP's notes in words: "Keywords a and b · 4 stars · “the description”",
+/// each part a whole message, joined as the reader's language joins them.
+pub fn summary(shown: &Shown) -> Option<skwir_core::words::Words> {
+    use skwir_core::words;
     let mut parts = Vec::new();
-    if !notes.tags.is_empty() {
-        parts.push(format!("Keywords {}", notes.tag_names().join(", ")));
+    if !shown.keywords.is_empty() {
+        parts.push(words!(
+            xmp_summary_keywords = "Keywords { $keywords }",
+            keywords = words::List::and(shown.keywords.iter().map(String::as_str)),
+            note = "Part of what Properties says of the XMP inside a picture: its keywords, as written in it."
+        ));
     }
-    if let Some(r) = notes.rating {
-        parts.push(skwir_core::notes::stars(r).say());
+    if let Some(r) = shown.rating {
+        parts.push(skwir_core::notes::stars(r));
     }
-    if let Some(c) = &notes.comment {
-        parts.push(format!("“{c}”"));
+    if let Some(c) = &shown.comment {
+        parts.push(words!(
+            xmp_summary_comment = "“{ $comment }”",
+            comment = c.as_str(),
+            note = "Part of what Properties says of the XMP inside a picture: its description, as written in it, quoted."
+        ));
     }
-    (!parts.is_empty()).then(|| parts.join(" · "))
+    parts.into_iter().rev().reduce(|after, before| {
+        words!(
+            xmp_summary_parts = "{ $before } · { $after }",
+            before = before,
+            after = after,
+            note = "Two parts of what Properties says of the XMP inside a picture (its keywords, its rating, its description), on one line."
+        )
+    })
 }
 
 /// The XMP plugin.

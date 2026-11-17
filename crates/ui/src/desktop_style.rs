@@ -15,7 +15,7 @@ use skwir_core::App;
 use skwir_core::settings::Settings;
 use skwir_core::words;
 use skwir_core::words::Words;
-use skwir_platform::desktop_style::{DesktopStyle, Scheme};
+use skwir_platform::desktop_style::{DesktopStyle, Read, Scheme};
 
 use crate::palettes::{self, Palette};
 use crate::settings::{COLORS_FROM_KEY, DESKTOP_COLORS_KEY};
@@ -384,11 +384,11 @@ impl Source {
     /// What the source's Automatic read, as its choices name it: GTK's
     /// (the portal's are GTK's), Qt's, or the desktop's own by its name
     /// (`Plasma`); empty when nothing was.
-    pub fn now(from: Option<&str>) -> String {
+    pub fn now(from: Option<&Read>) -> String {
         match from {
-            Some(from) if from.starts_with("GTK") || from == "the portal" => "gtk".to_owned(),
-            Some(from) if from.starts_with("Qt") => "qt".to_owned(),
-            Some(from) => from.to_owned(),
+            Some(Read::Portal | Read::Gtk(_)) => "gtk".to_owned(),
+            Some(Read::Qt(_)) => "qt".to_owned(),
+            Some(Read::Desktop(name)) => name.clone().into_owned(),
             None => String::new(),
         }
     }
@@ -430,17 +430,15 @@ pub fn keep_own_colors(settings: &Settings) {
 
 /// Where the colors were read while Colors from is Automatic (`Plasma`,
 /// `GTK`): what its Automatic comes to (`settings::show_resolved`).
-pub fn colors_source() -> Option<String> {
+pub fn colors_source() -> Option<Read> {
     said().and_then(|said| said.colors_from)
 }
 
 /// Where Fonts from's Automatic reads the fonts (`Plasma`, `GTK`),
 /// whatever it chooses: what its Automatic comes to
 /// (`settings::show_resolved`).
-pub fn fonts_source() -> Option<String> {
-    read(Source::Automatic)
-        .map(|fonts| fonts.from)
-        .filter(|from| !from.is_empty())
+pub fn fonts_source() -> Option<Read> {
+    read(Source::Automatic).and_then(|fonts| fonts.from)
 }
 
 /// The fonts the desktop names as the settings choose to read them, with
@@ -456,7 +454,7 @@ fn read(source: Source) -> Option<skwir_platform::desktop_style::Fonts> {
     match source {
         Source::Own => None,
         Source::Automatic => Some(skwir_platform::desktop_style::Fonts {
-            from: said.fonts_from.unwrap_or_default(),
+            from: said.fonts_from,
             interface: said.font,
             document: said.document_font,
             monospace: said.monospace_font,
@@ -476,7 +474,7 @@ fn read(source: Source) -> Option<skwir_platform::desktop_style::Fonts> {
 pub struct Sizes {
     pub interface: Option<f32>,
     pub monospace: Option<f32>,
-    pub from: Option<String>,
+    pub from: Option<Read>,
     pub scaling: Option<f32>,
 }
 
@@ -495,8 +493,7 @@ pub fn sizes(settings: &Settings) -> Sizes {
         // Where the interface's size was read: none when none was.
         from: fonts
             .filter(|fonts| fonts.interface_px.is_some())
-            .map(|fonts| fonts.from)
-            .filter(|from| !from.is_empty()),
+            .and_then(|fonts| fonts.from),
         scaling,
     }
 }
@@ -754,15 +751,15 @@ mod tests {
         set(DesktopStyle {
             font: Some("Noto Sans".into()),
             font_px: Some(px(10.)),
-            fonts_from: Some("GTK".into()),
+            fonts_from: Some(Read::gtk("GTK")),
             gtk: Some(Said {
-                from: "GTK".into(),
+                from: Some(Read::gtk("GTK")),
                 interface: Some("Noto Sans".into()),
                 interface_px: Some(px(10.)),
                 ..Said::default()
             }),
             qt: Some(Said {
-                from: "Qt (qt6ct)".into(),
+                from: Some(Read::qt("Qt (qt6ct)")),
                 interface: Some("DejaVu Sans".into()),
                 interface_px: Some(px(9.)),
                 monospace: Some("Hack".into()),
@@ -780,7 +777,7 @@ mod tests {
         assert_eq!(fonts(&app.settings).interface.as_deref(), Some("Noto Sans"));
         let automatic = sizes(&app.settings);
         assert_eq!(automatic.interface, Some(px(10.)));
-        assert_eq!(automatic.from.as_deref(), Some("GTK"));
+        assert_eq!(automatic.from, Some(Read::gtk("GTK")));
         assert_eq!(automatic.scaling, Some(1.25));
         // Qt's alone, families and sizes.
         choose("qt");
@@ -791,7 +788,7 @@ mod tests {
         assert_eq!(fonts(&app.settings).monospace.as_deref(), Some("Hack"));
         let qt = sizes(&app.settings);
         assert_eq!((qt.interface, qt.monospace), (Some(px(9.)), Some(px(10.))));
-        assert_eq!(qt.from.as_deref(), Some("Qt (qt6ct)"));
+        assert_eq!(qt.from, Some(Read::qt("Qt (qt6ct)")));
         // Skwir's own colors are the colors alone: the fonts stay Qt's.
         app.settings.set(COLORS_FROM_KEY, OWN.into());
         assert_eq!(
@@ -971,9 +968,9 @@ mod tests {
             ..breeze()
         };
         set(DesktopStyle {
-            colors_from: Some("Plasma".into()),
+            colors_from: Some(Read::desktop("Plasma")),
             gtk_colors: Some(Colors {
-                from: "GTK".into(),
+                from: Some(Read::gtk("GTK")),
                 schemes: skwir_platform::desktop_style::Schemes {
                     light: None,
                     dark: Some(night.clone()),
@@ -989,9 +986,10 @@ mod tests {
         // Qt names none: skwir's colors, with the accent its scheme had not.
         app.settings.set(COLORS_FROM_KEY, "qt".into());
         assert!(colors(&app.settings).schemes.light.is_none());
-        assert_eq!(colors_source().as_deref(), Some("Plasma"));
-        assert_eq!(Source::now(Some("Plasma")), "Plasma");
-        assert_eq!(Source::now(Some("Qt (qt6ct)")), "qt");
-        assert_eq!(Source::now(Some("the portal")), "gtk");
+        assert_eq!(colors_source(), Some(Read::desktop("Plasma")));
+        assert_eq!(Source::now(Some(&Read::desktop("Plasma"))), "Plasma");
+        assert_eq!(Source::now(Some(&Read::qt("Qt (qt6ct)"))), "qt");
+        assert_eq!(Source::now(Some(&Read::Portal)), "gtk");
+        assert_eq!(Source::now(Some(&Read::gtk("GTK (GSettings)"))), "gtk");
     }
 }

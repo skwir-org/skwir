@@ -52,7 +52,9 @@ const KIND: &str = "shrink_copy";
 const TYPES: &str = "kind:application/pdf,image/jpeg,image/png";
 
 /// The file menu's submenu it joins, the archives' Compress.
-const COMPRESS: skwir_core::registry::Submenu = skwir_core::registry::submenus::COMPRESS;
+fn compress_submenu() -> skwir_core::registry::Submenu {
+    skwir_core::registry::submenus::compress()
+}
 
 /// The menu of the preview's More button and of its own context menu,
 /// whose items the window runs with what the preview shows
@@ -220,7 +222,7 @@ fn menus(app: &App) {
             Invocation::new("shrink.reduce_ask"),
         )
         .when(&format!("selection !place !restores {TYPES}"))
-        .submenu(COMPRESS),
+        .submenu(compress_submenu()),
     );
     app.registry.menus.add(
         ID,
@@ -527,15 +529,12 @@ impl op::Effect for ShrinkCopy {
     }
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        // Said here: a conflict's reason is text (`StepStatus`).
-        let conflict = |reason: Words| StepStatus::Conflict {
-            reason: reason.say(),
-        };
+        let conflict = |reason: Words| StepStatus::Conflict { reason };
         if let Err(invalid) = op::valid_file_name(&self.name) {
             return conflict(Words::of_error(invalid));
         }
         if let Err(error) = self.entry.resolve() {
-            return conflict(Words::as_written(error.to_string()));
+            return conflict(error.words());
         }
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(words!(
@@ -570,7 +569,20 @@ impl op::Effect for ShrinkCopy {
             inputs: vec![self.entry.path.clone()],
             folder: false,
             size: None,
-            words: ("Make Smaller Copy", "made smaller"),
+            words: op::MakeWords {
+                verb: words!(
+                    shrink_make_verb = "Make Smaller Copy",
+                    note = "The button of the question asking what becomes of the name a smaller copy finds taken: make it, once that is answered."
+                ),
+                waiting: words!(
+                    shrink_nothing_made = "Nothing is made smaller until you choose.",
+                    note = "Under the title of the question asking what becomes of the name a smaller copy finds taken."
+                ),
+                cancelled: words!(
+                    shrink_clash_cancelled = "Cancelled: nothing was made smaller",
+                    note = "A smaller copy found its name taken, asked what becomes of it, and the user cancelled it."
+                ),
+            },
         })
     }
 
@@ -661,16 +673,15 @@ impl op::Effect for ShrinkCopy {
             return Err(op::Cancelled.into());
         }
         let (copy, made) = made?;
-        // Said here: what a step says beside what it did is text. The
-        // helper's notes are as it wrote them.
+        // The helper's notes are what it found, said here.
         let what = || Name::of(&self.entry.path);
         let Some(copy) = copy else {
             let why = match made.notes.first() {
                 Some(note) => words!(
                     shrink_none_made_note = "No smaller copy of { $name } was made: { $said }",
                     name = what(),
-                    said = note.clone(),
-                    note = "What follows the file's name is the helper's reason, as it wrote it."
+                    said = note.words(),
+                    note = "What follows the file's name is why (it is protected by a password)."
                 ),
                 // Location and camera details go with a copy: none made,
                 // they stay, which is said, never left to be assumed.
@@ -683,21 +694,18 @@ impl op::Effect for ShrinkCopy {
                     name = what()
                 ),
             };
-            return Err(op::Unneeded(why.say()).into());
+            return Err(op::Unneeded(why).into());
         };
         if made.met == Some(false) {
-            ctx.say(not_under(&self.entry.path, made.after).say());
+            ctx.say(not_under(&self.entry.path, made.after));
         }
         for note in made.notes {
-            ctx.say(
-                words!(
-                    shrink_note = "{ $name }: { $said }",
-                    name = what(),
-                    said = note,
-                    note = "What the helper said of a file as it made its smaller copy, as it wrote it."
-                )
-                .say(),
-            );
+            ctx.say(words!(
+                shrink_note = "{ $name }: { $said }",
+                name = what(),
+                said = note.words(),
+                note = "What was left as it was in a file's smaller copy, and why, after the file's name."
+            ));
         }
         ctx.check_cancelled()?;
         let staging = ctx.stage(&self.dest_dir)?;
@@ -715,8 +723,7 @@ impl op::Effect for ShrinkCopy {
                         name = Name::of(&target),
                         folder = Name::of(&self.dest_dir),
                         note = "A smaller copy could not be put in place; why follows."
-                    )
-                    .say(),
+                    ),
                 )
             })
         });

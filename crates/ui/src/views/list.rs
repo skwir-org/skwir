@@ -70,14 +70,13 @@ pub struct Column {
     /// Its name where its dragged width is remembered
     /// (`Session::column_widths`).
     pub key: &'static str,
-    /// Whether it is shown (`ui.column_*`).
+    /// Whether it is shown (`ui.column_*`). What it is called and what
+    /// Settings says of it are `label_words` and `description_words`.
     pub setting: &'static str,
-    pub label: &'static str,
-    pub description: &'static str,
     /// Shown until the user says otherwise.
     pub shown: bool,
-    /// What a click on its header sorts by, if anything.
-    pub sort: Option<SortKey>,
+    /// What a click on its header sorts by, whose title it goes by.
+    pub sort: SortKey,
     /// Its width at 100 % (ADR-117): drawn at the files' scale, as a
     /// width dragged is remembered.
     pub width: f32,
@@ -125,10 +124,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Folder,
         key: "folder",
         setting: "ui.column_folder",
-        label: "Folder",
-        description: "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
         shown: true,
-        sort: Some(SortKey::Folder),
+        sort: SortKey::Folder,
         width: 180.,
         right: false,
     },
@@ -136,10 +133,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Deleted,
         key: "deleted",
         setting: "ui.column_deleted",
-        label: "Deleted",
-        description: "Show when each file was put in the trash, where the trash's files are listed.",
         shown: true,
-        sort: Some(SortKey::Deleted),
+        sort: SortKey::Deleted,
         width: 136.,
         right: false,
     },
@@ -147,10 +142,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Size,
         key: "size",
         setting: "ui.column_size",
-        label: "Size",
-        description: "Show the size of files.",
         shown: true,
-        sort: Some(SortKey::Size),
+        sort: SortKey::Size,
         width: 80.,
         right: true,
     },
@@ -158,10 +151,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Dimensions,
         key: "dimensions",
         setting: "ui.column_dimensions",
-        label: "Dimensions",
-        description: "Show the size of pictures in pixels, where a plugin reads it of them.",
         shown: false,
-        sort: Some(SortKey::Dimensions),
+        sort: SortKey::Dimensions,
         width: 100.,
         right: true,
     },
@@ -169,10 +160,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Duration,
         key: "duration",
         setting: "ui.column_duration",
-        label: "Duration",
-        description: "Show how long sounds and films last, where a plugin reads it of them.",
         shown: false,
-        sort: Some(SortKey::Duration),
+        sort: SortKey::Duration,
         width: 72.,
         right: true,
     },
@@ -180,10 +169,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Modified,
         key: "modified",
         setting: "ui.column_modified",
-        label: "Modified",
-        description: "Show when each item last changed.",
         shown: true,
-        sort: Some(SortKey::Modified),
+        sort: SortKey::Modified,
         width: 136.,
         right: false,
     },
@@ -191,10 +178,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Created,
         key: "created",
         setting: "ui.column_created",
-        label: "Created",
-        description: "Show when each item was made, where the system keeps it.",
         shown: false,
-        sort: Some(SortKey::Created),
+        sort: SortKey::Created,
         width: 136.,
         right: false,
     },
@@ -202,10 +187,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Accessed,
         key: "accessed",
         setting: "ui.column_accessed",
-        label: "Accessed",
-        description: "Show when each item was last read, as the system keeps it.",
         shown: false,
-        sort: Some(SortKey::Accessed),
+        sort: SortKey::Accessed,
         width: 136.,
         right: false,
     },
@@ -213,10 +196,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Taken,
         key: "taken",
         setting: "ui.column_taken",
-        label: "Taken",
-        description: "Show when pictures and films were taken, by their camera's clock, where a plugin reads it of them.",
         shown: false,
-        sort: Some(SortKey::Taken),
+        sort: SortKey::Taken,
         width: 136.,
         right: false,
     },
@@ -224,10 +205,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Type,
         key: "type",
         setting: "ui.column_type",
-        label: "Type",
-        description: "Show the kind of file, such as PDF document.",
         shown: true,
-        sort: Some(SortKey::Type),
+        sort: SortKey::Type,
         width: 150.,
         right: false,
     },
@@ -235,10 +214,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Kind,
         key: "kind",
         setting: "ui.column_kind",
-        label: "Kind",
-        description: "Show what kind of file each is, such as Image or Document.",
         shown: false,
-        sort: Some(SortKey::Kind),
+        sort: SortKey::Kind,
         width: 110.,
         right: false,
     },
@@ -246,10 +223,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Owner,
         key: "owner",
         setting: "ui.column_owner",
-        label: "Owner",
-        description: "Show who owns each item.",
         shown: false,
-        sort: Some(SortKey::Owner),
+        sort: SortKey::Owner,
         width: 100.,
         right: false,
     },
@@ -257,10 +232,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Vcs,
         key: "vcs",
         setting: "ui.column_vcs",
-        label: "Git",
-        description: "Show what Git says of each file in a repository: changed, staged, new, in conflict or ignored, and of a folder what it holds.",
         shown: false,
-        sort: Some(SortKey::Vcs),
+        sort: SortKey::Vcs,
         // A folder's says what it holds: "Holds staged changes".
         width: 160.,
         right: false,
@@ -269,10 +242,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         detail: Detail::Rating,
         key: "rating",
         setting: "ui.column_rating",
-        label: "Rating",
-        description: "Show the stars each file was given, where its notes are kept. It is the first column to give way in a narrow pane.",
         shown: false,
-        sort: Some(SortKey::Rating),
+        sort: SortKey::Rating,
         width: 76.,
         right: false,
     },
@@ -280,18 +251,16 @@ pub const COLUMNS: [Column; DETAILS] = [
 
 impl Column {
     /// What its header and the menus call it: its criterion's title
-    /// (`SortKey::title_words`), `label` as words.
+    /// (`SortKey::title_words`).
     pub fn label_words(&self) -> Words {
-        self.sort
-            .map_or_else(|| Words::as_written(self.label), SortKey::title_words)
+        self.sort.title_words()
     }
 
-    /// What Settings says of it, as words (`description` until every
-    /// caller says words).
+    /// What Settings says of it.
     pub fn description_words(&self) -> Words {
         match self.detail {
             Detail::Folder => words!(
-                list_column_folder_description = "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
+                list_column_folder_description = "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent.",
                 note = "A setting's description: whether the list has the Folder column. Recent is a place in the sidebar."
             ),
             Detail::Deleted => words!(
@@ -349,9 +318,27 @@ impl Column {
                 note = "A setting's description: whether the list has the Git column. Git is a program's name."
             ),
             Detail::Rating => words!(
-                list_column_rating_description = "Show the stars each file was given, where its notes are kept. It is the first column to give way in a narrow pane.",
+                list_column_rating_description =
+                    "Show the stars each file was given, where its notes are kept.",
                 note = "A setting's description: whether the list has the Rating column."
             ),
+        }
+    }
+
+    /// What Settings says of it after its description, in its tooltip,
+    /// where it says more.
+    pub fn more_words(&self) -> Option<Words> {
+        match self.detail {
+            Detail::Folder => Some(words!(
+                list_column_folder_more = "It is the last column to give way.",
+                note = "What the Folder column's setting says after its description, in its tooltip: in a narrow pane."
+            )),
+            Detail::Rating => Some(words!(
+                list_column_rating_more = "It is the first column to give way in a narrow pane.",
+                note =
+                    "What the Rating column's setting says after its description, in its tooltip."
+            )),
+            _ => None,
         }
     }
 }
@@ -422,13 +409,12 @@ impl Shell {
         crate::settings::remember(self, column.setting, shown.to_string(), cx);
     }
 
-    /// What the pane sorts by here, each with what menus call it: every
-    /// criterion (ADR-130) that applies here, as its column would (Rating
-    /// while ratings are kept, Deleted in the trash, Owner where the system
-    /// keeps one by number), those only the sorter reads (a kind, a type's
-    /// name, an owner) while there is one.
-    /// The View menu offers these, and the palette only their sorts.
-    pub fn sort_keys(&self) -> Vec<(&'static str, SortKey)> {
+    /// What the pane sorts by here: every criterion (ADR-130) that applies
+    /// here, as its column would (Rating while ratings are kept, Deleted in
+    /// the trash, Owner where the system keeps one by number), those only
+    /// the sorter reads (a kind, a type's name, an owner) while there is
+    /// one. The View menu offers these, and the palette only their sorts.
+    pub fn sort_keys(&self) -> Vec<SortKey> {
         let sorter = !self.app.registry.sorters.all().is_empty();
         SortKey::ALL
             .into_iter()
@@ -445,7 +431,6 @@ impl Shell {
                     .is_some_and(|field| self.app.fields.knows(field)),
                 key => sorter || !key.keyed(),
             })
-            .map(|key| (key.title(), key))
             .collect()
     }
 
@@ -455,7 +440,7 @@ impl Shell {
         if self.app.registry.sorters.all().is_empty() {
             return Vec::new();
         }
-        self.sort_keys().into_iter().map(|(_, key)| key).collect()
+        self.sort_keys()
     }
 
     /// Whether `detail` can be shown here: Rating only while ratings are
@@ -483,7 +468,7 @@ impl Shell {
             Detail::Dimensions | Detail::Duration | Detail::Taken => detail
                 .column()
                 .sort
-                .and_then(SortKey::field)
+                .field()
                 .is_some_and(|field| self.app.fields.knows(field)),
             // A file says its owner where the system keeps one by number.
             Detail::Owner => cfg!(unix),
@@ -505,7 +490,7 @@ impl Shell {
         COLUMNS
             .iter()
             .filter(|column| shown[column.detail])
-            .filter_map(|column| column.sort.and_then(SortKey::field))
+            .filter_map(|column| column.sort.field())
             .collect()
     }
 
@@ -1021,7 +1006,7 @@ impl Shell {
                     String::new,
                     |state| {
                         if e.is_dir() {
-                            state.below_words().say()
+                            state.below().say()
                         } else {
                             state.words().say()
                         }
@@ -1552,7 +1537,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                 .child(header_cell(
                     ("h", column.detail as usize),
                     column.label_words(),
-                    column.sort,
+                    Some(column.sort),
                     shell,
                     theme,
                     cx,

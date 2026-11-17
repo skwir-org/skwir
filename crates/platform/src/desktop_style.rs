@@ -90,7 +90,7 @@ pub struct DesktopStyle {
     #[serde(default)]
     pub monospace_px: Option<f32>,
     #[serde(default)]
-    pub fonts_from: Option<String>,
+    pub fonts_from: Option<Read>,
     /// The fonts GTK's settings name, and Qt's, each apart: what the user
     /// may choose to follow instead (`Fonts from`, ADR-117).
     #[serde(default)]
@@ -101,7 +101,7 @@ pub struct DesktopStyle {
     /// (qt6ct)`), and GTK's colors and Qt's, each apart: what the user may
     /// choose to follow instead (`Colors from`, ADR-071).
     #[serde(default)]
-    pub colors_from: Option<String>,
+    pub colors_from: Option<Read>,
     #[serde(default)]
     pub gtk_colors: Option<Colors>,
     #[serde(default)]
@@ -112,12 +112,65 @@ pub struct DesktopStyle {
     pub text_scaling: Option<f64>,
 }
 
+/// Where a style was read: the desktop portal (GTK's settings, as it says
+/// them), a toolkit's settings, or a desktop's own, each but the portal
+/// shown by its name (`GTK (GSettings)`, `Qt (qt6ct)`, `Plasma`, `macOS`).
+/// What reads it asks its kind, never its words.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Read {
+    Portal,
+    Gtk(std::borrow::Cow<'static, str>),
+    Qt(std::borrow::Cow<'static, str>),
+    Desktop(std::borrow::Cow<'static, str>),
+}
+
+impl Read {
+    /// GTK's settings, by the name shown.
+    pub const fn gtk(name: &'static str) -> Read {
+        Read::Gtk(std::borrow::Cow::Borrowed(name))
+    }
+
+    /// Qt's settings, by the name shown.
+    pub const fn qt(name: &'static str) -> Read {
+        Read::Qt(std::borrow::Cow::Borrowed(name))
+    }
+
+    /// A desktop's own, by its name.
+    pub const fn desktop(name: &'static str) -> Read {
+        Read::Desktop(std::borrow::Cow::Borrowed(name))
+    }
+
+    /// What it is called, said where it is shown: a name as written, the
+    /// portal in words.
+    pub fn words(&self) -> skwir_core::words::Words {
+        match self {
+            Read::Portal => skwir_core::words!(
+                desktop_style_portal = "the portal",
+                note = "Where the desktop's fonts were read: the desktop portal (xdg-desktop-portal), placed where a desktop's or a toolkit's name goes (sizes read from the portal)."
+            ),
+            Read::Gtk(name) | Read::Qt(name) | Read::Desktop(name) => {
+                skwir_core::words::Words::as_written(name.clone())
+            }
+        }
+    }
+
+    /// Its name as written, for logs and tests; the portal's is
+    /// `portal`.
+    pub fn name(&self) -> &str {
+        match self {
+            Read::Portal => "portal",
+            Read::Gtk(name) | Read::Qt(name) | Read::Desktop(name) => name,
+        }
+    }
+}
+
 /// The fonts one source names: their families, the interface's and the
 /// monospace font's sizes in pixels, and which source it is (`GTK`,
-/// `the portal`, `Qt (qt6ct)`).
+/// the portal, `Qt (qt6ct)`).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Fonts {
-    pub from: String,
+    pub from: Option<Read>,
     #[serde(default)]
     pub interface: Option<String>,
     #[serde(default)]
@@ -134,7 +187,7 @@ pub struct Fonts {
 /// source it is.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Colors {
-    pub from: String,
+    pub from: Option<Read>,
     #[serde(default)]
     pub schemes: Schemes,
 }
@@ -520,7 +573,7 @@ mod imp {
         pub(super) monospace: Option<String>,
         pub(super) interface_px: Option<f32>,
         pub(super) monospace_px: Option<f32>,
-        pub(super) from: Option<&'static str>,
+        pub(super) from: Option<super::Read>,
     }
 
     impl Named {
@@ -551,7 +604,7 @@ mod imp {
         /// matches them.
         fn apart(&self) -> Option<super::Fonts> {
             self.names_any().then(|| super::Fonts {
-                from: self.from.unwrap_or_default().to_owned(),
+                from: self.from.clone(),
                 interface: self.interface.as_deref().map(crate::fonts::unalias),
                 document: self.document.as_deref().map(crate::fonts::unalias),
                 monospace: self.monospace.as_deref().map(crate::fonts::unalias),
@@ -565,12 +618,12 @@ mod imp {
     #[derive(Clone, Debug, Default)]
     pub(super) struct Painted {
         pub(super) schemes: Schemes,
-        pub(super) from: Option<&'static str>,
+        pub(super) from: Option<super::Read>,
     }
 
     impl Painted {
         /// One scheme, said by `from`.
-        pub(super) fn one(scheme: Option<super::Scheme>, from: &'static str) -> Painted {
+        pub(super) fn one(scheme: Option<super::Scheme>, from: super::Read) -> Painted {
             let mut schemes = Schemes::default();
             if let Some(scheme) = scheme {
                 schemes.add(scheme);
@@ -595,7 +648,7 @@ mod imp {
         /// Apart, as the user may choose it.
         fn apart(&self) -> Option<super::Colors> {
             (!self.schemes.is_empty()).then(|| super::Colors {
-                from: self.from.unwrap_or_default().to_owned(),
+                from: self.from.clone(),
                 schemes: self.schemes.clone(),
             })
         }
@@ -727,7 +780,7 @@ mod imp {
             Named {
                 interface: named.and_then(|name| super::pango_family(name)),
                 interface_px: named.and_then(|name| super::pango_size(name)),
-                from: Some("GTK"),
+                from: Some(super::Read::gtk("GTK")),
                 ..Named::default()
             }
         }
@@ -753,7 +806,7 @@ mod imp {
                 document: document.as_deref().and_then(super::pango_family),
                 monospace: monospace.as_deref().and_then(super::pango_family),
                 monospace_px: monospace.as_deref().and_then(super::pango_size),
-                from: Some("GTK (GSettings)"),
+                from: Some(super::Read::gtk("GTK (GSettings)")),
             }
         }
 
@@ -875,7 +928,7 @@ mod imp {
             document: said(document).as_deref().and_then(super::pango_family),
             monospace: monospace_name.as_deref().and_then(super::pango_family),
             monospace_px: monospace_name.as_deref().and_then(super::pango_size),
-            from: Some("the portal"),
+            from: Some(super::Read::Portal),
         };
         // As GTK's applications here take them (`Own::wayland`): on
         // Wayland the portal's, else GSettings' (whose schema names its
@@ -925,10 +978,7 @@ mod imp {
             monospace_px: named.monospace_px,
             // Where the interface's font was read: none when none was, a
             // source that named nothing never said.
-            fonts_from: named
-                .from
-                .filter(|_| named.interface.is_some())
-                .map(str::to_owned),
+            fonts_from: named.from.clone().filter(|_| named.interface.is_some()),
             gtk: gtk.apart(),
             qt: qt.apart(),
             text_scaling,
@@ -936,7 +986,7 @@ mod imp {
             document_font: unaliased(named.document),
             monospace_font: unaliased(named.monospace),
             schemes: colors.schemes.clone(),
-            colors_from: colors.from.map(str::to_owned),
+            colors_from: colors.from.clone(),
             gtk_colors: gtk_colors.apart(),
             qt_colors: qt_colors.apart(),
         }
@@ -971,7 +1021,7 @@ mod imp {
         // applications over GTK's built-in theme.
         let gtk_colors = Painted {
             schemes: theme(gtk_theme.as_deref().unwrap_or_default()),
-            from: Some("GTK"),
+            from: Some(super::Read::gtk("GTK")),
         };
         let own_colors = own.own_colors(&theme);
         let qt_colors = if own.qt_is_own() {
@@ -1365,7 +1415,7 @@ mod imp {
                     document: pango(&other("document-font-name")),
                     monospace: pango(&monospace),
                     monospace_px: size(&monospace),
-                    from: Some(schema_name(schema)),
+                    from: Some(super::Read::desktop(schema_name(schema))),
                 }
             }
             Some(Chosen::Kde) => {
@@ -1374,11 +1424,21 @@ mod imp {
                 // `XDG_CONFIG_DIRS`).
                 let kdeglobals = desktop::kdeglobals_cascade();
                 let texts: Vec<&str> = kdeglobals.iter().map(String::as_str).collect();
-                qt_named_in(&texts, "General", ("font", "fixed"), "Plasma")
+                qt_named_in(
+                    &texts,
+                    "General",
+                    ("font", "fixed"),
+                    super::Read::desktop("Plasma"),
+                )
             }
             Some(Chosen::Lxqt) => {
                 let conf = desktop::lxqt_conf();
-                qt_named(conf.as_deref(), "Qt", ("font", "fixed"), "LXQt")
+                qt_named(
+                    conf.as_deref(),
+                    "Qt",
+                    ("font", "fixed"),
+                    super::Read::desktop("LXQt"),
+                )
             }
             Some(Chosen::Xfce) => {
                 let interface = desktop::xfconf("/Gtk/FontName");
@@ -1388,7 +1448,7 @@ mod imp {
                     interface_px: size(&interface),
                     monospace: pango(&monospace),
                     monospace_px: size(&monospace),
-                    from: Some("Xfce"),
+                    from: Some(super::Read::desktop("Xfce")),
                     ..Named::default()
                 }
             }
@@ -1402,7 +1462,7 @@ mod imp {
         text: Option<&str>,
         group: &str,
         keys: (&str, &str),
-        from: &'static str,
+        from: super::Read,
     ) -> Named {
         qt_named_in(text.as_slice(), group, keys, from)
     }
@@ -1414,7 +1474,7 @@ mod imp {
         texts: &[&str],
         group: &str,
         (interface, fixed): (&str, &str),
-        from: &'static str,
+        from: super::Read,
     ) -> Named {
         let value = |key| {
             texts
@@ -1441,18 +1501,22 @@ mod imp {
     fn own_colors(theme: &dyn Fn(&str) -> Schemes) -> Painted {
         let gtk = |named: Option<String>, from: &'static str| Painted {
             schemes: theme(&desktop::forced_gtk_theme().or(named).unwrap_or_default()),
-            from: Some(from),
+            from: Some(super::Read::desktop(from)),
         };
         match desktop::chosen() {
-            Some(Chosen::Kde) => Painted::one(crate::kde_scheme::read(), "Plasma"),
+            Some(Chosen::Kde) => {
+                Painted::one(crate::kde_scheme::read(), super::Read::desktop("Plasma"))
+            }
             Some(Chosen::Lxqt) => Painted::one(
                 desktop::lxqt_conf().and_then(|conf| crate::qt_palette::lxqt(&conf)),
-                "LXQt",
+                super::Read::desktop("LXQt"),
             ),
             Some(Chosen::GSettings(schema)) => gtk(desktop::own_gtk_theme(), schema_name(schema)),
             Some(Chosen::Xfce) => gtk(desktop::own_gtk_theme(), "Xfce"),
             // Omarchy's session names Hyprland, its colors its own.
-            None if crate::omarchy::is_session() => Painted::one(crate::omarchy::read(), "Omarchy"),
+            None if crate::omarchy::is_session() => {
+                Painted::one(crate::omarchy::read(), super::Read::desktop("Omarchy"))
+            }
             None => Painted::default(),
         }
     }
@@ -1473,13 +1537,13 @@ mod imp {
     }
 
     /// Where a platform theme's colors and fonts are said to come from.
-    fn qt_source(program: &str) -> &'static str {
-        match program {
+    fn qt_source(program: &str) -> super::Read {
+        super::Read::qt(match program {
             "qt6ct" => "Qt (qt6ct)",
             "qtengine" => "Qt (qtengine)",
             "hyprqt6engine" => "Qt (hyprqt6engine)",
             _ => "Qt (qt5ct)",
-        }
+        })
     }
 
     /// The fonts a platform theme's settings name, as each writes them:
@@ -1588,7 +1652,7 @@ mod imp {
                 // resolves it: none is said apart to replace it.
                 accent: None,
                 more_contrast,
-                colors_from: (!schemes.is_empty()).then(|| "macOS".to_owned()),
+                colors_from: (!schemes.is_empty()).then(|| super::Read::desktop("macOS")),
                 schemes,
                 ..read_fonts()
             }
@@ -1599,7 +1663,7 @@ mod imp {
         DesktopStyle {
             font: Some(SYSTEM_FONT.to_owned()),
             font_px: Some(SYSTEM_FONT_SIZE),
-            fonts_from: Some("macOS".to_owned()),
+            fonts_from: Some(super::Read::desktop("macOS")),
             ..DesktopStyle::default()
         }
     }
@@ -1679,7 +1743,7 @@ mod imp {
         DesktopStyle {
             accent: if contrast { None } else { style::accent() },
             more_contrast: contrast,
-            colors_from: contrast.then(|| "Windows".to_owned()),
+            colors_from: contrast.then(|| super::Read::desktop("Windows")),
             schemes,
             ..read_fonts()
         }
@@ -1689,7 +1753,7 @@ mod imp {
         use crate::windows::style;
         DesktopStyle {
             font: style::message_font(),
-            fonts_from: Some("Windows".to_owned()),
+            fonts_from: Some(super::Read::desktop("Windows")),
             text_scaling: style::text_scale(),
             ..DesktopStyle::default()
         }
@@ -1929,9 +1993,14 @@ mod tests {
         use zbus::object_server::SignalEmitter;
         use zbus::zvariant::{OwnedValue, Value};
 
-        use super::super::{DesktopStyle, Schemes, imp};
+        use super::super::{DesktopStyle, Read, Schemes, imp};
 
         type Values = Arc<Mutex<HashMap<(String, String), OwnedValue>>>;
+
+        /// Where `read` was, by its name (`Read::name`).
+        fn named(read: Option<&Read>) -> Option<&str> {
+            read.map(Read::name)
+        }
 
         /// A settings portal that answers what `values` holds.
         struct Portal {
@@ -2100,7 +2169,10 @@ mod tests {
                 match &self.kdeglobals {
                     Some(file) => {
                         let text = std::fs::read_to_string(file).unwrap_or_default();
-                        imp::Painted::one(crate::kde_scheme::scheme_of(&[text], &[]), "Plasma")
+                        imp::Painted::one(
+                            crate::kde_scheme::scheme_of(&[text], &[]),
+                            Read::desktop("Plasma"),
+                        )
                     }
                     None => imp::Painted::default(),
                 }
@@ -2153,9 +2225,9 @@ mod tests {
                     schemes: Schemes::default(),
                     font_px: Some(10. * 96. / 72.),
                     monospace_px: Some(10. * 96. / 72.),
-                    fonts_from: Some("the portal".into()),
+                    fonts_from: Some(Read::Portal),
                     gtk: Some(super::super::Fonts {
-                        from: "the portal".into(),
+                        from: Some(Read::Portal),
                         interface: Some("Noto Sans".into()),
                         document: Some("Noto Serif".into()),
                         monospace: Some("Hack".into()),
@@ -2201,7 +2273,7 @@ mod tests {
                     ),
                     "Fonts",
                     ("general", "fixed"),
-                    "Qt (qt6ct)",
+                    Read::qt("Qt (qt6ct)"),
                 )
             }
 
@@ -2272,16 +2344,16 @@ mod tests {
                     Some("[Appearance]\ncustom_palette=false\nstyle=Fusion\n"),
                     "Fonts",
                     ("general", "fixed"),
-                    "Qt (qt6ct)",
+                    Read::qt("Qt (qt6ct)"),
                 )
             }
 
             fn qt_colors(&self) -> imp::Painted {
-                imp::Painted::one(None, "Qt (qt6ct)")
+                imp::Painted::one(None, Read::qt("Qt (qt6ct)"))
             }
 
             fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
-                imp::Painted::one(None, "LXQt")
+                imp::Painted::one(None, Read::desktop("LXQt"))
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -2296,7 +2368,12 @@ mod tests {
             let user = "[General]\nfixed=Hack,10,-1,5,400,0,0,0,0,0\n";
             let defaults = "[General]\nfont=Noto Sans,11,-1,5,400,0,0,0,0,0\n\
                             fixed=Noto Sans Mono,10,-1,5,400,0,0,0,0,0\n";
-            let named = imp::qt_named_in(&[user, defaults], "General", ("font", "fixed"), "Plasma");
+            let named = imp::qt_named_in(
+                &[user, defaults],
+                "General",
+                ("font", "fixed"),
+                Read::desktop("Plasma"),
+            );
             assert_eq!(named.interface.as_deref(), Some("Noto Sans"));
             assert_eq!(named.monospace.as_deref(), Some("Hack"));
         }
@@ -2322,7 +2399,7 @@ mod tests {
                 imp::Named {
                     interface: Some("Noto Sans".into()),
                     interface_px: Some(10. * 96. / 72.),
-                    from: Some("GTK"),
+                    from: Some(Read::gtk("GTK")),
                     ..imp::Named::default()
                 }
             }
@@ -2357,7 +2434,7 @@ mod tests {
                 imp::Named {
                     interface: Some("Adwaita Sans".into()),
                     interface_px: Some(11. * 96. / 72.),
-                    from: Some("GTK (GSettings)"),
+                    from: Some(Read::gtk("GTK (GSettings)")),
                     ..imp::Named::default()
                 }
             }
@@ -2427,7 +2504,7 @@ mod tests {
                         ForegroundNormal=35,38,41\n[Colors:Window]\nBackgroundNormal=239,240,241\n";
                     imp::Painted::one(
                         crate::kde_scheme::scheme_of(&[breeze.into()], &[]),
-                        "Plasma",
+                        Read::desktop("Plasma"),
                     )
                 } else {
                     imp::Painted::default()
@@ -2452,7 +2529,7 @@ mod tests {
                         "#ff000000, #ffefefef, #ffffffff, #ffcacaca, #ff9f9f9f, #ffb8b8b8, \
                          #ffffffff, #ffffffff, #ff000000, #ff202020, #ff303030",
                     ),
-                    "Qt (qt6ct)",
+                    Read::qt("Qt (qt6ct)"),
                 )
             }
 
@@ -2498,21 +2575,21 @@ mod tests {
             // On X11 GTK takes settings.ini's theme; Automatic is GTK's, the
             // desktop naming none, and Qt's is kept apart.
             let x11 = imp::read_from(Some(&bus), &painters(false, false));
-            assert_eq!(x11.colors_from.as_deref(), Some("GTK"));
+            assert_eq!(x11.colors_from, Some(Read::gtk("GTK")));
             assert_eq!(bg(&x11.gtk_colors), Some(253. / 255.));
             assert_eq!(
                 x11.schemes.light.as_ref().map(|s| s.bg[0]),
                 Some(253. / 255.)
             );
             let qt = x11.qt_colors.as_ref().expect("Qt's colors");
-            assert_eq!(qt.from, "Qt (qt6ct)");
+            assert_eq!(qt.from, Some(Read::qt("Qt (qt6ct)")));
             assert!(qt.schemes.dark.is_some());
             // On Wayland the portal's theme first.
             let wayland = imp::read_from(Some(&bus), &painters(true, false));
             assert_eq!(bg(&wayland.gtk_colors), Some(224. / 255.));
             // The desktop's own first: Plasma's, GTK's and Qt's still apart.
             let plasma = imp::read_from(Some(&bus), &painters(false, true));
-            assert_eq!(plasma.colors_from.as_deref(), Some("Plasma"));
+            assert_eq!(plasma.colors_from, Some(Read::desktop("Plasma")));
             assert_eq!(plasma.schemes.light.as_ref().map(|s| s.bg[0]), Some(1.));
             assert!(plasma.gtk_colors.is_some() && plasma.qt_colors.is_some());
         }
@@ -2530,11 +2607,11 @@ mod tests {
             // On Wayland GTK takes the portal's before settings.ini.
             let wayland = imp::read_from(Some(&bus), &IniOnly(true));
             assert_eq!(wayland.font.as_deref(), Some("Cantarell"));
-            assert_eq!(wayland.fonts_from.as_deref(), Some("the portal"));
+            assert_eq!(wayland.fonts_from, Some(Read::Portal));
             // On X11 settings.ini's.
             let x11 = imp::read_from(Some(&bus), &IniOnly(false));
             assert_eq!(x11.font.as_deref(), Some("Noto Sans"));
-            assert_eq!(x11.fonts_from.as_deref(), Some("GTK"));
+            assert_eq!(named(x11.fonts_from.as_ref()), Some("GTK"));
             // Without a portal, settings.ini's either way.
             let alone = imp::read_from(None, &IniOnly(true));
             assert_eq!(alone.font.as_deref(), Some("Noto Sans"));
@@ -2542,7 +2619,7 @@ mod tests {
             // values (its defaults) before settings.ini, font and theme.
             let schema = imp::read_from(None, &IniAndSchema(true));
             assert_eq!(schema.font.as_deref(), Some("Adwaita Sans"));
-            assert_eq!(schema.fonts_from.as_deref(), Some("GTK (GSettings)"));
+            assert_eq!(schema.fonts_from, Some(Read::gtk("GTK (GSettings)")));
             let light = schema.schemes.light.expect("the theme GSettings names");
             assert!((light.bg[0] - 1.).abs() < 1e-6);
             // The portal still first; on X11 settings.ini's.
@@ -2563,16 +2640,21 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             // Read as written, it is the binary form that names nothing.
             let general = crate::desktop_settings::keyfile_value(conf, "Fonts", "general");
             assert!(general.is_some_and(|value| value.starts_with("@Variant(")));
-            let old = imp::qt_named(Some(conf), "Fonts", ("general", "fixed"), "Qt (qt5ct)");
+            let old = imp::qt_named(
+                Some(conf),
+                "Fonts",
+                ("general", "fixed"),
+                Read::qt("Qt (qt5ct)"),
+            );
             assert_eq!((old.interface.as_deref(), old.interface_px), (None, None));
             assert_eq!((old.monospace.as_deref(), old.monospace_px), (None, None));
             // Named nothing, it gives way to what follows.
             let after = imp::Named {
                 interface: Some("Noto Sans".into()),
-                from: Some("GTK"),
+                from: Some(Read::gtk("GTK")),
                 ..imp::Named::default()
             };
-            assert_eq!(old.or(after).from, Some("GTK"));
+            assert_eq!(old.or(after).from, Some(Read::gtk("GTK")));
         }
 
         #[test]
@@ -2584,7 +2666,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             assert!(close(alone.font_px, 16.));
             assert_eq!(alone.monospace_font.as_deref(), Some("Hack"));
             assert!(close(alone.monospace_px, 14.667));
-            assert_eq!(alone.fonts_from.as_deref(), Some("Qt (qt6ct)"));
+            assert_eq!(alone.fonts_from, Some(Read::qt("Qt (qt6ct)")));
             assert_eq!(alone.gtk, None);
             let qt = alone.qt.expect("Qt's fonts, apart");
             assert_eq!(qt.interface.as_deref(), Some("Fira Sans"));
@@ -2607,7 +2689,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             let both = imp::read_from(Some(&bus), &QtOnly);
             assert_eq!(both.font.as_deref(), Some("Noto Sans"));
             assert!(close(both.font_px, 13.333));
-            assert_eq!(both.fonts_from.as_deref(), Some("the portal"));
+            assert_eq!(both.fonts_from, Some(Read::Portal));
             // A role GTK's side leaves out is still Qt's.
             assert_eq!(both.monospace_font.as_deref(), Some("Hack"));
             assert_eq!(
@@ -2883,7 +2965,12 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
 
             fn qt_fonts(&self) -> imp::Named {
                 let text = std::fs::read_to_string(&self.0).ok();
-                imp::qt_named(text.as_deref(), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
+                imp::qt_named(
+                    text.as_deref(),
+                    "Fonts",
+                    ("general", "fixed"),
+                    Read::qt("Qt (qt6ct)"),
+                )
             }
 
             fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
@@ -3044,7 +3131,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             assert!(close(engine.interface_px, 11. * 96. / 72.));
             assert_eq!(engine.monospace.as_deref(), Some("Iosevka"));
             assert_eq!(engine.monospace_px, None, "no size said");
-            assert_eq!(engine.from, Some("Qt (qtengine)"));
+            assert_eq!(engine.from, Some(Read::qt("Qt (qtengine)")));
             let hypr = imp::qt_settings_named(&settings(
                 "hyprqt6engine",
                 "theme {\n  font = Noto Sans\n  font_size = 10\n  font_fixed = Hack\n  \
@@ -3054,7 +3141,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             assert!(close(hypr.interface_px, 10. * 96. / 72.));
             assert_eq!(hypr.monospace.as_deref(), Some("Hack"));
             assert!(close(hypr.monospace_px, 12.));
-            assert_eq!(hypr.from, Some("Qt (hyprqt6engine)"));
+            assert_eq!(hypr.from, Some(Read::qt("Qt (hyprqt6engine)")));
             // Said nothing, or not JSON: none, the program's own default
             // being no choice of the user's.
             for (program, text) in [("qtengine", "{}"), ("qtengine", "{"), ("hyprqt6engine", "")] {
@@ -3067,7 +3154,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
                 "[Fonts]\ngeneral=\"Fira Sans,12,-1,5,400,0,0,0,0,0\"\n",
             ));
             assert_eq!(ct.interface.as_deref(), Some("Fira Sans"));
-            assert_eq!(ct.from, Some("Qt (qt6ct)"));
+            assert_eq!(ct.from, Some(Read::qt("Qt (qt6ct)")));
         }
 
         /// A settings file that names a scheme file by its path (as qt6ct
@@ -3084,7 +3171,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
                     .ok()
                     .and_then(|named| std::fs::read_to_string(named.trim()).ok())
                     .and_then(|text| crate::kde_scheme::scheme_of(&[text], &[]));
-                imp::Painted::one(scheme, "Plasma")
+                imp::Painted::one(scheme, Read::desktop("Plasma"))
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -3159,7 +3246,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             }
 
             fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
-                imp::Painted::one(crate::omarchy::read_in(&self.0), "Omarchy")
+                imp::Painted::one(crate::omarchy::read_in(&self.0), Read::desktop("Omarchy"))
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -3199,7 +3286,7 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             };
             let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
             let first = next();
-            assert_eq!(first.colors_from.as_deref(), Some("Omarchy"));
+            assert_eq!(first.colors_from, Some(Read::desktop("Omarchy")));
             assert!(first.schemes.light.is_some());
             // As omarchy-theme-set does: the next theme made beside it, the
             // theme removed, the next one renamed to it.

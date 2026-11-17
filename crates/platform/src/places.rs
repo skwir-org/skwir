@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use skwir_core::CancelToken;
 use skwir_core::words;
+use skwir_core::words::Words;
 
 /// An XDG user directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +29,10 @@ pub struct Bookmark {
 /// A mounted volume worth showing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mount {
-    pub label: String,
+    /// What it is called, said where it is shown: its folder's name as
+    /// written, or Skwir's words for the volume the system runs from
+    /// ("Root") and a Windows drive ("Local Disk (C:)").
+    pub label: Words,
     pub path: PathBuf,
     pub fstype: String,
     /// Mounted by udisks for the user (under `/run/media` or `/media`):
@@ -390,7 +394,12 @@ pub fn mount(device: &str) -> anyhow::Result<PathBuf> {
     #[cfg(windows)]
     {
         let _ = device;
-        Err(skwir_core::system::not_yet("Mounting a volume").into())
+        Err(skwir_core::system::not_yet_words(skwir_core::words!(
+            places_mount_not_yet = "Mounting a volume is not available on { $system } yet",
+            system = skwir_core::system::named(),
+            note = "Why a volume shown in the sidebar is not mounted. system: the system's name (Windows)."
+        ))
+        .into())
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -1067,7 +1076,7 @@ pub fn bookmarks_folders() -> Vec<PathBuf> {
 
 /// Apply `edit` to the GTK bookmarks. Returns the edit that reverts it, or
 /// `None` when nothing changed. Writes a file: call from a worker. A link
-/// is followed and a read-only file refused ([`crate::file::rewrite`]).
+/// is followed and a read-only file refused ([`crate::file::rewrite_words`]).
 pub fn edit_bookmarks(edit: &BookmarkEdit) -> anyhow::Result<Option<BookmarkEdit>> {
     let link = bookmarks_file().ok_or_else(|| {
         anyhow::Error::from(words!(
@@ -1132,18 +1141,17 @@ pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
             continue;
         }
         let label = if mountpoint == Path::new("/") {
-            // Transitional: a mount's label is text, said once here
-            // (ADR-139).
             words!(
                 places_root = "Root",
                 note = "The name of the volume the system runs from (/), in the sidebar's Devices."
             )
-            .say()
         } else {
-            mountpoint
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
+            Words::as_written(
+                mountpoint
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            )
         };
         let udisks = mountpoint.starts_with("/run/media") || mountpoint.starts_with("/media");
         out.push(Mount {
@@ -1193,15 +1201,12 @@ mod imp {
                 let information = crate::windows::volume_information(&root);
                 let locked = information.is_none() && crate::windows::drive_locked(&root);
                 let (label, fstype) = information.unwrap_or_default();
-                // Transitional: a mount's label is text, said once here
-                // (ADR-139).
                 let label = if label.is_empty() {
                     skwir_core::words!(
                         places_local_disk = "Local Disk ({ $letter })",
                         letter = letter.clone(),
                         note = "A Windows drive that has no name of its own, as Windows names it. letter: its drive letter (C:)."
                     )
-                    .say()
                 } else {
                     skwir_core::words!(
                         places_drive = "{ $label } ({ $letter })",
@@ -1209,7 +1214,6 @@ mod imp {
                         letter = letter.clone(),
                         note = "A Windows drive, as Windows names it. label: the drive's own name; letter: its drive letter (C:)."
                     )
-                    .say()
                 };
                 Mount {
                     label,
@@ -1266,11 +1270,12 @@ mod imp {
                 if path != Path::new("/") && !path.starts_with("/Volumes") {
                     return None;
                 }
-                let label = if path == Path::new("/") {
+                // The Finder's name of the system's volume, as it writes it.
+                let label = skwir_core::words::Words::as_written(if path == Path::new("/") {
                     "Macintosh HD".to_owned()
                 } else {
                     path.file_name()?.to_string_lossy().into_owned()
-                };
+                });
                 Some(Mount {
                     label,
                     fstype: text(&e.f_fstypename),
@@ -2067,9 +2072,9 @@ mod tests {
         let v = parse_mountinfo(text);
         let paths: Vec<String> = v.iter().map(|m| m.path.display().to_string()).collect();
         assert_eq!(paths, ["/", "/home", "/run/media/u/my disk", "/mnt/backup"]);
-        assert_eq!(v[0].label, "Root");
+        assert_eq!(v[0].label.english(), "Root");
         assert!(!v[0].udisks);
-        assert_eq!(v[2].label, "my disk");
+        assert_eq!(v[2].label.english(), "my disk");
         assert!(v[2].udisks);
         assert_eq!(v[3].fstype, "fuse.sshfs");
         assert_eq!(v[0].root, Path::new("/root"), "a subvolume");
@@ -2123,7 +2128,7 @@ mod tests {
             .iter()
             .find(|m| m.path == std::path::Path::new("C:\\"))
             .unwrap_or_else(|| panic!("{mounts:?}"));
-        assert!(c.label.ends_with("(C:)"), "{}", c.label);
+        assert!(c.label.english().ends_with("(C:)"), "{}", c.label);
         assert!(super::space(&c.path).is_some());
         let dirs = super::user_dirs();
         assert!(

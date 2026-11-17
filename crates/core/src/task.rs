@@ -31,7 +31,7 @@ pub struct Tasks {
 
 struct Shared {
     id: u64,
-    title: String,
+    title: crate::words::Words,
     went: AtomicU32,
     cancel: CancelToken,
 }
@@ -40,8 +40,9 @@ struct Shared {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Running {
     pub id: u64,
-    /// What it does, as a sentence starts: "Print “notes.md”".
-    pub title: String,
+    /// What it does, as a sentence starts: "Print “notes.md”", said where
+    /// it is shown.
+    pub title: crate::words::Words,
     /// How far it went, from 0 to 1; `None` until it says.
     pub went: Option<f64>,
     /// It was asked to stop and has not yet.
@@ -63,7 +64,11 @@ impl Tasks {
 
     /// A task titled `title` starts, stopped by `cancel` (which Cancel
     /// cancels).
-    pub fn start(self: &Arc<Self>, title: impl Into<String>, cancel: CancelToken) -> Task {
+    pub fn start(
+        self: &Arc<Self>,
+        title: impl Into<crate::words::Words>,
+        cancel: CancelToken,
+    ) -> Task {
         let shared = Arc::new(Shared {
             id: self.next.fetch_add(1, Ordering::Relaxed),
             title: title.into(),
@@ -168,7 +173,10 @@ mod tests {
         tasks.set_waker(Some(Arc::new(move || {
             counted.fetch_add(1, Ordering::Relaxed);
         })));
-        let task = tasks.start("Print “notes.md”", CancelToken::new());
+        let task = tasks.start(
+            crate::words::Words::as_written("Print “notes.md”"),
+            CancelToken::new(),
+        );
         let shown = tasks.running();
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].went, None);

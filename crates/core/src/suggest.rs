@@ -30,6 +30,7 @@ use crate::command::Invocation;
 use crate::location::Location;
 use crate::metadata::TagRef;
 use crate::scheduler::Lane;
+use crate::words::Words;
 use crate::workspace::PaneId;
 
 /// What the text typed is, as the field reads it: a source answers the
@@ -140,27 +141,8 @@ pub enum Section {
 }
 
 impl Section {
-    /// Its title over its rows; `None` for the first row.
-    pub fn title(self) -> Option<&'static str> {
-        Some(match self {
-            Section::Run => return None,
-            Section::Help => "What the field takes",
-            Section::Syntax => "Terms of a search",
-            Section::Scopes | Section::SearchIn => "Search in",
-            Section::Complete => "Complete",
-            Section::Reading => "Did you mean",
-            Section::Terms => "Add a term",
-            Section::Recent => "Recent searches",
-            Section::Saved => "Saved searches",
-            Section::Tabs => "Open tabs",
-            Section::History => "Back",
-            Section::Go => "Go to",
-            Section::Actions => "Actions",
-        })
-    }
-
-    /// Its title over its rows, as words; `None` for the first row
-    /// (`title` until every caller says words).
+    /// Its title over its rows, said where it is drawn; `None` for the
+    /// first row.
     pub fn words(self) -> Option<crate::words::Words> {
         use crate::words;
         Some(match self {
@@ -227,9 +209,11 @@ impl Section {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Suggestion {
     pub section: Section,
-    pub title: String,
+    /// What the row says, said where it is drawn; in English to agents
+    /// (ADR-139, 7). A query, a path or a name is as written.
+    pub title: Words,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub detail: Option<Words>,
     /// A bundled symbolic icon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -281,7 +265,7 @@ pub struct Suggestion {
     /// The heading it stands under within its section (a reference's
     /// group, ADR-137: "Values"); its section's title when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub heading: Option<String>,
+    pub heading: Option<Words>,
     /// Its place within its section: lower first.
     #[serde(default)]
     pub rank: i32,
@@ -291,7 +275,7 @@ pub struct Suggestion {
 }
 
 impl Suggestion {
-    pub fn new(section: Section, title: impl Into<String>) -> Self {
+    pub fn new(section: Section, title: impl Into<Words>) -> Self {
         Suggestion {
             section,
             title: title.into(),
@@ -317,7 +301,7 @@ impl Suggestion {
     }
 
     #[must_use]
-    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+    pub fn detail(mut self, detail: impl Into<Words>) -> Self {
         self.detail = Some(detail.into());
         self
     }
@@ -342,7 +326,7 @@ impl Suggestion {
 
     /// Under `heading` within its section.
     #[must_use]
-    pub fn heading(mut self, heading: impl Into<String>) -> Self {
+    pub fn heading(mut self, heading: impl Into<Words>) -> Self {
         self.heading = Some(heading.into());
         self
     }
@@ -370,9 +354,9 @@ pub struct Span {
     /// Byte offsets into the text.
     pub range: Range<usize>,
     pub kind: SpanKind,
-    /// Why it cannot be read (an error's).
+    /// Why it cannot be read (an error's), said where it is shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub message: Option<Words>,
 }
 
 /// A source's answer.
@@ -513,7 +497,7 @@ mod tests {
             spans: vec![],
         };
         let merged = merge([("query".to_owned(), a), ("jump".to_owned(), b)]);
-        let titles: Vec<&str> = merged.rows.iter().map(|r| r.title.as_str()).collect();
+        let titles: Vec<String> = merged.rows.iter().map(|r| r.title.english()).collect();
         assert_eq!(titles, ["Search", "kind:", "Music", "Maps"]);
         assert_eq!(merged.rows[0].source, "query");
         assert_eq!(merged.rows[2].source, "jump");

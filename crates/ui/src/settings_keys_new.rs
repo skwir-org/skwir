@@ -175,12 +175,11 @@ fn args_of(fields: &[Field], cx: &App) -> Result<Value, Words> {
 /// by its `when` token and what it is called.
 fn places() -> Vec<(Option<&'static str>, String)> {
     let mut places = vec![(None, anywhere())];
-    // Transitional: the places sharing their keys are told by their
-    // labels, as the keymap tells them (`keymap::place_of`), until a place
-    // names the one it shares them with.
+    // The places sharing their keys are one, by their group
+    // (`keymap::Place::group`), as the keymap tells them.
     for (at, place) in keymap::PLACES.iter().enumerate() {
-        if !keymap::PLACES[..at].iter().any(|p| p.label == place.label) {
-            places.push((Some(place.token), place.label.to_owned()));
+        if !keymap::PLACES[..at].iter().any(|p| p.group == place.group) {
+            places.push((Some(place.token), place.words().say()));
         }
     }
     places
@@ -352,8 +351,7 @@ impl SettingsView {
                     keys_search_commands = "Search commands",
                     note =
                         "The placeholder of the field a new shortcut's command is looked for in."
-                )
-                .say(),
+                ),
                 cx,
             )
         });
@@ -464,7 +462,7 @@ impl SettingsView {
                 }
                 let kind = kind_of(&root, &schema);
                 let input = matches!(kind, Kind::Text | Kind::Number | Kind::Json)
-                    .then(|| cx.new(|cx| TextInput::new("", cx)));
+                    .then(|| cx.new(|cx| TextInput::new(Words::default(), cx)));
                 if let Some(input) = &input {
                     subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                         if matches!(event, InputEvent::Changed)
@@ -563,9 +561,10 @@ impl SettingsView {
         Some((
             Action {
                 place: at.place,
+                place_id: at.id,
                 rank: at.rank,
                 inside: at.inside,
-                title: keymap::title(&self.app, &command, &args),
+                title: keymap::title_words(&self.app, &command, &args).say(),
                 command,
                 args,
                 chips: Vec::new(),

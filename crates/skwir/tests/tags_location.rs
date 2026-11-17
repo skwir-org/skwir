@@ -414,7 +414,12 @@ fn a_depth_that_lists_no_files_is_searched_with_everything_within_it() {
             .as_str()
             .unwrap()
             .to_owned();
-        (expr, row.detail.unwrap_or_default())
+        (
+            expr,
+            row.detail
+                .map(|detail| detail.english())
+                .unwrap_or_default(),
+        )
     };
     let within = |place: &Location| {
         format!(

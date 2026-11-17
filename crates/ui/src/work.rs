@@ -21,7 +21,7 @@ use skwir_core::workspace::WindowId;
 use skwir_platform::desktop::{Asked, Desktop, Kind, Notice, Presence, Progress, State};
 
 use crate::activity::{Ended, Stopped, Under, summary};
-use crate::toast::{self, Action, Running, Toast, Tone, capitalized};
+use crate::toast::{self, Action, Running, Toast, Tone};
 
 /// From how long an action ran the desktop is told that it ended while a
 /// window is up: the same 5 s from which its answer says what it moved in
@@ -616,7 +616,7 @@ impl Work {
                         error,
                         cancelled,
                         items,
-                        kept_in: kept_in.as_deref(),
+                        kept_in: kept_in.as_ref(),
                         said: &said,
                         moved,
                         ran,
@@ -924,10 +924,9 @@ impl Work {
 /// as the desktop lists it.
 pub(crate) fn why(under: &Under) -> String {
     match (under.plans.as_slice(), under.tasks.as_slice()) {
-        // Transitional: a plan's title capitalised (ADR-139).
-        ([(running, _)], []) => capitalized(&running.title.say()),
+        ([(running, _)], []) => running.title.heading().say(),
         // A task's title begins a sentence already (`task::Running`).
-        ([], [task]) => task.title.clone(),
+        ([], [task]) => task.title.say(),
         ([], []) => words!(
             work_why_under_way = "Actions under way",
             note = "What the machine is kept awake for, and the session's end held off for, \
@@ -1198,7 +1197,10 @@ mod tests {
             front: here,
             unfold_after: ms(1500),
         };
-        let task = app.tasks.start("Print “it's a.pdf”", CancelToken::new());
+        let task = app.tasks.start(
+            skwir_core::words::Words::as_written("Print “it's a.pdf”"),
+            CancelToken::new(),
+        );
         assert_eq!(work.watch(&app, t0, Some(askers)), Some(t0 + ms(1500)));
         assert!(!work.unfolds_in(here, t0 + ms(1499)));
         assert!(work.unfolds_in(here, t0 + ms(1500)));
@@ -1215,7 +1217,10 @@ mod tests {
         assert_eq!(work.watch(&app, t0 + ms(1600), Some(askers)), None);
         assert!(!work.unfolds_in(here, t0 + ms(1600)));
         // Without a window, nothing unfolds.
-        let late = app.tasks.start("Print “b.pdf”", CancelToken::new());
+        let late = app.tasks.start(
+            skwir_core::words::Words::as_written("Print “b.pdf”"),
+            CancelToken::new(),
+        );
         work.watch(&app, t0, None);
         assert!(!work.unfolds_in(here, t0 + ms(5000)));
         drop(late);
@@ -1393,7 +1398,10 @@ mod tests {
         assert_eq!(work.spell_ended(), 1);
         // Stopped before it went anywhere: nothing ended.
         let cancel = skwir_core::CancelToken::new();
-        let quit = app.tasks.start("Print “b.pdf”", cancel.clone());
+        let quit = app.tasks.start(
+            skwir_core::words::Words::as_written("Print “b.pdf”"),
+            cancel.clone(),
+        );
         work.settle(&app);
         cancel.cancel();
         work.settle(&app);

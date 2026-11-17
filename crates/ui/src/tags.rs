@@ -595,11 +595,6 @@ pub fn stars(rating: u64, size: f32, theme: &Theme) -> Div {
         .children((1..=5).map(|n| star(n, rating, size, theme)))
 }
 
-/// A rating in words, said: "4 stars", "3½ stars" (`stars_said`).
-pub fn stars_words(rating: u64) -> String {
-    stars_said(rating).say()
-}
-
 /// A rating in half stars, in words: "4 stars", "3½ stars".
 pub fn stars_said(rating: u64) -> Words {
     words!(
@@ -944,13 +939,11 @@ impl Shell {
             note = "The tag editor's title: the file whose tags it edits, or how many."
         );
         let back = FocusReturn::capture(window, cx);
-        // Said as the editor opens, the field keeping it while it is open.
         let placeholder = words!(
             tag_editor_placeholder = "Filter, or type a new tag",
             note =
                 "The tag editor's empty field: typing filters the tags listed, or names a new one."
-        )
-        .say();
+        );
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         let sub = cx.subscribe_in(
             &input,

@@ -884,7 +884,7 @@ fn edit_list_text(text: &str, edit: &AssociationEdit) -> Option<(String, Associa
 
 /// Write `edit` into its list. Returns the edit that reverts it, or `None`
 /// when the list already said that. A link is followed and a read-only list
-/// refused ([`crate::file::rewrite`]). Writes a file: call from a worker.
+/// refused ([`crate::file::rewrite_words`]). Writes a file: call from a worker.
 ///
 /// # Errors
 /// When the list cannot be read or written.

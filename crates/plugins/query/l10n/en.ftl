@@ -229,6 +229,9 @@ query_filter_tags = Filter tags
 # Why a saved place's filter was not changed: another saved place is that.
 query_filter_taken = this filter is already saved as { $name }
 
+# A submenu of a file's menu: searches for files like the one selected (same kind, size, date).
+query_find_similar_submenu = Find Similar
+
 query_forget = Remove saved search
 
 query_forget_description = Take a saved search out of the sidebar, named by its search (a saved place by its filter and `at`) or its name

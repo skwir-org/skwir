@@ -696,9 +696,6 @@ clashes_nothing_copied = Nothing is copied until you choose.
 # Under the title of the dialog asking what becomes of the names taken where links are made.
 clashes_nothing_linked = Nothing is linked until you choose.
 
-# Under the title of the dialog asking what becomes of the names taken where a step makes something: done is what it does, a participle (extracted).
-clashes_nothing_made = Nothing is { $done } until you choose.
-
 # Under the title of the dialog asking what becomes of the names taken where something is moved.
 clashes_nothing_moved = Nothing is moved until you choose.
 
@@ -2847,7 +2844,10 @@ grid_caption_size_description = Under each name in the grid, the size of the fil
 grid_caption_size_title = Size under names
 
 # A setting's description: whether each tile of the grid says this under its name.
-grid_caption_tags_description = Under each name in the grid, a line of its tags, as many as fit, then dots. The picture is then left to itself.
+grid_caption_tags_description = Under each name in the grid, a line of its tags, as many as fit, then dots.
+
+# What the grid's tags caption setting says after its description, in its tooltip: the tags are not drawn over the picture.
+grid_caption_tags_more = The picture is then left to itself.
 
 # A setting's name: whether each tile of the grid says this under its name.
 grid_caption_tags_title = Tags under names
@@ -3005,7 +3005,7 @@ icons_plays_playing = playing
 # Why a theme's icon is not drawn: its file is larger than a preview reads. size: that bound.
 icons_too_large = Icon exceeds { $size } preview limit
 
-# What a screen reader hears of a cell of a row in a preview's table: its column's header, then what it holds, both as the file writes them.
+# What a screen reader hears of a cell of a row in a preview's table: its column's header (Skwir's, or the file's own), then what it holds, as the file writes it.
 inspector_cell_said = { $column }: { $cell }
 
 # Said where a chapter typed is none of the book's. last: its last chapter's number.
@@ -3053,8 +3053,14 @@ inspector_lines_so_far = { $count ->
 # Pointing at a book's next button, counted by printed pages. ] is the key that does it too.
 inspector_next_page = Next page · ]
 
+# A book's next button, as a menu's row names it: counted by printed pages.
+inspector_next_page_name = Next page
+
 # Pointing at a preview's next button: the chapter, sheet or page of rows after. ] is the key that does it too.
 inspector_next_section = Next section · ]
+
+# A preview's next button, as a menu's row names it: the chapter, sheet or page of rows after.
+inspector_next_section_name = Next section
 
 # In a book's find field, asked for the match before: there is none in this chapter.
 inspector_no_earlier_match = No earlier match in this chapter
@@ -3074,8 +3080,14 @@ inspector_page_printed_refused = Enter a page number printed in the book, from {
 # Pointing at a book's previous button, counted by printed pages. [ is the key that does it too.
 inspector_previous_page = Previous page · [
 
+# A book's previous button, as a menu's row names it: counted by printed pages.
+inspector_previous_page_name = Previous page
+
 # Pointing at a preview's previous button: the chapter, sheet or page of rows before. [ is the key that does it too.
 inspector_previous_section = Previous section · [
+
+# A preview's previous button, as a menu's row names it: the chapter, sheet or page of rows before.
+inspector_previous_section_name = Previous section
 
 # Pointing at a preview's text size button and at each size it offers (100 %).
 inspector_text_size = Text size
@@ -3152,6 +3164,60 @@ keymap_go_home = Go to your home folder
 
 # A key that goes to a folder; folder: its name.
 keymap_go_to = Go to { $folder }
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts (Alt+Enter).
+keymap_key_alt = Alt
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: the key erasing before the caret.
+keymap_key_backspace = Backspace
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Shift+N): Strg in German.
+keymap_key_ctrl = Ctrl
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts (Shift+Delete): Entf in German, Suppr in French.
+keymap_key_delete = Delete
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: Ende in German, Fin in French.
+keymap_key_end = End
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Enter): Entrée in French.
+keymap_key_enter = Enter
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: Escape, short (Échap in French).
+keymap_key_escape = Esc
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: the Fn key of a laptop.
+keymap_key_fn = Fn
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: a function key (F1, F2…). number: its number, as written on it.
+keymap_key_function = F{ $number }
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: Pos1 in German, Début in French.
+keymap_key_home = Home
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: Einfg in German, Inser in French.
+keymap_key_insert = Insert
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: the key that opens the context menu.
+keymap_key_menu = Menu
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: Bild ab in German.
+keymap_key_page_down = Page Down
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: Bild auf in German.
+keymap_key_page_up = Page Up
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Shift+N): Umschalt in German.
+keymap_key_shift = Shift
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: the space bar (Ctrl+Space): Leertaste in German.
+keymap_key_space = Space
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts: the key with the system's logo (Super+E).
+keymap_key_super = Super
+
+# A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Tab).
+keymap_key_tab = Tab
 
 # Where keys work: a condition that must not hold (not in the trash); condition: the condition.
 keymap_not = not { $condition }
@@ -3551,7 +3617,10 @@ list_column_dimensions_description = Show the size of pictures in pixels, where 
 list_column_duration_description = Show how long sounds and films last, where a plugin reads it of them.
 
 # A setting's description: whether the list has the Folder column. Recent is a place in the sidebar.
-list_column_folder_description = Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.
+list_column_folder_description = Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent.
+
+# What the Folder column's setting says after its description, in its tooltip: in a narrow pane.
+list_column_folder_more = It is the last column to give way.
 
 # A setting's description: whether the list has the Kind column.
 list_column_kind_description = Show what kind of file each is, such as Image or Document.
@@ -3563,7 +3632,10 @@ list_column_modified_description = Show when each item last changed.
 list_column_owner_description = Show who owns each item.
 
 # A setting's description: whether the list has the Rating column.
-list_column_rating_description = Show the stars each file was given, where its notes are kept. It is the first column to give way in a narrow pane.
+list_column_rating_description = Show the stars each file was given, where its notes are kept.
+
+# What the Rating column's setting says after its description, in its tooltip.
+list_column_rating_more = It is the first column to give way in a narrow pane.
 
 # A setting's description: whether the list has the Size column.
 list_column_size_description = Show the size of files.
@@ -3811,7 +3883,7 @@ media_subtitles_off = Off
 # A button of a player's volume, while its sound is muted.
 media_unmute = Unmute
 
-# What a screen reader calls a player's volume slider and its popup.
+# A player's speaker button, as a menu's row names it: it opens the player's volume.
 media_volume = Volume
 
 # Pointing at a player's speaker button: how loud it plays (80 %).
@@ -3821,6 +3893,12 @@ media_volume_level = Volume · { $level }
 media_volume_muted = Volume · muted
 
 menu_close_tab = Close Tab
+
+# What was copied, said after “Copied”: a link's web address.
+menu_copied_link = the link's address
+
+# What was copied, said after “Copied”: a file's path.
+menu_copied_path = the path
 
 menu_copy_link = Copy link address
 
@@ -4131,10 +4209,10 @@ omnibox_token_filtering = Filtering { $scope }
 # What a screen reader calls the token before the address field's text while words search a place and its folders; scope: the place.
 omnibox_token_searching = Searching { $scope } and below
 
-# Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken).
+# Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken), a list.
 omnibox_waits = { $what } need a search.
 
-# Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), and the key that searches.
+# Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), a list, and the key that searches.
 omnibox_waits_keys = { $what } need a search: { $keys }.
 
 # Where a search looks, the root of the file system: every folder.
@@ -4936,9 +5014,6 @@ properties_contains = Contains
 # What a folder holds, in Properties' Contains: it is empty.
 properties_contains_nothing = Nothing
 
-# A group's heading in Properties: what the file says of itself (a picture's camera, a document's author).
-properties_content = Content
-
 # Said as a row of Properties is clicked: what it said was copied. what: the row's label (path, size).
 properties_copied = Copied { $what }
 
@@ -5043,9 +5118,6 @@ properties_found_on_what = found on
 # Under a value in Properties: which plugin gave it, by its name.
 properties_from_plugin = from { $plugin }
 
-# A group's heading in Properties: the file's size and what it takes.
-properties_general = General
-
 # The title of the choices of the group a file belongs to. what: the file, by its name, or how many items.
 properties_give_to_group = Give { $what } to the group
 
@@ -5124,9 +5196,6 @@ properties_level_write_only = Write only
 # A row's label in Properties, for a link: the path it leads to.
 properties_links_to = Links to
 
-# A group's heading in Properties: the file's path and folder.
-properties_location = Location
-
 # A value in Properties, with several items selected, where they differ.
 properties_mixed = Mixed
 
@@ -5139,9 +5208,6 @@ properties_modified_folder_tip = When a name in it was last added, removed or re
 # Pointing at a file's Modified in Properties.
 properties_modified_tip = When its contents last changed. A copy, or a file unpacked, may keep the original's.
 
-# A group's heading in Properties: what plugins or the user attached to the file beside the rest.
-properties_more = More
-
 # A user or a group in Properties: its name, then its number (alice (1000)).
 properties_named_id = { $name } ({ $id })
 
@@ -5150,9 +5216,6 @@ properties_no = No
 
 # A row's label in Properties: what was left out of what a folder holds.
 properties_not_counted = Not counted
-
-# A group's heading in Properties: the file's tags, rating and comment.
-properties_notes = Notes
 
 # Beside the choice that is the file's now, among the choices of who may use it.
 properties_now = Now
@@ -5202,9 +5265,6 @@ properties_path = Path
 # Said where a path to copy is not text (a name in no encoding), which the clipboard cannot hold.
 properties_path_not_text = The path is not text the clipboard can hold
 
-# A group's heading in Properties: who owns the file and who may use it.
-properties_permissions = Permissions
-
 # A row's label in Properties: the stars the file was given.
 properties_rating = Rating
 
@@ -5244,9 +5304,6 @@ properties_runs_owner_others = Its owner and others
 # A row's label in Properties, with several items selected: how many.
 properties_selected = Selected
 
-# A group's heading in Properties, with several items selected: how many, what they weigh.
-properties_selection = Selection
-
 # Under a value in Properties: the user gave it.
 properties_set_by_you = set by you
 
@@ -5262,9 +5319,6 @@ properties_setuid = Runs as its owner, whoever starts it
 # What a folder's set-user-ID bit is called, in Properties' Special: it does nothing on most systems.
 properties_setuid_folder = Set-user-ID
 
-# A group's heading in Properties, with several items selected: the owner, group and access they share.
-properties_shared_permissions = Shared permissions
-
 # A link after the folder a file of the trash was deleted from: go there.
 properties_show_folder = Show
 
@@ -5273,9 +5327,6 @@ properties_size = Size
 
 # What a folder holds in Properties, while it is counted.
 properties_so_far = { $size } so far…
-
-# A group's heading in Properties: where a download came from.
-properties_source = Source
 
 # A row's label in Properties: what a special bit of the file's mode does (set-user-ID, sticky).
 properties_special = Special
@@ -5304,9 +5355,6 @@ properties_target_items = { $count ->
 # Inside the title of what changes who may use a file: the file, by its name, quoted.
 properties_target_named = { $name }
 
-# A group's heading in Properties: when the file changed, was made, was read.
-properties_times = Times
-
 # A row's label in Properties, with several items selected: what they weigh together.
 properties_total_size = Total size
 
@@ -5330,9 +5378,6 @@ properties_unread = { $count ->
 
 # A row's label in Properties: what of a folder could not be counted.
 properties_unreadable = Unreadable
-
-# A group's heading in Properties: the drive the file is on.
-properties_volume = Volume
 
 # The value of a field of a file that is yes or no, in Properties' More.
 properties_yes = Yes
@@ -5704,9 +5749,6 @@ review_clashes_cancelled_copy = Cancelled: nothing was copied
 # Links that found names taken asked what becomes of them, and the user cancelled them.
 review_clashes_cancelled_link = Cancelled: nothing was linked
 
-# An action that makes something and found names taken asked what becomes of them, and the user cancelled it; done: what it would have done (extracted).
-review_clashes_cancelled_make = Cancelled: nothing was { $done }
-
 # A move that found names taken asked what becomes of them, and the user cancelled it.
 review_clashes_cancelled_move = Cancelled: nothing was moved
 
@@ -5883,14 +5925,17 @@ session_setting = The last window's view, split, preview and timeline
 
 settings_activity_opens = Open Activity by itself
 
-settings_activity_opens_description = Activity opens above the footer, over the files, with an action's progress, its speed and its buttons, once an action you asked in the window lasts. Its chevron folds it into the footer until what runs has ended; the next long action opens it again. Off, it opens only from the footer's strip, or Ctrl+Shift+J.
+settings_activity_opens_description = Activity opens above the footer, over the files, with an action's progress, its speed and its buttons, once an action you asked in the window lasts.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_activity_opens_description_more = Its chevron folds it into the footer until what runs has ended; the next long action opens it again. Off, it opens only from the footer's strip, or Ctrl+Shift+J.
 
 settings_activity_unfold = Open Activity after
 
-settings_activity_unfold_description = How long an action you asked runs before Activity opens. Until then, and for anything quicker, the footer's strip says how it goes.
+settings_activity_unfold_description = How long an action you asked runs before Activity opens.
 
-# The button adding a record to a list in the settings: record is what one is called (server, remote).
-settings_add_record = Add { $record }
+# What a setting's description says after its first sentence, in its tooltip.
+settings_activity_unfold_description_more = Until then, and for anything quicker, the footer's strip says how it goes.
 
 # A badge on a setting whose change takes effect at the next start.
 settings_after_restart = Applies after restart
@@ -5912,14 +5957,17 @@ settings_buttons_for_views = Show view buttons
 # What a setting kept as data holds, for agents and scripts: true, false, list, grid and columns are as written.
 settings_buttons_for_views_data = The views given a button beside the address (true) or whose button was taken away (false), by id; any other has a button if it shows the files as they are listed (list, grid, columns)
 
-settings_buttons_for_views_description = Show a button for each view beside the address: list, grid, columns, and any other given one from the buttons' menu. Off, one button stands for them, the view shown, and opens the View menu, as in a pane too narrow for them; its right-click still chooses the buttons.
+settings_buttons_for_views_description = Show a button for each view beside the address: list, grid, columns, and any other given one from the buttons' menu.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_buttons_for_views_description_more = Off, one button stands for them, the view shown, and opens the View menu, as in a pane too narrow for them; its right-click still chooses the buttons.
 
 settings_cards = Cards
 
-settings_cards_description = Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines. The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.
+settings_cards_description = Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines.
 
-# A setting's default choice and what it comes to here and now: Automatic (Dark).
-settings_choice_now = { $choice } ({ $now })
+# What a setting's description says after its first sentence, in its tooltip.
+settings_cards_description_more = The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.
 
 # A setting's default choice as a screen reader names it, with what it comes to here and now: Automatic, now Dark.
 settings_choice_now_said = { $choice }, now { $now }
@@ -5935,60 +5983,86 @@ settings_close = Close
 
 settings_code_appearance = Light or dark
 
+settings_code_appearance_description = Draw source files and code in documents light or dark.
+
 # Automatic, Light and Dark are the setting's choices.
-settings_code_appearance_description = Draw source files and code in documents light or dark. Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.
+settings_code_appearance_description_more = Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.
 
 settings_code_dark_theme = Dark theme
 
-# Light or dark and Colors from are the names of other settings, Dark a choice of the first; bat is a program's name.
-settings_code_dark_theme_description = The colors of source files and of code in documents when code is dark: while skwir is dark, or always when Light or dark above says Dark. Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its dark background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
+# Light or dark is the name of another setting, Dark one of its choices.
+settings_code_dark_theme_description = The colors of source files and of code in documents when code is dark: while skwir is dark, or always when Light or dark above says Dark.
+
+# Default is a choice of the setting; Colors from is the name of another setting; bat is a program's name.
+settings_code_dark_theme_description_more = Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its dark background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
 
 settings_code_engine = Automatic uses
 
+# Automatic is a choice of the languages listed below; bat and tree-sitter are programs' names.
+settings_code_engine_description = Which grammar colors a language left Automatic below when both bat and a tree-sitter grammar know it.
+
 # bat first and Tree-sitter first are the setting's choices; bat, tree-sitter and Sublime Text are programs' names.
-settings_code_engine_description = Which grammar colors a language left Automatic below when both bat and a tree-sitter grammar know it. With bat first, bat's grammar colors it, or one you added to bat or Sublime Text; with Tree-sitter first, the tree-sitter grammar. A language only one of them knows is colored by that one. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.
+settings_code_engine_description_more = With bat first, bat's grammar colors it, or one you added to bat or Sublime Text; with Tree-sitter first, the tree-sitter grammar. A language only one of them knows is colored by that one. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.
 
 settings_code_font = Code font
 
+settings_code_font_description = The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width.
+
 # Fonts from is the name of another setting.
-settings_code_font_description = The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width. Automatic is your desktop's monospace font, as Fonts from reads it, else skwir's own.
+settings_code_font_description_more = Automatic is your desktop's monospace font, as Fonts from reads it, else skwir's own.
 
 settings_code_light_theme = Light theme
 
-# Light or dark and Colors from are the names of other settings, Light a choice of the first; bat is a program's name.
-settings_code_light_theme_description = The colors of source files and of code in documents when code is light: while skwir is light, or always when Light or dark above says Light. Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its light background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
+# Light or dark is the name of another setting, Light one of its choices.
+settings_code_light_theme_description = The colors of source files and of code in documents when code is light: while skwir is light, or always when Light or dark above says Light.
+
+# Default is a choice of the setting; Colors from is the name of another setting; bat is a program's name.
+settings_code_light_theme_description_more = Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its light background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
 
 settings_code_text_size = Code text size
 
-settings_code_text_size_description = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one. The preview's own size buttons still change only the file shown.
+settings_code_text_size_description = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one.
 
 # points: the size 100 % comes to here, in points (10.5).
-settings_code_text_size_now = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one, now { $points } pt. The preview's own size buttons still change only the file shown.
+settings_code_text_size_now = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one, now { $points } pt.
 
 # Said by settings.check of a value it does not know: it may be among the themes you added to bat (a program).
 settings_code_theme_more = the themes you added to bat
 
 settings_colors_from = Colors from
 
+settings_colors_from_description = Where skwir takes its colors: your desktop's, or one of skwir's palettes.
+
 # Plasma, LXQt, Omarchy, GNOME, MATE, Cinnamon, Xfce, Noctalia, Caelestia and Dux Shell are desktops' names; qt6ct, qt5ct, qtengine and hyprqt6engine programs'.
-settings_colors_from_description = Where skwir takes its colors: your desktop's, or one of skwir's palettes. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, Omarchy's theme, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's colors (its theme, with your own GTK style sheet over it, where a desktop shell such as Noctalia, Caelestia or Dux Shell writes its colors), else the color scheme of qt6ct, qt5ct, qtengine or hyprqt6engine; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen.
+settings_colors_from_description_more = Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, Omarchy's theme, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's colors (its theme, with your own GTK style sheet over it, where a desktop shell such as Noctalia, Caelestia or Dux Shell writes its colors), else the color scheme of qt6ct, qt5ct, qtengine or hyprqt6engine; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen.
+
+settings_colors_from_macos = Where skwir takes its colors: macOS's, or one of skwir's palettes.
 
 # Increase contrast is as macOS names its setting.
-settings_colors_from_macos = Where skwir takes its colors: macOS's, or one of skwir's palettes. Automatic wears the colors macOS draws its own windows in, with the accent you chose and its Increase contrast. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. Increase contrast is followed whatever is chosen.
+settings_colors_from_macos_more = Automatic wears the colors macOS draws its own windows in, with the accent you chose and its Increase contrast. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. Increase contrast is followed whatever is chosen.
 
-settings_colors_from_windows = Where skwir takes its colors: Windows' accent, or one of skwir's palettes. Automatic wears skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen.
+settings_colors_from_windows = Where skwir takes its colors: Windows' accent, or one of skwir's palettes.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_colors_from_windows_more = Automatic wears skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen.
 
 settings_contents_pinned = Keep contents open
 
-settings_contents_pinned_description = Keep a document's or a book's contents open beside it while you read, the text or the pages narrowed to make room. Off, they open over what you read and close once you choose a part. The pin at the top of the contents changes it too.
+settings_contents_pinned_description = Keep a document's or a book's contents open beside it while you read, the text or the pages narrowed to make room.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_contents_pinned_description_more = Off, they open over what you read and close once you choose a part. The pin at the top of the contents changes it too.
 
 # A setting's choice: the dark look.
 settings_dark = Dark
 
 settings_dates = Dates
 
-# Friendly and ISO are the setting's choices.
-settings_dates_description = Friendly dates read as Today 14:02, Tuesday 09:30 or 12 Mar, with the exact time in a tooltip. ISO shows 2026-03-12 14:02 everywhere.
+# Friendly is one of the setting's choices.
+settings_dates_description = Friendly dates read as Today 14:02, Tuesday 09:30 or 12 Mar, with the exact time in a tooltip.
+
+# ISO is one of the setting's choices.
+settings_dates_description_more = ISO shows 2026-03-12 14:02 everywhere.
 
 # A choice of how dates are written: Today 14:02, Tuesday 09:30, 12 Mar.
 settings_dates_friendly = Friendly
@@ -6010,8 +6084,10 @@ settings_does_nothing = Does nothing here. { $why }.
 
 settings_drag_image = Dragged files
 
+settings_drag_image_description = How several files look while you drag them.
+
 # Fan, Pile, Mosaic and Single are the setting's choices.
-settings_drag_image_description = How several files look while you drag them. Fan holds the one you took in front of two more leaning out behind it; Pile lays two more under it, each a little lower; Mosaic sets up to four side by side, the last square saying how many more; Single shows the one you took alone. A badge counts them, but in the mosaic. One file is always its own picture.
+settings_drag_image_description_more = Fan holds the one you took in front of two more leaning out behind it; Pile lays two more under it, each a little lower; Mosaic sets up to four side by side, the last square saying how many more; Single shows the one you took alone. A badge counts them, but in the mosaic. One file is always its own picture.
 
 # How several files look while dragged: the one taken in front of two more leaning out behind it.
 settings_drag_image_fan = Fan
@@ -6039,35 +6115,46 @@ settings_file_at = { $path }. It lists only what differs from the defaults.
 
 settings_files_opacity = Files background opacity
 
-settings_files_opacity_description = How much the files and the terminal hide what is behind the window; at 100 % they hide it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
+settings_files_opacity_description = How much the files and the terminal hide what is behind the window; at 100 % they hide it.
 
 settings_files_text_size = Files text size
 
-settings_files_text_size_description = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size. Rows and labels grow with the text, while icons and pictures keep the zoom's size.
+settings_files_text_size_description = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size.
+
+# What the Files text size setting's description says after its first sentence, in its tooltip.
+settings_files_text_size_more = Rows and labels grow with the text, while icons and pictures keep the zoom's size.
 
 # points: the size 100 % comes to here, in points (10.5).
-settings_files_text_size_now = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size, now { $points } pt. Rows and labels grow with the text, while icons and pictures keep the zoom's size.
+settings_files_text_size_now = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size, now { $points } pt.
+
+# The button adding a name to the list of files a folder's preview looks for.
+settings_folder_preview_add_name = Add name
 
 settings_folder_preview_file = Show a README or a cover
 
-settings_folder_preview_file_description = In the preview, show a folder by the file that says what it holds: its README, or the cover of an album or of a photo folder. The first of the names below that it holds is shown. Its card, its count and its Properties stay the folder's; the × leaves the file for the folder's count. Off, a folder's preview says how many items it holds.
+settings_folder_preview_file_description = In the preview, show a folder by the file that says what it holds: its README, or the cover of an album or of a photo folder.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_folder_preview_file_description_more = The first of the names below that it holds is shown. Its card, its count and its Properties stay the folder's; the × leaves the file for the folder's count. Off, a folder's preview says how many items it holds.
 
 # A field of a file's name a folder's preview looks for.
 settings_folder_preview_name = Name
 
 settings_folder_preview_name_description = A file's name, or a pattern where * stands for any characters
 
-# What one record of the list of names a folder's preview looks for is, placed in the settings window's buttons and titles (Add, Remove).
-settings_folder_preview_name_record = name
-
 settings_folder_preview_names = Names
 
-settings_folder_preview_names_description = The files looked for, the first first: a name, or a pattern where * stands for any characters (cover.* finds cover.jpg and cover.png). Letter case is ignored. A folder is shown by the file of the first name it holds that Skwir can preview; a file it cannot preview is passed over for the next one found.
+settings_folder_preview_names_description = The files looked for, the first first: a name, or a pattern where * stands for any characters (cover.* finds cover.jpg and cover.png).
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_folder_preview_names_description_more = Letter case is ignored. A folder is shown by the file of the first name it holds that Skwir can preview; a file it cannot preview is passed over for the next one found.
 
 settings_font = Font
 
+settings_font_description = The font of skwir's menus, lists, bars and dialogs.
+
 # Fonts from is the name of another setting; Inter is a font's name.
-settings_font_description = The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's, as Fonts from reads it, else skwir's own, Inter.
+settings_font_description_more = Automatic is your desktop's, as Fonts from reads it, else skwir's own, Inter.
 
 # Said by settings.check of a value it does not know: it may be among the fonts installed.
 settings_font_more = the fonts installed
@@ -6077,6 +6164,8 @@ settings_font_not_drawn = This font cannot be drawn
 
 settings_fonts_from = Fonts from
 
+settings_fonts_from_description = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes.
+
 # What Automatic comes to here, after the setting's description. font: a font's family; points: its size in points (10.5); from: where it was read, a desktop's or a toolkit's name (Plasma, GTK).
 settings_fonts_from_now_read = Now { $font } at { $points } pt, sizes read from { $from }.
 
@@ -6084,29 +6173,32 @@ settings_fonts_from_now_read = Now { $font } at { $points } pt, sizes read from 
 settings_fonts_from_now_usual = Now { $font } at { $points } pt, the system's usual size, as no desktop names one.
 
 # Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_system = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.
+settings_fonts_from_system = Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.
 
 # now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_system_now = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }
+settings_fonts_from_system_now = Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }
 
 # Inter and JetBrains Mono are fonts' names; Skwir's own, GTK and Qt are the setting's choices.
-settings_fonts_from_toolkits = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts.
+settings_fonts_from_toolkits = Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts.
 
 # now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Inter and JetBrains Mono are fonts' names; Skwir's own, GTK and Qt are the setting's choices.
-settings_fonts_from_toolkits_now = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts. { $now }
+settings_fonts_from_toolkits_now = Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts. { $now }
 
 # Text size and Accessibility are as Windows names them; Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_windows = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.
+settings_fonts_from_windows = Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.
 
 # now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Text size and Accessibility are as Windows names them; Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_windows_now = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }
+settings_fonts_from_windows_now = Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }
 
 # The caption over settings found or changed: the page they are on, then their section.
 settings_found_on = { $page } › { $section }
 
 settings_full_path = Show the full path
 
-settings_full_path_description = Show a folder's whole path above its files, from the root, each folder under its own name: / › home › someone › Documents › 2026. Off starts it at the deepest folder of the sidebar that holds it, under the sidebar's name: Documents › 2026, a drive's name for a folder on a drive.
+settings_full_path_description = Show a folder's whole path above its files, from the root, each folder under its own name: / › home › someone › Documents › 2026.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_full_path_description_more = Off starts it at the deepest folder of the sidebar that holds it, under the sidebar's name: Documents › 2026, a drive's name for a folder on a drive.
 
 # A grammar the user added, as a choice on the Reading page: program is where it was added (bat, Sublime Text), grammar its name.
 settings_grammar_added = { $program }: { $grammar }
@@ -6148,19 +6240,22 @@ settings_grammar_combined = { $queries }, with { $library ->
        *[system] the system's library
     }
 
+# The button adding a folder to the list of where grammars were looked for.
+settings_grammar_folder_add = Add Folder
+
 # A column of the list of where grammars were looked for: the languages found in the folder.
 settings_grammar_folder_held = What it held
 
 # A column of the list of where grammars were looked for: the folder read.
 settings_grammar_folder_name = Folder
 
-# What one record of the list of where grammars were looked for is.
-settings_grammar_folder_record = Folder
-
 settings_grammar_folders = Where grammars were looked for
 
 # tree-sitter is a program's name.
-settings_grammar_folders_description = Each folder Skwir read for tree-sitter grammars, and the languages it held. What was nearly found comes first, each saying what to do: a repository a folder too deep, a library with no queries to color with, a folder the tree-sitter CLI's configuration names that is not there.
+settings_grammar_folders_description = Each folder Skwir read for tree-sitter grammars, and the languages it held.
+
+# tree-sitter is a program's name; CLI is its command-line program.
+settings_grammar_folders_description_more = What was nearly found comes first, each saying what to do: a repository a folder too deep, a library with no queries to color with, a folder the tree-sitter CLI's configuration names that is not there.
 
 # A list's title on the Reading page: count is how many grammars were nearly found, listed first.
 settings_grammar_folders_nearly = Where grammars were looked for: { $count } nearly found
@@ -6215,14 +6310,20 @@ settings_grammar_unknown = “{ $grammar }” is no grammar to choose
 
 settings_grid_fill = Fill thumbnails
 
-settings_grid_fill_description = Crop each thumbnail in the grid to a square, so a folder of pictures reads as a gallery. Off shows every picture whole.
+settings_grid_fill_description = Crop each thumbnail in the grid to a square, so a folder of pictures reads as a gallery.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_grid_fill_description_more = Off shows every picture whole.
 
 # What the window keeps, for agents and scripts.
 settings_hints_state = Commands whose shortcut hint was already shown
 
 settings_icon_theme = Icon theme
 
-settings_icon_theme_description = The icons skwir draws files, folders and places with. Automatic follows your desktop's choice.
+settings_icon_theme_description = The icons skwir draws files, folders and places with.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_icon_theme_description_more = Automatic follows your desktop's choice.
 
 # Said by settings.check of a value it does not know: it may be among the icon themes installed.
 settings_icon_theme_more = the icon themes installed
@@ -6271,7 +6372,13 @@ settings_intro_views = How a folder shows its files: their order, how their size
 
 settings_keep_awake = Keep the computer awake while an action runs
 
-settings_keep_awake_description = While a copy, a move or another action runs, and is not paused, the computer does not go to sleep by itself. Closing a laptop's lid still puts it to sleep.
+settings_keep_awake_description = While a copy, a move or another action runs, and is not paused, the computer does not go to sleep by itself.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_keep_awake_description_more = Closing a laptop's lid still puts it to sleep.
+
+# The button adding a language to the list of languages grammars color, on the Reading page.
+settings_language_add = Add Language
 
 # A column of the list of languages on the Reading page: the files a language colors.
 settings_language_files = Files
@@ -6279,22 +6386,24 @@ settings_language_files = Files
 # A column of the list of languages on the Reading page: the language's name.
 settings_language_name = Language
 
-# What one record of the list of languages on the Reading page is.
-settings_language_record = Language
-
 # A list's title on the Reading page: the languages grammars color.
 settings_languages = Languages
 
-# Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name.
-settings_languages_description = The languages a grammar was found or added for, each with the files it colors and what colors it. Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.
+settings_languages_description = The languages a grammar was found or added for, each with the files it colors and what colors it.
 
-# folder: where Skwir's grammars folder is (~/.local/share/skwir/grammars). Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name.
-settings_languages_description_at = The languages a grammar was found or added for, each with the files it colors and what colors it. Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder ({ $folder }) and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.
+# What the Languages list's description says after its first sentence, in its tooltip. folder: where Skwir's grammars folder is (~/.local/share/skwir/grammars). Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name.
+settings_languages_description_at = Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder ({ $folder }) and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.
+
+# What the Languages list's description says after its first sentence, in its tooltip. Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name.
+settings_languages_description_more = Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.
 
 settings_launch_opens = Open folders from other programs in
 
 # Show in Folder is what browsers call the command; skwir there is the command typed in a terminal.
-settings_launch_opens_description = Where a folder goes that another program opens in Skwir while it runs: Show in Folder from a browser, a launcher, skwir and a folder typed in a terminal. A new window opens on it; a tab opens it in the window used last, and Skwir started again with no folder brings that window forward.
+settings_launch_opens_description = Where a folder goes that another program opens in Skwir while it runs: Show in Folder from a browser, a launcher, skwir and a folder typed in a terminal.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_launch_opens_description_more = A new window opens on it; a tab opens it in the window used last, and Skwir started again with no folder brings that window forward.
 
 # Where a folder another program opens in Skwir goes: a tab of the window used last.
 settings_launch_opens_tab = A tab
@@ -6310,11 +6419,17 @@ settings_light = Light
 
 settings_model_perspective = Perspective
 
-settings_model_perspective_description = Draw 3D models in perspective, nearer parts larger, as a camera sees them. Off, every part keeps its size at any depth, as in the model's picture and in a drawing.
+settings_model_perspective_description = Draw 3D models in perspective, nearer parts larger, as a camera sees them.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_model_perspective_description_more = Off, every part keeps its size at any depth, as in the model's picture and in a drawing.
 
 settings_model_smooth = Smooth shading
 
-settings_model_smooth_description = Shade 3D models smoothly across their faces, as a scanned or sculpted surface reads best. Off, each face is shaded flat, so a printed part's facets and edges show.
+settings_model_smooth_description = Shade 3D models smoothly across their faces, as a scanned or sculpted surface reads best.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_model_smooth_description_more = Off, each face is shaded flat, so a printed part's facets and edges show.
 
 # The button raising a number in the settings by a step.
 settings_more = More
@@ -6341,11 +6456,17 @@ settings_nothing_found = Nothing matches “{ $typed }”.
 
 settings_notify_desktop = Tell the desktop when a long action ends
 
-settings_notify_desktop_description = The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while skwir's window is in the background. With the window closed, every action that ends is told. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.
+settings_notify_desktop_description = The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while skwir's window is in the background.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_notify_desktop_description_more = With the window closed, every action that ends is told. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.
 
 settings_opacity = Background opacity
 
-settings_opacity_description = How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100 % they hide it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
+# What the background opacity settings' descriptions say after their first sentence, in their tooltip: below 100 %.
+settings_opacity_below = Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
+
+settings_opacity_description = How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100 % they hide it.
 
 # The button opening the settings file in an editor.
 settings_open_file = Open
@@ -6403,43 +6524,58 @@ settings_plugins_filter_label = Filter plugins
 
 settings_preview_opacity = Preview background opacity
 
+settings_preview_opacity_description = How much a preview hides what is behind the window, whatever it shows.
+
 # Properties is the name of a panel.
-settings_preview_opacity_description = How much a preview hides what is behind the window, whatever it shows. That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
+settings_preview_opacity_description_more = That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
 
 settings_printed_pages = Printed page numbers
 
-settings_printed_pages_description = Count where you are by the page numbers a book's printed edition lists, or a PDF's pages are printed with. That is page 47 of 312 rather than chapter 3 of 12; a book without them counts chapters.
+settings_printed_pages_description = Count where you are by the page numbers a book's printed edition lists, or a PDF's pages are printed with.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_printed_pages_description_more = That is page 47 of 312 rather than chapter 3 of 12; a book without them counts chapters.
 
 settings_read_ahead = Read ahead
 
-settings_read_ahead_description = While you step through pictures, in the preview panel, in peek or on the whole screen, decode the next one before you reach it, so it shows at once. The preview reads ahead in the panel once two steps went the same way, and holds one more picture in memory meanwhile. Off, each picture is decoded when you reach it.
+settings_read_ahead_description = While you step through pictures, in the preview panel, in peek or on the whole screen, decode the next one before you reach it, so it shows at once.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_read_ahead_description_more = The preview reads ahead in the panel once two steps went the same way, and holds one more picture in memory meanwhile. Off, each picture is decoded when you reach it.
 
 # Above every page of the settings when the settings file cannot be written.
 settings_read_only = Your settings file is read-only (Home Manager links it, say): a change here is not kept. Change them where they are declared.
 
 settings_reader_continuous = Continuous scrolling
 
-settings_reader_continuous_description = Read a document, a book laid out in pages or a comic as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.
+settings_reader_continuous_description = Read a document, a book laid out in pages or a comic as one scrolling column.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_reader_continuous_description_more = Off shows one page at a time, and the reader's own button still changes it for the document in front of you.
 
 settings_reading_font = Reading font
 
+settings_reading_font_description = The font books, Markdown and HTML files, documents and mail are read in.
+
 # Fonts from is the name of another setting.
-settings_reading_font_description = The font books, Markdown and HTML files, documents and mail are read in. Automatic is your desktop's document font, as Fonts from reads it, else the interface's.
+settings_reading_font_description_more = Automatic is your desktop's document font, as Fonts from reads it, else the interface's.
 
 settings_reading_text_size = Reading text size
 
-settings_reading_text_size_description = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at. The preview's own size buttons still change only the file shown.
+settings_reading_text_size_description = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at.
 
 # points: the size 100 % comes to here, in points (12).
-settings_reading_text_size_now = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at, now { $points } pt. The preview's own size buttons still change only the file shown.
+settings_reading_text_size_now = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at, now { $points } pt.
 
 settings_reading_width = Reading width
 
 # How wide a reading column may grow: about 85 characters.
 settings_reading_width_comfortable = Comfortable
 
+settings_reading_width_description = How long the lines of a book, a Markdown or HTML file may grow before the text stops widening and sits in the middle of the preview.
+
 # Narrow, Comfortable, Wide and Full width are the setting's choices.
-settings_reading_width_description = How long the lines of a book, a Markdown or HTML file may grow before the text stops widening and sits in the middle of the preview. Narrow is about 65 characters, Comfortable 85, Wide 110; Full width uses the whole panel, with small margins.
+settings_reading_width_description_more = Narrow is about 65 characters, Comfortable 85, Wide 110; Full width uses the whole panel, with small margins.
 
 # How wide a reading column may grow: the whole panel.
 settings_reading_width_full = Full width
@@ -6485,15 +6621,20 @@ settings_search_results = Search results
 
 settings_single_tab = Show a lone tab
 
+settings_single_tab_description = Show the tabs even when the window has one, named like the place it shows.
+
 # New tab and More are a command's and a menu's names.
-settings_single_tab_description = Show the tabs even when the window has one, named like the place it shows. Off gives the lists the strip's row; New tab stays in the More menu and on Ctrl+T.
+settings_single_tab_description_more = Off gives the lists the strip's row; New tab stays in the More menu and on Ctrl+T.
 
 # A text size's choice: its percentage (100%), then the size it comes to in points.
 settings_size_step_points = { $step } ({ $points } pt)
 
 settings_slideshow = Slideshow
 
-settings_slideshow_description = How long a slideshow shows each picture. A slideshow plays the pictures of the folder or search on the whole screen, in the order they are listed, from the one shown to the last.
+settings_slideshow_description = How long a slideshow shows each picture.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_slideshow_description_more = A slideshow plays the pictures of the folder or search on the whole screen, in the order they are listed, from the one shown to the last.
 
 # A slideshow's pace: how long it shows each picture.
 settings_slideshow_pace = { $count ->
@@ -6509,7 +6650,10 @@ settings_table_cell = { $section }: { $setting }
 
 settings_tabs_at = Show tabs
 
-settings_tabs_at_description = Where the tabs are listed. Above the files, a strip over the panes holds them, side by side. In the sidebar, they are its first group, a row each, and the panes start at the top of the window; while the sidebar is hidden, or the window too narrow for it, they go back above the files.
+settings_tabs_at_description = Where the tabs are listed.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_tabs_at_description_more = Above the files, a strip over the panes holds them, side by side. In the sidebar, they are its first group, a row each, and the panes start at the top of the window; while the sidebar is hidden, or the window too narrow for it, they go back above the files.
 
 # Where the tabs are listed: the sidebar's first group.
 settings_tabs_at_sidebar = In the sidebar
@@ -6519,7 +6663,10 @@ settings_tabs_at_strip = Above the files
 
 settings_text_continuous = Continuous scrolling of text
 
-settings_text_continuous_description = Read a book, a document, a page in reading mode or a message as one scrolling column. Off shows a screen at a time, ending at a whole line: the wheel, the arrows and Page Down turn it, and past a chapter's last page comes the next chapter. The button beside the text's size changes it too.
+settings_text_continuous_description = Read a book, a document, a page in reading mode or a message as one scrolling column.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_text_continuous_description_more = Off shows a screen at a time, ending at a whole line: the wheel, the arrows and Page Down turn it, and past a chapter's last page comes the next chapter. The button beside the text's size changes it too.
 
 settings_text_size = Text size
 
@@ -6528,14 +6675,20 @@ settings_text_size_description = How large skwir writes its menus, bars, the sid
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
-    }. Bars, rows and menus grow with the text; icons keep their size.
+    }.
+
+# What the Text size setting's description says after its first sentence, in its tooltip.
+settings_text_size_more = Bars, rows and menus grow with the text; icons keep their size.
 
 # desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5).
 settings_text_size_now = How large skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
-    }, now { $points } pt. Bars, rows and menus grow with the text; icons keep their size.
+    }, now { $points } pt.
+
+# What the Reading and Code text size settings' descriptions say after their first sentence, in their tooltip.
+settings_text_size_preview_buttons = The preview's own size buttons still change only the file shown.
 
 settings_theme = Theme
 
@@ -6546,11 +6699,13 @@ settings_title_appearance = Appearance
 
 settings_title_bar = Title bar
 
-# System, Compact, In the top row and Automatic are the setting's choices.
-settings_title_bar_description = Where the window's title and its buttons are. System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.
+settings_title_bar_description = Where the window's title and its buttons are.
 
 # System, Compact, In the top row and Automatic are the setting's choices. here: what a refusal of the system's means here, a sentence.
-settings_title_bar_description_here = Where the window's title and its buttons are. System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. { $here }
+settings_title_bar_description_here = System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. { $here }
+
+# System, Compact, In the top row and Automatic are the setting's choices.
+settings_title_bar_description_more = System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.
 
 # A page of the settings window, as its list and its header name it.
 settings_title_changed = Changed by you
@@ -6593,11 +6748,17 @@ settings_unfolded_state = The settings pages unfolded to show all their settings
 
 settings_up_button = Show an Up button
 
-settings_up_button_description = Show Up after Back and Forward: it goes to the folder that holds the one shown, or to the place before it in its trail, as Alt+Up does. Off, the trail's segment before the last goes there.
+settings_up_button_description = Show Up after Back and Forward: it goes to the folder that holds the one shown, or to the place before it in its trail, as Alt+Up does.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_up_button_description_more = Off, the trail's segment before the last goes there.
 
 settings_wrap_lines = Wrap lines
 
-settings_wrap_lines_description = Wrap a text file's long lines to the panel, a line's number on its first row. Off, they go on sideways and the panel scrolls with them.
+settings_wrap_lines_description = Wrap a text file's long lines to the panel, a line's number on its first row.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_wrap_lines_description_more = Off, they go on sideways and the panel scrolls with them.
 
 # What a screen reader calls the address field.
 shell_address = Address
@@ -7542,6 +7703,9 @@ toast_restored = { $count ->
 
 # A button on what an error stopped: try what failed again.
 toast_retry = Retry
+
+# What an action's steps said beside what it did, each sentence after the one before (“a.pdf”: its last page was left out. Fold each sheet in half).
+toast_said_then = { $said }. { $then }
 
 # What a copy onto a server's folder does while the server takes what it wrote; count: the files it still sends. Said after other words: begins in lower case.
 toast_sending = { $count ->

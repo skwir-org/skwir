@@ -491,14 +491,11 @@ impl skwir_core::suggest::SuggestSource for TagSuggestions {
             .map(|(i, (rank, tag))| {
                 let location = skwir_core::location::Location::parse(&sidebar_location(&tag));
                 let mut row = Suggestion::new(Section::Go, skwir_core::metadata::tag_leaf(&tag))
-                    .detail(
-                        words!(
-                            tags_suggestion_detail = "Tag · { $tag }",
-                            tag = tag.as_str(),
-                            note = "Beside a tag the address field offers: tag is its whole name, its categories included (Places/France/Paris)."
-                        )
-                        .say(),
-                    )
+                    .detail(words!(
+                        tags_suggestion_detail = "Tag · { $tag }",
+                        tag = tag.as_str(),
+                        note = "Beside a tag the address field offers: tag is its whole name, its categories included (Places/France/Paris)."
+                    ))
                     .rank(rank * 10 + i32::try_from(i).unwrap_or(0) + 5)
                     .runs(Invocation::with_args(
                         "navigate",
@@ -721,13 +718,13 @@ fn rating_items(chosen: Option<u8>) -> Vec<MenuItem> {
                 520 + i32::from(5 - stars),
                 if stars == 0 { "minus" } else { "star" },
             )
-            // Said now: a choice's values meet by its name.
+            // Its values meet by its id, its row saying its name.
             .value_of(
-                &words!(
+                "tags.rating",
+                words!(
                     tags_rating_choice = "Rating",
                     note = "The name of the files' menu's row of stars."
-                )
-                .say(),
+                ),
                 ChoiceLook::Stars,
                 chosen == Some(stars),
             )
@@ -757,16 +754,16 @@ fn ask_comment(text: Option<&str>) -> Invocation {
             tags_comment_title = "Comment",
             note = "The title of the question that edits the selection's comment."
         )
-        .say(),
+        .to_data(),
         "accept": words!(
             tags_comment_accept = "Save",
             note = "The button that keeps a comment typed."
         )
-        .say(),
+        .to_data(),
         "placeholder": words!(
             tags_comment_placeholder = "A comment on the selection (empty removes it)"
         )
-        .say(),
+        .to_data(),
         "command": "notes.comment",
         "field": "text",
     });
@@ -778,10 +775,6 @@ fn ask_comment(text: Option<&str>) -> Invocation {
 
 /// An item of the files' menu: a file's notes; a place (a tag's) has its
 /// own menu.
-/// The context menu's submenu of a selection's tags (ADR-099), which the
-/// tags written into names join.
-pub(crate) const TAGS_SUBMENU: skwir_core::registry::Submenu = skwir_core::registry::submenus::TAGS;
-
 fn menu_item(title: Words, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("selection !place")
 }
@@ -940,13 +933,19 @@ impl Plugin for TagsPlugin {
             SettingSpec::integer(
                 index::LIMIT_SETTING,
                 words!(tags_limit_title = "Room for tagged files"),
-                words!(
-                    tags_limit_description = "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so."
+                (
+                    words!(
+                        tags_limit_description = "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches."
+                    ),
+                    words!(
+                        tags_limit_description_more = "Past it, new tagged files are left out of the tags' folders, and skwir says so.",
+                        note = "What a setting's description says after its first sentence, in its tooltip."
+                    ),
                 ),
                 index::LIMIT_DEFAULT,
                 (8, 4096),
             )
-            .unit("MB")
+            .unit(skwir_core::settings::unit::megabytes)
             .page(skwir_core::settings::page::NOTES)
             .section(skwir_core::settings::section::TAGS),
         );
@@ -994,13 +993,11 @@ impl Plugin for TagsPlugin {
                 open_title: words!(
                     tags_aspect_open = "Tags of this folder",
                     note = "The tooltip of the button at the end of a folder's address that shows its tags."
-                )
-                .say(),
+                ),
                 close_title: words!(
                     tags_aspect_close = "Back to the folder",
                     note = "The same button's tooltip while the folder's tags are shown."
-                )
-                .say(),
+                ),
             },
         );
         app.registry.keepers.add(
@@ -1009,8 +1006,8 @@ impl Plugin for TagsPlugin {
                 scheme: location::SCHEME.into(),
                 filtered: false,
                 save: Invocation::new("tags.keep"),
-                save_title: words!(tags_keep_save = "Pin this tag to the sidebar").say(),
-                forget_title: words!(tags_keep_forget = "Unpin this tag from the sidebar").say(),
+                save_title: words!(tags_keep_save = "Pin this tag to the sidebar"),
+                forget_title: words!(tags_keep_forget = "Unpin this tag from the sidebar"),
                 keeps: Some(browse::keepable),
             },
         );
@@ -1780,7 +1777,7 @@ impl Plugin for TagsPlugin {
                         530,
                         "comment",
                     ));
-                    Ok(Outcome::Value(serde_json::json!({ "items": items })))
+                    Ok(Outcome::Value(skwir_core::registry::menu_answer(&items)))
                 },
             )
             .data();
@@ -1875,7 +1872,7 @@ impl Plugin for TagsPlugin {
         app.registry.menus.add(
             ID,
             MenuItem {
-                submenu: Some(TAGS_SUBMENU),
+                submenu: Some(skwir_core::registry::submenus::tags()),
                 ..menu_item(
                     words!(
                         tags_edit_item = "Edit Tags…",
@@ -1975,7 +1972,9 @@ mod tests {
             let ask = ask(text);
             assert!(source.answers(&ask), "{text}");
             let rows = source.suggest(&app, &ask, &CancelToken::new()).rows;
-            rows.into_iter().map(|r| r.title).collect::<Vec<_>>()
+            rows.into_iter()
+                .map(|r| r.title.english())
+                .collect::<Vec<_>>()
         };
         assert_eq!(titles("#pr"), ["print"]);
         assert_eq!(titles("#").len(), 2);
@@ -2128,7 +2127,7 @@ mod tests {
         for item in items {
             let submenu = item
                 .submenu
-                .map(|submenu| submenu.title.into_owned())
+                .map(|submenu| submenu.title.english())
                 .unwrap_or_default();
             match out.iter_mut().find(|(name, _)| *name == submenu) {
                 Some((_, titles)) => titles.push(item.title.english()),
@@ -2240,7 +2239,7 @@ mod tests {
              then by name; then a pinned one none has"
         );
         assert!(items.iter().all(|item| {
-            item.submenu_id() == Some(&*TAGS_SUBMENU.id)
+            item.submenu_id() == Some("tags")
                 && &*item.command.name == "tags.toggle"
                 && item.order / 100 == 5
         }));
@@ -2254,7 +2253,7 @@ mod tests {
             .into_iter()
             .find(|item| item.title.english() == "Edit Tags…")
             .unwrap();
-        assert_eq!(editor.submenu, Some(TAGS_SUBMENU));
+        assert_eq!(editor.submenu_id(), Some("tags"));
         assert!(items.iter().all(|item| editor.order < item.order));
         // A chip's menu (its tag, with the files) edits them too.
         let Outcome::Value(chip) = app
@@ -2721,9 +2720,9 @@ mod tests {
                 .listing
                 .find_by_name("it's both.txt".as_ref())
                 .and_then(|e| e.metadata.value(keys::NOTES_DIFFER).cloned());
-            if let Some(Value::List(titles)) = differ {
-                let xdg = skwir_core::notes::NotesStore::title(&xdg::XdgStore).english();
-                assert_eq!(titles[0].as_str(), Some(xdg.as_str()));
+            if let Some(Value::List(ids)) = differ {
+                let xdg = skwir_core::notes::NotesStore::id(&xdg::XdgStore);
+                assert_eq!(ids[0].as_str(), Some(xdg), "the store, by its id");
                 break;
             }
             assert!(std::time::Instant::now() < deadline);

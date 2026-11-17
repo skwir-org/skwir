@@ -1,8 +1,9 @@
 //! The system skwir runs on, by name, and what is not written for it yet.
 //!
 //! skwir is built for Linux, macOS and Windows (ADR-035). Code that has no
-//! implementation on a system yet answers with [`not_yet`], an error that
-//! names the system, never with Linux's behaviour where it would be wrong.
+//! implementation on a system yet answers with [`not_yet_words`], an
+//! error that names the system, never with Linux's behaviour where it
+//! would be wrong.
 
 /// The system's name as the user knows it.
 pub const NAME: &str = if cfg!(target_os = "linux") {
@@ -14,15 +15,6 @@ pub const NAME: &str = if cfg!(target_os = "linux") {
 } else {
     "this system"
 };
-
-/// `what` ("Restoring from the trash") has no implementation on this
-/// system yet: an unsupported error saying so, in words for the user.
-pub fn not_yet(what: &str) -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        format!("{what} is not available on {NAME} yet"),
-    )
-}
 
 /// What has no implementation on this system yet, said whole
 /// (`words!(…_not_yet = "Printing is not available on { $system } yet",

@@ -87,18 +87,16 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
     let about = archive.about();
     let area = about.bounds.unwrap_or(WORLD);
     let drawn = about.format.drawn() && about.unreadable.is_none();
-    // Said on a worker for the window that shows it.
     let notice = if drawn {
-        String::new()
+        None
     } else if let Some(why) = &about.unreadable {
-        words!(
+        Some(words!(
             map_tiles_unreadable_notice = "{ $why }: the map shows where it has tiles",
             why = why.clone(),
             note = "why: why a tile archive's tiles cannot be read (they are compressed in a way skwir does not read)."
-        )
-        .say()
+        ))
     } else {
-        match about.format {
+        Some(match about.format {
             Format::Vector => words!(
                 map_tiles_vector_notice =
                     "Vector tiles are not drawn: the map shows where the file has tiles"
@@ -111,8 +109,7 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
                 map_tiles_tiles_notice =
                     "Its tiles are not drawn: the map shows where the file has tiles"
             ),
-        }
-        .say()
+        })
     };
     let doc = GeoDoc {
         // Its own tiles show where it has them; an outline would cover
@@ -152,65 +149,66 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
         )
         .say()
     });
+    // Its format's name, as written, and the name it gives itself.
     let title = if about.name.is_empty() {
-        about.container.clone()
+        words::Words::as_written(about.container.clone())
     } else {
-        format!("{} · {}", about.container, about.name)
+        words!(
+            map_tiles_title = "{ $format } · { $name }",
+            format = about.container.clone(),
+            name = about.name.clone(),
+            note = "The title of a tile archive's preview: its format's name (PMTiles 3, MBTiles), then the name the archive gives itself, both as written."
+        )
     };
     Inspection {
         kind: InspectionKind::Map,
         title,
         details: details([
             (
-                &*words!(map_tiles_detail_name = "Name").say(),
+                words!(map_tiles_detail_name = "Name"),
                 Some(about.name.clone()),
             ),
             (
-                &*words!(map_tiles_detail_description = "Description").say(),
+                words!(map_tiles_detail_description = "Description"),
                 Some(about.description.clone()),
             ),
             (
-                &*words!(map_tiles_detail_format = "Format").say(),
+                words!(map_tiles_detail_format = "Format"),
                 Some(about.container.clone()),
             ),
             (
-                &*words!(
+                words!(
                     map_tiles_detail_tiles = "Tiles",
                     note = "A tile archive's detail: what its tiles are (PNG pictures, vector shapes)."
-                )
-                .say(),
+                ),
                 Some(about.format.describe().say()),
             ),
+            (words!(map_tiles_detail_zoom = "Zoom"), Some(zoom)),
             (
-                &*words!(map_tiles_detail_zoom = "Zoom").say(),
-                Some(zoom),
-            ),
-            (
-                &*words!(
+                words!(
                     map_tiles_detail_area = "Area",
                     note = "A tile archive's detail: where on Earth it has tiles."
-                )
-                .say(),
+                ),
                 corners,
             ),
             (
-                &*words!(map_tiles_detail_count = "Tile count").say(),
+                words!(map_tiles_detail_count = "Tile count"),
                 about.tiles.map(|n| n.to_string()),
             ),
             (
-                &*words!(map_tiles_detail_layers = "Layers").say(),
+                words!(map_tiles_detail_layers = "Layers"),
                 Some(about.layers.join(", ")),
             ),
             (
-                &*words!(map_tiles_detail_attribution = "Attribution").say(),
+                words!(map_tiles_detail_attribution = "Attribution"),
                 Some(about.attribution.clone()),
             ),
             (
-                &*words!(map_tiles_detail_version = "Version").say(),
+                words!(map_tiles_detail_version = "Version"),
                 Some(about.version.clone()),
             ),
         ]),
-        notice,
+        notices: notice.into_iter().collect(),
         // A database or a binary file: no source to read.
         source_available: false,
         geo: Some(Arc::new(doc)),
@@ -235,7 +233,7 @@ mod tests {
     fn fact<'a>(data: &'a Inspection, label: &str) -> Option<&'a str> {
         data.details
             .iter()
-            .find(|d| d.label == label)
+            .find(|d| d.label.english() == label)
             .map(|d| d.value.as_str())
     }
 
@@ -310,11 +308,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(data.kind, InspectionKind::Map);
-        assert_eq!(data.title, "PMTiles 3 · Invented Hills");
+        assert_eq!(data.title.english(), "PMTiles 3 · Invented Hills");
         assert_eq!(fact(&data, "Tiles"), Some("PNG pictures"));
         assert_eq!(fact(&data, "Zoom"), Some("3"));
         assert_eq!(fact(&data, "Layers"), Some("water, roads"));
-        assert!(data.notice.is_empty(), "{}", data.notice);
+        assert!(data.notices.is_empty(), "{:?}", data.notices);
         let doc = data.geo.as_deref().unwrap();
         assert!(doc.areas.is_empty(), "its tiles show where it has them");
         let layer = data.tiles.clone().expect("its tiles");
@@ -347,7 +345,7 @@ mod tests {
             .inspect(&req, &InspectRequest::default(), &CancelToken::new())
             .unwrap()
             .unwrap();
-        assert_eq!(data.title, "PMTiles 3 · Invented Hills");
+        assert_eq!(data.title.english(), "PMTiles 3 · Invented Hills");
         // Its tiles too, for as long as the map shows them.
         let layer = data.tiles.clone().expect("its tiles");
         let tile = ask(&layer, 4, 2).unwrap();
@@ -409,7 +407,7 @@ mod tests {
             .inspect(&req, &InspectRequest::default(), &CancelToken::new())
             .unwrap()
             .unwrap();
-        assert_eq!(data.title, "MBTiles · Invented Hills");
+        assert_eq!(data.title.english(), "MBTiles · Invented Hills");
         // SQLite read the one copy written for it: the path itself never
         // existed.
         assert!(!path.exists());
@@ -463,7 +461,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.tiles.is_none(), "vector tiles are not drawn");
-        assert!(data.notice.starts_with("Vector tiles are not drawn"));
+        assert!(
+            data.notice()
+                .is_some_and(|said| said.english().starts_with("Vector tiles are not drawn"))
+        );
         assert_eq!(fact(&data, "Format"), Some("MBTiles"));
         assert_eq!(fact(&data, "Zoom"), Some("0 to 6"));
         let doc = data.geo.as_deref().unwrap();

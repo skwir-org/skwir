@@ -353,12 +353,6 @@ impl Field {
         matches!(self.kind, Kind::Secret { .. })
     }
 
-    /// Why `text`, typed in it, is no answer, said in the window's
-    /// language ([`Field::refusal_words`]); `None` when it is one.
-    pub fn refusal(&self, text: &str) -> Option<String> {
-        self.refusal_words(text).map(|words| words.say())
-    }
-
     /// Why `text`, typed in it, is no answer, as words; `None` when it is
     /// one.
     pub fn refusal_words(&self, text: &str) -> Option<Words> {
@@ -438,13 +432,6 @@ impl Form {
     pub fn waiting(mut self, what: impl Into<Words>) -> Self {
         self.waiting = Some(what.into());
         self
-    }
-
-    /// Why `values` are no answer to it, the first field's that is not
-    /// among those shown, said in the window's language
-    /// ([`Form::refusal_words`]); `None` when they are one.
-    pub fn refusal(&self, values: &Values) -> Option<String> {
-        self.refusal_words(values).map(|words| words.say())
     }
 
     /// Why `values` are no answer to it, as words, the first field's that
@@ -639,24 +626,27 @@ mod tests {
                 },
             ));
         assert_eq!(
-            form.refusal(&values(&[])).as_deref(),
+            refused(&form, &values(&[])).as_deref(),
             Some("Name is needed")
         );
         assert_eq!(
-            form.refusal(&values(&[("name", "it's mine"), ("port", "70000")]))
-                .as_deref(),
+            refused(&form, &values(&[("name", "it's mine"), ("port", "70000")])).as_deref(),
             Some("Port is a whole number from 1 to 65535")
         );
         // A secret kept stays when nothing is typed.
         assert_eq!(
-            form.refusal(&values(&[("name", "n"), ("port", "22")])),
+            refused(&form, &values(&[("name", "n"), ("port", "22")])),
             None
         );
         assert_eq!(
-            form.refusal(&values(&[("name", "n"), ("kind", "b2")]))
-                .as_deref(),
+            refused(&form, &values(&[("name", "n"), ("kind", "b2")])).as_deref(),
             Some("Kind is one of its choices")
         );
+    }
+
+    /// Why `values` are no answer to `form`, in English.
+    fn refused(form: &Form, values: &Values) -> Option<String> {
+        form.refusal_words(values).map(|refusal| refusal.english())
     }
 
     /// A field shown only with another's value is refused only while it
@@ -687,11 +677,11 @@ mod tests {
             );
         let all = values(&[("to", "printer"), ("pages", "all"), ("ranges", "")]);
         assert!(!form.fields[2].shown_with(&all));
-        assert_eq!(form.refusal(&all), None, "hidden: not needed");
+        assert_eq!(refused(&form, &all), None, "hidden: not needed");
         let ranges = values(&[("to", "pdf"), ("pages", "ranges"), ("ranges", "")]);
         assert!(form.fields[2].shown_with(&ranges));
         assert_eq!(
-            form.refusal(&ranges).as_deref(),
+            refused(&form, &ranges).as_deref(),
             Some("Pages to print is needed")
         );
         assert_eq!(form.accept_with(&all).english(), "Print…");
@@ -699,7 +689,7 @@ mod tests {
         let neither = values(&[("to", "fax"), ("pages", "all")]);
         assert_eq!(form.accept_with(&neither).english(), "OK");
         assert_eq!(
-            form.refusal(&neither).as_deref(),
+            refused(&form, &neither).as_deref(),
             Some("To is one of its choices")
         );
     }
@@ -805,7 +795,7 @@ mod tests {
             "notes.pdf"
         );
         assert_eq!(held(&[("layout", "as_shown"), ("together", "each")]), "");
-        assert_eq!(field.refusal("/anywhere/x.pdf"), None);
+        assert_eq!(field.refusal_words("/anywhere/x.pdf"), None);
         assert_eq!(Field::text("t", "T").save_name(&values(&[])), "");
     }
 }

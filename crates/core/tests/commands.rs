@@ -121,13 +121,15 @@ fn a_command_is_called_by_the_form_of_its_arguments() {
     let spec = app.commands.get("sorter.sort").unwrap();
     assert!(spec.keeps_a_key);
     assert_eq!(
-        spec.title_for(&serde_json::json!({"key": "size"})),
+        spec.title_for(&serde_json::json!({"key": "size"}))
+            .english(),
         "Sort by size"
     );
-    assert_eq!(spec.title_for(&serde_json::json!({})), "Sort");
-    assert_eq!(spec.title_for(&serde_json::Value::Null), "Sort");
+    assert_eq!(spec.title_for(&serde_json::json!({})).english(), "Sort");
+    assert_eq!(spec.title_for(&serde_json::Value::Null).english(), "Sort");
     assert_eq!(
-        spec.title_for(&serde_json::json!({"key": "name"})),
+        spec.title_for(&serde_json::json!({"key": "name"}))
+            .english(),
         "Sort (key name)"
     );
 }

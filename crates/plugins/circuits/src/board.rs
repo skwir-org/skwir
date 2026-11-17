@@ -249,7 +249,7 @@ struct Facts {
     nets: HashSet<String>,
     tracks: usize,
     vias: usize,
-    title: Vec<(String, String)>,
+    title: Vec<(skwir_core::words::Words, String)>,
 }
 
 /// A footprint: its drawings, texts and pads, in its own frame.
@@ -609,12 +609,11 @@ fn mm(value: f64) -> f64 {
 }
 
 /// Properties' label for how many pads a board or footprint has.
-fn pads() -> String {
+fn pads() -> skwir_core::words::Words {
     words!(
         circuits_detail_pads = "Pads",
         note = "A label in the preview's Properties: how many copper pads (where components are soldered) the board or footprint has."
     )
-    .say()
 }
 
 /// A board: its picture and what it holds.
@@ -648,8 +647,7 @@ pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Fou
             words!(
                 circuits_detail_board_size = "Board size",
                 note = "A label in the preview's Properties: the width and height of the board's outline."
-            )
-            .say(),
+            ),
             crate::millimetres_by(mm(outline.width()), mm(outline.height())),
         ));
     }
@@ -659,8 +657,7 @@ pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Fou
                 circuits_detail_copper_layers = "Copper layers",
                 note =
                     "A label in the preview's Properties: how many layers of copper the board has."
-            )
-            .say(),
+            ),
             facts.copper_layers.to_string(),
         ));
     }
@@ -669,8 +666,7 @@ pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Fou
             words!(
                 circuits_detail_thickness = "Thickness",
                 note = "A label in the preview's Properties: how thick the board is."
-            )
-            .say(),
+            ),
             crate::millimetres(mm(thickness)),
         ));
     }
@@ -679,8 +675,7 @@ pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Fou
             words!(
                 circuits_detail_footprints = "Footprints",
                 note = "A label in the preview's Properties: how many components' footprints are placed on the board."
-            )
-            .say(),
+            ),
             facts.footprints,
         ),
         (pads(), facts.pads),
@@ -688,24 +683,21 @@ pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Fou
             words!(
                 circuits_detail_nets = "Nets",
                 note = "A label in the preview's Properties: how many nets (sets of connected pins) the board has."
-            )
-            .say(),
+            ),
             facts.nets.len(),
         ),
         (
             words!(
                 circuits_detail_tracks = "Tracks",
                 note = "A label in the preview's Properties: how many copper tracks (straight or curved) the board has."
-            )
-            .say(),
+            ),
             facts.tracks,
         ),
         (
             words!(
                 circuits_detail_vias = "Vias",
                 note = "A label in the preview's Properties: how many vias (plated holes joining layers) the board has."
-            )
-            .say(),
+            ),
             facts.vias,
         ),
     ] {
@@ -753,8 +745,7 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
             words!(
                 circuits_detail_footprint = "Footprint",
                 note = "A label in the preview's Properties: the footprint's name, as its library gives it."
-            )
-            .say(),
+            ),
             name.into_owned(),
         ));
     }
@@ -763,8 +754,7 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
             words!(
                 circuits_detail_description = "Description",
                 note = "A label in the preview's Properties: the footprint's description, as its library gives it."
-            )
-            .say(),
+            ),
             description
                 .chars()
                 .take(skwir_platform::inspection::limits::DETAIL_CHARS)
@@ -790,8 +780,7 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
             words!(
                 circuits_detail_mounting = "Mounting",
                 note = "A label in the preview's Properties: how the footprint's component is fixed to the board (Surface mount, Through hole)."
-            )
-            .say(),
+            ),
             kind,
         ));
     }
@@ -904,10 +893,10 @@ mod tests {
                 (pad "2" smd rect (at 1 0) (size 1 1.4) (layers "F.Cu" "F.Paste" "F.Mask")))"#,
         )
         .unwrap();
-        let svg = found.svg.unwrap();
+        let svg = found.svg.clone().unwrap();
         assert!(svg.contains("viewBox=\"-2.09 -1.65 4.18 2.94\""), "{svg}");
         assert_eq!(
-            found.details,
+            found.english_details(),
             [
                 ("Footprint".to_owned(), "C_0805".to_owned()),
                 ("Description".to_owned(), "Capacitor SMD 0805".to_owned()),

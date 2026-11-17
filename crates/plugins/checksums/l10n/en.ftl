@@ -25,6 +25,12 @@ checksums_copy = Copy
 # The error says why, as the system or Skwir said it.
 checksums_could_not_compute = The checksum of { $name } could not be computed: { $error }
 
+# What a folded Checksums group says of a checksum computed: the algorithm's name (SHA-256), then the checksum's first digits, as written.
+checksums_gist = { $algorithm } { $digest }
+
+# A group's heading in Properties: the file's SHA-256, MD5 and BLAKE3, each computed when asked.
+checksums_group = Checksums
+
 # Why a checksum could not be computed: what was named is a folder, a pipe or a device, or is gone.
 checksums_it_is_not_a_file = it is not a file
 

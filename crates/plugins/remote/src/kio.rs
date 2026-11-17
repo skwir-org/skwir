@@ -391,7 +391,7 @@ impl Connector for Kio {
             }
             Err(device) => Recognised {
                 address: None,
-                label: (*authority).to_owned(),
+                label: Words::as_written((*authority).to_owned()),
                 ours: false,
                 device: Some(device),
             },
@@ -488,7 +488,10 @@ fn kde_places(xml: &str) -> Vec<Server> {
                 .children()
                 .find(|n| n.has_tag_name("title"))
                 .and_then(|n| n.text())
-                .map_or_else(|| address.label(), str::to_owned);
+                .map_or_else(
+                    || address.label(),
+                    |title| Words::as_written(title.to_owned()),
+                );
             Some(Server {
                 address,
                 label,
@@ -520,7 +523,7 @@ mod tests {
 </xbel>"#;
         let places: Vec<(String, String)> = kde_places(xml)
             .into_iter()
-            .map(|s| (s.label, s.address.to_string()))
+            .map(|s| (s.label.english(), s.address.to_string()))
             .collect();
         assert_eq!(
             places,

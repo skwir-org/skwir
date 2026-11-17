@@ -90,7 +90,6 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     } else {
         (label::zoom_out(), label::zoom_in())
     };
-    let (smaller, larger) = (smaller.say(), larger.say());
     bar.push(Item::button(
         Slot::View,
         1,
@@ -103,7 +102,7 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
             Button::new(
                 "preview-zoom-menu",
                 "chevron",
-                label::zoom().say(),
+                label::zoom(),
                 "ui.preview_menu",
             )
             .args(serde_json::json!({"kind":"zoom"}))
@@ -119,13 +118,13 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("preview-fit", "fit", label::fit().say(), "reset").active(fit),
+        step("preview-fit", "fit", label::fit(), "reset").active(fit),
     ));
     if !shell.preview.shows_film() {
         bar.push(Item::button(
             Slot::View,
             0,
-            step("preview-width", "width", label::fit_width().say(), "width")
+            step("preview-width", "width", label::fit_width(), "width")
                 .active(shell.preview.fit_width),
         ));
     }
@@ -244,8 +243,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
                 words!(
                     preview_back_five = "Back five seconds",
                     note = "A film preview's button."
-                )
-                .say(),
+                ),
                 "ui.preview_seek",
             )
             .args(serde_json::json!({"delta":-5}))
@@ -268,8 +266,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
                 words!(
                     preview_forward_five = "Forward five seconds",
                     note = "A film preview's button."
-                )
-                .say(),
+                ),
                 "ui.preview_seek",
             )
             .args(serde_json::json!({"delta":5}))
@@ -373,8 +370,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
             words!(
                 preview_previous_picture = "Previous picture",
                 note = "A button of a picture shown on the whole screen."
-            )
-            .say(),
+            ),
             -1,
             previous.is_some(),
         ),
@@ -396,8 +392,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
                     preview_slideshow_play = "Play the slideshow",
                     note = "A button of a picture shown on the whole screen: show the pictures one after another."
                 )
-            }
-            .say(),
+            },
             "ui.slideshow",
         )
         .active(playing),
@@ -411,8 +406,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
             words!(
                 preview_next_picture = "Next picture",
                 note = "A button of a picture shown on the whole screen."
-            )
-            .say(),
+            ),
             1,
             next.is_some(),
         ),
@@ -425,7 +419,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
             Button::new(
                 "picture-pace",
                 "chevron",
-                each_picture_for().say(),
+                each_picture_for(),
                 "ui.preview_menu",
             )
             .args(serde_json::json!({"kind": crate::fullscreen::SLIDESHOW_POPUP}))
@@ -455,14 +449,19 @@ fn pace_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         each_picture_for().say().into(),
         None,
     )];
-    for (value, label) in crate::settings::SLIDESHOW_PACES {
+    for (value, label) in crate::settings::slideshow_paces() {
         let seconds: u64 = value.parse().unwrap_or(5);
         parts.push(toolbar::MenuPart::Row(
-            Button::new(format!("pace-{value}"), "", label, "ui.slideshow_pace")
-                .args(serde_json::json!({ "seconds": seconds }))
-                .label(label)
-                .active(chosen == value)
-                .menu(),
+            Button::new(
+                format!("pace-{value}"),
+                "",
+                label.clone(),
+                "ui.slideshow_pace",
+            )
+            .args(serde_json::json!({ "seconds": seconds }))
+            .label(label)
+            .active(chosen == value)
+            .menu(),
         ));
     }
     Some(

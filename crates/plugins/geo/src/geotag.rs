@@ -1054,20 +1054,15 @@ impl skwir_core::op::Effect for SetPosition {
                         geo_gone = "{ $name } no longer exists",
                         name = Name::of(&p),
                         note = "Why a step of a plan that writes a picture's location cannot run: the picture is gone."
-                    )
-                    .say(),
+                    ),
                 };
             }
             Err(e) => {
-                return StepStatus::Conflict {
-                    reason: e.to_string(),
-                };
+                return StepStatus::Conflict { reason: e.words() };
             }
         };
         let Ok(program) = program() else {
-            return StepStatus::Conflict {
-                reason: missing().say(),
-            };
+            return StepStatus::Conflict { reason: missing() };
         };
         let tags = match read_tags(&program, &path, ctx.cancel_token()) {
             Ok(tags) => tags,
@@ -1078,8 +1073,7 @@ impl skwir_core::op::Effect for SetPosition {
                         name = Name::of(&path),
                         error = e,
                         note = "Why a step of a plan that writes a picture's location cannot run: what the picture says of its location cannot be read. error: why."
-                    )
-                    .say(),
+                    ),
                 };
             }
         };
@@ -1091,8 +1085,7 @@ impl skwir_core::op::Effect for SetPosition {
                     geo_changed_since = "{ $name } changed since the plan was made",
                     name = Name::of(&path),
                     note = "Why a step of a plan that writes a picture's location does not run: the picture was written since the plan was reviewed."
-                )
-                .say(),
+                ),
             }
         } else {
             StepStatus::Pending { reversible: true }
@@ -1216,8 +1209,9 @@ fn select_track() -> Words {
 
 /// Notes said one after the other, under a plan's title or after why
 /// nothing was planned.
-fn joined(notes: &[Words]) -> String {
-    notes.iter().map(Words::say).collect::<Vec<_>>().join(" · ")
+/// What was left out, said as a list in the reader's language.
+fn joined(notes: &[Words]) -> skwir_core::words::List {
+    skwir_core::words::List::and(notes.iter().cloned())
 }
 
 fn is_raw(mime: &mime::Mime) -> bool {
@@ -1441,9 +1435,8 @@ pub(crate) fn plan_geotag(
             words!(
                 geo_nothing_along_because = "No picture to place along { $track }: { $why }",
                 track = track_name(),
-                // Transitional: a list argument (ADR-139)
                 why = joined(&notes),
-                note = "Why a geotag planned nothing. track: the name of the GPS track; why: what was left out, each said after the other (3 pictures outside the track's times · 1 other file left out)."
+                note = "Why a geotag planned nothing. track: the name of the GPS track; why: what was left out, as a list (3 pictures outside the track's times and 1 other file left out)."
             )
         };
         return Ok(Geotag::Nothing(why));
@@ -1473,7 +1466,11 @@ fn plan(title: Words, notes: &[Words], steps: Vec<SetPosition>) -> Plan {
     if notes.is_empty() {
         plan
     } else {
-        plan.with_note(joined(notes))
+        plan.with_note(words!(
+            geo_left_out = "{ $what }",
+            what = joined(notes),
+            note = "Under the title of a plan placing or removing pictures' locations: what was left out, as a list (1 picture outside the track's times and 1 other file left out)."
+        ))
     }
 }
 
@@ -1515,9 +1512,8 @@ fn remove_location(app: &App, args: RemoveArgs) -> anyhow::Result<Outcome> {
         }
         anyhow::bail!(words!(
             geo_no_picture_selected_because = "No picture selected: { $why }",
-            // Transitional: a list argument (ADR-139)
             why = joined(&notes),
-            note = "Why no location was removed: the selection holds no picture. why: what it holds instead, each said after the other (1 RAW picture left out: their sidecars are not written yet · 2 other files left out)."
+            note = "Why no location was removed: the selection holds no picture. why: what it holds instead, as a list (1 RAW picture left out: their sidecars are not written yet and 2 other files left out)."
         ));
     }
     let title = words!(
@@ -1962,7 +1958,7 @@ mod tests {
             ..step.clone()
         };
         assert!(
-            matches!(stale.check(&ctx), StepStatus::Conflict { reason } if reason.contains("changed since")),
+            matches!(stale.check(&ctx), StepStatus::Conflict { reason } if reason.english().contains("changed since")),
         );
 
         // Undo: no location again, the time still kept.
@@ -2269,7 +2265,7 @@ mod tests {
         };
         assert_eq!(plan.title.english(), "place “Named.jpg” along “Walk.gpx”");
         assert_eq!(
-            plan.note.as_deref(),
+            plan.note.as_ref().map(Words::english).as_deref(),
             Some("1 picture already placed, left as it is")
         );
         let result = skwir_core::op::Executor::new(skwir_core::scheduler::Scheduler::new(1))
@@ -2344,9 +2340,9 @@ mod tests {
             "place 2 pictures along “Walk (day 1).gpx”"
         );
         assert_eq!(
-            plan.note.as_deref(),
+            plan.note.as_ref().map(Words::english).as_deref(),
             Some(
-                "1 picture outside the track's times · 1 picture already placed, left as it is · 1 RAW picture left out: their sidecars are not written yet · 1 other file left out"
+                "1 picture outside the track's times, 1 picture already placed, left as it is, 1 RAW picture left out: their sidecars are not written yet, and 1 other file left out"
             )
         );
         let during = plan
@@ -2499,7 +2495,7 @@ mod tests {
         assert_eq!(plan.len(), 2);
         assert_eq!(plan.title.english(), "remove the location of 2 pictures");
         assert_eq!(
-            plan.note.as_deref(),
+            plan.note.as_ref().map(Words::english).as_deref(),
             Some("1 RAW picture left out: their sidecars are not written yet")
         );
         // Each step says what it will do and what it did.

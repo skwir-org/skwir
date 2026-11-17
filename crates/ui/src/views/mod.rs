@@ -10,7 +10,6 @@ pub mod list;
 
 use skwir_core::registry::ViewSpec;
 use skwir_core::words;
-use skwir_core::words::Words;
 
 use crate::view::{self, spec};
 
@@ -18,62 +17,61 @@ use crate::view::{self, spec};
 pub fn specs() -> Vec<ViewSpec> {
     vec![
         // The two a folder may remember as its view (ADR-132).
-        titled(
-            spec(view::LIST, "", 0, || Box::new(list::ListView::default())),
-            &words!(
+        spec(
+            view::LIST,
+            words!(
                 views_list = "List",
                 note = "A view's name: the files of a folder in rows, one under the other."
             ),
+            0,
+            || Box::new(list::ListView::default()),
         )
         .remembered(),
         // Beside the list it extends, in the View menu: a button only
         // while shown. No Ctrl+digit: the others keep theirs, and Usage
         // and the map have the next ones.
-        titled(
-            spec(view::TREE, "", 1, || Box::new(list::ListView::tree())),
-            &words!(
+        spec(
+            view::TREE,
+            words!(
                 views_tree = "Tree",
                 note = "A view's name: the list with folders opened in place below their rows."
             ),
+            1,
+            || Box::new(list::ListView::tree()),
         )
         .alternate(),
-        titled(
-            spec(view::GRID, "", 2, || Box::new(grid::GridView::default())),
-            &words!(
+        spec(
+            view::GRID,
+            words!(
                 views_grid = "Grid",
                 note = "A view's name: the files of a folder as tiles with their pictures."
             ),
+            2,
+            || Box::new(grid::GridView::default()),
         )
         .remembered(),
-        titled(
-            spec(view::COLUMNS, "", 3, || {
-                Box::new(columns::ColumnsView::default())
-            }),
-            &words!(
+        spec(
+            view::COLUMNS,
+            words!(
                 views_columns = "Columns",
                 note = "A view's name: the folders above shown side by side, each a column."
             ),
+            3,
+            || Box::new(columns::ColumnsView::default()),
         ),
         // The folders, or a tag's tags, side by side: a shape chosen now
         // and then, with a button only while shown.
-        titled(
-            spec(view::BOARD, "", 4, || Box::new(board::BoardView::default())),
-            &words!(
+        spec(
+            view::BOARD,
+            words!(
                 views_board = "Board",
                 note = "A view's name: the folders, or a tag's tags, side by side as columns of cards."
             ),
+            4,
+            || Box::new(board::BoardView::default()),
         )
         .alternate(),
     ]
-}
-
-/// `spec` titled `title`. Transitional: a view's title is a `String`
-/// (`ViewSpec::title`), said once where it is registered (ADR-139).
-fn titled(spec: ViewSpec, title: &Words) -> ViewSpec {
-    ViewSpec {
-        title: title.say(),
-        ..spec
-    }
 }
 
 /// Bundled renderers for toolkit-independent plugin descriptors.

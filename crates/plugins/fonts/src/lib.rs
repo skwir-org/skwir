@@ -76,7 +76,12 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let bounds = Bounds::of(view);
         let held = req.held()?;
-        let bytes = inspection::read_file(&held, bounds, "Font", cancel)?;
+        let refusal = words!(
+            fonts_file_too_large = "Font exceeds { $size } preview limit",
+            size = words::Size(bounds.binary_input() as u64),
+            note = "Why a font is not previewed: it is larger than the preview reads. size: that bound (16 MB)."
+        );
+        let bytes = inspection::read_file(&held, bounds, refusal, cancel)?;
         let (font, packed) = unpacked(bytes, bounds)?;
         specimen(&font, packed, view, cancel).map(Some)
     }
@@ -122,8 +127,7 @@ fn unpacked(
                         fonts_too_large = "Font exceeds { $size } preview limit",
                         size = words::Size(bounds.binary_input() as u64),
                         note = "Why a web font is not previewed: unpacked, it is larger than the preview reads. size: that bound (16 MB)."
-                    )
-                    .say(),
+                    ),
                 ));
             }
             Ok((font.map_err(|_| damaged())?.into(), Some("WOFF")))
@@ -195,72 +199,56 @@ fn specimen(
             words!(
                 fonts_detail_family = "Family",
                 note = "A label in the preview's Properties: the font's family name."
-            )
-            .say()
-            .as_str(),
+            ),
             named(StringId::FAMILY_NAME),
         ),
         (
             words!(
                 fonts_detail_style = "Style",
                 note = "A label in the preview's Properties: the font's style in its family (Bold Italic)."
-            )
-            .say()
-            .as_str(),
+            ),
             named(StringId::SUBFAMILY_NAME),
         ),
         (
             words!(
                 fonts_detail_version = "Version",
                 note = "A label in the preview's Properties: the font's version, as the font states it."
-            )
-            .say()
-            .as_str(),
+            ),
             named(StringId::VERSION_STRING),
         ),
         (
             words!(
                 fonts_detail_designer = "Designer",
                 note = "A label in the preview's Properties: who designed the font."
-            )
-            .say()
-            .as_str(),
+            ),
             named(StringId::DESIGNER),
         ),
         (
             words!(
                 fonts_detail_license = "License",
                 note = "A label in the preview's Properties: the font's licence, as the font states it."
-            )
-            .say()
-            .as_str(),
+            ),
             named(StringId::LICENSE_DESCRIPTION),
         ),
         (
             words!(
                 fonts_detail_glyphs = "Glyphs",
                 note = "A label in the preview's Properties: how many glyphs the font holds."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(usize::from(glyphs)),
         ),
         (
             words!(
                 fonts_detail_outlines = "Outlines",
                 note = "A label in the preview's Properties: what the font's glyphs are drawn with (TrueType, PostScript (CFF), Bitmaps only)."
-            )
-            .say()
-            .as_str(),
+            ),
             outlines,
         ),
         (
             words!(
                 fonts_detail_variable = "Variable",
                 note = "A label in the preview's Properties: whether the font is a variable font, one whose weight or width can be varied."
-            )
-            .say()
-            .as_str(),
+            ),
             (!font.axes().is_empty()).then(|| {
                 words!(
                     fonts_variable_yes = "Yes",
@@ -273,9 +261,7 @@ fn specimen(
             words!(
                 fonts_detail_packed_as = "Packed as",
                 note = "A label in the preview's Properties: the web font format the font came packed in (WOFF, WOFF2)."
-            )
-            .say()
-            .as_str(),
+            ),
             packed.map(str::to_owned),
         ),
     ]);
@@ -290,11 +276,10 @@ fn specimen(
     chars.sort_unstable();
     chars.dedup();
     details.extend(inspection::detail(
-        &words!(
+        words!(
             fonts_detail_characters = "Characters",
             note = "A label in the preview's Properties: how many characters the font has a glyph for."
-        )
-        .say(),
+        ),
         chars.len().to_string(),
     ));
     let sheet = limits::SHEET_GLYPHS;
@@ -324,7 +309,7 @@ fn specimen(
         .flat_map(|c| [*c, ' '])
         .collect();
     skipped += draw(&font, &glyph_text, SHEET_SIZE, y + 8., &mut rgba, cancel)?.0;
-    let notice = [
+    let notices = [
         (skipped > 0).then(|| {
             words!(
                 fonts_glyphs_skipped = "{ $count ->
@@ -334,20 +319,15 @@ fn specimen(
                 count = skipped,
                 note = "A note under a font's specimen: glyphs too large to draw were left out."
             )
-            .say()
         }),
-        Some(
-            words!(
-                fonts_notice = "Search sets the specimen text · font collections show their first face",
-                note = "A note under a font's specimen: what is typed in the preview's search is drawn instead of the sample text; of a file holding several fonts, the first is shown."
-            )
-            .say(),
-        ),
+        Some(words!(
+            fonts_notice = "Search sets the specimen text · font collections show their first face",
+            note = "A note under a font's specimen: what is typed in the preview's search is drawn instead of the sample text; of a file holding several fonts, the first is shown."
+        )),
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    .collect();
     Ok(Inspection {
         details,
         kind: skwir_core::inspection::InspectionKind::Font,
@@ -356,8 +336,7 @@ fn specimen(
             name = name,
             note =
                 "The title of a font's preview. name: the font's full name, as the font gives it."
-        )
-        .say(),
+        ),
         image: Some(Image {
             width: WIDTH as u32,
             height: HEIGHT as u32,
@@ -366,7 +345,7 @@ fn specimen(
         previous: (offset > 0).then(|| offset.saturating_sub(sheet) as u64),
         next: (offset + sheet < chars.len()).then_some((offset + sheet) as u64),
         position: offset as u64,
-        notice,
+        notices,
         ..Inspection::default()
     })
 }
@@ -746,8 +725,8 @@ mod tests {
             .inspect(&request, &InspectRequest::default(), &CancelToken::new())
             .unwrap()
             .unwrap();
-        assert!(data.title.starts_with("Font · "));
-        let glyphs = data.details.iter().find(|d| d.label == "Glyphs");
+        assert!(data.title.english().starts_with("Font · "));
+        let glyphs = data.details.iter().find(|d| d.label.english() == "Glyphs");
         assert_eq!(glyphs.map(|d| d.value.as_str()), Some("2"));
         let image = data.image.unwrap();
         assert!(image.rgba.chunks(4).any(|px| px[0] < 128));
@@ -757,23 +736,24 @@ mod tests {
     fn synthetic_font_renders_a_specimen() {
         let data = render(synthetic_ttf(1000, 400, 400), Some("AAA")).unwrap();
         assert_eq!(data.kind, skwir_core::inspection::InspectionKind::Font);
-        assert!(data.title.starts_with("Font · "));
+        assert!(data.title.english().starts_with("Font · "));
         // What the font is made of is Properties, never a sentence in the sheet.
         assert!(data.blocks.is_empty());
         let fact = |label: &str| {
             data.details
                 .iter()
-                .find(|d| d.label == label)
+                .find(|d| d.label.english() == label)
                 .map(|d| d.value.as_str())
         };
         assert_eq!(fact("Glyphs"), Some("2"));
         assert_eq!(fact("Characters"), Some("1"));
         assert_eq!(fact("Outlines"), Some("TrueType"));
-        let image = data.image.unwrap();
+        let image = data.image.clone().unwrap();
         assert_eq!((image.width, image.height), (WIDTH as u32, HEIGHT as u32));
         let dark = image.rgba.chunks(4).filter(|px| px[0] < 128).count();
         assert!(dark > 1000, "the square glyph paints pixels, got {dark}");
-        assert!(!data.notice.contains("oversized"));
+        let notice = data.notice().map(|said| said.english()).unwrap_or_default();
+        assert!(!notice.contains("oversized"));
         assert_eq!(data.next, None);
     }
 
@@ -783,11 +763,8 @@ mod tests {
         // of roughly 98k × 98k pixels. The head table lies about the bounds.
         let data = render(synthetic_ttf(16, 16383, 16), Some("AAA")).unwrap();
         // Three specimen sizes of "AAA" plus the character sheet's single glyph.
-        assert!(
-            data.notice.starts_with("10 oversized glyphs"),
-            "{}",
-            data.notice
-        );
+        let notice = data.notice().map(|said| said.english()).unwrap_or_default();
+        assert!(notice.starts_with("10 oversized glyphs"), "{notice}");
         let image = data.image.unwrap();
         assert!(image.rgba.chunks(4).all(|px| px[0] == 255));
     }
@@ -910,7 +887,7 @@ mod tests {
     fn packed_as(data: &Inspection) -> Option<&str> {
         data.details
             .iter()
-            .find(|d| d.label == "Packed as")
+            .find(|d| d.label.english() == "Packed as")
             .map(|d| d.value.as_str())
     }
 
@@ -931,7 +908,7 @@ mod tests {
             let unpacked: Vec<_> = data
                 .details
                 .iter()
-                .filter(|d| d.label != "Packed as")
+                .filter(|d| d.label.english() != "Packed as")
                 .cloned()
                 .collect();
             assert_eq!(unpacked, plain.details);

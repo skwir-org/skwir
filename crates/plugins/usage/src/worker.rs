@@ -757,7 +757,13 @@ impl<'a> Scanner<'a> {
     /// root's device are retained for the descent.
     fn list_root(&mut self) -> anyhow::Result<Vec<(OsString, EntryId, i64)>> {
         if !cfg!(unix) {
-            return Err(skwir_core::system::not_yet("Disk usage").into());
+            return Err(skwir_core::system::not_yet_words(words!(
+                usage_not_yet = "Disk usage is not available on { $system } yet",
+                system = skwir_core::system::named(),
+                note =
+                    "Why a folder's disk usage is not shown. system: the system's name (Windows)."
+            ))
+            .into());
         }
         let path = self.path;
         anyhow::ensure!(

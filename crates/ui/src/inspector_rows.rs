@@ -35,13 +35,13 @@ const DRAGGED_WIDEST: f32 = 1600.;
 /// spreadsheet's next sheet) or another file, whose `State` starts empty.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Dragged {
-    header: Vec<String>,
+    header: Vec<skwir_core::words::Words>,
     widths: Vec<Option<f32>>,
 }
 
 impl Dragged {
     /// A table came with `header`: the widths stay if it is theirs.
-    pub fn keep_for(&mut self, header: &[String]) {
+    pub fn keep_for(&mut self, header: &[skwir_core::words::Words]) {
         if self.header != header {
             self.header = header.to_vec();
             self.widths.clear();
@@ -96,15 +96,16 @@ pub fn number(cell: &str) -> Option<f64> {
     text.parse().ok()
 }
 
-pub fn shape(columns: &[String], rows: &[Row]) -> Shape {
+pub fn shape(columns: &[skwir_core::words::Words], rows: &[Row]) -> Shape {
     let count = columns
         .len()
         .max(rows.iter().map(|row| row.cells.len()).max().unwrap_or(0));
+    // A header's width as said now: only a width, kept with the rows.
     let mut chars: Vec<usize> = (0..count)
         .map(|index| {
             columns
                 .get(index)
-                .map_or(0, |title| title.chars().count() + 2)
+                .map_or(0, |title| title.say().chars().count() + 2)
         })
         .collect();
     let mut numeric = vec![true; count];
@@ -368,6 +369,7 @@ fn measure(block: &Block, cell: std::ops::Range<usize>) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use skwir_core::words::Words;
 
     fn row(cells: &[&str], header: bool) -> Block {
         let mut text = String::new();
@@ -450,7 +452,7 @@ mod tests {
                 "",
             ],
         ]);
-        let columns = ["name", "qty", "price", "value", "notes"].map(String::from);
+        let columns = ["name", "qty", "price", "value", "notes"].map(Words::as_written);
         let shape = shape(&columns, &table);
         assert_eq!(shape.numeric, [false, true, false, true, false]);
         assert!((shape.widths[1] - NARROWEST).abs() < 1e-3, "a short column");
@@ -473,7 +475,7 @@ mod tests {
 
     #[test]
     fn a_dragged_width_stays_with_its_header() {
-        let header = ["name", "qty"].map(String::from);
+        let header = ["name", "qty"].map(Words::as_written);
         let shape = shape(&header, &rows(&[&["apple", "3"]]));
         let mut dragged = Dragged::default();
         dragged.keep_for(&header);
@@ -496,7 +498,7 @@ mod tests {
         dragged.forget(30);
         assert_eq!(dragged.widths(&shape)[0], shape.widths[0]);
         // Another header: the widths were not given for it.
-        dragged.keep_for(&["date".to_owned(), "qty".to_owned()]);
+        dragged.keep_for(&["date", "qty"].map(Words::as_written));
         assert_eq!(dragged.widths(&shape), shape.widths);
     }
 

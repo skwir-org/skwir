@@ -1,5 +1,8 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
+# The button adding a tile server to the settings' list of them.
+map_tiles_add_server = Add tile server
+
 # status: an HTTP status number (404).
 map_tiles_answered = the tile server answered { $status }
 
@@ -162,9 +165,6 @@ map_tiles_server_name_description = What the server is called in the list
 # An example of a tile server's name, shown in its empty field.
 map_tiles_server_name_example = Topographic
 
-# What one record of the list is, placed in the settings window's buttons and titles (Add, Remove).
-map_tiles_server_record = tile server
-
 map_tiles_server_subdomains = Subdomains
 
 map_tiles_server_subdomains_description = What { "{s}" } stands for, one after another
@@ -178,7 +178,10 @@ map_tiles_servers_description = Backgrounds from other servers, to choose in Map
 
 map_tiles_source = Map background
 
-map_tiles_source_description = What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look.
+map_tiles_source_description = What maps are drawn on.
+
+# What a setting's description says after its first sentence, in its tooltip.
+map_tiles_source_description_more = The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look.
 
 map_tiles_test_server = Test a tile server
 
@@ -189,6 +192,9 @@ map_tiles_tile_too_large = A tile of the archive is too large
 map_tiles_tiles_notice = Its tiles are not drawn: the map shows where the file has tiles
 
 map_tiles_timed_out = the tile server did not answer in time
+
+# The title of a tile archive's preview: its format's name (PMTiles 3, MBTiles), then the name the archive gives itself, both as written.
+map_tiles_title = { $format } · { $name }
 
 map_tiles_too_deep = The archive's directories nest too deep
 

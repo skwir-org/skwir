@@ -590,17 +590,23 @@ pub fn ui_commands() -> &'static [(&'static str, serde_json::Value, Words)] {
 pub struct Offer {
     pub name: String,
     pub args: serde_json::Value,
+    /// What it is called, as words other rows carry (the address field's
+    /// actions).
+    pub words: Words,
+    /// The same, said as the palette was asked: what typing matches.
     pub title: String,
     /// Required argument names from the command's schema.
     pub required: Vec<String>,
 }
 
 impl Offer {
-    fn of(name: &str, args: serde_json::Value, title: impl Into<String>) -> Self {
+    fn of(name: &str, args: serde_json::Value, title: impl Into<Words>) -> Self {
+        let words = title.into();
         Offer {
             name: name.to_owned(),
             args,
-            title: title.into(),
+            title: words.say(),
+            words,
             required: Vec::new(),
         }
     }
@@ -633,7 +639,7 @@ pub fn offered(
         }
         offers.push(Offer {
             required: spec.required_args(),
-            ..Offer::of(&spec.name, serde_json::json!({}), spec.title.say())
+            ..Offer::of(&spec.name, serde_json::json!({}), spec.title.clone())
         });
         for form in &spec.forms {
             // A sort by what no column shows here is not offered, as the
@@ -660,14 +666,14 @@ pub fn offered(
                     continue;
                 }
             }
-            offers.push(Offer::of(&spec.name, form.args.clone(), form.title.say()));
+            offers.push(Offer::of(&spec.name, form.args.clone(), form.title.clone()));
         }
     }
     for view in views {
         offers.push(Offer::of(
             "ui.view",
             serde_json::json!({ "id": view.id }),
-            keymap::view_title(view.title.clone()).say(),
+            keymap::view_title(view.title.clone()),
         ));
     }
     // Every setting is reachable by name, like a command: its page, its
@@ -697,7 +703,7 @@ pub fn offered(
         offers.push(Offer::of(
             "ui.settings",
             serde_json::json!({ "key": spec.key }),
-            title.say(),
+            title,
         ));
     }
     for (page, title) in [
@@ -719,11 +725,11 @@ pub fn offered(
         offers.push(Offer::of(
             "ui.settings",
             serde_json::json!({ "page": page }),
-            title.say(),
+            title,
         ));
     }
     for (name, args, title) in ui_commands() {
-        offers.push(Offer::of(name, args.clone(), title.say()));
+        offers.push(Offer::of(name, args.clone(), title.clone()));
     }
     // A plugin's context-menu item that runs a shell command with its
     // own arguments (Other Application… is `ui.choose` over the plugin's
@@ -742,13 +748,11 @@ pub fn offered(
         let title = match &item.submenu {
             Some(submenu) => words!(
                 palette_in_submenu = "{ $submenu } › { $item }",
-                submenu = skwir_core::registry::submenus::words_of(&submenu.id)
-                    .unwrap_or_else(|| Words::as_written(submenu.title.clone())),
+                submenu = submenu.title.clone(),
                 item = item.title.clone(),
                 note = "A context menu's item in the palette, named by its submenu (Open With) and its own title."
-            )
-            .say(),
-            None => item.title.say(),
+            ),
+            None => item.title.clone(),
         };
         offers.push(Offer::of(&command.name, command.args.clone(), title));
     }
@@ -757,7 +761,7 @@ pub fn offered(
 
 impl Shell {
     fn palette_items(&self) -> Vec<PaletteItem> {
-        let sorts: Vec<SortKey> = self.sort_keys().into_iter().map(|(_, key)| key).collect();
+        let sorts: Vec<SortKey> = self.sort_keys();
         offered(
             &self.app,
             &self.available_views(),
@@ -778,9 +782,8 @@ impl Shell {
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| {
-            let mut input =
-                TextInput::new(words!(palette_placeholder = "Type a command").say(), cx);
-            input.set_label(palette_label().say());
+            let mut input = TextInput::new(words!(palette_placeholder = "Type a command"), cx);
+            input.set_label(palette_label());
             input
         });
         let sub = cx.subscribe_in(
@@ -834,7 +837,7 @@ impl Shell {
             args.values.insert(key, serde_json::Value::String(value));
             args.index += 1;
             if args.index < args.required.len() {
-                let asked = asked(&args.name, &args.required[args.index]).say();
+                let asked = asked(&args.name, &args.required[args.index]);
                 p.input.update(cx, |i, cx| {
                     i.set_text("", cx);
                     i.set_label(asked);
@@ -857,7 +860,7 @@ impl Shell {
             self.run(&item.name, item.args, window, cx);
         } else {
             // The field is named by what it asks for, as its label says.
-            let asked = asked(&item.name, &item.required[0]).say();
+            let asked = asked(&item.name, &item.required[0]);
             p.args = Some(ArgPrompt {
                 name: item.name,
                 required: item.required,

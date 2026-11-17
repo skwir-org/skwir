@@ -35,7 +35,7 @@ use crate::keymap::RunCommand;
 use crate::shell::Shell;
 use crate::theme::Chosen as _;
 use crate::theme::Theme;
-use crate::toast::{Action, capitalized};
+use crate::toast::Action;
 
 /// The History's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
 pub const POPUP: &str = "undo-history";
@@ -365,8 +365,7 @@ pub(crate) fn why(row: &HistoryRow) -> Option<String> {
                 history_never = "Cannot be undone",
                 note = "Why an action has no Undo."
             ),
-            // Transitional: a plan's title capitalised (ADR-139).
-            Can::After { title, since, .. } => held(*since, capitalized(&title.say())),
+            Can::After { title, since, .. } => held(*since, title.heading()),
         }
         .say(),
     )
@@ -405,7 +404,7 @@ pub(crate) fn undo_held(action: &Action, by_plan: &HashMap<PlanId, HistoryRow>) 
 
 /// Why an Undo waits for the action `title` that holds it, by how that
 /// one stands.
-fn held(since: Since, title: String) -> Words {
+fn held(since: Since, title: Words) -> Words {
     match since {
         Since::Done => words!(
             history_held_done = "Undo “{ $title }” first: it touched what this did",
@@ -444,17 +443,11 @@ fn held(since: Since, title: String) -> Words {
 }
 
 /// `held`, said in two parts, before and after where its language places
-/// the title, so that the title's link stands there. Transitional
-/// (ADR-139): where an argument is placed, as data beside what is said, is
-/// core's to give (the API pass); found here by a mark placed as the title,
-/// never by reading the words.
+/// the title (`Words::say_around`), so that the title's link stands there.
 fn held_around(since: Since) -> (String, String) {
-    const MARK: &str = "\u{E000}";
-    let said = held(since, MARK.to_owned()).say();
-    match said.split_once(MARK) {
-        Some((before, after)) => (before.to_owned(), after.to_owned()),
-        None => (said, String::new()),
-    }
+    let held = held(since, Words::default());
+    held.say_around("title")
+        .unwrap_or_else(|| (held.say(), String::new()))
 }
 
 /// The tooltip of what the footer's Undo and the History's chevron do,
@@ -771,14 +764,13 @@ fn history_row(
         )),
         Done::Done => None,
     };
-    // Transitional: a plan's title capitalised (ADR-139).
-    let title = capitalized(&row.title.say());
+    let title = row.title.heading();
     let why_said = why(row);
     // What a screen reader hears of the row, built only while one listens.
     let label: Option<SharedString> = a11y.then(|| {
         let title = title.clone();
         match (pill.clone(), why_said.clone()) {
-            (None, None) => Words::as_written(title),
+            (None, None) => title,
             (Some(state), None) => words!(
                 history_row_heard_state = "{ $title }, { $state }",
                 title = title,
@@ -833,7 +825,7 @@ fn history_row(
                     .text_ellipsis()
                     .text_body()
                     .when(undone, |d| d.text_color(theme.text_muted)),
-                title,
+                title.say(),
             )),
     );
     // Why it waits or cannot, on a line of its own under the title: the
@@ -846,8 +838,7 @@ fn history_row(
         } => focus(Part::Blocker).map(|link| {
             let (before, after) = held_around(*since);
             let holder = *holder;
-            // Transitional: a plan's title capitalised (ADR-139).
-            let named = capitalized(&holder_title.say());
+            let named = holder_title.heading();
             div()
                 .flex()
                 .flex_wrap()
@@ -886,7 +877,7 @@ fn history_row(
                             let accent = theme.accent;
                             move |s| s.border_color(accent)
                         })
-                        .child(named)
+                        .child(named.say())
                         .press(
                             move |this, window, cx| {
                                 // Its row lit, the keyboard on its Undo,
@@ -1045,6 +1036,7 @@ mod tests {
     use super::{OVERDRAW, Part, Walk, held, held_around, relist, stops, undo_held, walked, why};
     use crate::toast::Action;
     use skwir_core::op::{Can, Done, HistoryRow, Plan, PlanId, Since};
+    use skwir_core::words::Words;
     use std::collections::HashMap;
     use std::time::SystemTime;
 
@@ -1123,7 +1115,7 @@ mod tests {
             let (before, after) = held_around(since);
             assert_eq!(
                 format!("{before}Copy a{after}"),
-                held(since, "Copy a".to_owned()).say(),
+                held(since, Words::as_written("Copy a")).say(),
                 "{since:?}"
             );
         }

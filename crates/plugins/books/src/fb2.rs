@@ -52,7 +52,7 @@ pub(crate) struct Fb2 {
     /// it.
     text: String,
     /// How it was decoded, when not as UTF-8.
-    decoded: Option<String>,
+    decoded: Option<Words>,
     refs: Vec<ChapterRef>,
     chapters: Vec<Chapter>,
     /// The base64 text of each picture, by its id.
@@ -77,10 +77,16 @@ fn read<S: FileSource + ?Sized>(
     file: &S,
     zipped: bool,
     cancel: &CancelToken,
-) -> anyhow::Result<(String, Option<String>)> {
+) -> anyhow::Result<(String, Option<Words>)> {
     let bytes = if zipped {
-        let mut package =
-            skwir_platform::package::Package::open(file, "This zipped FB2", false, cancel)?;
+        let too_many = words!(
+            books_fb2_zip_members = "{ $count ->
+               *[other] This zipped FB2 holds more than { $count } members
+            }",
+            count = limits::CONTAINER_MEMBERS,
+            note = "An error: a ZIP file typed as a zipped FictionBook holds more files than the preview reads (4,000)."
+        );
+        let mut package = skwir_platform::package::Package::open(file, too_many, false, cancel)?;
         let names: Vec<String> = package.names().map(str::to_owned).collect();
         let name = names
             .iter()
@@ -94,7 +100,16 @@ fn read<S: FileSource + ?Sized>(
                 ))
             })?
             .clone();
-        Cow::Owned(package.read(&name, limits::BINARY_INPUT, "FB2 document", cancel)?)
+        let missing = words!(
+            books_fb2_document_missing = "FB2 document is missing",
+            note = "An error: the FictionBook a zipped FB2 names is not in it."
+        );
+        let too_large = words!(
+            books_fb2_document_too_large = "FB2 document exceeds { $size } preview limit",
+            size = skwir_core::words::Size(limits::BINARY_INPUT as u64),
+            note = "An error: the FictionBook a zipped FB2 holds unpacks past what the preview reads. size: that bound (16 MB)."
+        );
+        Cow::Owned(package.read(&name, limits::BINARY_INPUT, missing, too_large, cancel)?)
     } else {
         file.read_whole(limits::BINARY_INPUT as u64, cancel)?
             .ok_or_else(|| {
@@ -171,7 +186,7 @@ impl Fb2 {
         Self::parse(text, decoded, cancel)
     }
 
-    fn parse(text: String, decoded: Option<String>, cancel: &CancelToken) -> anyhow::Result<Self> {
+    fn parse(text: String, decoded: Option<Words>, cancel: &CancelToken) -> anyhow::Result<Self> {
         let doc = inspection::xml_document(&text)?;
         let root = doc.root_element();
         anyhow::ensure!(is(root, "FictionBook"), not_fb2());
@@ -346,7 +361,7 @@ fn not_fb2() -> Words {
 /// XML declaration names (Russian books are often in Windows-1251), else
 /// UTF-8, else Windows-1252 (`inspection::decode`). With how it was
 /// decoded, when not as UTF-8.
-fn decode(bytes: &[u8]) -> (String, Option<String>) {
+fn decode(bytes: &[u8]) -> (String, Option<Words>) {
     let declared = (encoding_rs::Encoding::for_bom(bytes).is_none())
         .then(|| declared_encoding(bytes))
         .flatten()
@@ -355,14 +370,11 @@ fn decode(bytes: &[u8]) -> (String, Option<String>) {
         let (text, _) = encoding.decode_without_bom_handling(bytes);
         return (
             text.into_owned(),
-            Some(
-                words!(
-                    books_read_as = "Read as { $encoding }",
-                    encoding = encoding.name(),
-                    note = "A notice above a book: the text encoding its file was decoded from, as it is named (windows-1251)."
-                )
-                .say(),
-            ),
+            Some(words!(
+                books_read_as = "Read as { $encoding }",
+                encoding = encoding.name(),
+                note = "A notice above a book: the text encoding its file was decoded from, as it is named (windows-1251)."
+            )),
         );
     }
     let (text, encoding) = inspection::decode(bytes);
@@ -1047,34 +1059,26 @@ impl Book for Reading<'_> {
     fn chapters(&self) -> &[ChapterRef] {
         &self.0.refs
     }
-    fn text(
-        &mut self,
-        href: &str,
-        _cancel: &CancelToken,
-    ) -> anyhow::Result<(String, Option<String>)> {
+    fn text(&mut self, href: &str, _cancel: &CancelToken) -> anyhow::Result<(String, Vec<Words>)> {
         let chapter = self.0.chapter(href)?;
         let cut = chapter.cut.then(|| {
             words!(
                 books_chapter_cut = "The chapter is cut: it holds more than reading mode reads",
                 note = "A notice above a chapter of a book that holds more than the preview reads."
             )
-            .say()
         });
-        let notice: Vec<String> = self.0.decoded.clone().into_iter().chain(cut).collect();
-        Ok((
-            chapter.xhtml.clone(),
-            (!notice.is_empty()).then(|| notice.join(" · ")),
-        ))
+        let notices = self.0.decoded.clone().into_iter().chain(cut).collect();
+        Ok((chapter.xhtml.clone(), notices))
     }
     fn source(
         &mut self,
         href: &str,
         _cancel: &CancelToken,
-    ) -> anyhow::Result<(String, Option<String>)> {
+    ) -> anyhow::Result<(String, Vec<Words>)> {
         let range = self.0.chapter(href)?.source.clone();
         Ok((
             self.0.text.get(range).unwrap_or_default().to_owned(),
-            self.0.decoded.clone(),
+            self.0.decoded.clone().into_iter().collect(),
         ))
     }
     fn resources<'r>(

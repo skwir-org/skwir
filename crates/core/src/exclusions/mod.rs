@@ -192,7 +192,7 @@ pub enum Matcher {
     Holding(String),
 }
 
-/// What stops the rules reading a matcher ([`Matcher::check_words`]):
+/// What stops the rules reading a matcher ([`Matcher::check`]):
 /// why, and whether it is what it says of `beside` that is wrong, the
 /// field a window points at (told by where it is found, never by its
 /// words).
@@ -210,7 +210,7 @@ impl Matcher {
     ///
     /// # Errors
     /// What is wrong, and of which field.
-    pub fn check_words(&self) -> Result<(), Unreadable> {
+    pub fn check(&self) -> Result<(), Unreadable> {
         let of_pattern = |why: Words| Unreadable {
             why,
             of_beside: false,
@@ -257,16 +257,6 @@ impl Matcher {
                 }
             }
         }
-    }
-
-    /// [`Matcher::check_words`], what is wrong said in the window's
-    /// language (until its callers take words).
-    ///
-    /// # Errors
-    /// What is wrong, in words for the user.
-    pub fn check(&self) -> Result<(), String> {
-        self.check_words()
-            .map_err(|unreadable| unreadable.why.say())
     }
 
     /// The one folder it names, as written: a path, never a name, a glob,
@@ -413,12 +403,6 @@ impl Matcher {
             None => what,
         }
     }
-
-    /// [`Matcher::words`] said in the window's language (until its callers
-    /// take words).
-    pub fn said(&self) -> String {
-        self.words().say()
-    }
 }
 
 /// A category of the list.
@@ -441,7 +425,13 @@ pub struct Entry {
     pub category: String,
     /// A built-in's category as skwir ships it.
     pub shipped_category: Option<String>,
-    pub what: String,
+    /// What it is, said where it is shown: the user's own as they wrote
+    /// it, and skwir's as `builtin.toml` writes it. Those are data, a
+    /// tool's name and what it keeps there ("SSH: keys and known hosts"),
+    /// as written until the list's texts have catalogs of their own
+    /// (PLAN.md, step E: the extractor reads only `words!`); what skwir
+    /// adds to them is a message.
+    pub what: Words,
     /// A sub-heading within its category (a language).
     pub group: Option<String>,
     pub matcher: Matcher,
@@ -588,12 +578,11 @@ fn shipped_table() -> &'static Shipped {
 
 /// skwir's list for this system, its bases where the environment puts
 /// them: made again only once what the login shell said changed
-/// (`environment::generation`), or the language its entries are said in
-/// (`words::revision`).
+/// (`environment::generation`). Its words are said where they are shown.
 fn builtin() -> Arc<Catalog> {
-    type Made = Option<((u64, u64), Arc<Catalog>)>;
+    type Made = Option<(u64, Arc<Catalog>)>;
     static BUILTIN: parking_lot::Mutex<Made> = parking_lot::Mutex::new(None);
-    let generation = (crate::environment::generation(), words::revision());
+    let generation = crate::environment::generation();
     let mut kept = BUILTIN.lock();
     if let Some((at, catalog)) = kept.as_ref()
         && *at == generation
@@ -722,7 +711,7 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             _ => continue,
         };
         let category = format!("{BUILTIN}{}", e.category);
-        let entry = |id: String, what: String, matcher: Matcher| Entry {
+        let entry = |id: String, what: Words, matcher: Matcher| Entry {
             id,
             builtin: true,
             shipped_category: Some(category.clone()),
@@ -732,19 +721,17 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             matcher,
             ticks: Switches::ALL,
         };
-        entries.push(entry(format!("{BUILTIN}{}", e.id), e.what.clone(), matcher));
+        // As `builtin.toml` writes it (`Entry::what`).
+        let what = Words::as_written(e.what.clone());
+        entries.push(entry(format!("{BUILTIN}{}", e.id), what.clone(), matcher));
         for (n, text) in also.into_iter().enumerate() {
             entries.push(entry(
                 format!("{BUILTIN}{}.also-{}", e.id, n + 2),
-                // Said as the window shows it (the list is made again
-                // when the language moves), until an entry's `what` is
-                // words.
                 words!(
                     exclusions_what_also = "{ $what } (another of its list)",
-                    what = e.what.clone(),
+                    what = what.clone(),
                     note = "What one of Skwir's exclusions is, where it names several folders: what the first says it is, then this."
-                )
-                .say(),
+                ),
                 Matcher::Pattern {
                     text,
                     beside: None,
@@ -757,10 +744,9 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
                 format!("{BUILTIN}{}.before-it-moved", e.id),
                 words!(
                     exclusions_what_before = "{ $what } (where it was before it moved)",
-                    what = e.what.clone(),
+                    what = what.clone(),
                     note = "What one of Skwir's exclusions is, for the folder a program used before it moved it: what the exclusion says it is, then this."
-                )
-                .say(),
+                ),
                 Matcher::Pattern {
                     text,
                     beside: None,
@@ -785,8 +771,7 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             what: words!(
                 exclusions_what_cache_home = "Your cache folder (XDG_CACHE_HOME)",
                 note = "What one of Skwir's exclusions is: the folder programs keep caches in, moved from ~/.cache by the variable named."
-            )
-            .say(),
+            ),
             group: None,
             matcher: Matcher::Pattern {
                 text: literally(&tilde(cache)),
@@ -1108,8 +1093,10 @@ impl Catalog {
                         table.insert("holding".into(), toml::Value::String(file.clone()));
                     }
                 }
+                // The user's own as written; what skwir wrote for them (an
+                // older list's) in English, as a setting's value is.
                 if !entry.what.is_empty() {
-                    table.insert("what".into(), toml::Value::String(entry.what.clone()));
+                    table.insert("what".into(), toml::Value::String(entry.what.english()));
                 }
                 if entry.category != YOURS {
                     table.insert(
@@ -1225,7 +1212,7 @@ fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, Words> {
             ));
         }
     };
-    matcher.check_words().map_err(|unreadable| unreadable.why)?;
+    matcher.check().map_err(|unreadable| unreadable.why)?;
     for (key, field) in table {
         match key.as_str() {
             "searches" | "agents" | "index" if !field.is_bool() => {
@@ -1241,7 +1228,7 @@ fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, Words> {
         builtin: false,
         category: YOURS.to_owned(),
         shipped_category: None,
-        what: text("what").unwrap_or_default().to_owned(),
+        what: Words::as_written(text("what").unwrap_or_default().to_owned()),
         group: None,
         matcher,
         // A hand-written entry naming no role is kept from every role its
@@ -1454,9 +1441,15 @@ pub fn declare(settings: &Settings) {
                 exclusions_shell_variables = "Read your shell's variables",
                 note = "A switch on the Privacy page: whether the login shell is asked for variables a path of the exclusions starts at."
             ),
-            words!(
-                exclusions_shell_variables_description = "Read variables such as CARGO_HOME from your login shell too, where a path starts at one. A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.",
-                note = "CARGO_HOME, .zshrc and config.fish are names, as written."
+            (
+                words!(
+                    exclusions_shell_variables_description = "Read variables such as CARGO_HOME from your login shell too, where a path starts at one.",
+                    note = "CARGO_HOME, .zshrc and config.fish are names, as written."
+                ),
+                words!(
+                    exclusions_shell_variables_description_more = "A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.",
+                    note = "CARGO_HOME, .zshrc and config.fish are names, as written."
+                ),
             ),
             true,
         )
@@ -1633,8 +1626,7 @@ impl Legacy {
                 what: words!(
                     exclusions_what_legacy = "Private (from 0.3.1's list)",
                     note = "What an exclusion is that the user's list of private folders of an older version (0.3.1) held."
-                )
-                .say(),
+                ),
                 group: None,
                 matcher: Matcher::Pattern {
                     text: text.trim().to_owned(),

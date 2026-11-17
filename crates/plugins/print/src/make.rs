@@ -727,10 +727,7 @@ fn source(
         };
         let parts = print_job::parts(&inspection, &palette, &mut pictures, cancel)?;
         if !parts.parts.is_empty() {
-            return Ok(Source::parts(
-                parts.parts,
-                parts.notice.map(Words::as_written),
-            ));
+            return Ok(Source::parts(parts.parts, parts.notice));
         }
     }
     if let Some(session) = app.previews.open_document(&request, cancel)? {
@@ -783,10 +780,7 @@ fn builtin(
             &skwir_platform::highlight::CodeTheme::own(false),
         );
         let parts = print_job::parts(&inspection, &palette, &mut |_| None, cancel)?;
-        return Ok(Source::parts(
-            parts.parts,
-            parts.notice.map(Words::as_written),
-        ));
+        return Ok(Source::parts(parts.parts, parts.notice));
     }
     anyhow::bail!(nothing_printable(path))
 }
@@ -1185,7 +1179,7 @@ mod tests {
             font: Some("Noto Sans".into()),
             monospace_font: Some("Hack".into()),
             gtk: Some(Fonts {
-                from: "GTK".into(),
+                from: Some(skwir_platform::desktop_style::Read::gtk("GTK")),
                 interface: Some("Cantarell".into()),
                 monospace: Some("Source Code Pro".into()),
                 ..Fonts::default()

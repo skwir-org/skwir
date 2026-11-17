@@ -546,16 +546,14 @@ impl PaneView for MapView {
                     skwir_core::words!(
                         map_view_area_tip = "Search the pictures and videos of this folder and its subfolders made in the area shown",
                         note = "Pointing at the Map view's This area button."
-                    )
-                    .say(),
+                    ),
                     "ui.map_view_search_area",
                 )
                 .label(
                     skwir_core::words!(
                         map_view_area = "This area",
                         note = "A button of the Map view: search for the files made in the area the map shows."
-                    )
-                    .say(),
+                    ),
                 )
                 .render(shell, cx),
             );
@@ -566,16 +564,14 @@ impl PaneView for MapView {
                     skwir_core::words!(
                         map_view_subfolders_tip = "Show the pictures and tracks of the subfolders too",
                         note = "Pointing at the Map view's Subfolders button."
-                    )
-                    .say(),
+                    ),
                     "geo.search_subfolders",
                 )
                 .label(
                     skwir_core::words!(
                         map_view_subfolders = "Subfolders",
                         note = "A button of the Map view: put the files of the folders inside on the map too."
-                    )
-                    .say(),
+                    ),
                 )
                 .render(shell, cx),
             );
@@ -596,8 +592,7 @@ impl PaneView for MapView {
                         map_view_spread = "Spread the files at one place around it, in the order they were taken",
                         note = "Pointing at the Map view's button while the files made at one place are one mark with their count."
                     )
-                }
-                .say(),
+                },
                 "ui.map_view_spread",
             )
             .active(spread)
@@ -611,8 +606,7 @@ impl PaneView for MapView {
                     map_view_fit = "Fit the map to its files · Home",
                     note =
                         "Pointing at the Map view's Fit button. Home is the key that does it too."
-                )
-                .say(),
+                ),
                 "ui.map_view_fit",
             )
             .active(self.handles.view.get().is_none())

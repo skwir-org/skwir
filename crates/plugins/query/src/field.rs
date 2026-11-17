@@ -81,8 +81,8 @@ fn scope_of(ask: &Ask) -> Option<Location> {
 
 /// What a scope is called in a row: a place with depths searched with
 /// everything within it says so (`searched_place`).
-fn scope_said(app: &App, scope: &Location, ask: &Ask) -> String {
-    let said = match scope.path() {
+fn scope_said(app: &App, scope: &Location, ask: &Ask) -> Words {
+    match scope.path() {
         Some(path) if path.parent().is_none() => words!(
             query_field_whole_disk = "on the whole disk",
             note = "Beside a search the address field offers: where it looks."
@@ -107,8 +107,7 @@ fn scope_said(app: &App, scope: &Location, ask: &Ask) -> String {
             place = app.location_title(scope),
             note = "Beside a search the address field offers: where it looks. place: a place that lists files (Recent)."
         ),
-    };
-    said.say()
+    }
 }
 
 /// The place a place with depths (a tag's, ADR-108) is searched as, and
@@ -217,7 +216,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                 SpanKind::Operator => suggest::SpanKind::Operator,
                 SpanKind::Error => suggest::SpanKind::Error,
             },
-            message: s.message.as_ref().map(Words::say),
+            message: s.message.clone(),
         })
         .collect();
     let Some(scope) = scope_of(ask) else {
@@ -253,7 +252,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     // the scope, and elsewhere below.
     let expr = first.map_or_else(|| words.to_owned(), |item| with(item).trim().to_owned());
     if let Some(problem) = problem.filter(|_| first.is_none()) {
-        let mut row = Suggestion::new(Section::Run, problem.say()).icon("warning");
+        let mut row = Suggestion::new(Section::Run, problem).icon("warning");
         row.error = true;
         rows.push(row);
     } else if completed.typing && first.is_none() {
@@ -268,7 +267,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                 note = "In the address field, in place of the search: a key typed has no value yet (kind:)."
             )
         };
-        let mut row = Suggestion::new(Section::Run, said.say()).icon("warning");
+        let mut row = Suggestion::new(Section::Run, said).icon("warning");
         row.error = true;
         rows.push(row);
     } else {
@@ -278,8 +277,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                 query_field_search = "Search “{ $search }”",
                 search = expr.as_str(),
                 note = "The address field's first row: runs the search typed. search: the search, as written."
-            )
-            .say(),
+            ),
         )
             .detail(scope_said(app, &scope, ask))
             .icon("search")
@@ -301,11 +299,11 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     // writes it.
     for (i, item) in completed.items.iter().enumerate() {
         let is_key = item.text.ends_with(':') && !item.text.contains("::");
-        let mut row = Suggestion::new(Section::Complete, item.label.say())
+        let mut row = Suggestion::new(Section::Complete, item.label.clone())
             .detail(
                 item.detail
-                    .as_ref()
-                    .map_or_else(|| item.text.clone(), Words::say),
+                    .clone()
+                    .unwrap_or_else(|| Words::as_written(item.text.clone())),
             )
             .icon(&item.icon)
             .rank(i32::try_from(i).unwrap_or(i32::MAX));
@@ -332,16 +330,12 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                 }",
                 count = more,
                 note = "Below the tags the address field offers: how many more go on with what is typed."
-            )
-            .say(),
+            ),
         )
-        .detail(
-            words!(
-                query_field_narrow_tags = "Type more of the name to narrow them",
-                note = "Beside how many more tags go on with what is typed in the address field."
-            )
-            .say(),
-        )
+        .detail(words!(
+            query_field_narrow_tags = "Type more of the name to narrow them",
+            note = "Beside how many more tags go on with what is typed in the address field."
+        ))
             .icon("tag")
             .rank(i32::try_from(completed.items.len()).unwrap_or(i32::MAX));
         rows.push(row);
@@ -356,7 +350,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         &tags.here
     };
     if let Some(reading) = assist::interpret_in(words, named) {
-        let mut row = Suggestion::new(Section::Reading, reading.label.say())
+        let mut row = Suggestion::new(Section::Reading, reading.label.clone())
             .detail(reading.expr.clone())
             .icon("sliders")
             .runs(search(app, &reading.expr, &scope, ask));
@@ -385,9 +379,8 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                 Some(path) if path.parent().is_none() => words!(
                     query_field_search_disk = "Whole disk",
                     note = "A row of the address field: the same search on the whole disk."
-                )
-                .say(),
-                _ => app.location_title(&other).say(),
+                ),
+                _ => app.location_title(&other),
             };
             rows.push(
                 Suggestion::new(Section::SearchIn, title)
@@ -403,8 +396,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                     words!(
                         query_field_search_contents = "Contents",
                         note = "A row of the address field: the words typed searched in what the files hold."
-                    )
-                    .say(),
+                    ),
                 )
                     .icon("contents")
                     .rank(3)
@@ -425,8 +417,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                     words!(
                         query_field_search_names = "Names",
                         note = "A row of the address field: words written #tag searched in names, not as tags."
-                    )
-                    .say(),
+                    ),
                 )
                     .detail(names.clone())
                     .icon("search")
@@ -450,8 +441,7 @@ fn at_words(app: &App, ask: &Ask) -> Suggestion {
             query_field_search_for = "Search for “{ $words }”",
             words = words,
             note = "A row of the address field: the words typed after @ searched in names, as written."
-        )
-        .say(),
+        ),
     )
         .detail(scope_said(app, &scope, ask))
         .icon("search")
@@ -522,7 +512,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
     .into_iter()
     .enumerate()
     {
-        let mut row = Suggestion::new(Section::Terms, title.say())
+        let mut row = Suggestion::new(Section::Terms, title)
             .icon(icon)
             .rank(i32::try_from(rank).unwrap_or(0));
         row.completion = Some(format!("{before}{key}"));
@@ -550,14 +540,11 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| recent.expr.clone());
         let mut row = Suggestion::new(Section::Recent, words.clone())
-            .detail(
-                words!(
-                    query_field_recent_in = "in { $place }",
-                    place = app.location_title(&scope),
-                    note = "Beside a search run lately, offered by the address field: where it looked."
-                )
-                .say(),
-            )
+            .detail(words!(
+                query_field_recent_in = "in { $place }",
+                place = app.location_title(&scope),
+                note = "Beside a search run lately, offered by the address field: where it looked."
+            ))
             .icon("recent")
             .rank(i32::try_from(rank).unwrap_or(0))
             .runs(search(app, &words, &scope, &as_it_was));
@@ -577,7 +564,11 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
         let (location, filter, detail) = match saved.at {
             None => {
                 let detail = crate::facets::text_of(&saved.expr).unwrap_or(saved.expr.clone());
-                (Location::new(crate::SCHEME, saved.expr), None, detail)
+                (
+                    Location::new(crate::SCHEME, saved.expr),
+                    None,
+                    Words::as_written(detail),
+                )
             }
             Some(at) => {
                 let detail = words!(
@@ -585,8 +576,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
                     filter = saved.expr.as_str(),
                     place = app.location_title(&at),
                     note = "Beside a saved place, offered by the address field: what filters it, as written, and where it is."
-                )
-                .say();
+                );
                 (at, Some(saved.expr), detail)
             }
         };
@@ -740,7 +730,7 @@ mod tests {
     fn enter_runs_the_search_or_says_why_it_cannot() {
         let r = rows("dunes jpg");
         assert_eq!(r[0].section, Section::Run);
-        assert_eq!(r[0].title, "Search “dunes jpg”");
+        assert_eq!(r[0].title.english(), "Search “dunes jpg”");
         let run = r[0].run.as_ref().expect("runs");
         assert_eq!(run.args["expr"], "dunes jpg");
         assert_eq!(run.args["root"], "/data/guide");
@@ -762,7 +752,7 @@ mod tests {
         assert_eq!(run.args["expr"], "kind:image dunes");
         let r = rows("kind:pix");
         assert!(r[0].error && r[0].run.is_none());
-        assert!(r[0].title.contains("pix"), "{}", r[0].title);
+        assert!(r[0].title.english().contains("pix"), "{}", r[0].title);
     }
 
     #[test]
@@ -784,7 +774,7 @@ mod tests {
     #[test]
     fn a_value_being_typed_is_what_enter_takes_and_tab_writes() {
         let r = rows("dunes kind:im");
-        assert_eq!(r[0].title, "Search “dunes kind:image”");
+        assert_eq!(r[0].title.english(), "Search “dunes kind:image”");
         assert_eq!(r[0].completion.as_deref(), Some("dunes kind:image"));
         assert_eq!(r[0].rest.as_deref(), Some("age"));
         assert!(r.iter().any(|s| s.section == Section::Complete));
@@ -795,27 +785,30 @@ mod tests {
     #[test]
     fn a_hash_searches_a_tag_and_names_are_a_row_below() {
         let r = rows("#print dunes");
-        assert_eq!(r[0].title, "Search “#print dunes”");
-        let names = r.iter().find(|s| s.title == "Names").expect("names");
+        assert_eq!(r[0].title.english(), "Search “#print dunes”");
+        let names = r
+            .iter()
+            .find(|s| s.title.english() == "Names")
+            .expect("names");
         assert_eq!(
             names.run.as_ref().unwrap().args["expr"],
             r##""#print" dunes"##
         );
-        assert!(r.iter().all(|s| s.title != "Contents"));
+        assert!(r.iter().all(|s| s.title.english() != "Contents"));
         let r = rows("dunes");
-        assert!(r.iter().any(|s| s.title == "Contents"));
-        assert!(r.iter().all(|s| s.title != "Names"));
+        assert!(r.iter().any(|s| s.title.english() == "Contents"));
+        assert!(r.iter().all(|s| s.title.english() != "Names"));
     }
 
     #[test]
     fn words_read_as_terms_are_offered_below_the_words() {
         let r = rows("pdf last week");
-        assert_eq!(r[0].title, "Search “pdf last week”");
+        assert_eq!(r[0].title.english(), "Search “pdf last week”");
         let reading = r
             .iter()
             .find(|s| s.section == Section::Reading)
             .expect("a reading");
-        assert_eq!(reading.title, "PDFs modified last week");
+        assert_eq!(reading.title.english(), "PDFs modified last week");
         assert_eq!(
             reading.run.as_ref().unwrap().args["expr"],
             "ext:pdf modified:last-week"
@@ -867,7 +860,7 @@ mod tests {
     fn a_quote_not_closed_says_so() {
         let r = rows(r#""my file"#);
         assert!(
-            r[0].error && r[0].title == "Close the quote to search",
+            r[0].error && r[0].title.english() == "Close the quote to search",
             "{}",
             r[0].title
         );

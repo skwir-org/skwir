@@ -685,10 +685,10 @@ pub(crate) fn file_encrypted(path: &Path) -> std::io::Result<bool> {
 struct Given(String);
 
 impl Ask for Given {
-    fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+    fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
         Some(self.0.clone())
     }
-    fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+    fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
         false
     }
 }
@@ -724,13 +724,11 @@ pub fn encrypt(
     Ok(())
 }
 
-/// What rclone's own question asks, run as its `--password-command`
-/// (`skwir` given no prompt): its configuration's password.
-pub const PROMPT: &str = "Password";
-
 /// Where the password of rclone's configuration is asked: the keyring's,
 /// where the user asked it kept (once: a wrong one is asked of the
-/// window), then the window. Every other question goes to `inner`.
+/// window), then the window. It is what rclone asks run with Skwir as its
+/// `--password-command`, which gives no prompt (`Ask::unprompted`). Every
+/// other question goes to `inner`.
 pub struct ConfigAsk {
     inner: Arc<dyn Ask>,
     keyring: Arc<dyn crate::passwords::Keyring>,
@@ -748,35 +746,36 @@ impl ConfigAsk {
 }
 
 impl Ask for ConfigAsk {
-    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
-        if title != PROMPT {
-            return self.inner.secret(title, accept, cancel);
-        }
+    fn secret(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<String> {
+        self.inner.secret(title, accept, cancel)
+    }
+
+    /// rclone's question, asked with no prompt: its configuration's
+    /// password.
+    fn unprompted(&self, _: &Words, cancel: &CancelToken) -> Option<String> {
         if !self.tried.swap(true, std::sync::atomic::Ordering::AcqRel)
             && let Some(kept) = self.keyring.own(KEYRING_KEY)
         {
             return Some(kept);
         }
-        // Said for the window that asks it.
         self.inner.secret(
-            &words!(remote_rclone_config_password = "Password of rclone's configuration").say(),
+            &words!(remote_rclone_config_password = "Password of rclone's configuration"),
             &words!(
                 remote_rclone_config_open = "Open",
                 note = "The button that gives the password of rclone's configuration, opening it."
-            )
-            .say(),
+            ),
             cancel,
         )
     }
 
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn confirm(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool {
         self.inner.confirm(title, detail, cancel)
     }
 
     fn password(
         &self,
-        title: &str,
-        accept: &str,
+        title: &Words,
+        accept: &Words,
         cancel: &CancelToken,
     ) -> Option<crate::connector::Password> {
         self.inner.password(title, accept, cancel)
@@ -803,10 +802,10 @@ mod tests {
     struct Nobody;
 
     impl Ask for Nobody {
-        fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+        fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
             None
         }
-        fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+        fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
             false
         }
     }

@@ -700,7 +700,7 @@ impl Process {
     ) -> anyhow::Result<Arc<Process>> {
         let executable = match &inner.executable {
             Some(executable) => executable.clone(),
-            None => WORKER.require_words(words!(
+            None => WORKER.require(words!(
                 tree_sitter_install = "Install { $program } to color code with tree-sitter grammars",
                 program = WORKER.executable,
                 note = "What to do to color code with the grammars found. program: the helper's name (skwir-tree-sitter-worker)."

@@ -567,7 +567,6 @@ fn allowed(
         Value::Object(object) if object.is_empty() => String::new(),
         args => serde_json::to_string_pretty(args).unwrap_or_default(),
     };
-    // Asked in the window: its words as the window says them.
     let detail = if arguments.is_empty() {
         words!(
             control_ask_detail = "{ $command }: { $description }",
@@ -590,9 +589,8 @@ fn allowed(
             control_ask = "An agent asks to run “{ $command }”",
             command = spec.title.clone(),
             note = "A question in the window: may an AI agent run this command (its title)? The user allows or refuses."
-        )
-        .say(),
-        detail.say(),
+        ),
+        detail,
     );
     let deadline = std::time::Instant::now() + PATIENCE;
     loop {
@@ -692,16 +690,10 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
             app.apply_whole(plan);
             verdict
         }
-        // Shown in the window's review, in its language.
-        PlanMode::Propose => app.propose_awaiting(
-            plan.proposed_by(
-                words!(
-                    control_proposer = "An agent",
-                    note = "Who proposes a plan, in its review: an AI agent."
-                )
-                .say(),
-            ),
-        ),
+        PlanMode::Propose => app.propose_awaiting(plan.proposed_by(words!(
+            control_proposer = "An agent",
+            note = "Who proposes a plan, in its review: an AI agent."
+        ))),
     };
     let deadline = std::time::Instant::now() + PATIENCE;
     loop {

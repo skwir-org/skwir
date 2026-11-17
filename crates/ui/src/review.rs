@@ -390,7 +390,7 @@ impl Shell {
             }
             Some(Review::Clashes(clashes)) => {
                 self.app.answer_clashes(clashes.question.id, None);
-                let said = match clashes.question.clashes.first().map(|c| c.act) {
+                let said = match clashes.question.clashes.first().map(|c| &c.act) {
                     Some(Act::Move) => words!(
                         review_clashes_cancelled_move = "Cancelled: nothing was moved",
                         note = "A move that found names taken asked what becomes of them, and \
@@ -401,15 +401,8 @@ impl Shell {
                         note = "Links that found names taken asked what becomes of them, and \
                                 the user cancelled them."
                     ),
-                    // Transitional: what it makes says it in English
-                    // (`Act::Make::done`, ADR-139).
-                    Some(Act::Make { done, .. }) => words!(
-                        review_clashes_cancelled_make = "Cancelled: nothing was { $done }",
-                        done = done,
-                        note = "An action that makes something and found names taken asked \
-                                what becomes of them, and the user cancelled it; done: what it \
-                                would have done (extracted)."
-                    ),
+                    // What it makes says it in words of its own.
+                    Some(Act::Make { words, .. }) => words.cancelled.clone(),
                     Some(Act::Copy) | None => words!(
                         review_clashes_cancelled_copy = "Cancelled: nothing was copied",
                         note = "A copy that found names taken asked what becomes of them, and \
@@ -458,7 +451,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                             steps are listed as if both were kept."
                 )
             });
-            // Transitional: a plan's note is said where it is made (ADR-139).
             let note = match (plan.note.clone(), asked) {
                 (Some(note), Some(asked)) => Some(words!(
                     review_note_then_names_taken = "{ $said } { $asked }",
@@ -467,7 +459,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     note = "A proposed plan's own note (what it leaves out), then that names are \
                             taken where it puts items."
                 )),
-                (note, asked) => note.map(Words::from).or(asked),
+                (note, asked) => note.or(asked),
             };
             (
                 match &plan.by {
@@ -597,9 +589,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 ),
             };
             (
-                // Transitional: a question's title is said where it is made
-                // (ADR-139).
-                Words::from(question.title.clone()),
+                question.title.clone(),
                 if pending > 0 {
                     words!(
                         review_waiting = "{ $waiting } more waiting",
@@ -613,7 +603,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 Some(note),
                 ROWS.text(
                     "review-detail",
-                    div().text_color(theme.text).child(question.detail.clone()),
+                    div().text_color(theme.text).child(question.detail.say()),
                     &handles.scroll,
                     &theme,
                 ),
@@ -815,6 +805,7 @@ mod tests {
     use std::path::PathBuf;
 
     use skwir_core::op::{Change, PlanDiff, StepStatus};
+    use skwir_core::words::Words;
 
     use super::{Checked, LineKind, line, shared_folder};
 
@@ -917,7 +908,7 @@ mod tests {
                         words: None,
                     },
                     StepStatus::Conflict {
-                        reason: "gone".into(),
+                        reason: Words::as_written("gone"),
                     },
                 ),
             ],

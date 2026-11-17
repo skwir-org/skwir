@@ -14,21 +14,37 @@ use crate::address::{Address, Scheme};
 
 /// What a connection needs only the user can say, asked of the window
 /// (`Window`) or, in tests, answered beforehand. Each call waits for the
-/// answer; `None` and `false` are Cancel, and so is `cancel` firing. What
-/// it is given is said already, for the window: its questions take text.
+/// answer; `None` and `false` are Cancel, and so is `cancel` firing. Its
+/// questions are words, said where they are shown.
 pub trait Ask: Send + Sync {
     /// A secret: a password, a key's passphrase. `title` says whose
     /// ("Password for me@example.com"), `accept` the button's verb.
-    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String>;
+    fn secret(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<String>;
+    /// A secret a program asks for saying nothing of what it is (rclone
+    /// running Skwir as its `--password-command`, with no prompt): a
+    /// password, asked in Skwir's words. Told apart by the prompt the
+    /// program gave none of, never by the words it is asked in: an asker
+    /// that knows whose it is answers it (`rclone_config::ConfigAsk`, its
+    /// configuration's); a wrapper passes it on.
+    fn unprompted(&self, accept: &Words, cancel: &CancelToken) -> Option<String> {
+        self.secret(
+            &words!(
+                remote_ask_password = "Password",
+                note = "What a password prompt asks when the program asking (rclone) said nothing of its own."
+            ),
+            accept,
+            cancel,
+        )
+    }
     /// Whether to go on where the server cannot be vouched for (a host
     /// key never seen, a certificate not trusted): `detail` is what the
     /// tool said, fingerprint included.
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool;
+    fn confirm(&self, title: &Words, detail: &Words, cancel: &CancelToken) -> bool;
     /// A server's password (ADR-082): the keyring's first where the
     /// connection keeps one (`passwords::Keyed`), else asked as a secret
     /// the window offers to remember. Never a key's passphrase, a code, a
     /// configuration's password: those are `secret`.
-    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+    fn password(&self, title: &Words, accept: &Words, cancel: &CancelToken) -> Option<Password> {
         self.secret(title, accept, cancel).map(|text| Password {
             text,
             remember: false,
@@ -63,8 +79,8 @@ pub struct Connected {
 pub struct Recognised {
     /// The address of its top, when it has one Skwir opens.
     pub address: Option<Address>,
-    /// What the user calls it.
-    pub label: String,
+    /// What the user calls it, said where it is shown.
+    pub label: Words,
     /// Skwir made it (under its runtime folder): letting go of it removes
     /// its mount point too.
     pub ours: bool,
@@ -98,12 +114,25 @@ impl Device {
 pub struct Offered {
     /// Where it opens: the top of its mount, once mounted.
     pub address: Address,
-    /// What its program calls it ("Example Phone"): mounted or not.
+    /// What its program calls it ("Example Phone"): mounted or not; empty
+    /// where it says nothing.
     pub name: String,
     pub device: Device,
     /// Its node on this machine (`/dev/bus/usb/001/004`), which a program
     /// using the device holds open: who holds it is found there.
     pub node: Option<PathBuf>,
+}
+
+impl Offered {
+    /// What it is called: its program's name for it, as written, else its
+    /// address's (`Address::label`).
+    pub fn label(&self) -> Words {
+        if self.name.is_empty() {
+            self.address.label()
+        } else {
+            Words::as_written(self.name.clone())
+        }
+    }
 }
 
 /// A server the user can connect to, from the tool's configuration (an
@@ -112,7 +141,9 @@ pub struct Offered {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Server {
     pub address: Address,
-    pub label: String,
+    /// What the user calls it: the name it was given (as written), else
+    /// its address's (`Address::label`), said where it is shown.
+    pub label: Words,
     /// What kind of storage its tool says it is (rclone's type: `drive`,
     /// `s3`), empty where it says none.
     pub kind: String,
@@ -293,7 +324,7 @@ pub fn connect_button() -> Words {
 }
 
 /// The question for a server's password, `label` naming its login.
-pub fn password_for(label: &str) -> Words {
+pub fn password_for(label: Words) -> Words {
     words!(
         remote_password_for = "Password for { $label }",
         label = label,

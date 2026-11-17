@@ -109,17 +109,17 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("model-zoom-out", "minus", label::zoom_out().say(), "out"),
+        step("model-zoom-out", "minus", label::zoom_out(), "out"),
     ));
     bar.push(Item::button(
         Slot::View,
         1,
-        step("model-zoom-in", "plus", label::zoom_in().say(), "in"),
+        step("model-zoom-in", "plus", label::zoom_in(), "in"),
     ));
     bar.push(Item::button(
         Slot::View,
         2,
-        step("model-fit", "fit", label::fit().say(), "reset").active(opened),
+        step("model-fit", "fit", label::fit(), "reset").active(opened),
     ));
     let look = shell.prefs.model_look;
     let perspective = skwir_core::words!(

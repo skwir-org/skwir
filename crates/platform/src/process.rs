@@ -47,24 +47,10 @@ impl Worker {
             .or_else(|| find_program(self.executable))
     }
 
-    /// [`Worker::find`], or what to do without it, in one wording for
-    /// every worker: "Install skwir-archive-worker to open archives".
-    ///
-    /// Transitional: `purpose` is a fragment the sentence is written
-    /// around; [`Worker::require_words`] takes the sentence whole
-    /// (ADR-139).
-    pub fn require(&self, purpose: &str) -> anyhow::Result<PathBuf> {
-        self.find()
-            .with_context(|| format!("Install {} to {purpose}", self.executable))
-    }
-
     /// [`Worker::find`], or `missing`: what to do without it, a whole
     /// message naming the program as an argument ("Install { $program } to
     /// open archives", `program = WORKER.executable`).
-    pub fn require_words(
-        &self,
-        missing: impl Into<skwir_core::words::Words>,
-    ) -> anyhow::Result<PathBuf> {
+    pub fn require(&self, missing: impl Into<skwir_core::words::Words>) -> anyhow::Result<PathBuf> {
         self.find()
             .ok_or_else(|| anyhow::Error::from(Into::<skwir_core::words::Words>::into(missing)))
     }

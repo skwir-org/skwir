@@ -215,7 +215,14 @@ mod imp {
     /// A Mac's terminal applications hand a command to a window and return
     /// at once: nothing waits for the program yet.
     pub fn terminal_with<S: AsRef<OsStr>>(_dir: &Path, _argv: &[S]) -> anyhow::Result<Command> {
-        Err(skwir_core::system::not_yet("A terminal running a program").into())
+        Err(skwir_core::system::not_yet_words(skwir_core::words!(
+            open_terminal_program_not_yet =
+                "A terminal running a program is not available on { $system } yet",
+            system = skwir_core::system::named(),
+            note =
+                "Why a program is not run in a terminal window. system: the system's name (macOS)."
+        ))
+        .into())
     }
 }
 

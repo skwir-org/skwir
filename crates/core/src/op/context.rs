@@ -31,7 +31,7 @@ pub struct Cancelled;
 /// executor says them for the step ([`StepContext::say`]).
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub struct Unneeded(pub String);
+pub struct Unneeded(pub crate::words::Words);
 
 /// The error a step returns when it failed partway, having done what
 /// `inverse` takes back and nothing more (an archive's items removed
@@ -801,7 +801,7 @@ pub struct StepContext {
     checked: RefCell<Option<Box<dyn std::any::Any>>>,
     /// What the step under way said for its plan's answer to carry
     /// ([`Self::say`]), taken by the executor when it ends.
-    said: RefCell<Vec<String>>,
+    said: RefCell<Vec<crate::words::Words>>,
     /// The copies this plan made of files with several names, by the file
     /// copied: a later name of one is linked to its copy (ADR-049).
     copies: RefCell<HashMap<crate::FileId, Copied>>,
@@ -1302,12 +1302,12 @@ impl StepContext {
     /// the toast after the sentence of what was done, a script's
     /// `Verdict`), never a notification of its own, which that answer
     /// would cover or follow. What it left out, how to use what it made.
-    pub fn say(&self, note: impl Into<String>) {
+    pub fn say(&self, note: impl Into<crate::words::Words>) {
         self.said.borrow_mut().push(note.into());
     }
 
     /// What the step under way said ([`Self::say`]), taken.
-    pub(super) fn take_said(&self) -> Vec<String> {
+    pub(super) fn take_said(&self) -> Vec<crate::words::Words> {
         std::mem::take(&mut *self.said.borrow_mut())
     }
 
@@ -1839,12 +1839,17 @@ impl StepContext {
 
     /// Ask the user for what the step needs that only they know (an
     /// archive's password): `title` the question, `accept` its button's
-    /// verb. Waits for the answer, or for the plan to be cancelled.
+    /// verb, each said where it is shown. Waits for the answer, or for the
+    /// plan to be cancelled.
     ///
     /// # Errors
     /// [`Unanswered`]: no one can be asked (no window: a script's plan, an
     /// agent's), or the user cancelled, or the plan was.
-    pub fn ask_secret(&self, title: &str, accept: &str) -> Result<String, Unanswered> {
+    pub fn ask_secret(
+        &self,
+        title: &crate::words::Words,
+        accept: &crate::words::Words,
+    ) -> Result<String, Unanswered> {
         let asker = self.secret_asker.as_ref().ok_or(Unanswered::NoOne)?;
         asker(title, accept, &self.cancel)
     }

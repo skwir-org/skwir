@@ -43,7 +43,7 @@ fn skwirs_list_reads_and_each_entry_is_in_a_category() {
         entry
             .matcher
             .check()
-            .unwrap_or_else(|e| panic!("{}: {e}", entry.id));
+            .unwrap_or_else(|e| panic!("{}: {}", entry.id, e.why));
     }
     assert!(categories.contains(YOURS));
     // Secrets are kept from agents, not from your own searches.

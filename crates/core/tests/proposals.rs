@@ -9,6 +9,7 @@ use std::time::Duration;
 use common::*;
 use skwir_core::Plan;
 use skwir_core::op::{Mkdir, Verdict};
+use skwir_core::words::Words;
 
 fn a_folder_plan(path: &std::path::Path) -> Plan {
     let mut plan = Plan::new("Make a folder");
@@ -63,8 +64,8 @@ fn a_question_is_answered_once_or_withdrawn() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     let (id, answer) = app.ask(
-        "An agent asks to run “Undo”",
-        "undo: Undo the most recent plan",
+        Words::as_written("An agent asks to run “Undo”"),
+        Words::as_written("undo: Undo the most recent plan"),
     );
     let asked = app.take_questions();
     assert_eq!(asked.len(), 1);
@@ -74,7 +75,10 @@ fn a_question_is_answered_once_or_withdrawn() {
     assert_eq!(answer.recv_timeout(Duration::from_secs(1)), Ok(true));
     assert!(!app.answer(id, false), "answered once");
     // Withdrawn before the window took it: never shown, never answered.
-    let (gone, _answer) = app.ask("An agent asks to run “Redo”", "redo");
+    let (gone, _answer) = app.ask(
+        Words::as_written("An agent asks to run “Redo”"),
+        Words::as_written("redo"),
+    );
     app.withdraw(gone);
     assert!(app.take_questions().is_empty());
     assert!(!app.answer(gone, true));

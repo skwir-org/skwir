@@ -77,8 +77,8 @@ impl Connector for SystemShares {
                     });
                 }
                 Err(skwir_platform::shares::Refused::Login) => {
-                    let title = crate::connector::password_for(&top.label()).say();
-                    let connect = crate::connector::connect_button().say();
+                    let title = crate::connector::password_for(top.label());
+                    let connect = crate::connector::connect_button();
                     let answer = ask
                         .password(&title, &connect, cancel)
                         .ok_or_else(|| anyhow::anyhow!(crate::connector::cancelled()))?;

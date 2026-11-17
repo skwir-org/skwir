@@ -3,13 +3,19 @@
 # A setting's title: how much memory thumbnails may take, in megabytes.
 thumbnails_budget = Memory budget
 
-thumbnails_budget_description = Decoded thumbnails kept in memory. Higher values scroll large image folders more smoothly.
+thumbnails_budget_description = Decoded thumbnails kept in memory.
+
+# What a setting's description says after its first sentence, in its tooltip.
+thumbnails_budget_description_more = Higher values scroll large image folders more smoothly.
 
 # A setting's title. ImageMagick is a program's name.
 thumbnails_imagemagick = Use ImageMagick
 
-# ImageMagick, Photoshop and GIMP are programs' names; HEIC, AVIF and JPEG XL are formats' names.
-thumbnails_imagemagick_description = Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws. It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.
+# ImageMagick is a program's name.
+thumbnails_imagemagick_description = Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws.
+
+# Photoshop and GIMP are programs' names; HEIC, AVIF and JPEG XL are formats' names.
+thumbnails_imagemagick_description_more = It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.
 
 # An error in place of a picture's preview: no installed program (a thumbnailer, ImageMagick) draws its type.
 thumbnails_none_draws = No thumbnailer draws this picture

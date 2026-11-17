@@ -64,7 +64,7 @@ enum Mode {
 /// What a drill file holds, drawn.
 pub struct Drawn {
     pub svg: Option<String>,
-    pub details: Vec<(String, String)>,
+    pub details: Vec<(skwir_core::words::Words, String)>,
 }
 
 /// The numbers after `X` and `Y` in a line, if any.
@@ -245,8 +245,7 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
             words!(
                 circuits_detail_holes = "Holes",
                 note = "A label in a drill file's Properties: whether its holes are plated (Plated, Not plated, Plated and not)."
-            )
-            .say(),
+            ),
             plating.say(),
         ));
     }
@@ -257,8 +256,7 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
         words!(
             circuits_detail_drilled = "Drilled",
             note = "A label in a drill file's Properties: how many round holes it drills."
-        )
-        .say(),
+        ),
         holes.len().to_string(),
     ));
     if !paths.is_empty() {
@@ -266,8 +264,7 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
             words!(
                 circuits_detail_slots = "Slots and routes",
                 note = "A label in a drill file's Properties: how many slots and routed paths it cuts, beside its round holes."
-            )
-            .say(),
+            ),
             paths.len().to_string(),
         ));
     }
@@ -281,16 +278,14 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
             words!(
                 circuits_detail_tools = "Tools",
                 note = "A label in a drill file's Properties: how many drill bits (tools) it uses."
-            )
-            .say(),
+            ),
             tools.len().to_string(),
         ));
         details.push((
             words!(
                 circuits_detail_sizes = "Sizes",
                 note = "A label in a drill file's Properties: the diameters of its drill bits, the smallest to the largest."
-            )
-            .say(),
+            ),
             if (largest - smallest).abs() < 1e-9 {
                 crate::millimetres(round(smallest))
             } else {

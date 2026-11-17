@@ -32,7 +32,7 @@ pub fn mermaid(source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
             note = "Why a Mermaid diagram in a document is shown as its text: it is longer than is drawn."
         )
     );
-    let worker = WORKER.require_words(skwir_core::words!(
+    let worker = WORKER.require(skwir_core::words!(
         diagram_install = "Install { $program } to draw diagrams",
         program = WORKER.executable,
         note = "What to do to see a document's Mermaid diagrams drawn. program: the diagram helper's name (skwir-mermaid-worker)."

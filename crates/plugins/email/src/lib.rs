@@ -76,8 +76,7 @@ impl PreviewProvider for Provider {
                     email_attachment_too_large = "Attachment exceeds { $size } preview limit",
                     size = words::Size(bounds.binary_input() as u64),
                     note = "Why an attachment is not previewed. size: the largest the preview reads (16 MB)."
-                )
-                .say(),
+                ),
             ));
         }
         let name = attachment.attachment_name().unwrap_or("Attachment");
@@ -177,54 +176,42 @@ impl PreviewProvider for Provider {
                 words!(
                     email_detail_subject = "Subject",
                     note = "A label in the preview's Properties: the email's subject."
-                )
-                .say()
-                .as_str(),
+                ),
                 message.subject().map(str::to_owned),
             ),
             (
                 words!(
                     email_detail_from = "From",
                     note = "A label in the preview's Properties: who sent the email."
-                )
-                .say()
-                .as_str(),
+                ),
                 Some(addresses(message.from())),
             ),
             (
                 words!(
                     email_detail_to = "To",
                     note = "A label in the preview's Properties: who the email was sent to."
-                )
-                .say()
-                .as_str(),
+                ),
                 Some(addresses(message.to())),
             ),
             (
                 words!(
                     email_detail_cc = "Cc",
                     note = "A label in the preview's Properties: who the email was copied to (carbon copy)."
-                )
-                .say()
-                .as_str(),
+                ),
                 Some(addresses(message.cc())),
             ),
             (
                 words!(
                     email_detail_sent = "Sent",
                     note = "A label in the preview's Properties: when the email was sent."
-                )
-                .say()
-                .as_str(),
+                ),
                 Some(sent),
             ),
             (
                 words!(
                     email_detail_attachments = "Attachments",
                     note = "A label in the preview's Properties: how many files the email carries."
-                )
-                .say()
-                .as_str(),
+                ),
                 inspection::count(attachments),
             ),
         ]);
@@ -248,13 +235,12 @@ impl PreviewProvider for Provider {
             .collect();
         // Only what applies to this message: a strip that always says the
         // same thing stops being read.
-        let notice = [
+        let notices = [
             remote.then(|| {
                 words!(
                     email_remote_images = "Remote images are not loaded",
                     note = "A note under an email: pictures it names on the web are not fetched."
                 )
-                .say()
             }),
             truncated.then(|| inspection::blocks_notice(bounds)),
             (attachments > 0).then(|| {
@@ -262,25 +248,22 @@ impl PreviewProvider for Provider {
                     email_select_attachment = "Select an attachment to preview it",
                     note = "A note under an email that carries files: choosing one in the list shows it."
                 )
-                .say()
             }),
         ]
         .into_iter()
         .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
+        .collect();
         Ok(Some(Inspection {
             details,
             kind: skwir_core::inspection::InspectionKind::Mail,
             title: words!(
                 email_title = "Email",
                 note = "The title of an email's preview."
-            )
-            .say(),
+            ),
             blocks,
             rows,
             source_available: true,
-            notice,
+            notices,
             whole_available: truncated && bounds.cut(),
             ..Inspection::default()
         }))
@@ -292,7 +275,12 @@ fn read<'a>(
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
-    inspection::read_file(held, bounds, "Email", cancel)
+    let refusal = words!(
+        email_too_large = "Email exceeds { $size } preview limit",
+        size = words::Size(bounds.binary_input() as u64),
+        note = "Why an email is not previewed. size: the largest the preview reads (16 MB)."
+    );
+    inspection::read_file(held, bounds, refusal, cancel)
 }
 /// The one parse both the message and its attachments are read from.
 fn parse<'x>(bytes: &'x [u8], cancel: &CancelToken) -> anyhow::Result<mail_parser::Message<'x>> {
@@ -369,7 +357,7 @@ mod tests {
                 .contains("To: Reader <reader@example.invalid>")
         );
         assert!(data.plain_text().contains("Just text."));
-        assert!(data.notice.is_empty(), "{}", data.notice);
+        assert!(data.notices.is_empty(), "{:?}", data.notices);
     }
 
     #[test]
@@ -404,8 +392,8 @@ mod tests {
             "From: Example <sender@example.invalid>\r\nSubject: Rich\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=sample\r\n\r\n--sample\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>Hi</p><img src='https://example.invalid/pixel.png'>\r\n--sample\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=data.bin\r\nContent-Transfer-Encoding: base64\r\n\r\nAAAA\r\n--sample--\r\n",
         );
         assert_eq!(
-            data.notice,
-            "Remote images are not loaded · Select an attachment to preview it"
+            data.notice().map(|said| said.english()).as_deref(),
+            Some("Remote images are not loaded · Select an attachment to preview it")
         );
         assert_eq!(data.rows[0].cells, ["data.bin", "3 B"]);
         assert_eq!(data.rows[0].bytes, Some(3));

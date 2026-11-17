@@ -71,15 +71,6 @@ impl Quality {
             .find(|quality| quality.key() == key)
     }
 
-    pub fn title(self) -> &'static str {
-        match self {
-            Quality::Lossless => "Lossless",
-            Quality::Print => "Print",
-            Quality::Screen => "Screen",
-            Quality::Small => "Small",
-        }
-    }
-
     pub fn picture(self) -> PictureRule {
         match self {
             Quality::Lossless => PictureRule {
@@ -148,38 +139,6 @@ impl Quality {
             Quality::Small => crate::words!(
                 shrink_small = "Small",
                 note = "A quality of a smaller copy: the smallest."
-            ),
-        }
-    }
-
-    /// What it does to a picture, said under its name in a dialog.
-    pub fn picture_said(self) -> Words {
-        let rule = self.picture();
-        match rule.longest {
-            Some(longest) => crate::words!(
-                shrink_picture_at_most = "At most { $longest } pixels across",
-                longest = longest.to_string(),
-                note = "What a quality does to a picture: the most pixels of its longer side."
-            ),
-            None => crate::words!(
-                shrink_picture_same = "Same pixels, nothing lost",
-                note = "What the lossless quality does to a picture."
-            ),
-        }
-    }
-
-    /// What it does to a PDF, said under its name in a dialog.
-    pub fn pdf_said(self) -> Words {
-        let rule = self.pdf();
-        match rule.dpi {
-            Some(dpi) => crate::words!(
-                shrink_pdf_at_most = "Images at most { $dpi } dpi",
-                dpi = dpi.to_string(),
-                note = "What a quality does to a PDF's images: the most dots per inch."
-            ),
-            None => crate::words!(
-                shrink_pdf_same = "Nothing re-encoded",
-                note = "What the lossless quality does to a PDF's images."
             ),
         }
     }
@@ -330,13 +289,116 @@ pub struct Made {
     /// A PDF's images written anew, and the pages (from 0) that show each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changed: Vec<Changed>,
-    /// What was left as it was, and why: said to the user.
+    /// What was left as it was, and why: said to the user where the copy
+    /// is told of (`Note::words`), the helper sending what it is, never
+    /// its words.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub notes: Vec<String>,
+    pub notes: Vec<Note>,
     /// Which of the rules tried made the copy (its place in their order,
     /// from 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<u32>,
+}
+
+/// What a smaller copy left as it was, and why, or why none was made: what
+/// the helper answers ([`Made::notes`]), said where the user is told.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Note {
+    /// A picture's pixels, written again, came out larger: kept.
+    PixelsKept,
+    /// A JPEG's pixels kept as stored, turned upright by its EXIF.
+    PixelsAsStored,
+    /// A picture's colour profile is not for the colours its copy is
+    /// written in.
+    ProfileLeftOut,
+    /// A picture's EXIF could not be read: its date was left out.
+    ExifUnread,
+    /// Part of a picture's date could not be read.
+    DatePartUnread,
+    /// A picture's date could not be kept.
+    DateNotKept,
+    /// A PDF protected by a password: no copy.
+    Protected,
+    /// A signed PDF: no copy.
+    Signed,
+    /// A PDF carrying rights its maker signed: no copy.
+    SignedRights,
+    /// A damaged PDF: no copy.
+    Damaged,
+    /// A PDF's copy looked different beyond its images: none kept.
+    Unlike,
+    /// A PDF's copy still looked different with its images put back.
+    StillUnlike,
+    /// A PDF's images, put back as they were, left it no smaller.
+    PutBack,
+}
+
+impl Note {
+    /// In words. A picture's notes are sentences of their own; a PDF's say
+    /// why no copy was made, after what was not made.
+    pub fn words(self) -> Words {
+        use crate::words;
+        match self {
+            Note::PixelsKept => words!(
+                shrink_note_pixels_kept =
+                    "Its pixels were kept as they were: written again, they came out larger.",
+                note = "Said of a picture made smaller, after its name."
+            ),
+            Note::PixelsAsStored => words!(
+                shrink_note_pixels_as_stored =
+                    "Its pixels were kept as stored, turned upright by its EXIF as before.",
+                note = "Said of a photo whose location and camera details were removed, after its name."
+            ),
+            Note::ProfileLeftOut => words!(
+                shrink_note_profile_left_out = "Its colour profile was left out: it is not for the colours the copy is written in, which may look different.",
+                note = "Said of a picture made smaller, after its name."
+            ),
+            Note::ExifUnread => words!(
+                shrink_note_exif_unread = "Its EXIF could not be read, so its date was left out.",
+                note = "Said of a picture made smaller, after its name: EXIF is where a photo keeps its date."
+            ),
+            Note::DatePartUnread => words!(
+                shrink_note_date_part_unread =
+                    "Part of its date could not be read, so it was left out.",
+                note = "Said of a picture made smaller, after its name."
+            ),
+            Note::DateNotKept => words!(
+                shrink_note_date_not_kept = "Its date could not be kept, so it was left out.",
+                note = "Said of a picture made smaller, after its name."
+            ),
+            Note::Protected => words!(
+                shrink_note_protected =
+                    "it is protected by a password, which a smaller copy would not keep",
+                note = "Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”."
+            ),
+            Note::Signed => words!(
+                shrink_note_signed = "it is signed, and a smaller copy would break its signature",
+                note = "Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”."
+            ),
+            Note::SignedRights => words!(
+                shrink_note_signed_rights = "it carries rights its maker signed (to fill it in and save it in Adobe's Reader), which a smaller copy would break",
+                note = "Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”."
+            ),
+            Note::Damaged => words!(
+                shrink_note_damaged = "it is damaged, and a smaller copy would lose what a reader repairs as it shows it",
+                note = "Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”."
+            ),
+            Note::Unlike => words!(
+                shrink_note_unlike =
+                    "a copy made looked different from it beyond its images, so none was kept",
+                note = "Why no smaller copy of a PDF was kept, after “No smaller copy of … was made:”: its pages, drawn, did not look the same."
+            ),
+            Note::StillUnlike => words!(
+                shrink_note_still_unlike = "a copy made still looked different from it with its images put back, so none was kept",
+                note = "Why no smaller copy of a PDF was kept, after “No smaller copy of … was made:”."
+            ),
+            Note::PutBack => words!(
+                shrink_note_put_back = "its images made smaller looked different in a copy and were put back as they were, which left it no smaller",
+                note = "Why no smaller copy of a PDF was kept, after “No smaller copy of … was made:”."
+            ),
+        }
+    }
 }
 
 /// A PDF's image written anew: its object number, the pages showing it.

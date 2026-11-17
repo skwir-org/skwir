@@ -391,13 +391,19 @@ impl Plugin for ThumbnailsPlugin {
                     thumbnails_budget = "Memory budget",
                     note = "A setting's title: how much memory thumbnails may take, in megabytes."
                 ),
-                words!(
-                    thumbnails_budget_description = "Decoded thumbnails kept in memory. Higher values scroll large image folders more smoothly."
+                (
+                    words!(
+                        thumbnails_budget_description = "Decoded thumbnails kept in memory."
+                    ),
+                    words!(
+                        thumbnails_budget_description_more = "Higher values scroll large image folders more smoothly.",
+                        note = "What a setting's description says after its first sentence, in its tooltip."
+                    ),
                 ),
                 64,
                 (4, 4096),
             )
-            .unit("MB")
+            .unit(skwir_core::settings::unit::megabytes)
             .step(16)
             .page(skwir_core::settings::page::VIEWS)
             .section(skwir_core::settings::section::THUMBNAILS),
@@ -409,9 +415,15 @@ impl Plugin for ThumbnailsPlugin {
                     thumbnails_imagemagick = "Use ImageMagick",
                     note = "A setting's title. ImageMagick is a program's name."
                 ),
-                words!(
-                    thumbnails_imagemagick_description = "Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws. It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.",
-                    note = "ImageMagick, Photoshop and GIMP are programs' names; HEIC, AVIF and JPEG XL are formats' names."
+                (
+                    words!(
+                        thumbnails_imagemagick_description = "Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws.",
+                        note = "ImageMagick is a program's name."
+                    ),
+                    words!(
+                        thumbnails_imagemagick_description_more = "It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.",
+                        note = "Photoshop and GIMP are programs' names; HEIC, AVIF and JPEG XL are formats' names."
+                    ),
                 ),
                 true,
             )

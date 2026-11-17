@@ -42,12 +42,18 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::{self, Button, Popup};
 
-/// A facet of the search as the plugin describes it.
+/// A facet of the search as the plugin describes it: its words as their
+/// data (`Words::to_data`), or text, said where they are drawn.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Chip {
     pub id: String,
-    pub title: String,
-    pub value: Option<String>,
+    pub title: Words,
+    pub value: Option<Words>,
+    /// What it is set to as data, where that is not words: a tag's full
+    /// name (`tag`, `not_tag`). What reads a search's tags reads it,
+    /// never `value` (ADR-139).
+    #[serde(default)]
+    pub written: Option<String>,
     pub icon: String,
     pub choices: Vec<Choice>,
     pub clear: Option<Invocation>,
@@ -61,14 +67,16 @@ pub struct Chip {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Segment {
-    pub label: String,
+    /// A tag's category, or the tag itself, by its name: data, drawn as
+    /// a name is (its bidirectional controls shown).
+    pub name: String,
     #[serde(default)]
     pub command: Option<Invocation>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Choice {
-    pub label: String,
+    pub label: Words,
     pub command: Invocation,
     pub active: bool,
 }
@@ -82,14 +90,14 @@ impl Chip {
     /// What the chip reads, as words other words hold.
     fn label_words(&self) -> Words {
         match (&self.value, self.title.is_empty()) {
-            (Some(value), true) => Words::as_written(value.clone()),
+            (Some(value), true) => value.clone(),
             (Some(value), false) => words!(
                 search_bar_chip = "{ $facet }: { $value }",
-                facet = self.title.as_str(),
-                value = value.as_str(),
+                facet = self.title.clone(),
+                value = value.clone(),
                 note = "A pill of a search or a filter; facet: what it filters by (Name, Kind, Tag); value: what it is set to."
             ),
-            (None, _) => Words::as_written(self.title.clone()),
+            (None, _) => self.title.clone(),
         }
     }
 
@@ -133,13 +141,14 @@ pub struct Chips {
 }
 
 impl Chips {
-    /// The tags every match of the search has, and those none has.
+    /// The tags every match of the search has, and those none has: as
+    /// their chips carry them, as data (`Chip::written`).
     pub fn tags(&self) -> (Vec<String>, Vec<String>) {
         let of = |id: &str| {
             self.chips
                 .iter()
                 .filter(|c| c.id == id)
-                .filter_map(|c| c.value.clone())
+                .filter_map(|c| c.written.clone())
                 .collect()
         };
         (of("tag"), of("not_tag"))
@@ -371,13 +380,12 @@ fn own_chip(crumb: &Crumb) -> Chip {
             words!(
                 search_bar_tag = "Tag",
                 note = "A filter's pill: what it filters by, before the tag's name."
-            )
-            .say(),
-            tag.name.clone(),
+            ),
+            Words::as_written(tag.name.clone()),
             tag.name
                 .split(TAG_SEPARATOR)
-                .map(|label| Segment {
-                    label: label.to_owned(),
+                .map(|name| Segment {
+                    name: name.to_owned(),
                     command: None,
                 })
                 .collect(),
@@ -387,17 +395,17 @@ fn own_chip(crumb: &Crumb) -> Chip {
             words!(
                 search_bar_not_tagged = "Not tagged",
                 note = "A filter's pill leaving out the files of a tag, before the tag's name."
-            )
-            .say(),
-            tag.name.clone(),
+            ),
+            Words::as_written(tag.name.clone()),
             Vec::new(),
         ),
-        None => ("own", String::new(), crumb.label.say(), Vec::new()),
+        None => ("own", Words::default(), crumb.label.clone(), Vec::new()),
     };
     Chip {
         id: id.to_owned(),
         title,
         value: Some(value),
+        written: crumb.tag.as_ref().map(|tag| tag.name.clone()),
         icon: if crumb.tag.is_some() { "tag" } else { "filter" }.to_owned(),
         choices: Vec::new(),
         clear: Some(Invocation::navigate(&crumb.location)),
@@ -412,22 +420,19 @@ fn own_chip(crumb: &Crumb) -> Chip {
 fn typed_chip(text: &str) -> Chip {
     Chip {
         id: "typed".to_owned(),
-        title: String::new(),
-        value: Some(
-            words!(
-                search_bar_typed = "“{ $text }”",
-                text = text,
-                note = "A filter's pill holding the words typed, as typed, in quotes."
-            )
-            .say(),
-        ),
+        title: Words::default(),
+        value: Some(words!(
+            search_bar_typed = "“{ $text }”",
+            text = text,
+            note = "A filter's pill holding the words typed, as typed, in quotes."
+        )),
+        written: None,
         icon: "search".to_owned(),
         choices: vec![Choice {
             label: words!(
                 search_bar_edit = "Edit…",
                 note = "A choice of the pill of the words typed: type them again in the address field."
-            )
-            .say(),
+            ),
             command: Invocation::with_args("ui.filter", &serde_json::json!({ "text": text })),
             active: false,
         }],
@@ -586,9 +591,10 @@ fn pill_row(
         }
         after_tag = is_tag;
         // A tag every match has, or none has, wears the tag's colors, as
-        // the pill of a folder narrowed by it does: hollow for none.
+        // the pill of a folder narrowed by it does: hollow for none. The
+        // tag as its chip carries it, as data (`Chip::written`).
         let tint = chip
-            .value
+            .written
             .clone()
             .and_then(|tag| match chip.id.as_str() {
                 "tag" => Some(TagRef::of(tag)),
@@ -609,11 +615,11 @@ fn pill_row(
             depth_tip(shell, chip, folder)
         } else if chip.lens {
             words!(
-                search_bar_lens_tip = "{ $pill } · kept as you go to other folders and searches, until taken off",
+                search_bar_lens_tip =
+                    "{ $pill } · kept as you go to other folders and searches, until taken off",
                 pill = chip.label_words(),
                 note = "The tooltip of a filter's pill that stays as the pane goes elsewhere; pill: what the pill reads."
             )
-            .say()
         } else if folder {
             words!(
                 search_bar_folder_tip = "{ $pill } · this folder only, not a search",
@@ -621,13 +627,13 @@ fn pill_row(
                 note =
                     "The tooltip of a pill filtering the folder shown; pill: what the pill reads."
             )
-            .say()
         } else if chip.title.is_empty() {
-            words!(search_bar_advanced_tip = "Part of the search no chip holds").say()
+            words!(search_bar_advanced_tip = "Part of the search no chip holds")
         } else if fit != Fit::Full {
             // Its icon or its value alone: the tooltip says it all.
-            chip.label()
+            chip.label_words()
         } else {
+            // The facet as the plugin said it.
             chip.title.clone()
         };
         let icon = match (chip.is_scope(), fit) {
@@ -648,9 +654,9 @@ fn pill_row(
         match fit {
             _ if is_tag => {}
             Fit::Lean | Fit::Compact if chip.is_scope() => {}
-            Fit::Full | Fit::Lean => button = button.label(chip.label()),
+            Fit::Full | Fit::Lean => button = button.label(chip.label_words()),
             Fit::Compact | Fit::Tight => {
-                button = button.label(chip.value.clone().unwrap_or_else(|| chip.label()));
+                button = button.label(chip.value.clone().unwrap_or_else(|| chip.label_words()));
             }
         }
         // How deep it looks opens its choices, as a menu's button does.
@@ -715,19 +721,15 @@ fn pill_row(
                     search_bar_facets_search =
                         "Narrow the search by name, kind, date, size, tag or contents"
                 )
-            }
-            .say(),
+            },
             "ui.search_chip",
         )
         .args(serde_json::json!({ "pane": pane, "facets": true }));
         let facets = if matches!(fit, Fit::Full | Fit::Lean) {
-            facets.label(
-                words!(
-                    search_bar_filter = "Filter",
-                    note = "The button after the pills that adds a filter."
-                )
-                .say(),
-            )
+            facets.label(words!(
+                search_bar_filter = "Filter",
+                note = "The button after the pills that adds a filter."
+            ))
         } else {
             facets
         };
@@ -747,7 +749,7 @@ fn pill_row(
 
 /// What a pill saying how deep words look tells: what it means, and the
 /// key that switches it from the address field.
-fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> String {
+fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> Words {
     let keys = |command: &str| shell.keys_for(command, &serde_json::json!({}));
     let here = chip.choices.first().is_some_and(|c| c.active);
     match () {
@@ -763,13 +765,15 @@ fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> String {
                 note = "The tooltip of the pill saying how deep the words typed look: before the dot, what they do; after it, what its other choice does, and the shortcut that chooses it."
             ),
             None => words!(
-                search_bar_depth_folder = "The words filter this folder only · its subfolders too are searched",
+                search_bar_depth_folder =
+                    "The words filter this folder only · its subfolders too are searched",
                 note = "The tooltip of the pill saying how deep the words typed look: before the dot, what they do; after it, what its other choice does."
             ),
         },
         () if here => match keys("ui.search") {
             Some(keys) => words!(
-                search_bar_depth_here_keys = "The search looks in this folder only · its subfolders too ({ $keys })",
+                search_bar_depth_here_keys =
+                    "The search looks in this folder only · its subfolders too ({ $keys })",
                 keys = keys,
                 note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice, and the shortcut that chooses it."
             ),
@@ -780,17 +784,18 @@ fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> String {
         },
         () => match keys("ui.filter") {
             Some(keys) => words!(
-                search_bar_depth_below_keys = "The search looks in the subfolders too · this folder only ({ $keys })",
+                search_bar_depth_below_keys =
+                    "The search looks in the subfolders too · this folder only ({ $keys })",
                 keys = keys,
                 note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice, and the shortcut that chooses it."
             ),
             None => words!(
-                search_bar_depth_below = "The search looks in the subfolders too · this folder only",
+                search_bar_depth_below =
+                    "The search looks in the subfolders too · this folder only",
                 note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice."
             ),
         },
     }
-    .say()
 }
 
 /// A tag's pill's segments: each category a link up to it, `›` between,
@@ -811,7 +816,7 @@ fn tag_segments(
             Some(up) => {
                 let tip: SharedString = words!(
                     search_bar_all_of = "All of { $category }",
-                    category = Name(segment.label.clone()),
+                    category = Name(segment.name.clone()),
                     note = "A tag's category in its pill, which goes to every file tagged with what it holds; category: its name."
                 )
                 .say()
@@ -832,7 +837,7 @@ fn tag_segments(
                             let up = up.clone().with("pane", pane);
                             this.run(&up.name, up.args, window, cx);
                         }))
-                        .child(segment.label.clone()),
+                        .child(words::shown_controls(&segment.name).into_owned()),
                 )
             }
             None => pill.child(crate::elements::clip::clipped(
@@ -841,7 +846,7 @@ fn tag_segments(
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis(),
-                segment.label.clone(),
+                words::shown_controls(&segment.name).into_owned(),
             )),
         };
     }
@@ -863,6 +868,7 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
                     Button::new(
                         SharedString::from(format!("chip-facet-{i}")),
                         chip.icon.clone(),
+                        // The facet as the plugin said it.
                         chip.title.clone(),
                         "ui.search_chip",
                     )
@@ -879,8 +885,7 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
                 label: words!(
                     search_bar_remove = "Remove",
                     note = "The last choice of a pill's menu: take that filter off."
-                )
-                .say(),
+                ),
                 command: clear.clone(),
                 active: false,
             });
@@ -891,6 +896,7 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
                     Button::new(
                         SharedString::from(format!("chip-choice-{j}")),
                         if choice.active { "check" } else { "" },
+                        // As the plugin said it.
                         choice.label.clone(),
                         choice.command.name.to_string(),
                     )

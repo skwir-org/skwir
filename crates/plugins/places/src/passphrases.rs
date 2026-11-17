@@ -299,14 +299,13 @@ fn asked(
             note = "The question asking an unnamed volume's passphrase."
         ),
     };
-    let keeping = volume.uuid.map(|_| what_keeping_means().say());
+    let keeping = volume.uuid.map(|_| what_keeping_means());
     let (id, answer) = app.ask_passphrase(
-        title.say(),
+        title,
         words!(
             places_unlock_accept = "Unlock",
             note = "The button of the question asking a volume's passphrase."
-        )
-        .say(),
+        ),
         keeping,
     );
     let cancelled = cancel.subscribe();

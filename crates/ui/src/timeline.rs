@@ -46,13 +46,8 @@ pub const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const PERIODS: [Period; 4] = [Period::Day, Period::Week, Period::Month, Period::Year];
 const DAY: usize = 0;
 /// The times the bars can count, as the plugin and the query language
-/// name them, and how the strip's menu says them.
-pub const DATES: [(&str, &str); 4] = [
-    ("modified", "When modified"),
-    ("created", "When created"),
-    ("accessed", "When last opened"),
-    ("taken", "When taken (pictures and videos)"),
-];
+/// name them; the strip says them with `date_label` and `date_title`.
+pub const DATES: [&str; 4] = ["modified", "created", "accessed", "taken"];
 const TAKEN: usize = 3;
 
 /// What the strip is called: its heading, and its chart to a screen reader.
@@ -64,7 +59,8 @@ fn title() -> Words {
     )
 }
 
-/// What the strip's button calls the time counted (`DATES`' word), as words.
+/// What the strip's button calls the time counted (an index into `DATES`),
+/// as words.
 fn date_label(date: usize) -> Words {
     match date {
         0 => words!(
@@ -87,7 +83,8 @@ fn date_label(date: usize) -> Words {
     }
 }
 
-/// How the strip's menu says the time counted (`DATES`' title), as words.
+/// How the strip's menu says the time counted (an index into `DATES`), as
+/// words.
 fn date_title(date: usize) -> Words {
     match date {
         0 => words!(
@@ -589,7 +586,7 @@ impl Shell {
 
     /// `ui.timeline_date`: which time the bars count.
     pub fn timeline_set_date(&mut self, date: &str, cx: &mut Context<Self>) {
-        if let Some(i) = DATES.iter().position(|(word, _)| *word == date)
+        if let Some(i) = DATES.iter().position(|word| *word == date)
             && i != self.timeline().date
         {
             let t = self.timeline_mut();
@@ -719,7 +716,7 @@ impl Shell {
             "end": end,
             "pane": self.pane,
             "subtree": self.timeline().subtree && self.timeline_in_folder(),
-            "date": DATES[self.timeline().date].0,
+            "date": DATES[self.timeline().date],
         });
         self.run("timeline.select", args, window, cx);
     }
@@ -854,7 +851,7 @@ impl Shell {
             let mut args = serde_json::json!({
                 "subtree": subtree,
                 "pane": self.pane,
-                "date": DATES[date].0,
+                "date": DATES[date],
             });
             if let Some(bucket) = bucket {
                 args["bucket"] = BUCKETS[bucket].into();
@@ -1154,17 +1151,12 @@ fn controls(
             note = "A button of the timeline: a bar for each day, week, month or year."
         );
         controls = controls.child(
-            Button::new(
-                format!("tl-{bucket}"),
-                "",
-                title.say(),
-                "ui.timeline_bucket",
-            )
-            .args(serde_json::json!({ "bucket": bucket }))
-            .label(label.say())
-            .active(shown == Some(i))
-            .render(shell, cx)
-            .h(sized(22.)),
+            Button::new(format!("tl-{bucket}"), "", title, "ui.timeline_bucket")
+                .args(serde_json::json!({ "bucket": bucket }))
+                .label(label)
+                .active(shown == Some(i))
+                .render(shell, cx)
+                .h(sized(22.)),
         );
     }
     if windowed && let (Some(h), Some(shown)) = (&t.histogram, shown) {
@@ -1202,7 +1194,7 @@ fn controls(
             ),
         ] {
             controls = controls.child(
-                Button::new(format!("tl-{toward}"), icon, title.say(), "ui.timeline_pan")
+                Button::new(format!("tl-{toward}"), icon, title, "ui.timeline_pan")
                     .args(serde_json::json!({ "toward": toward }))
                     .enabled(more > 0)
                     .render(shell, cx)
@@ -1217,17 +1209,13 @@ fn controls(
             words!(
                 timeline_subtree_tip = "Count the files of the folders inside too",
                 note = "Pointing at the timeline's subtree button."
-            )
-            .say(),
+            ),
             "ui.timeline_subtree",
         )
-        .label(
-            words!(
-                timeline_subtree = "subtree",
-                note = "A button of the timeline: count the files of the folders inside too."
-            )
-            .say(),
-        )
+        .label(words!(
+            timeline_subtree = "subtree",
+            note = "A button of the timeline: count the files of the folders inside too."
+        ))
         .active(t.subtree && folder)
         .enabled(folder)
         .render(shell, cx)
@@ -1260,17 +1248,12 @@ fn controls(
         ),
     ] {
         controls = controls.child(
-            Button::new(
-                format!("tl-by-{by}"),
-                "",
-                title.say(),
-                "ui.timeline_measure",
-            )
-            .args(serde_json::json!({ "by": by }))
-            .label(label.say())
-            .active(t.measure == measure)
-            .render(shell, cx)
-            .h(sized(22.)),
+            Button::new(format!("tl-by-{by}"), "", title, "ui.timeline_measure")
+                .args(serde_json::json!({ "by": by }))
+                .label(label)
+                .active(t.measure == measure)
+                .render(shell, cx)
+                .h(sized(22.)),
         );
     }
     // The time's popup is the active pane's: its button opened it.
@@ -1286,12 +1269,11 @@ fn controls(
             words!(
                 timeline_date_tip = "Which time the bars count",
                 note = "Pointing at the timeline's button choosing which time its bars count."
-            )
-            .say(),
+            ),
             "ui.toolbar_menu",
         )
         .args(serde_json::json!({ "kind": DATES_MENU }))
-        .label(date_label(t.date).say())
+        .label(date_label(t.date))
         .anchor_if(&t.dates, true)
         .active(open)
         .dropdown()
@@ -1319,7 +1301,7 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
     let parts = DATES
         .iter()
         .enumerate()
-        .map(|(i, (word, _))| {
+        .map(|(i, word)| {
             let label = date_title(i).say();
             toolbar::MenuPart::Row(
                 Button::new(

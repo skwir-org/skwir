@@ -120,7 +120,12 @@ impl Resources for Local<'_> {
     }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         let path = local_path(self.base, href)?;
-        let bytes = read_bounded(&path, limits::TEXT_INPUT, "Stylesheet", self.cancel).ok()?;
+        let refusal = skwir_core::words!(
+            rich_preview_stylesheet_limit = "Stylesheet exceeds { $size } preview limit",
+            size = skwir_core::words::Size(limits::TEXT_INPUT as u64),
+            note = "Why a page's stylesheet beside it is not read. size: the largest read (2 MB)."
+        );
+        let bytes = read_bounded(&path, limits::TEXT_INPUT, refusal, self.cancel).ok()?;
         Some(crate::inspection::decode(&bytes).0.into_owned())
     }
 }
@@ -1336,7 +1341,8 @@ fn below(named: &std::path::Path) -> Option<std::path::PathBuf> {
 /// Resolve only local descendants of the document directory, including symlinks.
 pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Image> {
     let path = local_path(base, href)?;
-    let bytes = read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
+    let refusal = crate::inspection::image_too_large(limits::BINARY_INPUT);
+    let bytes = read_bounded(&path, limits::BINARY_INPUT, refusal, cancel).ok()?;
     crate::inspection::image(&bytes).ok()
 }
 /// What is read first of a picture beside a document for its size
@@ -1366,8 +1372,8 @@ pub fn local_picture(base: &std::path::Path, href: &str, cancel: &CancelToken) -
                     crate::inspection::picture_size(&head)
                 })
                 .or_else(|| {
-                    let whole =
-                        read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
+                    let refusal = crate::inspection::image_too_large(limits::BINARY_INPUT);
+                    let whole = read_bounded(&path, limits::BINARY_INPUT, refusal, cancel).ok()?;
                     crate::inspection::picture_size(&whole)
                 })
         })?;

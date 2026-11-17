@@ -19,6 +19,7 @@ use skwir_core::CancelToken;
 use skwir_core::inspection::{self, Inspection, InspectionKind};
 use skwir_core::print::{self, Face, Family, Fonts, Job, Line, Made, Part};
 use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::highlight::{CodeTheme, DEFAULT, Highlighter, LIGHT_KEY, Palette};
 use crate::sandbox::Otherwise;
@@ -230,7 +231,7 @@ pub fn light_palette(app: &skwir_core::App) -> Palette {
 #[derive(Debug, Default)]
 pub struct Parts {
     pub parts: Vec<Part>,
-    pub notice: Option<String>,
+    pub notice: Option<Words>,
 }
 
 /// The parts a preview's model prints as:
@@ -267,9 +268,11 @@ pub fn parts(
             out.parts.push(part);
             out.notice = notice;
         }
+        // The job is the helper's: its words said as it is made, to be
+        // sent (ADR-139, 7).
         InspectionKind::Table if !inspection.rows.is_empty() || !inspection.columns.is_empty() => {
             out.parts.push(Part::Table {
-                columns: inspection.columns.clone(),
+                columns: inspection.columns.iter().map(Words::say).collect(),
                 rows: inspection
                     .rows
                     .iter()
@@ -281,7 +284,7 @@ pub fn parts(
         // and the names at them.
         InspectionKind::History => {
             out.parts.push(Part::Table {
-                columns: inspection.columns.iter().take(4).cloned().collect(),
+                columns: inspection.columns.iter().take(4).map(Words::say).collect(),
                 rows: inspection
                     .rows
                     .iter()
@@ -317,7 +320,7 @@ pub fn parts(
                     path,
                     width: image.width,
                     height: image.height,
-                    alt: inspection.title.clone(),
+                    alt: inspection.title.say(),
                     caption: None,
                     orientation: 0,
                 }],
@@ -357,7 +360,7 @@ fn code(
     inspection: &Inspection,
     palette: &Palette,
     cancel: &CancelToken,
-) -> Result<(Part, Option<String>)> {
+) -> Result<(Part, Option<Words>)> {
     let language = inspection
         .text
         .as_ref()
@@ -384,7 +387,6 @@ fn code(
         let runs = highlighter.line(&text).iter().map(run).collect();
         lines.push(Line { text, runs });
     }
-    // Transitional: `Parts::notice` is text, said once here (ADR-139).
     let notice = cut.then(|| {
         words!(
             print_job_lines_cut = "{ $count ->
@@ -394,7 +396,6 @@ fn code(
             count = lines.len(),
             note = "Said when a long code file is printed: the rest of its lines are left out."
         )
-        .say()
     });
     Ok((
         Part::Code {
@@ -547,7 +548,7 @@ pub fn make(
     cancel: &CancelToken,
     follow: &crate::process::Follow<'_>,
 ) -> Result<Made> {
-    let program = WORKER.require_words(words!(
+    let program = WORKER.require(words!(
         print_job_install = "Install { $program } to print",
         program = WORKER.executable,
         note = "The helper program that lays out what is printed is missing. program: its name."
@@ -1071,7 +1072,7 @@ mod tests {
     fn print_job_a_table_prints_every_row_and_some_kinds_nothing() {
         let data = Inspection {
             kind: InspectionKind::Table,
-            columns: vec!["a".into(), "b".into()],
+            columns: vec![Words::as_written("a"), Words::as_written("b")],
             rows: (0..3)
                 .map(|i| Row {
                     cells: vec![format!("{i}"), format!("{}", i * 2)],

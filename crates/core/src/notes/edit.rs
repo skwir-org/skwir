@@ -205,18 +205,6 @@ impl SetNotes {
         }
     }
 
-    /// What it says it will do, did, and found done already, in place of
-    /// what its fields say.
-    #[must_use]
-    pub fn saying(mut self, will: String, did: String, already: String) -> Self {
-        self.words = Some(Tenses {
-            will: will.into(),
-            did: did.into(),
-            already: (!already.is_empty()).then(|| already.into()),
-        });
-        self
-    }
-
     /// What it says it will do, did, and found done already, as words, in
     /// place of what its fields say.
     #[must_use]
@@ -712,12 +700,12 @@ impl Operation for SetNotes {
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if self.rating.is_some_and(|r| r > super::RATING_MAX) {
             return StepStatus::Conflict {
-                reason: rating_range().say(),
+                reason: rating_range(),
             };
         }
         let Ok(stores) = self.stores() else {
             return StepStatus::Conflict {
-                reason: no_stores().say(),
+                reason: no_stores(),
             };
         };
         match self.entry.resolve() {
@@ -733,12 +721,8 @@ impl Operation for SetNotes {
                     StepStatus::Pending { reversible: true }
                 }
             }
-            Err(ResolveError::Gone(p)) => StepStatus::Conflict {
-                reason: gone(&p).say(),
-            },
-            Err(e) => StepStatus::Conflict {
-                reason: e.to_string(),
-            },
+            Err(ResolveError::Gone(p)) => StepStatus::Conflict { reason: gone(&p) },
+            Err(e) => StepStatus::Conflict { reason: e.words() },
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -809,7 +793,7 @@ impl Operation for SetNotes {
         // The stores that wrote: what the others say is what was read.
         let mut written: Vec<&'static str> = Vec::new();
         // Why the stores that refused did: what is said if none held.
-        let mut refused: Vec<String> = Vec::new();
+        let mut refused: Vec<Words> = Vec::new();
         for (store, create) in &first {
             match store.write(&probe, &target, *create) {
                 Ok(Wrote::Written) => {
@@ -846,9 +830,8 @@ impl Operation for SetNotes {
             anyhow::bail!(words!(
                 notes_refused = "{ $path }: { $why }",
                 path = path.display().to_string(),
-                // Transitional: a list argument (ADR-139)
-                why = refused.join("; "),
-                note = "A file whose notes no store would keep: its path, then each store's reason, by semicolons."
+                why = words::List::and(refused),
+                note = "A file whose notes no store would keep: its path, then each store's reason, as a list (another file's there that it does not rewrite)."
             ));
         }
         let after = raw::snapshot(&path, &keys)?;
@@ -1020,24 +1003,20 @@ impl Operation for RestoreNotes {
         let path = match self.entry.resolve() {
             Ok(p) => p,
             Err(ResolveError::Gone(p)) => {
-                return StepStatus::Conflict {
-                    reason: gone(&p).say(),
-                };
+                return StepStatus::Conflict { reason: gone(&p) };
             }
             Err(e) => {
-                return StepStatus::Conflict {
-                    reason: e.to_string(),
-                };
+                return StepStatus::Conflict { reason: e.words() };
             }
         };
         match raw::snapshot(&path, &self.keys()) {
             Ok(now) if now == self.before => StepStatus::AlreadyDone,
             Ok(now) if now == self.after => StepStatus::Pending { reversible: true },
             Ok(_) => StepStatus::Conflict {
-                reason: changed_since(name_of(&self.entry.path)).say(),
+                reason: changed_since(name_of(&self.entry.path)),
             },
             Err(e) => StepStatus::Conflict {
-                reason: e.to_string(),
+                reason: Words::of_error(e.into()),
             },
         }
     }
@@ -1199,7 +1178,7 @@ mod tests {
             Vec::new()
         }
         fn write(&self, _: &Probe<'_>, _: &Notes, _: bool) -> std::io::Result<Wrote> {
-            Ok(Wrote::Refused(self.0.to_owned()))
+            Ok(Wrote::Refused(Words::as_written(self.0)))
         }
     }
 

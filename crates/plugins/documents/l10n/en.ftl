@@ -46,6 +46,38 @@ documents_first_blocks_of_part = { $count ->
        *[other] First { $count } blocks of this part
     }
 
+# Why a Word or OpenDocument file is not shown: its package holds more parts than the preview reads (4,000).
+documents_members = { $count ->
+       *[other] The document holds more than { $count } members
+    }
+
+# Why an OpenDocument file is not shown: the list of its parts (META-INF/manifest.xml) is not there.
+documents_missing_manifest = Manifest is missing
+
+# Why a Word file's footnotes or endnotes are not shown: the part holding them is not there.
+documents_missing_notes = Notes is missing
+
+# Why a Word file is not shown: the part saying how its lists are numbered is not there.
+documents_missing_numbering = Numbering is missing
+
+# Why a picture of a Word or OpenDocument file is not shown: the file names one it does not hold.
+documents_missing_picture = Embedded image is missing
+
+# Why what a document says of itself (its title, author) is not shown: the part holding it is not there.
+documents_missing_properties = Properties is missing
+
+# Why a Word file is not shown: the part that says where its other parts are (its relationships, _rels/*.rels) is not there.
+documents_missing_relationships = Relationships is missing
+
+# Why a Word or OpenDocument file is not shown: the part holding its styles is not there.
+documents_missing_styles = Styles is missing
+
+# Why a Word or OpenDocument file is not shown: the part holding its text is not there.
+documents_missing_text = The document's text is missing
+
+# Why a document's stored picture is not shown: the picture it names is not there.
+documents_missing_thumbnail = Thumbnail is missing
+
 # An error in place of a text document when neither skwir nor Pandoc reads its format.
 documents_no_reader = Nothing installed reads this document as text
 
@@ -70,7 +102,10 @@ documents_parts_keys = [ and ] move through its parts
 # A setting's title: where the PDFium library is.
 documents_pdfium_library = PDFium library
 
-documents_pdfium_library_description = Path to the PDFium shared library. Leave empty to search the usual locations.
+documents_pdfium_library_description = Path to the PDFium shared library.
+
+# What a setting's description says after its first sentence, in its tooltip.
+documents_pdfium_library_description_more = Leave empty to search the usual locations.
 
 documents_plugin_description = Read PDF and office documents: continuous scrolling, search, text selection, links and contents; Word and OpenDocument text also as text that fits the panel
 
@@ -107,10 +142,40 @@ documents_start_only = Only the start is shown
 documents_text_documents = Text documents
 
 # Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names.
-documents_text_documents_description = How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.
+documents_text_documents_description = How Word, OpenDocument and RTF documents are shown.
+
+# Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names.
+documents_text_documents_description_more = Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.
 
 # A choice of the Text documents setting: the document laid out in pages, as LibreOffice prints it.
 documents_text_documents_pages = Pages
 
 # A choice of the Text documents setting: the document's text read to fit the panel (a reading mode).
 documents_text_documents_reading = Reading
+
+# Why an OpenDocument file is not shown: the list of its parts (META-INF/manifest.xml) unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_manifest = Manifest exceeds { $size } preview limit
+
+# Why a Word file's footnotes or endnotes are not shown: the part holding them unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_notes = Notes exceeds { $size } preview limit
+
+# Why a Word file is not shown: the part saying how its lists are numbered unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_numbering = Numbering exceeds { $size } preview limit
+
+# Why a picture of a Word or OpenDocument file is not shown: it unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_picture = Embedded image exceeds { $size } preview limit
+
+# Why what a document says of itself (its title, author) is not shown: the part holding it unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_properties = Properties exceeds { $size } preview limit
+
+# Why a Word file is not shown: the part that says where its other parts are (its relationships) unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_relationships = Relationships exceeds { $size } preview limit
+
+# Why a Word or OpenDocument file is not shown: the part holding its styles unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_styles = Styles exceeds { $size } preview limit
+
+# Why a Word or OpenDocument file is not shown: the part holding its text unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_text = The document's text exceeds { $size } preview limit
+
+# Why a document's stored picture is not shown: it unpacks past what the preview reads. size: that bound (16 MB).
+documents_too_large_thumbnail = Thumbnail exceeds { $size } preview limit

@@ -7,6 +7,16 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::path::Path;
 
+/// What its notices say together, in English; empty for none.
+fn notice(data: &Inspection) -> String {
+    data.notice().map(|said| said.english()).unwrap_or_default()
+}
+
+/// Its details' labels, in English.
+fn labels(data: &Inspection) -> Vec<String> {
+    data.details.iter().map(|d| d.label.english()).collect()
+}
+
 /// A 2 × 3 picture.
 const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\xb9\xea\xde\x81\x00\x00\x00\x11\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x84\x19\x30\x18\x00\xa1\x79\x0b\xf5\x4d\xc4\x9a\x07\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
 
@@ -370,7 +380,11 @@ fn a_text_document_is_read_by_default_whatever_is_installed() {
         )
         .unwrap()
         .expect("the reading provider answers");
-    assert!(data.notice.starts_with("Reading mode"), "{}", data.notice);
+    assert!(
+        notice(&data).starts_with("Reading mode"),
+        "{}",
+        notice(&data)
+    );
     assert_eq!(data.blocks[0].text, "Café report");
 }
 
@@ -410,9 +424,8 @@ fn reading_takes_what_skwir_reads_and_names_its_pictures_for_later() {
         .unwrap();
     assert_eq!(data.kind, InspectionKind::Markdown);
     assert!(data.title.is_empty() && data.next.is_none());
-    assert!(data.notice.starts_with("Reading mode"));
-    let labels: Vec<_> = data.details.iter().map(|d| d.label.as_str()).collect();
-    assert_eq!(labels, ["Title", "Author", "Words"]);
+    assert!(notice(&data).starts_with("Reading mode"));
+    assert_eq!(labels(&data), ["Title", "Author", "Words"]);
     let picture = provider
         .picture(&req, &view, "word/media/a.png", &CancelToken::new())
         .unwrap()
@@ -461,8 +474,7 @@ fn reading_takes_the_document_from_what_is_held() {
         .unwrap()
         .unwrap();
     assert_eq!(data.blocks[0].text, "Café report");
-    let labels: Vec<_> = data.details.iter().map(|d| d.label.as_str()).collect();
-    assert_eq!(labels, ["Title", "Author", "Words"]);
+    assert_eq!(labels(&data), ["Title", "Author", "Words"]);
     let picture = provider
         .picture(&req, &view, "word/media/a.png", &CancelToken::new())
         .unwrap()
@@ -613,7 +625,10 @@ fn an_open_document_text_reads_as_its_structure() {
     assert_eq!(blocks[15].anchors, ["ftn1"]);
     assert!(read.details.contains(&("Pages", "3".into())));
     let facts = details(&read.details, read.words);
-    let application = facts.iter().find(|d| d.label == "Application").unwrap();
+    let application = facts
+        .iter()
+        .find(|d| d.label.english() == "Application")
+        .unwrap();
     assert_eq!(application.value, "LibreOffice 24.2.1.2");
 }
 
@@ -679,7 +694,7 @@ fn pandoc_reads_rtf_and_keeps_its_pictures() {
         .unwrap();
     assert_eq!(texts(&data.blocks), ["Bold and italic", "Second paragraph"]);
     assert!(run(&data.blocks[0], "Bold").bold);
-    assert!(data.notice.starts_with("Read by Pandoc"));
+    assert!(notice(&data).starts_with("Read by Pandoc"));
     // A Word file read by Pandoc when asked: its picture extracted, kept,
     // and read back once its folder is gone.
     let docx = dir.path().join("report.docx");

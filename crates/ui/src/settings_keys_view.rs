@@ -116,8 +116,7 @@ impl KeysPage {
                     words!(
                         keys_filter = "Filter by action or keys",
                         note = "The placeholder of the Keyboard page's filter: what it finds an action by."
-                    )
-                    .say(),
+                    ),
                     cx,
                 )
             }),
@@ -581,7 +580,7 @@ impl SettingsView {
             && let Some(error) = self.errors.get(BINDINGS_KEY)
         {
             bar = bar.child(
-                controls::noted("warning", theme.error, 13., error.clone())
+                controls::noted("warning", theme.error, 13., error.say())
                     .text_body()
                     .text_color(theme.error),
             );
@@ -1192,8 +1191,7 @@ impl SettingsView {
                 words!(
                     keys_type_placeholder = "ctrl-shift-n, or g h for one key after another",
                     note = "The placeholder of the field keys are typed in: ctrl-shift-n and g h are keys as the keymap writes them, kept as they are."
-                )
-                .say(),
+                ),
                 cx,
             );
             input.set_text(typed, cx);
@@ -1408,7 +1406,7 @@ impl SettingsView {
             }
             self.close_key_editor(window, cx);
         } else if let Some(editor) = self.keys.editor.as_mut() {
-            editor.error = self.errors.get(BINDINGS_KEY).cloned().or_else(|| {
+            editor.error = self.errors.get(BINDINGS_KEY).map(Words::say).or_else(|| {
                 Some(
                     words!(
                         keys_not_kept = "These keys cannot be kept",
@@ -1469,7 +1467,7 @@ impl SettingsView {
         let edit = Edit::Reset(&action);
         let judged = effects(&self.app, &self.key_records(), &edit, Some(id));
         if let Some(why) = judged.refused {
-            self.errors.insert(BINDINGS_KEY.to_owned(), why.say());
+            self.errors.insert(BINDINGS_KEY.to_owned(), why);
             cx.notify();
         } else if judged.lost.is_empty() {
             self.save_keys(&edit, cx);
@@ -2109,7 +2107,7 @@ impl SettingsView {
                         Some(&id),
                     );
                     if let Some(why) = removal_refused(action, chip).or(freed.refused) {
-                        self.errors.insert(BINDINGS_KEY.to_owned(), why.say());
+                        self.errors.insert(BINDINGS_KEY.to_owned(), why);
                     } else if freed.lost.is_empty() {
                         self.save_keys(&Edit::Remove(chip), cx);
                     } else {

@@ -84,7 +84,7 @@ pub fn read<S: FileSource + ?Sized>(
         // turn (3D is offered where it turns something: it toggles from
         // what is shown).
         Err(error) => Ok(Found {
-            notice: Some(words::Words::of_error(error).say()),
+            notice: Some(words::Words::of_error(error)),
             ..found
         }),
     }
@@ -340,7 +340,7 @@ pub(crate) mod tests {
         assert_eq!(&picture.rgba[..4], &[255, 0, 0, 255]);
         assert_eq!(&picture.rgba[picture.rgba.len() - 4..], &[0, 0, 255, 255]);
         assert_eq!(
-            found.details,
+            found.english_details(),
             [
                 ("Made with".to_owned(), "Rhinoceros 5.0".to_owned()),
                 ("Format".to_owned(), "3dm version 5".to_owned())

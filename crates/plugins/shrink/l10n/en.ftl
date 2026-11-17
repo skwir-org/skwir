@@ -23,6 +23,9 @@ shrink_both = { $pixels ->
 
 shrink_cancelled = Making the copy was cancelled
 
+# A smaller copy found its name taken, asked what becomes of it, and the user cancelled it.
+shrink_clash_cancelled = Cancelled: nothing was made smaller
+
 # Why a smaller copy was not made. Skwir is the program's name.
 shrink_closing = Skwir is closing
 
@@ -68,6 +71,9 @@ shrink_made = made { $copy }, a smaller copy of { $file }
 # A step of a plan, in its review: the copy's name, then its file's. Begins in lower case.
 shrink_make = make { $copy }, a smaller copy of { $file }
 
+# The button of the question asking what becomes of the name a smaller copy finds taken: make it, once that is answered.
+shrink_make_verb = Make Smaller Copy
+
 # An error an agent or a script reads: the file named is a root.
 shrink_no_folder = The file is in no folder
 
@@ -77,7 +83,7 @@ shrink_no_size = “{ $typed }” is no size
 # The unit typed after a size, as typed; KB and MB are units as written.
 shrink_no_unit = “{ $unit }” is no unit: write KB or MB
 
-# What follows the file's name is the helper's reason, as it wrote it.
+# What follows the file's name is why (it is protected by a password).
 shrink_none_made_note = No smaller copy of { $name } was made: { $said }
 
 shrink_none_made_strip = No smaller copy of { $name } was made, so its location and camera details were not removed either
@@ -94,10 +100,13 @@ shrink_not_placed = { $name } could not be placed in { $folder }
 # Said once a plan made smaller copies: the copy of this file is kept, larger than asked.
 shrink_not_under = { $name } could not be brought under the size asked: its smallest copy is { $size }
 
-# What the helper said of a file as it made its smaller copy, as it wrote it.
+# What was left as it was in a file's smaller copy, and why, after the file's name.
 shrink_note = { $name }: { $said }
 
 shrink_nothing = Nothing to make smaller
+
+# Under the title of the question asking what becomes of the name a smaller copy finds taken.
+shrink_nothing_made = Nothing is made smaller until you choose.
 
 # On the Lossless card: no picture or image is written again at a loss.
 shrink_nothing_re_encoded = Nothing re-encoded

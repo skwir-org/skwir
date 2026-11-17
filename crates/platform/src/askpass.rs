@@ -29,10 +29,11 @@ pub enum Kind {
     Notice,
 }
 
-/// A question as ssh put it.
+/// A question as ssh put it: its prompt as it wrote it, none where it
+/// gave none (the window asks for a password in its own words).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Question {
-    pub prompt: String,
+    pub prompt: Option<String>,
     pub kind: Kind,
 }
 
@@ -144,20 +145,9 @@ fn serve(stream: &mut (impl Read + Write), answer: &impl Fn(Question) -> Option<
 /// the program reading it. Whether it was answered: the exit status a
 /// confirmation is read from.
 pub fn answer_as_askpass(socket: &Path, prompt: Option<&str>) -> bool {
-    // Transitional: the question carries text, said here, in the process
-    // ssh started (ADR-139).
-    let prompt = prompt.map_or_else(
-        || {
-            skwir_core::words!(
-                askpass_password = "Password",
-                note = "What a password prompt asks when the program asking (ssh, rclone) said nothing of its own."
-            )
-            .say()
-        },
-        str::to_owned,
-    );
     let said = std::env::var("SSH_ASKPASS_PROMPT").ok();
-    let kind = kind_of(&prompt, said.as_deref());
+    let kind = kind_of(prompt.unwrap_or_default(), said.as_deref());
+    let prompt = prompt.map(str::to_owned);
     let Some(answer) = ask(socket, &Question { prompt, kind }) else {
         return kind == Kind::Notice;
     };
@@ -318,22 +308,31 @@ mod tests {
     fn a_question_is_answered_over_the_socket_and_the_socket_goes() {
         let folder = tempfile::tempdir().unwrap();
         let server = Server::start(folder.path(), |q: Question| {
-            (q.kind == Kind::Secret).then(|| format!("answer to {}", q.prompt))
+            (q.kind == Kind::Secret)
+                .then(|| format!("answer to {}", q.prompt.as_deref().unwrap_or("nothing")))
         })
         .unwrap();
         let path = server.path().to_owned();
         let asked = ask(
             &path,
             &Question {
-                prompt: "pw".into(),
+                prompt: Some("pw".into()),
                 kind: Kind::Secret,
             },
         );
         assert_eq!(asked.as_deref(), Some("answer to pw"));
+        let unsaid = ask(
+            &path,
+            &Question {
+                prompt: None,
+                kind: Kind::Secret,
+            },
+        );
+        assert_eq!(unsaid.as_deref(), Some("answer to nothing"), "none asked");
         let refused = ask(
             &path,
             &Question {
-                prompt: "sure?".into(),
+                prompt: Some("sure?".into()),
                 kind: Kind::Confirm,
             },
         );
@@ -346,7 +345,7 @@ mod tests {
             ask(
                 &path,
                 &Question {
-                    prompt: "pw".into(),
+                    prompt: Some("pw".into()),
                     kind: Kind::Secret
                 }
             ),
@@ -359,7 +358,7 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let server = Server::start(folder.path(), |q: Question| {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            Some(format!("answer to {}", q.prompt))
+            Some(format!("answer to {}", q.prompt.unwrap_or_default()))
         })
         .unwrap();
         let path = server.path().to_owned();
@@ -370,7 +369,7 @@ mod tests {
                     ask(
                         &path,
                         &Question {
-                            prompt: format!("q{n}"),
+                            prompt: Some(format!("q{n}")),
                             kind: Kind::Secret,
                         },
                     )

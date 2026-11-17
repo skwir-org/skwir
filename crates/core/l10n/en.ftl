@@ -569,10 +569,13 @@ app_no_work_dir = select something, or open a folder
 app_notes_read = Read
 
 # Under the Read switch of a place notes are kept (a file's attributes, a file beside it, its name).
-app_notes_read_all = It holds all of a file's notes. Read, what it keeps is shown merged with the other places' notes.
+app_notes_read_all = It holds all of a file's notes.
 
-# Under the Read switch of a place notes are kept: what it cannot hold that the others can (no comma in a tag).
-app_notes_read_limits = What it cannot hold: { $limits }. Read, what it keeps is shown merged with the other places' notes.
+# Under the Read switch of a place notes are kept: what it cannot hold that the others can, a phrase the place gives (no comma in a tag).
+app_notes_read_limits = What it cannot hold: { $limits }.
+
+# In the tooltip of the Read switch of a place notes are kept, after what it holds.
+app_notes_read_merged = Read, what it keeps is shown merged with the other places' notes.
 
 # A choice of a place notes are kept: when Skwir writes notes there.
 app_notes_write = Write
@@ -809,6 +812,9 @@ command_panicked = “{ $command }” stopped on a fault of its own (the log say
 
 # Said to an agent, a script or a key bound by the user: no action has this name (an identifier, as written).
 command_unknown = unknown command `{ $command }`
+
+# A command named with the arguments it runs with, where none of its forms names them (Sort (key name)). args: the arguments as a script writes them, never translated.
+command_with_args = { $title } ({ $args })
 
 # A note of a deletion's review: files deleted here have other names (hard links) elsewhere, so what they hold stays on the disk.
 entry_kept_elsewhere = { $count ->
@@ -1075,7 +1081,10 @@ exclusions_said_unset = { $pattern }, while { $variables } is not set: none
 exclusions_shell_variables = Read your shell's variables
 
 # CARGO_HOME, .zshrc and config.fish are names, as written.
-exclusions_shell_variables_description = Read variables such as CARGO_HOME from your login shell too, where a path starts at one. A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.
+exclusions_shell_variables_description = Read variables such as CARGO_HOME from your login shell too, where a path starts at one.
+
+# CARGO_HOME, .zshrc and config.fish are names, as written.
+exclusions_shell_variables_description_more = A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.
 
 # A notice leading to the Exclusions page: exclusions in the settings that cannot be read, so they keep nothing private. How many more besides the first, then the first: where it is and why.
 exclusions_unreadable = { $more ->
@@ -1224,6 +1233,9 @@ inspection_mesh_infinite = the mesh has a position that is not finite
 # Why a 3D model cannot be shown: its triangles' corners do not come in threes.
 inspection_mesh_partial = the mesh's indices are not whole triangles
 
+# Two things a preview says of how it shows a file, on one line above it: each is a whole sentence of its own.
+inspection_notices = { $before } · { $after }
+
 io_bad_name = the name is too long, or not allowed there
 
 io_busy = it is in use
@@ -1251,6 +1263,9 @@ io_taken = something of that name is already there
 io_timed_out = the drive did not answer in time
 
 io_too_large = the file is too large for that drive
+
+# The button adding a shortcut to the list of keys the user binds.
+keymap_add_shortcut = Add shortcut
 
 # A column of the list of shortcuts: what the action is given.
 keymap_args = Arguments
@@ -1291,7 +1306,10 @@ keymap_refused = { $keys }: { $error }
 keymap_shortcuts = Your shortcuts
 
 # skwir is the program's name.
-keymap_shortcuts_description = Keys you bind, over the ones skwir and its plugins set. Leave the command empty to free a key.
+keymap_shortcuts_description = Keys you bind, over the ones skwir and its plugins set.
+
+# skwir is the program's name.
+keymap_shortcuts_description_more = Leave the command empty to free a key.
 
 # A shortcut refused: its keys and the action's name, both as written.
 keymap_unknown_command = { $keys } runs { $command }, which no command is called (is its plugin on?)
@@ -1381,7 +1399,7 @@ notes_rating_range = a rating is from 1 to { $max }
 
 notes_rating_stars = a rating is from 1 to 5 stars
 
-# A file whose notes no store would keep: its path, then each store's reason, by semicolons.
+# A file whose notes no store would keep: its path, then each store's reason, as a list (another file's there that it does not rewrite).
 notes_refused = { $path }: { $why }
 
 # A step of a plan: a tag's name, its new name, the file. Begins in lower case.
@@ -1960,6 +1978,39 @@ print_paper_legal = Legal
 # A paper's name: US Letter, 8.5 by 11 inches.
 print_paper_letter = Letter
 
+# A group's heading in Properties: what the file says of itself (a picture's camera, a document's author).
+properties_content = Content
+
+# A group's heading in Properties: the file's size and what it takes.
+properties_general = General
+
+# A group's heading in Properties: the file's path and folder.
+properties_location = Location
+
+# A group's heading in Properties: what plugins or the user attached to the file beside the rest.
+properties_more = More
+
+# A group's heading in Properties: the file's tags, rating and comment.
+properties_notes = Notes
+
+# A group's heading in Properties: who owns the file and who may use it.
+properties_permissions = Permissions
+
+# A group's heading in Properties, with several items selected: how many, what they weigh.
+properties_selection = Selection
+
+# A group's heading in Properties, with several items selected: the owner, group and access they share.
+properties_shared_permissions = Shared permissions
+
+# A group's heading in Properties: where a download came from.
+properties_source = Source
+
+# A group's heading in Properties: when the file changed, was made, was read.
+properties_times = Times
+
+# A group's heading in Properties: the drive the file is on.
+properties_volume = Volume
+
 # What a sign of a regular expression matches: . (a dot).
 reference_any = Any character
 
@@ -2105,7 +2156,10 @@ settings_close_split = Pane that closes
 settings_close_split_active = Active
 
 # Split is a command's name; Other, Active and Right are the setting's choices.
-settings_close_split_description = Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.
+settings_close_split_description = Which pane goes when you close the split with Split or F3.
+
+# Split is a command's name; Other, Active and Right are the setting's choices.
+settings_close_split_description_more = Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.
 
 # Which pane closes: the other one.
 settings_close_split_other = Other
@@ -2116,7 +2170,10 @@ settings_close_split_right = Right
 settings_drop_asks = Ask what dropped files do
 
 # Shift, Ctrl and Ctrl+Shift are keys, as the keyboard names them.
-settings_drop_asks_description = Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.
+settings_drop_asks_description = Files dropped in a folder with no key held open a menu: move, copy or link them there.
+
+# Shift, Ctrl and Ctrl+Shift are keys, as the keyboard names them.
+settings_drop_asks_description_more = Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.
 
 # As a settings file writes a switch's value: true and false are its words.
 settings_expected_boolean = expected true or false
@@ -2182,7 +2239,10 @@ settings_file_unreadable = “{ $path }” could not be read: { $why }
 
 settings_folders_first = Folders first
 
-settings_folders_first_description = List folders before files, each sorted among themselves. Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none.
+settings_folders_first_description = List folders before files, each sorted among themselves.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_folders_first_description_more = Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none.
 
 # A setting's key with an empty part (a.b..c).
 settings_invalid_key = invalid setting key
@@ -2190,7 +2250,10 @@ settings_invalid_key = invalid setting key
 # A setting on the Tags and notes page; a copy that cannot keep them names it too.
 settings_keep_attributes = Keep tags and attributes when copying
 
-settings_keep_attributes_description = Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.
+settings_keep_attributes_description = Copies carry their source's tags, rating, comment and where it was downloaded from.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_keep_attributes_description_more = Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.
 
 # A setting's key, then the JSON reader's own words.
 settings_key_not_json = { $key }: expected JSON: { $error }
@@ -2201,7 +2264,10 @@ settings_language = Language
 settings_language_automatic = Automatic
 
 # Automatic is a choice of the setting (settings_language_automatic).
-settings_language_description = The language skwir's window speaks. Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.
+settings_language_description = The language skwir's window speaks.
+
+# Automatic is a choice of the setting (settings_language_automatic).
+settings_language_description_more = Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.
 
 # The pseudo-language, English accented and longer, offered in builds for testing.
 settings_language_pseudo = Pseudo (for testing)
@@ -2372,7 +2438,10 @@ settings_section_video = Video
 settings_show_companions = Show companion files
 
 # ._ is how a Mac's companion files begin their names; Properties is a dialog.
-settings_show_companions_description = With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Properties lists a file's companions either way.
+settings_show_companions_description = With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars.
+
+# ._ is how a Mac's companion files begin their names; Properties is a dialog.
+settings_show_companions_description_more = Properties lists a file's companions either way.
 
 # How sizes are counted: the setting's title.
 settings_size_units = Units
@@ -2382,7 +2451,10 @@ settings_size_units_binary = Binary
 settings_size_units_decimal = Decimal
 
 # kB, MB, KiB… are units' symbols; 10M, 10MB and 10MiB are as a search is typed, never translated.
-settings_size_units_description = How sizes are counted. Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.
+settings_size_units_description = How sizes are counted.
+
+# kB, MB, KiB… are units' symbols; 10M, 10MB and 10MiB are as a search is typed, never translated.
+settings_size_units_description_more = Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.
 
 settings_startup = Open at startup
 
@@ -2392,12 +2464,24 @@ settings_startup_folder = Startup folder
 
 settings_startup_folder_choice = A chosen folder
 
-settings_startup_folder_description = Used when a chosen folder opens at startup. Leave empty for your home folder.
+settings_startup_folder_description = Used when a chosen folder opens at startup.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_startup_folder_description_more = Leave empty for your home folder.
 
 settings_startup_last = The windows and tabs left open
 
 # What the TOML reader found wrong in a settings file, in its own words, and the line it is on.
 settings_toml_on_line = { $problem } on line { $line }
+
+# A setting's number in megabytes, after its field or slider (64 MB).
+settings_unit_megabytes = { $n } MB
+
+# A setting's number in percent, after its slider (100 %).
+settings_unit_percent = { $n } %
+
+# A setting's number in seconds, after its slider (1.5 s): n may be a decimal.
+settings_unit_seconds = { $n } s
 
 # A setting's key no setting has.
 settings_unknown = unknown setting: { $key }
@@ -2423,17 +2507,44 @@ settings_unreadable_unsaved = { $file ->
 # A quality of a smaller copy: nothing lost.
 shrink_lossless = Lossless
 
-# What a quality does to a PDF's images: the most dots per inch.
-shrink_pdf_at_most = Images at most { $dpi } dpi
+# Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”.
+shrink_note_damaged = it is damaged, and a smaller copy would lose what a reader repairs as it shows it
 
-# What the lossless quality does to a PDF's images.
-shrink_pdf_same = Nothing re-encoded
+# Said of a picture made smaller, after its name.
+shrink_note_date_not_kept = Its date could not be kept, so it was left out.
 
-# What a quality does to a picture: the most pixels of its longer side.
-shrink_picture_at_most = At most { $longest } pixels across
+# Said of a picture made smaller, after its name.
+shrink_note_date_part_unread = Part of its date could not be read, so it was left out.
 
-# What the lossless quality does to a picture.
-shrink_picture_same = Same pixels, nothing lost
+# Said of a picture made smaller, after its name: EXIF is where a photo keeps its date.
+shrink_note_exif_unread = Its EXIF could not be read, so its date was left out.
+
+# Said of a photo whose location and camera details were removed, after its name.
+shrink_note_pixels_as_stored = Its pixels were kept as stored, turned upright by its EXIF as before.
+
+# Said of a picture made smaller, after its name.
+shrink_note_pixels_kept = Its pixels were kept as they were: written again, they came out larger.
+
+# Said of a picture made smaller, after its name.
+shrink_note_profile_left_out = Its colour profile was left out: it is not for the colours the copy is written in, which may look different.
+
+# Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”.
+shrink_note_protected = it is protected by a password, which a smaller copy would not keep
+
+# Why no smaller copy of a PDF was kept, after “No smaller copy of … was made:”.
+shrink_note_put_back = its images made smaller looked different in a copy and were put back as they were, which left it no smaller
+
+# Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”.
+shrink_note_signed = it is signed, and a smaller copy would break its signature
+
+# Why no smaller copy of a PDF was made, after “No smaller copy of … was made:”.
+shrink_note_signed_rights = it carries rights its maker signed (to fill it in and save it in Adobe's Reader), which a smaller copy would break
+
+# Why no smaller copy of a PDF was kept, after “No smaller copy of … was made:”.
+shrink_note_still_unlike = a copy made still looked different from it with its images put back, so none was kept
+
+# Why no smaller copy of a PDF was kept, after “No smaller copy of … was made:”: its pages, drawn, did not look the same.
+shrink_note_unlike = a copy made looked different from it beyond its images, so none was kept
 
 # A quality of a smaller copy: good enough to print.
 shrink_print = Print
@@ -2799,7 +2910,10 @@ tabs_select_window_description = Make a window the active one, brought forward
 
 tabs_sleep = Free the memory of hidden tabs
 
-tabs_sleep_description = A tab you are not looking at lets go of its list of files and lists it again when shown. Turn this off to keep every tab listed and up to date, which uses more memory and background work.
+tabs_sleep_description = A tab you are not looking at lets go of its list of files and lists it again when shown.
+
+# What a setting's description says after its first sentence, in its tooltip.
+tabs_sleep_description_more = Turn this off to keep every tab listed and up to date, which uses more memory and background work.
 
 # Said to an agent or a script: `window` is the argument's name.
 tabs_which_window = which window: `window` is needed

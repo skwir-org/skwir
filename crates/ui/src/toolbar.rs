@@ -7,6 +7,7 @@ use gpui::{
     AnyView, App, Context, Div, FocusHandle, Render, ScrollHandle, SharedString, Stateful, Window,
     div, prelude::*, px, svg,
 };
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 pub fn asset(path: &str) -> Option<&'static [u8]> {
@@ -196,10 +197,12 @@ impl gpui::Global for ShownTip {}
 pub struct Button {
     id: SharedString,
     icon: SharedString,
-    title: SharedString,
+    /// What it does, its tooltip; said where it is drawn, as are its
+    /// label, value and name.
+    title: Words,
     command: SharedString,
     args: serde_json::Value,
-    label: Option<SharedString>,
+    label: Option<Words>,
     anchor: Option<crate::elements::popover::PopoverAnchor>,
     pub active: bool,
     pub enabled: bool,
@@ -216,10 +219,10 @@ pub struct Button {
     /// whether that submenu is open.
     beside: Option<bool>,
     /// What a setting's row says it is set to, at its end (`value`).
-    value: Option<SharedString>,
+    value: Option<Words>,
     /// What it is called, without what its title says of its state
     /// (`named`, `menu_named`).
-    name: Option<SharedString>,
+    name: Option<Words>,
     /// Whether the keyboard stops on it; not a value its row's stop
     /// answers for (`no_stop`).
     stop: bool,
@@ -247,14 +250,13 @@ impl Tint {
 
 /// A setting's row named with what it is set to, as its tooltip and a
 /// screen reader say it ("Sort by: Name, A to Z").
-fn set_to(title: &str, value: &str) -> String {
+fn set_to(title: &Words, value: &Words) -> Words {
     skwir_core::words!(
         toolbar_title_value = "{ $title }: { $value }",
-        title = title,
-        value = value,
+        title = title.clone(),
+        value = value.clone(),
         note = "A setting's row in a menu, as its tooltip and a screen reader say it: its name, then what it is set to (Sort by: Name, A to Z)."
     )
-    .say()
 }
 
 /// How a button stands among its neighbours.
@@ -285,7 +287,7 @@ impl Button {
     pub fn new(
         id: impl Into<SharedString>,
         icon: impl Into<SharedString>,
-        title: impl Into<SharedString>,
+        title: impl Into<Words>,
         command: impl Into<SharedString>,
     ) -> Self {
         Self {
@@ -314,14 +316,15 @@ impl Button {
         self.id.clone()
     }
 
-    pub fn title(&self) -> SharedString {
-        self.title.clone()
+    /// What it does: its tooltip's words.
+    pub fn title(&self) -> &Words {
+        &self.title
     }
     pub fn args(mut self, args: serde_json::Value) -> Self {
         self.args = args;
         self
     }
-    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+    pub fn label(mut self, label: impl Into<Words>) -> Self {
         self.label = Some(label.into());
         self
     }
@@ -331,25 +334,15 @@ impl Button {
     }
     /// What it is called where its title says its state too ("Volume"
     /// for "Volume · 80%"): its row's words in a menu (`menu_named`).
-    pub fn named(mut self, name: impl Into<SharedString>) -> Self {
+    pub fn named(mut self, name: impl Into<Words>) -> Self {
         self.name = Some(name.into());
         self
     }
     /// Its row in a menu of what a bar left out (a preview's More, the
-    /// dock's), called by its name (`named`): its title without what it
-    /// says of its state ("Volume", not "Volume · 80%").
+    /// dock's), called by its name (`named`), else by its title: never
+    /// what its title says of its state ("Volume", not "Volume · 80%").
     pub fn menu_named(self) -> Self {
-        let name = self.name.clone().unwrap_or_else(|| {
-            // Transitional (ADR-139): a title cut where it says its state,
-            // until every caller names its button (`named`).
-            let title = self.title();
-            title
-                .split(" · ")
-                .next()
-                .unwrap_or(&title)
-                .to_owned()
-                .into()
-        });
+        let name = self.name.clone().unwrap_or_else(|| self.title.clone());
         self.label(name).menu()
     }
     /// One of the window's buttons (`title_bar`): round, on its ground.
@@ -397,7 +390,7 @@ impl Button {
     /// What a setting's row is set to, said at its end before its chevron
     /// (the View menu's Sort by: "Name, A to Z"), and with its name to a
     /// screen reader.
-    pub fn value(mut self, value: impl Into<SharedString>) -> Self {
+    pub fn value(mut self, value: impl Into<Words>) -> Self {
         self.value = Some(value.into());
         self
     }
@@ -493,11 +486,12 @@ impl Button {
         // To assistive technology: named by the words it shows, else by its
         // title, which then describes it.
         let said = shell.a11y.then(|| {
-            let described = self.label.is_some().then(|| self.title.clone());
-            let named = self.label.clone().unwrap_or_else(|| self.title.clone());
+            let described: Option<SharedString> =
+                self.label.is_some().then(|| self.title.say().into());
+            let named = self.label.as_ref().unwrap_or(&self.title);
             let named: SharedString = match &self.value {
-                Some(value) => set_to(&named, value).into(),
-                None => named,
+                Some(value) => set_to(named, value).say().into(),
+                None => named.say().into(),
             };
             (named, described, keys.clone())
         });
@@ -506,16 +500,16 @@ impl Button {
         // when the two do not fit, which its tooltip then says whole.
         let has_value = self.value.is_some();
         let title: SharedString = match (&self.value, keys) {
-            (Some(value), _) => set_to(&self.title, value).into(),
+            (Some(value), _) => set_to(&self.title, value).say().into(),
             (None, Some(keys)) => skwir_core::words!(
                 toolbar_title_keys = "{ $title } · { $keys }",
-                title = self.title.to_string(),
+                title = self.title.clone(),
                 keys = keys,
                 note = "A button's tooltip: what it does, then its shortcut (Back · Alt+Left)."
             )
             .say()
             .into(),
-            (None, None) => self.title,
+            (None, None) => self.title.say().into(),
         };
         let (active, dropdown, open) = (
             self.active,
@@ -526,7 +520,7 @@ impl Button {
         // A label cut short says itself in the tooltip, before the title.
         let (label, clip) = self
             .label
-            .map(crate::elements::clip::text)
+            .map(|label| crate::elements::clip::text(label.say()))
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         let id = self.id.clone();
         let clicked = id.clone();
@@ -773,7 +767,7 @@ impl Button {
                             .truncate()
                             .text_body()
                             .text_color(theme.text_muted)
-                            .child(value)
+                            .child(value.say())
                     }))
                     .child(
                         svg()
@@ -1250,12 +1244,14 @@ pub fn submenu_row(
 ) -> gpui::AnyElement {
     let theme = cx.global::<Theme>().clone();
     let open = popup.sub.open.as_deref() == Some(name);
-    let mut button = Button::new(id, icon, label.to_string(), "ui.toolbar_submenu")
+    // Said as the menu's parts were made, this frame (`MenuPart::Sub`).
+    let label = Words::as_written(label.to_string());
+    let mut button = Button::new(id, icon, label.clone(), "ui.toolbar_submenu")
         .args(serde_json::json!({ "open": name }))
         .label(label)
         .opens_beside(open);
     if let Some(value) = value {
-        button = button.value(value);
+        button = button.value(Words::as_written(value.to_string()));
     }
     // Only the open one's row says where the submenu stands: every row
     // marking the one anchor, the last drawn won, and each submenu opened

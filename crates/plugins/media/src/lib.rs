@@ -61,8 +61,14 @@ fn declare(app: &App) {
                 media_keep_playing = "Keep playing while you browse",
                 note = "A setting's title: whether what plays goes on when another file is selected."
             ),
-            words!(
-                media_keep_playing_description = "What you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves."
+            (
+                words!(
+                    media_keep_playing_description = "What you play goes on when you select another file, in a player at the foot of the preview."
+                ),
+                words!(
+                    media_keep_playing_description_more = "Off, it stops when the selection moves.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             true,
         )
@@ -134,9 +140,15 @@ fn declare(app: &App) {
                 media_replay_gain = "Even out loudness",
                 note = "A setting's title: whether tracks are played louder or quieter so that they sound equally loud (ReplayGain)."
             ),
-            words!(
-                media_replay_gain_description = "Use the ReplayGain values in a track's tags so that songs mastered at different levels sound equally loud. Per album keeps an album's own quiet and loud songs as they are. Tracks without the tags play unchanged; it applies from the next track.",
-                note = "ReplayGain is a standard's name; Per album is one of the setting's choices."
+            (
+                words!(
+                    media_replay_gain_description = "Use the ReplayGain values in a track's tags so that songs mastered at different levels sound equally loud.",
+                    note = "ReplayGain is a standard's name; Per album is one of the setting's choices."
+                ),
+                words!(
+                    media_replay_gain_description_more = "Per album keeps an album's own quiet and loud songs as they are. Tracks without the tags play unchanged; it applies from the next track.",
+                    note = "ReplayGain is a standard's name; Per album is one of the setting's choices."
+                ),
             ),
             "off",
             vec![
@@ -173,9 +185,15 @@ fn declare(app: &App) {
                 media_video_engine = "Video engine",
                 note = "A setting's title: what plays videos, or shows a still frame of them."
             ),
-            words!(
-                media_video_engine_description = "Automatic plays with GStreamer and falls back to a still frame from FFmpeg. Playback needs the media worker and GStreamer plugins.",
-                note = "Automatic is the setting's first choice; GStreamer and FFmpeg are programs' names; the media worker is Skwir's helper program that plays."
+            (
+                words!(
+                    media_video_engine_description = "Automatic plays with GStreamer and falls back to a still frame from FFmpeg.",
+                    note = "Automatic is the setting's first choice; GStreamer and FFmpeg are programs' names; the media worker is Skwir's helper program that plays."
+                ),
+                words!(
+                    media_video_engine_description_more = "Playback needs the media worker and GStreamer plugins.",
+                    note = "Automatic is the setting's first choice; GStreamer and FFmpeg are programs' names; the media worker is Skwir's helper program that plays."
+                ),
             ),
             "auto",
             vec![

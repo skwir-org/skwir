@@ -590,7 +590,10 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
         assert!(Instant::now() < deadline, "the password was never asked");
         std::thread::sleep(Duration::from_millis(20));
     };
-    assert_eq!(question.title, "Password of rclone's configuration");
+    assert_eq!(
+        question.title.english(),
+        "Password of rclone's configuration"
+    );
     assert!(app.answer_secret(question.id, Some(password.into())));
     let edit = window.form(30);
     assert_eq!(edit.form.title.english(), "Edit “plain”");
@@ -912,8 +915,8 @@ fn a_remote_left_half_made_is_said_so_and_removed() {
     assert!(
         shown
             .unavailable
-            .as_deref()
-            .is_some_and(|why| why.contains("not finished setting up")),
+            .as_ref()
+            .is_some_and(|why| why.english().contains("not finished setting up")),
         "{shown:?}"
     );
     assert!(
@@ -1911,7 +1914,13 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         panic!("a menu");
     };
     let item = &menu["items"][0];
-    assert_eq!(item["title"], "Keep as Server");
+    // A menu source's words come as data (`menu_answer`).
+    assert_eq!(
+        serde_json::from_value::<Words>(item["title"].clone())
+            .unwrap()
+            .english(),
+        "Keep as Server"
+    );
     app.dispatch(&Invocation::with_args(
         "remote.keep_as_server",
         &serde_json::json!({ "address": other }),

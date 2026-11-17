@@ -1031,7 +1031,7 @@ pub(crate) fn play_pause() -> Words {
 fn control(
     id: impl Into<gpui::SharedString>,
     icon: &str,
-    title: impl Into<gpui::SharedString>,
+    title: impl Into<Words>,
     action: &str,
     value: serde_json::Value,
 ) -> Button {
@@ -1120,8 +1120,12 @@ pub(crate) fn volume_button(
             note = "Pointing at a player's speaker button: how loud it plays (80 %)."
         )
     };
-    Button::new(id, speaker_icon(state), title.say(), command)
+    Button::new(id, speaker_icon(state), title, command)
         .args(serde_json::json!({ "kind": kind }))
+        .named(words!(
+            media_volume = "Volume",
+            note = "A player's speaker button, as a menu's row names it: it opens the player's volume."
+        ))
 }
 
 fn percent(volume: f64) -> String {
@@ -1261,8 +1265,7 @@ fn volume_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option
             )
         } else {
             words!(media_mute = "Mute", note = "A button of a player's volume.")
-        }
-        .say(),
+        },
         "mute",
         serde_json::Value::Null,
     );
@@ -1646,7 +1649,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             step(
                 "audio-previous",
                 "skip-previous",
-                previous_track().say(),
+                previous_track(),
                 -1,
                 previous,
             ),
@@ -1658,7 +1661,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         control(
             "video-play",
             if state.playing() { "pause" } else { "play" },
-            play_pause().say(),
+            play_pause(),
             "play",
             serde_json::Value::Null,
         ),
@@ -1667,7 +1670,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         bar.push(Item::button(
             Slot::Navigate,
             1,
-            step("audio-next", "skip-next", next_track().say(), 1, next),
+            step("audio-next", "skip-next", next_track(), 1, next),
         ));
     }
     bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
@@ -1740,8 +1743,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                     media_continue_tip = "When a track ends: { $mode }",
                     mode = mode.label(),
                     note = "Pointing at the button of what a player does when a track ends. mode: Stop, Play next or Shuffle."
-                )
-                .say(),
+                ),
                 "ui.preview_menu",
             )
             .args(serde_json::json!({ "kind": CONTINUE_POPUP }))
@@ -1803,7 +1805,7 @@ pub(crate) fn continue_parts(shell: &Shell) -> Vec<crate::toolbar::MenuPart> {
         None,
     )];
     for mode in Continue::ALL {
-        let label = mode.label().say();
+        let label = mode.label();
         parts.push(MenuPart::Row(
             Button::new(
                 format!("continue-{}", mode.key()),
@@ -1824,7 +1826,7 @@ pub(crate) fn continue_parts(shell: &Shell) -> Vec<crate::toolbar::MenuPart> {
 /// title, and the `action` with its `value`, named as `ui.media_control`
 /// takes them for the panel's player and as a `PlayerRequest` names them
 /// for the pinned one (`dock.rs`).
-pub(crate) type Send<'a> = &'a dyn Fn(String, String, &str, serde_json::Value) -> Button;
+pub(crate) type Send<'a> = &'a dyn Fn(String, Words, &str, serde_json::Value) -> Button;
 
 /// What playback has no button for: whether it goes on while you browse,
 /// whether it starts on selection, volume, speed and the tracks.
@@ -1864,7 +1866,7 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
         MenuPart::Line,
     ];
     let send =
-        |id: String, title: String, action: &str, value| control(id, "", title, action, value);
+        |id: String, title: Words, action: &str, value| control(id, "", title, action, value);
     parts.extend(playback_parts(state, &send));
     crate::toolbar::menu_part_elements(parts, shell, theme, cx)
 }
@@ -1879,9 +1881,12 @@ pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar
     let speeds = [0.5, 1., 1.25, 1.5, 2.]
         .into_iter()
         .map(|value| {
+            // A speed as English writes it, until numbers arrive with
+            // each language (PLAN.md, step F).
             let label = format!("{value}×");
-            send(format!("rate-{label}"), label.clone(), "rate", value.into())
-                .label(label)
+            let said = Words::as_written(label.clone());
+            send(format!("rate-{label}"), said.clone(), "rate", value.into())
+                .label(said)
                 .active((state.rate - value).abs() < 0.01)
                 .enabled(state.seekable)
                 .segment()
@@ -1928,8 +1933,7 @@ pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar
             let off = words!(
                 media_subtitles_off = "Off",
                 note = "The choice of no subtitles for a film."
-            )
-            .say();
+            );
             parts.push(MenuPart::Row(
                 send("subtitles-off".into(), off.clone(), action, (-1).into())
                     .label(off)
@@ -1938,9 +1942,11 @@ pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar
             ));
         }
         for (i, label) in tracks.iter().enumerate() {
+            // A track's name, as the film says it.
+            let label = Words::as_written(label.clone());
             parts.push(MenuPart::Row(
                 send(format!("{action}-{i}"), label.clone(), action, i.into())
-                    .label(label.clone())
+                    .label(label)
                     .active(i as i32 == selected)
                     .menu(),
             ));
@@ -2012,16 +2018,17 @@ pub(crate) fn halo_square(
 /// figure lies in.
 pub(crate) fn audio_figure(
     state: &Playback,
-    title: String,
+    title: Words,
     picture: AnyElement,
-    also: Option<&'static str>,
+    also: Option<Words>,
     theme: &Theme,
 ) -> gpui::Div {
+    let also = also.map(|also| gpui::SharedString::from(also.say()));
     let line = |id: &'static str, text: String| {
         crate::elements::clip::clipped_with(
             div().id(id).flex_none().max_w_full().truncate(),
             text,
-            also.map(gpui::SharedString::from),
+            also.clone(),
         )
     };
     div()
@@ -2034,7 +2041,7 @@ pub(crate) fn audio_figure(
         .justify_center()
         .gap_1()
         .child(picture)
-        .child(line("figure-title", title).text_title())
+        .child(line("figure-title", title.say()).text_title())
         .child(line("figure-artist", state.artist.clone()).text_color(theme.text_muted))
         .child(line("figure-album", state.album.clone()).text_color(theme.text_muted))
 }
@@ -2067,7 +2074,14 @@ pub fn audio_content(
         .playing_path()
         .map(|path| track_title(&p.media.state, &path))
         .unwrap_or_default();
-    let figure = audio_figure(&p.media.state, title, square, None, theme);
+    // The track's own title, as its file or its tags give it.
+    let figure = audio_figure(
+        &p.media.state,
+        Words::as_written(title),
+        square,
+        None,
+        theme,
+    );
     if interactive {
         clickable("audio-surface", figure, Flash::Preview, cx).into_any_element()
     } else {

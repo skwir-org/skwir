@@ -194,6 +194,9 @@ tags_files_not_found = The files tagged { $tag } were not found: { $error }
 # done: what was done to the sidebar's pinned tags (tags_pinned…); filter: the filter the tag's place was shown with, as typed.
 tags_filter_not_kept = { $done }; its filter “{ $filter }” is not kept with it
 
+# What a Mac's Finder tags cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings.
+tags_finder_limits = no rating; seven colors
+
 # As tags_follow_both_will, found done already.
 tags_follow_both_already = { $to } was already pinned and colored as { $from } were
 
@@ -274,7 +277,10 @@ tags_known = Tags known
 
 tags_known_description = `{"{"} generation, tags? {"}"}`: every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first. `generation` numbers them: asked with the one held, `tags` is left out while it is current
 
-tags_limit_description = How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so.
+tags_limit_description = How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches.
+
+# What a setting's description says after its first sentence, in its tooltip.
+tags_limit_description_more = Past it, new tagged files are left out of the tags' folders, and skwir says so.
 
 tags_limit_title = Room for tagged files
 
@@ -647,3 +653,6 @@ tags_which_tag = which tag?
 
 # A pill of a tag's trail while it lists the files of the tags within it too.
 tags_with_sub_tags = With sub-tags
+
+# What the desktop's attributes cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings.
+tags_xdg_limits = no comma in a tag, no tag colors

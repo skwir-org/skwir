@@ -550,7 +550,7 @@ impl NotesStore for AppleDoubleStore {
             rating: true,
             comment: true,
             origin: true,
-            limits: "",
+            limits: None,
         }
     }
     fn default_write(&self) -> Write {
@@ -613,8 +613,7 @@ impl NotesStore for AppleDoubleStore {
             Beside::Rewritten(ad) => ad,
             Beside::None if create && has_notes => AppleDouble::empty(),
             Beside::None => return Ok(Wrote::NotHere),
-            // Said now: a store's refusal is text until it is words.
-            Beside::Left(why) => return Ok(Wrote::Refused(why.say())),
+            Beside::Left(why) => return Ok(Wrote::Refused(why)),
         };
         let before = ad.clone();
         let theirs = ad
@@ -872,10 +871,10 @@ pub(crate) mod tests {
         for bytes in [version_1, three, b"a stray file".to_vec()] {
             std::fs::write(sidecar(&file).unwrap(), &bytes).unwrap();
             assert!(store.keys(&probe, true).is_empty());
-            assert_eq!(
-                store.write(&probe, &notes, true).unwrap(),
-                Wrote::Refused(why.to_owned())
-            );
+            let Wrote::Refused(refused) = store.write(&probe, &notes, true).unwrap() else {
+                panic!("refused");
+            };
+            assert_eq!(refused.english(), why);
             assert_eq!(std::fs::read(sidecar(&file).unwrap()).unwrap(), bytes);
         }
         // An edit no other store keeps says why (ADR-027's volume without

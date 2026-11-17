@@ -1012,10 +1012,10 @@ fn refused(me: Option<&Me>, uid: Option<u32>, gid: Option<u32>) -> Option<Words>
     None
 }
 
-/// A dry run's conflict, said for the review that shows it.
+/// A dry run's conflict, for the review that shows it.
 fn conflict(reason: &Words) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.say(),
+        reason: reason.clone(),
     }
 }
 
@@ -1024,7 +1024,7 @@ fn gone(e: &ResolveError) -> StepStatus {
     match e {
         ResolveError::Gone(p) => conflict(&not_there(p)),
         other @ ResolveError::Replaced { .. } => StepStatus::Conflict {
-            reason: other.to_string(),
+            reason: other.words(),
         },
     }
 }
@@ -2291,7 +2291,7 @@ mod tests {
             Some(&someone),
         );
         assert!(
-            matches!(&status, StepStatus::Conflict { reason } if reason.contains("their notes.txt") && reason.contains("not yours")),
+            matches!(&status, StepStatus::Conflict { reason } if reason.english().contains("their notes.txt") && reason.english().contains("not yours")),
             "{status:?}"
         );
         // A group given where the user is not in the item's: not undoable.
@@ -2535,14 +2535,14 @@ mod tests {
         .unwrap();
         assert!(matches!(
             Effect::check(&step(&item, "u+x", false), &ctx),
-            StepStatus::Conflict { reason } if reason.contains("in the trash")
+            StepStatus::Conflict { reason } if reason.english().contains("in the trash")
         ));
         // A file of root's, for a user who is not root.
         if !rustix::process::geteuid().is_root() {
             let theirs = Path::new("/");
             let status = Effect::check(&step(theirs, "o+w", false), &ctx);
             assert!(
-                matches!(&status, StepStatus::Conflict { reason } if reason.contains("only its owner")),
+                matches!(&status, StepStatus::Conflict { reason } if reason.english().contains("only its owner")),
                 "{status:?}"
             );
         }

@@ -71,7 +71,7 @@ impl LocationProvider for Provider {
     fn title(&self, location: &Location) -> Option<skwir_core::words::Words> {
         Address::of_location(location)
             .ok()
-            .map(|a| skwir_core::words::Words::as_written(self.remotes.label_of(&a)))
+            .map(|a| self.remotes.label_of(&a))
     }
 
     /// The servers known, as the server is typed (`sftp://me@ho`): those
@@ -111,7 +111,7 @@ impl LocationProvider for Provider {
     fn empty_state(&self, location: &Location) -> Option<EmptyState> {
         let address = Address::of_location(location).ok()?;
         let label = self.remotes.label_of(&address);
-        let opening = |label: String| {
+        let opening = |label: skwir_core::words::Words| {
             words!(
                 remote_provider_opening = "Opening { $label }…",
                 label = label,
@@ -188,8 +188,14 @@ impl How {
                         .send(ListingEvent::Redirect(Location::from_path(path))),
                     Err(error) => {
                         let label = this.remotes.label_of(&this.address);
-                        let of = skwir_core::ListingError::of(&error);
-                        // Said for the window that shows the listing.
+                        // Its kind as `ListingError::of` reads it: the first
+                        // system error of its chain.
+                        let kind = error
+                            .chain()
+                            .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                            .map_or(skwir_core::Failure::Other, |io| {
+                                skwir_core::Failure::of(io.kind())
+                            });
                         let message = match this.address.scheme.device() {
                             Some(_) => words!(
                                 remote_provider_not_opened =
@@ -207,8 +213,8 @@ impl How {
                             ),
                         };
                         this.tx.send(ListingEvent::Error(skwir_core::ListingError {
-                            message: message.say(),
-                            ..of
+                            kind,
+                            message,
                         }))
                     }
                 };
@@ -255,7 +261,7 @@ impl How {
                 ),
             ),
         };
-        if self.agent && !ask.confirm(&title.say(), &detail.say(), &self.cancel) {
+        if self.agent && !ask.confirm(&title, &detail, &self.cancel) {
             anyhow::bail!(words!(remote_provider_not_allowed = "you did not allow it"));
         }
         self.remotes.reach(&app, &self.address, &ask, &self.cancel)

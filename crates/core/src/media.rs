@@ -189,7 +189,8 @@ pub struct Update {
     /// `state` with the same generation restores the actual playback state.
     pub notice: Option<String>,
     /// Fatal: the session has ended and its controls must be withdrawn.
-    pub error: Option<String>,
+    /// Why, said where it is shown.
+    pub error: Option<crate::words::Words>,
     /// The session let go of its file for a plan that takes it away
     /// (`fs::kept_open`, ADR-136), and has ended: the plan's end, told to
     /// its observers by this id, says where the file went.

@@ -336,16 +336,16 @@ pub fn rows(ask: &Ask) -> Vec<Suggestion> {
                 continue;
             };
             let mut row = Suggestion::new(Section::Syntax, item.written.clone())
-                .detail(item.says.say())
-                .heading(group.title.say())
+                .detail(item.says.clone())
+                .heading(group.title.clone())
                 .rank(rank(&rows));
             row.typed = true;
             row.completion = Some(put(ask, part, written));
             rows.push(row);
         }
         for note in group.notes {
-            let row = Suggestion::new(Section::Syntax, note.say())
-                .heading(group.title.say())
+            let row = Suggestion::new(Section::Syntax, note)
+                .heading(group.title.clone())
                 .rank(rank(&rows));
             rows.push(row);
         }
@@ -494,7 +494,7 @@ mod tests {
         assert!(
             inert
                 .iter()
-                .any(|r| r.title.contains("start and the end of a line"))
+                .any(|r| r.title.english().contains("start and the end of a line"))
         );
         assert_eq!(rows[0].completion.as_deref(), Some("kind:"));
     }

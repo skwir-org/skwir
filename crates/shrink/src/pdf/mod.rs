@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use anyhow::{Context, Result};
 use lopdf::xref::{XrefEntry, XrefRecovery};
 use lopdf::{Document, LoadOptions, Object, ObjectId, Stream};
-use skwir_core::shrink::{Changed, Job, Made, PdfRule};
+use skwir_core::shrink::{Changed, Job, Made, Note, PdfRule};
 
 /// The largest PDF read whole: past it, none is made smaller here.
 const MOST_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -40,11 +40,11 @@ pub fn shrink(job: &Job, progress: &mut dyn FnMut(u64, u64)) -> Result<Made> {
         size <= MOST_BYTES,
         "It is larger than a PDF made smaller may be"
     );
-    let not_made = |note: &str| Made {
+    let not_made = |note: Note| Made {
         before: size,
         after: size,
         written: false,
-        notes: vec![note.to_owned()],
+        notes: vec![note],
         ..Made::default()
     };
     // Its bytes let go of once read: what is kept is what was read of it.
@@ -57,27 +57,15 @@ pub fn shrink(job: &Job, progress: &mut dyn FnMut(u64, u64)) -> Result<Made> {
     // empty) is read decrypted, its `/Encrypt` taken out: it was encrypted
     // all the same, and a copy would no longer forbid what it forbids.
     if doc.was_encrypted() || doc.is_encrypted() || doc.trailer.has(b"Encrypt") {
-        return Ok(not_made(
-            "it is protected by a password, which a smaller copy would not keep",
-        ));
+        return Ok(not_made(Note::Protected));
     }
     match signed(&doc) {
-        Some(Signed::Signature) => {
-            return Ok(not_made(
-                "it is signed, and a smaller copy would break its signature",
-            ));
-        }
-        Some(Signed::Rights) => {
-            return Ok(not_made(
-                "it carries rights its maker signed (to fill it in and save it in Adobe's Reader), which a smaller copy would break",
-            ));
-        }
+        Some(Signed::Signature) => return Ok(not_made(Note::Signed)),
+        Some(Signed::Rights) => return Ok(not_made(Note::SignedRights)),
         None => {}
     }
     if damaged(&doc) {
-        return Ok(not_made(
-            "it is damaged, and a smaller copy would lose what a reader repairs as it shows it",
-        ));
+        return Ok(not_made(Note::Damaged));
     }
     // What every try shares, done once: the pages' thumbnails and what
     // nothing reaches let go of, what is not an image packed tighter, and
@@ -478,7 +466,7 @@ mod tests {
         let copy = dir.path().join("copy.pdf");
         let made = shrink(&job(&input, &copy), &mut |_, _| {}).unwrap();
         assert!(!made.written && !copy.exists());
-        assert!(made.notes.iter().any(|note| note.contains("damaged")));
+        assert_eq!(made.notes, [Note::Damaged]);
     }
 
     /// The rule a copy was made by is said, and a job can ask that one
@@ -539,10 +527,6 @@ mod tests {
         std::fs::remove_file(&copy).unwrap();
         let made = shrink(&job(&protected, &copy), &mut |_, _| {}).unwrap();
         assert!(!made.written && !copy.exists());
-        assert!(
-            made.notes.iter().any(|note| note.contains("password")),
-            "{:?}",
-            made.notes
-        );
+        assert_eq!(made.notes, [Note::Protected]);
     }
 }

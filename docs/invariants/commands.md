@@ -28,7 +28,7 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
 - **Forms (ADR-024).** Arguments that make a command one thing to do are
   declared with its title (`Declared::forms`: `sort {"key": "size"}` is
   Sort by size), and every list of actions calls it so
-  (`keymap::title`). A key that runs a command with arguments has a form
+  (`keymap::title_words`). A key that runs a command with arguments has a form
   for them, where the command is declared;
   `crates/skwir/tests/keymap_titles.rs` holds it for every built-in key
   and that no place lists two actions under one title. Only a title

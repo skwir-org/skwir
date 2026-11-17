@@ -525,7 +525,17 @@ pub struct Form {
     /// elsewhere: Extend the selection up, down, to the first item are
     /// "Extend the selection". F1 lists a family's keys on one row.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub family: Option<Words>,
+    pub family: Option<Family>,
+}
+
+/// The family of forms a [`Form`] is one of: which, as data (what its
+/// forms meet by, never their words, ADR-139, 8), and what its row says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Family {
+    /// Unique among its command's families (`cursor.extend`).
+    pub id: String,
+    /// "Extend the selection", said where it is drawn.
+    pub title: Words,
 }
 
 impl Form {
@@ -537,28 +547,39 @@ impl Form {
         }
     }
 
-    /// One of `family` (see [`Form::family`]).
+    /// One of the family `id`, its row saying `title` (see
+    /// [`Form::family`]).
     #[must_use]
-    pub fn in_family(mut self, family: impl Into<Words>) -> Self {
-        self.family = Some(family.into());
+    pub fn in_family(mut self, id: impl Into<String>, title: impl Into<Words>) -> Self {
+        self.family = Some(Family {
+            id: id.into(),
+            title: title.into(),
+        });
         self
     }
 }
 
 /// `title` with the arguments said after it, as a command is called when
-/// no form names them: `Sort (key name)`.
-pub fn with_args(title: &str, args: &serde_json::Value) -> String {
+/// no form names them: `Sort (key name)`. The arguments are as written
+/// (their names and values, as a script writes them), never translated.
+pub fn with_args(title: impl Into<Words>, args: &serde_json::Value) -> Words {
+    let title = title.into();
     match args.as_object().filter(|args| !args.is_empty()) {
-        None => title.to_owned(),
+        None => title,
         Some(args) => {
-            let said: Vec<String> = args
+            let written: Vec<String> = args
                 .iter()
                 .map(|(name, value)| match value.as_str() {
                     Some(text) => format!("{name} {text}"),
                     None => format!("{name} {value}"),
                 })
                 .collect();
-            format!("{title} ({})", said.join(", "))
+            crate::words!(
+                command_with_args = "{ $title } ({ $args })",
+                title = title,
+                args = written.join(", "),
+                note = "A command named with the arguments it runs with, where none of its forms names them (Sort (key name)). args: the arguments as a script writes them, never translated."
+            )
         }
     }
 }
@@ -605,6 +626,12 @@ pub struct CommandSpec {
     /// outside's answer) is `Effect::Reads` without being data.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub data: bool,
+    /// The command it is a twin of, which does the same thing for a person
+    /// (the core's `window.close` and the window's `ui.close_window`): a
+    /// list of actions shows one of them (`Declared::same_as`). Told by
+    /// this, never by their titles (`docs/invariants/words.md`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub same_as: Option<Arc<str>>,
     /// When a key held down runs it again (ADR-066): a step along
     /// something (the cursor, a page, the volume, the next tab), never an
     /// act or a switch, which the key's repeats would run over and over.
@@ -644,13 +671,13 @@ impl CommandSpec {
         self.forms.iter().find(|form| form.args == *args)
     }
 
-    /// What it is called run with `args`, said in the user's language:
-    /// their form's title, else its own, with the arguments no form names
-    /// said after it, so two ways to run it never read alike.
-    pub fn title_for(&self, args: &serde_json::Value) -> String {
+    /// What it is called run with `args`, said where it is shown: their
+    /// form's title, else its own, with the arguments no form names said
+    /// after it, so two ways to run it never read alike.
+    pub fn title_for(&self, args: &serde_json::Value) -> Words {
         match self.form(args) {
-            Some(form) => form.title.say(),
-            None => with_args(&self.title.say(), args),
+            Some(form) => form.title.clone(),
+            None => with_args(self.title.clone(), args),
         }
     }
 
@@ -716,6 +743,12 @@ impl Declared<'_> {
     /// Its keys may change, never all go (see `CommandSpec::keeps_a_key`).
     pub fn keeps_a_key(&self) {
         self.update(|spec| spec.keeps_a_key = true);
+    }
+
+    /// It does what `twin` does, for a person (see
+    /// `CommandSpec::same_as`): a list of actions shows one of them.
+    pub fn same_as(&self, twin: &str) {
+        self.update(|spec| spec.same_as = Some(twin.into()));
     }
 
     /// A key held down runs it again where `rule` says, by its arguments
@@ -1046,6 +1079,7 @@ impl CommandRegistry {
             forms: Vec::new(),
             keeps_a_key: false,
             data: false,
+            same_as: None,
             repeats: None,
         };
         let mut commands = self.commands.write();
@@ -1090,7 +1124,7 @@ impl CommandRegistry {
 
     /// What `name` run with `args` is called (`CommandSpec::title_for`),
     /// read in place: `None` for no such command.
-    pub fn title(&self, name: &str, args: &serde_json::Value) -> Option<String> {
+    pub fn title_words(&self, name: &str, args: &serde_json::Value) -> Option<Words> {
         self.commands
             .read()
             .get(name)

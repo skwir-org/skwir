@@ -168,10 +168,10 @@ impl Connector for Fstab {
         // A mount of the system's own, named as its folder is.
         address.as_ref()?;
         Some(Recognised {
-            label: remote.point.file_name().map_or_else(
+            label: Words::as_written(remote.point.file_name().map_or_else(
                 || source.clone().into_owned(),
                 |n| n.to_string_lossy().into_owned(),
-            ),
+            )),
             address,
             ours: false,
             device: None,
@@ -222,10 +222,11 @@ impl Connector for Fstab {
             .filter(|e| e.users)
             .filter_map(|e| {
                 Some(Server {
-                    label: e
-                        .point
-                        .file_name()
-                        .map_or_else(|| e.source.clone(), |n| n.to_string_lossy().into_owned()),
+                    label: Words::as_written(
+                        e.point
+                            .file_name()
+                            .map_or_else(|| e.source.clone(), |n| n.to_string_lossy().into_owned()),
+                    ),
                     address: e.address?,
                     kind: String::new(),
                     kept: crate::servers::Kept::Tool(crate::servers::Keeper::Fstab),

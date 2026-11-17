@@ -48,5 +48,8 @@ email_select_attachment = Select an attachment to preview it
 # The title of an email's preview.
 email_title = Email
 
+# Why an email is not previewed. size: the largest the preview reads (16 MB).
+email_too_large = Email exceeds { $size } preview limit
+
 # An attachment the email gives no name, in its list of attachments.
 email_unnamed_attachment = Attachment

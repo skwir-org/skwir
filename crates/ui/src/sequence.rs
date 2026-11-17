@@ -18,7 +18,8 @@ use crate::theme::Theme;
 #[derive(Default)]
 pub struct Sequence {
     typed: Vec<Keystroke>,
-    next: Vec<(String, String)>,
+    /// The keys that may follow, and what each does, said where drawn.
+    next: Vec<(String, skwir_core::words::Words)>,
 }
 
 /// Whether a stroke typed matches a stroke bound, as GPUI matches them:
@@ -65,7 +66,7 @@ impl Shell {
         };
         let stack = window.context_stack();
         let holds = |token: &str| stack.iter().any(|context| context.contains(token));
-        let mut next: Vec<(String, String)> = Vec::new();
+        let mut next: Vec<(String, skwir_core::words::Words)> = Vec::new();
         for hint in &self.key_hints {
             if !crate::shortcuts::applies(&hint.context, &holds) {
                 continue;
@@ -112,7 +113,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         .min_w_0()
                         .truncate()
                         .text_color(theme.text_muted),
-                    title.clone(),
+                    title.say(),
                 )),
         );
     }

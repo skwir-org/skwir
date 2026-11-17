@@ -102,18 +102,19 @@ pub struct Known {
     /// Its address (`sftp://me@example.com/`): what a folder there is
     /// kept as (tabs, the session), and opened by again once let go of.
     pub address: Option<crate::location::Location>,
-    /// What the user calls it: `me@example.com`, `photos on nas`.
-    pub label: String,
+    /// What the user calls it: `me@example.com`, `photos on nas`, said
+    /// where it is shown.
+    pub label: crate::words::Words,
     pub thumbnails: Thumbnails,
     /// What its program is told before a folder of it is read again, where
     /// it answers from what it read before (kio-fuse keeps a listing and a
     /// file's attributes 30 seconds): `App::read_again`.
     pub forget: Option<Forget>,
-    /// Where its server keeps what is deleted there, in the user's words
-    /// (“Google Drive's trash”): a deletion's question says so rather than
-    /// that it is gone for good (ADR-086). `None`: deleted for good, as on
-    /// any network folder.
-    pub trash: Option<String>,
+    /// Where its server keeps what is deleted there (“Google Drive's
+    /// trash”), said where it is shown: a deletion's question says so
+    /// rather than that it is gone for good (ADR-086). `None`: deleted for
+    /// good, as on any network folder.
+    pub trash: Option<crate::words::Words>,
     /// What its plugin asks of it when the window comes back
     /// (`App::refresh_remote`), shown or not: what other programs left
     /// waiting to be sent to its server (rclone's, ADR-102). Called in

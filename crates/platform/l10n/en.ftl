@@ -90,9 +90,6 @@ archive_quarantine_unheld = { $name } could not be held in quarantine
 # macOS: what a downloaded archive is marked with (where it came from) could not be read, so its files are not marked alike.
 archive_quarantine_unread = the archive's quarantine could not be read
 
-# What a password prompt asks when the program asking (ssh, rclone) said nothing of its own.
-askpass_password = Password
-
 # ssh is the program that connects to servers (a name).
 askpass_unsupported = asking for a password through ssh is not available on this system yet
 
@@ -107,6 +104,9 @@ desktop_notice_stop = Stop all
 
 # A button of the notice, or an entry of the tray's menu, that shows while Skwir works without a window: it opens a window.
 desktop_open = Open Skwir
+
+# Where the desktop's fonts were read: the desktop portal (xdg-desktop-portal), placed where a desktop's or a toolkit's name goes (sizes read from the portal).
+desktop_style_portal = the portal
 
 # An entry of the menu of Skwir's icon in the tray, in place of Pause all: every paused action goes on.
 desktop_tray_go_on = Go on
@@ -339,6 +339,9 @@ inspection_drawing_inflated = The drawing is too large to read
 # Why an SVG drawing is not previewed: it is larger than the preview reads. size: that bound (16 MB).
 inspection_drawing_too_large = Drawing exceeds { $size } preview limit
 
+# Why a picture a document names is not shown. size: the largest read (16 MB).
+inspection_embedded_image_limit = Embedded image exceeds { $size } preview limit
+
 # A column's header in the hexadecimal view: where each row of bytes is in the file.
 inspection_hex_offset = Offset
 
@@ -468,6 +471,9 @@ open_not_web_or_mail = only web and mail links open from here
 # The desktop's default application could not be started for a file. path: the file; error: why.
 open_path_failed = open { $path }: { $error }
 
+# Why a program is not run in a terminal window. system: the system's name (macOS).
+open_terminal_program_not_yet = A terminal running a program is not available on { $system } yet
+
 # BitLocker is Windows' encryption of drives (a name).
 places_bitlocker_asks = Windows asks for a BitLocker drive's password itself: open the drive
 
@@ -485,6 +491,9 @@ places_drive = { $label } ({ $letter })
 
 # A Windows drive that has no name of its own, as Windows names it. letter: its drive letter (C:).
 places_local_disk = Local Disk ({ $letter })
+
+# Why a volume shown in the sidebar is not mounted. system: the system's name (Windows).
+places_mount_not_yet = Mounting a volume is not available on { $system } yet
 
 # Why a bookmark cannot be kept: the user has no configuration folder to write it in.
 places_no_config_dir = no configuration directory
@@ -594,6 +603,9 @@ print_no_token = the print dialog answered no token
 # The desktop refused to print what its dialog chose. code: the number it answered.
 print_not_taken = the desktop's printing did not take it ({ $code })
 
+# Why nothing is printed. system: the system's name, or this system.
+print_not_yet = Printing is not available on { $system } yet
+
 # The desktop's printing service no longer answers.
 print_portal_silent = the print portal stopped answering
 
@@ -648,11 +660,20 @@ process_too_much_output = { $program }: excessive output
 # Why a book's fixed-layout page is not shown: it declares a width or height of zero.
 rich_preview_page_no_size = page has no size
 
+# Why a page's stylesheet beside it is not read. size: the largest read (2 MB).
+rich_preview_stylesheet_limit = Stylesheet exceeds { $size } preview limit
+
+# Why a converter does not run. system: the system's name (Windows).
+sandbox_converter_not_yet = Running a converter isolated from your files is not available on { $system } yet
+
 # Why a converter or plugin program does not run: bubblewrap, a program's name, is not installed.
 sandbox_needs_bubblewrap = This needs bubblewrap, to run isolated from your files
 
 # Why a converter or plugin program does not run on macOS: the system's sandbox does not work here.
 sandbox_needs_sandbox = This needs the system's sandbox, to run isolated from your files
+
+# Why a plugin from outside, a program, does not run. system: the system's name (Windows).
+sandbox_plugin_not_yet = Running a plugin as a program, isolated from your files is not available on { $system } yet
 
 # The desktop's keyring, which keeps passwords (GNOME Keyring, KWallet), did not answer. error: why.
 secrets_no_keyring = No keyring answered: { $error }
@@ -666,11 +687,17 @@ secrets_unsupported = No keyring is supported on this system yet
 # Why a server's shared folder was not connected: the name or the password was not accepted.
 shares_login_refused = the server refused the login
 
+# Why a share is not mounted the Mac's way. NetFS is the Mac's name for it; system: the system's name (Windows).
+shares_netfs_not_yet = Mounting a share through NetFS is not available on { $system } yet
+
 # address: what was typed to connect to a server (smb://server/share).
 shares_no_address = “{ $address }” is no address the system reads
 
 # NetFS is macOS's service that connects servers' shared folders (a name): it said it connected one, and not where.
 shares_no_mount_point = NetFS said no mount point
+
+# Why a Windows share is not connected to. system: the system's name (macOS).
+shares_windows_not_yet = A Windows share is not available on { $system } yet
 
 # Why the variables a login shell sets were not read: the shell failed. shell: its path; status: how it ended, as the system says it (exit status: 1).
 shell_environment_failed = { $shell } ended with { $status }
@@ -696,17 +723,8 @@ shrink_no_copy = the shrink helper wrote no copy
 # The helper program said it made a smaller copy, and the copy is not smaller.
 shrink_no_smaller = the shrink helper wrote a copy no smaller than the file
 
-# Why no smaller copy of a PDF was kept, said after “No smaller copy was made”.
-shrink_put_back = its images made smaller looked different in a copy and were put back as they were, which left it no smaller
-
 # The helper program that makes smaller copies ended without its answer.
 shrink_silent = the shrink helper said nothing
-
-# Why no smaller copy of a PDF was kept, said after “No smaller copy was made”.
-shrink_still_unlike = a copy made still looked different from it with its images put back, so none was kept
-
-# Why no smaller copy of a PDF was kept, said after “No smaller copy was made”: its pages, drawn, did not look the same.
-shrink_unlike = a copy made looked different from it beyond its images, so none was kept
 
 # path: the file a smaller copy is made of.
 shrink_unread = { $path } could not be read

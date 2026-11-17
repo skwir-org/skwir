@@ -335,8 +335,7 @@ impl crate::shell::Shell {
         let Some((id, short, summary)) = found else {
             return;
         };
-        // What it is goes as text in the command's arguments, said here
-        // (Transitional, ADR-139: `ui.copy_text` takes text).
+        // What it is goes as words' data, said where the toast is drawn.
         let item = |order, title: Words, what: Words, text: String| {
             skwir_core::registry::MenuItem::new(
                 "preview",
@@ -345,7 +344,7 @@ impl crate::shell::Shell {
                 order,
                 skwir_core::command::Invocation::with_args(
                     "ui.copy_text",
-                    &serde_json::json!({ "text": text, "what": what.say() }),
+                    &serde_json::json!({ "text": text, "what": what.to_data() }),
                 ),
             )
         };

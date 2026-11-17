@@ -121,10 +121,13 @@ the reasoning.
   and twenty in all: a new essential takes another's place.
 - Titles are sentence case, without the plugin's name. Descriptions say
   what changes for the user, not what the key is called, in sentences.
-  **The first sentence stands alone**, in at most 30 words: a row shows
-  it, and the whole description is its tooltip and what a screen reader
-  hears (`settings::first_sentence`, ADR-072). Put what each choice does,
-  examples and exceptions after it.
+  **The description is one sentence that stands alone**, in at most 30
+  words: a row shows it (ADR-072). What each choice does, examples and
+  exceptions are a message of their own after it, its `more`
+  (`settings::Description`: `(words!(…_description = "…"),
+  words!(…_description_more = "…"))`), shown under it in the row's
+  tooltip and heard with it by a screen reader; never one message cut
+  where a sentence ends (ADR-139).
   Choice labels are a word or two; the description explains them.
   `crates/skwir/tests/settings.rs` checks the titles and the sentences
   of every plugin's settings.

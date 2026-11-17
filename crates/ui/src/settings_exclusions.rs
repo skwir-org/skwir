@@ -339,7 +339,8 @@ pub(crate) struct Line {
     pub dimmed: bool,
     /// The folder as written.
     pub pattern: Words,
-    pub what: String,
+    /// What it is, as its entry says (`Entry::what`).
+    pub what: Words,
     /// What it means, where that says more than the folder.
     pub meaning: Option<Words>,
     pub badges: Vec<Badge>,
@@ -373,7 +374,7 @@ impl Line {
                 note = "Under a folder on the Exclusions page: what it is (Virtual machines, as its entry says), then what it means (any folder named target beside a Cargo.toml)."
             ),
             (Some(meaning), true) => meaning.clone(),
-            (None, _) => Words::as_written(self.what.clone()),
+            (None, _) => self.what.clone(),
         }
     }
 
@@ -419,11 +420,8 @@ type Place = (Option<Box<[u8]>>, Box<[u8]>);
 /// the names', never the catalog's: a row added, or read again from the
 /// settings, which keep none, stands where its name puts it.
 fn place(entry: &Entry, shown_as: &str) -> Place {
-    let name = if entry.what.is_empty() {
-        shown_as
-    } else {
-        &entry.what
-    };
+    let what = entry.what.say();
+    let name = if what.is_empty() { shown_as } else { &what };
     (
         entry
             .group
@@ -493,7 +491,8 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
             let meaning = meaning(&entry.matcher);
             if filtering && !named {
                 let means = meaning.as_ref().map(Words::say);
-                let mut texts = vec![shown_as.as_str(), entry.what.as_str()];
+                let what = entry.what.say();
+                let mut texts = vec![shown_as.as_str(), what.as_str()];
                 texts.extend(means.as_deref());
                 texts.extend(entry.group.as_deref());
                 if let Matcher::Pattern {
@@ -679,7 +678,8 @@ impl Draft {
             names,
             beside,
             holding,
-            what: entry.what.clone(),
+            // Its field's text: the user's own as written, skwir's as shown.
+            what: entry.what.say(),
             category: entry.category.clone(),
         }
     }
@@ -792,15 +792,14 @@ pub(crate) fn already<'a>(
 }
 
 /// What the rules' own check says of the folders of the entry `id` in
-/// `catalog`, if anything (`Matcher::check_words`): why, and of which
-/// field.
+/// `catalog`, if anything (`Matcher::check`): why, and of which field.
 pub(crate) fn problem(catalog: &Catalog, id: &str) -> Option<Unreadable> {
     catalog
         .entries
         .iter()
         .find(|e| e.id == id)?
         .matcher
-        .check_words()
+        .check()
         .err()
 }
 
@@ -862,12 +861,10 @@ pub(crate) fn duplicated(catalog: &Catalog, id: &str) -> (Catalog, Option<String
         return (next, None);
     };
     let original = next.entries[at].clone();
+    // An id is an identifier: made from the English.
+    let what = original.what.english();
     let new_id = unique_id(
-        if original.what.is_empty() {
-            &original.id
-        } else {
-            &original.what
-        },
+        if what.is_empty() { &original.id } else { &what },
         &taken(catalog),
     );
     let copy = Entry {
@@ -926,7 +923,7 @@ pub(crate) fn added(
         builtin: false,
         category,
         shipped_category: None,
-        what: what.to_owned(),
+        what: Words::as_written(what.to_owned()),
         group: None,
         matcher,
         ticks: ticks_for(role),
@@ -941,7 +938,7 @@ pub(crate) fn edited(catalog: &Catalog, id: &str, matcher: Matcher, draft: &Draf
     let category = catalog.category(&draft.category).map(|c| c.id.clone());
     if let Some(entry) = entry_mut(&mut next, id).filter(|e| !e.builtin) {
         entry.matcher = matcher;
-        draft.what.trim().clone_into(&mut entry.what);
+        entry.what = Words::as_written(draft.what.trim().to_owned());
         if let Some(category) = category {
             entry.category = category;
         }
@@ -1297,7 +1294,7 @@ mod tests {
             rows(catalog, &ask(Role::Searches, "", &here, &unfolded))
                 .iter()
                 .filter_map(|r| match r {
-                    Row::Entry(line) if line.category == YOURS => Some(line.what.clone()),
+                    Row::Entry(line) if line.category == YOURS => Some(line.what.english()),
                     _ => None,
                 })
                 .collect()
@@ -1754,7 +1751,7 @@ mod tests {
         assert!(
             read.entries
                 .iter()
-                .any(|e| e.id == id && e.what == "Virtual machines (big)")
+                .any(|e| e.id == id && e.what.english() == "Virtual machines (big)")
         );
         // Edited: its folders, words and category; its ticks stay.
         let edit = Draft {
@@ -1768,7 +1765,7 @@ mod tests {
         };
         let edited = edited(&catalog, &id, edit.matcher().unwrap(), &edit);
         let e = edited.entries.iter().find(|e| e.id == id).unwrap();
-        assert_eq!(e.what, "VM output");
+        assert_eq!(e.what.english(), "VM output");
         assert_eq!(e.category, YOURS);
         assert!(e.ticks.get(Role::Agents));
         assert_eq!(

@@ -555,12 +555,8 @@ impl<S: FileSource + ?Sized> Book for Reading<'_, S> {
     fn chapters(&self) -> &[ChapterRef] {
         &self.book.refs
     }
-    fn text(
-        &mut self,
-        href: &str,
-        _cancel: &CancelToken,
-    ) -> anyhow::Result<(String, Option<String>)> {
-        Ok((self.book.chapter(href)?.to_owned(), None))
+    fn text(&mut self, href: &str, _cancel: &CancelToken) -> anyhow::Result<(String, Vec<Words>)> {
+        Ok((self.book.chapter(href)?.to_owned(), Vec::new()))
     }
     fn resources<'r>(
         &'r mut self,

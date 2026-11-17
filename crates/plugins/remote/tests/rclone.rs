@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::testing::free_port;
+use skwir_core::words::Words;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector};
 use skwir_plugin_remote::rclone::Rclone;
@@ -19,10 +20,10 @@ use skwir_plugin_remote::rclone::Rclone;
 struct NoOne;
 
 impl Ask for NoOne {
-    fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+    fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
         None
     }
-    fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+    fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
         false
     }
 }

@@ -268,15 +268,15 @@ impl Row {
         self
     }
 
-    /// A provider's fact, with its link.
+    /// A provider's fact, with its link, said where the row is made.
     fn of(detail: &skwir_core::inspection::Detail) -> Self {
         Row {
             actions: detail
                 .action
                 .iter()
-                .map(|(words, action)| (words.clone().into(), action.clone()))
+                .map(|(words, action)| (words.say().into(), action.clone()))
                 .collect(),
-            ..Row::new(detail.label.clone(), detail.value.clone())
+            ..Row::new(detail.label.say(), detail.value.clone())
         }
     }
 }
@@ -297,12 +297,23 @@ pub struct Group {
 }
 
 impl Group {
-    /// The group known by `key` (`group_keys`), headed by its words; a source's
-    /// own group, by its name, headed by it as the source writes it.
+    /// The group known by `key` (`group_keys`), headed by core's words for
+    /// it; a source's own group, by its key, headed by the source's words
+    /// (`headed`).
     pub fn new(key: impl Into<SharedString>, rows: Vec<Row>) -> Self {
+        Group::headed(key, None, rows)
+    }
+
+    /// The group known by `key`, headed by `heading` where it is a source's
+    /// own, else by core's words for one of Properties' own.
+    pub fn headed(key: impl Into<SharedString>, heading: Option<&Words>, rows: Vec<Row>) -> Self {
         let key = key.into();
+        let title = heading
+            .cloned()
+            .or_else(|| group_keys::words_of(&key))
+            .map_or_else(|| key.clone(), |title| title.say().into());
         Group {
-            title: group_keys::title(&key).map_or_else(|| key.clone(), |title| title.say().into()),
+            title,
             key,
             rows,
             folded: false,
@@ -373,79 +384,10 @@ fn group(key: &'static str, rows: Vec<Row>) -> Option<Group> {
 }
 
 /// What Properties' own groups are known by (`Group::key`), the same in
-/// every language: the English of their titles, as the sources name the
-/// groups they join and as the window remembers what is folded.
-pub mod group_keys {
-    use skwir_core::words;
-    use skwir_core::words::Words;
-
-    pub const GENERAL: &str = "General";
-    pub const NOTES: &str = "Notes";
-    pub const SOURCE: &str = "Source";
-    pub const LOCATION: &str = "Location";
-    pub const PERMISSIONS: &str = "Permissions";
-    pub const TIMES: &str = "Times";
-    pub const MORE: &str = "More";
-    pub const SELECTION: &str = "Selection";
-    /// The Permissions group of several entries: what they share, apart
-    /// from the Permissions of the entry the cursor is on.
-    pub const SHARED_PERMISSIONS: &str = "Shared permissions";
-    pub const VOLUME: &str = "Volume";
-    pub const CONTENT: &str = "Content";
-
-    /// The heading of the group known by `key`; `None` for one Properties
-    /// does not make (a source's own).
-    pub fn title(key: &str) -> Option<Words> {
-        Some(match key {
-            GENERAL => words!(
-                properties_general = "General",
-                note = "A group's heading in Properties: the file's size and what it takes."
-            ),
-            NOTES => words!(
-                properties_notes = "Notes",
-                note = "A group's heading in Properties: the file's tags, rating and comment."
-            ),
-            SOURCE => words!(
-                properties_source = "Source",
-                note = "A group's heading in Properties: where a download came from."
-            ),
-            LOCATION => words!(
-                properties_location = "Location",
-                note = "A group's heading in Properties: the file's path and folder."
-            ),
-            PERMISSIONS => words!(
-                properties_permissions = "Permissions",
-                note = "A group's heading in Properties: who owns the file and who may use it."
-            ),
-            TIMES => words!(
-                properties_times = "Times",
-                note =
-                    "A group's heading in Properties: when the file changed, was made, was read."
-            ),
-            MORE => words!(
-                properties_more = "More",
-                note = "A group's heading in Properties: what plugins or the user attached to the file beside the rest."
-            ),
-            SELECTION => words!(
-                properties_selection = "Selection",
-                note = "A group's heading in Properties, with several items selected: how many, what they weigh."
-            ),
-            SHARED_PERMISSIONS => words!(
-                properties_shared_permissions = "Shared permissions",
-                note = "A group's heading in Properties, with several items selected: the owner, group and access they share."
-            ),
-            VOLUME => words!(
-                properties_volume = "Volume",
-                note = "A group's heading in Properties: the drive the file is on."
-            ),
-            CONTENT => words!(
-                properties_content = "Content",
-                note = "A group's heading in Properties: what the file says of itself (a picture's camera, a document's author)."
-            ),
-            _ => return None,
-        })
-    }
-}
+/// every language, as the sources name the groups they join and as the
+/// window remembers what is folded: core's, beside their headings'
+/// words (`words_of`).
+pub use skwir_core::registry::property_groups as group_keys;
 
 /// The title of the Permissions group of several entries: what they
 /// share, apart from the Permissions of the entry the cursor is on.
@@ -477,11 +419,13 @@ impl Folds {
     }
 }
 
-/// A row a property source answered (`plugin_rows`): the group it joins,
-/// whether that group ships folded, and the row.
+/// A row a property source answered (`plugin_rows`): the group it joins
+/// (by key), the heading of a group of the source's own, whether that
+/// group ships folded, and the row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceRow {
     pub group: SharedString,
+    pub heading: Option<Words>,
     pub folded: bool,
     pub row: Row,
 }
@@ -608,7 +552,8 @@ fn note_source(provenance: &Provenance) -> Option<SharedString> {
 /// Only while the tags plugin, which reads and writes them, is on.
 /// A category holding one tag at a time (`fields`) is a field of its own,
 /// whose value is the tag within it (`Status: Draft`).
-fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Option<Group>; 2] {
+fn notes_groups(entry: &Entry, path: &std::path::Path, noting: Noting<'_>) -> [Option<Group>; 2] {
+    let fields = noting.fields;
     let meta = &entry.metadata;
     let text = |key| meta.value(key).and_then(Value::as_str).map(str::to_owned);
     let target = serde_json::json!([EntryRef::new(entry.file(), path)]);
@@ -668,36 +613,36 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
             rating,
             target: EntryRef::new(entry.file(), path),
         },
-        gist: rating.map(|r| Gist::Said(crate::tags::stars_words(r).into())),
+        gist: rating.map(|r| Gist::Said(crate::tags::stars_said(r).say().into())),
         ..Row::new(
             words!(
                 properties_rating = "Rating",
                 note = "A row's label in Properties: the stars the file was given."
             )
             .say(),
-            rating.map_or_else(String::new, crate::tags::stars_words),
+            rating.map_or_else(String::new, |r| crate::tags::stars_said(r).say()),
         )
     };
     let comment = text(keys::COMMENT);
-    let comment_label = words!(
+    let comment_words = words!(
         properties_comment = "Comment",
         note = "A row's label in Properties, and the title of where it is written: the comment on the file."
-    )
-    .say();
-    // Transitional: what asks for the comment takes its words said
-    // (`ui.ask`'s arguments, ADR-139).
+    );
+    let comment_label = comment_words.say();
+    // What asks for the comment takes its words as their data (`ui.ask`'s
+    // arguments, said in the window's language).
     let mut ask = serde_json::json!({
-        "title": comment_label,
+        "title": comment_words.to_data(),
         "accept": words!(
             properties_comment_save = "Save",
             note = "The button that keeps the comment written for a file."
         )
-        .say(),
+        .to_data(),
         "placeholder": words!(
             properties_comment_placeholder = "A comment on this item (empty removes it)",
             note = "The placeholder of the field a file's comment is written in."
         )
-        .say(),
+        .to_data(),
         "command": "notes.comment",
         "field": "text",
         "args": { "entries": target },
@@ -743,7 +688,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
         } else {
             row
         };
-        // Transitional: `ui.copy_text` takes what it copied said (ADR-139).
+        // What it copied as words' data, said where the toast is drawn.
         row.action(
             &words!(
                 properties_copy_link = "Copy",
@@ -751,7 +696,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
             ),
             Invocation::with_args(
                 "ui.copy_text",
-                &serde_json::json!({ "text": url, "what": what.say() }),
+                &serde_json::json!({ "text": url, "what": what.to_data() }),
             ),
         )
     };
@@ -792,11 +737,17 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     .into_iter()
     .flatten()
     .collect();
+    // The stores the field names by id, said by their titles.
     let titles = |key| match meta.value(key) {
-        Some(Value::List(items)) => items
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect::<Vec<_>>(),
+        Some(Value::List(items)) => {
+            let ids: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+            noting
+                .stores
+                .titles(&ids)
+                .iter()
+                .map(Words::say)
+                .collect::<Vec<_>>()
+        }
         _ => Vec::new(),
     };
     let mut rows = vec![tags_row];
@@ -839,13 +790,22 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     ]
 }
 
+/// What Properties says of a file's notes, while a store keeps some: the
+/// categories it holds one tag at a time of (as fields), and the stores,
+/// which say their titles by id where the notes are kept
+/// (`keys::NOTES_KEPT`).
+#[derive(Clone, Copy)]
+pub struct Noting<'a> {
+    pub fields: &'a [String],
+    pub stores: &'a skwir_core::notes::NoteStores,
+}
+
 /// What the entry itself says; with `notes`, what the user noted on it
-/// (the tags plugin is on), the categories it holds one tag at a time of
-/// as fields. Pure, so it is tested without a window.
+/// (the tags plugin is on). Pure, so it is tested without a window.
 pub fn entry_groups(
     entry: &Entry,
     path: &std::path::Path,
-    notes: Option<&[String]>,
+    notes: Option<Noting<'_>>,
     user: &User,
 ) -> Vec<Group> {
     let meta = &entry.metadata;
@@ -1104,7 +1064,7 @@ pub fn entry_groups(
         .collect();
 
     let [notes, source] = match notes {
-        Some(fields) => notes_groups(entry, path, fields),
+        Some(noting) => notes_groups(entry, path, noting),
         None => [None, None],
     };
     // Not read yet: what reading the entry always says keeps its place,
@@ -1428,19 +1388,21 @@ pub fn plugin_rows(
             }
         };
         match answer {
+            // Said here, as every row Properties collects is.
             Ok(answer) => rows.extend(answer.rows.into_iter().map(|property| {
                 SourceRow {
                     group: SharedString::from(property.group),
+                    heading: property.heading,
                     folded: property.folded,
                     row: Row {
                         actions: property
                             .actions
                             .into_iter()
-                            .map(|a| (a.words.into(), a.command))
+                            .map(|a| (a.words.say().into(), a.command))
                             .collect(),
                         actions_shown: property.actions_shown,
-                        gist: property.gist.map(|gist| Gist::Said(gist.into())),
-                        ..Row::new(property.label, property.value)
+                        gist: property.gist.map(|gist| Gist::Said(gist.say().into())),
+                        ..Row::new(property.label.say(), property.value.say())
                     },
                 }
             })),
@@ -1774,31 +1736,30 @@ pub fn access_rows(
     };
     // A picker whose choices each run a `set_access`; for folders, with a
     // switch that reaches what they hold.
-    // Transitional: what picks takes its words said (`ui.choose`'s
-    // arguments, ADR-139).
+    // What picks takes its words as their data (`ui.choose`'s arguments,
+    // said in the window's language).
     let choose = |title: Words, choices: Vec<serde_json::Value>| {
-        let mut args = serde_json::json!({ "title": title.say(), "choices": choices });
+        let mut args = serde_json::json!({ "title": title.to_data(), "choices": choices });
         if subjects.iter().any(|s| s.folder) {
             args["option"] = serde_json::json!({
                 "title": words!(
                     properties_also_inside = "Also everything inside",
                     note = "A switch under the choices of who may use folders: change what they hold too."
                 )
-                .say(),
+                .to_data(),
                 "field": "inside",
             });
         }
         Invocation::with_args("ui.choose", &args)
     };
-    let choice = |title: &str, now: bool, command: serde_json::Value| {
-        let mut choice = serde_json::json!({ "title": title, "command": command });
+    let choice = |title: Words, now: bool, command: serde_json::Value| {
+        let mut choice = serde_json::json!({ "title": title.to_data(), "command": command });
         if now {
             choice["detail"] = words!(
                 properties_now = "Now",
                 note = "Beside the choice that is the file's now, among the choices of who may use it."
             )
-            .say()
-            .into();
+            .to_data();
         }
         choice
     };
@@ -1831,7 +1792,7 @@ pub fn access_rows(
             .into_iter()
             .map(|(name, gid)| {
                 choice(
-                    &name,
+                    Words::as_written(name),
                     now == Some(gid),
                     serde_json::json!({
                         "name": "set_access",
@@ -1870,7 +1831,7 @@ pub fn access_rows(
             };
             let choices = levels
                 .into_iter()
-                .map(|(words, at, clause)| choice(&words.say(), bits == Some(at), set(clause)))
+                .map(|(words, at, clause)| choice(words, bits == Some(at), set(clause)))
                 .collect();
             row = row.edit(
                 &label::change(),
@@ -1942,25 +1903,25 @@ pub fn access_rows(
         if let Some(mode) = mode {
             describe["current"] = (mode & 0o7777).into();
         }
-        // Transitional: what asks takes its words said (`ui.ask`'s
-        // arguments, ADR-139).
+        // What asks takes its words as their data (`ui.ask`'s arguments,
+        // said in the window's language).
         let mut ask = serde_json::json!({
             "title": words!(
                 properties_access_of = "Access of { $what }",
                 what = targets.named(count),
                 note = "The title of where a file's mode is typed. what: the file, by its name, or how many items."
             )
-            .say(),
+            .to_data(),
             "accept": words!(
                 properties_access_change = "Change",
                 note = "The button that changes a file's mode to the one typed."
             )
-            .say(),
+            .to_data(),
             "placeholder": words!(
                 properties_access_placeholder = "As chmod takes it: 644, u+x, go-w, a=rX",
                 note = "The placeholder of the field a file's mode is typed in. chmod is a program's name; 644, u+x, go-w and a=rX are modes as it writes them."
             )
-            .say(),
+            .to_data(),
             "command": "set_access",
             "field": "mode",
             "args": targets.args(&serde_json::json!({})),
@@ -2347,7 +2308,7 @@ fn content_group(shell: &Shell) -> Option<Group> {
                     row.gist(
                         words!(
                             properties_detail_gist = "{ $label }: { $value }",
-                            label = detail.label.as_str(),
+                            label = detail.label.clone(),
                             value = detail.value.as_str(),
                             note = "A folded heading of Properties: the first fact the file's format says of it, its label then its value, as the preview said them (Author: Ann)."
                         )
@@ -2449,8 +2410,9 @@ pub fn places(
         .filter(|place| place.of == of)
         .map(|place| SourceRow {
             group: SharedString::from(place.group.clone()),
+            heading: place.heading.clone(),
             folded: place.folded,
-            row: Row::reserved(place.label.clone()),
+            row: Row::reserved(place.label.say()),
         })
         .collect()
 }
@@ -2740,7 +2702,11 @@ pub fn render(
                 at,
                 Group {
                     folded: source.folded,
-                    ..Group::new(source.group.clone(), vec![source.row.clone()])
+                    ..Group::headed(
+                        source.group.clone(),
+                        source.heading.as_ref(),
+                        vec![source.row.clone()],
+                    )
                 },
             );
         }
@@ -3179,6 +3145,16 @@ mod tests {
     use super::*;
     use skwir_core::entry::{EntryId, EntryKind};
 
+    /// Notes said with the categories `fields`, no store registered.
+    fn noting(fields: &[String]) -> Noting<'_> {
+        static STORES: std::sync::LazyLock<skwir_core::notes::NoteStores> =
+            std::sync::LazyLock::new(skwir_core::notes::NoteStores::default);
+        Noting {
+            fields,
+            stores: &STORES,
+        }
+    }
+
     /// A file's whole path on this system (a drive's on Windows), and its
     /// folder.
     const FILE: &str = if cfg!(windows) {
@@ -3234,8 +3210,9 @@ mod tests {
     fn a_source_s_rows_keep_their_place_where_it_answers() {
         let source = skwir_core::registry::PropertySource {
             places: vec![skwir_core::registry::PropertyPlace {
-                group: "General".into(),
-                label: "Opens with".into(),
+                group: group_keys::GENERAL.into(),
+                heading: None,
+                label: Words::as_written("Opens with"),
                 folded: false,
                 of: skwir_core::registry::PlaceOf::Files,
             }],
@@ -3305,7 +3282,7 @@ mod tests {
             },
         );
         let path = std::path::Path::new(FILE);
-        let groups = entry_groups(&entry, path, Some(&[]), &User::default());
+        let groups = entry_groups(&entry, path, Some(noting(&[])), &User::default());
         let find = |title: &str, label: &str| {
             groups
                 .iter()
@@ -3382,7 +3359,7 @@ mod tests {
             ]),
             Provenance::User,
         );
-        let with_field = entry_groups(&tagged, path, Some(&fields), &User::default());
+        let with_field = entry_groups(&tagged, path, Some(noting(&fields)), &User::default());
         let notes = with_field.iter().find(|g| g.title == "Notes").unwrap();
         let status = notes.rows.iter().find(|r| r.label == "Status").unwrap();
         assert_eq!(status.value.as_ref(), "In review");
@@ -3572,7 +3549,7 @@ mod tests {
         );
         let path = std::path::Path::new("/data/it's a café.txt");
         let rows = |entry: &Entry| -> Vec<Row> {
-            entry_groups(entry, path, Some(&[]), &me)
+            entry_groups(entry, path, Some(noting(&[])), &me)
                 .into_iter()
                 .flat_map(|g| g.rows)
                 .collect()
@@ -3627,6 +3604,7 @@ mod tests {
         );
         let row = |group: &str, folded: bool| SourceRow {
             group: group.to_owned().into(),
+            heading: None,
             folded,
             row: Row::new("SHA-256", ""),
         };
@@ -3689,7 +3667,7 @@ mod tests {
             },
         );
         let path = std::path::Path::new(FILE);
-        let groups = entry_groups(&file, path, Some(&[]), &User::default());
+        let groups = entry_groups(&file, path, Some(noting(&[])), &User::default());
         let gist = |groups: &[Group], title: &str| {
             groups
                 .iter()
@@ -4001,7 +3979,13 @@ mod tests {
         assert_eq!(owner.name.as_ref(), "ui.choose");
         let choices = owner.args["choices"].as_array().unwrap();
         assert_eq!(choices[1]["command"]["args"]["mode"], "u+r,u-w");
-        assert_eq!(choices[2]["detail"], "Now");
+        // Words as their data, read back as the window reads them.
+        let english = |said: &serde_json::Value| {
+            serde_json::from_value::<Words>(said.clone())
+                .unwrap()
+                .english()
+        };
+        assert_eq!(english(&choices[2]["detail"]), "Now");
         assert!(owner.args.get("option").is_none(), "a file holds nothing");
         // The group goes to one of the user's.
         let groups = rows[1].actions[0].1.args["choices"].as_array().unwrap();
@@ -4017,7 +4001,7 @@ mod tests {
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         crate::commands::declare_all(&app);
         app.commands.check(ask).unwrap();
-        assert_eq!(ask.args["reference"]["title"], "Access");
+        assert_eq!(english(&ask.args["reference"]["title"]), "Access");
         let describe = &ask.args["describe"];
         let mut args = describe["args"].clone();
         args["mode"] = "u+x".into();
@@ -4029,10 +4013,7 @@ mod tests {
         };
         if !cfg!(windows) {
             assert!(
-                said["says"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("rwxr--r-- (744)"),
+                english(&said["says"]).starts_with("rwxr--r-- (744)"),
                 "{said}"
             );
         }

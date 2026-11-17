@@ -490,15 +490,18 @@ fn a_password_is_asked_twice_to_make_an_archive_and_once_to_extract_it() {
         |app| {
             // Two that differ: asked again from the start.
             let first = secret_asked(app);
-            assert_eq!(first.title, "A password for “private.zip”");
-            assert_eq!(first.accept, "Next");
+            assert_eq!(first.title.english(), "A password for “private.zip”");
+            assert_eq!(first.accept.english(), "Next");
             assert!(app.answer_secret(first.id, Some("pass word 1".into())));
             let again = secret_asked(app);
-            assert_eq!(again.accept, "Compress");
+            assert_eq!(again.accept.english(), "Compress");
             assert!(app.answer_secret(again.id, Some("another".into())));
             let first = secret_asked(app);
             assert!(
-                first.title.starts_with("The two passwords differed"),
+                first
+                    .title
+                    .english()
+                    .starts_with("The two passwords differed"),
                 "{}",
                 first.title
             );
@@ -532,11 +535,15 @@ fn a_password_is_asked_twice_to_make_an_archive_and_once_to_extract_it() {
     };
     let extracted = whole(&app, extract(), |app| {
         let asked = secret_asked(app);
-        assert_eq!(asked.title, "Password for “private.zip”");
-        assert_eq!(asked.accept, "Extract");
+        assert_eq!(asked.title.english(), "Password for “private.zip”");
+        assert_eq!(asked.accept.english(), "Extract");
         assert!(app.answer_secret(asked.id, Some("wrong".into())));
         let asked = secret_asked(app);
-        assert!(asked.title.starts_with("Wrong password"), "{}", asked.title);
+        assert!(
+            asked.title.english().starts_with("Wrong password"),
+            "{}",
+            asked.title
+        );
         assert!(app.answer_secret(asked.id, Some("pass word 1".into())));
     });
     assert!(matches!(extracted, ExecEvent::Finished { error: None, .. }));
@@ -653,13 +660,16 @@ fn an_extraction_onto_its_folder_there_keeps_both_or_merges() {
         let question = clashes_asked(app);
         assert_eq!(question.clashes.len(), 1);
         let clash = &question.clashes[0];
+        let Act::Make { words, merges } = &clash.act else {
+            panic!("{:?}", clash.act);
+        };
         assert_eq!(
-            clash.act,
-            Act::Make {
-                verb: "Extract",
-                done: "extracted",
-                merges: true,
-            }
+            (
+                words.verb.english().as_str(),
+                words.waiting.english().as_str(),
+                *merges
+            ),
+            ("Extract", "Nothing is extracted until you choose.", true)
         );
         assert!(clash.folders(), "merged as a copy's folder is");
         assert_eq!(clash.there.path, dest.join("project-1.0"));
@@ -1292,7 +1302,7 @@ fn an_empty_password_is_asked_again() {
             assert!(app.answer_secret(asked.id, Some(String::new().into())));
             let asked = secret_asked(app);
             assert!(
-                asked.title.ends_with("it cannot be empty"),
+                asked.title.english().ends_with("it cannot be empty"),
                 "{}",
                 asked.title
             );
@@ -1351,7 +1361,7 @@ fn room_is_asked_for_what_is_made_and_extracted() {
             };
             let needed = format!("{} needed", skwir_core::fs::size_said(needs));
             assert!(
-                question.title.contains(&needed),
+                question.title.english().contains(&needed),
                 "{}: {args}",
                 question.title
             );

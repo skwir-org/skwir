@@ -31,6 +31,7 @@ use skwir_core::{
     preview::{FileSource, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
     words,
+    words::Words,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::model::{Asked, MeshFormat};
@@ -192,72 +193,82 @@ impl Format {
 #[derive(Default)]
 struct Found {
     /// What it is, for the toolbar.
-    title: String,
+    title: Words,
     picture: Option<Image>,
     /// The mesh itself, read for a window that turns it (`Asked::Turned`).
     mesh: Option<Arc<skwir_core::inspection::Mesh>>,
     /// Whether its mesh can be turned in 3D, whichever was shown.
     mesh_available: bool,
-    /// Facts in the order they are shown.
-    details: Vec<(String, String)>,
+    /// Facts in the order they are shown: each label, and its value.
+    details: Vec<(Words, String)>,
     /// What was left out, and why.
-    notice: Option<String>,
+    notice: Option<Words>,
     /// Whether it was left out to stay quick: Full preview shows it.
     whole_available: bool,
 }
 
+#[cfg(test)]
+impl Found {
+    /// Its facts, each label in English.
+    fn english_details(&self) -> Vec<(String, String)> {
+        self.details
+            .iter()
+            .map(|(label, value)| (label.english(), value.clone()))
+            .collect()
+    }
+
+    /// What it says was left out, in English.
+    fn english_notice(&self) -> Option<String> {
+        self.notice.as_ref().map(Words::english)
+    }
+}
+
 /// What Properties calls the program that wrote a file.
-fn made_with() -> String {
+fn made_with() -> Words {
     words!(
         models_detail_made_with = "Made with",
         note = "A label in the preview's Properties: the program that wrote the file."
     )
-    .say()
 }
 
 /// What Properties calls a file's format and its version.
-fn format_label() -> String {
+fn format_label() -> Words {
     words!(
         models_detail_format = "Format",
         note = "A label in the preview's Properties: the file's format and its version (DWG 2018, STEP AP214)."
     )
-    .say()
 }
 
 /// What Properties calls the version of the program that saved a file.
-fn saved_by() -> String {
+fn saved_by() -> Words {
     words!(
         models_detail_saved_by = "Saved by",
         note = "A label in the preview's Properties: the program and its version that saved the file (Blender 4.2)."
     )
-    .say()
 }
 
 /// What Properties calls a model's or a drawing's size.
-fn size_label() -> String {
+fn size_label() -> Words {
     words!(
         models_detail_size = "Size",
         note = "A label in the preview's Properties: the model's or the drawing's dimensions, not its size in bytes."
     )
-    .say()
 }
 
 /// What Properties calls a print's predicted time.
-fn print_time() -> String {
+fn print_time() -> Words {
     words!(
         models_detail_print_time = "Print time",
         note = "A label in the preview's Properties: how long a 3D print takes, as its slicer predicted."
     )
-    .say()
 }
 
 /// What Properties calls the filament a print uses, by weight.
-fn filament() -> String {
+fn filament() -> Words {
     words!(
         models_detail_filament = "Filament",
         note = "A label in the preview's Properties: how much plastic filament a 3D print uses, in grams."
     )
-    .say()
 }
 
 /// A weight of filament, `grams` written as a number.
@@ -271,13 +282,12 @@ fn grams(grams: String) -> String {
 }
 
 /// Why a file is not drawn: larger than `most` bytes.
-fn too_large(most: usize) -> String {
+fn too_large(most: usize) -> Words {
     words!(
         models_too_large = "Too large to draw (more than { $size })",
         size = words::Size(most as u64),
         note = "Why a model or a drawing is not drawn. size: the largest file drawn (16 MB)."
     )
-    .say()
 }
 
 /// A model's size, its three lengths written as numbers, in the unit the
@@ -345,34 +355,31 @@ fn size_2d([width, height]: [String; 2], unit: Option<&str>) -> String {
 
 /// What a model is, for the toolbar: `format` names its format or its
 /// program (`STL`, `Rhino`, `SketchUp`).
-fn model_title(format: &str) -> String {
+fn model_title(format: &str) -> Words {
     words!(
         models_model_title = "{ $format } model",
         format = format,
         note = "The title of a 3D model's preview. format: the format's or the program's name (STL, glTF, STEP, Rhino, SketchUp)."
     )
-    .say()
 }
 
 /// What a drawing is, for the toolbar: `format` names its format (`DWG`).
-fn drawing_title(format: &str) -> String {
+fn drawing_title(format: &str) -> Words {
     words!(
         models_drawing_title = "{ $format } drawing",
         format = format,
         note = "The title of an AutoCAD drawing's preview. format: the format's name (DWG, DXF)."
     )
-    .say()
 }
 
 /// What a document is, for the toolbar: `program` names the program that
 /// makes it (`FreeCAD`).
-fn document_title(program: &str) -> String {
+fn document_title(program: &str) -> Words {
     words!(
         models_document_title = "{ $program } document",
         program = program,
         note = "The title of a document's preview. program: the program that makes it (FreeCAD, LayOut)."
     )
-    .say()
 }
 
 /// `image` at most `side` pixels on its longer side, never enlarged.
@@ -437,13 +444,11 @@ impl PreviewProvider for Provider {
                 title: words!(
                     models_object_file = "Object file",
                     note = "The preview's title for a .obj file that is a compiled program's object, not a 3D model."
-                )
-                .say(),
-                notice: words!(
+                ),
+                notices: vec![words!(
                     models_not_obj = "Not a Wavefront OBJ model",
                     note = "Said in the preview of a .obj file that is not a 3D model (Wavefront OBJ is the format's name)."
-                )
-                .say(),
+                )],
                 ..Inspection::default()
             }));
         }
@@ -468,7 +473,7 @@ impl PreviewProvider for Provider {
             cancel,
         )?;
         let whole_available = found.whole_available;
-        let notice = found.notice.unwrap_or_default();
+        let notices: Vec<Words> = found.notice.into_iter().collect();
         let details = found
             .details
             .into_iter()
@@ -481,7 +486,7 @@ impl PreviewProvider for Provider {
                 mesh: Some(mesh),
                 mesh_available: true,
                 details,
-                notice,
+                notices,
                 ..Inspection::default()
             }));
         }
@@ -493,7 +498,7 @@ impl PreviewProvider for Provider {
                 details,
                 source_available: format.is_text(),
                 mesh_available: found.mesh_available,
-                notice,
+                notices,
                 whole_available,
                 ..Inspection::default()
             },
@@ -502,11 +507,8 @@ impl PreviewProvider for Provider {
             None if format.is_text() => {
                 let mut data = inspection::plain(&held, req.mime.as_deref(), cancel)?;
                 data.details = details;
-                data.notice = [notice, std::mem::take(&mut data.notice)]
-                    .into_iter()
-                    .filter(|notice| !notice.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" · ");
+                let own = std::mem::take(&mut data.notices);
+                data.notices = notices.into_iter().chain(own).collect();
                 data.whole_available = whole_available;
                 data
             }
@@ -514,14 +516,13 @@ impl PreviewProvider for Provider {
                 kind: InspectionKind::Text,
                 title: found.title,
                 details,
-                notice: if notice.is_empty() {
-                    words!(
+                notices: if notices.is_empty() {
+                    vec![words!(
                         models_no_picture = "No picture is stored in this file",
                         note = "Said in the preview of a model or drawing whose program stored no picture of it."
-                    )
-                    .say()
+                    )]
                 } else {
-                    notice
+                    notices
                 },
                 whole_available,
                 ..Inspection::default()
@@ -592,6 +593,11 @@ mod tests {
     use skwir_core::op::EntryRef;
     use skwir_core::preview::{Held, HeldSlot};
 
+    /// What its notices say together, in English; empty for none.
+    fn notice(data: &Inspection) -> String {
+        data.notice().map(|said| said.english()).unwrap_or_default()
+    }
+
     fn request(path: &Path) -> PreviewRequest {
         PreviewRequest {
             entry: EntryRef::from_path(path).unwrap(),
@@ -644,7 +650,7 @@ mod tests {
             .unwrap();
         assert!(data.image.is_none());
         assert!(data.plain_text().contains("M104 S200"));
-        assert_eq!(data.details[0].label, "Print time");
+        assert_eq!(data.details[0].label.english(), "Print time");
         assert_eq!(data.details[0].value, "1m 5s");
         assert!(!data.source_available, "it is its source already");
         // It moves: drawn, its text one toggle away.
@@ -655,7 +661,7 @@ mod tests {
             .unwrap();
         assert!(data.image.is_some());
         assert!(data.source_available);
-        assert_eq!(data.details[1].label, "Size");
+        assert_eq!(data.details[1].label.english(), "Size");
         // A binary file named like a program is left to the others.
         let binary = dir.path().join("climate.nc");
         std::fs::write(&binary, b"CDF\x01\0\0\0\x0a\0\0\0\x01").unwrap();
@@ -725,7 +731,7 @@ mod tests {
         assert!(Provider.accepts(&moves));
         let data = show(&moves);
         assert!(data.image.is_some(), "its moves drawn");
-        assert_eq!(data.details[1].label, "Size");
+        assert_eq!(data.details[1].label.english(), "Size");
         let still = PreviewRequest::holding(
             gone("still.gcode"),
             b";TIME:65\nM104 S200\n".as_slice(),
@@ -764,7 +770,7 @@ mod tests {
             b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x01\0".as_slice(),
             None,
         ));
-        assert_eq!(object.notice, "Not a Wavefront OBJ model");
+        assert_eq!(notice(&object), "Not a Wavefront OBJ model");
     }
 
     #[test]
@@ -781,7 +787,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.image.is_none());
-        assert_eq!(data.notice, "No picture is stored in this file");
+        assert_eq!(notice(&data), "No picture is stored in this file");
         assert_eq!(data.details[0].value, "DWG 2000");
     }
     /// Point `SKWIR_MODEL_WORKER` at `worker`. Tests run in processes of
@@ -898,7 +904,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.image.is_none());
-        assert_eq!(data.notice, "Not a Wavefront OBJ model");
+        assert_eq!(notice(&data), "Not a Wavefront OBJ model");
     }
 
     /// A request about a remote's file, whose own path never exists:
@@ -1026,9 +1032,9 @@ END-ISO-10303-21;
             )
             .unwrap()
             .unwrap();
-        assert_eq!(data.title, "STEP model");
+        assert_eq!(data.title.english(), "STEP model");
         assert!(data.image.is_some(), "the model drawn");
-        assert!(data.notice.is_empty(), "{}", data.notice);
+        assert!(data.notices.is_empty(), "{:?}", data.notices);
         let said: Vec<String> = data
             .details
             .iter()
@@ -1100,7 +1106,7 @@ END-ISO-10303-21;
             .unwrap()
             .unwrap();
         assert!(data.image.is_some(), "its picture still");
-        assert!(data.notice.contains("no triangles"), "{}", data.notice);
+        assert!(notice(&data).contains("no triangles"), "{}", notice(&data));
         assert!(!data.mesh_available, "nothing to turn");
         assert_eq!(data.details[0].value, "Rhinoceros 5.0");
     }
@@ -1126,7 +1132,7 @@ END-ISO-10303-21;
         let mesh = data.mesh.expect("the mesh");
         assert_eq!((mesh.positions().len(), mesh.triangles()), (8, 12));
         assert_eq!(data.details[0].value, "10 × 10 × 10 mm");
-        assert!(data.notice.is_empty());
+        assert!(data.notices.is_empty());
         // Asked for a picture, it is still drawn.
         let data = Provider
             .inspect(
@@ -1228,9 +1234,9 @@ END-ISO-10303-21;
             .unwrap();
         assert!(data.image.is_none());
         assert!(
-            data.notice.contains("skwir-model-worker"),
+            notice(&data).contains("skwir-model-worker"),
             "{}",
-            data.notice
+            notice(&data)
         );
         assert_eq!(data.details[0].value, "A slicer");
     }

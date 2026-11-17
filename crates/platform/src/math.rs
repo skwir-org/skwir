@@ -89,7 +89,7 @@ pub fn typeset(formulas: &[Formula], cancel: &CancelToken) -> anyhow::Result<Vec
     if asked.is_empty() {
         return Ok(drawn);
     }
-    let worker = WORKER.require_words(skwir_core::words!(
+    let worker = WORKER.require(skwir_core::words!(
         math_install = "Install { $program } to typeset formulas",
         program = WORKER.executable,
         note = "What to do to see a document's formulas drawn. program: the math helper's name (skwir-math-worker)."

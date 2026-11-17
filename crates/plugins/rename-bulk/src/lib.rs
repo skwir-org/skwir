@@ -141,7 +141,7 @@ pub enum BulkRenameError {
     InvalidName {
         item: String,
         name: String,
-        reason: String,
+        reason: Words,
     },
     NotText {
         item: String,

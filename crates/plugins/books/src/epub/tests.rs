@@ -9,6 +9,14 @@ use skwir_core::{
 };
 use std::sync::Arc;
 
+/// What its notices say together, in English; empty for none.
+fn notice(shown: &Inspection) -> String {
+    shown
+        .notice()
+        .map(|said| said.english())
+        .unwrap_or_default()
+}
+
 /// A member the spine names twice is found at its first place, as
 /// reading the spine for it found it; a link however spelt finds its
 /// member, and one to no member (or no key) finds nothing.
@@ -170,13 +178,9 @@ fn contents_and_encoded_names_resolve_through_the_bounded_container() {
         first
             .details
             .iter()
-            .map(|detail| (detail.label.as_str(), detail.value.as_str()))
+            .map(|detail| format!("{}: {}", detail.label.english(), detail.value))
             .collect::<Vec<_>>(),
-        [
-            ("Title", "Synthetic book"),
-            ("Language", "en"),
-            ("Chapters", "3")
-        ]
+        ["Title: Synthetic book", "Language: en", "Chapters: 3"]
     );
     let third = inspect(
         &path,
@@ -332,7 +336,7 @@ fn repeated_search_advances_to_the_next_chapter_and_wraps() {
     };
     let first = search(0);
     assert_eq!(first.position, 0);
-    assert_eq!(first.notice, "Search match in this chapter");
+    assert_eq!(notice(&first), "Search match in this chapter");
     let second = search(first.position + 1);
     assert_eq!(second.position, 2, "chapter two has no match");
     let wrapped = search(second.position + 1);
@@ -346,7 +350,7 @@ fn repeated_search_advances_to_the_next_chapter_and_wraps() {
         },
     )
     .unwrap();
-    assert_eq!(none.notice, "No matching chapter");
+    assert_eq!(notice(&none), "No matching chapter");
     assert_eq!(none.position, 1);
 }
 
@@ -450,7 +454,7 @@ fn a_link_through_parent_folders_lands_on_its_chapter() {
     )
     .unwrap();
     assert_eq!(linked.position, 1);
-    assert_eq!(linked.title, "EPUB · chapter 2 / 3");
+    assert_eq!(linked.title.english(), "EPUB · chapter 2 / 3");
     assert_eq!((linked.previous, linked.next), (Some(0), Some(2)));
     assert!(linked.plain_text().contains("The note."));
     // A chapter in a legacy encoding reads, and says how.
@@ -464,9 +468,9 @@ fn a_link_through_parent_folders_lands_on_its_chapter() {
     .unwrap();
     assert!(third.plain_text().contains("caf\u{e9}"));
     assert!(
-        third.notice.contains("Read as Windows-1252"),
+        notice(&third).contains("Read as Windows-1252"),
         "{}",
-        third.notice
+        notice(&third)
     );
 }
 
@@ -565,7 +569,7 @@ fn a_chapter_reads_with_its_stylesheet_and_as_xhtml() {
         },
     )
     .unwrap();
-    assert_eq!(search.notice, "No matching chapter");
+    assert_eq!(notice(&search), "No matching chapter");
 }
 
 /// A fixed-layout book whose pages are pictures (a comic) shows a page
@@ -891,7 +895,7 @@ fn a_book_and_its_pages_come_from_what_is_held() {
     let request = held(&written);
     assert!(provider.accepts(&request));
     let first = provider.inspect(&request, &view, &cancel).unwrap().unwrap();
-    assert_eq!(first.title, "EPUB · chapter 1 / 3");
+    assert_eq!(first.title.english(), "EPUB · chapter 1 / 3");
     assert!(first.blocks.iter().any(|b| b.text == "First"));
     let written = tmp.path().join("Synthetic drawn book.epub");
     fixed(

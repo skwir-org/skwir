@@ -152,11 +152,10 @@ impl Plugin for GeoPlugin {
         geotag::register(app, lifetime);
         let mut spec = ViewSpec::named(
             VIEW,
-            &words!(
+            words!(
                 geo_view = "Map",
                 note = "The view that places a folder's pictures, videos and tracks on a map, among the views (List, Grid…)."
-            )
-            .say(),
+            ),
             "map",
             Arc::clone(&self.revision),
         )
@@ -563,8 +562,15 @@ fn read<S: FileSource + ?Sized>(
         Format::Litchi => litchi::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
         Format::Kmz => {
             drop(file);
+            let too_many = words!(
+                geo_kmz_members = "{ $count ->
+                   *[other] This KMZ holds more than { $count } members
+                }",
+                count = inspection::limits::CONTAINER_MEMBERS,
+                note = "Why a KMZ file (a zipped Google Earth file) is not shown on a map: it holds more files than the preview reads (4,000)."
+            );
             let mut package =
-                skwir_platform::package::Package::open(source, "This KMZ", false, cancel)?;
+                skwir_platform::package::Package::open(source, too_many, false, cancel)?;
             // A DJI mission (WPML) is a KMZ of its own kind.
             if let Some(name) = wpml::MEMBERS.iter().find(|name| package.has(name)) {
                 let member = package.reader(name).ok_or_else(|| {
@@ -591,7 +597,12 @@ fn read<S: FileSource + ?Sized>(
             }
         }
         Format::QgcPlan => {
-            let bytes = inspection::read_file(source, bounds, "This plan", cancel)?;
+            let refusal = words!(
+                geo_plan_too_large = "This plan exceeds { $size } preview limit",
+                size = words::Size(bounds.binary_input() as u64),
+                note = "Why a QGroundControl plan (a drone mission) is not shown on a map: it is larger than the preview reads. size: that bound (16 MB)."
+            );
+            let bytes = inspection::read_file(source, bounds, refusal, cancel)?;
             let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
                 anyhow::anyhow!(words!(
                     geo_qgc_invalid = "Not a valid QGroundControl plan: { $error }",
@@ -604,7 +615,12 @@ fn read<S: FileSource + ?Sized>(
             None
         }
         Format::GeoJson => {
-            let bytes = inspection::read_file(source, bounds, "This GeoJSON file", cancel)?;
+            let refusal = words!(
+                geo_geojson_too_large = "This GeoJSON file exceeds { $size } preview limit",
+                size = words::Size(bounds.binary_input() as u64),
+                note = "Why a GeoJSON file is not shown on a map: it is larger than the preview reads. size: that bound (16 MB)."
+            );
+            let bytes = inspection::read_file(source, bounds, refusal, cancel)?;
             geojson::read(&bytes, into, cancel)?;
             None
         }
@@ -975,17 +991,10 @@ fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(Words, Option<St
     ]
 }
 
-/// Facts with their labels said, in the order given, those without a
-/// value left out.
+/// Facts with their labels, in the order given, those without a value
+/// left out.
 fn details(facts: Vec<(Words, Option<String>)>) -> Vec<Detail> {
-    let said: Vec<(String, Option<String>)> = facts
-        .into_iter()
-        .map(|(label, value)| (label.say(), value))
-        .collect();
-    inspection::details(
-        said.iter()
-            .map(|(label, value)| (label.as_str(), value.clone())),
-    )
+    inspection::details(facts)
 }
 
 fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
@@ -1233,9 +1242,9 @@ pub(crate) fn inspect_as<S: FileSource + ?Sized>(
     };
     Ok(Inspection {
         kind: InspectionKind::Map,
-        title: title.say(),
+        title,
         details: facts(&doc, &c),
-        notice: notes.iter().map(Words::say).collect::<Vec<_>>().join(" · "),
+        notices: notes,
         // A KMZ is compressed and a FIT file binary: no source to read.
         source_available: format.has_source(),
         geo: Some(Arc::new(doc)),
@@ -1294,8 +1303,13 @@ mod tests {
     fn fact<'a>(data: &'a Inspection, label: &str) -> Option<&'a str> {
         data.details
             .iter()
-            .find(|d| d.label == label)
+            .find(|d| d.label.english() == label)
             .map(|d| d.value.as_str())
+    }
+
+    /// What its notices say together, in English; empty for none.
+    fn notice(data: &Inspection) -> String {
+        data.notice().map(|said| said.english()).unwrap_or_default()
     }
 
     #[test]
@@ -1305,7 +1319,7 @@ mod tests {
         std::fs::write(&path, gpx::tests::HIKE).unwrap();
         let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.kind, InspectionKind::Map);
-        assert_eq!(data.title, "GPX · 1 track, 1 route, 2 waypoints");
+        assert_eq!(data.title.english(), "GPX · 1 track, 1 route, 2 waypoints");
         assert_eq!(fact(&data, "Distance"), Some("222 m"));
         assert_eq!(fact(&data, "Duration"), Some("0:02:00"));
         assert_eq!(fact(&data, "Climb"), Some("20 m"));
@@ -1313,7 +1327,11 @@ mod tests {
         assert_eq!(fact(&data, "Name"), Some("Café & ridge"));
         assert_eq!(fact(&data, "Start"), Some("45.00000, 6.00000"));
         assert!(data.source_available);
-        assert!(data.notice.contains("1 point left out"), "{}", data.notice);
+        assert!(
+            notice(&data).contains("1 point left out"),
+            "{}",
+            notice(&data)
+        );
         let geo = data.geo.as_ref().unwrap();
         assert_eq!(geo.lines.len(), 2);
     }
@@ -1339,7 +1357,7 @@ mod tests {
         let path = dir.path().join("trip.kmz");
         std::fs::write(&path, kmz()).unwrap();
         let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
-        assert_eq!(data.title, "KMZ · 1 waypoint");
+        assert_eq!(data.title.english(), "KMZ · 1 waypoint");
         assert!(!data.source_available);
         assert_eq!(data.geo.as_ref().unwrap().waypoints[0].name, "Here");
     }
@@ -1362,7 +1380,7 @@ mod tests {
         assert!(Provider.accepts(&req));
         let data = show(&req);
         assert_eq!(data.kind, InspectionKind::Map);
-        assert_eq!(data.title, "Drone mission · 5 waypoints");
+        assert_eq!(data.title.english(), "Drone mission · 5 waypoints");
         // A text file of that name is not a mission: its start says so.
         let notes = PreviewRequest::holding(
             gone("notes.txt"),
@@ -1376,14 +1394,17 @@ mod tests {
             Some("application/gpx+xml"),
         );
         assert!(Provider.accepts(&hike));
-        assert_eq!(show(&hike).title, "GPX · 1 track, 1 route, 2 waypoints");
+        assert_eq!(
+            show(&hike).title.english(),
+            "GPX · 1 track, 1 route, 2 waypoints"
+        );
         let trip = PreviewRequest::holding(
             gone("trip.kmz"),
             kmz(),
             Some("application/vnd.google-earth.kmz"),
         );
         assert!(Provider.accepts(&trip));
-        assert_eq!(show(&trip).title, "KMZ · 1 waypoint");
+        assert_eq!(show(&trip).title.english(), "KMZ · 1 waypoint");
     }
 
     #[test]
@@ -1392,10 +1413,7 @@ mod tests {
         let path = dir.path().join("empty.geojson");
         std::fs::write(&path, r#"{"type":"FeatureCollection","features":[]}"#).unwrap();
         let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
-        assert!(
-            data.notice
-                .starts_with("Nothing in this file has a position")
-        );
+        assert!(notice(&data).starts_with("Nothing in this file has a position"));
         assert!(data.geo.as_ref().unwrap().bounds.is_none());
         std::fs::write(&path, "{ not json").unwrap();
         let error = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap_err();

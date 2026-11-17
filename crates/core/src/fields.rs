@@ -24,6 +24,7 @@ use parking_lot::{Mutex, RwLock};
 use crate::cache::CacheSlot;
 use crate::cancel::CancelToken;
 use crate::entry::Value;
+use crate::words::Words;
 
 /// Answers remembered in memory; beyond, the cache on disk answers.
 const REMEMBERED: usize = 100_000;
@@ -44,9 +45,17 @@ pub trait FieldProvider: Send + Sync {
     /// The keys it answers: core keys (`entry::keys::POSITION`) or its
     /// own, namespaced (`geo.place`).
     fn keys(&self) -> &'static [&'static str];
-    /// The words Properties labels `key` with; `None` keeps it out of
-    /// Properties (a position, which the picture's own facts show).
-    fn label(&self, _key: &str) -> Option<&'static str> {
+    /// The words Properties labels `key` with, said where it shows them;
+    /// `None` keeps it out of Properties (a position, which the picture's
+    /// own facts show).
+    fn label(&self, _key: &str) -> Option<Words> {
+        None
+    }
+    /// What Properties shows of `value`, an answer for `key`: words made of
+    /// the data the answer keeps (a place near a town, a packet's notes),
+    /// said where they are shown, never kept said; `None` shows a text
+    /// value as it is written.
+    fn said(&self, _key: &str, _value: &Value) -> Option<Words> {
         None
     }
     /// Whom Properties credits for `key`'s answers, when their data asks
@@ -165,19 +174,33 @@ impl Fields {
 
     /// The keys shown in Properties for a file named `name`, with their
     /// labels, in the order they were registered.
-    pub fn shown_for(&self, name: &OsStr) -> Vec<(&'static str, &'static str)> {
-        let mut shown = Vec::new();
+    pub fn shown_for(&self, name: &OsStr) -> Vec<(&'static str, Words)> {
+        let mut shown: Vec<(&'static str, Words)> = Vec::new();
         for (_, provider) in self.providers.read().iter() {
             for key in provider.keys() {
-                if let Some(label) = provider.label(key)
+                if !shown.iter().any(|(k, _)| k == key)
                     && provider.accepts(key, name)
-                    && !shown.iter().any(|(k, _)| k == key)
+                    && let Some(label) = provider.label(key)
                 {
                     shown.push((*key, label));
                 }
             }
         }
         shown
+    }
+
+    /// What Properties shows of `value`, the answer for `key` of a file
+    /// named `name`: said by its provider ([`FieldProvider::said`]), else
+    /// a text as written; `None` for a value it does not show.
+    pub fn said(&self, key: &str, name: &OsStr, value: &Value) -> Option<Words> {
+        let said = self
+            .provider(key, name)
+            .and_then(|(_, provider)| provider.said(key, value));
+        said.or_else(|| {
+            value
+                .as_str()
+                .map(|text| Words::as_written(text.to_owned()))
+        })
     }
 
     /// Whom Properties credits for `key`, for a file named `name`. On a worker.

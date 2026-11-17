@@ -78,8 +78,7 @@ pub fn model<S: FileSource + ?Sized>(
                 words!(
                     models_detail_scenes = "Scenes",
                     note = "A label in the preview's Properties: how many scenes (saved views) a SketchUp model holds."
-                )
-                .say(),
+                ),
                 scenes.to_string(),
             ));
         }
@@ -144,8 +143,7 @@ pub fn layout<S: FileSource + ?Sized>(
                             words!(
                                 models_detail_pages = "Pages",
                                 note = "A label in the preview's Properties: how many pages a LayOut document has."
-                            )
-                            .say(),
+                            ),
                             pages,
                         ));
                     }
@@ -206,7 +204,7 @@ mod tests {
         let picture = found.picture.as_ref().expect("the thumbnail");
         assert_eq!((picture.width, picture.height), (6, 4));
         assert_eq!(
-            found.details,
+            found.english_details(),
             [
                 ("Made with".to_owned(), "SketchUp 2021".to_owned()),
                 ("Scenes".to_owned(), "2".to_owned())
@@ -249,7 +247,7 @@ mod tests {
         let found = layout(&path, 1600, &CancelToken::new()).unwrap();
         assert!(found.picture.is_some());
         assert_eq!(
-            found.details,
+            found.english_details(),
             [
                 ("Made with".to_owned(), "LayOut 2021".to_owned()),
                 ("Pages".to_owned(), "5".to_owned())

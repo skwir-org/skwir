@@ -183,7 +183,13 @@ fn needed() -> anyhow::Error {
         )
         .into()
     } else {
-        skwir_core::system::not_yet("Running a converter isolated from your files").into()
+        skwir_core::system::not_yet_words(skwir_core::words!(
+            sandbox_converter_not_yet =
+                "Running a converter isolated from your files is not available on { $system } yet",
+            system = skwir_core::system::named(),
+            note = "Why a converter does not run. system: the system's name (Windows)."
+        ))
+        .into()
     }
 }
 
@@ -875,10 +881,13 @@ fn plugin_isolated(
     _work: &Path,
     _network: bool,
 ) -> anyhow::Result<Command> {
-    Err(
-        skwir_core::system::not_yet("Running a plugin as a program, isolated from your files")
-            .into(),
-    )
+    Err(skwir_core::system::not_yet_words(skwir_core::words!(
+        sandbox_plugin_not_yet =
+            "Running a plugin as a program, isolated from your files is not available on { $system } yet",
+        system = skwir_core::system::named(),
+        note = "Why a plugin from outside, a program, does not run. system: the system's name (Windows)."
+    ))
+    .into())
 }
 
 #[cfg(test)]

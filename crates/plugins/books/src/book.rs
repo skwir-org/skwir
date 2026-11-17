@@ -51,19 +51,12 @@ pub(crate) trait Book {
     const SOURCE: &'static str;
     /// Its chapters, in reading order.
     fn chapters(&self) -> &[ChapterRef];
-    /// A chapter's text, and how it was decoded when not as UTF-8.
-    fn text(
-        &mut self,
-        href: &str,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<(String, Option<String>)>;
+    /// A chapter's text, and what is said of how it was read: how it was
+    /// decoded when not as UTF-8, what was left out.
+    fn text(&mut self, href: &str, cancel: &CancelToken) -> anyhow::Result<(String, Vec<Words>)>;
     /// A chapter's source, as the book holds it: its text, unless the
     /// format translates it for reading mode.
-    fn source(
-        &mut self,
-        href: &str,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<(String, Option<String>)> {
+    fn source(&mut self, href: &str, cancel: &CancelToken) -> anyhow::Result<(String, Vec<Words>)> {
         self.text(href, cancel)
     }
     /// What the chapter whose links start at `base` names: pictures
@@ -108,14 +101,11 @@ pub(crate) fn inspect<B: Book>(
     let sections = Sections::of(chapters.iter().map(|chapter| member_key(&chapter.href)));
     let mut index = view.offset.min(chapters.len().saturating_sub(1) as u64) as usize;
     let mut sheets = Sheets::new();
-    let mut notice = vec![
-        words!(
-            books_reading_mode =
-                "Reading mode · the book's fonts, colours and page layout are not applied",
-            note = "The notice above a book read in reading mode."
-        )
-        .say(),
-    ];
+    let mut notices = vec![words!(
+        books_reading_mode =
+            "Reading mode · the book's fonts, colours and page layout are not applied",
+        note = "The notice above a book read in reading mode."
+    )];
     if let Some(query) = view.query.as_deref().filter(|q| !q.is_empty()) {
         // A search starts at the requested chapter and wraps, so a caller
         // resuming at `position + 1` reaches the next matching chapter.
@@ -150,20 +140,18 @@ pub(crate) fn inspect<B: Book>(
         if let Some(found) = found {
             index = found;
         }
-        notice = vec![
-            if found.is_some() {
-                words!(
-                    books_search_found = "Search match in this chapter",
-                    note = "The notice above a book's chapter shown because it holds what was searched for."
-                )
-            } else {
-                words!(
-                    books_search_none = "No matching chapter",
-                    note = "The notice above a book none of whose chapters holds what was searched for."
-                )
-            }
-            .say(),
-        ];
+        notices = vec![if found.is_some() {
+            words!(
+                books_search_found = "Search match in this chapter",
+                note = "The notice above a book's chapter shown because it holds what was searched for."
+            )
+        } else {
+            words!(
+                books_search_none = "No matching chapter",
+                note =
+                    "The notice above a book none of whose chapters holds what was searched for."
+            )
+        }];
     }
     let href = view
         .target
@@ -207,24 +195,15 @@ pub(crate) fn inspect<B: Book>(
         ),
         inspection::count(chapters.len()),
     ));
-    let details: Vec<(String, Option<String>)> = details
-        .into_iter()
-        .map(|(label, value)| (label.say(), value))
-        .collect();
     let frame = Inspection {
-        details: inspection::details(
-            details
-                .iter()
-                .map(|(label, value)| (label.as_str(), value.clone())),
-        ),
+        details: inspection::details(details),
         title: words!(
             books_title = "{ $format } · chapter { $chapter } / { $count }",
             format = book.format(),
             chapter = index + 1,
             count = chapters.len(),
             note = "The title of a book's preview: its format as it is named (EPUB, FB2, MOBI), the chapter shown, from 1, and how many there are."
-        )
-        .say(),
+        ),
         previous: (index > 0).then(|| index as u64 - 1),
         next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
         position: index as u64,
@@ -240,18 +219,18 @@ pub(crate) fn inspect<B: Book>(
         return Ok(Inspection {
             kind: code.kind,
             blocks: code.blocks,
-            notice: decoded.unwrap_or_default(),
+            notices: decoded,
             ..frame
         });
     }
     let (text, decoded) = book.text(&href, cancel)?;
-    notice.extend(decoded);
+    notices.extend(decoded);
     let base = base(&href);
     let bounds = Bounds::of(view);
     let resources = book.resources(base, true, &mut sheets, cancel);
     let page = rich_preview::html(&text, chapters[index].markup, bounds, cancel, resources)?;
     if page.truncated {
-        notice.push(inspection::blocks_notice(bounds));
+        notices.push(inspection::blocks_notice(bounds));
     }
     let mut blocks = page.blocks;
     for block in &mut blocks {
@@ -268,7 +247,7 @@ pub(crate) fn inspect<B: Book>(
         kind: InspectionKind::Book,
         blocks,
         rows,
-        notice: notice.join(" · "),
+        notices,
         whole_available: page.truncated && bounds.cut(),
         ..frame
     })

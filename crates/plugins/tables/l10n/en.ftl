@@ -92,6 +92,11 @@ tables_separator_tab = Tab
 # Why a spreadsheet could not be shown as a table: it has no worksheet (only charts, say).
 tables_spreadsheet_empty = The spreadsheet has no sheet of cells
 
+# Why a spreadsheet is not shown: its package holds more parts than the preview reads (4,000).
+tables_spreadsheet_members = { $count ->
+       *[other] The spreadsheet holds more than { $count } members
+    }
+
 # Why a spreadsheet could not be shown: its parts, once unpacked, are larger than size (128 MB).
 tables_spreadsheet_too_large = Spreadsheet exceeds { $size } unpacked
 
@@ -99,7 +104,10 @@ tables_spreadsheet_too_large = Spreadsheet exceeds { $size } unpacked
 tables_spreadsheets = Spreadsheets
 
 # Table and Pages are the setting's two choices.
-tables_spreadsheets_description = Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another. Pages shows them as LibreOffice prints them, when it is installed.
+tables_spreadsheets_description = Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another.
+
+# Table and Pages are the setting's two choices.
+tables_spreadsheets_description_more = Pages shows them as LibreOffice prints them, when it is installed.
 
 # A choice of the Spreadsheets setting: a workbook shown as LibreOffice prints it, page by page.
 tables_spreadsheets_pages = Pages

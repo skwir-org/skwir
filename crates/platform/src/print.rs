@@ -100,10 +100,7 @@ fn name_in(text: &str) -> Option<&'static str> {
         .map(str::trim)
         .find(|line| !line.is_empty() && !line.starts_with('#'))?
         .to_lowercase();
-    Paper::NAMED
-        .iter()
-        .map(|(known, _)| *known)
-        .find(|known| *known == name)
+    Paper::NAMED.into_iter().find(|known| *known == name)
 }
 
 /// A4, or Letter where the locale's region writes on Letter.
@@ -145,8 +142,18 @@ pub fn ask(ask: &Ask, cancel: &CancelToken) -> anyhow::Result<Option<Chosen>> {
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = (ask, cancel);
-        Err(skwir_core::system::not_yet("Printing").into())
+        Err(printing_not_yet().into())
     }
+}
+
+/// Printing, on a system Skwir does not print on yet.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn printing_not_yet() -> std::io::Error {
+    skwir_core::system::not_yet_words(skwir_core::words!(
+        print_not_yet = "Printing is not available on { $system } yet",
+        system = skwir_core::system::named(),
+        note = "Why nothing is printed. system: the system's name, or this system."
+    ))
 }
 
 /// How the system's printing answered a document handed to it.
@@ -200,7 +207,7 @@ pub fn send(
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = (chosen, title, pdf, cancel);
-        Err(skwir_core::system::not_yet("Printing").into())
+        Err(printing_not_yet().into())
     }
 }
 

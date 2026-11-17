@@ -248,7 +248,7 @@ pub enum ExecEvent {
         /// What its steps said beside what they did (`StepContext::say`,
         /// an `Unneeded`'s why), in order, each once: its answer says it
         /// after what was done.
-        said: Vec<String>,
+        said: Vec<Words>,
         /// The bytes it moved, and how long its steps ran, its pauses left
         /// out: what its answer says of a long copy (ADR-113).
         moved: u64,
@@ -294,9 +294,10 @@ pub enum Verdict {
         /// to whoever waits (an agent).
         error: Option<Words>,
         cancelled: bool,
-        /// What its steps said beside what they did, each once.
+        /// What its steps said beside what they did, each once: English
+        /// to whoever waits.
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        said: Vec<String>,
+        said: Vec<Words>,
     },
     Dismissed,
 }
@@ -1562,7 +1563,7 @@ pub type RoomAsker =
 /// password), titled with the question and its button's verb, and waits
 /// for the answer until the token given is cancelled.
 pub type SecretAsker = Arc<
-    dyn Fn(&str, &str, &crate::cancel::CancelToken) -> Result<String, super::Unanswered>
+    dyn Fn(&Words, &Words, &crate::cancel::CancelToken) -> Result<String, super::Unanswered>
         + Send
         + Sync,
 >;
@@ -3988,7 +3989,6 @@ impl Executor {
                     .then(|| {
                         super::guarded(|| {
                             Ok(first_conflict(&plan, &companions, cancel, &shown)
-                                .map(Words::from)
                                 .or_else(|| self.short_of_room(&plan, cancel, &shown)))
                         })
                         .unwrap_or_else(|e| Some(Words::of_error(e)))
@@ -4697,7 +4697,7 @@ impl Executor {
             // Unwound, it would take the plans' thread with it.
             let status =
                 super::guarded(|| Ok(step.check(&ctx))).unwrap_or_else(|e| StepStatus::Conflict {
-                    reason: Words::of_error(e).say(),
+                    reason: Words::of_error(e),
                 });
             let mut err = None;
             let mut reason = None;
@@ -4721,7 +4721,7 @@ impl Executor {
                         Came::Already
                     };
                 }
-                StepStatus::Conflict { reason } => err = Some(Words::from(reason.clone())),
+                StepStatus::Conflict { reason } => err = Some(reason.clone()),
                 StepStatus::Pending { .. } => match super::guarded(|| step.apply(&ctx)) {
                     Ok(Some(inv)) => {
                         applied += 1;
@@ -4745,7 +4745,9 @@ impl Executor {
                     // done already, as a step whose check found it so.
                     Err(e) if e.is::<super::Unneeded>() => {
                         skipped += 1;
-                        ctx.say(e.to_string());
+                        if let Some(super::Unneeded(why)) = e.downcast_ref() {
+                            ctx.say(why.clone());
+                        }
                     }
                     Err(e) => match e.downcast::<super::Partly>() {
                         // It failed partway: what it did is journaled as an
@@ -5074,7 +5076,7 @@ fn first_conflict(
     companions: &Arc<crate::companions::Companions>,
     cancel: &CancelToken,
     shown: &Shown<'_>,
-) -> Option<String> {
+) -> Option<Words> {
     let ctx = dry_context(&plan.steps, companions, cancel, shown);
     super::dry_run_in(&plan.steps, ctx).find_map(|(_, status)| match status {
         StepStatus::Conflict { reason } => Some(reason),
@@ -5148,7 +5150,7 @@ mod tests {
         fn check(&self, _: &StepContext) -> StepStatus {
             if self.conflict {
                 StepStatus::Conflict {
-                    reason: "in the way".into(),
+                    reason: Words::as_written("in the way"),
                 }
             } else {
                 StepStatus::Pending { reversible: false }
@@ -5307,7 +5309,7 @@ mod tests {
         fn check(&self, _: &StepContext) -> StepStatus {
             if self.blocked.load(Ordering::SeqCst) {
                 StepStatus::Conflict {
-                    reason: "not answering".into(),
+                    reason: Words::as_written("not answering"),
                 }
             } else {
                 StepStatus::Pending { reversible: true }
@@ -7049,7 +7051,7 @@ mod tests {
             while Instant::now() < deadline {
                 if ctx.check_cancelled().is_err() {
                     return StepStatus::Conflict {
-                        reason: "cancelled as it read".into(),
+                        reason: Words::as_written("cancelled as it read"),
                     };
                 }
                 std::thread::sleep(Duration::from_millis(5));
@@ -7185,8 +7187,8 @@ mod tests {
             StepStatus::Pending { reversible: true }
         }
         fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-            ctx.say("“needless” was read twice");
-            Err(super::super::Unneeded("as small as it gets already".to_owned()).into())
+            ctx.say(Words::as_written("“needless” was read twice"));
+            Err(super::super::Unneeded(Words::as_written("as small as it gets already")).into())
         }
         fn clone_box(&self) -> Box<dyn Operation> {
             Box::new(self.clone())
@@ -7217,7 +7219,8 @@ mod tests {
             matches!(
                 ended.last(),
                 Some(ExecEvent::Finished { said, .. })
-                    if *said == ["“needless” was read twice", "as small as it gets already"]
+                    if said.iter().map(Words::english).collect::<Vec<_>>()
+                        == ["“needless” was read twice", "as small as it gets already"]
             ),
             "{ended:?}"
         );

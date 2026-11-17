@@ -164,7 +164,9 @@ pub type Factory = Arc<dyn Any + Send + Sync>;
 #[derive(Clone)]
 pub struct ViewSpec {
     pub id: Arc<str>,
-    pub title: String,
+    /// What the view is called ("List"), said where it is drawn; in
+    /// English to agents (ADR-139, 7).
+    pub title: Words,
     /// Bundled symbolic toolbar icon; unknown icons use the generic view icon.
     pub icon: String,
     /// Display order in the view selector. Bundled base views precede plugin views.
@@ -204,7 +206,12 @@ pub enum ViewRole {
 pub struct ViewRenderer(pub &'static str);
 
 impl ViewSpec {
-    pub fn named(id: &'static str, title: &str, icon: &str, revision: Arc<AtomicU64>) -> Self {
+    pub fn named(
+        id: &'static str,
+        title: impl Into<Words>,
+        icon: &str,
+        revision: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             id: id.into(),
             title: title.into(),
@@ -267,12 +274,12 @@ pub struct Place {
     pub activate: Option<Invocation>,
     /// Why the place cannot be opened as it is (a volume to mount, a
     /// bookmarked folder that is not there): the row is drawn as not
-    /// available, with this as its tooltip.
-    pub unavailable: Option<String>,
-    /// What its owner is doing to it now, in its words ("Unlocking…",
-    /// "Unmounting…"): the row says so in place of its details, and is
-    /// not activated or ejected again until the owner publishes it without.
-    pub busy: Option<String>,
+    /// available, with this as its tooltip, said where it is drawn.
+    pub unavailable: Option<Words>,
+    /// What its owner is doing to it now ("Unlocking…", "Unmounting…"):
+    /// the row says so in place of its details, and is not activated or
+    /// ejected again until the owner publishes it without.
+    pub busy: Option<Words>,
     /// The place's own items in its context menu (rename or remove a
     /// bookmark), with their arguments; the UI adds Open and Eject. `when`
     /// is not evaluated: the owner lists what applies to this place.
@@ -287,6 +294,11 @@ pub struct Place {
     /// name): the place is a tag's, drawn as the tag's chip in that color,
     /// as the views draw tags, the chips of a group wrapping together.
     pub color: Option<String>,
+    /// The tag it stands for, by its full name (`Places/France`): what its
+    /// chip shows of it (the tag's own name, without its category) and
+    /// what names it in a sentence, as data, never read back from its
+    /// title (ADR-139).
+    pub tag: Option<String>,
     /// Offered by its owner rather than kept by the user (a tag used
     /// often, while none is pinned): drawn fainter than the places kept.
     pub suggested: bool,
@@ -356,6 +368,7 @@ impl Place {
             forget: None,
             reorder: None,
             color: None,
+            tag: None,
             suggested: false,
             key: None,
             hidden: false,
@@ -440,10 +453,10 @@ pub struct Keeper {
     /// scheme: a place kept with what filters it (ADR-109).
     pub filtered: bool,
     pub save: Invocation,
-    /// "Bookmark this folder".
-    pub save_title: String,
+    /// "Bookmark this folder", said where it is drawn.
+    pub save_title: Words,
     /// "Remove from bookmarks".
-    pub forget_title: String,
+    pub forget_title: Words,
     /// Which of its scheme's locations it keeps (a tag folder of the home
     /// folder, not narrowed); all of them when `None`. The pane's button
     /// is offered, and `keep` runs, only where it does.
@@ -478,10 +491,10 @@ pub struct Aspect {
     /// goes back to the folder that one is of (`tags.browse` with
     /// `toggle`), as the key bound to it does.
     pub command: Invocation,
-    /// "Tags of this folder".
-    pub open_title: String,
+    /// "Tags of this folder", said where it is drawn.
+    pub open_title: Words,
     /// "Back to the folder".
-    pub close_title: String,
+    pub close_title: Words,
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must
@@ -573,25 +586,26 @@ pub struct MenuItem {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Submenu {
     pub id: Cow<'static, str>,
-    pub title: Cow<'static, str>,
+    /// What its row says, said where it is drawn.
+    pub title: Words,
 }
 
 impl Submenu {
     /// The submenu `id`, its row saying `title`.
-    pub const fn new(id: &'static str, title: &'static str) -> Self {
+    pub fn new(id: impl Into<Cow<'static, str>>, title: impl Into<Words>) -> Self {
         Submenu {
-            id: Cow::Borrowed(id),
-            title: Cow::Borrowed(title),
+            id: id.into(),
+            title: title.into(),
         }
     }
 }
 
 /// A section of the sidebar ([`Place::group`]): what the places of several
-/// owners meet by, its id, and the words its heading says (ADR-139, 8).
+/// owners meet by, its id; its heading's words are core's
+/// ([`groups::words_of`], ADR-139, 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Group {
     pub id: &'static str,
-    pub title: &'static str,
 }
 
 /// The sidebar's sections: places come only from plugins built in, so
@@ -599,48 +613,19 @@ pub struct Group {
 pub mod groups {
     use super::Group;
 
-    pub const PLACES: Group = Group {
-        id: "places",
-        title: "Places",
-    };
-    pub const BOOKMARKS: Group = Group {
-        id: "bookmarks",
-        title: "Bookmarks",
-    };
+    pub const PLACES: Group = Group { id: "places" };
+    pub const BOOKMARKS: Group = Group { id: "bookmarks" };
     /// Saved searches and the places kept with their filters (ADR-109).
-    pub const SEARCHES: Group = Group {
-        id: "searches",
-        title: "Saved",
-    };
-    pub const TAGS: Group = Group {
-        id: "tags",
-        title: "Tags",
-    };
-    pub const DEVICES: Group = Group {
-        id: "devices",
-        title: "Devices",
-    };
-    pub const NETWORK: Group = Group {
-        id: "network",
-        title: "Network",
-    };
+    pub const SEARCHES: Group = Group { id: "searches" };
+    pub const TAGS: Group = Group { id: "tags" };
+    pub const DEVICES: Group = Group { id: "devices" };
+    pub const NETWORK: Group = Group { id: "network" };
     /// The window's open tabs, the shell's own.
-    pub const TABS: Group = Group {
-        id: "tabs",
-        title: "Tabs",
-    };
+    pub const TABS: Group = Group { id: "tabs" };
     pub const ALL: [Group; 7] = [PLACES, BOOKMARKS, SEARCHES, TAGS, DEVICES, NETWORK, TABS];
 
-    /// The words the heading of the section `id` says.
-    pub fn title_of(id: &str) -> &'static str {
-        ALL.iter()
-            .find(|group| group.id == id)
-            .map_or("", |group| group.title)
-    }
-
-    /// The words the heading of the section `id` says, as words: `None`
-    /// for a section core does not own (`title_of` until every caller
-    /// says words).
+    /// The words the heading of the section `id` says: `None` for a
+    /// section core does not own.
     pub fn words_of(id: &str) -> Option<crate::words::Words> {
         use crate::words;
         Some(match id {
@@ -681,42 +666,52 @@ pub mod groups {
 /// The submenus several plugins fill (ADR-099's groups, ADR-139, 8).
 pub mod submenus {
     use super::Submenu;
+    use crate::words;
 
     /// The ways to compress the selection: the archives' formats, a
     /// smaller copy.
-    pub const COMPRESS: Submenu = Submenu::new("compress", "Compress");
-    /// What opens the selection: its applications, a command run on it.
-    pub const OPEN_WITH: Submenu = Submenu::new("open_with", "Open With");
-    /// The same, on a folder's background, for the folder.
-    pub const OPEN_FOLDER_WITH: Submenu = Submenu::new("open_folder_with", "Open Folder With");
-    /// The selection's tags: the editor, each tag as a check, the tags
-    /// written into names.
-    pub const TAGS: Submenu = Submenu::new("tags", "Tags");
-
-    /// The words the row of the submenu `id` says, as words: `None` for a
-    /// submenu core does not own (its `title` until every caller says
-    /// words).
-    pub fn words_of(id: &str) -> Option<crate::words::Words> {
-        use crate::words;
-        Some(match id {
-            "compress" => words!(
+    pub fn compress() -> Submenu {
+        Submenu::new(
+            "compress",
+            words!(
                 registry_compress = "Compress",
                 note = "A submenu of a file's menu: the ways to compress it (archives' formats, a smaller copy)."
             ),
-            "open_with" => words!(
+        )
+    }
+
+    /// What opens the selection: its applications, a command run on it.
+    pub fn open_with() -> Submenu {
+        Submenu::new(
+            "open_with",
+            words!(
                 registry_open_with = "Open With",
                 note = "A submenu of a file's menu: the applications that open it."
             ),
-            "open_folder_with" => words!(
+        )
+    }
+
+    /// The same, on a folder's background, for the folder.
+    pub fn open_folder_with() -> Submenu {
+        Submenu::new(
+            "open_folder_with",
+            words!(
                 registry_open_folder_with = "Open Folder With",
                 note = "A submenu of a folder's background menu: the applications that open the folder."
             ),
-            "tags" => words!(
+        )
+    }
+
+    /// The selection's tags: the editor, each tag as a check, the tags
+    /// written into names.
+    pub fn tags() -> Submenu {
+        Submenu::new(
+            "tags",
+            words!(
                 registry_tags = "Tags",
                 note = "A submenu of a file's menu: its tags, each a check, and the tags editor."
             ),
-            _ => return None,
-        })
+        )
     }
 }
 
@@ -735,8 +730,12 @@ pub enum Check {
 /// (`MenuItem::choice`), the value set `checked`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Choice {
-    /// What it sets: the name its row says ("Color", "Rating").
-    pub name: String,
+    /// Which choice it is (`tags.rating`): its values meet by it, never by
+    /// their words (ADR-139, 8).
+    pub id: String,
+    /// What it sets: the name its row says ("Color", "Rating"), said
+    /// where it is drawn.
+    pub name: Words,
     #[serde(default)]
     pub look: ChoiceLook,
 }
@@ -829,23 +828,55 @@ impl MenuItem {
         self.checked == Some(Check::On)
     }
 
-    /// One value of the choice `name`, drawn as `look` says, `chosen` or
-    /// not.
+    /// One value of the choice `id`, its row saying `name`, drawn as
+    /// `look` says, `chosen` or not.
     #[must_use]
-    pub fn value_of(mut self, name: &str, look: ChoiceLook, chosen: bool) -> Self {
+    pub fn value_of(
+        mut self,
+        id: &str,
+        name: impl Into<Words>,
+        look: ChoiceLook,
+        chosen: bool,
+    ) -> Self {
         self.choice = Some(Choice {
-            name: name.to_owned(),
+            id: id.to_owned(),
+            name: name.into(),
             look,
         });
         self.checked(chosen)
     }
+
+    /// The item as the window sends it to itself (a menu source's answer,
+    /// [`menu_answer`]): its words as their data (`Words::to_data`), read
+    /// back as the words they are, where `Serialize` writes English for
+    /// agents.
+    pub fn to_data(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).unwrap_or_default();
+        value["title"] = self.title.to_data();
+        if let Some(submenu) = &self.submenu {
+            value["submenu"]["title"] = submenu.title.to_data();
+        }
+        if let Some(choice) = &self.choice {
+            value["choice"]["name"] = choice.name.to_data();
+        }
+        value
+    }
+}
+
+/// A menu source's answer (`{"items": […]}`, [`MenuSource`]), its items'
+/// words as data (`MenuItem::to_data`): the menu says them in the window's
+/// language.
+pub fn menu_answer(items: &[MenuItem]) -> serde_json::Value {
+    let items: Vec<serde_json::Value> = items.iter().map(MenuItem::to_data).collect();
+    serde_json::json!({ "items": items })
 }
 
 /// Items of a menu that depend on what the owner knows when it opens
 /// ("Open With Image Viewer"): the UI dispatches `command` with the pane
 /// (`{"pane": id}`) each time the menu opens where `when` holds (the same
 /// tokens as [`MenuItem::when`]), and adds the [`MenuItem`]s it answers
-/// (`{"items": [...]}`), whose own `when` is not evaluated.
+/// (`{"items": [...]}`, written by [`menu_answer`] so their words come
+/// back as words), whose own `when` is not evaluated.
 ///
 /// The command runs on the UI thread while the menu opens: it answers from
 /// what the owner keeps in memory, and refreshes that on a worker. An
@@ -887,14 +918,93 @@ pub struct PropertySource {
 }
 
 /// A row a [`PropertySource`] answers for every entry of a kind, as its
-/// answer names it.
+/// answer names it: its group by key ([`Property::group`]), the heading of
+/// a source's own group, its label.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PropertyPlace {
     pub group: String,
-    pub label: String,
+    pub heading: Option<Words>,
+    pub label: Words,
     /// Its group ships folded ([`Property::folded`]).
     pub folded: bool,
     pub of: PlaceOf,
+}
+
+/// Properties' own groups (ADR-058), by key: what the window's rows and a
+/// source's meet by ([`Property::group`]), the same in every language, as
+/// the window remembers what is folded (ADR-139, 8). Their headings are
+/// core's ([`property_groups::words_of`]); a source's own group is its
+/// key, headed by its rows' [`Property::heading`].
+pub mod property_groups {
+    use crate::words;
+    use crate::words::Words;
+
+    pub const GENERAL: &str = "General";
+    pub const NOTES: &str = "Notes";
+    pub const SOURCE: &str = "Source";
+    pub const LOCATION: &str = "Location";
+    pub const PERMISSIONS: &str = "Permissions";
+    pub const TIMES: &str = "Times";
+    pub const MORE: &str = "More";
+    pub const SELECTION: &str = "Selection";
+    /// The Permissions group of several entries: what they share, apart
+    /// from the Permissions of the entry the cursor is on.
+    pub const SHARED_PERMISSIONS: &str = "Shared permissions";
+    pub const VOLUME: &str = "Volume";
+    pub const CONTENT: &str = "Content";
+
+    /// The heading of the group known by `key`; `None` for one Properties
+    /// does not make (a source's own).
+    pub fn words_of(key: &str) -> Option<Words> {
+        Some(match key {
+            GENERAL => words!(
+                properties_general = "General",
+                note = "A group's heading in Properties: the file's size and what it takes."
+            ),
+            NOTES => words!(
+                properties_notes = "Notes",
+                note = "A group's heading in Properties: the file's tags, rating and comment."
+            ),
+            SOURCE => words!(
+                properties_source = "Source",
+                note = "A group's heading in Properties: where a download came from."
+            ),
+            LOCATION => words!(
+                properties_location = "Location",
+                note = "A group's heading in Properties: the file's path and folder."
+            ),
+            PERMISSIONS => words!(
+                properties_permissions = "Permissions",
+                note = "A group's heading in Properties: who owns the file and who may use it."
+            ),
+            TIMES => words!(
+                properties_times = "Times",
+                note =
+                    "A group's heading in Properties: when the file changed, was made, was read."
+            ),
+            MORE => words!(
+                properties_more = "More",
+                note = "A group's heading in Properties: what plugins or the user attached to the file beside the rest."
+            ),
+            SELECTION => words!(
+                properties_selection = "Selection",
+                note = "A group's heading in Properties, with several items selected: how many, what they weigh."
+            ),
+            SHARED_PERMISSIONS => words!(
+                properties_shared_permissions = "Shared permissions",
+                note = "A group's heading in Properties, with several items selected: the owner, group and access they share."
+            ),
+            VOLUME => words!(
+                properties_volume = "Volume",
+                note = "A group's heading in Properties: the drive the file is on."
+            ),
+            CONTENT => words!(
+                properties_content = "Content",
+                note = "A group's heading in Properties: what the file says of itself (a picture's camera, a document's author)."
+            ),
+            _ => return None,
+        })
+    }
 }
 
 /// What a [`PropertyPlace`] is answered for.
@@ -925,34 +1035,70 @@ impl PropertySource {
     }
 }
 
-/// A row a property source answers: the group it joins (`General`, or one
-/// of its own named so), its label and value, and links after the value.
-/// The links show while the pointer is on the row, unless `actions_shown`
-/// (they stop what runs) or the value is empty (they are all it says).
-/// With `folded`, a group of its own ships folded (what is seldom looked
-/// at: checksums), until the user unfolds it; Properties names no plugin's
-/// group itself. With `gist`, what the row says in short on its group's
-/// heading while the group is folded.
+/// A row a property source answers: the group it joins, by key (one of
+/// Properties' own, [`property_groups`], or its own, headed by `heading`),
+/// its label and value, and links after the value. The links show while
+/// the pointer is on the row, unless `actions_shown` (they stop what runs)
+/// or the value is empty (they are all it says). With `folded`, a group of
+/// its own ships folded (what is seldom looked at: checksums), until the
+/// user unfolds it; Properties names no plugin's group itself. With
+/// `gist`, what the row says in short on its group's heading while the
+/// group is folded.
+///
+/// What it says is words, said where Properties draws them: a source
+/// answers its rows with [`Property::answer`], their words as data
+/// (`words::data`), which read back as the words they are.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Property {
     pub group: String,
-    pub label: String,
-    #[serde(default)]
-    pub value: String,
+    /// The heading of the source's own group ("Checksums"); `None` for one
+    /// of Properties' own, which core heads.
+    #[serde(default, with = "crate::words::data::optional")]
+    pub heading: Option<Words>,
+    #[serde(with = "crate::words::data")]
+    pub label: Words,
+    /// What it says of the entry: Skwir's words ("Computing…"), or what
+    /// the entry holds as written (a digest).
+    #[serde(default, with = "crate::words::data")]
+    pub value: Words,
     #[serde(default)]
     pub actions: Vec<PropertyAction>,
     #[serde(default)]
     pub actions_shown: bool,
     #[serde(default)]
     pub folded: bool,
-    #[serde(default)]
-    pub gist: Option<String>,
+    #[serde(default, with = "crate::words::data::optional")]
+    pub gist: Option<Words>,
+}
+
+impl Property {
+    /// A row of the group `group` (a key), saying `value` after `label`.
+    pub fn new(group: impl Into<String>, label: impl Into<Words>, value: impl Into<Words>) -> Self {
+        Property {
+            group: group.into(),
+            heading: None,
+            label: label.into(),
+            value: value.into(),
+            actions: Vec::new(),
+            actions_shown: false,
+            folded: false,
+            gist: None,
+        }
+    }
+
+    /// A source's answer: `{ "rows": [Property] }`, each row's words as
+    /// their data, so the window says them in its language; an agent
+    /// reads each one's `english`.
+    pub fn answer(rows: &[Property]) -> crate::command::Outcome {
+        crate::command::Outcome::Value(serde_json::json!({ "rows": rows }))
+    }
 }
 
 /// A link after a property's value: its words and what it runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PropertyAction {
-    pub words: String,
+    #[serde(with = "crate::words::data")]
+    pub words: Words,
     pub command: Invocation,
 }
 

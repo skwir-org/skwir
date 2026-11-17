@@ -255,18 +255,6 @@ impl ToastState {
     }
 }
 
-/// Transitional (ADR-139): `text` with its first letter a capital, for a
-/// plan's title or a step's words, which begin in lower case to be said
-/// inside a sentence, where they begin one: neither has a capitalised form
-/// of its own yet (the API pass). Never for a message of Skwir's own,
-/// whose capitalised form is a message of its own.
-pub(crate) fn capitalized(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
-}
-
 /// How a sentence about `change` names a path: the file it acts on by
 /// `named` where the step said it (an item of a trash, by the name it had),
 /// any other path by its own name. The name is bare: the message quotes
@@ -291,16 +279,15 @@ fn said_title(running: &Running) -> Words {
 /// What an applied plan did, in a sentence: the item by name when there is
 /// one (by `named`, where the step said the name the user knows it by), a
 /// count otherwise. Falls back to the plan's title (`title`: an undo's,
-/// the action it takes back, `said_title`). Where a sentence is not a
-/// message yet and begins with a title or a step's own words, capitalised,
-/// they are said here (in the window's language) until it is one.
+/// the action it takes back, `said_title`). A title or a step's own words
+/// that begin the sentence are its heading (`Words::heading`).
 pub fn describe(
     title: &Words,
     run: RunKind,
     first: Option<&Change>,
     named: Option<&str>,
     applied: usize,
-    kept_in: Option<&str>,
+    kept_in: Option<&Words>,
 ) -> Words {
     let name = naming(first, named);
     let one = applied == 1;
@@ -336,7 +323,7 @@ pub fn describe(
                     }",
                     count = applied,
                     name = name(path),
-                    trash = trash,
+                    trash = trash.clone(),
                     note = "trash: the trash the server keeps what is deleted in, as it names \
                             it (Google Drive's trash)."
                 )
@@ -389,10 +376,9 @@ pub fn describe(
             name = name(from),
             folder = Folder::of(to)
         ),
-        // Transitional: a step's words capitalised (ADR-139).
         Some(Change::Create {
             words: Some(words), ..
-        }) if one => Words::from(capitalized(&words.did.say())),
+        }) if one => words.did.heading(),
         Some(Change::Create {
             path,
             directory: true,
@@ -404,25 +390,22 @@ pub fn describe(
         Some(Change::Create { path, .. }) if one => {
             words!(toast_created = "Created { $name }", name = name(path))
         }
-        // A step that says what it did says it best. Transitional: a
-        // step's words capitalised (ADR-139).
+        // A step that says what it did says it best.
         Some(Change::Metadata {
             words: Some(words), ..
-        }) if one => Words::from(capitalized(&words.did.say())),
-        // Transitional: a plan's title capitalised (ADR-139).
+        }) if one => words.did.heading(),
         _ if applied == 0 => words!(
             toast_nothing_to_do = "{ $title }: nothing to do",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             note = "title: the action, capitalised (Copy 3 items to Docs), which found nothing \
                     to do."
         ),
-        // Transitional: a plan's title capitalised (ADR-139).
         _ => words!(
             toast_done_items = "{ $title } ({ $count ->
                 [one] { $count } item
                *[other] { $count } items
             })",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             count = applied,
             note = "What an action did, by its title, capitalised (Copy 3 items to Docs), and \
                     how many items it went through."
@@ -518,10 +501,9 @@ pub fn failure(
             why = why,
             note = "why: what stopped it, as the system or the step said it (permission denied)."
         ),
-        // Transitional: a plan's title capitalised (ADR-139).
         _ => words!(
             toast_failed = "{ $title }: { $error }",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             error = error.clone(),
             note = "title: the action, capitalised (Copy 3 items to Docs); error: what stopped \
                     it, as the system or the step said it (permission denied)."
@@ -615,20 +597,19 @@ pub(crate) fn share(items: usize, t: &Transfer) -> f32 {
 /// title, and whether it is paused, when it has begun), and the two ways
 /// on, for it and the `waiting` ones behind it: Skwir finishes without its
 /// window, then quits; or stops now. No figures: the bar under the
-/// question goes on with them. What runs is said by its title,
-/// capitalised until a title has a capitalised form (`capitalized`).
+/// question goes on with them. What runs is said by its title, its
+/// heading (`Words::heading`).
 pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: usize) -> String {
-    // Transitional: a plan's title capitalised (ADR-139).
     let what = match (running, others) {
         (Some((title, true)), 0) => words!(
             toast_quit_paused = "{ $title } is paused.",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             note = "What Quit asks while an action is paused, first: the action by its title, \
                     capitalised (Copy 3 items to Docs)."
         ),
         (Some((title, false)), 0) => words!(
             toast_quit_running = "{ $title } is still running.",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             note = "What Quit asks while an action runs, first: the action by its title, \
                     capitalised (Copy 3 items to Docs)."
         ),
@@ -638,7 +619,7 @@ pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: us
                 [one] { $count } other action
                *[other] { $count } other actions
             } beside it.",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             count = others,
             note = "What Quit asks while actions run, first: the one paused, by its title, \
                     capitalised (Copy 3 items to Docs); count: how many others run beside it."
@@ -648,7 +629,7 @@ pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: us
                 [one] { $count } other action
                *[other] { $count } other actions
             } beside it.",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             count = others,
             note = "What Quit asks while actions run, first: one of them, by its title, \
                     capitalised (Copy 3 items to Docs); count: how many others run beside it."
@@ -696,12 +677,16 @@ pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: us
     .say()
 }
 
-/// Words read in a second, unhurried.
-const WORDS_A_SECOND: u64 = 3;
+/// Characters (grapheme clusters, spaces included) read in a second,
+/// unhurried: three English words of five letters and a space, as the
+/// toast counted words before, and a count a language written without
+/// spaces between its words has too.
+const READ_A_SECOND: u64 = 18;
 
 /// How many seconds `toast` stays: by its weight, and at least the time its
 /// words take to read.
 fn shown_for(toast: &Toast) -> u64 {
+    use unicode_segmentation::UnicodeSegmentation;
     let weight = match (&toast.tone, toast.actions.is_empty()) {
         (Tone::Error, _) => 10,
         (_, false) => 8,
@@ -709,8 +694,8 @@ fn shown_for(toast: &Toast) -> u64 {
     };
     // Counted as said: how long its words take to read in the reader's
     // language, its parts joined.
-    let words = toast.said().say().split_whitespace().count() as u64;
-    weight.max(words.div_ceil(WORDS_A_SECOND))
+    let read = toast.said().say().graphemes(true).count() as u64;
+    weight.max(read.div_ceil(READ_A_SECOND))
 }
 
 impl Shell {
@@ -868,9 +853,16 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (Words, Tone) {
         tally,
         skipped,
     } = end;
-    // Transitional: a list argument (ADR-139): what the steps said, each
-    // as they wrote it, one after the other.
-    let said = said.join(". ");
+    // What the steps said, each a sentence of its own, one after the other.
+    let said = said.iter().cloned().reduce(|said, then| {
+        words!(
+            toast_said_then = "{ $said }. { $then }",
+            said = said,
+            then = then,
+            note = "What an action's steps said beside what it did, each sentence after the \
+                    one before (“a.pdf”: its last page was left out. Fold each sheet in half)."
+        )
+    });
     let already = tally.filter(|t| t.already.count > 0 && error.is_none() && !cancelled);
     let nothing_else = applied == 0 && error.is_none() && !cancelled && already.is_none();
     let (title, run) = (said_title(&running), running.run);
@@ -911,14 +903,14 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (Words, Tone) {
                     done already (2 were already there)."
         );
     }
-    // What the steps said follows, as they wrote it.
-    let whole = match (said.is_empty(), nothing_else) {
-        (true, _) => text,
-        (false, true) => return (Words::from(said), Tone::Info),
-        (false, false) => words!(
+    // What the steps said follows.
+    let whole = match (said, nothing_else) {
+        (None, _) => text,
+        (Some(said), true) => return (said, Tone::Info),
+        (Some(said), false) => words!(
             toast_done_then_said = "{ $done }. { $said }",
             done = text,
-            said = Words::from(said),
+            said = said,
             note = "done: what an action did; said: what its steps said after (Fold each \
                     sheet in half)."
         ),
@@ -1010,8 +1002,7 @@ pub fn found_done(title: &Words, run: RunKind, found: &Counted) -> Words {
                     }),
                 ..
             },
-            // Transitional: a step's words capitalised (ADR-139).
-        ) if one => Words::from(capitalized(&already.say())),
+        ) if one => already.heading(),
         Some(Change::Create {
             path,
             directory: true,
@@ -1028,10 +1019,9 @@ pub fn found_done(title: &Words, run: RunKind, found: &Counted) -> Words {
             toast_already_as_asked = "{ $name } was already as asked",
             name = name(path)
         ),
-        // Transitional: a plan's title capitalised (ADR-139).
         _ => words!(
             toast_already_done = "{ $title }: already done",
-            title = capitalized(&title.say()),
+            title = title.heading(),
             note = "title: the action, capitalised (Copy 3 items to Docs), which found all it \
                     was asked done already."
         ),
@@ -1151,8 +1141,9 @@ pub(crate) struct End<'a> {
     pub cancelled: bool,
     pub items: Option<skwir_core::op::Items>,
     /// Deleted where its server keeps a trash (ADR-086): that trash.
-    pub kept_in: Option<&'a str>,
-    pub said: &'a [String],
+    pub kept_in: Option<&'a Words>,
+    /// What its steps said beside what they did (`ExecEvent::Finished`).
+    pub said: &'a [Words],
     pub moved: u64,
     pub ran: Duration,
     /// Its items done and found done already (`ExecEvent::Finished`).
@@ -1170,7 +1161,7 @@ fn ended_as(
     error: Option<Words>,
     cancelled: bool,
     items: Option<skwir_core::op::Items>,
-    kept_in: Option<&str>,
+    kept_in: Option<&Words>,
 ) -> (Words, Tone) {
     let said = said_title(&running);
     let (title, run) = (running.title, running.run);
@@ -1212,11 +1203,10 @@ fn ended_as(
             ),
             Tone::Error,
         ),
-        // Transitional: a plan's title capitalised (ADR-139).
         (None, true) if applied == 0 => (
             words!(
                 toast_cancelled_before = "{ $title }: cancelled before anything was done",
-                title = capitalized(&title.say()),
+                title = title.heading(),
                 note = "title: the action, capitalised (Copy 3 items to Docs)."
             ),
             Tone::Info,
@@ -1318,25 +1308,20 @@ pub(crate) fn show_action(made: &Path) -> Action {
 
 /// An action waiting its turn, as its row under the cards of what runs
 /// says it (ADR-079, 12): what it is ("Rename to b.txt"), and what it
-/// waits for ("Waits for copy to /media/stick"), its title capitalised as
-/// said until a title has a capitalised form (`capitalized`).
-pub(crate) fn waiting_words(waiting: &skwir_core::op::Waiting) -> (String, String) {
-    // Transitional: a plan's title capitalised (ADR-139).
+/// waits for ("Waits for copy to /media/stick"), its title its heading
+/// (`Words::heading`).
+pub(crate) fn waiting_words(waiting: &skwir_core::op::Waiting) -> (Words, Words) {
     (
-        capitalized(&waiting.named.say()),
-        waits_for(&waiting.waits_for, false).say(),
+        waiting.named.heading(),
+        waits_for(&waiting.waits_for, false),
     )
 }
 
 /// An action waiting its turn, as the strip says it while only it waits:
 /// what it is, and what it waits for, said after it ("… · waits for the
 /// disk").
-pub(crate) fn waiting_next(waiting: &skwir_core::op::Waiting) -> (String, Words) {
-    // Transitional: a plan's title capitalised (ADR-139).
-    (
-        capitalized(&waiting.named.say()),
-        waits_for(&waiting.waits_for, true),
-    )
+pub(crate) fn waiting_next(waiting: &skwir_core::op::Waiting) -> (Words, Words) {
+    (waiting.named.heading(), waits_for(&waiting.waits_for, true))
 }
 
 /// What an action waiting its turn waits for: alone, as its row says it
@@ -1676,7 +1661,8 @@ mod tests {
         applied: usize,
         kept_in: Option<&str>,
     ) -> Words {
-        super::describe(&title.into(), run, first, named, applied, kept_in)
+        let kept_in = kept_in.map(|kept| Words::as_written(kept.to_owned()));
+        super::describe(&title.into(), run, first, named, applied, kept_in.as_ref())
     }
 
     /// `toast::failure` of a plan titled as text, its error and reason as
@@ -1971,11 +1957,11 @@ mod tests {
             format!(
                 "Copied 3 items to it's here ({} in {}); 2 were already there",
                 crate::format::size(moved),
-                crate::format::took(ran)
+                crate::format::took_words(ran).english()
             )
         );
         // What the steps said follows.
-        let said = ["Fold each sheet in half".to_owned()];
+        let said = [Words::as_written("Fold each sheet in half")];
         assert_eq!(
             ended(
                 copying(),
@@ -2035,7 +2021,7 @@ mod tests {
                 running(),
                 End {
                     applied: 1,
-                    said: &["Fold each sheet in half twice".to_owned()],
+                    said: &[Words::as_written("Fold each sheet in half twice")],
                     ..End::default()
                 }
             ),
@@ -2048,7 +2034,7 @@ mod tests {
             ended(
                 running(),
                 End {
-                    said: &["“it's.md” is as small as it gets".to_owned()],
+                    said: &[Words::as_written("“it's.md” is as small as it gets")],
                     ..End::default()
                 }
             ),
@@ -2076,6 +2062,10 @@ mod tests {
         assert_eq!(shown_for(&toast("It failed", Tone::Error, Vec::new())), 10);
         let folding = "Saved “it's.md” as “it's (booklet).pdf”. Fold each sheet in half three times, page 1 outside and upright, cut its closed folds open, and put the sheets one after another";
         assert_eq!(shown_for(&toast(folding, Tone::Success, undo())), 10);
+        // A language that writes no spaces between its words is read by its
+        // characters, never as one long word.
+        let unspaced = "字".repeat(180);
+        assert_eq!(shown_for(&toast(&unspaced, Tone::Info, Vec::new())), 10);
     }
 
     /// A toast's Undo takes back the plan it reports, by its id, as the

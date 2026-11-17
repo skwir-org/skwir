@@ -364,7 +364,11 @@ fn an_agent_asks_before_a_command_that_acts_and_never_answers_for_the_user() {
             asked.extend(app.take_questions());
             !asked.is_empty()
         });
-        assert!(asked[0].title.contains("“Act”"), "{}", asked[0].title);
+        assert!(
+            asked[0].title.english().contains("“Act”"),
+            "{}",
+            asked[0].title
+        );
         assert!(app.answer(asked[0].id, allow));
         let answer = call.join().unwrap();
         if allow {

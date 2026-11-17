@@ -4,7 +4,7 @@
 use skwir_platform::inspection::limits;
 
 /// What the header says: the protocol and the program that wrote the file.
-pub fn header(text: &str) -> Vec<(String, String)> {
+pub fn header(text: &str) -> Vec<(skwir_core::words::Words, String)> {
     let Some(start) = text.find("HEADER;") else {
         return Vec::new();
     };
@@ -266,6 +266,14 @@ fn decoded(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the header says, its labels in English.
+    fn header(text: &str) -> Vec<(String, String)> {
+        super::header(text)
+            .into_iter()
+            .map(|(label, value)| (label.english(), value))
+            .collect()
+    }
 
     #[test]
     fn the_header_says_the_protocol_and_the_program() {

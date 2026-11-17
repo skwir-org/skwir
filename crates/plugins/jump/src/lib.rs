@@ -495,7 +495,8 @@ impl skwir_core::suggest::SuggestSource for Places {
                         &serde_json::json!({ "path": PathArg::from(c.path.clone()), "pane": ask.pane }),
                     ));
                 if let Some(parent) = c.path.parent() {
-                    row.detail = Some(shown_from(parent, home.as_deref()));
+                    // A path, as written.
+                    row.detail = Some(Words::as_written(shown_from(parent, home.as_deref())));
                 }
                 if dir {
                     row.scope = Some(Location::from_path(&c.path));

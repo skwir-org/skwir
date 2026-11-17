@@ -91,18 +91,24 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
         serde_json::from_value(tag_chip["choices"][0]["command"]["args"]["source"].clone())
             .unwrap();
     let answer = value(&app, &source.name, source.args.clone());
-    let titles: Vec<&str> = answer["choices"]
+    // The chooser's words come as data, said in the window's language.
+    let english = |value: &serde_json::Value| {
+        serde_json::from_value::<skwir_core::words::Words>(value.clone())
+            .unwrap()
+            .english()
+    };
+    let titles: Vec<String> = answer["choices"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| c["title"].as_str().unwrap())
+        .map(|c| english(&c["title"]))
         .collect();
     assert_eq!(
         titles,
         ["work", "holiday", "to do", "Another tag…"],
         "most used first"
     );
-    assert_eq!(answer["choices"][0]["detail"], "2 files");
+    assert_eq!(english(&answer["choices"][0]["detail"]), "2 files");
     // Choosing one refines the search.
     let work: Invocation = serde_json::from_value(answer["choices"][0]["command"].clone()).unwrap();
     app.dispatch(&work).unwrap();

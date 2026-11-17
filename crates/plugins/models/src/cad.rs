@@ -167,7 +167,12 @@ pub fn dxf<S: FileSource + ?Sized>(
         found.notice = Some(crate::too_large(drawn));
         found.whole_available = bounds.cut();
     } else {
-        let text = inspection::read_bounded(source, drawn, "The drawing", cancel)?;
+        let refusal = words!(
+            models_drawing_exceeds = "The drawing exceeds { $size } preview limit",
+            size = words::Size(drawn as u64),
+            note = "Why a DXF drawing is not drawn: it grew past what the preview reads while it was read. size: that bound (33.6 MB)."
+        );
+        let text = inspection::read_bounded(source, drawn, refusal, cancel)?;
         let drawing = crate::dxf::draw(&String::from_utf8_lossy(&text), cancel)?;
         found.details.extend(drawing.details);
         found.notice = drawing.notice;
@@ -270,7 +275,7 @@ mod tests {
         .unwrap();
         let found = super::dwg(&png_path, 256, &CancelToken::new()).unwrap();
         assert_eq!(
-            found.details,
+            found.english_details(),
             [("Format".to_owned(), "DWG 2018".to_owned())]
         );
         assert!(red_first(&found.picture.unwrap()), "the PNG, upright");
@@ -308,7 +313,7 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         let found = dxf(&path, 256, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(
-            found.details,
+            found.english_details(),
             [("Format".to_owned(), "DXF 2013".to_owned())]
         );
         assert!(red_first(&found.picture.unwrap()));
@@ -328,14 +333,14 @@ mod tests {
             .unwrap();
         let found = dxf(&path, 256, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(
-            found.notice.as_deref(),
+            found.english_notice().as_deref(),
             Some("Too large to draw (more than 33.6 MB)")
         );
         assert!(found.whole_available);
         let found = dxf(&path, 256, Bounds::WHOLE, &CancelToken::new()).unwrap();
         assert!(!found.whole_available);
         assert_ne!(
-            found.notice.as_deref(),
+            found.english_notice().as_deref(),
             Some("Too large to draw (more than 33.6 MB)")
         );
     }

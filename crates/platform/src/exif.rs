@@ -12,7 +12,7 @@ use skwir_core::inspection::Detail;
 use skwir_core::preview::FileSource;
 use skwir_core::words;
 
-use crate::inspection::{detail_words, limits};
+use crate::inspection::{detail, limits};
 
 /// What is read of a TIFF-based file (a camera's raw file, a scan) for its
 /// metadata: its first directories and what they hold are at its start.
@@ -415,7 +415,7 @@ fn read(exif: &Exif) -> Vec<Detail> {
     .into_iter()
     // The position told by the table, never by its label (ADR-139, 8).
     .filter_map(|(label, value, mapped)| {
-        let row = detail_words(label, value?)?;
+        let row = detail(label, value?)?;
         Some(if mapped {
             crate::inspection::on_map(row)
         } else {
@@ -466,7 +466,7 @@ mod tests {
             metadata(path).map(|exif| {
                 read(&exif)
                     .into_iter()
-                    .find(|d| d.label == "Camera")
+                    .find(|d| d.label.english() == "Camera")
                     .map(|d| d.value)
             })
         };
@@ -563,7 +563,7 @@ mod tests {
             .expect("the synthetic directory parses");
         let facts: Vec<_> = read(&exif)
             .into_iter()
-            .map(|detail| (detail.label, detail.value))
+            .map(|detail| (detail.label.english(), detail.value))
             .collect();
         assert_eq!(
             facts,

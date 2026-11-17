@@ -745,7 +745,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     let asked = question();
     assert_eq!(asked.asker, skwir_core::app::Asker::Room);
     assert_eq!(
-        asked.title,
+        asked.title.english(),
         "Not enough room in “dest”: 1.0 kB needed, 10 B free"
     );
     app.answer(asked.id, false);
@@ -803,7 +803,10 @@ fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
     select(&app, &["a.txt", "c.txt"]);
     let one = plan(&app, "delete", serde_json::json!({}));
     assert_eq!(
-        one.note.as_deref(),
+        one.note
+            .as_ref()
+            .map(skwir_core::words::Words::english)
+            .as_deref(),
         Some("1 file has names elsewhere: 8 B stays on the disk")
     );
     select(&app, &["a.txt", "b.txt", "c.txt"]);

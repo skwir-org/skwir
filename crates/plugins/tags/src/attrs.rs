@@ -115,24 +115,18 @@ impl AttributesProvider {
                 continue;
             }
             fill_entry(&mut e.metadata, &notes);
-            let titles = |ids: &[&str]| {
-                Value::List(
-                    self.stores
-                        .titles(ids)
-                        .into_iter()
-                        // Said as read: the field should keep the stores'
-                        // ids and say their titles where it is shown.
-                        .map(|t| Value::Text(Arc::from(t.say())))
-                        .collect(),
-                )
+            // The stores by id: Properties says their titles where it
+            // shows them (`NoteStores::titles`).
+            let ids = |ids: &[&str]| {
+                Value::List(ids.iter().map(|id| Value::Text(Arc::from(*id))).collect())
             };
             let kept: Vec<&str> = read.each.iter().map(|(id, _)| *id).collect();
             e.metadata
-                .set(keys::NOTES_KEPT, titles(&kept), Provenance::Filesystem);
+                .set(keys::NOTES_KEPT, ids(&kept), Provenance::Filesystem);
             if !read.differ.is_empty() {
                 e.metadata.set(
                     keys::NOTES_DIFFER,
-                    titles(&read.differ),
+                    ids(&read.differ),
                     Provenance::Filesystem,
                 );
             }

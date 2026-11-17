@@ -13,7 +13,7 @@ const ACL_DEFAULT: &str = "system.posix_acl_default";
 const CAPABILITIES: &str = "security.capability";
 const SELINUX: &str = "security.selinux";
 
-/// What a fact of `facts` is.
+/// What a fact of `facts_words` is.
 #[derive(Clone, Copy)]
 enum Fact {
     Access,
@@ -23,16 +23,6 @@ enum Fact {
 }
 
 impl Fact {
-    /// Its label in English.
-    fn english(self) -> &'static str {
-        match self {
-            Fact::Access => "Access list",
-            Fact::Default => "Default for new items",
-            Fact::Capabilities => "Capabilities",
-            Fact::SELinux => "SELinux",
-        }
-    }
-
     /// Its label, as words.
     fn words(self) -> skwir_core::words::Words {
         match self {
@@ -56,17 +46,6 @@ impl Fact {
 
 /// The facts of `path` beyond its mode, each with its label, in the
 /// order Properties shows them; nothing for a file that has none.
-///
-/// Transitional: English labels; [`facts_words`] gives them as words
-/// (ADR-139).
-pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
-    read_facts(path)
-        .into_iter()
-        .map(|(fact, value)| (fact.english(), value))
-        .collect()
-}
-
-/// [`facts`], each label words.
 pub fn facts_words(path: &Path) -> Vec<(skwir_core::words::Words, String)> {
     read_facts(path)
         .into_iter()
@@ -380,6 +359,12 @@ mod tests {
             .unwrap();
         let file = tmp.path().join("it's shared.txt");
         std::fs::write(&file, b"x").unwrap();
+        let facts = |file: &Path| -> Vec<(String, String)> {
+            facts_words(file)
+                .into_iter()
+                .map(|(label, value)| (label.english(), value))
+                .collect()
+        };
         assert!(facts(&file).is_empty(), "a mode alone says nothing more");
         // What `setfacl -m u:4000000001:r` writes: the owner may set it.
         let list = acl_bytes(&[
@@ -396,7 +381,7 @@ mod tests {
         assert_eq!(
             facts(&file),
             [(
-                "Access list",
+                "Access list".to_owned(),
                 "user 4000000001: r--, at most r--".to_owned()
             )]
         );

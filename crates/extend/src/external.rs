@@ -345,7 +345,12 @@ impl Runner {
                 }
                 Arc::new(Program::new(
                     self.id,
-                    crate::MODULE_WORKER.require("run plugins that are WebAssembly modules")?,
+                    crate::MODULE_WORKER.require(words!(
+                        extend_install_module_worker =
+                            "Install { $program } to run plugins that are WebAssembly modules",
+                        program = crate::MODULE_WORKER.executable,
+                        note = "Why a plugin from outside Skwir written as a WebAssembly module does not start. program: the helper's name (skwir-module-worker)."
+                    ))?,
                     args,
                     self.folder.clone(),
                     self.granted,

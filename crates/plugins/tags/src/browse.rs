@@ -18,7 +18,7 @@ use skwir_core::metadata::{
     TAG_COLORS, TAG_EXCLUSIVE_SETTING, clean_tag, same_tag, tag_leaf, tag_lineage, tag_parent,
     tag_under,
 };
-use skwir_core::op::EntryRef;
+use skwir_core::op::{EntryRef, Tenses};
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::{ChoiceLook, MenuItem};
 use skwir_core::words;
@@ -343,12 +343,16 @@ pub fn drop(
                 ),
             ),
         };
-        // Said now: an edit's words are text until it takes words.
-        Some(app.notes.edit(r).change_tags(change.clone()).saying(
-            will.say(),
-            did.say(),
-            already.say(),
-        ))
+        Some(
+            app.notes
+                .edit(r)
+                .change_tags(change.clone())
+                .saying_tenses(Tenses {
+                    will,
+                    did,
+                    already: Some(already),
+                }),
+        )
     })
 }
 
@@ -434,8 +438,11 @@ pub fn untag(
             Some(change) => app.notes.edit(r).change_tags(change.clone()),
             None => app.notes.edit(r).tags(Vec::new()),
         };
-        // Said now: an edit's words are text until it takes words.
-        Some(edit.saying(will.say(), did.say(), already.say()))
+        Some(edit.saying_tenses(Tenses {
+            will,
+            did,
+            already: Some(already),
+        }))
     })
 }
 
@@ -702,12 +709,11 @@ fn item(title: Words, command: Invocation, order: i32, icon: &str) -> MenuItem {
 /// A tag's colors: one choice, drawn as swatches (each value's
 /// `MenuItem::color`), from its name first, `color` the one it was given.
 fn color_items(tag: &str, color: Option<&str>) -> Vec<MenuItem> {
-    // Said now: a choice's values meet by its name.
+    // Its values meet by its id, its row saying its name.
     let choice = words!(
         tags_color_choice = "Color",
         note = "The name of a tag's menu's row of colors."
-    )
-    .say();
+    );
     std::iter::once((
         words!(
             tags_color_from_name = "From Its Name",
@@ -730,7 +736,12 @@ fn color_items(tag: &str, color: Option<&str>) -> Vec<MenuItem> {
             0,
             "",
         )
-        .value_of(&choice, ChoiceLook::Colors, color == value);
+        .value_of(
+            "tags.color",
+            choice.clone(),
+            ChoiceLook::Colors,
+            color == value,
+        );
         match value {
             Some(value) => item.colored(value),
             None => item,
@@ -792,7 +803,7 @@ pub fn place_menu(app: &App, known: &[String], a: PaneOnly) -> Outcome {
         .map(PathArg::from);
     let mut items = tag_items(app, &tags, root.as_ref(), false);
     items.extend(one_at_a_time(app, &tags, false, known));
-    Outcome::Value(serde_json::json!({ "items": items }))
+    Outcome::Value(skwir_core::registry::menu_answer(&items))
 }
 
 /// `tags.tag_menu`'s arguments: tags by name (a chip in Properties), or a
@@ -858,7 +869,7 @@ pub fn tag_menu(app: &App, known: &[String], a: TagMenuArgs) -> Outcome {
     };
     items.extend(tag_items(app, &tags, None, on_pin));
     items.extend(one_at_a_time(app, &tags, a.files, known));
-    Outcome::Value(serde_json::json!({ "items": items }))
+    Outcome::Value(skwir_core::registry::menu_answer(&items))
 }
 
 /// The most tags the context menu's Tags submenu checks.
@@ -955,7 +966,7 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
                     &serde_json::json!({ "tag": tag, "pane": pane, "on": !on }),
                 ),
             )
-            .submenu(crate::TAGS_SUBMENU)
+            .submenu(skwir_core::registry::submenus::tags())
             .colored(&colors.of_tag(vocabulary, tag));
             match *count {
                 0 => item.checked(false),
@@ -964,7 +975,7 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
             }
         })
         .collect();
-    Outcome::Value(serde_json::json!({ "items": items }))
+    Outcome::Value(skwir_core::registry::menu_answer(&items))
 }
 
 /// What a tag's menu adds where files show it (their chips, Properties,
@@ -1121,13 +1132,13 @@ pub fn tag_items(
                     tags_move_ask = "Move into a category, keeping the names",
                     note = "The title of the question Move to Category… asks."
                 )
-                .say(),
+                .to_data(),
                 "accept": words!(
                     tags_move_accept = "Move",
                     note = "The button that moves tags into the category typed."
                 )
-                .say(),
-                "placeholder": words!(tags_move_placeholder = "Category (Places/France)").say(),
+                .to_data(),
+                "placeholder": words!(tags_move_placeholder = "Category (Places/France)").to_data(),
                 "command": "tags.move",
                 "args": { "tags": tags, "root": root },
                 "field": "into",
@@ -1177,13 +1188,13 @@ pub fn tag_items(
             Invocation::with_args(
                 "ui.ask",
                 &serde_json::json!({
-                    "title": words!(tags_merge_ask = "Merge these tags into one, on every file").say(),
+                    "title": words!(tags_merge_ask = "Merge these tags into one, on every file").to_data(),
                     "accept": words!(
                         tags_merge_accept = "Merge",
                         note = "The button that merges the tags into the one typed."
                     )
-                    .say(),
-                    "placeholder": words!(tags_merge_placeholder = "The tag they become").say(),
+                    .to_data(),
+                    "placeholder": words!(tags_merge_placeholder = "The tag they become").to_data(),
                     "command": "tags.rename",
                     "args": { "tags": tags, "root": root },
                     "field": "to",

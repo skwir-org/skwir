@@ -42,10 +42,10 @@ impl Shell {
     /// A command failed. Nothing selected, reached from the palette or a
     /// menu, is a hint rather than a failure. The error handed over is
     /// said link by link in the window's language (`Words::of_error`).
-    pub fn report_error(&mut self, error: impl Failed, cx: &mut Context<Self>) {
-        if skwir_core::command::is_nothing_selected(error.error()) {
+    pub fn report_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        if skwir_core::command::is_nothing_selected(&error) {
             self.set_status(crate::shell::nothing_selected(), false, cx);
-        } else if skwir_core::command::wants_clipboard(error.error()) {
+        } else if skwir_core::command::wants_clipboard(&error) {
             self.set_status(
                 words!(
                     status_nothing_to_paste = "Nothing to paste",
@@ -55,7 +55,7 @@ impl Shell {
                 cx,
             );
         } else {
-            self.set_status(error.said(), true, cx);
+            self.set_status(Words::of_error(error), true, cx);
         }
     }
 
@@ -99,35 +99,6 @@ impl Shell {
             ),
             cx,
         );
-    }
-}
-
-/// A command's error, for `Shell::report_error`: handed over, it is said
-/// link by link in the window's language.
-pub trait Failed {
-    fn error(&self) -> &anyhow::Error;
-    fn said(self) -> Words;
-}
-
-impl Failed for anyhow::Error {
-    fn error(&self) -> &anyhow::Error {
-        self
-    }
-
-    fn said(self) -> Words {
-        Words::of_error(self)
-    }
-}
-
-impl Failed for &anyhow::Error {
-    fn error(&self) -> &anyhow::Error {
-        self
-    }
-
-    /// Transitional (ADR-139): a borrowed error is said as its English
-    /// until its caller hands it over (`report_error(e, cx)`).
-    fn said(self) -> Words {
-        Words::as_written(format!("{self:#}"))
     }
 }
 
@@ -213,7 +184,7 @@ pub(crate) fn render(
                     // its heading counts them (ADR-131, 2).
                     p.found_count().unwrap_or(shell.ui().list.listed.len()),
                     p.listing.is_complete(),
-                    p.listing.error().map(str::to_owned),
+                    p.listing.error().cloned(),
                     shell.ui().place.search,
                     p.selection.sweeping(),
                     // Filtered (its lens, words typed): how many there are in all.
@@ -649,10 +620,8 @@ pub(crate) fn render(
     }
     // What a plugin counts (the shelf's items) announces itself only
     // when it counts something, in its words; a click opens what it counts.
-    for tally in &shell.tallies {
+    for (name, tally) in &shell.tallies {
         let open = tally.open.clone();
-        // Transitional: what it counts is said as its plugin said it
-        // (`Tally::label`, ADR-139).
         let said = words!(
             status_tally = "{ $what }: { $count }",
             what = tally.label.clone(),
@@ -663,7 +632,7 @@ pub(crate) fn render(
         let tallied = div()
             // Known by what it counts: one that comes or goes moves the
             // others.
-            .id(crate::elements::known_by("tally", &tally.label))
+            .id(crate::elements::known_by("tally", name))
             .role(gpui::Role::Button)
             .when(shell.a11y, |d| d.aria_label(said.clone()))
             .px_2()

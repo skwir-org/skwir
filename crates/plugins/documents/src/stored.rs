@@ -4,7 +4,7 @@
 //! saved with one. A fallback: a desktop thumbnailer comes first, and this
 //! comes before a converted document's first page, which needs a preview
 //! to have been made.
-use crate::package::{self, Package};
+use crate::package::{self, Package, Part};
 use skwir_core::CancelToken;
 use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 use skwir_platform::inspection;
@@ -21,7 +21,7 @@ fn stored(package: &mut Package, cancel: &CancelToken) -> Option<String> {
         return Some(OPEN_DOCUMENT.to_owned());
     }
     let rels = package
-        .text("_rels/.rels", "Relationships", cancel)
+        .text("_rels/.rels", Part::Relationships, cancel)
         .ok()??;
     let doc = package::xml(&rels).ok()?;
     doc.root_element()
@@ -49,7 +49,7 @@ pub(crate) fn picture(
     let Some(name) = stored(&mut package, cancel) else {
         return Ok(None);
     };
-    let bytes = package.read(&name, "Thumbnail", cancel)?;
+    let bytes = package.read(&name, Part::Thumbnail, cancel)?;
     Ok(inspection::picture(&bytes, side).ok().map(|picture| Image {
         width: picture.width,
         height: picture.height,

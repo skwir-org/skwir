@@ -367,13 +367,25 @@ fn plugin_found(plugin: &PluginInfo, words: &collate::Words) -> bool {
     ])
 }
 
+/// A setting's whole description, said: its first sentence, then what
+/// follows as a paragraph of its own (the two messages placed apart, never
+/// joined into one sentence).
+fn whole_description(spec: &SettingSpec) -> String {
+    let first = spec.description.say();
+    match &spec.more {
+        Some(more) => format!("{first}\n\n{}", more.say()),
+        None => first,
+    }
+}
+
 /// A setting found by its words, its page's title or its plugin's, its
 /// key or section, or one of its choices' labels.
 fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -> bool {
     // Found by its words as the dialog says them.
-    let (title, description, section) = (
+    let (title, description, more, section) = (
         spec.title.say(),
         spec.description.say(),
+        spec.more.as_ref().map(Words::say),
         spec.section_title.say(),
     );
     let mut texts: Vec<&str> = vec![
@@ -384,6 +396,7 @@ fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -
         titles[0],
         titles[1],
     ];
+    texts.extend(more.as_deref());
     let labels: Vec<String> = spec
         .constraints
         .choice_labels
@@ -392,23 +405,6 @@ fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -
         .collect();
     texts.extend(labels.iter().map(String::as_str));
     words.found_in(&texts)
-}
-
-/// The choice `value` as `SettingSpec::choice_shown` says it, as words to
-/// place in a sentence: its label, and for the default, while its owner
-/// says what it comes to, that too.
-fn choice_shown(spec: &SettingSpec, value: &str) -> Words {
-    let label = spec.choice_label(value);
-    match spec.now_of(value) {
-        Some(now) => words!(
-            settings_choice_now = "{ $choice } ({ $now })",
-            choice = label,
-            now = now,
-            note =
-                "A setting's default choice and what it comes to here and now: Automatic (Dark)."
-        ),
-        None => label,
-    }
 }
 
 impl SettingsView {
@@ -756,7 +752,7 @@ impl SettingsView {
         let el = el
             .aria_label(row.label.clone())
             .aria_disabled(!row.available);
-        let description = row.spec.description.say();
+        let description = whole_description(&row.spec);
         if description.is_empty() {
             el
         } else {
@@ -833,15 +829,8 @@ impl SettingsView {
                     .map(|source| source.add.clone());
                 controls::button(
                     format!("add-{key}"),
-                    // Transitional: the record's name arrives said
-                    // (`SettingConstraints::record_name`); its owner's own
-                    // words for the button wait for core (ADR-139).
-                    words!(
-                        settings_add_record = "Add { $record }",
-                        record = row.spec.constraints.record_name.clone(),
-                        note = "The button adding a record to a list in the settings: record is what one is called (server, remote)."
-                    )
-                    .say(),
+                    // Its owner's own words (`SettingConstraints::record_add`).
+                    row.spec.constraints.record_add.say(),
                     Some("plus"),
                     ButtonStyle::Plain,
                     &focus,
@@ -890,6 +879,31 @@ impl SettingsView {
                         d.w(sized(width)).min_w(sized(FIELD_MIN)).flex_shrink_1()
                     }
                 });
+                // Its unit around the field, as its words place the number
+                // they agree with, the one typed (`SettingSpec::unit`).
+                let unit = row.spec.unit.and_then(|_| {
+                    let typed = row
+                        .value
+                        .trim()
+                        .parse()
+                        .ok()
+                        .or_else(|| row.spec.default.as_integer())
+                        .unwrap_or_default();
+                    row.spec.written(typed).say_around("n")
+                });
+                let unit_part = |text: &str| {
+                    let text = text.trim().to_owned();
+                    (!text.is_empty()).then(|| {
+                        div()
+                            .flex_none()
+                            .text_small()
+                            .text_color(theme.text_muted)
+                            .child(text)
+                    })
+                };
+                if let Some(before) = unit.as_ref().and_then(|(before, _)| unit_part(before)) {
+                    group = group.child(before);
+                }
                 if numeric {
                     let (less, more) = (key.clone(), key.clone());
                     let (less_focus, more_focus) = (
@@ -949,13 +963,8 @@ impl SettingsView {
                         &input, fixed, focused, invalid, None, theme,
                     ));
                 }
-                if !row.spec.unit.is_empty() {
-                    group = group.child(
-                        div()
-                            .text_small()
-                            .text_color(theme.text_muted)
-                            .child(row.spec.unit.clone()),
-                    );
+                if let Some(after) = unit.as_ref().and_then(|(_, after)| unit_part(after)) {
+                    group = group.child(after);
                 }
                 if kind == SettingKind::Path {
                     let browse = self.handle(&format!("browse:{key}"), cx);
@@ -1011,7 +1020,7 @@ impl SettingsView {
         );
         let at = crate::settings::slider_at(&row.spec, value);
         let (min, max) = row.spec.constraints.integer_range.unwrap_or((0, 0));
-        let written = |value: i64| row.spec.written(value);
+        let written = |value: i64| row.spec.written(value).say();
         let said = written(value);
         // The value's room is the longest end's, its figures all as wide
         // (tabular): the knob's value changing moves nothing.
@@ -1152,7 +1161,7 @@ impl SettingsView {
             // chosen (`SettingConstraints::unavailable`).
             frame = frame.child(match row.spec.unavailable_why(&choice) {
                 Some(why) => {
-                    let why: SharedString = why.to_owned().into();
+                    let why: SharedString = why.say().into();
                     let tip = why.clone();
                     segment
                         .opacity(0.45)
@@ -1197,7 +1206,7 @@ impl SettingsView {
                 controls::dropdown_with(
                     format!("choice-{key}"),
                     picture,
-                    row.spec.choice_shown(&row.value),
+                    row.spec.choice_shown(&row.value).say(),
                     focus,
                     theme,
                 )
@@ -1238,7 +1247,7 @@ impl SettingsView {
             let part = size_part(&key);
             for choice in row.spec.constraints.choices.clone() {
                 let selected = choice == row.value;
-                let label = row.spec.choice_shown(&choice);
+                let label = row.spec.choice_shown(&choice).say();
                 // A text size's choice written at the size it gives, in its
                 // part's font, its row as tall as it needs, the labels on
                 // one edge.
@@ -1257,7 +1266,7 @@ impl SettingsView {
                 let key = key.clone();
                 // One that does nothing here is offered dimmed with why,
                 // never chosen (`SettingConstraints::unavailable`).
-                let why = row.spec.unavailable_why(&choice).map(str::to_owned);
+                let why = row.spec.unavailable_why(&choice).map(Words::say);
                 let line =
                     controls::dropdown_row(format!("choice-{key}-{choice}"), selected, theme)
                         .when(picture.is_some(), |d| d.min_h(sized(PICTURED_ROW)))
@@ -1530,12 +1539,7 @@ impl SettingsView {
         self.row_items.insert(key.clone(), item);
         let error = self.errors.get(&key).cloned();
         let mut texts = self
-            .described(
-                row.spec.title.say(),
-                &row.spec.description.say(),
-                &key,
-                theme,
-            )
+            .described(row.spec.title.say(), &row.spec, &key, theme)
             // Beneath the switch it is under.
             .when(!row.spec.under.is_empty(), |d| d.pl(sized(24.)));
         if row.spec.restart_required {
@@ -1562,11 +1566,9 @@ impl SettingsView {
                     "warning",
                     theme.warning,
                     13.,
-                    // Transitional: why arrives said
-                    // (`Unavailable::why`, ADR-139).
                     words!(
                         settings_does_nothing = "Does nothing here. { $why }.",
-                        why = why,
+                        why = why.clone(),
                         note = "Under a setting whose value does nothing on this system: why is the reason, a sentence without its full stop (X11's window manager keeps its frame)."
                     )
                     .say(),
@@ -1616,35 +1618,37 @@ impl SettingsView {
         }
     }
 
-    /// A setting's title and the first sentence of its description: the
-    /// whole description is the sentence's tooltip, and what the control's
-    /// description says to a screen reader (ADR-072).
+    /// A setting's title and the first sentence of its description
+    /// (`SettingSpec::description`): what follows it (`more`) is the
+    /// sentence's tooltip, under it as its own paragraph, and both are what
+    /// the control's description says to a screen reader (ADR-072).
     fn described(
         &self,
         title: impl Into<SharedString>,
-        description: &str,
+        spec: &SettingSpec,
         key: &str,
         theme: &Theme,
     ) -> gpui::Div {
-        let (shown, more) = crate::settings::first_sentence(description);
-        let full: SharedString = description.to_owned().into();
+        let shown = spec.description.say();
+        let whole: Option<SharedString> =
+            spec.more.as_ref().map(|_| whole_description(spec).into());
         Self::texts(title, "", theme).when(!shown.is_empty(), |d| {
             d.child(
                 div()
                     .id(SharedString::from(format!("description-{key}")))
                     .text_body()
                     .text_color(theme.text_muted)
-                    .child(shown.to_owned())
-                    .when(more, |d| {
-                        d.tooltip(move |_, cx| crate::toolbar::tooltip(full.clone(), cx))
+                    .child(shown)
+                    .when_some(whole, |d, whole| {
+                        d.tooltip(move |_, cx| crate::toolbar::tooltip(whole.clone(), cx))
                     }),
             )
         })
     }
 
     /// Why a change was refused, under the texts of its row.
-    fn error_line(error: String, theme: &Theme) -> gpui::Div {
-        controls::noted("warning", theme.error, 13., error)
+    fn error_line(error: Words, theme: &Theme) -> gpui::Div {
+        controls::noted("warning", theme.error, 13., error.say())
             .text_body()
             .text_color(theme.error)
     }
@@ -1674,7 +1678,7 @@ impl SettingsView {
         } else {
             words!(
                 settings_restore_default = "Restore the default: { $default }",
-                default = choice_shown(&row.spec, &row.default_text),
+                default = row.spec.choice_shown(&row.default_text),
                 note =
                     "The tooltip of a setting's revert button: default is the value it gives back."
             )
@@ -1743,12 +1747,7 @@ impl SettingsView {
         for cell in cells {
             self.row_items.insert(cell.spec.key.clone(), item);
         }
-        let mut texts = self.described(
-            title.to_owned(),
-            &first.spec.description.say(),
-            &first.spec.key,
-            theme,
-        );
+        let mut texts = self.described(title.to_owned(), &first.spec, &first.spec.key, theme);
         for cell in cells {
             if let Some(error) = self.errors.get(&cell.spec.key).cloned() {
                 texts = texts.child(Self::error_line(error, theme));

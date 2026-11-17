@@ -126,7 +126,7 @@ pub struct Deleting {
     /// Where the server keeps every row deleted, when one does and all are
     /// there (a cloud's own trash, ADR-086): what the question says
     /// rather than that they are gone for good.
-    kept_in: Option<String>,
+    kept_in: Option<Words>,
     scroll: UniformListScrollHandle,
     cancel: CancelToken,
 }
@@ -167,7 +167,7 @@ impl Deleting {
     fn of(
         plan: &Plan,
         remotes: Vec<(PathBuf, skwir_core::Location)>,
-        kept_by: &[(PathBuf, String)],
+        kept_by: &[(PathBuf, Words)],
         cancel: CancelToken,
     ) -> (Self, Vec<(usize, PathBuf)>) {
         let home = skwir_core::os_path::home();
@@ -214,18 +214,20 @@ impl Deleting {
             });
             paths.push((at, path));
         }
-        // One trash of a server keeps them all, or they are said gone.
-        let kept: Vec<Option<&String>> = paths
+        // One trash of a server keeps them all, or they are said gone: the
+        // server's by where it is mounted.
+        let kept: Vec<Option<usize>> = paths
             .iter()
             .map(|(_, path)| {
                 kept_by
                     .iter()
-                    .find(|(point, _)| path.starts_with(point))
-                    .map(|(_, trash)| trash)
+                    .position(|(point, _)| path.starts_with(point))
             })
             .collect();
         let kept_in = match kept.first() {
-            Some(Some(first)) if kept.iter().all(|k| *k == Some(*first)) => Some((*first).clone()),
+            Some(Some(first)) if kept.iter().all(|k| *k == Some(*first)) => {
+                Some(kept_by[*first].1.clone())
+            }
             _ => None,
         };
         let mut known = rows.iter().filter(|r| !r.trashed && !r.other);
@@ -261,7 +263,7 @@ impl Deleting {
     /// how many, the plan's other steps left out (what a trash command
     /// moves to the trash beside what it deletes on a remote); then what
     /// the plan's maker could tell of what stays.
-    fn question(&self, note: Option<&str>) -> Words {
+    fn question(&self, note: Option<&Words>) -> Words {
         let deleted: Vec<&Row> = self.rows.iter().filter(|r| !r.other).collect();
         let rows = if deleted.is_empty() {
             self.rows.iter().collect()
@@ -321,12 +323,11 @@ impl Deleting {
                 note = "Asked before deleting items for good."
             ),
         };
-        // Transitional: a plan's note is said where it is made (ADR-139).
         match note {
             Some(note) => words!(
                 deleting_noted = "{ $asked } { $then }.",
                 asked = asked,
-                then = note.to_owned(),
+                then = note.clone(),
                 note = "The question asked before deleting, then what the action could tell of \
                         what stays (1 of these has other names: its file stays)."
             ),
@@ -744,7 +745,7 @@ impl Shell {
     pub fn confirm_deleting(&mut self, plan: Plan, window: &mut Window, cx: &mut Context<Self>) {
         let cancel = self.app.lifetime().child();
         let known = self.app.registry.remotes.all();
-        let trashes: Vec<(PathBuf, String)> = known
+        let trashes: Vec<(PathBuf, Words)> = known
             .iter()
             .filter_map(|known| Some((known.point.clone(), known.trash.clone()?)))
             .collect();
@@ -753,7 +754,7 @@ impl Shell {
             .filter_map(|known| Some((known.point, known.address?)))
             .collect();
         let (listed, paths) = Deleting::of(&plan, remotes, &trashes, cancel.clone());
-        let question = listed.question(plan.note.as_deref());
+        let question = listed.question(plan.note.as_ref());
         let id = plan.id;
         self.open_confirm(question, Confirmed::Apply(plan), window, cx);
         if let Some(confirm) = self.confirm.as_mut() {
@@ -1043,6 +1044,7 @@ mod tests {
 
     use skwir_core::companions::{Companion, Companions};
     use skwir_core::op::{Delete, EntryRef, Operation, Trash};
+    use skwir_core::words::Words;
     use skwir_core::{CancelToken, FileId, Plan};
 
     /// A remote's folder is said by its address, not its mount's path
@@ -1119,7 +1121,9 @@ mod tests {
         let (listed, _) = Deleting::of(&several, Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed
-                .question(Some("1 of these has other names: its file stays"))
+                .question(Some(&Words::as_written(
+                    "1 of these has other names: its file stays"
+                )))
                 .english(),
             "Delete 2 items permanently? This cannot be undone. \
              1 of these has other names: its file stays."
@@ -1149,10 +1153,10 @@ mod tests {
         let (listed, _) = Deleting::of(&mixed, Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed
-                .question(Some(
+                .question(Some(&Words::as_written(
                     "It is in a network folder, which keeps no trash; the other item goes to the \
                      trash"
-                ))
+                )))
                 .english(),
             "Delete “on the server.txt” permanently? This cannot be undone. \
              It is in a network folder, which keeps no trash; the other item goes to the trash."
@@ -1165,7 +1169,7 @@ mod tests {
     #[test]
     fn a_deletion_kept_in_a_servers_trash_says_where_it_goes() {
         let dir = PathBuf::from("/run/user/1/skwir/remote/rclone rclone:%2F%2Fphotos%2F");
-        let trashes = vec![(dir.clone(), "Google Drive's trash".to_owned())];
+        let trashes = vec![(dir.clone(), Words::as_written("Google Drive's trash"))];
         let one = plan(vec![dir.join("it's here.jpg")]);
         let (listed, _) = Deleting::of(&one, Vec::new(), &trashes, CancelToken::new());
         assert_eq!(

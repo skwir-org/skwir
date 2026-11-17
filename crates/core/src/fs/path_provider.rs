@@ -381,7 +381,7 @@ impl PathLocation {
                 if !ctx.cancel.is_cancelled()
                     && let Err(error) = result
                 {
-                    tx.send(ListingEvent::Error(crate::ListingError::of(&error)));
+                    tx.send(ListingEvent::Error(crate::ListingError::of(error)));
                 }
             },
         );
@@ -706,14 +706,11 @@ impl Shared {
         if !ids.is_empty() {
             self.send_as_now(ListingEvent::Removed(ids));
         }
-        // Said once, as the window shows it (until a listing's error
-        // holds words).
         self.tx.send(ListingEvent::Error(crate::ListingError::new(
             crate::words!(
                 fs_folder_gone = "This folder was deleted or is no longer available.",
                 note = "Shown in place of a folder's files: the folder shown went away (deleted, or its drive or server let go)."
-            )
-            .say(),
+            ),
         )));
     }
 

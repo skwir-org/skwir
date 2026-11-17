@@ -68,36 +68,29 @@ pub enum Caption {
 /// tiles read `CAPTIONS`.
 pub struct CaptionSpec {
     pub caption: Caption,
-    /// Whether tiles say it (`ui.grid_caption_*`), off until chosen.
+    /// Whether tiles say it (`ui.grid_caption_*`), off until chosen. What
+    /// it is called and what Settings says of it are `label_words`,
+    /// `title_words` and `description_words`.
     pub setting: &'static str,
-    /// What the View menu calls it.
-    pub label: &'static str,
-    /// What Settings calls it.
-    pub title: &'static str,
-    pub description: &'static str,
 }
 
 impl CaptionSpec {
     /// The criterion that sorts by what it says: the View menu lists the
     /// captions in the sort's order and groups.
-    pub fn sorts_by(&self) -> Option<skwir_core::SortKey> {
+    pub fn sorts_by(&self) -> skwir_core::SortKey {
         match self.caption {
-            Caption::Tags => Some(skwir_core::SortKey::Tags),
+            Caption::Tags => skwir_core::SortKey::Tags,
             Caption::Detail(detail) => detail.column().sort,
         }
     }
 
     /// What the View menu calls it: the title of the criterion it says
-    /// (`SortKey::title_words`), `label` as words.
+    /// (`SortKey::title_words`).
     pub fn label_words(&self) -> Words {
-        self.sorts_by().map_or_else(
-            || Words::as_written(self.label),
-            skwir_core::SortKey::title_words,
-        )
+        self.sorts_by().title_words()
     }
 
-    /// What Settings calls it, as words (`title` until every caller says
-    /// words).
+    /// What Settings calls it.
     pub fn title_words(&self) -> Words {
         match self.caption {
             Caption::Tags => words!(
@@ -163,12 +156,12 @@ impl CaptionSpec {
         }
     }
 
-    /// What Settings says of it, as words (`description` until every
-    /// caller says words).
+    /// What Settings says of it.
     pub fn description_words(&self) -> Words {
         match self.caption {
             Caption::Tags => words!(
-                grid_caption_tags_description = "Under each name in the grid, a line of its tags, as many as fit, then dots. The picture is then left to itself.",
+                grid_caption_tags_description =
+                    "Under each name in the grid, a line of its tags, as many as fit, then dots.",
                 note = "A setting's description: whether each tile of the grid says this under its name."
             ),
             Caption::Detail(Detail::Folder) => words!(
@@ -233,6 +226,18 @@ impl CaptionSpec {
             ),
         }
     }
+
+    /// What Settings says of it after its description, in its tooltip,
+    /// where it says more.
+    pub fn more_words(&self) -> Option<Words> {
+        match self.caption {
+            Caption::Tags => Some(words!(
+                grid_caption_tags_more = "The picture is then left to itself.",
+                note = "What the grid's tags caption setting says after its description, in its tooltip: the tags are not drawn over the picture."
+            )),
+            Caption::Detail(_) => None,
+        }
+    }
 }
 
 /// The captions in the order they stand under a name: the tags, then the
@@ -241,107 +246,62 @@ pub const CAPTIONS: [CaptionSpec; 1 + crate::views::list::DETAILS] = [
     CaptionSpec {
         caption: Caption::Tags,
         setting: "ui.grid_caption_tags",
-        label: "Tags",
-        title: "Tags under names",
-        description: "Under each name in the grid, a line of its tags, as many as fit, then dots. The picture is then left to itself.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Folder),
         setting: "ui.grid_caption_folder",
-        label: "Folder",
-        title: "Folder under names",
-        description: "Under each name in the grid, the folder it is in, where files from many folders are listed: a search, a tag, the shelf, Recent.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Deleted),
         setting: "ui.grid_caption_deleted",
-        label: "Deleted",
-        title: "Deletion under names",
-        description: "Under each name in the grid, when it was put in the trash, where the trash's files are listed.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Size),
         setting: "ui.grid_caption_size",
-        label: "Size",
-        title: "Size under names",
-        description: "Under each name in the grid, the size of the file, or how many files a place holds.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Dimensions),
         setting: "ui.grid_caption_dimensions",
-        label: "Dimensions",
-        title: "Dimensions under names",
-        description: "Under each name in the grid, a picture's size in pixels, where a plugin reads it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Duration),
         setting: "ui.grid_caption_duration",
-        label: "Duration",
-        title: "Duration under names",
-        description: "Under each name in the grid, how long a sound or a film lasts, where a plugin reads it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Modified),
         setting: "ui.grid_caption_modified",
-        label: "Modified",
-        title: "Modification under names",
-        description: "Under each name in the grid, when it last changed.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Created),
         setting: "ui.grid_caption_created",
-        label: "Created",
-        title: "Creation under names",
-        description: "Under each name in the grid, when it was made, where the system keeps it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Accessed),
         setting: "ui.grid_caption_accessed",
-        label: "Accessed",
-        title: "Last access under names",
-        description: "Under each name in the grid, when it was last read, as the system keeps it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Taken),
         setting: "ui.grid_caption_taken",
-        label: "Taken",
-        title: "When taken under names",
-        description: "Under each name in the grid, when a picture or a film was taken, by its camera's clock, where a plugin reads it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Type),
         setting: "ui.grid_caption_type",
-        label: "Type",
-        title: "Type under names",
-        description: "Under each name in the grid, the kind of file, such as PDF document.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Kind),
         setting: "ui.grid_caption_kind",
-        label: "Kind",
-        title: "Kind under names",
-        description: "Under each name in the grid, what kind of file it is, such as Image or Document.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Owner),
         setting: "ui.grid_caption_owner",
-        label: "Owner",
-        title: "Owner under names",
-        description: "Under each name in the grid, who owns it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Vcs),
         setting: "ui.grid_caption_vcs",
-        label: "Git",
-        title: "Git state under names",
-        description: "Under each name in the grid, what Git says of it in a repository: changed, staged, new, in conflict or ignored.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Rating),
         setting: "ui.grid_caption_rating",
-        label: "Rating",
-        title: "Rating under names",
-        description: "Under each name in the grid, the stars it was given, where its notes are kept.",
     },
 ];
 
@@ -1704,7 +1664,7 @@ mod tests {
         let columns: Vec<Detail> = COLUMNS.iter().map(|column| column.detail).collect();
         assert_eq!(details, columns);
         for (spec, column) in CAPTIONS[1..].iter().zip(&COLUMNS) {
-            assert_eq!(spec.label, column.label);
+            assert_eq!(spec.sorts_by(), column.sort, "called as the column is");
             assert_eq!(spec.setting, format!("ui.grid_caption_{}", column.key));
         }
     }

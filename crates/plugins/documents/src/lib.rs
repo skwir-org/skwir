@@ -198,8 +198,14 @@ impl Plugin for PreviewPlugin {
                     documents_pdfium_library = "PDFium library",
                     note = "A setting's title: where the PDFium library is."
                 ),
-                words!(
-                    documents_pdfium_library_description = "Path to the PDFium shared library. Leave empty to search the usual locations."
+                (
+                    words!(
+                        documents_pdfium_library_description = "Path to the PDFium shared library."
+                    ),
+                    words!(
+                        documents_pdfium_library_description_more = "Leave empty to search the usual locations.",
+                        note = "What a setting's description says after its first sentence, in its tooltip."
+                    ),
                 ),
                 "",
             )
@@ -212,9 +218,15 @@ impl Plugin for PreviewPlugin {
                 documents_text_documents = "Text documents",
                 note = "A setting's title: how Word, OpenDocument and RTF documents are shown in the preview."
             ),
-            words!(
-                documents_text_documents_description = "How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
-                note = "Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names."
+            (
+                words!(
+                    documents_text_documents_description = "How Word, OpenDocument and RTF documents are shown.",
+                    note = "Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names."
+                ),
+                words!(
+                    documents_text_documents_description_more = "Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
+                    note = "Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names."
+                ),
             ),
             "reading",
             vec![
@@ -446,20 +458,16 @@ impl Reading {
             .map(|b| b.text.split_whitespace().count())
             .sum();
         let facts = about(held, cancel);
-        let notice = [
-            Some(
-                words!(
-                    documents_read_by_pandoc = "Read by Pandoc · layout, headers and comments are not shown",
-                    note = "A note under a text document's preview read by Pandoc, a program."
-                )
-                .say(),
-            ),
+        let notices = [
+            Some(words!(
+                documents_read_by_pandoc = "Read by Pandoc · layout, headers and comments are not shown",
+                note = "A note under a text document's preview read by Pandoc, a program."
+            )),
             cut.then(|| {
                 words!(
                     documents_start_only = "Only the start is shown",
                     note = "A note under a document's preview: Pandoc's reading of it was longer than the preview shows."
                 )
-                .say()
             }),
             page.truncated.then(|| {
                 words!(
@@ -469,14 +477,13 @@ impl Reading {
                     count = bounds.blocks(),
                     note = "A note under a document's preview: only its first paragraphs, headings, tables and pictures (blocks) are shown."
                 )
-                .say()
             }),
         ];
         Ok(Inspection {
             kind: InspectionKind::Markdown,
             whole_available: (cut || page.truncated) && bounds.cut(),
             blocks: page.blocks,
-            notice: notice.into_iter().flatten().collect::<Vec<_>>().join(" · "),
+            notices: notices.into_iter().flatten().collect(),
             details: details(&facts, words),
             ..Inspection::default()
         })
@@ -565,54 +572,44 @@ fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::in
             words!(
                 documents_detail_title = "Title",
                 note = "A label in the preview's Properties: the title the document gives itself."
-            )
-            .say()
-            .as_str(),
+            ),
             fact("Title"),
         ),
         (
             words!(
                 documents_detail_author = "Author",
                 note = "A label in the preview's Properties: who wrote the document, as it says."
-            )
-            .say()
-            .as_str(),
+            ),
             fact("Author"),
         ),
         (
             words!(
                 documents_detail_subject = "Subject",
-                note = "A label in the preview's Properties: the subject the document gives itself."
-            )
-            .say()
-            .as_str(),
+                note =
+                    "A label in the preview's Properties: the subject the document gives itself."
+            ),
             fact("Subject"),
         ),
         (
             words!(
                 documents_detail_keywords = "Keywords",
-                note = "A label in the preview's Properties: the keywords the document gives itself."
-            )
-            .say()
-            .as_str(),
+                note =
+                    "A label in the preview's Properties: the keywords the document gives itself."
+            ),
             fact("Keywords"),
         ),
         (
             words!(
                 documents_detail_pages = "Pages",
                 note = "A label in the preview's Properties: how many pages the document had when it was saved."
-            )
-            .say()
-            .as_str(),
+            ),
             fact("Pages"),
         ),
         (
             words!(
                 documents_detail_words = "Words",
                 note = "A label in the preview's Properties: how many words the document holds."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(words),
         ),
         // `LibreOffice/24.2.1.2$Linux_X86_64 LibreOffice_project/…`: the
@@ -621,9 +618,7 @@ fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::in
             words!(
                 documents_detail_application = "Application",
                 note = "A label in the preview's Properties: the program that saved the document, with its version."
-            )
-            .say()
-            .as_str(),
+            ),
             fact("Application")
                 .map(|app| app.split('$').next().unwrap_or_default().replace('/', " ")),
         ),
@@ -634,20 +629,16 @@ fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::in
 /// `[` and `]` going to the others.
 fn shown(read: blocks::Read) -> Inspection {
     let paged = read.parts > 1;
-    let notice = [
-        Some(
-            words!(
-                documents_reading_mode = "Reading mode · layout, headers and comments are not shown",
-                note = "A note under a Word or OpenDocument file's preview, read by skwir as text that fits the panel."
-            )
-            .say(),
-        ),
+    let notices = [
+        Some(words!(
+            documents_reading_mode = "Reading mode · layout, headers and comments are not shown",
+            note = "A note under a Word or OpenDocument file's preview, read by skwir as text that fits the panel."
+        )),
         paged.then(|| {
             words!(
                 documents_parts_keys = "[ and ] move through its parts",
                 note = "A note under a long document's preview, shown a part at a time: the [ and ] keys show the part before and the part after."
             )
-            .say()
         }),
         read.truncated.then(|| {
             words!(
@@ -657,7 +648,6 @@ fn shown(read: blocks::Read) -> Inspection {
                 count = limits::BLOCKS,
                 note = "A note under a document's preview: only the first paragraphs, headings, tables and pictures (blocks) of the part shown are shown."
             )
-            .say()
         }),
     ];
     Inspection {
@@ -669,15 +659,14 @@ fn shown(read: blocks::Read) -> Inspection {
                 parts = read.parts,
                 note = "The title of a long document's preview, shown a part at a time: which part, of how many."
             )
-            .say()
         } else {
-            String::new()
+            skwir_core::words::Words::default()
         },
         blocks: read.blocks,
         previous: read.part.checked_sub(1),
         next: Some(read.part + 1).filter(|next| *next < read.parts),
         position: read.part,
-        notice: notice.into_iter().flatten().collect::<Vec<_>>().join(" · "),
+        notices: notices.into_iter().flatten().collect(),
         details: details(&read.details, read.words),
         ..Inspection::default()
     }
@@ -736,7 +725,7 @@ impl PreviewProvider for Reading {
         let held = req.held()?;
         let bytes = match self.engine(&held) {
             Some(Engine::Word | Engine::OpenDocument) => {
-                package::Package::open(&held, cancel)?.read(key, "Embedded image", cancel)?
+                package::Package::open(&held, cancel)?.read(key, package::Part::Picture, cancel)?
             }
             Some(Engine::Pandoc(tool, format)) => {
                 let name =
@@ -756,7 +745,7 @@ impl PreviewProvider for Reading {
                         let Ok(bytes) = inspection::read_bounded(
                             &file,
                             limits::BINARY_INPUT,
-                            "Embedded image",
+                            inspection::image_too_large(limits::BINARY_INPUT),
                             cancel,
                         ) else {
                             continue;

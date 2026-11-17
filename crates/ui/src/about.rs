@@ -126,7 +126,7 @@ fn graphics(specs: &gpui::GpuSpecs) -> Words {
 fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes) -> Words {
     use crate::sizes::Part;
     let body = theme.sizes.of(Part::Interface);
-    let source = desktop.from.as_deref().map_or_else(
+    let source = desktop.from.as_ref().map_or_else(
         || {
             words!(
                 about_text_own_size = "skwir's own size",
@@ -136,7 +136,7 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
         |from| {
             words!(
                 about_text_from = "from { $desktop }",
-                desktop = from,
+                desktop = from.words(),
                 note = "In About, where the text's size was read: desktop is where (GTK, Plasma)."
             )
         },

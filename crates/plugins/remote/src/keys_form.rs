@@ -13,7 +13,7 @@ use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::Words;
 
 use crate::address::Address;
 use crate::connector::Ask;
@@ -76,7 +76,7 @@ fn form(top: &Address, offered: &[(String, Key)], ssh_dir: &std::path::Path, new
     let form = Form::new(
         words!(
             remote_keys_form_title = "Set Up Key Login on { $server }",
-            server = Name(top.label()),
+            server = crate::address::named(&top.label()),
             note = "server: the login and server a key is set up for (me@nas)."
         ),
         words!(remote_keys_form_accept = "Set Up"),
@@ -189,18 +189,18 @@ pub fn set_up(
     };
     let ask: Arc<dyn Ask> = Arc::new(crate::WindowAsk { app: app.weak() });
     let added = keys::install(top, std::slice::from_ref(&key), &with.ssh, &ask, cancel)?;
-    let label = top.label();
+    let label = crate::address::named(&top.label());
     if keys::logs_in(top, &with.ssh, Some(&ask), cancel) {
         let said = if added == 0 {
             words!(
                 remote_keys_had_it = "{ $server } had the key already: ssh logs in with it",
-                server = Name(label),
+                server = label,
                 note = "server: the login and server (me@nas)."
             )
         } else {
             words!(
                 remote_keys_set_up = "Key login is set up on { $server }",
-                server = Name(label),
+                server = label,
                 note = "server: the login and server (me@nas)."
             )
         };
@@ -210,7 +210,7 @@ pub fn set_up(
             NotifyLevel::Warning,
             words!(
                 remote_keys_not_taken = "The key is on { $server }, but ssh does not log in with it: the server may not take keys",
-                server = Name(label),
+                server = label,
                 note = "server: the login and server (me@nas)."
             ),
         );

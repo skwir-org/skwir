@@ -71,6 +71,10 @@ new user is not met with all of them.
   the whole description is its tooltip and what a screen reader hears.
   The first sentence stands alone, of at most 30 words (checked by the
   same test).
+  - *Amended 2026-11-17 (ADR-139):* the first sentence is data, not cut
+    from said text: a setting's `description` is that sentence, a message
+    of its own, and the rest is `more`, another. A translation then has
+    its own first sentence, and nothing splits words in code.
 
 Not done: a global Simple/Advanced switch. Links, the guide and toasts
 name settings that a mode would hide; a value changed in one mode keeps

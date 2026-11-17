@@ -234,8 +234,7 @@ pub fn background_button(
         skwir_core::words!(
             map_background = "Map background",
             note = "Pointing at the button of a map that chooses what is drawn under its places (streets, a satellite's pictures)."
-        )
-        .say(),
+        ),
         command,
     )
         .args(serde_json::json!({ "kind": kind }))
@@ -276,8 +275,7 @@ pub fn background_rows(
             skwir_core::words!(
                 map_manage_backgrounds_tip = "Manage backgrounds",
                 note = "Pointing at the last row of the map background's choices, which opens their settings."
-            )
-            .say(),
+            ),
             "ui.settings",
         )
         .args(serde_json::json!({ "key": backgrounds.setting }))
@@ -285,8 +283,7 @@ pub fn background_rows(
             skwir_core::words!(
                 map_manage_backgrounds = "Manage backgrounds…",
                 note = "The last row of the map background's choices, which opens their settings."
-            )
-            .say(),
+            ),
         )
         .menu()
         .render(shell, cx),
@@ -303,17 +300,17 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("map-zoom-out", "minus", label::zoom_out().say(), "out"),
+        step("map-zoom-out", "minus", label::zoom_out(), "out"),
     ));
     bar.push(Item::button(
         Slot::View,
         1,
-        step("map-zoom-in", "plus", label::zoom_in().say(), "in"),
+        step("map-zoom-in", "plus", label::zoom_in(), "in"),
     ));
     bar.push(Item::button(
         Slot::View,
         2,
-        step("map-fit", "fit", label::fit().say(), "reset").active(fitted),
+        step("map-fit", "fit", label::fit(), "reset").active(fitted),
     ));
     let backgrounds = shell.map_tiles.borrow_mut().backgrounds();
     if let Some(backgrounds) = backgrounds {
@@ -348,8 +345,7 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
         skwir_core::words!(
             map_open_external = "Open in Maps",
             note = "A map preview's menu row: show the place in the desktop's maps application."
-        )
-        .say(),
+        ),
         "ui.map_open",
     )));
 }

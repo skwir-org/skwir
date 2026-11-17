@@ -363,15 +363,12 @@ fn listing(
                         note = "Why each finder of servers nearby found none, one after the other."
                     )
                 });
-                // Said for the window's banner, which takes text.
                 let said = words!(
                     remote_nearby_none_answers = "Servers nearby are found by Avahi or wsdd, and neither answers here ({ $why })",
                     why = why.unwrap_or_default(),
                     note = "why: what each of them said."
                 );
-                sink.send(ListingEvent::Error(skwir_core::ListingError::new(
-                    said.say(),
-                )));
+                sink.send(ListingEvent::Error(skwir_core::ListingError::new(said)));
             }
             sink.send(ListingEvent::Complete);
         }

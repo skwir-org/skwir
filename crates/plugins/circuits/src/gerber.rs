@@ -934,7 +934,7 @@ impl Repeat {
 /// What a Gerber file holds, drawn.
 pub struct Drawn {
     pub svg: Option<String>,
-    pub details: Vec<(String, String)>,
+    pub details: Vec<(skwir_core::words::Words, String)>,
     pub left_out: bool,
 }
 
@@ -1163,8 +1163,7 @@ pub fn draw(text: &str, name: &str, cancel: &skwir_core::CancelToken) -> anyhow:
             words!(
                 circuits_detail_layer = "Layer",
                 note = "A label in a Gerber file's Properties: which of the board's layers it is (Top copper, Board outline)."
-            )
-            .say(),
+            ),
             layer.name.clone(),
         ));
     }
@@ -1176,8 +1175,7 @@ pub fn draw(text: &str, name: &str, cancel: &skwir_core::CancelToken) -> anyhow:
             words!(
                 circuits_detail_created = "Created",
                 note = "A label in a Gerber file's Properties: when it was made, as the file says."
-            )
-            .say(),
+            ),
             created,
         ));
     }
@@ -1186,8 +1184,7 @@ pub fn draw(text: &str, name: &str, cancel: &skwir_core::CancelToken) -> anyhow:
             words!(
                 circuits_detail_size = "Size",
                 note = "A label in a Gerber file's Properties: the width and height of what the layer draws."
-            )
-            .say(),
+            ),
             crate::millimetres_by(
                 (image.bounds.width() * 100.).round() / 100.,
                 (image.bounds.height() * 100.).round() / 100.,
@@ -1198,8 +1195,7 @@ pub fn draw(text: &str, name: &str, cancel: &skwir_core::CancelToken) -> anyhow:
         words!(
             circuits_detail_apertures = "Apertures",
             note = "A label in a Gerber file's Properties: how many apertures (the shapes its lines are drawn and its pads flashed with) it defines."
-        )
-        .say(),
+        ),
         apertures.len().to_string(),
     ));
     // An outline is thin lines only: at least a quarter of a percent of
@@ -1422,6 +1418,15 @@ mod tests {
     use super::*;
     use skwir_core::CancelToken;
 
+    /// What was drawn says of itself, its labels in English.
+    fn english(drawn: &Drawn) -> Vec<(String, String)> {
+        drawn
+            .details
+            .iter()
+            .map(|(label, value)| (label.english(), value.clone()))
+            .collect()
+    }
+
     #[test]
     fn a_kicad_layer_with_a_macro_a_region_and_clear_polarity() {
         let text = "%TF.GenerationSoftware,KiCad,Pcbnew,9.0*%\n%TF.FileFunction,Copper,L1,Top*%\n%FSLAX46Y46*%\n%MOMM*%\n%LPD*%\n\
@@ -1431,14 +1436,14 @@ D10*\nX0Y0D02*\nX10000000Y0D01*\nD11*\nX5000000Y5000000D03*\n\
 G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y20000000D01*\nX0Y10000000D01*\nG37*\n\
 %LPC*%\nD10*\nX5000000Y15000000D03*\nM02*\n";
         let drawn = draw(text, "board-F_Cu.gbr", &CancelToken::new()).unwrap();
-        let svg = drawn.svg.unwrap();
+        let svg = drawn.svg.clone().unwrap();
         assert!(svg.contains("#c83434"), "top copper's colour: {svg}");
         assert!(
             svg.contains("#001023"),
             "the clear flash in the background's"
         );
         assert_eq!(
-            drawn.details,
+            english(&drawn),
             [
                 ("Layer".to_owned(), "Top copper (layer 1)".to_owned()),
                 ("Made with".to_owned(), "KiCad Pcbnew 9.0".to_owned()),
@@ -1538,16 +1543,15 @@ G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y200000
     fn a_step_and_repeat_and_a_single_quadrant_arc() {
         let text = "%FSLAX24Y24*%\n%MOIN*%\n%ADD10C,0.01*%\n%SRX3Y2I1.0J1.0*%\nD10*\nX0Y0D02*\nG74*\nG02X1000Y1000I1000J0D01*\n%SR*%\nM02*\n";
         let drawn = draw(text, "panel.gbr", &CancelToken::new()).unwrap();
-        let svg = drawn.svg.unwrap();
+        let svg = drawn.svg.clone().unwrap();
         assert_eq!(svg.matches("<g transform=").count(), 6);
         // Three columns an inch apart, the last arc an inch wide.
         assert!(
-            drawn
-                .details
+            english(&drawn)
                 .iter()
                 .any(|(l, v)| l == "Size" && v == "53.59 × 28.19 mm"),
             "{:?}",
-            drawn.details
+            english(&drawn)
         );
     }
 }

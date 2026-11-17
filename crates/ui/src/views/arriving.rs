@@ -52,8 +52,8 @@ pub fn words(arriving: &Arriving) -> String {
             note = "On a pill beside a file a copy brings into the folder: it is being copied, how far not known."
         )
         .say(),
-        Arrives::Moving(fraction) => crate::activity::percent(fraction),
-        Arrives::Landed => crate::activity::percent(1.),
+        Arrives::Moving(fraction) => crate::activity::percent_words(fraction).say(),
+        Arrives::Landed => crate::activity::percent_words(1.).say(),
     }
 }
 
@@ -86,8 +86,8 @@ pub fn said(arriving: &Arriving) -> String {
     .say()
 }
 
-fn percent_of(arriving: &Arriving) -> String {
-    crate::activity::percent(fraction(arriving))
+fn percent_of(arriving: &Arriving) -> skwir_core::words::Words {
+    crate::activity::percent_words(fraction(arriving))
 }
 
 /// The pill: Small, a count; the accent's fill under a share moving, the
@@ -180,7 +180,7 @@ fn tip(app: &skwir_core::App, arriving: &Arriving) -> String {
         .executor
         .transfer(arrival.plan)
         .and_then(|transfer| transfer.left)
-        .map(crate::format::time_left);
+        .map(|left| crate::format::time_left_words(left).say());
     let how = match arriving.state {
         _ if arriving.paused => words!(
             views_arriving_tip_paused = "paused",
@@ -203,7 +203,7 @@ fn tip(app: &skwir_core::App, arriving: &Arriving) -> String {
             note = "Pointing at a file a copy brings into the folder: a tool copies it with the others, how far not known."
         )
         .say(),
-        Arrives::Moving(_) => percent_of(arriving),
+        Arrives::Moving(_) => percent_of(arriving).say(),
         Arrives::Landed => words!(
             views_arriving_tip_landed = "in place",
             note = "Pointing at a file a copy brings into the folder: it has arrived."

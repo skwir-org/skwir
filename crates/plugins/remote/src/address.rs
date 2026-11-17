@@ -426,8 +426,9 @@ impl Address {
     /// port not its scheme's usual one is said (`nas:8080`), so two
     /// servers of one host are told apart. A device by GVfs's name for it
     /// (`Example Phone 0123 (MTP)`), where its volume's is not known
-    /// (`Remotes::label_of`).
-    pub fn label(&self) -> String {
+    /// (`Remotes::label_of`). Said where it is shown; in English where
+    /// another program reads it (a keyring's item, a mount's name).
+    pub fn label(&self) -> Words {
         if let Some(label) = self.device_label() {
             return label;
         }
@@ -437,35 +438,35 @@ impl Address {
             None => self.host.clone(),
         };
         match self.scheme {
-            Scheme::Smb | Scheme::Afp if !share.is_empty() => format!("{share} on {server}"),
+            Scheme::Smb | Scheme::Afp if !share.is_empty() => share_on(share, server),
             Scheme::Nfs if self.path != b"/" => {
                 let path = String::from_utf8_lossy(&self.path);
                 let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
-                format!("{name} on {server}")
+                share_on(name.to_owned(), server)
             }
-            Scheme::Rclone => self.host.clone(),
+            Scheme::Rclone => Words::as_written(self.host.clone()),
             // A bucket, and the AWS profile it is reached by.
             Scheme::S3 => match &self.user {
-                Some(profile) => format!("{} ({profile})", self.host),
-                None => self.host.clone(),
+                Some(profile) => words!(
+                    remote_bucket_label = "{ $bucket } ({ $profile })",
+                    bucket = self.host.clone(),
+                    profile = profile.clone(),
+                    note = "What an S3 bucket is called: bucket is its name, profile the AWS profile it is reached by (both as written)."
+                ),
+                None => Words::as_written(self.host.clone()),
             },
-            _ => match &self.user {
+            // A login and its server, as an address writes them.
+            _ => Words::as_written(match &self.user {
                 Some(user) => format!("{user}@{server}"),
                 None => server,
-            },
+            }),
         }
     }
 
     /// What a device's address says of it: its name with spaces, its
     /// protocol after.
-    fn device_label(&self) -> Option<String> {
-        let words = self.bare_host().replace('_', " ");
-        Some(match self.scheme {
-            Scheme::Mtp => format!("{words} (MTP)"),
-            Scheme::Gphoto2 => format!("{words} (camera)"),
-            Scheme::Afc => format!("{words} (iOS)"),
-            _ => return None,
-        })
+    fn device_label(&self) -> Option<Words> {
+        device_words(self.scheme, self.bare_host().replace('_', " "))
     }
 
     /// The address as a URI other programs read (`gio mount`): its path's
@@ -528,6 +529,55 @@ impl fmt::Display for Address {
             write!(f, ":{port}")?;
         }
         f.write_str(&skwir_core::location::escape(&self.path))
+    }
+}
+
+/// What a share (or an NFS export) of a server is called: `photos on nas`.
+fn share_on(share: String, server: String) -> Words {
+    words!(
+        remote_share_label = "{ $share } on { $server }",
+        share = share,
+        server = server,
+        note = "What a share of a server (SMB, AFP, an NFS export) is called in the sidebar and elsewhere: share is its name, server the server's (with its port where it is not the usual one), both as written."
+    )
+}
+
+/// What a device GVfs reads on this machine is called, its name `device`
+/// (as its address or GVfs says it) and what it is: `None` for a server's
+/// scheme.
+pub(crate) fn device_words(scheme: Scheme, device: String) -> Option<Words> {
+    Some(match scheme {
+        Scheme::Mtp => words!(
+            remote_gvfs_mtp_label = "{ $device } (MTP)",
+            device = device,
+            note = "What a phone GVfs reads over MTP is called: device is its name or serial."
+        ),
+        Scheme::Gphoto2 => words!(
+            remote_gvfs_camera_label = "{ $device } (camera)",
+            device = device,
+            note = "What a camera GVfs reads is called: device is its name or where it is \
+                    plugged in."
+        ),
+        Scheme::Afc => words!(
+            remote_gvfs_ios_label = "{ $device } (iOS)",
+            device = device,
+            note = "What an iPhone or iPad GVfs reads is called: device is its name or serial."
+        ),
+        _ => return None,
+    })
+}
+
+/// A server's or a mount's name (`Address::label`, a server's own) as an
+/// argument of a sentence: quoted as a name where it is as written (the
+/// user's, a login and its server), else its words (`photos on nas`),
+/// said in the reader's language as they are, never said here first.
+pub(crate) fn named(label: &Words) -> skwir_core::words::Arg {
+    if label.message_of().is_some() {
+        skwir_core::words::Arg::Words(Box::new(label.clone()))
+    } else {
+        // As written: its text is the user's or the system's, in no
+        // language.
+        skwir_core::words::Arg::Name(label.english())
     }
 }
 
@@ -799,7 +849,7 @@ mod tests {
         );
         assert_eq!(a.first_part(), b"photos");
         assert_eq!(a.top().path, b"/photos/");
-        assert_eq!(a.label(), "photos on nas");
+        assert_eq!(a.label().english(), "photos on nas");
         // An NFS export may be of several parts: the server says which.
         let nfs = Address::parse("nfs://nas/srv/photos").unwrap();
         assert_eq!(nfs.top().path, b"/srv/photos/");
@@ -813,7 +863,7 @@ mod tests {
         assert_eq!(dav.top().below(&below), Some(b"It's 2024".as_slice()));
         assert_eq!(Address::parse("dav://nas:8080/").unwrap().top().path, b"/");
         // A port not the usual one is said; the usual one is not.
-        let label = |text: &str| Address::parse(text).unwrap().label();
+        let label = |text: &str| Address::parse(text).unwrap().label().english();
         assert_eq!(label("dav://127.0.0.1:8080/"), "127.0.0.1:8080");
         assert_eq!(label("dav://127.0.0.1:80/"), "127.0.0.1");
         assert_eq!(label("smb://nas:4450/photos"), "photos on nas:4450");
@@ -882,7 +932,7 @@ mod tests {
             (Scheme::Mtp, "Example_Phone_0123", None)
         );
         assert_eq!(phone.to_string(), "mtp://Example_Phone_0123/");
-        assert_eq!(phone.label(), "Example Phone 0123 (MTP)");
+        assert_eq!(phone.label().english(), "Example Phone 0123 (MTP)");
         assert_eq!(phone.scheme.device(), Some(Device::Phone));
         assert_eq!(Scheme::Sftp.device(), None);
         let camera = Address::parse("gphoto2://[usb:001,004]/DCIM/It's 100").unwrap();
@@ -890,7 +940,7 @@ mod tests {
         assert_eq!(camera.scheme.device(), Some(Device::Camera));
         assert_eq!(camera.top().to_string(), "gphoto2://[usb:001,004]/");
         assert_eq!(camera.uri(), "gphoto2://[usb:001,004]/DCIM/It's%20100");
-        assert_eq!(camera.label(), "usb:001,004 (camera)");
+        assert_eq!(camera.label().english(), "usb:001,004 (camera)");
         assert_eq!(
             Address::parse("gphoto2://%5Busb%3A001%2C004%5D/").unwrap(),
             camera.top(),
@@ -948,6 +998,6 @@ mod tests {
         assert_eq!(&*location.scheme, "rclone");
         assert_eq!(location.to_string(), "rclone://gdrive/Photos/2024");
         assert_eq!(Address::of_location(&location).unwrap(), a);
-        assert_eq!(a.label(), "gdrive");
+        assert_eq!(a.label().english(), "gdrive");
     }
 }

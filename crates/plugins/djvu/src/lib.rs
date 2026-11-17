@@ -190,7 +190,7 @@ impl DocumentSession for Holding {
     fn locate(&self, text: &str, near: u32, cancel: &CancelToken) -> anyhow::Result<Option<u32>> {
         self.session.locate(text, near, cancel)
     }
-    fn closed_links(&self) -> Option<&str> {
+    fn closed_links(&self) -> Option<&skwir_core::words::Words> {
         self.session.closed_links()
     }
     fn draws_small_quickly(&self) -> bool {

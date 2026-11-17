@@ -916,9 +916,9 @@ fn papers(chosen: &str) -> Field {
             note = "A field of the Print dialog, a PDF chosen: the paper it is laid out on (A4, Letter…)."
         ),
         Kind::Row {
-            choices: skwir_core::print::Paper::NAMED
-                .iter()
-                .map(|(name, title)| Choice::new(*name, Words::as_written(*title)))
+            choices: skwir_core::print::Paper::named_words()
+                .into_iter()
+                .map(|(name, title)| Choice::new(name, title))
                 .collect(),
         },
     )

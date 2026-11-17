@@ -364,23 +364,30 @@ impl Askpass {
         let (ask, cancel) = (Arc::clone(ask), cancel.clone());
         let server = skwir_platform::askpass::Server::start(&folder, move |question| {
             // ssh's question, as ssh wrote it.
-            let prompt = question.prompt.trim().trim_end_matches(':').trim();
-            let connect = connector::connect_button().say();
-            let answer = match question.kind {
+            let prompt = question
+                .prompt
+                .as_deref()
+                .map(|prompt| prompt.trim().trim_end_matches(':').trim());
+            let said = Words::as_written(prompt.unwrap_or_default().to_owned());
+            let connect = connector::connect_button();
+            let answer = match (question.kind, prompt) {
+                // Asked with no prompt (rclone's password command): the
+                // asker knows whose password it is (`Ask::unprompted`).
+                (Kind::Secret, None) => ask.unprompted(&connect, &cancel),
                 // A server's password may be kept (ADR-082); a key's
                 // passphrase, a code, rclone's configuration's are not.
-                Kind::Secret if crate::passwords::is_server_password(prompt) => {
-                    ask.password(prompt, &connect, &cancel).map(|p| p.text)
+                (Kind::Secret, Some(prompt)) if crate::passwords::is_server_password(prompt) => {
+                    ask.password(&said, &connect, &cancel).map(|p| p.text)
                 }
-                Kind::Secret => ask.secret(prompt, &connect, &cancel),
-                Kind::Confirm => ask
+                (Kind::Secret, Some(_)) => ask.secret(&said, &connect, &cancel),
+                (Kind::Confirm, _) => ask
                     .confirm(
-                        &words!(remote_mounter_trust = "Connect to this server?").say(),
-                        prompt,
+                        &words!(remote_mounter_trust = "Connect to this server?"),
+                        &said,
                         &cancel,
                     )
                     .then(|| "yes".to_owned()),
-                Kind::Notice => return None,
+                (Kind::Notice, _) => return None,
             };
             // Cancelled: the attempt ends, rather than ssh asking again (a
             // refused password counts as a wrong one).

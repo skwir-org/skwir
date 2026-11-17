@@ -117,7 +117,10 @@ impl NotesStore for XdgStore {
             rating: true,
             comment: true,
             origin: true,
-            limits: "no comma in a tag, no tag colors",
+            limits: Some(skwir_core::words!(
+                tags_xdg_limits = "no comma in a tag, no tag colors",
+                note = "What the desktop's attributes cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings."
+            )),
         }
     }
     fn default_write(&self) -> Write {

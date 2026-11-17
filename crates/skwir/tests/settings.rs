@@ -8,7 +8,21 @@ use skwir_core::{
     app::AppConfig,
     command::Invocation,
     settings::{SaveState, SettingSpec},
+    words::Words,
 };
+
+/// What follows the first sentence of `text`, in English, where a full
+/// stop ends one (a capital, a digit or skwir after it); not every full
+/// stop does: a name, a file's extension, "12 Mar.". A test's reading,
+/// never the window's: the window shows each message whole.
+fn second_sentence(text: &str) -> Option<&str> {
+    text.match_indices(". ").find_map(|(at, _)| {
+        let next = &text[at + 2..];
+        (next.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit())
+            || next.starts_with("skwir"))
+        .then_some(next)
+    })
+}
 
 #[test]
 fn changing_document_engine_refreshes_only_document_previews() {
@@ -157,16 +171,26 @@ fn every_setting_has_a_title_and_a_description_in_sentences() {
         }) {
             problems.push(format!("{key}: its title is its plugin's name"));
         }
+        // A row says its description, one sentence standing alone
+        // (ADR-072); what follows is a message of its own (`more`).
         if !description.ends_with('.') {
             problems.push(format!("{key}: its description does not end a sentence"));
         }
-        // A row says its first sentence (ADR-072): it stands alone.
-        let (first, _) = skwir_ui::settings::first_sentence(&description);
-        let words = first.split_whitespace().count();
+        if let Some(second) = second_sentence(&description) {
+            problems.push(format!(
+                "{key}: its description is more than one sentence; give the rest as its more: {second}"
+            ));
+        }
+        let words = description.split_whitespace().count();
         if words > 30 {
             problems.push(format!(
-                "{key}: its first sentence has {words} words, more than 30: {first}"
+                "{key}: its description has {words} words, more than 30: {description}"
             ));
+        }
+        if let Some(more) = spec.more.as_ref().map(Words::english)
+            && !more.ends_with('.')
+        {
+            problems.push(format!("{key}: its more does not end a sentence"));
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));

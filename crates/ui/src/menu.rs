@@ -501,12 +501,13 @@ fn drawn_of(items: &[MenuItem], rows: &[Row]) -> Vec<(Row, bool)> {
         .collect()
 }
 
-/// What the row of the submenu `id` says: the words its items give it.
+/// What the row of the submenu `id` says: the words its items give it,
+/// said where it is drawn.
 pub fn submenu_title(items: &[MenuItem], id: &str) -> String {
     items
         .iter()
         .find_map(|item| item.submenu.as_ref().filter(|submenu| submenu.id == id))
-        .map(|submenu| submenu.title.to_string())
+        .map(|submenu| submenu.title.say())
         .unwrap_or_default()
 }
 
@@ -599,7 +600,7 @@ fn values_of(items: &[MenuItem], value: usize) -> Vec<usize> {
         .enumerate()
         .filter(|(_, other)| {
             other.submenu_id() == item.submenu_id()
-                && other.choice.as_ref().is_some_and(|c| c.name == choice.name)
+                && other.choice.as_ref().is_some_and(|c| c.id == choice.id)
         })
         .map(|(index, _)| index)
         .collect()
@@ -668,10 +669,10 @@ fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
         .iter()
         .filter(|item| item.submenu_id() == Some(submenu));
     let first = values.next()?;
-    let name = &first.choice.as_ref()?.name;
+    let id = &first.choice.as_ref()?.id;
     let mut chosen = first.is_on().then_some(first);
     for item in values {
-        if item.choice.as_ref().map(|c| &c.name) != Some(name) {
+        if item.choice.as_ref().map(|c| &c.id) != Some(id) {
             return None;
         }
         if item.is_on() {
@@ -861,16 +862,11 @@ impl Shell {
             .as_ref()
             .filter(|_| ctx.count > 0 && !ctx.all_places)
         {
-            items.push(item(
-                Words::as_written(remove.title.clone()),
-                "take_out",
-                280,
-                "minus",
-            ));
+            items.push(item(remove.title.clone(), "take_out", 280, "minus"));
         }
         if let Some(create) = verbs.create.as_ref().filter(|_| ctx.count == 0) {
             items.push(item(
-                Words::as_written(create.title.clone()),
+                create.title.clone(),
                 "ui.create_here",
                 300,
                 "folder-plus",
@@ -1455,7 +1451,11 @@ impl Shell {
                 Target::Uri(uri) => {
                     let url = serde_json::json!({ "url": uri });
                     items.push(item(0, follow.clone(), "external", "ui.open_url", url));
-                    let text = serde_json::json!({ "text": uri, "what": "the link's address" });
+                    let what = words!(
+                        menu_copied_link = "the link's address",
+                        note = "What was copied, said after “Copied”: a link's web address."
+                    );
+                    let text = serde_json::json!({ "text": uri, "what": what.to_data() });
                     items.push(item(
                         110,
                         words!(menu_copy_link = "Copy link address"),
@@ -1491,7 +1491,11 @@ impl Shell {
                     ));
                     // A name the clipboard cannot hold as text has no item.
                     if let Some(text) = path.to_str() {
-                        let text = serde_json::json!({ "text": text, "what": "the path" });
+                        let what = words!(
+                            menu_copied_path = "the path",
+                            note = "What was copied, said after “Copied”: a file's path."
+                        );
+                        let text = serde_json::json!({ "text": text, "what": what.to_data() });
                         items.push(item(110, menu_copy_path(), "link", "ui.copy_text", text));
                     }
                 }
@@ -2373,7 +2377,7 @@ fn choice_element(
     div()
         .id((if sub { "subchoice" } else { "choice-row" }, i))
         .role(gpui::Role::RadioGroup)
-        .when(shell.a11y, |d| d.aria_label(choice.name.clone()))
+        .when(shell.a11y, |d| d.aria_label(choice.name.say()))
         .relative()
         .h(sized(crate::toolbar::MENU_ROW + 4.))
         // One line, all it holds (a row of fixed height).
@@ -2408,7 +2412,7 @@ fn choice_element(
         }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(div().size(px(16.)).flex_none())
-        .child(div().flex_1().pr_4().child(choice.name))
+        .child(div().flex_1().pr_4().child(choice.name.say()))
         .child(shown)
         .into_any_element()
 }
@@ -2580,7 +2584,7 @@ mod tests {
                 icon: icon.map(str::to_owned),
                 ..item(title, submenu)
             }
-            .value_of("Setting", look, chosen)
+            .value_of("setting", "Setting", look, chosen)
         };
         let items = [
             item("Open", None),

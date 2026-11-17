@@ -2,7 +2,7 @@
 //! its body walked into blocks with the shape its styles and numbering
 //! give each paragraph. Transitional and Strict namespaces read alike.
 use crate::blocks::{self, Builder, Look, Read, Shape, is_code, is_quote};
-use crate::package::{self, Package};
+use crate::package::{self, Package, Part as Member};
 use roxmltree::Node;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{Align, Script};
@@ -504,7 +504,7 @@ fn rels(package: &mut Package, name: &str, cancel: &CancelToken) -> anyhow::Resu
         format!("{dir}/_rels/{file}.rels")
     };
     let mut map = Rels::new();
-    let Some(xml) = package.text(&rels_name, "Relationships", cancel)? else {
+    let Some(xml) = package.text(&rels_name, Member::Relationships, cancel)? else {
         return Ok(map);
     };
     let doc = package::xml(&xml)?;
@@ -534,7 +534,9 @@ fn related(package: &mut Package, name: &str, kind: &str, cancel: &CancelToken) 
     } else {
         format!("{dir}/_rels/{file}.rels")
     };
-    let xml = package.text(&rels_name, "Relationships", cancel).ok()??;
+    let xml = package
+        .text(&rels_name, Member::Relationships, cancel)
+        .ok()??;
     let doc = package::xml(&xml).ok()?;
     doc.root_element()
         .children()
@@ -1076,21 +1078,19 @@ pub(crate) fn read<S: FileSource + ?Sized>(
     let mut package = Package::open(file, cancel)?;
     let main = related(&mut package, "", "officeDocument", cancel)
         .unwrap_or_else(|| "word/document.xml".into());
-    let source = package
-        .text(&main, "The document's text", cancel)?
-        .ok_or_else(|| {
-            anyhow::anyhow!(words!(
-                documents_docx_no_text = "This is not a Word document: it has no text part",
-                note = "An error in place of a file named as a Word document that holds no text."
-            ))
-        })?;
+    let source = package.text(&main, Member::Text, cancel)?.ok_or_else(|| {
+        anyhow::anyhow!(words!(
+            documents_docx_no_text = "This is not a Word document: it has no text part",
+            note = "An error in place of a file named as a Word document that holds no text."
+        ))
+    })?;
     let doc = package::xml(&source)?;
     let styles_xml = match related(&mut package, &main, "styles", cancel) {
-        Some(name) => package.text(&name, "Styles", cancel)?,
+        Some(name) => package.text(&name, Member::Styles, cancel)?,
         None => None,
     };
     let numbering_xml = match related(&mut package, &main, "numbering", cancel) {
-        Some(name) => package.text(&name, "Numbering", cancel)?,
+        Some(name) => package.text(&name, Member::Numbering, cancel)?,
         None => None,
     };
     let styles = Styles::read(styles_xml.as_deref());
@@ -1140,7 +1140,7 @@ pub(crate) fn read<S: FileSource + ?Sized>(
             let Some(name) = name else {
                 continue;
             };
-            let Some(xml) = walk.package.text(&name, "Notes", cancel)? else {
+            let Some(xml) = walk.package.text(&name, Member::Notes, cancel)? else {
                 continue;
             };
             let doc = package::xml(&xml)?;
@@ -1194,7 +1194,7 @@ fn details(package: &mut Package, cancel: &CancelToken) -> Vec<(&'static str, St
     let mut facts = Vec::new();
     let core = related(package, "", "core-properties", cancel)
         .unwrap_or_else(|| "docProps/core.xml".into());
-    if let Ok(Some(xml)) = package.text(&core, "Properties", cancel)
+    if let Ok(Some(xml)) = package.text(&core, Member::Properties, cancel)
         && let Ok(doc) = package::xml(&xml)
     {
         for (label, local) in [
@@ -1215,7 +1215,7 @@ fn details(package: &mut Package, cancel: &CancelToken) -> Vec<(&'static str, St
     }
     let app = related(package, "", "extended-properties", cancel)
         .unwrap_or_else(|| "docProps/app.xml".into());
-    if let Ok(Some(xml)) = package.text(&app, "Properties", cancel)
+    if let Ok(Some(xml)) = package.text(&app, Member::Properties, cancel)
         && let Ok(doc) = package::xml(&xml)
     {
         for (label, local) in [("Pages", "Pages"), ("Application", "Application")] {

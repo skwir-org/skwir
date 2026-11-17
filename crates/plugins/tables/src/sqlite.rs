@@ -162,52 +162,45 @@ pub fn table(
     } else {
         (index > 0).then(|| (index as u64 - 1) * TABLE)
     };
-    let notice = [
+    let notices = [
         (all.len() > most).then(|| crate::columns_cut(most)),
         (cut > 0).then(|| crate::cells_cut(cut)),
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    .collect();
     let details = inspection::details([
         (
             words!(
                 tables_detail_table = "Table",
                 note =
                     "A label in the preview's Properties: the name of the database's table shown."
-            )
-            .say()
-            .as_str(),
+            ),
             Some(name.clone()),
         ),
         (
             words!(
                 tables_detail_tables = "Tables",
                 note = "A label in the preview's Properties: how many tables the database has."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(tables.len()),
         ),
         (
-            crate::detail_rows().as_str(),
+            crate::detail_rows(),
             if more {
                 Some(crate::more_rows(shown_to))
             } else {
                 inspection::count(shown_to as usize)
             },
         ),
-        (
-            crate::detail_columns().as_str(),
-            inspection::count(all.len()),
-        ),
+        (crate::detail_columns(), inspection::count(all.len())),
     ]);
     Ok(Inspection {
         details,
         kind: skwir_core::inspection::InspectionKind::Table,
         title: if rows.is_empty() {
-            name.clone()
+            // The table's name, as the database names it.
+            words::Words::as_written(name.clone())
         } else {
             words!(
                 tables_title_database_rows = "{ $table } · rows { $first }–{ $last }",
@@ -216,14 +209,18 @@ pub fn table(
                 last = shown_to,
                 note = "The title of a SQLite database's preview: the table's name as the database names it, then the rows shown, by number, from first to last."
             )
-            .say()
         },
-        columns: shown.to_vec(),
+        // The columns' names, as the database names them.
+        columns: shown
+            .iter()
+            .cloned()
+            .map(words::Words::as_written)
+            .collect(),
         rows,
         position: offset,
         previous,
         next,
-        notice,
+        notices,
         whole_available: all.len() > most && bounds.cut(),
         ..Inspection::default()
     })
@@ -284,8 +281,11 @@ mod tests {
         let before = listing(dir.path());
         let cancel = CancelToken::new();
         let people = table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
-        assert_eq!(people.title, "people · rows 1–2");
-        assert_eq!(people.columns, ["id", "name", "photo", "score", "note"]);
+        assert_eq!(people.title.english(), "people · rows 1–2");
+        assert_eq!(
+            crate::tests::columns(&people),
+            ["id", "name", "photo", "score", "note"]
+        );
         assert_eq!(
             &people.rows[0].cells[..4],
             ["1", "Zoë", "2.0 kB blob", "2.5"]
@@ -298,7 +298,7 @@ mod tests {
             "then the next table, not the view"
         );
         let odd = table(&path, TABLE, limits::Bounds::QUICK, &cancel).unwrap();
-        assert_eq!(odd.title, "odd \"name\" · rows 1–1");
+        assert_eq!(odd.title.english(), "odd \"name\" · rows 1–1");
         assert_eq!(odd.rows[0].cells, ["here"]);
         assert_eq!((odd.previous, odd.next), (Some(0), None));
         assert_eq!(

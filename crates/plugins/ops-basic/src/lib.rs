@@ -40,7 +40,7 @@ use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, PlanId};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::words;
-use skwir_core::words::{Folder, Name, Words};
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "ops-basic";
@@ -309,40 +309,17 @@ fn paste(clipboard: &Mutex<Clipboard>, a: PasteArgs, app: &App) -> anyhow::Resul
     )))
 }
 
-/// A paste's title, as core's transfers are titled (ADR-135): what it takes
-/// (one by its name, several by their count) and the folder it goes to, by
-/// its name (`op::folder_said`).
+/// A paste's title: core's transfer's (`op::transfer_words`, ADR-135),
+/// what it takes (one by its name, several by their count) and the folder
+/// it goes to, by its name.
 fn paste_title(cut: bool, sources: &[std::path::PathBuf], dest: &std::path::Path) -> Words {
-    let count = sources.len();
-    let name = || {
-        sources
-            .first()
-            .map_or_else(|| Name(String::new()), |one| Name::of(one))
-    };
-    let folder = || Folder(skwir_core::op::folder_said(dest));
-    if cut {
-        words!(
-            ops_basic_paste_move = "{ $count ->
-                [1] move { $name } to { $folder }
-               *[other] move { $count } items to { $folder }
-            }",
-            count = count,
-            name = name(),
-            folder = folder(),
-            note = "A plan's title: files cut, pasted in a folder (by its name). One by its name, or how many. Begins in lower case."
-        )
+    let taken: Vec<&std::path::Path> = sources.iter().map(std::path::PathBuf::as_path).collect();
+    let carried = if cut {
+        skwir_core::op::Carried::Move
     } else {
-        words!(
-            ops_basic_paste_copy = "{ $count ->
-                [1] copy { $name } to { $folder }
-               *[other] copy { $count } items to { $folder }
-            }",
-            count = count,
-            name = name(),
-            folder = folder(),
-            note = "A plan's title: files copied, pasted in a folder (by its name). One by its name, or how many. Begins in lower case."
-        )
-    }
+        skwir_core::op::Carried::Copy
+    };
+    skwir_core::op::transfer_words(carried, &taken, dest)
 }
 
 /// A paste into a location that is no folder but takes files (a tag's):

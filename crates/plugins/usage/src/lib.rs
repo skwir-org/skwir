@@ -346,11 +346,10 @@ impl Plugin for UsagePlugin {
             ID,
             ViewSpec::named(
                 ID,
-                &words!(
+                words!(
                     usage_view = "Usage",
                     note = "The view that shows what each folder takes on disk, among the views (List, Grid…)."
-                )
-                .say(),
+                ),
                 "usage",
                 Arc::clone(&self.revision),
             )

@@ -87,19 +87,22 @@ fn declare_source(app: &App) {
     app.settings.declare(SettingSpec::choice_words(
         SOURCE_KEY,
         words!(map_tiles_source = "Map background"),
-        words!(
-            map_tiles_source_description = "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look."
+        (
+            words!(
+                map_tiles_source_description = "What maps are drawn on."
+            ),
+            words!(
+                map_tiles_source_description_more = "The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look.",
+                note = "What a setting's description says after its first sentence, in its tooltip."
+            ),
         ),
         OUTLINE,
         choices,
     )
-    .more_choices(
-        &words!(
-            map_tiles_more_choices = "the tile servers you add",
-            note = "Said where the settings file names a background not listed: it may be among these."
-        )
-        .say(),
-    )
+    .more_choices(words!(
+        map_tiles_more_choices = "the tile servers you add",
+        note = "Said where the settings file names a background not listed: it may be among these."
+    ))
     .page(skwir_core::settings::page::MEDIA)
     .section(skwir_core::settings::section::MAPS));
 }
@@ -158,11 +161,10 @@ impl Plugin for MapTilesPlugin {
                 words!(
                     map_tiles_servers_description = "Backgrounds from other servers, to choose in Map background or from a map."
                 ),
-                &words!(
-                    map_tiles_server_record = "tile server",
-                    note = "What one record of the list is, placed in the settings window's buttons and titles (Add, Remove)."
-                )
-                .say(),
+                words!(
+                    map_tiles_add_server = "Add tile server",
+                    note = "The button adding a tile server to the settings' list of them."
+                ),
                 vec![
                     RecordField::text(
                         "name",

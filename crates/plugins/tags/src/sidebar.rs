@@ -62,16 +62,16 @@ fn rename(tag: &str) -> Invocation {
                 tag = Name(tag.to_owned()),
                 note = "The title of the question that asks for a tag's new name."
             )
-            .say(),
+            .to_data(),
             "accept": words!(
                 tags_rename_accept = "Rename",
                 note = "The button that renames a tag on every file."
             )
-            .say(),
+            .to_data(),
             "placeholder": words!(
                 tags_rename_placeholder = "New name (an existing tag's merges them)"
             )
-            .say(),
+            .to_data(),
             "text": tag,
             "command": "tags.rename",
             "args": { "tag": tag },
@@ -382,6 +382,9 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
             suggested: !r.pinned,
             rename: Some(rename(&r.tag)),
             color: Some(r.color),
+            // The tag it is, as data: its pill's name and the sentences
+            // naming it read it, never its title.
+            tag: Some(r.tag.clone()),
             // Shift: the files shown that have it too; Alt: its files in the
             // folder shown (`tags.pill`).
             clicks: [("shift", "also"), ("alt", "here")]

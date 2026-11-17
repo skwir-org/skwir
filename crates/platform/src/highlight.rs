@@ -451,18 +451,8 @@ fn is_dark(colors: &Colors) -> bool {
 /// then bat's themes of that look, then the user's once read, a theme of
 /// the user's taking the place of bat's of the same name as in bat. The
 /// one chosen is always among them, said missing once the user's are
-/// read and none has its name.
-///
-/// Transitional: [`choices_words`] gives the labels as words (ADR-139).
-pub fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec<(String, String)> {
-    choices_words(dark, chosen, user)
-        .into_iter()
-        .map(|(value, label)| (value, label.say()))
-        .collect()
-}
-
-/// [`choices`], each label words: Default and a theme not found are
-/// messages, a theme's name is as written.
+/// read and none has its name. Each label is words: Default and a theme
+/// not found are messages, a theme's name is as written.
 pub fn choices_words(
     dark: bool,
     chosen: &str,
@@ -765,6 +755,14 @@ mod tests {
     use super::*;
     use skwir_core::inspection::Block;
     use std::collections::BTreeSet;
+
+    /// [`choices_words`], each label in English.
+    fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec<(String, String)> {
+        choices_words(dark, chosen, user)
+            .into_iter()
+            .map(|(value, label)| (value, label.english()))
+            .collect()
+    }
 
     #[test]
     fn everyday_languages_are_highlighted_by_extension_or_name() {

@@ -185,8 +185,9 @@ pub trait DocumentSession: Send + Sync {
     }
     /// Why its links are not followed, when they are not: a plugin from
     /// outside skwir that may not use the network drew its pages, and a
-    /// link the user clicks would carry what it read (ADR-047).
-    fn closed_links(&self) -> Option<&str> {
+    /// link the user clicks would carry what it read (ADR-047). Said where
+    /// a click on one is refused.
+    fn closed_links(&self) -> Option<&crate::words::Words> {
         None
     }
     /// The PDF it reads, when it reads one (a PDF, an office document

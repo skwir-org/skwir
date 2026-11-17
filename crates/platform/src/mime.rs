@@ -385,26 +385,6 @@ impl Kind {
         }
     }
 
-    /// What people call a group of them: `Images`.
-    ///
-    /// Transitional: English; [`Kind::words`] says it in the reader's
-    /// language (ADR-139).
-    pub fn title(self) -> &'static str {
-        match self {
-            Kind::Folder => "Folders",
-            Kind::Image => "Images",
-            Kind::Video => "Videos",
-            Kind::Audio => "Music and audio",
-            Kind::Document => "Documents",
-            Kind::Spreadsheet => "Spreadsheets",
-            Kind::Presentation => "Presentations",
-            Kind::Text => "Text and code",
-            Kind::Archive => "Archives",
-            Kind::Font => "Fonts",
-            Kind::Program => "Programs",
-        }
-    }
-
     /// A kind by its word, its plural or a common synonym (`music`,
     /// `photos`), in any case.
     pub fn from_name(word: &str) -> Option<Kind> {

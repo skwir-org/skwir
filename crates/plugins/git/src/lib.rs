@@ -61,8 +61,14 @@ impl Plugin for GitPlugin {
             skwir_core::settings::SettingSpec::toggle(
                 state::SHOWN,
                 words!(git_states_setting = "Show the files' Git state"),
-                words!(
-                    git_states_setting_description = "Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository. The list's Git column says the same."
+                (
+                    words!(
+                        git_states_setting_description = "Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository."
+                    ),
+                    words!(
+                        git_states_setting_description_more = "The list's Git column says the same.",
+                        note = "What a setting's description says after its first sentence, in its tooltip."
+                    ),
                 ),
                 true,
             )
@@ -281,8 +287,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         label: words!(
             git_detail_commits = "Commits",
             note = "A history's detail: how many commits it lists."
-        )
-        .say(),
+        ),
         value: if log.more || log.stopped {
             words!(
                 git_commits_shown = "{ $count } shown",
@@ -300,8 +305,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
             label: words!(
                 git_detail_branch = "Branch",
                 note = "A history's detail: the branch checked out."
-            )
-            .say(),
+            ),
             value: head.clone(),
             action: None,
         });
@@ -311,14 +315,13 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         // What the bar's caption says is shown: where it is read from, and
         // the branch checked out.
         title: log.head.as_ref().map_or_else(
-            || words!(git_history = "Git history").say(),
+            || words!(git_history = "Git history"),
             |head| {
                 words!(
                     git_history_on = "Git history · { $branch }",
                     branch = head.as_str(),
                     note = "The caption of a history of commits; branch: the branch checked out, as Git names it."
                 )
-                .say()
             },
         ),
         blocks,
@@ -326,23 +329,20 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
             words!(
                 git_column_commit = "Commit",
                 note = "A column's header in a history of commits: its summary."
-            )
-            .say(),
+            ),
             words!(
                 git_column_hash = "Hash",
                 note = "A column's header in a history of commits: its short id."
-            )
-            .say(),
-            words!(git_column_author = "Author", note = "A column's header in a history of commits.").say(),
-            words!(git_column_date = "Date", note = "A column's header in a history of commits.").say(),
+            ),
+            words!(git_column_author = "Author", note = "A column's header in a history of commits."),
+            words!(git_column_date = "Date", note = "A column's header in a history of commits."),
             words!(
                 git_column_names = "Branches and tags",
                 note = "A column's header in a history of commits: the names at each commit."
-            )
-            .say(),
+            ),
         ],
         rows,
-        notice: notice.map(|notice| notice.say()).unwrap_or_default(),
+        notices: notice.into_iter().collect(),
         details,
         whole_available: !whole && (log.more || log.stopped),
         ..Inspection::default()
@@ -385,7 +385,7 @@ fn when(seconds: i64, zone: &jiff::tz::TimeZone) -> String {
 #[cfg(test)]
 mod tests {
     use super::{asked, history, when};
-    use skwir_core::inspection::{InspectionKind, REFS_JOIN};
+    use skwir_core::inspection::{Inspection, InspectionKind, REFS_JOIN};
     use skwir_platform::git::{Commit, Log};
 
     fn commit(id: &str, parents: &[&str]) -> Commit {
@@ -426,7 +426,8 @@ mod tests {
         let whole = history(&log, "", false);
         assert_eq!(whole.kind, InspectionKind::History);
         assert_eq!(
-            whole.title, "Git history · main",
+            whole.title.english(),
+            "Git history · main",
             "its source and its branch"
         );
         assert_eq!(whole.rows.len(), 3);
@@ -440,7 +441,8 @@ mod tests {
         );
         assert!(whole.rows.iter().all(|row| row.graph.is_some()));
         assert!(whole.whole_available);
-        assert_eq!(whole.notice, "The newest 3 commits");
+        let notice = |data: &Inspection| data.notice().map(|said| said.english());
+        assert_eq!(notice(&whole).as_deref(), Some("The newest 3 commits"));
         let folder = history(&log, "docs", true);
         assert!(folder.rows.iter().all(|row| row.graph.is_none()));
         assert!(!folder.whole_available, "asked whole");
@@ -466,8 +468,8 @@ mod tests {
             false,
         );
         assert_eq!(
-            named.notice,
-            "The newest 3 commits. Some commits have more branches and tags than are shown"
+            notice(&named).as_deref(),
+            Some("The newest 3 commits. Some commits have more branches and tags than are shown")
         );
     }
 

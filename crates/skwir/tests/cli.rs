@@ -252,7 +252,10 @@ fn as_askpass_skwir_asks_the_socket_and_prints_the_answer() {
     use skwir_platform::askpass::{Kind, SOCKET_VAR, Server};
     let tmp = home_tempdir();
     let server = Server::start(tmp.path(), |question| match question.kind {
-        Kind::Secret => Some(format!("secret for {}", question.prompt.trim())),
+        Kind::Secret => Some(format!(
+            "secret for {}",
+            question.prompt.as_deref().unwrap_or_default().trim()
+        )),
         Kind::Confirm => Some("yes".to_owned()),
         Kind::Notice => None,
     })

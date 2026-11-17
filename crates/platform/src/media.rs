@@ -332,10 +332,8 @@ impl WorkerSession {
                         Arc::new(crate::process::explain(&helper, &manager_lifetime, error));
                     let _ = startup.try_send(Err(Words::of_error_from(&error, 0).into()));
                     if !manager_lifetime.is_cancelled() {
-                        // Transitional: an update's error is text, said
-                        // once here (ADR-139).
-                        let said = Words::of_error_from(&error, 0).say();
-                        manager_shared.publish(|u| u.error = Some(said));
+                        let why = Words::of_error_from(&error, 0);
+                        manager_shared.publish(|u| u.error = Some(why));
                     }
                 }
                 manager_lifetime.cancel();
@@ -940,7 +938,10 @@ mod tests {
             error = error.take().or(session.take_update().error);
             error.is_some()
         });
-        assert_eq!(error.as_deref(), Some("runtime gone"));
+        assert_eq!(
+            error.map(|error| error.english()).as_deref(),
+            Some("runtime gone")
+        );
         until(|| !std::path::Path::new(&format!("/proc/{pid}")).exists());
         assert!(session.control(Control::Play(true)).is_err());
     }

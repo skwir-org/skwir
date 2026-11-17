@@ -290,8 +290,8 @@ impl Shell {
         for i in 0..FIELDS.len() {
             let (label, placeholder) = field_words(i);
             let input = cx.new(|cx| {
-                let mut input = TextInput::new(placeholder.say(), cx);
-                input.set_label(label.say());
+                let mut input = TextInput::new(placeholder, cx);
+                input.set_label(label);
                 input
             });
             if i == 0 {

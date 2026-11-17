@@ -51,7 +51,6 @@ use skwir_core::words::Words;
 use crate::activity::{Under, summary, words};
 use crate::keymap;
 use crate::shell::Shell;
-use crate::toast::capitalized;
 use crate::work::{Watched, Work};
 
 /// How long the program waits, as it ends, for the desktop to be told the
@@ -1115,10 +1114,9 @@ pub(crate) fn act(app: &skwir_core::App, work: &Work, asked: &Asked) {
 fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     let summary = summary(under);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        // Transitional: a plan's title capitalised (ADR-139).
-        ([(running, _)], []) => Words::as_written(capitalized(&running.title.say())),
+        ([(running, _)], []) => running.title.heading(),
         // A task's title begins a sentence already (`task::Running`).
-        ([], [task]) => Words::as_written(task.title.clone()),
+        ([], [task]) => task.title.clone(),
         ([], []) => Words::default(),
         _ => skwir_core::words!(
             finishing_actions = "{ $count ->
@@ -1130,8 +1128,7 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
                     actions."
         ),
     };
-    // Transitional: a plan's title capitalised (ADR-139).
-    let stopped = work.stopped.as_ref().map(|s| capitalized(&s.title.say()));
+    let stopped = work.stopped.as_ref().map(|s| s.title.heading());
     let (standing, about) = if asks {
         (
             Standing::Asks,

@@ -255,9 +255,9 @@ fn ask(
             // Its own words, as it wrote them.
             let mut plan =
                 Plan::with_steps(Words::as_written(title), plan_steps(app, &steps, refs)?)
-                    .proposed_by(runner.title.clone());
+                    .proposed_by(Words::as_written(runner.title.clone()));
             if let Some(note) = note {
-                plan = plan.with_note(note);
+                plan = plan.with_note(Words::as_written(note));
             }
             Outcome::Plan(plan)
         }

@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use skwir_core::entry::Value;
 use skwir_core::geo::{EARTH_RADIUS, LatLon};
 use skwir_core::words;
 use skwir_core::words::Words;
@@ -77,8 +78,75 @@ pub(crate) enum Source {
 /// before the city. Beyond every place's reach, nothing. The distance has
 /// a decimal under 10 km and none above; the direction is one of eight,
 /// from the place to the position.
-pub(crate) fn describe(at: LatLon) -> Option<Words> {
-    index().describe(at)
+pub(crate) fn describe(at: LatLon) -> Option<Placed> {
+    index().locate(at)
+}
+
+/// Where a position is, as data (`describe`): in a place, by its name as
+/// the place names' data writes it, or near one, how far and which way
+/// from it. What the `geo.place` field keeps (`to_value`), said where it
+/// is shown (`words`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Placed {
+    In(String),
+    Near {
+        metres: f64,
+        /// One of eight, from north, clockwise (`compass`).
+        direction: u8,
+        place: String,
+    },
+}
+
+impl Placed {
+    /// In words: the place's name, or "5.6 km NE of Example Town".
+    pub(crate) fn words(&self) -> Words {
+        match self {
+            Placed::In(name) => Words::as_written(name.clone()),
+            Placed::Near {
+                metres,
+                direction,
+                place,
+            } => words!(
+                geo_place_near = "{ $distance } { $direction } of { $place }",
+                distance = distance_words(*metres),
+                direction = compass_words(*direction),
+                place = place.as_str(),
+                note = "Where a picture was taken, in its Properties beside Place, when it is near a town rather than in it: 5.6 km NE of Example Town. distance: how far, with its unit; direction: one of the eight abbreviated directions, from the town; place: the town's name, as the place names' data writes it."
+            ),
+        }
+    }
+
+    /// As a field's value: the name; or how far, which way and the name.
+    pub(crate) fn to_value(&self) -> Value {
+        match self {
+            Placed::In(name) => Value::Text(name.as_str().into()),
+            Placed::Near {
+                metres,
+                direction,
+                place,
+            } => Value::List(vec![
+                Value::Float(*metres),
+                Value::UInt(u64::from(*direction)),
+                Value::Text(place.as_str().into()),
+            ]),
+        }
+    }
+
+    /// What `to_value` made; `None` for anything else.
+    pub(crate) fn of(value: &Value) -> Option<Self> {
+        match value {
+            Value::Text(name) => Some(Placed::In(name.to_string())),
+            Value::List(parts) => match parts.as_slice() {
+                [Value::Float(metres), direction, Value::Text(place)] => Some(Placed::Near {
+                    metres: *metres,
+                    direction: u8::try_from(direction.as_u64()?).ok()?,
+                    place: place.to_string(),
+                }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 /// The places named `name`, compared ignoring case, Latin accents, and the
@@ -183,13 +251,19 @@ fn distance_words(metres: f64) -> Words {
 }
 
 /// The direction of `to` seen from `from`, as one of eight.
-fn compass(from: LatLon, to: LatLon) -> Words {
+fn compass(from: LatLon, to: LatLon) -> u8 {
     let (a, b) = (from.lat.to_radians(), to.lat.to_radians());
     let dlon = (to.lon - from.lon).to_radians();
     let y = dlon.sin() * b.cos();
     let x = a.cos() * b.sin() - a.sin() * b.cos() * dlon.cos();
     let degrees = y.atan2(x).to_degrees().rem_euclid(360.);
-    match (degrees / 45.).round() as usize % 8 {
+    ((degrees / 45.).round() as usize % 8) as u8
+}
+
+/// One of the eight directions (`compass`, from north, clockwise), in
+/// words.
+fn compass_words(direction: u8) -> Words {
+    match direction % 8 {
         0 => words!(
             geo_compass_n = "N",
             note = "North, abbreviated, as a picture's place says it (5.6 km N of Example Town)."
@@ -479,7 +553,7 @@ impl Index {
         self.cells(rows, cols, visit);
     }
 
-    fn describe(&self, at: LatLon) -> Option<Words> {
+    fn locate(&self, at: LatLon) -> Option<Placed> {
         // (share of the extent, place) of the place the position is in,
         // (share of the reach, distance, place) of the one it is near.
         let mut inside: Option<(f64, &Place)> = None;
@@ -496,16 +570,14 @@ impl Index {
             }
         });
         if let Some((_, place)) = inside {
-            return Some(Words::as_written(self.name(place).to_owned()));
+            return Some(Placed::In(self.name(place).to_owned()));
         }
-        let (_, distance, place) = near?;
-        Some(words!(
-            geo_place_near = "{ $distance } { $direction } of { $place }",
-            distance = distance_words(distance),
-            direction = compass(place.at(), at),
-            place = self.name(place),
-            note = "Where a picture was taken, in its Properties beside Place, when it is near a town rather than in it: 5.6 km NE of Example Town. distance: how far, with its unit; direction: one of the eight abbreviated directions, from the town; place: the town's name, as the place names' data writes it."
-        ))
+        let (_, metres, place) = near?;
+        Some(Placed::Near {
+            metres,
+            direction: compass(place.at(), at),
+            place: self.name(place).to_owned(),
+        })
     }
 
     fn find(&self, name: &str) -> Vec<Named> {
@@ -687,8 +759,11 @@ mod tests {
         LatLon::new(lat, lon).expect("a position")
     }
 
+    /// Where it is, in English, through what the field keeps of it.
     fn describe(lat: f64, lon: f64) -> Option<String> {
-        index().describe(at(lat, lon)).map(|words| words.english())
+        let placed = index().locate(at(lat, lon))?;
+        assert_eq!(Placed::of(&placed.to_value()).as_ref(), Some(&placed));
+        Some(placed.words().english())
     }
 
     #[test]
@@ -898,8 +973,8 @@ mod tests {
         // A capital's own coordinates are that capital.
         assert_eq!(
             index
-                .describe(at(48.8566, 2.3522))
-                .map(|w| w.english())
+                .locate(at(48.8566, 2.3522))
+                .map(|placed| placed.words().english())
                 .as_deref(),
             Some("Paris")
         );

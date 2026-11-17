@@ -183,12 +183,6 @@ impl Kept {
             )
         })
     }
-
-    /// [`Kept::words`] said in the window's language (until a plan's note
-    /// takes words).
-    pub fn said(&self) -> Option<String> {
-        self.words().map(|words| words.say())
-    }
 }
 
 /// What deleting `entries` leaves on the disk because their files have
@@ -406,11 +400,12 @@ pub mod keys {
     /// The page that led to the download, `Value::Text` (a URL), from
     /// `user.xdg.referrer.url`.
     pub const REFERRER: &str = "referrer";
-    /// Where a file's notes are kept: the titles of the stores holding
-    /// them (ADR-027), a list of text.
+    /// Where a file's notes are kept: the ids of the stores holding them
+    /// (ADR-027), a list of text, their titles said where they are shown
+    /// (`NoteStores::titles`).
     pub const NOTES_KEPT: &str = "notes_kept";
-    /// The stores whose notes differ from the rest, a list of text: they
-    /// can be made to agree.
+    /// The stores whose notes differ from the rest, by id, a list of text:
+    /// they can be made to agree.
     pub const NOTES_DIFFER: &str = "notes_differ";
     /// The companions beside a file (ADR-028), by their paths from its
     /// folder (`._x`, `x.jpg.xmp`, `.ts/x.jpg`), a list of text: read with
@@ -888,7 +883,7 @@ mod tests {
             Some("1 file has names elsewhere: 100 B stays on the disk")
         );
         assert_eq!(
-            kept_by_other_names([&a, &b, &alone]).unwrap().said(),
+            kept_by_other_names([&a, &b, &alone]).unwrap().words(),
             None,
             "every name goes"
         );

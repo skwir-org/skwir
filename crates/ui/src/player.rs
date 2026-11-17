@@ -2664,7 +2664,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                         .cursor_pointer()
                         .hover(|d| d.bg(theme.hover)),
                     title,
-                    Some(crate::dock::REVEAL_TIP.into()),
+                    Some(crate::dock::reveal_tip().say().into()),
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx))),
             )
@@ -2693,7 +2693,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
 /// A button of the pin's transport: it sends `what` as a `PlayerRequest`,
 /// the same the desktop's media keys send, from the dock and the footer's strip.
 pub(crate) fn request(id: &'static str, icon: &'static str, tip: &Words, what: &str) -> Button {
-    Button::new(id, icon, tip.say(), "ui.player").args(serde_json::json!({ "request": what }))
+    Button::new(id, icon, tip.clone(), "ui.player").args(serde_json::json!({ "request": what }))
 }
 
 /// A track nothing here plays.

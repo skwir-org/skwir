@@ -1288,8 +1288,8 @@ pub enum Made {
     /// A remote of rclone's configuration.
     Remote(String),
     /// A server added by its address, kept in Skwir's list or KDE's
-    /// network folders.
-    Server(String),
+    /// network folders: what it is called.
+    Server(Words),
 }
 
 #[derive(PartialEq, Eq)]

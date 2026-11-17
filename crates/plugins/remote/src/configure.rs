@@ -395,14 +395,19 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         SettingSpec::records(
             RECORDS,
             words!(remote_configure_servers = "Servers"),
-            words!(
-                remote_configure_servers_description = "The servers of the sidebar's Network section, each changed where it is kept. Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too."
+            (
+                words!(
+                    remote_configure_servers_description = "The servers of the sidebar's Network section, each changed where it is kept."
+                ),
+                words!(
+                    remote_configure_servers_description_more = "Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
-            &words!(
-                remote_configure_server_record = "Server",
-                note = "What one record of Settings' list of servers is."
-            )
-            .say(),
+            words!(
+                remote_configure_add_record = "Add Server",
+                note = "The button adding a server to Settings' list of the sidebar's Network servers."
+            ),
             vec![
                 RecordField::text(
                     "name",
@@ -483,7 +488,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             ),
                             None => (
                                 server.address.to_string(),
-                                server.label.clone(),
+                                server.label.say(),
                                 words!(
                                     remote_configure_record_kept = "{ $kind } · { $kept }",
                                     kind = server.address.to_string(),
@@ -536,7 +541,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     if let Some(crate::rclone_forms::Made::Server(name)) = &made {
                         remotes.refresh(app);
                         remotes.records.changed();
-                        app.notify(NotifyLevel::Info, added(name.clone()));
+                        app.notify(NotifyLevel::Info, added(name));
                     }
                     if let Some(crate::rclone_forms::Made::Remote(name)) = made {
                         remotes.refresh(app);
@@ -562,7 +567,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                 Invocation::new("remote.encrypt_rclone_config"),
                             );
                         } else {
-                            app.notify(NotifyLevel::Info, added(name));
+                            app.notify(NotifyLevel::Info, added(&Words::as_written(name)));
                         }
                     }
                     Ok(())
@@ -591,7 +596,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 in_form(&remotes_, app, SAVED, move |flow, remotes, app| {
                     if flow.edit(&args.id)? {
                         remotes.refresh(app);
-                        app.notify(NotifyLevel::Info, saved(args.id));
+                        app.notify(NotifyLevel::Info, saved(&Words::as_written(args.id)));
                     }
                     Ok(())
                 })?;
@@ -673,7 +678,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     crate::rclone_forms::note_unfinished(app, &args.id, false);
                     forget_kept_for(remotes, app, &address, flow.cancel);
                     remotes.refresh(app);
-                    app.notify(NotifyLevel::Info, removed(args.id));
+                    app.notify(NotifyLevel::Info, removed(&Words::as_written(args.id)));
                     Ok(())
                 })?;
                 Ok(Outcome::Done)
@@ -758,7 +763,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     })
                     .into_iter()
                     .collect();
-                Ok(Outcome::Value(serde_json::json!({ "items": items })))
+                Ok(Outcome::Value(skwir_core::registry::menu_answer(&items)))
             },
         )
         .data();
@@ -801,8 +806,8 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     let made = crate::rclone_features::public_link(&remote.point, &target.path, &cancel);
                     let Some(app) = weak.upgrade() else { return };
                     match made {
-                        // What was copied, said in the window's words: it
-                        // takes text.
+                        // What was copied, as words' data: the window says
+                        // them in its language.
                         Ok(url) => app.request_front(Invocation::with_args(
                             "ui.copy_text",
                             &serde_json::json!({
@@ -811,7 +816,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                     remote_configure_copied_what = "the public link",
                                     note = "What was put on the clipboard, placed in the window's “Copied …”."
                                 )
-                                .say(),
+                                .to_data(),
                             }),
                         )),
                         Err(error) => app.notify(
@@ -893,7 +898,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                             NotifyLevel::Info,
                                             words!(
                                                 remote_configure_options_saved = "{ $server } is mounted so when it next connects",
-                                                server = Name(top.label()),
+                                                server = crate::address::named(&top.label()),
                                                 note = "server: the login and server (me@nas)."
                                             ),
                                         ),
@@ -936,13 +941,13 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     let cancel = lifetime.child();
                     let done = at_login(&remotes, &app, &top, &id, args.on, &cancel);
                     remotes.refresh(&app);
-                    let label = top.label();
+                    let label = crate::address::named(&top.label());
                     match (done, args.on) {
                         (Ok(()), true) => app.notify(
                             NotifyLevel::Info,
                             words!(
                                 remote_configure_connects_at_login = "{ $server } connects at login",
-                                server = Name(label),
+                                server = label,
                                 note = "server: the login and server, or a remote of rclone's."
                             ),
                         ),
@@ -950,7 +955,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             NotifyLevel::Info,
                             words!(
                                 remote_configure_no_longer_at_login = "{ $server } no longer connects at login",
-                                server = Name(label),
+                                server = label,
                                 note = "server: the login and server, or a remote of rclone's."
                             ),
                         ),
@@ -958,7 +963,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             NotifyLevel::Error,
                             words!(
                                 remote_configure_at_login_failed = "{ $server } was not set to connect at login: { $error }",
-                                server = Name(label),
+                                server = label,
                                 error = error,
                                 note = "server: the login and server, or a remote of rclone's."
                             ),
@@ -999,7 +1004,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                 NotifyLevel::Error,
                                 words!(
                                     remote_configure_key_login_failed = "Key login was not set up on { $server }: { $error }",
-                                    server = Name(top.label()),
+                                    server = crate::address::named(&top.label()),
                                     error = error,
                                     note = "server: the login and server (me@nas)."
                                 ),
@@ -1080,7 +1085,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     })
                     .into_iter()
                     .collect();
-                Ok(Outcome::Value(serde_json::json!({ "items": items })))
+                Ok(Outcome::Value(skwir_core::registry::menu_answer(&items)))
             },
         )
         .data();
@@ -1126,7 +1131,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     })
                     .into_iter()
                     .collect();
-                Ok(Outcome::Value(serde_json::json!({ "items": items })))
+                Ok(Outcome::Value(skwir_core::registry::menu_answer(&items)))
             },
         )
         .data();
@@ -1224,10 +1229,11 @@ fn keep_as_server(
     let bookmark = skwir_platform::places::remote_bookmarks()
         .into_iter()
         .find(|b| Address::parse(&b.address).is_ok_and(|a| a == *address));
+    // Empty: it goes by its address's (`servers::add`).
     let name = name
         .or_else(|| bookmark.as_ref().map(|b| b.title.clone()))
         .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| address.label());
+        .unwrap_or_default();
     let kept = crate::servers::add(app, &name, address)?;
     remotes.refresh(app);
     // Its bookmark out first, which the places plugin says: what the user
@@ -1249,7 +1255,7 @@ fn keep_as_server(
         words!(
             remote_configure_kept_as_server =
                 "{ $server } is a server of the Network section, kept { $kept }",
-            server = Name(name),
+            server = crate::address::named(&crate::servers::label_of(&name, address)),
             kept = kept.words(),
             note = "kept: where it is kept (in Skwir's list, in KDE's network folders)."
         ),
@@ -1347,7 +1353,7 @@ fn servers_alone(
         };
         if let Some(name) = added {
             remotes.refresh(app);
-            app.notify(NotifyLevel::Info, self::added(name));
+            app.notify(NotifyLevel::Info, self::added(&name));
         }
         Ok(())
     })
@@ -1379,28 +1385,28 @@ fn not_done(done: &'static str, error: anyhow::Error) -> Words {
 }
 
 /// `name`, a server's, is added.
-fn added(name: String) -> Words {
+fn added(name: &Words) -> Words {
     words!(
         remote_configure_added = "{ $server } is added",
-        server = Name(name),
+        server = crate::address::named(name),
         note = "server: the name of the server just added."
     )
 }
 
 /// `name`, a server's, is saved.
-fn saved(name: String) -> Words {
+fn saved(name: &Words) -> Words {
     words!(
         remote_configure_saved = "{ $server } is saved",
-        server = Name(name),
+        server = crate::address::named(name),
         note = "server: the name of the server just changed."
     )
 }
 
 /// `name`, a server's, is removed.
-fn removed(name: String) -> Words {
+fn removed(name: &Words) -> Words {
     words!(
         remote_configure_removed = "{ $server } is removed",
-        server = Name(name),
+        server = crate::address::named(name),
         note = "server: the name of the server just removed."
     )
 }
@@ -1461,7 +1467,7 @@ fn kept_at(remotes: &Remotes, address: &Address) -> anyhow::Result<crate::connec
                 server.kept.by_address(),
                 words!(
                     remote_configure_kept_elsewhere = "{ $server } is { $kept }: change it there",
-                    server = Name(server.label.clone()),
+                    server = crate::address::named(&server.label),
                     kept = server.kept.words(),
                     note = "kept: where the server is kept (in rclone's configuration, one of Dolphin's places)."
                 )
@@ -1484,6 +1490,7 @@ fn edit_kept(
         return Ok(());
     };
     crate::servers::change(app, address, &name, &new)?;
+    let label = crate::servers::label_of(&name, &new);
     let (old_top, new_top) = (address.top(), new.top());
     if old_top != new_top {
         let options = crate::options::of(app, &old_top);
@@ -1495,14 +1502,14 @@ fn edit_kept(
                 words!(
                     remote_configure_moved_off_login =
                         "{ $server } no longer connects at login: its address changed",
-                    server = Name(name.clone()),
+                    server = crate::address::named(&label),
                     note = "server: the name of the server just changed."
                 ),
             );
         }
     }
     remotes.refresh(app);
-    app.notify(NotifyLevel::Info, saved(name));
+    app.notify(NotifyLevel::Info, saved(&label));
     Ok(())
 }
 
@@ -1532,7 +1539,7 @@ fn remove_kept(
     let form = Form::new(
         words!(
             remote_configure_remove_title = "Remove { $server }?",
-            server = Name(server.label.clone())
+            server = crate::address::named(&server.label)
         ),
         words!(remote_configure_remove = "Remove"),
     )
@@ -1543,7 +1550,7 @@ fn remove_kept(
     crate::servers::remove(app, address)?;
     forget_kept_for(remotes, app, address, cancel);
     remotes.refresh(app);
-    app.notify(NotifyLevel::Info, removed(server.label));
+    app.notify(NotifyLevel::Info, removed(&server.label));
     Ok(())
 }
 
@@ -1733,17 +1740,16 @@ fn encrypt_in_form(
 /// (`AtLogin::rclone` refuses an encrypted configuration).
 fn connecting_at_login_alone(remotes: &Remotes) -> anyhow::Result<()> {
     // `login::id_of`: the connector, then the address.
-    let mut connecting: Vec<String> = remotes
+    let mut connecting: Vec<Address> = remotes
         .state
         .lock()
         .at_login
         .iter()
         .filter_map(|id| id.strip_prefix("rclone/"))
         .filter_map(|address| Address::parse(address).ok())
-        .map(|address| format!("“{}”", address.label()))
         .collect();
-    connecting.sort();
-    // The names quoted, joined as a list: no list is an argument yet.
+    // By their names, as rclone's configuration writes them.
+    connecting.sort_by(|a, b| a.host.cmp(&b.host));
     anyhow::ensure!(
         connecting.is_empty(),
         words!(
@@ -1752,8 +1758,12 @@ fn connecting_at_login_alone(remotes: &Remotes) -> anyhow::Result<()> {
                *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
             }",
             count = connecting.len(),
-            remotes = connecting.join(", "),
-            note = "remotes: the names of the remotes of rclone's that connect at login, each quoted, separated by commas."
+            remotes = skwir_core::words::List::and(
+                connecting
+                    .iter()
+                    .map(|address| crate::address::named(&address.label()))
+            ),
+            note = "remotes: the names of the remotes of rclone's that connect at login, each quoted, as a list."
         )
     );
     Ok(())

@@ -241,6 +241,9 @@ geo_fpl_not_plan = not a Garmin flight plan
 # Why a GeoJSON file is not shown on a map. error: what the JSON reader says is wrong, in English.
 geo_geojson_invalid = Not valid GeoJSON: { $error }
 
+# Why a GeoJSON file is not shown on a map: it is larger than the preview reads. size: that bound (16 MB).
+geo_geojson_too_large = This GeoJSON file exceeds { $size } preview limit
+
 # An action: write into pictures where they were taken, read from a GPS track recorded at the same time.
 geo_geotag = Geotag pictures from a track
 
@@ -265,6 +268,11 @@ geo_invalid_points = { $count ->
 # A distance in kilometres, in a map's Properties (Distance: 42.2 km) and in where a picture was taken (5.6 km NE of Example Town). km: the number.
 geo_kilometres = { $km } km
 
+# Why a KMZ file (a zipped Google Earth file) is not shown on a map: it holds more files than the preview reads (4,000).
+geo_kmz_members = { $count ->
+       *[other] This KMZ holds more than { $count } members
+    }
+
 # Why a KMZ file (a zipped Google Earth file) is not shown on a map: it holds no .kml file.
 geo_kmz_no_kml = This KMZ holds no KML document
 
@@ -276,6 +284,9 @@ geo_left_others = { $count ->
         [one] { $count } other file left out
        *[other] { $count } other files left out
     }
+
+# Under the title of a plan placing or removing pictures' locations: what was left out, as a list (1 picture outside the track's times and 1 other file left out).
+geo_left_out = { $what }
 
 # Under a geotag's plan, what was left out: pictures taken before the track began or after it ended.
 geo_left_outside = { $count ->
@@ -359,7 +370,7 @@ geo_no_pane = no pane { $pane }
 # Why no location was removed: the selection holds no picture.
 geo_no_picture_selected = No picture selected
 
-# Why no location was removed: the selection holds no picture. why: what it holds instead, each said after the other (1 RAW picture left out: their sidecars are not written yet · 2 other files left out).
+# Why no location was removed: the selection holds no picture. why: what it holds instead, as a list (1 RAW picture left out: their sidecars are not written yet and 2 other files left out).
 geo_no_picture_selected_because = No picture selected: { $why }
 
 # A notice in place of a map: the file holds no point with a latitude and a longitude.
@@ -371,7 +382,7 @@ geo_not_a_map = Not a map file
 # Why a geotag planned nothing. track: the name of the GPS track.
 geo_nothing_along = No picture to place along { $track }
 
-# Why a geotag planned nothing. track: the name of the GPS track; why: what was left out, each said after the other (3 pictures outside the track's times · 1 other file left out).
+# Why a geotag planned nothing. track: the name of the GPS track; why: what was left out, as a list (3 pictures outside the track's times and 1 other file left out).
 geo_nothing_along_because = No picture to place along { $track }: { $why }
 
 # A plan's title, in its review and in what is said after it (Undid: …): pictures are given where they were taken, from a GPS track. name: the picture's name when there is one; track: the track's name. Begins in lower case.
@@ -383,11 +394,17 @@ geo_place_along = { $count ->
 # A step of a plan, in its review: a picture is given where it was taken. lat, lon: its latitude and longitude in degrees. Begins in lower case.
 geo_place_at = place { $name } at { $lat }, { $lon }
 
+# A row's label in a picture's or a video's Properties: the town it was taken in or near.
+geo_place_label = Place
+
 # Where a picture was taken, in its Properties beside Place, when it is near a town rather than in it: 5.6 km NE of Example Town. distance: how far, with its unit; direction: one of the eight abbreviated directions, from the town; place: the town's name, as the place names' data writes it.
 geo_place_near = { $distance } { $direction } of { $place }
 
 # What a step did, said once its plan ran: a picture was given where it was taken. lat, lon: its latitude and longitude in degrees. Begins in lower case.
 geo_placed_at = placed { $name } at { $lat }, { $lon }
+
+# Why a QGroundControl plan (a drone mission) is not shown on a map: it is larger than the preview reads. size: that bound (16 MB).
+geo_plan_too_large = This plan exceeds { $size } preview limit
 
 # Why a .pln file is not shown on a map: it is not a flight plan of Microsoft Flight Simulator.
 geo_pln_not_plan = not a flight simulator plan

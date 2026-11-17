@@ -127,11 +127,13 @@ impl FieldProvider for Fields {
     fn keys(&self) -> &'static [&'static str] {
         self.keys
     }
-    fn label(&self, key: &str) -> Option<&'static str> {
+    /// As its author wrote it: a plugin from outside says its own words.
+    fn label(&self, key: &str) -> Option<Words> {
         self.declared
             .iter()
             .find(|(k, _, _)| *k == key)
             .and_then(|(_, label, _)| *label)
+            .map(Words::as_written)
     }
     fn accepts(&self, key: &str, name: &OsStr) -> bool {
         let Some(mime) = mime::by_name(name) else {
@@ -406,7 +408,6 @@ impl Previews {
                 plugin = self.runner.title.clone(),
                 note = "Under a preview a plugin from outside Skwir (its title, as its author wrote it) made, which may not use the network: its links are not followed."
             )
-            .say()
         });
         Converted {
             path: made,
@@ -494,7 +495,8 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
             Kind::Hex => inspection::InspectionKind::Hex,
             Kind::Table => inspection::InspectionKind::Table,
         },
-        title: answer.title,
+        // What a plugin from outside says is as it wrote it.
+        title: Words::as_written(answer.title),
         blocks: inspection::split_blocks(
             answer
                 .text
@@ -506,7 +508,7 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
                 })
                 .collect(),
         ),
-        columns: answer.columns,
+        columns: answer.columns.into_iter().map(Words::as_written).collect(),
         rows: answer
             .rows
             .into_iter()
@@ -523,12 +525,15 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
         previous: answer.previous,
         next: answer.next,
         position: answer.position,
-        notice: answer.notice,
+        notices: (!answer.notice.is_empty())
+            .then(|| Words::as_written(answer.notice))
+            .into_iter()
+            .collect(),
         details: answer
             .details
             .into_iter()
             .map(|detail| inspection::Detail {
-                label: detail.label,
+                label: Words::as_written(detail.label),
                 value: detail.value,
                 action: None,
             })

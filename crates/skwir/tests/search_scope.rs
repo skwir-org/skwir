@@ -127,7 +127,7 @@ fn the_sidebars_places_offered_carry_a_scope_only_where_words_search() {
         answer
             .rows
             .into_iter()
-            .find(|row| row.source == "places" && row.title == title)
+            .find(|row| row.source == "places" && row.title.english() == title)
             .unwrap_or_else(|| panic!("no row {title} for {words}"))
             .scope
     };
@@ -162,15 +162,15 @@ fn a_tag_s_place_has_two_depths_and_is_searched_as_it_is_shown() {
     assert_eq!((&depths.here, &depths.below), (&france, &deep));
     assert_eq!(app.depths(&deep).as_ref(), Some(&depths), "from either");
     assert_eq!(
-        (depths.here_label.as_str(), depths.below_label.as_str()),
-        ("This tag", "With sub-tags")
+        (depths.here_label.english(), depths.below_label.english()),
+        ("This tag".to_owned(), "With sub-tags".to_owned())
     );
     let top = app
         .depths(&Address::default().location())
         .expect("every tag's place has depths");
     assert_eq!(
-        (top.here_label.as_str(), top.below_label.as_str()),
-        ("These tags", "Every tagged file")
+        (top.here_label.english(), top.below_label.english()),
+        ("These tags".to_owned(), "Every tagged file".to_owned())
     );
     assert_ne!(top.here, top.below);
     for none in [

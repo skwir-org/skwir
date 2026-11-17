@@ -63,7 +63,7 @@ pub fn worker_path() -> Option<std::path::PathBuf> {
     WORKER.find()
 }
 fn worker() -> anyhow::Result<std::path::PathBuf> {
-    WORKER.require_words(words!(
+    WORKER.require(words!(
         archive_install = "Install { $program } to open archives",
         program = WORKER.executable,
         note = "Said where an archive cannot be opened. program: the helper's name (skwir-archive-worker)."
@@ -262,7 +262,7 @@ fn write_member(
 ) -> anyhow::Result<()> {
     let most = bounds.binary_input();
     if u64::try_from(member.size).unwrap_or(0) > most as u64 {
-        return Err(bounds.refuse_words(member_too_large(most)));
+        return Err(bounds.refuse(member_too_large(most)));
     }
     // It writes in the folder that will hold the member, and nowhere else.
     let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
@@ -310,7 +310,7 @@ pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Resul
     let temp = crate::file::memory_dir("skwir-member-")?;
     let output = temp.path().join("member");
     write_member(path, member, &output, Bounds::QUICK, cancel)?;
-    inspection::read_bounded_words(
+    inspection::read_bounded(
         &output,
         limits::BINARY_INPUT,
         member_too_large(limits::BINARY_INPUT),
@@ -473,7 +473,7 @@ impl Session {
         for member in order {
             let most = bounds.binary_input();
             if u64::try_from(member.size).unwrap_or(0) > most as u64 {
-                return Err(bounds.refuse_words(member_too_large(most)));
+                return Err(bounds.refuse(member_too_large(most)));
             }
             let Answer::Read(bytes) = self.ask(Asked::Read(member.clone(), bounds), cancel)? else {
                 anyhow::bail!("unexpected archive reply");

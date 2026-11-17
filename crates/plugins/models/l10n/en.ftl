@@ -102,6 +102,9 @@ models_detail_watertight = Watertight
 # The title of a document's preview. program: the program that makes it (FreeCAD, LayOut).
 models_document_title = { $program } document
 
+# Why a DXF drawing is not drawn: it grew past what the preview reads while it was read. size: that bound (33.6 MB).
+models_drawing_exceeds = The drawing exceeds { $size } preview limit
+
 # The title of an AutoCAD drawing's preview. format: the format's name (DWG, DXF).
 models_drawing_title = { $format } drawing
 
@@ -137,6 +140,12 @@ models_install_worker = Install { $program } to draw models that store no pictur
 # A print's layer height in millimetres, in the preview's Properties. mm: the number.
 models_layer_height_mm = { $mm } mm
 
+# Why a part of a model's package is not read: the package has none by that name. member: its name in the package, as written.
+models_member_missing = { $member } is missing
+
+# Why a part of a model's package is not read: it inflates past what the preview reads. member: its name in the package, as written; size: that bound.
+models_member_too_large = { $member } exceeds { $size } preview limit
+
 # The title of a 3D model's preview. format: the format's or the program's name (STL, glTF, STEP, Rhino, SketchUp).
 models_model_title = { $format } model
 
@@ -168,6 +177,11 @@ models_object_file = Object file
 models_objects_unmeshed = { $count ->
         [one] { $count } object stores no mesh and is not drawn
        *[other] { $count } objects store no mesh and are not drawn
+    }
+
+# Why a model's package (3MF, SketchUp, LayOut) is not shown: it holds more parts than the preview reads (4,000).
+models_package_members = { $count ->
+       *[other] The package holds more than { $count } members
     }
 
 models_plugin_description = Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths, the meshes Rhino models keep and STL, OBJ, PLY, OFF, glTF, STEP and IGES models; print time, filament, size, volume and version in Properties

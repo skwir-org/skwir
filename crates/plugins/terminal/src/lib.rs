@@ -122,9 +122,14 @@ impl Plugin for TerminalPlugin {
                     terminal_program = "Shell",
                     note = "A setting's title: the program the terminal runs (bash, fish)."
                 ),
-                words!(
-                    terminal_program_description =
-                        "The program the terminal runs. Leave empty for your login shell."
+                (
+                    words!(
+                        terminal_program_description = "The program the terminal runs."
+                    ),
+                    words!(
+                        terminal_program_description_more = "Leave empty for your login shell.",
+                        note = "What a setting's description says after its first sentence, in its tooltip."
+                    ),
                 ),
                 "",
             )
@@ -138,16 +143,31 @@ impl Plugin for TerminalPlugin {
                     terminal_scrollback = "History",
                     note = "A setting's title: how many lines of what the terminal showed can be scrolled back to."
                 ),
-                words!(
-                    terminal_scrollback_description = "How many lines you can scroll back to, for terminals opened from now on, at most { $most }. Once full, every { $lines } lines of a wide terminal take about 30 MB.",
-                    most = SCROLLBACK_MOST,
-                    lines = SCROLLBACK,
-                    note = "A setting's description: the most lines it allows (30,000), and how much memory 10,000 lines take."
+                (
+                    words!(
+                        terminal_scrollback_description = "How many lines you can scroll back to, for terminals opened from now on, at most { $most }.",
+                        most = SCROLLBACK_MOST,
+                        note = "A setting's description: the most lines it allows (30,000)."
+                    ),
+                    words!(
+                        terminal_scrollback_description_more = "Once full, every { $lines } lines of a wide terminal take about 30 MB.",
+                        lines = SCROLLBACK,
+                        note = "What a setting's description says after its first sentence, in its tooltip: how much memory 10,000 lines take."
+                    ),
                 ),
                 SCROLLBACK,
                 (0, SCROLLBACK_MOST),
             )
-            .unit("lines")
+            .unit(|n| {
+                words!(
+                    terminal_scrollback_lines = "{ $n ->
+                        [one] { $n } line
+                       *[other] { $n } lines
+                    }",
+                    n = n,
+                    note = "The unit of how many lines a terminal keeps, after its number in the settings (10,000 lines)."
+                )
+            })
             .step(1000)
             .page(skwir_core::settings::page::TERMINAL)
             .section(skwir_core::settings::section::TERMINAL),
@@ -158,9 +178,15 @@ impl Plugin for TerminalPlugin {
                 terminal_follow = "Follow the folder shown",
                 note = "A setting's title: whether the terminal and the pane go to the same folder."
             ),
-            words!(
-                terminal_follow_description = "The terminal changes to the folder the pane shows, and the pane goes where you cd. Nothing is typed while a program runs in the terminal.",
-                note = "cd is the shell's command that changes folder."
+            (
+                words!(
+                    terminal_follow_description = "The terminal changes to the folder the pane shows, and the pane goes where you cd.",
+                    note = "cd is the shell's command that changes folder."
+                ),
+                words!(
+                    terminal_follow_description_more = "Nothing is typed while a program runs in the terminal.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             true,
         )

@@ -52,7 +52,7 @@ impl NotesStore for Counting {
             rating: false,
             comment: false,
             origin: false,
-            limits: "",
+            limits: None,
         }
     }
     fn default_write(&self) -> Write {

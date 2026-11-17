@@ -29,7 +29,7 @@ pub struct Placeholder {
 /// A failure in the user's words, by its kind (`Listing::failure`). The
 /// system's message stays as the detail: it is what someone will search
 /// for.
-pub fn failure(kind: Failure, error: &str) -> Placeholder {
+pub fn failure(kind: Failure, error: &Words) -> Placeholder {
     let (title, action) = match kind {
         Failure::Denied => (
             words!(placeholder_denied = "You don't have permission to open this folder"),
@@ -48,7 +48,7 @@ pub fn failure(kind: Failure, error: &str) -> Placeholder {
     Placeholder {
         icon: "warning",
         title: title.say(),
-        detail: error.to_owned(),
+        detail: error.say(),
         action,
         problem: true,
     }
@@ -351,7 +351,7 @@ mod tests {
             denied.title,
             "You don't have permission to open this folder"
         );
-        assert_eq!(denied.detail, said);
+        assert_eq!(denied.detail, said.english());
         assert_eq!(denied.action, None);
         // A folder gone, as this system says it.
         let (gone, said) = of(std::fs::metadata("/nowhere/it’s gone").unwrap_err());

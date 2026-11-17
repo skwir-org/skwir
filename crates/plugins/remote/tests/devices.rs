@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use skwir_core::app::{App, AppConfig};
 use skwir_core::cancel::CancelToken;
 use skwir_core::registry::Place;
+use skwir_core::words::Words;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector};
 use skwir_plugin_remote::gvfs::Gvfs;
@@ -77,10 +78,10 @@ impl Connector for Through {
 struct NoOne;
 
 impl Ask for NoOne {
-    fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+    fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
         None
     }
-    fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+    fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
         false
     }
 }
@@ -396,7 +397,9 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
         Some("remote:mtp://Example_Phone_0123/")
     );
     assert_eq!(
-        remotes.label_of(&Address::parse("mtp://Example_Phone_0123/DCIM").unwrap()),
+        remotes
+            .label_of(&Address::parse("mtp://Example_Phone_0123/DCIM").unwrap())
+            .english(),
         "Example Phone",
         "named so below its top too, never by its serial"
     );

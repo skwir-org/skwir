@@ -61,23 +61,21 @@ impl PreviewProvider for Provider {
         let len = held.len();
         let row = HEX_ROW as u64;
         let mut position = view.offset.min(len.saturating_sub(1)) / row * row;
-        let mut notice = String::new();
+        let mut notices = Vec::new();
         if let Some(query) = &view.query {
             let needle = needle(query)?;
             if let Some(found) = find(&held, &needle, view.offset, cancel)? {
                 position = found;
-                notice = words!(
+                notices.push(words!(
                     hex_match_at = "Match at { $offset }",
                     offset = format!("0x{found:X}"),
                     note = "A note under a file's bytes: where the search found what it looked for, as a hexadecimal offset (0x64)."
-                )
-                .say();
+                ));
             } else {
-                notice = words!(
+                notices.push(words!(
                     hex_no_further_match = "No further match",
                     note = "A note under a file's bytes: the search found nothing past where it started."
-                )
-                .say();
+                ));
             }
         }
         let offset = position / row * row;
@@ -87,14 +85,13 @@ impl PreviewProvider for Provider {
                 hex_title = "Hex · { $size }",
                 size = Size(len),
                 note = "The title of a file's preview as hexadecimal bytes, with the file's size."
-            )
-            .say(),
+            ),
             &bytes,
             len,
             offset,
             position,
         );
-        page.notice = notice;
+        page.notices = notices;
         Ok(Some(page))
     }
 }
@@ -225,7 +222,8 @@ mod tests {
             first.rows[0].cells[0], "0000000000000060",
             "match row on top"
         );
-        assert_eq!(first.notice, "Match at 0x64");
+        let notice = |data: &Inspection| data.notice().map(|said| said.english());
+        assert_eq!(notice(&first).as_deref(), Some("Match at 0x64"));
         let second = search(first.position + 1);
         assert_eq!(second.position, 108, "same row, distinct match");
         let third = search(second.position + 1);
@@ -233,7 +231,7 @@ mod tests {
         assert_eq!(third.rows[0].cells[0], "0000000000001F40");
         assert_eq!(third.previous, Some(8000 - 4096));
         let none = search(third.position + 1);
-        assert_eq!(none.notice, "No further match");
+        assert_eq!(notice(&none).as_deref(), Some("No further match"));
         assert_eq!(
             none.position,
             8000 / 16 * 16,

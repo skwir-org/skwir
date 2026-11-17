@@ -152,10 +152,10 @@ fn display_name(path: &Path) -> String {
         .into_owned()
 }
 
-/// A step's conflict, said here: its reason is text (`StepStatus`).
+/// A step's conflict: why, in words.
 fn conflict(reason: impl Into<Words>) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.into().say(),
+        reason: reason.into(),
     }
 }
 
@@ -343,7 +343,20 @@ impl op::Effect for Extract {
             inputs: vec![self.entry.path.clone()],
             folder,
             size,
-            words: ("Extract", "extracted"),
+            words: op::MakeWords {
+                verb: words!(
+                    archives_extract_verb = "Extract",
+                    note = "The button of the question asking what becomes of the names an extraction finds taken: extract, once they are answered."
+                ),
+                waiting: words!(
+                    archives_nothing_extracted = "Nothing is extracted until you choose.",
+                    note = "Under the title of the question asking what becomes of the names an extraction finds taken."
+                ),
+                cancelled: words!(
+                    archives_cancelled_extract = "Cancelled: nothing was extracted",
+                    note = "An extraction that found names taken asked what becomes of them, and the user cancelled it."
+                ),
+            },
         })
     }
 
@@ -431,7 +444,6 @@ impl op::Effect for Extract {
                     |attempt| {
                         // Each member's attempts count from 1: a second
                         // says the first was wrong for it.
-                        // Said here: the question takes text.
                         let mut title = if attempt == 1 {
                             words!(
                                 archives_password_for = "Password for { $name }",
@@ -444,13 +456,11 @@ impl op::Effect for Extract {
                                 name = Name(archive_name.clone()),
                                 note = "The title of the question asking an archive's password again, the one given being wrong."
                             )
-                        }
-                        .say();
+                        };
                         let accept = words!(
                             archives_extract_button = "Extract",
                             note = "The button that gives an archive's password and extracts it."
-                        )
-                        .say();
+                        );
                         // Nothing typed is asked again, as making one
                         // asks; Cancel gives up.
                         loop {
@@ -460,8 +470,7 @@ impl op::Effect for Extract {
                                         archives_password_empty = "Password for { $name }: it cannot be empty",
                                         name = Name(archive_name.clone()),
                                         note = "The title of the question asking an archive's password again, nothing having been typed."
-                                    )
-                                    .say();
+                                    );
                                 }
                                 Ok(given) => return Some(given),
                                 Err(why) => {
@@ -546,11 +555,11 @@ impl Extract {
             .filter_map(|placing| EntryRef::from_path(target.join(&placing.to)))
             .collect();
         if made.is_empty() {
-            // Placed already, as its check found: nothing done. Said here:
-            // its why is text.
-            return Err(op::Unneeded(
-                already_extracted_into(&self.entry.path, display_name(target)).say(),
-            )
+            // Placed already, as its check found: nothing done.
+            return Err(op::Unneeded(already_extracted_into(
+                &self.entry.path,
+                display_name(target),
+            ))
             .into());
         }
         if op::keeps_no_trash(target) {

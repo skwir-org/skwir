@@ -1825,7 +1825,7 @@ pub struct ReadFilter {
     pub keeps: Arc<dyn Fn(&Entry) -> bool + Send + Sync>,
     /// What only a search can tell (what files contain, where they were
     /// taken), left out until Enter: said where the count is.
-    pub waits: Vec<String>,
+    pub waits: Vec<crate::words::Words>,
     /// Whether it asks what the files' metadata says: the pane asks for
     /// every file's.
     pub metadata: bool,

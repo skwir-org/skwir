@@ -1223,7 +1223,7 @@ fn a_proposal_with_a_name_taken_is_reviewed_as_the_defaults_settle_it() {
     }
     assert!(matches!(
         &plan.diff(&app.companions).steps[0].1,
-        StepStatus::Conflict { reason } if reason == "“a.txt” is already there"
+        StepStatus::Conflict { reason } if reason.english() == "“a.txt” is already there"
     ));
 }
 

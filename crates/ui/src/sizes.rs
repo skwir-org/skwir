@@ -163,18 +163,6 @@ impl Part {
         }
     }
 
-    /// How the user knows it: what a change of its size says.
-    /// Transitional (ADR-139): its English, for callers not yet moved to
-    /// `title_words`.
-    pub fn title(self) -> &'static str {
-        match self {
-            Part::Interface => "Text size",
-            Part::Files => "Files text",
-            Part::Reading => "Reading text",
-            Part::Code => "Code text",
-        }
-    }
-
     /// How the user knows it, as words: what a change of its size says.
     pub fn title_words(self) -> Words {
         match self {
@@ -248,12 +236,6 @@ pub fn preview_stepped(percent: u32, larger: bool) -> u32 {
             .find(|step| *step < percent)
             .unwrap_or(PREVIEW_STEPS[0])
     }
-}
-
-/// How a size is written, in the settings and the preview: `110%`, said
-/// in the window. Transitional (ADR-139): `step_words` is it as words.
-pub fn step_label(step: u32) -> String {
-    step_words(step).say()
 }
 
 /// How a size is written, in the settings and the preview: `110%`.
@@ -787,7 +769,7 @@ mod tests {
         let gnome = hundreds(&Desktop {
             interface: Some(11. * 96. / 72.),
             monospace: Some(11. * 96. / 72.),
-            from: Some("GNOME".into()),
+            from: Some(skwir_platform::desktop_style::Read::desktop("GNOME")),
             scaling: Some(1.25),
         });
         assert!(close(gnome[0], 18.333));

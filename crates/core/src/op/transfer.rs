@@ -3070,7 +3070,7 @@ mod tests {
         };
         let status = super::super::Operation::check(&step, &StepContext::detached());
         assert!(
-            matches!(&status, super::super::StepStatus::Conflict { reason } if reason.contains("keeps no trash")),
+            matches!(&status, super::super::StepStatus::Conflict { reason } if reason.english().contains("keeps no trash")),
             "{status:?}"
         );
     }

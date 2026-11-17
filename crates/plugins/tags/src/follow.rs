@@ -375,7 +375,7 @@ impl Operation for Follow {
         let app = self.ctx.as_ref().and_then(|c| c.app.upgrade());
         match app {
             None => StepStatus::Conflict {
-                reason: plugin_off().say(),
+                reason: plugin_off(),
             },
             Some(app) if self.target(&app).is_none() => StepStatus::AlreadyDone,
             Some(_) => StepStatus::Pending { reversible: true },
@@ -452,7 +452,7 @@ impl Operation for Restore {
             StepStatus::Pending { reversible: true }
         } else {
             StepStatus::Conflict {
-                reason: plugin_off().say(),
+                reason: plugin_off(),
             }
         }
     }

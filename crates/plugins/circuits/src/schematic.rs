@@ -456,7 +456,7 @@ struct Facts {
     paper: Option<String>,
     symbols: usize,
     sheets: usize,
-    title: Vec<(String, String)>,
+    title: Vec<(skwir_core::words::Words, String)>,
 }
 
 /// A placed symbol: its library drawing and its visible fields.
@@ -876,12 +876,11 @@ fn release(generator: Option<&str>, version: Option<u64>) -> Option<String> {
 }
 
 /// Properties' label for how many symbols a schematic or library holds.
-fn symbols_label() -> String {
+fn symbols_label() -> skwir_core::words::Words {
     words!(
         circuits_detail_symbols = "Symbols",
         note = "A label in the preview's Properties: how many symbols (components drawn in a schematic) the sheet or library holds."
     )
-    .say()
 }
 
 /// A schematic sheet: its picture and what it holds.
@@ -930,8 +929,7 @@ pub fn schematic(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result
             words!(
                 circuits_detail_paper = "Paper",
                 note = "A label in the preview's Properties: the paper size the schematic is drawn on (A4), as the file names it."
-            )
-            .say(),
+            ),
             paper,
         ));
     }
@@ -941,8 +939,7 @@ pub fn schematic(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result
             words!(
                 circuits_detail_sheets = "Sheets",
                 note = "A label in the preview's Properties: how many sub-sheets the schematic places."
-            )
-            .say(),
+            ),
             facts.sheets,
         ),
     ] {
@@ -996,8 +993,7 @@ pub fn library(text: &str) -> anyhow::Result<Found> {
             words!(
                 circuits_detail_first_symbol = "First symbol",
                 note = "A label in the preview's Properties: the name of the library's first symbol, the one drawn."
-            )
-            .say(),
+            ),
             name.into_owned(),
         ));
     }
@@ -1121,10 +1117,10 @@ mod tests {
                 (symbol "Derived" (extends "Base") (property "Reference" "U" (at 0 5 0))))"#,
         )
         .unwrap();
-        let svg = found.svg.unwrap();
+        let svg = found.svg.clone().unwrap();
         assert!(svg.contains("#ffffc2"), "the body filled");
         assert_eq!(
-            found.details,
+            found.english_details(),
             [
                 ("First symbol".to_owned(), "Base".to_owned()),
                 ("Symbols".to_owned(), "2".to_owned())

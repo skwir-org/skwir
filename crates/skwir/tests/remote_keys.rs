@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::testing::free_port;
+use skwir_core::words::Words;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::Ask;
 use skwir_plugin_remote::keys::{self, Key, Ssh};
@@ -531,14 +532,14 @@ impl Answers {
 }
 
 impl Ask for Answers {
-    fn secret(&self, title: &str, _: &str, _: &CancelToken) -> Option<String> {
+    fn secret(&self, title: &Words, _: &Words, _: &CancelToken) -> Option<String> {
         self.asked.lock().unwrap().push(format!("secret: {title}"));
         Some(self.password.clone())
     }
     fn password(
         &self,
-        title: &str,
-        _: &str,
+        title: &Words,
+        _: &Words,
         _: &CancelToken,
     ) -> Option<skwir_plugin_remote::connector::Password> {
         self.asked
@@ -551,7 +552,7 @@ impl Ask for Answers {
             remember: false,
         })
     }
-    fn confirm(&self, title: &str, detail: &str, _: &CancelToken) -> bool {
+    fn confirm(&self, title: &Words, detail: &Words, _: &CancelToken) -> bool {
         self.asked
             .lock()
             .unwrap()

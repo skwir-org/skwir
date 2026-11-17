@@ -31,7 +31,10 @@ use crate::words::Words;
 /// is written and put in the field (`{name}`, `\d`) is as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Reference {
-    /// What it is about, as its heading says it: "Template".
+    /// What it is about, as its heading says it: "Template". Its words
+    /// travel as data (the window sends a reference to itself, `ui.ask`).
+    #[serde(with = "crate::words::data")]
+    #[schemars(with = "Words")]
     pub title: Words,
     pub groups: Vec<Group>,
     /// What begins a part the field offers to go on with as it is typed
@@ -59,11 +62,18 @@ pub struct Offered {
 /// for them all.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Group {
+    #[serde(with = "crate::words::data")]
+    #[schemars(with = "Words")]
     pub title: Words,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<Item>,
     /// Lines said under its items.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "crate::words::data::many"
+    )]
+    #[schemars(with = "Vec<Words>")]
     pub notes: Vec<Words>,
 }
 
@@ -96,7 +106,9 @@ pub struct Item {
 pub struct ItemData {
     /// As it is written: `{n:03}`, `\d`, `kind:`.
     pub written: String,
-    /// What it means, in words.
+    /// What it means, in words, as their data.
+    #[serde(with = "crate::words::data")]
+    #[schemars(with = "Words")]
     pub says: Words,
     /// What it gives for what the field is about (the first file's), when
     /// that is known.

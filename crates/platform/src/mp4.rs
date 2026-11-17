@@ -67,7 +67,7 @@ pub fn details<S: FileSource + ?Sized>(source: &S) -> Vec<Detail> {
     taken(source)
         .at
         .and_then(|at| {
-            crate::inspection::detail_words(
+            crate::inspection::detail(
                 skwir_core::words!(
                     mp4_position = "Position",
                     note =

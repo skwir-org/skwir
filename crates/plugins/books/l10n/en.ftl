@@ -48,7 +48,15 @@ books_engine_auto = Automatic
 # A choice of the Book engine setting: Skwir's own engine.
 books_engine_builtin = Built-in
 
-books_engine_description = Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others.
+books_engine_description = Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out.
+
+# What a setting's description says after its first sentence, in its tooltip.
+books_engine_description_more = MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others.
+
+# Why a book is not shown: its package holds more files than the preview reads (4,000).
+books_epub_members = { $count ->
+       *[other] This EPUB holds more than { $count } members
+    }
 
 # An error: a book names a part of itself it does not hold. href: the part's name in the book.
 books_epub_missing = Missing EPUB resource { $href }
@@ -82,11 +90,44 @@ books_epub_protected_resource = This EPUB is protected: its epub resource is enc
 
 books_epub_protected_stylesheet = This EPUB is protected: its stylesheet is encrypted
 
+# Why a book is not shown: a chapter of an EPUB book unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_chapter = Chapter exceeds { $size } preview limit
+
+# Why a book is not shown: the file that names its package (META-INF/container.xml) unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_container = EPUB container exceeds { $size } preview limit
+
+# Why a book's contents are not shown: its table of contents unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_contents = EPUB contents exceeds { $size } preview limit
+
+# Why a book is not shown: its list of what it encrypts (META-INF/encryption.xml) unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_encryption = EPUB encryption exceeds { $size } preview limit
+
+# Why a book is not shown: its package document (the OPF), which lists its chapters, unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_package = EPUB package exceeds { $size } preview limit
+
+# Why a book is not shown: a page of a fixed-layout EPUB book unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_page = Page exceeds { $size } preview limit
+
+# Why a picture of an EPUB book is not shown: it unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_picture = Embedded image exceeds { $size } preview limit
+
+# Why what a chapter of an EPUB book names (a font, a file) is not read: it unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_resource = EPUB resource exceeds { $size } preview limit
+
+# Why a stylesheet of an EPUB book is not read: it unpacks past what the preview reads. size: that bound (16 MB).
+books_epub_too_large_stylesheet = Stylesheet exceeds { $size } preview limit
+
 # An error: a book laid out in pages lists more than can be shown.
 books_epub_too_many_pages = EPUB has too many pages
 
 # An error: a picture a FictionBook holds cannot be decoded. id: the picture's id in the book.
 books_fb2_damaged_picture = This FB2's picture { $id } is damaged
+
+# An error: the FictionBook a zipped FB2 names is not in it.
+books_fb2_document_missing = FB2 document is missing
+
+# An error: the FictionBook a zipped FB2 holds unpacks past what the preview reads. size: that bound (16 MB).
+books_fb2_document_too_large = FB2 document exceeds { $size } preview limit
 
 # An error: a chapter of a FictionBook asked for is not there. href: the chapter's name.
 books_fb2_missing_chapter = Missing FB2 chapter { $href }
@@ -113,6 +154,11 @@ books_fb2_too_many_chapters = This FB2 has more than { $count ->
 
 # An error: a ZIP file typed as a zipped FictionBook holds no FictionBook.
 books_fb2_zip_empty = This zipped FB2 holds no FB2
+
+# An error: a ZIP file typed as a zipped FictionBook holds more files than the preview reads (4,000).
+books_fb2_zip_members = { $count ->
+       *[other] This zipped FB2 holds more than { $count } members
+    }
 
 # An error: a Kindle (KF8) book lacks the index of the pieces of its text.
 books_kf8_no_fragments = This KF8 book has no fragment index

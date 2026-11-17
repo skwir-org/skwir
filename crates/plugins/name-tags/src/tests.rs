@@ -174,7 +174,7 @@ fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
         "names.tag",
         &serde_json::json!({ "entries": entries }),
     );
-    assert!(into.note.as_deref().unwrap().contains("two words"));
+    assert!(into.note.as_ref().unwrap().english().contains("two words"));
     let r = app.executor.execute_blocking(&into, app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     assert!(used.join("sub/IMG[vacation alps new].jpg").exists());

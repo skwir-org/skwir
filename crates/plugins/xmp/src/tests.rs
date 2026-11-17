@@ -144,7 +144,21 @@ fn xmp_inside_a_file_is_read_for_details() {
         .read("xmp.embedded", &f, &CancelToken::new())
         .unwrap()
         .unwrap();
-    assert_eq!(value.as_str(), Some("Keywords trip · 2 stars"));
+    let said = Embedded
+        .said("xmp.embedded", &value)
+        .map(|said| said.english());
+    assert_eq!(said.as_deref(), Some("Keywords trip · 2 stars"));
+    let shown = Shown {
+        keywords: vec!["a".into(), "b".into()],
+        rating: None,
+        comment: Some("the description".into()),
+    };
+    let kept = Shown::of(&shown.to_value());
+    assert_eq!(kept.as_ref(), Some(&shown), "kept as data");
+    assert_eq!(
+        summary(&shown).map(|said| said.english()).as_deref(),
+        Some("Keywords a and b · “the description”")
+    );
 }
 
 /// A name whose fourth byte from the end falls inside a character: the

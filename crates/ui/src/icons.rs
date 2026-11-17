@@ -1124,7 +1124,7 @@ fn icon_file(path: &Path, side: u32) -> Option<skwir_platform::inspection::Decod
         size = Size(bounds.binary_input() as u64),
         note = "Why a theme's icon is not drawn: its file is larger than a preview reads. size: that bound."
     );
-    let bytes = inspection::read_file_words(path, bounds, refusal, &cancel).ok()?;
+    let bytes = inspection::read_file(path, bounds, refusal, &cancel).ok()?;
     inspection::picture(&bytes, side).ok()
 }
 

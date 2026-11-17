@@ -134,9 +134,9 @@ pub enum NotifyLevel {
 pub struct Question {
     pub id: u64,
     /// What is asked, in a line: "An agent asks to run “Undo”".
-    pub title: String,
+    pub title: Words,
     /// What it would do, in full: the command and its arguments.
-    pub detail: String,
+    pub detail: Words,
     /// Who waits for the answer: what the answers say.
     pub asker: Asker,
 }
@@ -171,14 +171,14 @@ pub struct ClashQuestion {
 pub struct SecretQuestion {
     pub id: u64,
     /// The question: "Password for “photos.zip”".
-    pub title: String,
+    pub title: Words,
     /// The verb on its button: "Extract".
-    pub accept: String,
+    pub accept: Words,
     /// What the empty field says is asked: "Password", "Passphrase".
-    pub placeholder: String,
+    pub placeholder: Words,
     /// What keeping the answer means, said under Remember while it is on
     /// (a volume's passphrase, ADR-088).
-    pub keeping: Option<String>,
+    pub keeping: Option<Words>,
     /// Whether the window offers to keep the answer in the desktop's
     /// keyring (a server's password, ADR-082; a volume's passphrase,
     /// ADR-088): the asker keeps it.
@@ -623,14 +623,12 @@ impl App {
             app.executor.set_room_asker(Some(Arc::new(
                 move |title: &crate::words::Words, short: &op::room::Short| match asking.upgrade() {
                     Some(app) if app.window_shown() => {
-                        // For the window, said in its language.
                         let detail = words!(
                             app_room_detail = "{ $title }: a drive, a network share above all, may say it has less room than it has. Copy anyway, or cancel and make room.",
                             title = title.clone(),
                             note = "The question asked when a drive says it has too little room for an action: its title first, in lower case (copy 3 items to Docs)."
-                        )
-                        .say();
-                        app.ask_as(Asker::Room, short.said().say(), detail).1
+                        );
+                        app.ask_as(Asker::Room, short.said(), detail).1
                     }
                     // Gone, or no window: no one answers, so nothing is
                     // copied.
@@ -652,14 +650,14 @@ impl App {
             // one is asked, and the step says so.
             let asking = Arc::downgrade(&app);
             app.executor.set_secret_asker(Some(Arc::new(
-                move |title: &str, accept: &str, cancel: &crate::CancelToken| {
+                move |title: &Words, accept: &Words, cancel: &crate::CancelToken| {
                     use crossbeam_channel::RecvTimeoutError;
                     let (id, answer) = {
                         let app = asking.upgrade().ok_or(op::Unanswered::NoOne)?;
                         if !app.window_shown() {
                             return Err(op::Unanswered::NoOne);
                         }
-                        app.ask_secret(title, accept)
+                        app.ask_secret(title.clone(), accept.clone())
                     };
                     loop {
                         match answer.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -752,18 +750,28 @@ impl App {
         let (id, title) = (store.id(), store.title());
         let holds = store.holds();
         // First what sets it apart: the line of its table says it.
-        let read_said = if holds.limits.is_empty() {
-            words!(
-                app_notes_read_all = "It holds all of a file's notes. Read, what it keeps is shown merged with the other places' notes.",
-                note = "Under the Read switch of a place notes are kept (a file's attributes, a file beside it, its name)."
-            )
-        } else {
-            // Transitional: a phrase the store gives as text (ADR-139).
-            words!(
-                app_notes_read_limits = "What it cannot hold: { $limits }. Read, what it keeps is shown merged with the other places' notes.",
-                limits = holds.limits,
-                note = "Under the Read switch of a place notes are kept: what it cannot hold that the others can (no comma in a tag)."
-            )
+        let merged = words!(
+            app_notes_read_merged =
+                "Read, what it keeps is shown merged with the other places' notes.",
+            note =
+                "In the tooltip of the Read switch of a place notes are kept, after what it holds."
+        );
+        let read_said = match holds.limits {
+            None => (
+                words!(
+                    app_notes_read_all = "It holds all of a file's notes.",
+                    note = "Under the Read switch of a place notes are kept (a file's attributes, a file beside it, its name)."
+                ),
+                merged,
+            ),
+            Some(limits) => (
+                words!(
+                    app_notes_read_limits = "What it cannot hold: { $limits }.",
+                    limits = limits,
+                    note = "Under the Read switch of a place notes are kept: what it cannot hold that the others can, a phrase the place gives (no comma in a tag)."
+                ),
+                merged,
+            ),
         };
         let read = crate::notes::read_key(id);
         self.settings.declare(
@@ -2745,8 +2753,8 @@ impl App {
     /// the window closes, and whoever stops waiting `withdraw`s it.
     pub fn ask(
         &self,
-        title: impl Into<String>,
-        detail: impl Into<String>,
+        title: impl Into<Words>,
+        detail: impl Into<Words>,
     ) -> (u64, crossbeam_channel::Receiver<bool>) {
         self.ask_as(Asker::Agent, title, detail)
     }
@@ -2755,8 +2763,8 @@ impl App {
     pub fn ask_as(
         &self,
         asker: Asker,
-        title: impl Into<String>,
-        detail: impl Into<String>,
+        title: impl Into<Words>,
+        detail: impl Into<Words>,
     ) -> (u64, crossbeam_channel::Receiver<bool>) {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2811,8 +2819,8 @@ impl App {
     /// the window closes, and whoever stops waiting `withdraw_secret`s it.
     pub fn ask_secret(
         &self,
-        title: impl Into<String>,
-        accept: impl Into<String>,
+        title: impl Into<Words>,
+        accept: impl Into<Words>,
     ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
         self.ask_secret_as(SecretQuestion {
             id: 0,
@@ -2829,8 +2837,8 @@ impl App {
     /// the user asked for it, and the asker keeps it once it served.
     pub fn ask_password(
         &self,
-        title: impl Into<String>,
-        accept: impl Into<String>,
+        title: impl Into<Words>,
+        accept: impl Into<Words>,
     ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
         self.ask_secret_as(SecretQuestion {
             id: 0,
@@ -2849,9 +2857,9 @@ impl App {
     /// keeps it once it unlocked the volume.
     pub fn ask_passphrase(
         &self,
-        title: impl Into<String>,
-        accept: impl Into<String>,
-        keeping: Option<String>,
+        title: impl Into<Words>,
+        accept: impl Into<Words>,
+        keeping: Option<Words>,
     ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
         self.ask_secret_as(SecretQuestion {
             id: 0,
@@ -2860,8 +2868,7 @@ impl App {
             placeholder: words!(
                 app_passphrase = "Passphrase",
                 note = "What the empty field asking for an encrypted volume's passphrase says."
-            )
-            .say(),
+            ),
             remember: keeping.is_some(),
             keeping,
         })
@@ -3859,12 +3866,11 @@ fn nothing_to_retry() -> Words {
 }
 
 /// What the empty field asking for a password says.
-fn password() -> String {
+fn password() -> Words {
     words!(
         app_password = "Password",
         note = "What the empty field asking for a password (an archive's, a server's) says."
     )
-    .say()
 }
 
 fn replayed(what: &str, title: impl Serialize, result: &op::ExecResult) -> Outcome {
@@ -5367,10 +5373,10 @@ mod builtin {
             ),
             |a, _| {
                 let kinds = op::access::Kinds::of(a.folders, a.files);
-                // Its English, as JSON leaves the process (ADR-139, 7): the
-                // window's field says it in its language once it asks typed.
+                // As data: the window's field asks it (`ui.ask`'s
+                // `describe`) and says it in its language.
                 let says = op::access::said_words(&a.mode, a.current, kinds)?;
-                Ok(Outcome::Value(serde_json::json!({ "says": says })))
+                Ok(Outcome::Value(serde_json::json!({ "says": says.to_data() })))
             },
         )
         .data();
@@ -5434,8 +5440,7 @@ mod builtin {
                 );
                 // Said after the question, which counts what is deleted
                 // (`deleting.rs`): where they are, and what goes to the
-                // trash beside them. Said in the window's words: the
-                // review shows it.
+                // trash beside them.
                 let kept = all - deleted;
                 Ok(Outcome::Plan(match (for_good, kept) {
                     (0, _) => plan,
@@ -5447,8 +5452,7 @@ mod builtin {
                             }",
                             count = for_good,
                             note = "Said under the question asking to delete files for good, of those in network folders, which keep no trash: how many they are."
-                        )
-                        .say(),
+                        ),
                     ),
                     (_, kept) => plan.with_note(
                         words!(
@@ -5462,8 +5466,7 @@ mod builtin {
                             count = for_good,
                             kept = kept,
                             note = "Said under the question asking to delete files for good, of those in network folders, which keep no trash (count), and the others, which go to the trash (kept)."
-                        )
-                        .say(),
+                        ),
                     ),
                 }))
             },
@@ -5496,7 +5499,7 @@ mod builtin {
                     |_| delete_title(),
                     |e| Box::new(op::Delete { entry: e }),
                 )?;
-                Ok(match (plan, kept.and_then(|k| k.said())) {
+                Ok(match (plan, kept.and_then(|k| k.words())) {
                     (Outcome::Plan(plan), Some(note)) => Outcome::Plan(plan.with_note(note)),
                     (plan, _) => plan,
                 })

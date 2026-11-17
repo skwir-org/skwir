@@ -1481,16 +1481,15 @@ pub(crate) struct Place {
     /// that share their keys (the settings' contexts, the toolbars') share
     /// it; any other is its token.
     pub group: &'static str,
-    /// Transitional (ADR-139, E): what `Place::words` says, in English,
-    /// until every reader asks it.
-    pub label: &'static str,
     pub inside: bool,
 }
 
 impl Place {
-    /// What F1 and the Keyboard page call it, said where it is shown.
+    /// What F1 and the Keyboard page call it, said where it is shown:
+    /// its group's words (`group_words`, which names every group; a test
+    /// holds it so).
     pub fn words(&self) -> Words {
-        group_words(self.group).unwrap_or_else(|| Words::as_written(self.label))
+        group_words(self.group).unwrap_or_else(|| Words::as_written(self.token))
     }
 
     /// The same place, grouped with the others of `group`.
@@ -1500,22 +1499,20 @@ impl Place {
     }
 }
 
-const fn place(token: &'static str, context: &'static str, label: &'static str) -> Place {
+const fn place(token: &'static str, context: &'static str) -> Place {
     Place {
         token,
         context,
         group: token,
-        label,
         inside: false,
     }
 }
 
-const fn inside(token: &'static str, context: &'static str, label: &'static str) -> Place {
+const fn inside(token: &'static str, context: &'static str) -> Place {
     Place {
         token,
         context,
         group: token,
-        label,
         inside: true,
     }
 }
@@ -1602,59 +1599,55 @@ fn group_words(group: &str) -> Option<Words> {
 /// new place is one row. Any other token is taken as it is: a condition
 /// (`single`), or a context by its own name (`ContextMenu`).
 pub(crate) const PLACES: &[Place] = &[
-    place("pane", PANE, "File list"),
-    place("sidebar", SIDEBAR, "Sidebar"),
-    place("address", ADDRESS, "Address bar"),
-    place("view_buttons", VIEW_BUTTONS, "View buttons"),
-    place("peek", PEEK, "Peek"),
-    place("preview", PREVIEW, "Documents and structured previews"),
-    place("reader", READER, "Document reader"),
-    place("inspector", INSPECTOR, "Structured previews"),
-    place("text", TEXT, "Text in the preview"),
-    place("preview_find", PREVIEW_FIND, "Preview search"),
-    place("members", MEMBERS, "Files of an archive or a message"),
-    place(
-        "member",
-        MEMBER,
-        "A file shown from an archive or a message",
-    ),
-    place("image", IMAGE, "Picture preview"),
-    place("map", MAP, "Map preview"),
-    place("model", MODEL, "3D model preview"),
-    place("media", MEDIA, "Media player"),
-    place("volume", VOLUME, "Volume"),
-    place("fullscreen", FULLSCREEN, "Preview on the whole screen"),
-    place("slideshow", SLIDESHOW, "Picture on the whole screen"),
-    place("player", PLAYER, "Pinned player"),
-    place("activity", ACTIVITY, "Activity"),
-    place("terminal", TERMINAL, "Terminal"),
-    place("timeline", TIMELINE, "Timeline"),
-    inside("palette", PALETTE, "Command palette"),
-    inside("choose", CHOOSE, "Choosing from a list"),
-    inside("form", FORM, "Forms"),
-    inside("tag_editor", TAG_EDITOR, "Tag editor"),
-    inside("bulk", BULK, "Bulk rename"),
+    place("pane", PANE),
+    place("sidebar", SIDEBAR),
+    place("address", ADDRESS),
+    place("view_buttons", VIEW_BUTTONS),
+    place("peek", PEEK),
+    place("preview", PREVIEW),
+    place("reader", READER),
+    place("inspector", INSPECTOR),
+    place("text", TEXT),
+    place("preview_find", PREVIEW_FIND),
+    place("members", MEMBERS),
+    place("member", MEMBER),
+    place("image", IMAGE),
+    place("map", MAP),
+    place("model", MODEL),
+    place("media", MEDIA),
+    place("volume", VOLUME),
+    place("fullscreen", FULLSCREEN),
+    place("slideshow", SLIDESHOW),
+    place("player", PLAYER),
+    place("activity", ACTIVITY),
+    place("terminal", TERMINAL),
+    place("timeline", TIMELINE),
+    inside("palette", PALETTE),
+    inside("choose", CHOOSE),
+    inside("form", FORM),
+    inside("tag_editor", TAG_EDITOR),
+    inside("bulk", BULK),
     // Apart from the fields' keys: the arrows step the case on its row
     // alone, and move the caret in a field.
-    inside("bulk_case", BULK_CASE, "Bulk rename's case"),
-    inside("review", REVIEW, "Plan review"),
-    inside("confirm", CONFIRM, "Confirmation dialogs"),
-    inside("menu", MENU, "Context menu"),
-    inside("toolbar_button", "ToolbarButton", "Toolbars").of("toolbars"),
-    inside("toolbar_popup", "ToolbarPopup", "Toolbars").of("toolbars"),
-    inside("toolbar_submenu", "ToolbarSubmenu", "Toolbars").of("toolbars"),
-    inside("toolbar_choice", crate::toolbar::CHOICE_ROW, "Toolbars").of("toolbars"),
-    inside("shortcuts", "Shortcuts", "Shortcut overview"),
-    inside("about", "About", "About skwir"),
-    inside("settings", "Settings", "Settings"),
-    inside("settings_nav", "SettingsNav", "Settings").of("settings"),
-    inside("setting_control", "SettingControl", "Settings").of("settings"),
-    inside("setting_choices", "SettingChoices", "Settings").of("settings"),
-    inside("setting_number", "SettingNumber", "Settings").of("settings"),
-    inside("setting_slider", "SettingSlider", "Settings").of("settings"),
-    inside("setting_record", "SettingRecord", "Settings").of("settings"),
-    inside("setting_keys", "SettingKeys", "Settings").of("settings"),
-    inside("setting_exclusions", "SettingExclusions", "Settings").of("settings"),
+    inside("bulk_case", BULK_CASE),
+    inside("review", REVIEW),
+    inside("confirm", CONFIRM),
+    inside("menu", MENU),
+    inside("toolbar_button", "ToolbarButton").of("toolbars"),
+    inside("toolbar_popup", "ToolbarPopup").of("toolbars"),
+    inside("toolbar_submenu", "ToolbarSubmenu").of("toolbars"),
+    inside("toolbar_choice", crate::toolbar::CHOICE_ROW).of("toolbars"),
+    inside("shortcuts", "Shortcuts"),
+    inside("about", "About"),
+    inside("settings", "Settings"),
+    inside("settings_nav", "SettingsNav").of("settings"),
+    inside("setting_control", "SettingControl").of("settings"),
+    inside("setting_choices", "SettingChoices").of("settings"),
+    inside("setting_number", "SettingNumber").of("settings"),
+    inside("setting_slider", "SettingSlider").of("settings"),
+    inside("setting_record", "SettingRecord").of("settings"),
+    inside("setting_keys", "SettingKeys").of("settings"),
+    inside("setting_exclusions", "SettingExclusions").of("settings"),
 ];
 
 /// Map a registry `when` string to a GPUI context predicate. A token of
@@ -1909,7 +1902,7 @@ pub fn topic_and_family(
     args: &serde_json::Value,
 ) -> (
     skwir_core::command::Topic,
-    Option<(skwir_core::words::Words, usize)>,
+    Option<(skwir_core::command::Family, usize)>,
 ) {
     let Some(spec) = app.commands.get(command) else {
         return (skwir_core::command::Topic::Skwir, None);
@@ -1924,10 +1917,13 @@ pub fn topic_and_family(
                 .find(|view| &*view.id == id)
                 .map_or(i32::MAX, |view| view.order);
             Some((
-                words!(
-                    keymap_views = "Views",
-                    note = "A row of the list of shortcuts holding the keys of every view (list, grid, columns)."
-                ),
+                skwir_core::command::Family {
+                    id: "ui.view".to_owned(),
+                    title: words!(
+                        keymap_views = "Views",
+                        note = "A row of the list of shortcuts holding the keys of every view (list, grid, columns)."
+                    ),
+                },
                 usize::try_from(order).unwrap_or(0),
             ))
         }
@@ -1939,48 +1935,35 @@ pub fn topic_and_family(
     (spec.topic, family)
 }
 
-/// What a binding does, in words (see `title`).
-pub fn title_of(app: &App, hint: &KeyHint) -> String {
-    title(app, &hint.command, &hint.args)
-}
-
 /// What a binding does, as words said where they are shown (see
 /// `title_words`).
-pub fn title_words_of(app: &App, hint: &KeyHint) -> Words {
+pub fn title_of(app: &App, hint: &KeyHint) -> Words {
     title_words(app, &hint.command, &hint.args)
 }
 
-/// What a command run with `args` does, in words: the title of the form
-/// its declaration gives these arguments, else its own with the arguments
-/// said after it (`CommandSpec::title_for`, ADR-024); a readable form of
-/// the name for a command nothing registers now. Only a title naming what
-/// an argument names elsewhere is worked out here: a folder to go to, a
-/// view.
-pub fn title(app: &App, command: &str, args: &serde_json::Value) -> String {
-    title_words(app, command, args).say()
-}
-
 /// What a command run with `args` does, as words said where they are
-/// shown (see `title`).
+/// shown: the title of the form its declaration gives these arguments,
+/// else its own with the arguments said after it
+/// (`CommandSpec::title_for`, ADR-024); its name as written, with its
+/// arguments, for a command nothing registers now. Only a title naming
+/// what an argument names elsewhere is worked out here: a folder to go
+/// to, a view.
 pub fn title_words(app: &App, command: &str, args: &serde_json::Value) -> Words {
     if let Some(title) = named_title(app, command, args) {
         return title;
     }
-    if let Some(spec) = app.commands.get(command) {
-        return match spec.form(args) {
-            Some(form) => form.title.clone(),
-            // Its own title with the arguments said after it: said here
-            // until the command gives that as words.
-            None => Words::as_written(spec.title_for(args)),
-        };
-    }
-    // Not declared (a plugin turned off, a name mistyped in the keymap):
-    // by its name as written, which has no words of its own (ADR-139, 8).
-    Words::as_written(skwir_core::command::with_args(command, args))
+    app.commands
+        .title_words(command, args)
+        // Not declared (a plugin turned off, a name mistyped in the
+        // keymap): by its name as written, which has no words of its own
+        // (ADR-139, 8).
+        .unwrap_or_else(|| {
+            skwir_core::command::with_args(Words::as_written(command.to_owned()), args)
+        })
 }
 
 /// A view's name as the commands that show it say it: `List view`.
-pub(crate) fn view_title(view: String) -> Words {
+pub(crate) fn view_title(view: Words) -> Words {
     words!(
         keymap_view = "{ $view } view",
         view = view,
@@ -1995,12 +1978,15 @@ pub(crate) fn view_title(view: String) -> Words {
 fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<Words> {
     let text = |key| args.get(key).and_then(serde_json::Value::as_str);
     match command {
-        "ui.choose" => text("title").map(|title| {
-            words!(
+        // Its title as words, as `ui.choose` takes it: as written, or the
+        // data of words (`Words::to_data`).
+        "ui.choose" => args.get("title").and_then(|title| {
+            let title = serde_json::from_value::<Words>(title.clone()).ok()?;
+            Some(words!(
                 keymap_choose = "{ $title }…",
                 title = title,
                 note = "A key that offers a list to choose from; title: what the list is for, as the binding names it. The ellipsis says it asks more."
-            )
+            ))
         }),
         "ui.preview_invoke" => {
             let invoked = text("command").filter(|invoked| *invoked != command)?;
@@ -2034,18 +2020,31 @@ fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<Wor
                 .all()
                 .into_iter()
                 .find(|view| &*view.id == id)
-                .map_or_else(|| id.to_owned(), |view| view.title.clone());
+                .map_or_else(|| Words::as_written(id.to_owned()), |view| view.title.clone());
             Some(view_title(title))
         }
         _ => None,
     }
 }
 
-/// `ctrl-shift-p` as key caps; a binding may be a sequence of strokes.
+/// `ctrl-shift-p` as key caps, said as the desktop names its keys (Strg
+/// in German); a binding may be a sequence of strokes. The arrows, the
+/// Mac's modifiers and a key of one character are drawn as they are.
 pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
+    key_strokes(keys)
+        .iter()
+        .map(|stroke| stroke.iter().map(|part| key_cap(part)).collect())
+        .collect()
+}
+
+/// `ctrl-shift-p` as its strokes, each the keys it holds as the keymap's
+/// notation names them (`ctrl`, `shift`, `p`): what tells two bindings'
+/// keys apart, as data, where `key_caps` says them. An upper-case letter
+/// (`G`, as a scheme binds Shift+G) is held with `shift`.
+pub fn key_strokes(keys: &str) -> Vec<Vec<String>> {
     keys.split_whitespace()
         .map(|stroke| {
-            let mut caps: Vec<String> = Vec::new();
+            let mut held: Vec<String> = Vec::new();
             let mut parts = stroke.split('-');
             while let Some(part) = parts.next() {
                 // `ctrl--` binds the minus key: an empty part is a literal `-`.
@@ -2059,40 +2058,128 @@ pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
                 // is drawn as the same cap.
                 if part.len() == 1
                     && part.as_bytes()[0].is_ascii_uppercase()
-                    && !caps.iter().any(|cap| cap == "Shift")
+                    && !held.iter().any(|key| key == "shift")
                 {
-                    caps.push("Shift".into());
+                    held.push("shift".to_owned());
                 }
-                caps.push(match part {
-                    // `secondary` is the standard shortcuts' modifier: Cmd
-                    // on a Mac, Ctrl elsewhere, as GPUI reads it.
-                    "secondary" | "super" | "cmd" | "win" if cfg!(target_os = "macos") => {
-                        "⌘".into()
-                    }
-                    "ctrl" | "secondary" => "Ctrl".into(),
-                    "shift" => "Shift".into(),
-                    "alt" if cfg!(target_os = "macos") => "⌥".into(),
-                    "alt" => "Alt".into(),
-                    "super" | "cmd" | "win" => "Super".into(),
-                    "escape" => "Esc".into(),
-                    "pageup" => "Page Up".into(),
-                    "pagedown" => "Page Down".into(),
-                    "left" => "←".into(),
-                    "right" => "→".into(),
-                    "up" => "↑".into(),
-                    "down" => "↓".into(),
-                    other if other.chars().count() == 1 => other.to_uppercase(),
-                    other => {
-                        let mut chars = other.chars();
-                        chars.next().map_or_else(String::new, |first| {
-                            first.to_uppercase().chain(chars).collect()
-                        })
-                    }
-                });
+                held.push(part.to_owned());
             }
-            caps
+            held
         })
         .collect()
+}
+
+/// A key of the keymap's notation (`ctrl`, `pageup`, `g`) as its cap says
+/// it, in the reader's language where it is a word.
+pub fn key_cap(part: &str) -> String {
+    match part {
+        // `secondary` is the standard shortcuts' modifier: Cmd on a Mac,
+        // Ctrl elsewhere, as GPUI reads it.
+        "secondary" | "super" | "cmd" | "win" if cfg!(target_os = "macos") => "⌘".into(),
+        "alt" if cfg!(target_os = "macos") => "⌥".into(),
+        "left" => "←".into(),
+        "right" => "→".into(),
+        "up" => "↑".into(),
+        "down" => "↓".into(),
+        other if other.chars().count() == 1 => other.to_uppercase(),
+        other => key_name(other).map_or_else(
+            // A key GPUI names that has no words of its own here: its name
+            // as GPUI writes it, its first letter up.
+            || {
+                let mut chars = other.chars();
+                chars.next().map_or_else(String::new, |first| {
+                    first.to_uppercase().chain(chars).collect()
+                })
+            },
+            |name| name.say(),
+        ),
+    }
+}
+
+/// A key's name as its cap says it, in the reader's language (`Strg` for
+/// `ctrl` in German), for the keys GPUI names by words: `None` for any
+/// other.
+fn key_name(key: &str) -> Option<Words> {
+    Some(match key {
+        "ctrl" | "secondary" => words!(
+            keymap_key_ctrl = "Ctrl",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Shift+N): Strg in German."
+        ),
+        "shift" => words!(
+            keymap_key_shift = "Shift",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Shift+N): Umschalt in German."
+        ),
+        "alt" => words!(
+            keymap_key_alt = "Alt",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts (Alt+Enter)."
+        ),
+        "super" | "cmd" | "win" => words!(
+            keymap_key_super = "Super",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: the key with the system's logo (Super+E)."
+        ),
+        "fn" => words!(
+            keymap_key_fn = "Fn",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: the Fn key of a laptop."
+        ),
+        "escape" => words!(
+            keymap_key_escape = "Esc",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: Escape, short (Échap in French)."
+        ),
+        "enter" => words!(
+            keymap_key_enter = "Enter",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Enter): Entrée in French."
+        ),
+        "tab" => words!(
+            keymap_key_tab = "Tab",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts (Ctrl+Tab)."
+        ),
+        "space" => words!(
+            keymap_key_space = "Space",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: the space bar (Ctrl+Space): Leertaste in German."
+        ),
+        "backspace" => words!(
+            keymap_key_backspace = "Backspace",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: the key erasing before the caret."
+        ),
+        "delete" => words!(
+            keymap_key_delete = "Delete",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts (Shift+Delete): Entf in German, Suppr in French."
+        ),
+        "insert" => words!(
+            keymap_key_insert = "Insert",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: Einfg in German, Inser in French."
+        ),
+        "home" => words!(
+            keymap_key_home = "Home",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: Pos1 in German, Début in French."
+        ),
+        "end" => words!(
+            keymap_key_end = "End",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: Ende in German, Fin in French."
+        ),
+        "pageup" => words!(
+            keymap_key_page_up = "Page Up",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: Bild auf in German."
+        ),
+        "pagedown" => words!(
+            keymap_key_page_down = "Page Down",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: Bild ab in German."
+        ),
+        "menu" => words!(
+            keymap_key_menu = "Menu",
+            note = "A key's name on a keyboard, as the desktop shows it in shortcuts: the key that opens the context menu."
+        ),
+        _ => {
+            let number = key
+                .strip_prefix('f')
+                .filter(|n| !n.is_empty() && n.parse::<u8>().is_ok())?;
+            words!(
+                keymap_key_function = "F{ $number }",
+                number = number,
+                note = "A key's name on a keyboard, as the desktop shows it in shortcuts: a function key (F1, F2…). number: its number, as written on it."
+            )
+        }
+    })
 }
 
 /// `keys` as GPUI reads them, written one way: `secondary-c` is
@@ -3293,14 +3380,19 @@ mod tests {
         );
     }
 
-    /// Every place F1 and the Keyboard page name has words of its own,
-    /// the English its label keeps until every reader asks for them.
+    /// Every place F1 and the Keyboard page name has words of its own.
     #[test]
     fn every_place_is_named_by_its_words() {
         for place in super::PLACES {
             assert!(super::group_words(place.group).is_some(), "{}", place.token);
-            assert_eq!(place.words().english(), place.label, "{}", place.token);
         }
+        let english = |token: &str| {
+            let place = super::PLACES.iter().find(|p| p.token == token).unwrap();
+            place.words().english()
+        };
+        assert_eq!(english("pane"), "File list");
+        assert_eq!(english("setting_keys"), "Settings");
+        assert_eq!(english("toolbar_choice"), "Toolbars");
     }
 
     #[test]

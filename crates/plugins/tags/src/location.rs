@@ -186,13 +186,11 @@ impl Address {
             crumbs,
             filters,
             toggles: vec![Toggle {
-                // Said now: a toggle's label is text until it is words.
                 label: words!(
                     tags_include_sub_tags = "Include Sub-Tags",
                     note =
                         "A switch of a tag's place: it lists the files of the tags within it too."
-                )
-                .say(),
+                ),
                 on: self.deep,
                 location: switched.location(),
             }],
@@ -225,7 +223,7 @@ impl Address {
     pub fn verbs(&self) -> Verbs {
         let location = self.location().to_string();
         let here = self.tag.as_deref();
-        // Said now: a question's words are text in its arguments.
+        // A question's words go as data: the window says them.
         let ask = |title: Words,
                    accept: Words,
                    placeholder: Words,
@@ -236,9 +234,9 @@ impl Address {
             Invocation::with_args(
                 "ui.ask",
                 &serde_json::json!({
-                    "title": title.say(),
-                    "accept": accept.say(),
-                    "placeholder": placeholder.say(),
+                    "title": title.to_data(),
+                    "accept": accept.to_data(),
+                    "placeholder": placeholder.to_data(),
                     "text": text,
                     "command": command,
                     "args": args,
@@ -252,7 +250,6 @@ impl Address {
                 "tags.drop",
                 &serde_json::json!({ "location": location }),
             )),
-            // Said now: a verb's title is text until it is words.
             remove: Some(Verb::new(
                 match here {
                     Some(tag) => words!(
@@ -264,16 +261,14 @@ impl Address {
                         tags_remove_all_verb = "Remove All Tags",
                         note = "An item of the files' menu in the place of every tag."
                     ),
-                }
-                .say(),
+                },
                 Invocation::with_args("tags.untag", &serde_json::json!({ "location": location })),
             )),
             create: Some(Verb::new(
                 words!(
                     tags_new_verb = "New Tag…",
                     note = "An item of a tag's place's menu, where a folder's says New Folder…."
-                )
-                .say(),
+                ),
                 ask(
                     match here {
                         Some(tag) => words!(
@@ -305,8 +300,7 @@ impl Address {
                     words!(
                         tags_rename_verb = "Rename Tag…",
                         note = "An item of a tag's menu in its place: it asks for its new name on every file."
-                    )
-                    .say(),
+                    ),
                     ask(
                         words!(
                             tags_rename_ask = "Rename the tag { $tag } on every file",
@@ -1355,9 +1349,8 @@ impl LocationProvider for Provider {
         Some(skwir_core::location::Depths {
             here,
             below,
-            // Said now: a depth's label is text until it is words.
-            here_label: here_label.say(),
-            below_label: below_label.say(),
+            here_label,
+            below_label,
         })
     }
 

@@ -20,13 +20,33 @@ pub(crate) fn open<S: FileSource + ?Sized>(
     source: &S,
     cancel: &CancelToken,
 ) -> anyhow::Result<Archive> {
-    Archive::open(source, "The package", false, cancel)
+    let too_many = words!(
+        models_package_members = "{ $count ->
+           *[other] The package holds more than { $count } members
+        }",
+        count = limits::CONTAINER_MEMBERS,
+        note = "Why a model's package (3MF, SketchUp, LayOut) is not shown: it holds more parts than the preview reads (4,000)."
+    );
+    Archive::open(source, too_many, false, cancel)
 }
 
 /// The member `name`, if it is there and within `bound` once inflated.
 pub(crate) fn member(archive: &mut Archive, name: &str, bound: u64) -> Option<Vec<u8>> {
     let bound = usize::try_from(bound).unwrap_or(usize::MAX);
-    archive.read(name, bound, name, &CancelToken::new()).ok()
+    let missing = words!(
+        models_member_missing = "{ $member } is missing",
+        member = name,
+        note = "Why a part of a model's package is not read: the package has none by that name. member: its name in the package, as written."
+    );
+    let too_large = words!(
+        models_member_too_large = "{ $member } exceeds { $size } preview limit",
+        member = name,
+        size = words::Size(bound as u64),
+        note = "Why a part of a model's package is not read: it inflates past what the preview reads. member: its name in the package, as written; size: that bound."
+    );
+    archive
+        .read(name, bound, missing, too_large, &CancelToken::new())
+        .ok()
 }
 
 /// The start of member `name`, at most `bound` bytes of it.
@@ -112,7 +132,7 @@ pub fn three_mf<S: FileSource + ?Sized>(
         unit = metadata.unit;
     }
     let unit_at = details.len();
-    let with_unit = |mut details: Vec<(String, String)>| {
+    let with_unit = |mut details: Vec<(words::Words, String)>| {
         if let Some(unit) = unit {
             details.insert(
                 unit_at,
@@ -120,8 +140,7 @@ pub fn three_mf<S: FileSource + ?Sized>(
                     words!(
                         models_detail_unit = "Unit",
                         note = "A label in the preview's Properties: the length unit a 3MF model states, as the file writes it (millimeter, inch)."
-                    )
-                    .say(),
+                    ),
                     unit,
                 ),
             );
@@ -133,8 +152,7 @@ pub fn three_mf<S: FileSource + ?Sized>(
             words!(
                 models_detail_plates = "Plates",
                 note = "A label in the preview's Properties: how many build plates a 3D print's project holds."
-            )
-            .say(),
+            ),
             plates.to_string(),
         ));
     }
@@ -142,7 +160,7 @@ pub fn three_mf<S: FileSource + ?Sized>(
         details.extend(slice_info(&info));
     }
     // The format's name, the same in every language.
-    let title = || "3MF".to_owned();
+    let title = || words::Words::as_written("3MF");
     let worker = skwir_platform::model::worker_path().is_some();
     let turned = matches!(asked, Asked::Turned { .. }) && !picture_first;
     if picture.is_some() && !turned {
@@ -163,14 +181,11 @@ pub fn three_mf<S: FileSource + ?Sized>(
             title: title(),
             picture: None,
             details: with_unit(details),
-            notice: Some(
-                words!(
-                    models_install_worker = "Install { $program } to draw models that store no picture",
-                    program = skwir_platform::model::WORKER.executable,
-                    note = "Said in the preview of a 3MF model that stores no picture of itself. program: the helper program's name (skwir-model-worker)."
-                )
-                .say(),
-            ),
+            notice: Some(words!(
+                models_install_worker = "Install { $program } to draw models that store no picture",
+                program = skwir_platform::model::WORKER.executable,
+                note = "Said in the preview of a 3MF model that stores no picture of itself. program: the helper program's name (skwir-model-worker)."
+            )),
             ..Found::default()
         });
     }
@@ -188,7 +203,7 @@ pub fn three_mf<S: FileSource + ?Sized>(
             title: title(),
             picture: None,
             details: with_unit(details),
-            notice: Some(words::Words::of_error(error).say()),
+            notice: Some(words::Words::of_error(error)),
             ..Found::default()
         }),
     }
@@ -197,7 +212,7 @@ pub fn three_mf<S: FileSource + ?Sized>(
 /// What a model's XML says of itself.
 struct Metadata {
     /// The facts its application wrote, labelled, in the order shown.
-    facts: Vec<(String, String)>,
+    facts: Vec<(words::Words, String)>,
     /// The length unit it states, as it writes it (`millimeter`).
     unit: Option<String>,
 }
@@ -237,13 +252,10 @@ fn model_metadata(head: &[u8]) -> Metadata {
             }
             Event::End(_) => {
                 let label = match open.take().as_deref() {
-                    Some("Title") => Some(
-                        words!(
-                            models_detail_title = "Title",
-                            note = "A label in the preview's Properties: the model's title, as its 3MF package states it."
-                        )
-                        .say(),
-                    ),
+                    Some("Title") => Some(words!(
+                        models_detail_title = "Title",
+                        note = "A label in the preview's Properties: the model's title, as its 3MF package states it."
+                    )),
                     Some("Application") => Some(crate::made_with()),
                     _ => None,
                 };
@@ -263,7 +275,7 @@ fn model_metadata(head: &[u8]) -> Metadata {
 
 /// Bambu Studio's and Orca's `slice_info.config`: each sliced plate's
 /// predicted time (seconds) and weight (grams), summed.
-fn slice_info(xml: &[u8]) -> Vec<(String, String)> {
+fn slice_info(xml: &[u8]) -> Vec<(words::Words, String)> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     let mut buf = Vec::new();
     let (mut seconds, mut grams) = (None::<f64>, None::<f64>);
@@ -391,7 +403,7 @@ mod tests {
         found
             .details
             .iter()
-            .find(|(l, _)| l == label)
+            .find(|(l, _)| l.english() == label)
             .map(|(_, v)| v.as_str())
     }
 

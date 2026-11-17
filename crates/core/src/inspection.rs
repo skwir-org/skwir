@@ -1,5 +1,6 @@
 //! Bounded, toolkit-independent content previews. Providers execute on workers.
 use crate::thumbs::Image;
+use crate::words::Words;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -159,10 +160,14 @@ pub enum GraphPart {
 #[derive(Clone, Debug, Default)]
 pub struct Inspection {
     pub kind: InspectionKind,
-    pub title: String,
+    /// What the preview's bar says it is ("3 lines", a page's title), said
+    /// where it is shown.
+    pub title: Words,
     pub blocks: Vec<Block>,
     pub rows: Vec<Row>,
-    pub columns: Vec<String>,
+    /// The headers of `rows`' cells: Skwir's words (an archive's Name and
+    /// Size), or the file's own as written (a table's first row).
+    pub columns: Vec<Words>,
     /// Code block ranges: the first line remains visible, the rest can fold.
     /// Sorted by start; ranges must be nested or disjoint, never crossing.
     pub folds: Vec<std::ops::Range<usize>>,
@@ -178,7 +183,10 @@ pub struct Inspection {
     /// EPUB's `page-list`): where the toolbar counts by printed page.
     pub printed_pages: Vec<PrintedPage>,
     pub source_available: bool,
-    pub notice: String,
+    /// What the preview says of how it shows the file, each a whole
+    /// sentence ("Read as Windows-1252", "First 200 blocks · Source shows
+    /// the rest"), in order: said together where drawn (`notice`).
+    pub notices: Vec<Words>,
     /// What the format knows about the file, for the panel's Properties: a
     /// book's author, a font's family, an archive's unpacked size. Facts read
     /// from the content, in the order they should be shown, bounded like the
@@ -207,13 +215,15 @@ pub struct Inspection {
 /// A file a preview refused only because it is large: past a bound that
 /// keeps previews quick, not one that keeps hostile input out. Asked again
 /// with `InspectRequest::whole`, the provider reads it; the panel offers
-/// that (Full preview). Never made when the file was asked whole.
+/// that (Full preview). Never made when the file was asked whole. Its
+/// words say why, in the reader's language where its chain is said
+/// (`Words::of_error`).
 #[derive(Debug)]
-pub struct TooLarge(pub String);
+pub struct TooLarge(pub Words);
 
 impl std::fmt::Display for TooLarge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -423,18 +433,19 @@ pub struct PrintedPage {
     pub target: String,
 }
 
-/// One fact of [`Inspection::details`].
+/// One fact of [`Inspection::details`]: its label said where Properties
+/// shows it, its value as the file gives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Detail {
-    pub label: String,
+    pub label: Words,
     pub value: String,
     /// What the value leads to, drawn as a link after it: a picture's
     /// position shows it on the map. A command like any other, so it
     /// fails as one when its owner is disabled.
-    pub action: Option<(String, crate::command::Invocation)>,
+    pub action: Option<(Words, crate::command::Invocation)>,
 }
 impl Detail {
-    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn new(label: impl Into<Words>, value: impl Into<String>) -> Self {
         Detail {
             label: label.into(),
             value: value.into(),
@@ -446,7 +457,7 @@ impl Detail {
     #[must_use]
     pub fn with_action(
         mut self,
-        words: impl Into<String>,
+        words: impl Into<Words>,
         action: crate::command::Invocation,
     ) -> Self {
         self.action = Some((words.into(), action));
@@ -847,7 +858,13 @@ pub struct Row {
     pub graph: Option<Box<GraphRow>>,
 }
 impl Inspection {
-    pub fn text(title: impl Into<String>, text: impl Into<String>) -> Self {
+    /// What its notices say together, where they are drawn as one line
+    /// (`notices`, `notices_said`); `None` when it has none.
+    pub fn notice(&self) -> Option<Words> {
+        notices_said(&self.notices)
+    }
+
+    pub fn text(title: impl Into<Words>, text: impl Into<String>) -> Self {
         Self {
             title: title.into(),
             blocks: vec![Block {
@@ -865,6 +882,20 @@ impl Inspection {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+/// What `notices` say together where they are drawn as one line: each a
+/// whole sentence, in their order, joined as the reader's language joins
+/// them ("Read as Windows-1252 · 3 MB unpacked"); `None` for none.
+pub fn notices_said(notices: &[Words]) -> Option<Words> {
+    notices.iter().rev().cloned().reduce(|after, before| {
+        crate::words!(
+            inspection_notices = "{ $before } · { $after }",
+            before = before,
+            after = after,
+            note = "Two things a preview says of how it shows a file, on one line above it: each is a whole sentence of its own."
+        )
+    })
 }
 
 /// Longest logical line (in bytes) a block may hold; longer text is split

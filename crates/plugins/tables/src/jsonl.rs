@@ -120,7 +120,7 @@ pub fn table(
         .iter()
         .filter(|line| matches!(line, Line::Invalid(_)))
         .count();
-    let notice = [
+    let notices = [
         (invalid > 0).then(|| {
             words!(
                 tables_lines_invalid = "{ $count ->
@@ -130,7 +130,6 @@ pub fn table(
                 count = invalid,
                 note = "A note under a JSON Lines table: lines that are not JSON, shown as they are."
             )
-            .say()
         }),
         wide.then(|| {
             words!(
@@ -140,22 +139,17 @@ pub fn table(
                 count = bounds.table_columns(),
                 note = "A note under a JSON Lines table whose objects have more keys (its columns) than are shown."
             )
-            .say()
         }),
         (cut > 0).then(|| crate::cells_cut(cut)),
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    .collect();
     let shown = offset + rows.len() as u64;
     let details = inspection::details([
+        (crate::detail_columns(), inspection::count(columns.len())),
         (
-            crate::detail_columns().as_str(),
-            inspection::count(columns.len()),
-        ),
-        (
-            crate::detail_rows().as_str(),
+            crate::detail_rows(),
             if more {
                 Some(crate::more_rows(shown))
             } else {
@@ -171,7 +165,6 @@ pub fn table(
                 tables_title_json_lines = "JSON Lines",
                 note = "The title of a JSON Lines file's preview: the format's name."
             )
-            .say()
         } else {
             words!(
                 tables_title_json_lines_rows = "JSON Lines · rows { $first }–{ $last }",
@@ -179,15 +172,18 @@ pub fn table(
                 last = shown,
                 note = "The title of a JSON Lines file's preview: the rows shown, by number, from first to last."
             )
-            .say()
         },
-        columns: columns.keys().map(|key| (*key).to_owned()).collect(),
+        // The lines' own keys, as written.
+        columns: columns
+            .keys()
+            .map(|key| skwir_core::words::Words::as_written((*key).to_owned()))
+            .collect(),
         rows,
         position: offset,
         previous: (offset > 0).then(|| offset.saturating_sub(page)),
         next: more.then_some(offset + page),
         source_available: true,
-        notice,
+        notices,
         whole_available: wide && bounds.cut(),
         ..Inspection::default()
     })
@@ -261,7 +257,10 @@ mod tests {
             "{\"zeta\": 1, \"alpha\": \"café\"}\n\n{\"alpha\": null, \"nested\": {\"b\": [1, 2]}}\n\"a string\"\nnot json\n",
             0,
         );
-        assert_eq!(data.columns, ["zeta", "alpha", "nested", "value"]);
+        assert_eq!(
+            crate::tests::columns(&data),
+            ["zeta", "alpha", "nested", "value"]
+        );
         let cells: Vec<_> = data.rows.iter().map(|row| row.cells.clone()).collect();
         assert_eq!(
             cells,
@@ -272,8 +271,8 @@ mod tests {
                 ["", "", "", "not json"],
             ]
         );
-        assert_eq!(data.notice, "1 line not JSON");
-        assert_eq!(data.title, "JSON Lines · rows 1–4");
+        assert_eq!(crate::tests::notice(&data), "1 line not JSON");
+        assert_eq!(data.title.english(), "JSON Lines · rows 1–4");
     }
 
     #[test]
@@ -287,7 +286,7 @@ mod tests {
             numbers.join(",")
         );
         let data = read(&lines, 0);
-        assert_eq!(data.columns, ["id", "embedding", "value"]);
+        assert_eq!(crate::tests::columns(&data), ["id", "embedding", "value"]);
         let embedding = &data.rows[0].cells[1];
         assert!(embedding.starts_with("[0.0,0.00001,"), "{embedding}");
         assert_eq!(embedding.chars().count(), limits::TABLE_CELL + 1);
@@ -296,7 +295,7 @@ mod tests {
             limits::TABLE_CELL + 1
         );
         assert_eq!(
-            data.notice,
+            crate::tests::notice(&data),
             format!(
                 "2 cells longer than {} characters shortened",
                 crate::tests::grouped(limits::TABLE_CELL as u64)

@@ -58,31 +58,8 @@ impl State {
         State::ALL.into_iter().find(|state| state.word() == word)
     }
 
-    /// What a column, a caption or a group calls it.
-    pub fn title(self) -> &'static str {
-        match self {
-            State::Conflict => "In conflict",
-            State::Changed => "Changed",
-            State::Staged => "Staged",
-            State::New => "New",
-            State::Ignored => "Ignored",
-        }
-    }
-
-    /// What a folder holding it below is called, where the folder is not
-    /// it itself: "Holds changes".
-    pub fn below(self) -> &'static str {
-        match self {
-            State::Conflict => "Holds a conflict",
-            State::Changed => "Holds changes",
-            State::Staged => "Holds staged changes",
-            State::New => "Holds new files",
-            State::Ignored => "Ignored",
-        }
-    }
-
-    /// What a column, a caption or a group calls it, as words (`title`
-    /// until every caller says words).
+    /// What a column, a caption or a group calls it, said where it is
+    /// drawn.
     pub fn words(self) -> crate::words::Words {
         use crate::words;
         match self {
@@ -109,9 +86,9 @@ impl State {
         }
     }
 
-    /// What a folder holding it below is called, as words (`below` until
-    /// every caller says words).
-    pub fn below_words(self) -> crate::words::Words {
+    /// What a folder holding it below is called, where the folder is not
+    /// it itself ("Holds changes"), said where it is drawn.
+    pub fn below(self) -> crate::words::Words {
         use crate::words;
         match self {
             State::Conflict => words!(

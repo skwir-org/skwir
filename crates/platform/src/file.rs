@@ -18,7 +18,7 @@ pub use skwir_core::fs::file::{
     SIDE_FILE_LIMIT, open_regular, read_regular, read_regular_text, take_place,
 };
 
-/// Rewrite the text file at/// Rewrite the text file at `link` with `change`, which gets its current
+/// Rewrite the text file at `link` with `change`, which gets its current
 /// text (empty when there is no file) and answers the new text with a value
 /// for the caller, or `None` to leave the file alone. Writes a file: call
 /// from a worker.
@@ -26,30 +26,9 @@ pub use skwir_core::fs::file::{
 /// The file is replaced whole (a reader never sees half of it), keeping its
 /// mode. A file that is a link (a dotfile manager's) is updated where it
 /// points; if that is read-only, as a declarative configuration is, it is
-/// refused, naming the file as `what`, rather than replaced by a copy that
-/// silently parts from the declaration.
-///
-/// Transitional: `what` is a fragment the refusals are written around;
-/// [`rewrite_words`] takes the refusal whole (ADR-139).
-///
-/// # Errors
-/// When the file cannot be read or written.
-pub fn rewrite<T>(
-    link: &Path,
-    what: &str,
-    change: impl FnOnce(&str) -> Option<(String, T)>,
-) -> anyhow::Result<Option<T>> {
-    rewrite_with(
-        link,
-        || anyhow::anyhow!("{what} has no folder"),
-        || anyhow::anyhow!("{what} is read-only; change it where it is managed"),
-        change,
-    )
-}
-
-/// [`rewrite`], a read-only file refused saying `read_only`, a whole
-/// message naming it ("The bookmarks file is read-only; change it where
-/// it is managed").
+/// refused saying `read_only`, a whole message naming it ("The bookmarks
+/// file is read-only; change it where it is managed"), rather than
+/// replaced by a copy that silently parts from the declaration.
 ///
 /// # Errors
 /// When the file cannot be read or written.

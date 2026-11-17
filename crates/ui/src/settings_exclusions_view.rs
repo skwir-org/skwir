@@ -90,9 +90,6 @@ pub(crate) struct ExclusionsPage {
     presence: Presence,
     /// What the last change did, said at the page's foot.
     said: Option<Words>,
-    /// The words' revision the filter's own words were said in
-    /// (`words::revision`): said again when the language moves.
-    said_in: u64,
     /// The row whose menu the window shows, while it does: the menu holds
     /// what this is a weak hold of (`SettingsMenu::held`).
     menu: Option<(Cursor, std::rc::Weak<()>)>,
@@ -139,8 +136,8 @@ struct Asked {
 impl ExclusionsPage {
     pub fn new(cx: &mut App) -> Self {
         let filter = cx.new(|cx| {
-            let mut input = TextInput::new(filter_placeholder().say(), cx);
-            input.set_label(filter_label().say());
+            let mut input = TextInput::new(filter_placeholder(), cx);
+            input.set_label(filter_label());
             input
         });
         ExclusionsPage {
@@ -160,7 +157,6 @@ impl ExclusionsPage {
             found: RefCell::default(),
             presence: Presence::default(),
             said: None,
-            said_in: skwir_core::words::revision(),
             menu: None,
             menu_row: PopoverAnchor::default(),
             menu_area: PopoverAnchor::default(),
@@ -220,18 +216,15 @@ enum Item {
 /// agents with it unfolded.
 const SECRETS: &str = "skwir.secrets";
 
-/// An entry's menu's submenu of the categories it may move to, its row's
-/// words said as the menu is made.
+/// An entry's menu's submenu of the categories it may move to.
 fn move_to() -> skwir_core::registry::Submenu {
-    skwir_core::registry::Submenu {
-        id: "exclusions.move_to".into(),
-        title: words!(
+    skwir_core::registry::Submenu::new(
+        "exclusions.move_to",
+        words!(
             exclusions_move_to = "Move to",
             note = "A submenu of a row's menu on the Exclusions page: the categories the folder may move to."
-        )
-        .say()
-        .into(),
-    }
+        ),
+    )
 }
 
 /// What the page asks in a modal of the dialog.
@@ -669,15 +662,6 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // The filter's own words, said again when the language moved.
-        let revision = skwir_core::words::revision();
-        if self.exclusions.said_in != revision {
-            self.exclusions.said_in = revision;
-            self.exclusions.filter.update(cx, |input, cx| {
-                input.set_placeholder(filter_placeholder().say(), cx);
-                input.set_label(filter_label().say());
-            });
-        }
         let roles = self.handle("exclusions-role", cx);
         self.stop(&roles, None, None);
         let current = self.exclusions.role;
@@ -871,7 +855,7 @@ impl SettingsView {
             .or_else(|| self.errors.get(CATEGORIES_KEY))
         {
             bar = bar.child(
-                controls::noted("warning", theme.error, 13., error.clone())
+                controls::noted("warning", theme.error, 13., error.say())
                     .text_body()
                     .text_color(theme.error),
             );
@@ -1921,9 +1905,9 @@ impl SettingsView {
         text: &str,
         cx: &mut Context<Self>,
     ) -> Entity<TextInput> {
-        let label = label.say();
+        let label = label.clone();
         let text = text.to_owned();
-        let placeholder = placeholder.say();
+        let placeholder = placeholder.clone();
         cx.new(move |cx| {
             let mut input = TextInput::new(placeholder, cx);
             input.set_label(label);

@@ -272,9 +272,7 @@ impl PreviewProvider for Provider {
                 words!(
                     playlists_detail_tracks = "Tracks",
                     note = "A label in the preview's Properties: how many tracks the playlist has."
-                )
-                .say()
-                .as_str(),
+                ),
                 Some(if list.more {
                     words!(
                         playlists_tracks_more = "{ $count ->
@@ -292,31 +290,25 @@ impl PreviewProvider for Provider {
                 words!(
                     playlists_detail_length = "Total length",
                     note = "A label in the preview's Properties: how long the playlist's tracks play, together."
-                )
-                .say()
-                .as_str(),
+                ),
                 (total > 0.).then(|| length(total)),
             ),
             (
                 words!(
                     playlists_detail_missing = "Missing",
                     note = "A label in the preview's Properties: how many of the playlist's tracks are files that are not there."
-                )
-                .say()
-                .as_str(),
+                ),
                 inspection::count(missing),
             ),
             (
                 words!(
                     playlists_detail_remote = "Remote",
                     note = "A label in the preview's Properties: how many of the playlist's tracks are somewhere else (a server, a stream)."
-                )
-                .say()
-                .as_str(),
+                ),
                 inspection::count(remote),
             ),
         ]);
-        let notice = [
+        let notices = [
             list.encoding.notice(),
             list.more.then(|| {
                 words!(
@@ -326,20 +318,17 @@ impl PreviewProvider for Provider {
                     count = bounds.blocks(),
                     note = "A note under a playlist's preview that shows only its first tracks. Source is the preview's button that shows the file as text."
                 )
-                .say()
             }),
             (remote > 0).then(|| {
                 words!(
                     playlists_remote_named = "Remote entries are named, never fetched",
                     note = "A note under a playlist's preview: its tracks that are somewhere else (a server, a stream) are listed, not fetched."
                 )
-                .say()
             }),
         ]
         .into_iter()
         .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
+        .collect();
         Ok(Some(Inspection {
             kind: InspectionKind::Table,
             title: words!(
@@ -349,35 +338,30 @@ impl PreviewProvider for Provider {
                 }",
                 count = rows.len(),
                 note = "The title of a playlist's preview, with how many tracks it lists."
-            )
-            .say(),
+            ),
             columns: vec![
                 words!(
                     playlists_column_number = "#",
                     note = "A column's header in a playlist's preview: the track's number in the playlist."
-                )
-                .say(),
+                ),
                 words!(
                     playlists_column_title = "Title",
                     note = "A column's header in a playlist's preview: the track's title."
-                )
-                .say(),
+                ),
                 words!(
                     playlists_column_artist = "Artist",
                     note = "A column's header in a playlist's preview: who performs the track."
-                )
-                .say(),
+                ),
                 words!(
                     playlists_column_length = "Length",
                     note = "A column's header in a playlist's preview: how long the track plays."
-                )
-                .say(),
-                String::new(),
+                ),
+                skwir_core::words::Words::default(),
             ],
             rows,
             details,
             source_available: true,
-            notice,
+            notices,
             whole_available: list.more && bounds.cut(),
             ..Inspection::default()
         }))
@@ -456,14 +440,16 @@ mod tests {
         // Classic M3U is in the system code page.
         let data = read("legacy.m3u", b"#EXTINF:10,Caf\xe9 - Song\nx.mp3\n");
         assert_eq!(data.rows[0].cells[2], "Caf\u{e9}");
-        assert_eq!(data.notice, "Read as Windows-1252");
+        let notice =
+            |data: &Inspection| data.notice().map(|said| said.english()).unwrap_or_default();
+        assert_eq!(notice(&data), "Read as Windows-1252");
         // A playlist longer than the bound shows its start and says so.
         let data = read("long.m3u", "a.mp3\n".repeat(limits::BLOCKS + 5).as_bytes());
         assert_eq!(data.rows.len(), limits::BLOCKS);
         assert!(
-            data.notice.starts_with("First 2,000 tracks"),
+            notice(&data).starts_with("First 2,000 tracks"),
             "{}",
-            data.notice
+            notice(&data)
         );
         assert_eq!(data.details[0].value, "more than 2,000");
         assert!(data.whole_available, "Full preview shows the rest");
@@ -477,7 +463,7 @@ mod tests {
             &whole,
         );
         assert_eq!(data.rows.len(), limits::BLOCKS + 5);
-        assert!(!data.whole_available && data.notice.is_empty());
+        assert!(!data.whole_available && data.notices.is_empty());
     }
 
     // Types from the free desktops' database (step E, ADR-035).
@@ -514,7 +500,7 @@ mod tests {
         );
         let targets: Vec<_> = data.rows.iter().map(|row| row.target.as_deref()).collect();
         assert_eq!(targets, [Some("0"), None, None]);
-        assert!(!data.notice.is_empty());
+        assert!(!data.notices.is_empty());
 
         let member = Provider
             .extract(

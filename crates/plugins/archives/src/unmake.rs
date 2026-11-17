@@ -94,19 +94,23 @@ impl Unmake {
     }
 
     /// Where each item it takes back is now; `None` for one gone already.
-    fn found(&self) -> Result<Vec<Option<std::path::PathBuf>>, String> {
+    fn found(&self) -> Result<Vec<Option<std::path::PathBuf>>, ResolveError> {
         self.each()
             .map(|(entry, _)| match entry.resolve() {
                 Ok(path) => Ok(Some(path)),
                 Err(ResolveError::Gone(_)) => Ok(None),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e),
             })
             .collect()
     }
 
     /// Why one of what was made, now where `found` says, stays
     /// (`op::made_stays`).
-    fn stays(&self, found: &[Option<std::path::PathBuf>], ctx: &StepContext) -> Option<String> {
+    fn stays(
+        &self,
+        found: &[Option<std::path::PathBuf>],
+        ctx: &StepContext,
+    ) -> Option<skwir_core::words::Words> {
         self.each()
             .zip(found)
             .filter_map(|((entry, made_as), path)| Some((entry, made_as, path.as_deref()?)))
@@ -138,7 +142,11 @@ impl op::Effect for Unmake {
     fn check(&self, ctx: &StepContext) -> StepStatus {
         let found = match self.found() {
             Ok(found) => found,
-            Err(reason) => return StepStatus::Conflict { reason },
+            Err(gone) => {
+                return StepStatus::Conflict {
+                    reason: gone.words(),
+                };
+            }
         };
         if let Some(reason) = self.stays(&found, ctx) {
             return StepStatus::Conflict { reason };
@@ -151,9 +159,9 @@ impl op::Effect for Unmake {
     }
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let found = self.found().map_err(anyhow::Error::msg)?;
+        let found = self.found()?;
         if let Some(why) = self.stays(&found, ctx) {
-            anyhow::bail!("{why}");
+            return Err(why.into());
         }
         let mut removed = false;
         for ((entry, _), path) in self.each().zip(&found) {

@@ -10,7 +10,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 use crate::address::{Address, Scheme};
@@ -46,7 +46,7 @@ const SCHEMES: [Scheme; 8] = [
 ///
 /// # Errors
 /// As [`add`].
-pub fn add_any(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
+pub fn add_any(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::Result<Option<Words>> {
     loop {
         let pick = Form::new(
             words!(remote_server_form_add_server = "Add Server"),
@@ -306,8 +306,8 @@ pub fn address_of(scheme: Scheme, values: &Values) -> anyhow::Result<Address> {
 
 /// What became of a server's form.
 pub enum Added {
-    /// Kept, by the name given, and opened.
-    Done(String),
+    /// Kept, by the name given (else its address's), and opened.
+    Done(Words),
     Back,
     Cancelled,
 }
@@ -360,35 +360,31 @@ pub fn add(
             }
         };
         if let Some(kept) = crate::servers::find(app, &address) {
-            asked = blank.clone().again(&values, server_already(kept.label));
+            asked = blank.clone().again(&values, server_already(&kept.label));
             continue;
         }
-        let name = name_of(&values, &address);
+        let name = name_of(&values);
         crate::servers::add(app, &name, &address)?;
         if let Err(error) = app.navigate(pane, &address.location()) {
             tracing::debug!("the server added was not opened: {error:#}");
         }
-        return Ok(Added::Done(name));
+        return Ok(Added::Done(crate::servers::label_of(&name, &address)));
     }
 }
 
 /// A server is kept already at the address given: the one `named`.
-fn server_already(named: String) -> Words {
+fn server_already(named: &Words) -> Words {
     words!(
         remote_server_form_already = "{ $server } is a server already, at that address",
-        server = Name(named),
+        server = crate::address::named(named),
         note = "server: the name of the server kept at that address."
     )
 }
 
-/// The name a server's form gives it: its address's own where empty.
-fn name_of(values: &Values, address: &Address) -> String {
-    let name = values.get("title").trim();
-    if name.is_empty() {
-        address.label()
-    } else {
-        name.to_owned()
-    }
+/// The name a server's form gives it: empty where it goes by its
+/// address's own (`servers::add`).
+fn name_of(values: &Values) -> String {
+    values.get("title").trim().to_owned()
 }
 
 /// Ask the parts of `server`, added by its address, again, its form filled
@@ -407,7 +403,7 @@ pub fn edit(
     let mut blank = form(old.scheme, server.kept, false);
     blank.title = words!(
         remote_server_form_edit = "Edit { $server }",
-        server = Name(server.label.clone())
+        server = crate::address::named(&server.label)
     );
     blank.accept = words!(remote_server_form_save = "Save");
     blank.intro = words!(
@@ -417,7 +413,10 @@ pub fn edit(
         note = "kept: where the server is kept (in Skwir's list, in KDE's network folders, in rclone's configuration)."
     );
     let path = String::from_utf8_lossy(&old.path);
-    let named = (server.label != old.label()).then(|| server.label.clone());
+    // The name the user gave it, as written: none where it goes by its
+    // address's, whose words are no name to edit.
+    let named = (server.label != old.label() && server.label.message_of().is_none())
+        .then(|| server.label.english());
     for (key, value) in [
         ("host", Some(old.host.clone())),
         ("path", Some(path.trim_start_matches('/').to_owned())),
@@ -447,10 +446,10 @@ pub fn edit(
         if address != *old
             && let Some(other) = crate::servers::find(app, &address)
         {
-            asked = blank.clone().again(&values, server_already(other.label));
+            asked = blank.clone().again(&values, server_already(&other.label));
             continue;
         }
-        return Ok(Some((name_of(&values, &address), address)));
+        return Ok(Some((name_of(&values), address)));
     }
 }
 

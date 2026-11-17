@@ -34,7 +34,9 @@ const COMPRESSES: &str = "selection !place !restores";
 
 /// The context menu's submenu of the ways to compress, which the smaller
 /// copies join.
-const COMPRESS: skwir_core::registry::Submenu = skwir_core::registry::submenus::COMPRESS;
+fn compress_submenu() -> skwir_core::registry::Submenu {
+    skwir_core::registry::submenus::compress()
+}
 
 /// Make an archive named `name` in `dest_dir` of `entries`, each at its
 /// top under its own name, with what is beside it (its companions,
@@ -60,10 +62,10 @@ impl Compress {
     }
 
     /// The password it is encrypted by, asked of the user, twice to be
-    /// sure of it. Its questions are said here: they take text.
+    /// sure of it.
     fn password(&self, ctx: &StepContext) -> anyhow::Result<String> {
         let archive = || Name::of(&self.target());
-        let ask = |title: &str, accept: &str| {
+        let ask = |title: &Words, accept: &Words| {
             ctx.ask_secret(title, accept).map_err(|why| match why {
                 Unanswered::Declined => anyhow::Error::from(Cancelled),
                 Unanswered::NoOne => anyhow::Error::from(words!(
@@ -76,14 +78,12 @@ impl Compress {
         let next = words!(
             archives_password_next = "Next",
             note = "The button that gives an archive's new password, before it is asked again."
-        )
-        .say();
+        );
         let mut title = words!(
             archives_password_new = "A password for { $name }",
             name = archive(),
             note = "The title of the question asking the password an archive being made is encrypted by."
-        )
-        .say();
+        );
         loop {
             let first = ask(&title, &next)?;
             if first.is_empty() {
@@ -91,24 +91,21 @@ impl Compress {
                     archives_password_new_empty = "A password for { $name }: it cannot be empty",
                     name = archive(),
                     note = "The question asked again, nothing having been typed."
-                )
-                .say();
+                );
                 continue;
             }
             let again = words!(
                 archives_password_again = "The same password again, to be sure of it",
                 note = "The title of the question asking an archive's new password a second time."
-            )
-            .say();
-            if ask(&again, &compress_button().say())? == first {
+            );
+            if ask(&again, &compress_button())? == first {
                 return Ok(first);
             }
             title = words!(
                 archives_password_differed = "The two passwords differed: a password for { $name }",
                 name = archive(),
                 note = "The question asked again, the password typed the second time not being the first."
-            )
-            .say();
+            );
         }
     }
 }
@@ -132,10 +129,10 @@ fn compress_button() -> Words {
     )
 }
 
-/// A step's conflict, said here: its reason is text (`StepStatus`).
+/// A step's conflict: why, in words.
 fn conflict(reason: impl Into<Words>) -> StepStatus {
     StepStatus::Conflict {
-        reason: reason.into().say(),
+        reason: reason.into(),
     }
 }
 
@@ -301,7 +298,17 @@ impl op::Effect for Compress {
             folder: false,
             // Not known until it is written.
             size: None,
-            words: ("Compress", "compressed"),
+            words: skwir_core::op::MakeWords {
+                verb: compress_button(),
+                waiting: words!(
+                    archives_nothing_compressed = "Nothing is compressed until you choose.",
+                    note = "Under the title of the question asking what becomes of the name an archive being made finds taken."
+                ),
+                cancelled: words!(
+                    archives_cancelled_compress = "Cancelled: nothing was compressed",
+                    note = "An archive being made found its name taken, asked what becomes of it, and the user cancelled it."
+                ),
+            },
         })
     }
 
@@ -869,7 +876,7 @@ pub fn register(app: &App, owner: &str) {
             let name = default_name(&entries, Format::Zip);
             let text = name.to_string_lossy().into_owned();
             let stem = text.len() - Format::Zip.extension().len();
-            // Said here: the question takes text.
+            // As data: the window says the question's words.
             let (count, first) = named(&entries);
             let (title, note) = if a.password {
                 (
@@ -882,12 +889,12 @@ pub fn register(app: &App, owner: &str) {
                         name = first,
                         note = "The title of the question asking an encrypted archive's name, which follows it in a field."
                     )
-                    .say(),
+                    .to_data(),
                     words!(
                         archives_ask_with_password_note = "A ZIP archive, encrypted: its password is asked next",
                         note = "Under the field of an encrypted archive's name. ZIP is the format's name, as written."
                     )
-                    .say(),
+                    .to_data(),
                 )
             } else {
                 (
@@ -900,13 +907,13 @@ pub fn register(app: &App, owner: &str) {
                         name = first,
                         note = "The title of the question asking an archive's name, which follows it in a field."
                     )
-                    .say(),
+                    .to_data(),
                     words!(
                         archives_ask_as_note = "Its ending says the format: { $endings }",
                         endings = endings(),
                         note = "Under the field of an archive's name."
                     )
-                    .say(),
+                    .to_data(),
                 )
             };
             // Named by identity as well as path: accepted, the dialog's
@@ -923,7 +930,7 @@ pub fn register(app: &App, owner: &str) {
                     .with("title", title)
                     .with("text", text)
                     .with("select", [0, stem])
-                    .with("accept", compress_button().say())
+                    .with("accept", compress_button().to_data())
                     .with("note", note)
                     .with("command", "archive.compress")
                     .with("args", args)
@@ -957,7 +964,7 @@ pub fn register(app: &App, owner: &str) {
             ),
         )
         .when(COMPRESSES)
-        .submenu(COMPRESS),
+        .submenu(compress_submenu()),
     );
     app.registry.menus.add(
         owner,
@@ -972,7 +979,7 @@ pub fn register(app: &App, owner: &str) {
             Invocation::new("archive.compress_ask"),
         )
         .when(COMPRESSES)
-        .submenu(COMPRESS),
+        .submenu(compress_submenu()),
     );
     app.registry.menus.add(
         owner,
@@ -987,7 +994,7 @@ pub fn register(app: &App, owner: &str) {
             Invocation::new("archive.compress_ask").with("password", true),
         )
         .when(COMPRESSES)
-        .submenu(COMPRESS),
+        .submenu(compress_submenu()),
     );
 }
 

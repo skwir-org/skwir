@@ -171,8 +171,9 @@ pub struct Converted {
     pub mime: Option<String>,
     /// Why its links are not followed, when they are not: a plugin from
     /// outside skwir that may not use the network made it, and a link the
-    /// user clicks would carry what it read where it pleases.
-    pub closed_links: Option<String>,
+    /// user clicks would carry what it read where it pleases. Said where
+    /// a click on one is refused.
+    pub closed_links: Option<crate::words::Words>,
 }
 
 /// Another way of looking at what a provider accepts, offered beside the

@@ -2,6 +2,7 @@
 //! a page at a time, every cell bounded.
 use dialect::Dialect;
 use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -52,9 +53,15 @@ impl Plugin for PreviewPlugin {
                 tables_spreadsheets = "Spreadsheets",
                 note = "A setting's title: how spreadsheets are shown in the preview."
             ),
-            words!(
-                tables_spreadsheets_description = "Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another. Pages shows them as LibreOffice prints them, when it is installed.",
-                note = "Table and Pages are the setting's two choices."
+            (
+                words!(
+                    tables_spreadsheets_description = "Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another.",
+                    note = "Table and Pages are the setting's two choices."
+                ),
+                words!(
+                    tables_spreadsheets_description_more = "Pages shows them as LibreOffice prints them, when it is installed.",
+                    note = "Table and Pages are the setting's two choices."
+                ),
             ),
             "table",
             vec![
@@ -324,12 +331,9 @@ fn table(
     }
     let shown = offset + rows.len() as u64;
     let details = inspection::details([
+        (detail_columns(), inspection::count(columns.len())),
         (
-            detail_columns().as_str(),
-            inspection::count(columns.len()),
-        ),
-        (
-            detail_rows().as_str(),
+            detail_rows(),
             if more {
                 Some(more_rows(shown))
             } else {
@@ -340,17 +344,15 @@ fn table(
             words!(
                 tables_detail_separator = "Separator",
                 note = "A label in the preview's Properties: what splits a CSV's cells (Comma, Semicolon, Tab…)."
-            )
-            .say()
-            .as_str(),
+            ),
             (!columns.is_empty()).then(|| dialect.separator_name()),
         ),
     ]);
-    let notice = [encoding.notice(), bounds.notice()]
+    let notices = encoding
+        .notice()
         .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
+        .chain(bounds.notices())
+        .collect();
     Ok(Inspection {
         details,
         kind: skwir_core::inspection::InspectionKind::Table,
@@ -359,7 +361,6 @@ fn table(
                 tables_title_table = "Table",
                 note = "The title of a CSV or TSV file's preview, shown as a table."
             )
-            .say()
         } else {
             words!(
                 tables_title_table_rows = "Table · rows { $first }–{ $last }",
@@ -367,15 +368,15 @@ fn table(
                 last = shown,
                 note = "The title of a CSV or TSV file's preview: the rows shown, by number, from first to last."
             )
-            .say()
         },
-        columns,
+        // The file's own header, as written.
+        columns: columns.into_iter().map(Words::as_written).collect(),
         rows,
         position: offset,
         previous: (offset > 0).then(|| offset.saturating_sub(page)),
         next: more.then_some(offset + page),
         source_available: true,
-        notice,
+        notices,
         whole_available: bounds.rows > 0 && asked.cut(),
         ..Inspection::default()
     })
@@ -409,8 +410,9 @@ impl Bounds {
             .map(|cell| bounded_cell(&encoding.decode(cell), &mut self.cells))
             .collect()
     }
-    fn notice(&self) -> Option<String> {
-        let parts: Vec<String> = [
+    /// What they left out, each a notice of its own.
+    fn notices(&self) -> Vec<Words> {
+        [
             (self.rows > 0).then(|| {
                 words!(
                     tables_rows_cut = "{ $count ->
@@ -423,33 +425,29 @@ impl Bounds {
                     columns = self.columns,
                     note = "A note under a table: rows with more cells than are shown. columns: how many are shown (64)."
                 )
-                .say()
             }),
             (self.cells > 0).then(|| cells_cut(self.cells)),
         ]
         .into_iter()
         .flatten()
-        .collect();
-        (!parts.is_empty()).then(|| parts.join(" · "))
+        .collect()
     }
 }
 
 /// The Properties' label for how many columns a table has.
-pub(crate) fn detail_columns() -> String {
+pub(crate) fn detail_columns() -> Words {
     words!(
         tables_detail_columns = "Columns",
         note = "A label in the preview's Properties: how many columns the table has."
     )
-    .say()
 }
 
 /// The Properties' label for how many rows a table has.
-pub(crate) fn detail_rows() -> String {
+pub(crate) fn detail_rows() -> Words {
     words!(
         tables_detail_rows = "Rows",
         note = "A label in the preview's Properties: how many rows the table has."
     )
-    .say()
 }
 
 /// The Properties' rows of a table read no further than its page: more
@@ -466,7 +464,7 @@ pub(crate) fn more_rows(shown: u64) -> String {
 }
 
 /// The notice of `count` cells cut to `TABLE_CELL` characters.
-pub(crate) fn cells_cut(count: usize) -> String {
+pub(crate) fn cells_cut(count: usize) -> Words {
     words!(
         tables_cells_cut = "{ $count ->
             [one] { $count } cell
@@ -478,11 +476,10 @@ pub(crate) fn cells_cut(count: usize) -> String {
         characters = limits::TABLE_CELL,
         note = "A note under a table: cells whose text is cut. characters: the bound (1,024)."
     )
-    .say()
 }
 
 /// The notice of a table showing only its first `count` columns.
-pub(crate) fn columns_cut(count: usize) -> String {
+pub(crate) fn columns_cut(count: usize) -> Words {
     words!(
         tables_columns_cut = "{ $count ->
            *[other] Only the first { $count } columns shown
@@ -490,7 +487,6 @@ pub(crate) fn columns_cut(count: usize) -> String {
         count = count,
         note = "A note under a table that has more columns than are shown."
     )
-    .say()
 }
 
 /// Keep at most `TABLE_CELL` characters of a cell and mark the cut visibly.
@@ -627,9 +623,9 @@ mod tests {
             shown(&provider, &request)
         };
         let csv = previewed("l'été.csv", b"name,note\ncaf\xe9,a b\n", Some("text/csv"));
-        assert_eq!(csv.columns, ["name", "note"]);
+        assert_eq!(columns(&csv), ["name", "note"]);
         assert_eq!(csv.rows[0].cells, ["caf\u{e9}", "a b"]);
-        assert_eq!(csv.notice, "Read as Windows-1252");
+        assert_eq!(notice(&csv), "Read as Windows-1252");
         let tsv = previewed(
             "it's data.tsv",
             b"a\tb\n1\t2\n",
@@ -637,7 +633,7 @@ mod tests {
         );
         assert_eq!(tsv.rows[0].cells, ["1", "2"]);
         let lines = previewed("a log’s name.jsonl", b"{\"n\": 1}\n{\"n\": 2}\n", None);
-        assert_eq!(lines.columns, ["n"]);
+        assert_eq!(columns(&lines), ["n"]);
         assert_eq!(lines.rows.len(), 2);
         let made = spreadsheet::tests::workbook(
             dir.path(),
@@ -703,15 +699,25 @@ mod tests {
         assert!(!TAB_SEPARATED.holds(std::path::Path::new("data.tab"), Some("text/csv")));
         let tab = held("it's data.tab", b"name\tnote\na,b\tc\n");
         let t = table(&tab, true, 0, limits::Bounds::QUICK, &CancelToken::new()).unwrap();
-        assert_eq!(t.columns, ["name", "note"]);
+        assert_eq!(columns(&t), ["name", "note"]);
         assert_eq!(t.rows[0].cells, ["a,b", "c"]);
     }
 
     fn detail(data: &Inspection, label: &str) -> Option<String> {
         data.details
             .iter()
-            .find(|d| d.label == label)
+            .find(|d| d.label.english() == label)
             .map(|d| d.value.clone())
+    }
+
+    /// Its columns' headers, in English.
+    pub(crate) fn columns(data: &Inspection) -> Vec<String> {
+        data.columns.iter().map(Words::english).collect()
+    }
+
+    /// Its notices together, in English; empty for none.
+    pub(crate) fn notice(data: &Inspection) -> String {
+        data.notice().map(|said| said.english()).unwrap_or_default()
     }
 
     /// Asked about as the panel asks, a CSV split by semicolons, a comma
@@ -727,7 +733,7 @@ mod tests {
         );
         assert!(provider.accepts(&request));
         let data = shown(&provider, &request);
-        assert_eq!(data.columns, ["nom", "adresse", "total"]);
+        assert_eq!(columns(&data), ["nom", "adresse", "total"]);
         assert_eq!(data.rows[0].cells, ["Éa", "1, rue d'ici", "12,50"]);
         assert_eq!(detail(&data, "Separator").as_deref(), Some("Semicolon"));
         // What the type names stays: a TSV is split by its tabs alone.
@@ -737,16 +743,16 @@ mod tests {
             Some("text/tab-separated-values"),
         );
         let data = shown(&provider, &tsv);
-        assert_eq!(data.columns, ["a;b", "c"]);
+        assert_eq!(columns(&data), ["a;b", "c"]);
         assert_eq!(detail(&data, "Separator").as_deref(), Some("Tab"));
     }
 
     #[test]
     fn a_separator_is_read_in_every_encoding() {
         let data = read("export.csv", b"nom;prix\ncaf\xe9;3,50\nth\xe9;2,10\n", 0);
-        assert_eq!(data.columns, ["nom", "prix"]);
+        assert_eq!(columns(&data), ["nom", "prix"]);
         assert_eq!(data.rows[0].cells, ["caf\u{e9}", "3,50"]);
-        assert_eq!(data.notice, "Read as Windows-1252");
+        assert_eq!(notice(&data), "Read as Windows-1252");
         let utf16: Vec<u8> = [0xFF, 0xFE]
             .into_iter()
             .chain(
@@ -756,9 +762,9 @@ mod tests {
             )
             .collect();
         let data = read("unicode.csv", &utf16, 0);
-        assert_eq!(data.columns, ["nom", "prix"]);
+        assert_eq!(columns(&data), ["nom", "prix"]);
         assert_eq!(data.rows[0].cells, ["\u{e9}", "3,50"]);
-        assert_eq!(data.notice, "Read as UTF-16LE");
+        assert_eq!(notice(&data), "Read as UTF-16LE");
     }
 
     /// A `sep=` line is no row, and pages are counted as if it were not
@@ -774,7 +780,7 @@ mod tests {
         let cancel = CancelToken::new();
         let page = |offset| table(&long, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
         let first = page(0);
-        assert_eq!(first.columns, ["n", "name"]);
+        assert_eq!(columns(&first), ["n", "name"]);
         assert_eq!(first.rows[0].cells, ["1", "row; 1"]);
         assert_eq!(detail(&first, "Separator").as_deref(), Some("Semicolon"));
         let unseen = page(1000);
@@ -782,7 +788,7 @@ mod tests {
         page(500);
         assert_eq!(starts::nearest(&long, 1000).0, 1000);
         let seen = page(1000);
-        assert_eq!(seen.columns, ["n", "name"]);
+        assert_eq!(columns(&seen), ["n", "name"]);
         assert_eq!(seen.rows[0].cells, unseen.rows[0].cells);
         assert_eq!(seen.rows.len(), 200);
         assert_eq!(detail(&seen, "Rows").as_deref(), Some("1200"));
@@ -796,7 +802,7 @@ mod tests {
         let rows = 2 * 64 * 1024 / line.len();
         let text = format!("a;b\n{}", line.repeat(rows));
         let data = read("long one.csv", text.as_bytes(), 500);
-        assert_eq!(data.columns, ["a", "b"]);
+        assert_eq!(columns(&data), ["a", "b"]);
         assert_eq!(data.rows[0].cells.len(), 2);
     }
 
@@ -805,16 +811,16 @@ mod tests {
         // Latin-1 from a spreadsheet, with a mark-less legacy byte.
         let data = read("export.csv", b"name,price\ncaf\xe9,3\n", 0);
         assert_eq!(data.rows[0].cells, ["caf\u{e9}", "3"]);
-        assert_eq!(data.notice, "Read as Windows-1252");
+        assert_eq!(notice(&data), "Read as Windows-1252");
         // A UTF-8 mark is not part of the first column's name.
         let data = read(
             "marked.csv",
             "\u{feff}id,note\n1,\u{e9}t\u{e9}\n".as_bytes(),
             0,
         );
-        assert_eq!(data.columns, ["id", "note"]);
+        assert_eq!(columns(&data), ["id", "note"]);
         assert_eq!(data.rows[0].cells[1], "\u{e9}t\u{e9}");
-        assert!(data.notice.is_empty());
+        assert!(data.notices.is_empty());
         // UTF-16, as a spreadsheet's "Unicode text" writes it.
         let utf16: Vec<u8> = [0xFF, 0xFE]
             .into_iter()
@@ -825,9 +831,9 @@ mod tests {
             )
             .collect();
         let data = read("unicode.tsv", &utf16, 0);
-        assert_eq!(data.columns, ["a", "b"]);
+        assert_eq!(columns(&data), ["a", "b"]);
         assert_eq!(data.rows[0].cells, ["1", "\u{e9}"]);
-        assert_eq!(data.notice, "Read as UTF-16LE");
+        assert_eq!(notice(&data), "Read as UTF-16LE");
     }
 
     #[test]
@@ -840,12 +846,12 @@ mod tests {
         assert_eq!(data.columns.len(), limits::TABLE_COLUMNS);
         assert_eq!(data.rows[0].cells.len(), limits::TABLE_COLUMNS);
         assert_eq!(data.rows[1].cells, ["short"]);
-        assert_eq!(data.notice, "2 rows cut to 64 columns");
+        assert_eq!(notice(&data), "2 rows cut to 64 columns");
         assert!(data.whole_available, "Full preview shows the rest");
         let two = held("wide.csv", format!("{wide}\n{wide}\n").as_bytes());
         let all = table(&two, false, 0, limits::Bounds::WHOLE, &CancelToken::new()).unwrap();
         assert_eq!(all.columns.len(), limits::TABLE_COLUMNS + 6);
-        assert!(all.notice.is_empty() && !all.whole_available);
+        assert!(all.notices.is_empty() && !all.whole_available);
     }
 
     /// A page turned to is read from where the pages before it were seen
@@ -914,7 +920,7 @@ mod tests {
         let rows_detail = |data: &Inspection| {
             data.details
                 .iter()
-                .find(|d| d.label == "Rows")
+                .find(|d| d.label.english() == "Rows")
                 .map(|d| d.value.clone())
         };
         assert_eq!(rows_detail(&first).as_deref(), Some("more than 500"));
@@ -923,7 +929,7 @@ mod tests {
         assert_eq!(last.next, None);
         assert_eq!(rows_detail(&last), Some(rows.to_string()));
         assert_eq!(
-            last.title,
+            last.title.english(),
             format!(
                 "Table · rows {}–{}",
                 grouped(last_page + 1),

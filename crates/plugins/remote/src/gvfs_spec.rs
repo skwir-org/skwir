@@ -5,6 +5,7 @@
 //! back, without asking GVfs.
 
 use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::address::{Address, Scheme, decoded};
 
@@ -122,41 +123,37 @@ impl Spec {
 
     /// What the user calls this mount: its address's name, else what GVfs
     /// says it is (`Phone (MTP)`). A device's volume says better, where
-    /// its monitor offers it (`Remotes::label_of`). A device's is said as
-    /// it is read, for the window: the mount's label is text.
-    pub fn label(&self) -> String {
+    /// its monitor offers it (`Remotes::label_of`). Said where it is shown.
+    pub fn label(&self) -> Words {
         if let Some(address) = self.address() {
             return address.label();
         }
         let host = self.get("host").unwrap_or("");
         let device = device_name(host);
+        let scheme = match self.kind.as_str() {
+            "mtp" => Some(Scheme::Mtp),
+            "gphoto2" => Some(Scheme::Gphoto2),
+            "afc" => Some(Scheme::Afc),
+            _ => None,
+        };
+        if let Some(words) = scheme.and_then(|scheme| crate::address::device_words(scheme, device))
+        {
+            return words;
+        }
         match self.kind.as_str() {
-            "mtp" => words!(
-                remote_gvfs_mtp_label = "{ $device } (MTP)",
-                device = device,
-                note = "What a phone GVfs reads over MTP is called: device is its name or serial."
-            )
-            .say(),
-            "gphoto2" => words!(
-                remote_gvfs_camera_label = "{ $device } (camera)",
-                device = device,
-                note = "What a camera GVfs reads is called: device is its name or where it is \
-                        plugged in."
-            )
-            .say(),
-            "afc" => words!(
-                remote_gvfs_ios_label = "{ $device } (iOS)",
-                device = device,
-                note = "What an iPhone or iPad GVfs reads is called: device is its name or serial."
-            )
-            .say(),
-            "google-drive" => match self.get("user") {
+            // A login and its server, as an address writes them.
+            "google-drive" => Words::as_written(match self.get("user") {
                 Some(user) => format!("{user}@{host}"),
                 None => host.to_owned(),
-            },
+            }),
             other => match host {
-                "" => other.to_owned(),
-                host => format!("{host} ({other})"),
+                "" => Words::as_written(other.to_owned()),
+                host => words!(
+                    remote_gvfs_other_label = "{ $host } ({ $kind })",
+                    host = host,
+                    kind = other,
+                    note = "What a mount of GVfs no address names is called: host is its server, kind GVfs's name for its protocol (as written)."
+                ),
             },
         }
     }
@@ -213,7 +210,7 @@ mod tests {
             "sftp://me@example.com:2222/"
         );
         assert_eq!(
-            spec.label(),
+            spec.label().english(),
             "me@example.com:2222",
             "its port not the usual one"
         );
@@ -223,7 +220,7 @@ mod tests {
             share.address().unwrap().to_string(),
             "smb://WORK;me@nas/photos/"
         );
-        assert_eq!(share.label(), "photos on nas");
+        assert_eq!(share.label().english(), "photos on nas");
 
         let dav = Spec::parse(
             "dav:host=cloud.example.com,ssl=true,user=me,prefix=%2Fremote.php%2Fwebdav",
@@ -244,7 +241,7 @@ mod tests {
             phone.address().unwrap().to_string(),
             "mtp://Example_Phone_0123/"
         );
-        assert_eq!(phone.label(), "Example Phone 0123 (MTP)");
+        assert_eq!(phone.label().english(), "Example Phone 0123 (MTP)");
         // A phone or a camera is on this machine, never a server.
         assert_eq!(phone.device(), Some(Device::Phone));
         let camera = Spec::parse("gphoto2:host=%5Busb%3A001%2C004%5D").unwrap();
@@ -261,13 +258,13 @@ mod tests {
         // A name no device's address reads as keeps GVfs's word for it.
         let odd = Spec::parse("mtp:host=-Odd%20Phone").unwrap();
         assert!(odd.address().is_none());
-        assert_eq!(odd.label(), "-Odd Phone (MTP)");
+        assert_eq!(odd.label().english(), "-Odd Phone (MTP)");
         assert_eq!(odd.device(), Some(Device::Phone));
         let share = Spec::parse("smb-share:server=nas,share=photos").unwrap();
         assert_eq!(share.device(), None);
         let drive = Spec::parse("google-drive:host=example.com,user=me").unwrap();
         assert!(drive.address().is_none());
-        assert_eq!(drive.label(), "me@example.com");
+        assert_eq!(drive.label().english(), "me@example.com");
         assert!(Spec::parse("not a spec").is_none());
         assert!(Spec::parse("sftp:host").is_none(), "a key without a value");
     }

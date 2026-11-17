@@ -460,7 +460,7 @@ const SAID: usize = 4;
 /// `shell.run_here.describe`): the [`Line`] with the first `SAID` paths it
 /// is given, how many more, and the folder it runs in. An empty command is
 /// refused, as no answer; so is any where nothing runs.
-fn said(app: &App, command: &str, pane: Option<PaneId>, on: On) -> anyhow::Result<String> {
+fn said(app: &App, command: &str, pane: Option<PaneId>, on: On) -> anyhow::Result<Words> {
     runs_here()?;
     let command = asked(command, &on)?;
     let (dir, shown, count) = where_and_what(app, pane, on, SAID)?;
@@ -473,8 +473,7 @@ fn said(app: &App, command: &str, pane: Option<PaneId>, on: On) -> anyhow::Resul
         folder = skwir_core::os_path::from_home(&dir),
         note = "Said as a command is typed in Run Command…: line is what runs (the command \
                 with its paths); folder the path of the folder it runs in."
-    )
-    .say())
+    ))
 }
 
 /// What Run Command…'s field takes (ADR-137): on the selection, or in the
@@ -603,8 +602,14 @@ impl Plugin for ShellPlugin {
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,
             words!(shell_program = "Program for commands"),
-            words!(
-                shell_program_description = "The shell that runs a command on the selection: a POSIX shell or fish. Leave empty for yours ($SHELL) when it is one of them, else sh."
+            (
+                words!(
+                    shell_program_description = "The shell that runs a command on the selection: a POSIX shell or fish."
+                ),
+                words!(
+                    shell_program_description_more = "Leave empty for yours ($SHELL) when it is one of them, else sh.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             "",
         )
@@ -658,9 +663,10 @@ impl Plugin for ShellPlugin {
                 words!(
                     shell_run_describe_description = "Say what `shell.run` would run with `command` on the selected paths, or the entries': the line with the first paths as its shell is given them (after it, or where it names its arguments), how many more, and the folder; an error for an empty command, or where nothing runs"
                 ),
+                // As data: the window's field says it in its language.
                 |a, app| {
                     Ok(Outcome::Value(serde_json::json!({
-                        "says": said(app, &a.command, a.pane, On::Entries(a.entries))?
+                        "says": said(app, &a.command, a.pane, On::Entries(a.entries))?.to_data()
                     })))
                 },
             )
@@ -686,7 +692,7 @@ impl Plugin for ShellPlugin {
                 ),
                 |a, app| {
                     Ok(Outcome::Value(serde_json::json!({
-                        "says": said(app, &a.command, a.pane, On::Folder(a.folder))?
+                        "says": said(app, &a.command, a.pane, On::Folder(a.folder))?.to_data()
                     })))
                 },
             )
@@ -700,7 +706,7 @@ impl Plugin for ShellPlugin {
         let asks = [
             (
                 "selection !place",
-                skwir_core::registry::submenus::OPEN_WITH,
+                skwir_core::registry::submenus::open_with(),
                 words!(shell_ask_run = "Run command on selection"),
                 words!(shell_ask_run_placeholder = "Command; the selected paths are its arguments"),
                 "shell.run",
@@ -708,7 +714,7 @@ impl Plugin for ShellPlugin {
             ),
             (
                 "empty folder",
-                skwir_core::registry::submenus::OPEN_FOLDER_WITH,
+                skwir_core::registry::submenus::open_folder_with(),
                 words!(shell_ask_run_here = "Run command in this folder"),
                 words!(shell_ask_run_here_placeholder = "Command; it runs in this folder"),
                 "shell.run_here",
@@ -726,15 +732,15 @@ impl Plugin for ShellPlugin {
                     command: Invocation::with_args(
                         "ui.ask",
                         &serde_json::json!({
-                            // Said when the menu is made: the question's
-                            // arguments are text.
-                            "title": title.say(),
+                            // As data: the window says the question's
+                            // words in its language.
+                            "title": title.to_data(),
                             "accept": words!(
                                 shell_ask_accept = "Run",
                                 note = "The button that runs the command typed."
                             )
-                            .say(),
-                            "placeholder": placeholder.say(),
+                            .to_data(),
+                            "placeholder": placeholder.to_data(),
                             "command": command,
                             "field": "command",
                             "reference": reference(here),
@@ -1012,7 +1018,9 @@ mod tests {
         let said = |name: &str, args: serde_json::Value| {
             app.dispatch(&Invocation::with_args(name, &args))
                 .map(|outcome| match outcome {
-                    Outcome::Value(v) => v["says"].as_str().unwrap().to_owned(),
+                    Outcome::Value(v) => serde_json::from_value::<Words>(v["says"].clone())
+                        .unwrap()
+                        .english(),
                     other => panic!("{other:?}"),
                 })
         };

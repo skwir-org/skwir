@@ -601,7 +601,7 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
             );
             Pages::Selection
         }
-        Some(typed) => Pages::Ranges(skwir_core::print::parse(typed).map_err(anyhow::Error::msg)?),
+        Some(typed) => Pages::Ranges(skwir_core::print::parse(typed).map_err(anyhow::Error::new)?),
     };
     // What is selected is printed only when it is asked, alone.
     let what = match what {
@@ -1183,7 +1183,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
     // While it is made and sent, the window shows it, with Cancel: a
     // print is no plan, and nothing else would show it.
     let working = cancel.child();
-    let task = Arc::new(app.tasks.start(print_title(&what).say(), working.clone()));
+    let task = Arc::new(app.tasks.start(print_title(&what), working.clone()));
     let (weak, token, sent_as, held) = (
         app.weak(),
         working.clone(),
@@ -1828,10 +1828,7 @@ impl op::Effect for MakePdf {
     }
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        // Said here: a conflict's reason is text (`StepStatus`).
-        let conflict = |reason: Words| StepStatus::Conflict {
-            reason: reason.say(),
-        };
+        let conflict = |reason: Words| StepStatus::Conflict { reason };
         let not_a_folder = |folder: &Path| {
             words!(
                 print_not_a_folder = "{ $name } is not a folder",
@@ -1892,7 +1889,20 @@ impl op::Effect for MakePdf {
             inputs,
             folder: false,
             size: None,
-            words: ("Save as PDF", "saved as PDF"),
+            words: op::MakeWords {
+                verb: words!(
+                    print_save_verb = "Save as PDF",
+                    note = "The button of the question asking what becomes of the name a PDF being saved finds taken: save it, once that is answered."
+                ),
+                waiting: words!(
+                    print_nothing_saved = "Nothing is saved as PDF until you choose.",
+                    note = "Under the title of the question asking what becomes of the name a PDF being saved finds taken."
+                ),
+                cancelled: words!(
+                    print_cancelled_save = "Cancelled: nothing was saved as PDF",
+                    note = "A PDF being saved found its name taken, asked what becomes of it, and the user cancelled it."
+                ),
+            },
         })
     }
 
@@ -2045,8 +2055,7 @@ impl op::Effect for MakePdf {
                         name = Name::of(&target),
                         folder = Name::of(&self.dest_dir),
                         note = "A PDF made could not be put in place; why follows."
-                    )
-                    .say(),
+                    ),
                 )
             })
         });
@@ -2058,21 +2067,17 @@ impl op::Effect for MakePdf {
         }
         result?;
         // What was left out, and how to fold it, said with what was made:
-        // the folding once for several booklets alike. Said here: what a
-        // step says beside what it did is text.
+        // the folding once for several booklets alike.
         if let Some(notice) = ready.notice {
-            ctx.say(
-                words!(
-                    print_notice_of = "{ $name }: { $notice }",
-                    name = Name::of(&target),
-                    notice = notice,
-                    note = "Said once PDFs were saved: what was left out of this one."
-                )
-                .say(),
-            );
+            ctx.say(words!(
+                print_notice_of = "{ $name }: { $notice }",
+                name = Name::of(&target),
+                notice = notice,
+                note = "Said once PDFs were saved: what was left out of this one."
+            ));
         }
         if let Some(folding) = ready.folding {
-            ctx.say(folding.say());
+            ctx.say(folding);
         }
         let made = EntryRef::from_path(&target).with_context(|| {
             words!(

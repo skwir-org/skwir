@@ -320,7 +320,7 @@ impl Clashes {
     /// choose."), or what a step makes says ("Extract", "Nothing is
     /// extracted…").
     pub fn words(&self) -> (Words, Words) {
-        match self.question.clashes.first().map(|c| c.act) {
+        match self.question.clashes.first().map(|c| &c.act) {
             Some(Act::Move) => (
                 words!(
                     clashes_move = "Move",
@@ -341,16 +341,8 @@ impl Clashes {
                     note = "Under the title of the dialog asking what becomes of the names taken where links are made."
                 ),
             ),
-            // Transitional: a step's own verb and participle arrive as
-            // English text (`Act::Make`, ADR-139).
-            Some(Act::Make { verb, done, .. }) => (
-                Words::as_written(verb),
-                words!(
-                    clashes_nothing_made = "Nothing is { $done } until you choose.",
-                    done = done,
-                    note = "Under the title of the dialog asking what becomes of the names taken where a step makes something: done is what it does, a participle (extracted)."
-                ),
-            ),
+            // What a step makes says it in words of its own.
+            Some(Act::Make { words, .. }) => (words.verb.clone(), words.waiting.clone()),
             Some(Act::Copy) | None => (
                 words!(
                     clashes_copy = "Copy",
@@ -417,7 +409,7 @@ enum Wanted {
 
 impl Wanted {
     fn of(clash: &Clash) -> Self {
-        match clash.act {
+        match &clash.act {
             Act::Make { .. } => Wanted::Made {
                 name: clash
                     .there
@@ -429,7 +421,7 @@ impl Wanted {
             },
             act => Wanted::At {
                 path: clash.source.path.clone(),
-                linked: act == Act::Link,
+                linked: *act == Act::Link,
             },
         }
     }
@@ -902,6 +894,15 @@ mod tests {
 
     use super::*;
 
+    /// What an extraction says of what it makes, as a test's step says it.
+    fn extracting() -> std::sync::Arc<skwir_core::op::MakeWords> {
+        std::sync::Arc::new(skwir_core::op::MakeWords {
+            verb: Words::as_written("Extract"),
+            waiting: Words::as_written("Nothing is extracted until you choose."),
+            cancelled: Words::as_written("Cancelled: nothing was extracted"),
+        })
+    }
+
     fn side(path: &str, folder: bool, secs: u64) -> Side {
         Side {
             path: PathBuf::from(path),
@@ -947,8 +948,7 @@ mod tests {
         let archive = tmp.path().join("photos  2026.zip");
         let gone = tmp.path().join("gone.txt");
         let make = Act::Make {
-            verb: "Extract",
-            done: "extracted",
+            words: extracting(),
             merges: true,
         };
         let comes = |act: Act, source: &std::path::Path, name: &str, folder: bool| Clash {
@@ -967,7 +967,7 @@ mod tests {
             comes(Act::Copy, &photo, "it's a photo.jpg", false),
             comes(Act::Move, &link, "to the photo", false),
             comes(Act::Link, &photo, "it's a photo.jpg", false),
-            comes(make, &archive, "day one.txt", false),
+            comes(make.clone(), &archive, "day one.txt", false),
             comes(make, &archive, "album", true),
             comes(Act::Copy, &gone, "gone.txt", false),
         ];
@@ -1046,8 +1046,7 @@ mod tests {
         // a file's choices.
         let made = |there: &str, folder: bool| Clash {
             act: Act::Make {
-                verb: "Extract",
-                done: "extracted",
+                words: extracting(),
                 merges: false,
             },
             ..clash(there, folder, None, true)
@@ -1081,8 +1080,7 @@ mod tests {
         // its own clashes under it.
         let merged = |there: &str, folder: bool, inside| Clash {
             act: Act::Make {
-                verb: "Extract",
-                done: "extracted",
+                words: extracting(),
                 merges: true,
             },
             ..clash(there, folder, inside, true)

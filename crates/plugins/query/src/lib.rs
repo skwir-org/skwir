@@ -48,8 +48,15 @@ const ID: &str = "query";
 
 /// The context menu's submenu of the searches for files like the one
 /// selected: the query plugin's alone.
-const FIND_SIMILAR: skwir_core::registry::Submenu =
-    skwir_core::registry::Submenu::new("query.find_similar", "Find Similar");
+fn find_similar() -> skwir_core::registry::Submenu {
+    skwir_core::registry::Submenu::new(
+        "query.find_similar",
+        words!(
+            query_find_similar_submenu = "Find Similar",
+            note = "A submenu of a file's menu: searches for files like the one selected (same kind, size, date)."
+        ),
+    )
+}
 
 const SAVED_KEY: &str = "query.saved";
 /// The sidebar section of saved searches and saved places, "Saved".
@@ -766,7 +773,7 @@ fn place(search: SavedQuery) -> Place {
     if let Some(at) = &search.at {
         named["at"] = serde_json::json!(at.arg());
     }
-    // What its dialogs say, said as the sidebar's places are listed.
+    // What its dialogs say, as data: the window says them.
     let (item, title, placeholder, rename_title, name_placeholder) = match &search.at {
         None => (
             words!(query_edit_search_menu = "Edit Search…"),
@@ -776,8 +783,7 @@ fn place(search: SavedQuery) -> Place {
                 example = "kind:document modified:this-week *.pdf",
                 key = "in:",
                 note = "The example of a search in the field where a saved search is edited. example: a search, as written; key: the term that says where it looks."
-            )
-            .say(),
+            ),
             words!(query_rename_search_title = "Rename saved search"),
             words!(
                 query_rename_search_placeholder = "Name (empty: made from the search)",
@@ -791,7 +797,7 @@ fn place(search: SavedQuery) -> Place {
             ),
             words!(query_edit_filter_title = "Edit filter"),
             // A filter as written: no words of Skwir's.
-            "kind:image modified:this-year report".to_owned(),
+            Words::as_written("kind:image modified:this-year report"),
             words!(
                 query_rename_place_title = "Rename",
                 note = "The title of the dialog renaming a saved place."
@@ -805,9 +811,9 @@ fn place(search: SavedQuery) -> Place {
     let rename = Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": rename_title.say(),
-            "accept": words!(query_rename_accept = "Rename", note = "The button that renames a saved search or place.").say(),
-            "placeholder": name_placeholder.say(),
+            "title": rename_title.to_data(),
+            "accept": words!(query_rename_accept = "Rename", note = "The button that renames a saved search or place.").to_data(),
+            "placeholder": name_placeholder.to_data(),
             "text": search.name,
             "command": "query.rename",
             "args": named,
@@ -821,9 +827,9 @@ fn place(search: SavedQuery) -> Place {
         Invocation::with_args(
             "ui.ask",
             &serde_json::json!({
-                "title": title.say(),
-                "accept": words!(query_edit_accept = "Save", note = "The button that keeps a saved search or filter as edited.").say(),
-                "placeholder": placeholder,
+                "title": title.to_data(),
+                "accept": words!(query_edit_accept = "Save", note = "The button that keeps a saved search or filter as edited.").to_data(),
+                "placeholder": placeholder.to_data(),
                 "text": search.expr,
                 "command": "query.edit",
                 "args": named,
@@ -1357,7 +1363,7 @@ impl Plugin for QueryPlugin {
                     Invocation::with_args("query.similar", &serde_json::json!({ "by": by })),
                 )
                 .when(when)
-                .submenu(FIND_SIMILAR),
+                .submenu(find_similar()),
             );
         }
         app.commands.register::<RefineArgs, _>(
@@ -1529,17 +1535,16 @@ impl Plugin for QueryPlugin {
                         title: words!(
                             query_depth_chip = "This folder only",
                             note = "A filter's chip: how deep its words look, a folder's own files alone."
-                        )
-                        .say(),
+                        ),
                         value: None,
+                        written: None,
                         icon: "filter".into(),
                         choices: vec![
                             facets::Choice {
                                 label: words!(
                                     query_depth_here = "This folder only",
                                     note = "A choice of a filter's chip: the folder's own files alone."
-                                )
-                                .say(),
+                                ),
                                 command: Invocation::new("query.here"),
                                 active: true,
                             },
@@ -1547,8 +1552,7 @@ impl Plugin for QueryPlugin {
                                 label: words!(
                                     query_depth_below = "This folder and its subfolders",
                                     note = "A choice of a filter's chip: the folder searched with its subfolders."
-                                )
-                                .say(),
+                                ),
                                 command: Invocation::new("query.below"),
                                 active: false,
                             },
@@ -1616,13 +1620,11 @@ impl Plugin for QueryPlugin {
                 save_title: words!(
                     query_keep_search = "Save this search",
                     note = "The pane's keep button over a search: keeps it in the sidebar's Saved."
-                )
-                .say(),
+                ),
                 forget_title: words!(
                     query_unkeep_search = "Remove saved search",
                     note = "The pane's keep button over a saved search: takes it out of the sidebar's Saved."
-                )
-                .say(),
+                ),
                 keeps: None,
             },
         );
@@ -1637,13 +1639,11 @@ impl Plugin for QueryPlugin {
                 save_title: words!(
                     query_keep_place = "Save with this filter",
                     note = "The pane's keep button over a filtered place: keeps it with its filter in the sidebar's Saved."
-                )
-                .say(),
+                ),
                 forget_title: words!(
                     query_unkeep_place = "Remove from Saved",
                     note = "The pane's keep button over a saved place: takes it out of the sidebar's Saved."
-                )
-                .say(),
+                ),
                 keeps: None,
             },
         );
@@ -1683,6 +1683,13 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
+
+    /// Words carried as data (or text) in JSON, read back in English.
+    fn english(value: &serde_json::Value) -> String {
+        serde_json::from_value::<Words>(value.clone())
+            .map(|words| words.english())
+            .unwrap_or_default()
+    }
 
     #[test]
     fn generated_locations_preserve_literal_roots() {
@@ -2247,7 +2254,7 @@ mod tests {
         assert_eq!(names(), set(&["notes.txt"]));
         // The folder's words, searched below it.
         let depth = value("query.describe_filter")["depth"].clone();
-        assert_eq!(depth["title"], "This folder only");
+        assert_eq!(english(&depth["title"]), "This folder only");
         assert_eq!(depth["choices"][0]["active"], true);
         run(&depth["choices"][1]["command"]);
         assert!(app.is_search(&app.pane_location(pane).unwrap()));
@@ -2261,7 +2268,7 @@ mod tests {
             .find(|c| c["id"] == "where")
             .unwrap()
             .clone();
-        assert_eq!(place["title"], "And subfolders");
+        assert_eq!(english(&place["title"]), "And subfolders");
         run(&place["choices"][0]["command"]);
         assert_eq!(app.pane_location(pane), Some(Location::from_path(&docs)));
         let filter = app
@@ -2438,13 +2445,7 @@ mod tests {
         let pills = || -> Vec<String> {
             chips()
                 .iter()
-                .map(|c| {
-                    format!(
-                        "{}: {}",
-                        c["title"].as_str().unwrap(),
-                        c["value"].as_str().unwrap()
-                    )
-                })
+                .map(|c| format!("{}: {}", english(&c["title"]), english(&c["value"])))
                 .collect()
         };
 
@@ -2687,9 +2688,9 @@ mod tests {
                 .unwrap()
                 .clone()
         };
-        assert_eq!(chip("kind")["value"], "Images");
-        assert_eq!(chip("size")["value"], ">1k");
-        assert_eq!(chip("where")["title"], "And subfolders");
+        assert_eq!(english(&chip("kind")["value"]), "Images");
+        assert_eq!(english(&chip("size")["value"]), ">1k");
+        assert_eq!(english(&chip("where")["title"]), "And subfolders");
         // A choice's command is what the UI runs: clearing the size.
         let clear: Invocation = serde_json::from_value(chip("size")["clear"].clone()).unwrap();
         app.dispatch(&clear).unwrap();
@@ -3091,7 +3092,7 @@ mod tests {
         assert!(
             d.chips
                 .iter()
-                .any(|c| c.id == "where" && c.title == "And subfolders")
+                .any(|c| c.id == "where" && c.title.english() == "And subfolders")
         );
     }
 
@@ -3368,7 +3369,7 @@ mod tests {
             .expect("opening does no I/O");
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         match open.events().recv_deadline(deadline).unwrap() {
-            ListingEvent::Error(e) => assert!(e.message.contains("not a folder"), "{e}"),
+            ListingEvent::Error(e) => assert!(e.message.english().contains("not a folder"), "{e}"),
             other => panic!("{other:?}"),
         }
     }

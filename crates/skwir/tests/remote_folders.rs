@@ -21,6 +21,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
 use skwir_core::testing::free_port;
+use skwir_core::words::Words;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector, Password};
 use skwir_plugin_remote::kio::Kio;
@@ -204,7 +205,11 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
         other => panic!("{other:?}"),
     };
     assert!(!plan.undoable(), "a deletion for good");
-    assert!(plan.note.as_deref().is_some_and(|n| n.contains("no trash")));
+    assert!(
+        plan.note
+            .as_ref()
+            .is_some_and(|n| n.english().contains("no trash"))
+    );
     let done = app.executor.execute_blocking(&plan, app.lifetime());
     assert!(done.error.is_none(), "{:?}", done.error);
     assert!(!served_root.join("sub folder/hello.txt").exists());
@@ -380,11 +385,11 @@ struct Answers {
 }
 
 impl Ask for Answers {
-    fn secret(&self, title: &str, _: &str, _: &CancelToken) -> Option<String> {
+    fn secret(&self, title: &Words, _: &Words, _: &CancelToken) -> Option<String> {
         self.asked.lock().unwrap().push(format!("secret: {title}"));
         Some(self.password.clone())
     }
-    fn password(&self, title: &str, _: &str, _: &CancelToken) -> Option<Password> {
+    fn password(&self, title: &Words, _: &Words, _: &CancelToken) -> Option<Password> {
         self.asked
             .lock()
             .unwrap()
@@ -394,7 +399,7 @@ impl Ask for Answers {
             remember: self.remember,
         })
     }
-    fn confirm(&self, title: &str, detail: &str, _: &CancelToken) -> bool {
+    fn confirm(&self, title: &Words, detail: &Words, _: &CancelToken) -> bool {
         self.asked
             .lock()
             .unwrap()
@@ -1790,6 +1795,7 @@ fn what_another_program_left_to_send_is_said_on_its_place_until_sent() {
             .into_iter()
             .find(|place| place.location == Location::from_path(&point))
             .and_then(|place| place.busy)
+            .map(|busy| busy.english())
     };
     assert_eq!(said(), None);
 
@@ -3172,10 +3178,13 @@ fn gvfs_offers_a_phone_opens_it_and_lets_go_of_it() {
     assert!(offered.unavailable.is_some() && offered.eject.is_none());
     assert_ne!(
         offered.title.english(),
-        address.label(),
+        address.label().english(),
         "named by its volume, not its serial"
     );
-    assert_eq!(remotes.label_of(&address), offered.title.english());
+    assert_eq!(
+        remotes.label_of(&address).english(),
+        offered.title.english()
+    );
 
     // Opened: its mount, the same place, with Eject.
     let point = remotes
@@ -3281,7 +3290,7 @@ fn kmtpd_opens_a_phone_kde_holds_through_skwir_s_helper() {
     let address = Address::of_location(&offered.location).unwrap();
     assert_ne!(
         offered.title.english(),
-        address.label(),
+        address.label().english(),
         "named by kmtpd, not its serial"
     );
 
@@ -3661,7 +3670,7 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let recognised = gvfs.recognises(&remote).expect("GVfs's");
     assert_eq!(recognised.address, Some(address.top()));
     assert_eq!(
-        recognised.label,
+        recognised.label.english(),
         format!("tester@127.0.0.1:{}", served.port)
     );
 
@@ -4435,7 +4444,7 @@ fn rclone_asks_a_server_s_password_once_and_keeps_it_when_told() {
     let question = secret_asked(&app);
     assert!(question.remember, "a server's password may be kept");
     assert!(
-        question.title.contains("tester@127.0.0.1"),
+        question.title.english().contains("tester@127.0.0.1"),
         "{}",
         question.title
     );

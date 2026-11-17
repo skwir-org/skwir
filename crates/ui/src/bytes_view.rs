@@ -38,7 +38,7 @@ struct Reply {
 /// where it started when there was none), and what the bytes view said.
 struct Found {
     query: String,
-    answer: anyhow::Result<(u64, String)>,
+    answer: anyhow::Result<(u64, Option<skwir_core::words::Words>)>,
 }
 
 pub struct BytesView {
@@ -207,7 +207,7 @@ impl BytesView {
                 answer: previews
                     .inspect(&request, &view, cancel)
                     .and_then(|page| page.ok_or_else(no_view))
-                    .map(|page| (page.position, page.notice)),
+                    .map(|page| (page.position, page.notice())),
             },
         );
     }
@@ -341,7 +341,7 @@ impl Shell {
                     view.scroll.borrow_mut().reveal(byte / ROW);
                     state.selected = Some((byte / ROW) as usize);
                     // "Match at 0x…", or that there is none further.
-                    if !said.is_empty() {
+                    if let Some(said) = said {
                         self.find_said(said, false, cx);
                     }
                 }

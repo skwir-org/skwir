@@ -70,30 +70,24 @@ fn measured(
             words!(
                 markdown_detail_words = "Words",
                 note = "A label in the preview's Properties: how many words the document holds."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(words),
         ),
         (
             words!(
                 markdown_detail_headings = "Headings",
                 note = "A label in the preview's Properties: how many headings the document holds."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(headings),
         ),
     ]);
-    data.notice = [
-        encoding.notice(),
-        page.truncated.then(|| inspection::blocks_notice(bounds)),
-        (!data.notice.is_empty()).then(|| std::mem::take(&mut data.notice)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    let own = std::mem::take(&mut data.notices);
+    data.notices = encoding
+        .notice()
+        .into_iter()
+        .chain(page.truncated.then(|| inspection::blocks_notice(bounds)))
+        .chain(own)
+        .collect();
     data.whole_available |= page.truncated && bounds.cut();
     data.blocks = page.blocks;
     data
@@ -173,10 +167,10 @@ impl PreviewProvider for Provider {
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
         // A format's name is its title, the same in every language.
-        let (title, page, notice) = if format == Format::Markdown {
+        let (title, page, notices) = if format == Format::Markdown {
             let mut wiki = markdown::Wiki::new(path);
             let page = markdown::parse(&source, bounds, cancel, image, wiki.as_mut())?;
-            ("Markdown", page, String::new())
+            ("Markdown", page, Vec::new())
         } else {
             let markup = if format == Format::Xhtml {
                 rich_preview::Markup::Xhtml
@@ -192,20 +186,19 @@ impl PreviewProvider for Provider {
                     cancel,
                     rich_preview::Local { base, cancel },
                 )?,
-                words!(
+                vec![words!(
                     markdown_html_reading_mode =
                         "Reading mode · scripts, fonts and remote content are not loaded",
                     note = "A note under an HTML file's preview: it is read as a document, inert."
-                )
-                .say(),
+                )],
             )
         };
         Ok(Some(measured(
             Inspection {
                 kind: InspectionKind::Markdown,
-                title: title.into(),
+                title: skwir_core::words::Words::as_written(title),
                 source_available: true,
-                notice,
+                notices,
                 ..Inspection::default()
             },
             encoding,
@@ -229,21 +222,19 @@ fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::R
             title: words!(
                 markdown_title_notebook = "Notebook",
                 note = "The title of a Jupyter notebook's preview."
-            )
-            .say(),
+            ),
             source_available: true,
-            notice: if read.shortened > 0 {
-                words!(
+            notices: if read.shortened > 0 {
+                vec![words!(
                     markdown_outputs_shortened = "{ $count ->
                         [one] { $count } output
                        *[other] { $count } outputs
                     } shortened to their first lines",
                     count = read.shortened,
                     note = "A note under a notebook: the results of its cells that printed too many lines are cut."
-                )
-                .say()
+                )]
             } else {
-                String::new()
+                Vec::new()
             },
             whole_available: read.shortened > 0 && bounds.cut(),
             ..Inspection::default()
@@ -257,27 +248,21 @@ fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::R
             words!(
                 markdown_detail_cells = "Cells",
                 note = "A label in the preview's Properties: how many cells a Jupyter notebook holds."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(read.cells),
         ),
         (
             words!(
                 markdown_detail_language = "Language",
                 note = "A label in the preview's Properties: the programming language a notebook's code is in."
-            )
-            .say()
-            .as_str(),
+            ),
             read.language,
         ),
         (
             words!(
                 markdown_detail_kernel = "Kernel",
                 note = "A label in the preview's Properties: the Jupyter kernel a notebook runs on."
-            )
-            .say()
-            .as_str(),
+            ),
             read.kernel,
         ),
     ]));
@@ -331,10 +316,13 @@ mod tests {
         let data = read("README.md", "\u{feff}# T\u{ed}tulo\n\nText.\n".as_bytes());
         assert_eq!(data.blocks[0].heading, 1);
         assert_eq!(data.blocks[0].text, "T\u{ed}tulo");
-        assert!(data.notice.is_empty());
+        assert!(data.notices.is_empty());
         let data = read("notes caf\u{e9}.md", b"# Caf\xe9\n");
         assert_eq!(data.blocks[0].text, "Caf\u{e9}");
-        assert_eq!(data.notice, "Read as Windows-1252");
+        assert_eq!(
+            data.notice().map(|said| said.english()).as_deref(),
+            Some("Read as Windows-1252")
+        );
     }
 
     #[test]
@@ -342,7 +330,7 @@ mod tests {
         let changelog = "- a change\n".repeat(3000);
         let data = read("CHANGELOG.md", changelog.as_bytes());
         assert_eq!(data.blocks.len(), inspection::limits::BLOCKS);
-        assert_eq!(data.notice, inspection::blocks_notice(Bounds::QUICK));
+        assert_eq!(data.notices, [inspection::blocks_notice(Bounds::QUICK)]);
         assert!(data.whole_available, "Full preview shows the rest");
         let whole = InspectRequest {
             whole: true,
@@ -350,7 +338,7 @@ mod tests {
         };
         let data = read_as("CHANGELOG.md", changelog.as_bytes(), &whole).unwrap();
         assert_eq!(data.blocks.len(), 3000);
-        assert!(data.notice.is_empty() && !data.whole_available);
+        assert!(data.notices.is_empty() && !data.whole_available);
         let source = InspectRequest {
             source: true,
             ..InspectRequest::default()
@@ -445,7 +433,7 @@ mod tests {
         let fact = |label: &str| {
             data.details
                 .iter()
-                .find(|d| d.label == label)
+                .find(|d| d.label.english() == label)
                 .map(|d| d.value.clone())
         };
         assert_eq!(fact("Cells").as_deref(), Some("3"));

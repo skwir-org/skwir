@@ -72,14 +72,8 @@ pub struct Picked {
 
 /// Pages as people type them: `1-3, 7, 10-`, `-5`, commas or spaces
 /// between. A range backwards, a page 0 or a word is refused, saying
-/// which, in English ([`parse_words`] says it as words).
-pub fn parse(text: &str) -> Result<Vec<Range>, String> {
-    parse_words(text).map_err(|refused| refused.english())
-}
-
-/// Pages as people type them (see [`parse`]), what is refused said as
-/// words.
-pub fn parse_words(text: &str) -> Result<Vec<Range>, Words> {
+/// which.
+pub fn parse(text: &str) -> Result<Vec<Range>, Words> {
     let mut ranges = Vec::new();
     for part in text
         .split(|c: char| c == ',' || c.is_whitespace())
@@ -138,16 +132,10 @@ fn not_a_page(text: &str) -> Words {
     )
 }
 
-/// Ranges as the print portal writes them: from 0 (`0-2,4,9-11`); what is
-/// refused in English ([`from_zero_based_words`] says it as words).
-pub fn from_zero_based(text: &str) -> Result<Vec<Range>, String> {
-    from_zero_based_words(text).map_err(|refused| refused.english())
-}
-
-/// Ranges as the print portal writes them (see [`from_zero_based`]), what
-/// is refused said as words.
-pub fn from_zero_based_words(text: &str) -> Result<Vec<Range>, Words> {
-    let mut ranges = parse_words(&shift(text, 1)?)?;
+/// Ranges as the print portal writes them: from 0 (`0-2,4,9-11`), what is
+/// refused said as words.
+pub fn from_zero_based(text: &str) -> Result<Vec<Range>, Words> {
+    let mut ranges = parse(&shift(text, 1)?)?;
     ranges.retain(|range| range.first > 0);
     Ok(ranges)
 }
@@ -385,17 +373,12 @@ impl Paper {
     }
 
     /// The papers a PDF may be saved on, by name: what a dialog offers and
-    /// a script names (`a4`, `letter`…), and what it is called.
-    pub const NAMED: [(&'static str, &'static str); 5] = [
-        ("a4", "A4"),
-        ("letter", "Letter"),
-        ("a5", "A5"),
-        ("a3", "A3"),
-        ("legal", "Legal"),
-    ];
+    /// a script names (`a4`, `letter`…); what each is called is
+    /// [`Paper::named_words`]'s.
+    pub const NAMED: [&'static str; 5] = ["a4", "letter", "a5", "a3", "legal"];
 
-    /// The papers of [`Paper::NAMED`], each with what it is called, said
-    /// where it is drawn.
+    /// The papers of [`Paper::NAMED`], in its order, each with what it is
+    /// called, said where it is drawn.
     pub fn named_words() -> Vec<(&'static str, Words)> {
         vec![
             ("a4", Words::as_written("A4")),
@@ -1279,9 +1262,14 @@ mod tests {
             Paper::a4().margins,
             "half a sheet keeps its margins"
         );
-        for (name, _) in Paper::NAMED {
+        for name in Paper::NAMED {
             assert!(Paper::named(name).is_some(), "{name}");
         }
+        let said: Vec<&str> = Paper::named_words()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(said, Paper::NAMED, "each is called something");
         assert_eq!(Paper::named(" A4 "), Some(Paper::a4()));
     }
 }

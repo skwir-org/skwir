@@ -47,7 +47,8 @@ const PATIENCE: Duration = Duration::from_secs(120);
 pub struct AtLogin {
     /// Names it among the others ([`id_of`]: `rclone/rclone://gdrive/`).
     pub id: String,
-    /// What the user calls the remote (`Address::label`).
+    /// What the user calls the remote (`Address::label`), in English: the
+    /// service manager's entry, which other programs show, says it.
     pub title: String,
     /// The program, found on `PATH` as it was made.
     pub program: PathBuf,
@@ -186,7 +187,7 @@ impl AtLogin {
         args.extend(["-f", "-o", "BatchMode=yes"].map(OsString::from));
         AtLogin {
             id: id_of(with.id(), &top),
-            title: top.label(),
+            title: top.label().english(),
             program,
             args,
             point,
@@ -315,7 +316,7 @@ fn rclone_on_unix(
     }
     AtLogin {
         id: id_of(with.id(), top),
-        title: top.label(),
+        title: top.label().english(),
         program,
         args,
         point,
@@ -362,7 +363,7 @@ fn rclone_on_windows(
     );
     AtLogin {
         id: id_of(with.id(), top),
-        title: top.label(),
+        title: top.label().english(),
         program,
         args,
         folders: point.parent().map(|f| f.join(".rc")).into_iter().collect(),
@@ -1195,7 +1196,12 @@ impl Manager {
         let name = unit_name(&at.id);
         std::fs::create_dir_all(&self.folder)?;
         let unit = systemd_unit(at);
-        skwir_platform::file::rewrite(&self.folder.join(&name), "the login unit", |_| {
+        let read_only = words!(
+            remote_login_unit_read_only =
+                "the login unit is read-only; change it where it is managed",
+            note = "Why a server is not mounted at login: the systemd unit that does it is a link to a file that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it."
+        );
+        skwir_platform::file::rewrite_words(&self.folder.join(&name), read_only, |_| {
             Some((unit, ()))
         })?;
         let set_up = self
@@ -1259,7 +1265,12 @@ impl Manager {
         let file = self.folder.join(format!("{label}.plist"));
         std::fs::create_dir_all(&self.folder)?;
         let agent = launch_agent(at);
-        skwir_platform::file::rewrite(&file, "the login agent", |_| Some((agent, ())))?;
+        let read_only = words!(
+            remote_login_agent_read_only =
+                "the login agent is read-only; change it where it is managed",
+            note = "Why a server is not mounted at login on a Mac: the launch agent that does it is a link to a file that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it."
+        );
+        skwir_platform::file::rewrite_words(&file, read_only, |_| Some((agent, ())))?;
         if !start || mounted(&at.point) {
             return Ok(());
         }

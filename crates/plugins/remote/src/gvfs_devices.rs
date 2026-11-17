@@ -131,8 +131,8 @@ pub fn volumes(lists: &Structure<'_>) -> Vec<Offered> {
                 _ => None,
             };
             let name = text(1)
-                .filter(|n| !n.trim().is_empty())
-                .map_or_else(|| address.label(), |name| name.trim().to_owned());
+                .map(|name| name.trim().to_owned())
+                .unwrap_or_default();
             mounts.then_some(Offered {
                 address: address.top(),
                 name,

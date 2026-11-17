@@ -157,8 +157,14 @@ fn bounded(held: &Arc<Held>, limit: u64, cancel: &CancelToken) -> anyhow::Result
 
 /// Every part calamine may read inflated and counted.
 fn measure(held: &Arc<Held>, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
-    let mut package =
-        skwir_platform::package::Package::open(held, "The spreadsheet", false, cancel)?;
+    let too_many = words!(
+        tables_spreadsheet_members = "{ $count ->
+           *[other] The spreadsheet holds more than { $count } members
+        }",
+        count = limits::CONTAINER_MEMBERS,
+        note = "Why a spreadsheet is not shown: its package holds more parts than the preview reads (4,000)."
+    );
+    let mut package = skwir_platform::package::Package::open(held, too_many, false, cancel)?;
     let parts: Vec<String> = package
         .names()
         .filter(|name| {
@@ -355,47 +361,37 @@ pub fn table(
     } else {
         (sheet > 0).then(|| (sheet as u64 - 1) * SHEET)
     };
-    let notice = [
+    let notices = [
         (columns as usize > most).then(|| crate::columns_cut(most)),
         (cut > 0).then(|| crate::cells_cut(cut)),
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    .collect();
     let details = inspection::details([
         (
             words!(
                 tables_detail_sheet = "Sheet",
                 note = "A label in the preview's Properties: the name of the spreadsheet's sheet shown."
-            )
-            .say()
-            .as_str(),
+            ),
             Some(sheets[sheet].clone()),
         ),
         (
             words!(
                 tables_detail_sheets = "Sheets",
                 note = "A label in the preview's Properties: how many sheets the spreadsheet has."
-            )
-            .say()
-            .as_str(),
+            ),
             inspection::count(sheets.len()),
         ),
-        (
-            crate::detail_rows().as_str(),
-            inspection::count(rows as usize),
-        ),
-        (
-            crate::detail_columns().as_str(),
-            inspection::count(columns as usize),
-        ),
+        (crate::detail_rows(), inspection::count(rows as usize)),
+        (crate::detail_columns(), inspection::count(columns as usize)),
     ]);
     Ok(Inspection {
         details,
         kind: skwir_core::inspection::InspectionKind::Table,
         title: if table_rows.is_empty() {
-            sheets[sheet].clone()
+            // The sheet's name, as the file names it.
+            words::Words::as_written(sheets[sheet].clone())
         } else {
             words!(
                 tables_title_sheet_rows = "{ $sheet } · rows { $first }–{ $last }",
@@ -404,14 +400,16 @@ pub fn table(
                 last = last,
                 note = "The title of a spreadsheet's preview: the sheet's name as the file names it, then the rows shown, by number, from first to last."
             )
-            .say()
         },
-        columns: (0..shown as u32).map(letters).collect(),
+        // Its columns' letters, as every spreadsheet names them.
+        columns: (0..shown as u32)
+            .map(|column| words::Words::as_written(letters(column)))
+            .collect(),
         rows: table_rows,
         position: offset,
         previous,
         next,
-        notice,
+        notices,
         whole_available: columns as usize > most && bounds.cut(),
         ..Inspection::default()
     })
@@ -535,19 +533,25 @@ pub(crate) mod tests {
         let book = held(&path);
         let data = table(&book, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(data.columns.len(), limits::TABLE_COLUMNS);
-        assert_eq!(&data.columns[..4], ["A", "B", "C", "D"]);
+        assert_eq!(&crate::tests::columns(&data)[..4], ["A", "B", "C", "D"]);
         assert_eq!(&data.rows[0].cells[..2], ["name", "when"]);
         assert_eq!(
             &data.rows[1].cells[..4],
             ["café", "2025-10-13", "3.5", "12"]
         );
         assert_eq!(data.rows.len(), limits::TABLE_ROWS);
-        assert_eq!(data.title, format!("Data · rows 1–{}", limits::TABLE_ROWS));
-        assert_eq!(data.notice, "Only the first 64 columns shown");
+        assert_eq!(
+            data.title.english(),
+            format!("Data · rows 1–{}", limits::TABLE_ROWS)
+        );
+        assert_eq!(
+            crate::tests::notice(&data),
+            "Only the first 64 columns shown"
+        );
         let fact = |data: &Inspection, label: &str| {
             data.details
                 .iter()
-                .find(|d| d.label == label)
+                .find(|d| d.label.english() == label)
                 .map(|d| d.value.clone())
         };
         assert_eq!(fact(&data, "Rows").as_deref(), Some("1000000"));
@@ -563,13 +567,13 @@ pub(crate) mod tests {
             (
                 fact(&again, "Rows"),
                 fact(&again, "Columns"),
-                again.notice,
+                again.notices,
                 again.next
             ),
             (
                 fact(&data, "Rows"),
                 fact(&data, "Columns"),
-                data.notice.clone(),
+                data.notices.clone(),
                 data.next
             )
         );
@@ -579,7 +583,7 @@ pub(crate) mod tests {
         assert_eq!(last.rows.len(), 100);
         assert_eq!(last.next, Some(SHEET));
         let other = table(&book, XLSX, SHEET, limits::Bounds::QUICK, &cancel).unwrap();
-        assert_eq!(other.title, "Other · rows 1–1");
+        assert_eq!(other.title.english(), "Other · rows 1–1");
         assert_eq!(other.rows[0].cells, ["TRUE"]);
         assert_eq!((other.previous, other.next), (Some(0), None));
     }

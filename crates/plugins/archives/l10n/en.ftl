@@ -39,6 +39,12 @@ archives_ask_with_password_note = A ZIP archive, encrypted: its password is aske
 # Why an archive was not made: what is kept beside a file going in could not be read; why follows.
 archives_attributes_unread = the tags and attributes of { $name } could not be read
 
+# An archive being made found its name taken, asked what becomes of it, and the user cancelled it.
+archives_cancelled_compress = Cancelled: nothing was compressed
+
+# An extraction that found names taken asked what becomes of them, and the user cancelled it.
+archives_cancelled_extract = Cancelled: nothing was extracted
+
 # Why an archive is not extracted into a folder already there: what it holds must be known, member by member.
 archives_cannot_list_whole = { $name } cannot be listed whole
 
@@ -130,6 +136,9 @@ archives_extract_plan = { $count ->
 # A step of a plan, in its review: the archive, and the folder it is extracted to. Begins in lower case.
 archives_extract_to = extract { $archive } to { $into }
 
+# The button of the question asking what becomes of the names an extraction finds taken: extract, once they are answered.
+archives_extract_verb = Extract
+
 # What a step did, said once its plan ran. Begins in lower case.
 archives_extracted_into = extracted { $archive } into { $into }
 
@@ -180,6 +189,12 @@ archives_not_in_archive = { $member } is not in { $archive } any more
 archives_not_placed = { $name } could not be placed in { $folder }
 
 archives_not_writable = { $name } cannot be written in: nothing is extracted into it
+
+# Under the title of the question asking what becomes of the name an archive being made finds taken.
+archives_nothing_compressed = Nothing is compressed until you choose.
+
+# Under the title of the question asking what becomes of the names an extraction finds taken.
+archives_nothing_extracted = Nothing is extracted until you choose.
 
 archives_nothing_to_compress = Nothing to compress
 

@@ -95,7 +95,7 @@ pub(crate) fn dry_run_in(
     steps.iter().map(move |step| {
         let change = step.describe();
         let status = guarded(|| Ok(step.check(&ctx))).unwrap_or_else(|e| StepStatus::Conflict {
-            reason: Words::of_error(e).say(),
+            reason: Words::of_error(e),
         });
         if matches!(status, StepStatus::Pending { .. }) {
             ctx.foresee(&change);
@@ -441,21 +441,9 @@ fn unless_empty<'de, D: serde::Deserializer<'de>>(to: D) -> Result<Option<Words>
 }
 
 impl fmt::Display for Change {
+    /// In English, its paths whole: what a log reads ([`Change::words`]).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.said(f, None)
-    }
-}
-
-/// A [`Change`] said as it says itself, its paths under a folder written
-/// from there ([`Change::within`]).
-pub struct Within<'a> {
-    change: &'a Change,
-    folder: &'a Path,
-}
-
-impl fmt::Display for Within<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.change.said(f, Some(self.folder))
+        fmt::Display::fmt(&self.words(None), f)
     }
 }
 
@@ -470,16 +458,6 @@ fn shown<'a>(path: &'a Path, folder: Option<&Path>) -> std::path::Display<'a> {
 }
 
 impl Change {
-    /// Said as it says itself, each path under `folder` written from
-    /// there: a review that says the folder once lists `rename a.txt ->
-    /// b.txt`, not the folder on every line.
-    pub fn within<'a>(&'a self, folder: &'a Path) -> Within<'a> {
-        Within {
-            change: self,
-            folder,
-        }
-    }
-
     /// Every path it says, in the order it says them.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         let (first, second) = match self {
@@ -498,14 +476,11 @@ impl Change {
         std::iter::once(first.as_path()).chain(second.map(PathBuf::as_path))
     }
 
-    fn said(&self, f: &mut fmt::Formatter<'_>, folder: Option<&Path>) -> fmt::Result {
-        fmt::Display::fmt(&self.words(folder), f)
-    }
-
     /// What it does, as a review lists it, each path under `folder`
-    /// written from there (paths as they are, in every language): what its
-    /// `Display` says in English, said in the reader's language where it is
-    /// shown.
+    /// written from there (paths as they are, in every language): a review
+    /// that says the folder once lists `rename a.txt -> b.txt`, not the
+    /// folder on every line. What its `Display` says in English, said in
+    /// the reader's language where it is shown.
     pub fn words(&self, folder: Option<&Path>) -> Words {
         use crate::words;
         let p = |path| shown(path, folder).to_string();
@@ -800,8 +775,9 @@ pub enum StepStatus {
     Pending { reversible: bool },
     /// The effect is already in place; applying is a no-op.
     AlreadyDone,
-    /// Cannot be applied as-is (target exists, source moved, ...).
-    Conflict { reason: String },
+    /// Cannot be applied as-is (target exists, source moved, ...): why,
+    /// said where it is shown, English to agents.
+    Conflict { reason: Words },
 }
 
 /// A mutation with an inverse.
@@ -979,9 +955,23 @@ pub struct Made {
     /// A file's size where the step knows it before making it (an
     /// archive's one file, as listed): said beside what is there.
     pub size: Option<u64>,
-    /// What the question says of it: the verb on its button and what
-    /// nothing is until it is answered ("Extract", "extracted").
-    pub words: (&'static str, &'static str),
+    /// What the question of names taken says of it.
+    pub words: MakeWords,
+}
+
+/// What the question of the names a step finds taken says of what it
+/// makes ([`Made::words`], `clash::Act::Make`), each said where it is
+/// shown: three messages, never one verb placed in the others' sentences.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MakeWords {
+    /// The verb on its button: "Extract".
+    pub verb: Words,
+    /// What nothing is until it is answered, under its title: "Nothing is
+    /// extracted until you choose."
+    pub waiting: Words,
+    /// What the window says once the question is cancelled: "Cancelled:
+    /// nothing was extracted".
+    pub cancelled: Words,
 }
 
 impl Clone for Box<dyn Operation> {
@@ -1216,11 +1206,11 @@ pub struct Plan {
     /// What the review says under the title: what the plan left out and
     /// why ("3 pictures outside the track's times"). The toast does not
     /// repeat it.
-    pub note: Option<String>,
+    pub note: Option<Words>,
     pub steps: Vec<Box<dyn Operation>>,
     /// Who proposes it when the user did not make it: "An agent", a
     /// plugin from outside by its title. The review says so.
-    pub by: Option<String>,
+    pub by: Option<Words>,
     /// What becomes of a name taken where it copies or moves, said
     /// beforehand (ADR-054); `None` asks whoever applies it, and applies
     /// nothing where no one can be asked.
@@ -1392,8 +1382,9 @@ pub struct Counted {
 pub struct PlanData {
     /// English where it leaves the process; as written where it comes in.
     pub title: Words,
+    /// As its title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
+    pub note: Option<Words>,
     pub steps: Vec<OpData>,
     /// What becomes of a name taken where a step copies or moves: asked
     /// when applied in the window when omitted, else nothing applied.
@@ -1406,7 +1397,7 @@ pub struct PlanData {
 pub struct PlanDiff {
     pub title: Words,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
+    pub note: Option<Words>,
     pub steps: Vec<(Change, StepStatus)>,
 }
 
@@ -1431,16 +1422,17 @@ impl Plan {
         self
     }
 
-    /// The same plan, proposed by `who` ("An agent").
+    /// The same plan, proposed by `who` ("An agent"; a plugin from outside
+    /// by its title, as written).
     #[must_use]
-    pub fn proposed_by(mut self, who: impl Into<String>) -> Self {
+    pub fn proposed_by(mut self, who: impl Into<Words>) -> Self {
         self.by = Some(who.into());
         self
     }
 
     /// The same plan, with what the review says under its title.
     #[must_use]
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+    pub fn with_note(mut self, note: impl Into<Words>) -> Self {
         self.note = Some(note.into());
         self
     }
@@ -1721,7 +1713,7 @@ mod tests {
             )
         );
         assert_eq!(
-            rename.within(dir).to_string(),
+            rename.words(Some(dir)).english(),
             "rename old  name.txt -> sub/new name.txt"
         );
         // Where it leads, outside the folder, stays whole.
@@ -1730,7 +1722,7 @@ mod tests {
             to: dir.join("link"),
         };
         assert_eq!(
-            link.within(dir).to_string(),
+            link.words(Some(dir)).english(),
             "link link -> /elsewhere/target"
         );
         // The folder itself is not written as nothing.
@@ -1739,7 +1731,7 @@ mod tests {
             directory: true,
             words: None,
         };
-        assert_eq!(made.within(dir).to_string(), "mkdir /data/it's a café");
+        assert_eq!(made.words(Some(dir)).english(), "mkdir /data/it's a café");
         // A step's own words are what it says.
         let placed = Change::Metadata {
             path: dir.join("a.jpg"),
@@ -1750,7 +1742,7 @@ mod tests {
                 already: Some("“a.jpg” was already at 10, 20".into()),
             }),
         };
-        assert_eq!(placed.within(dir).to_string(), "place “a.jpg” at 10, 20");
+        assert_eq!(placed.words(Some(dir)).english(), "place “a.jpg” at 10, 20");
         let paths: Vec<_> = rename.paths().collect();
         assert_eq!(
             paths,

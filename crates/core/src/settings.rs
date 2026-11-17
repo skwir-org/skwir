@@ -501,6 +501,52 @@ impl std::fmt::Debug for Validator {
     }
 }
 
+/// A setting's description as its owner gives it (ADR-072, ADR-139): one
+/// sentence, its row's, or that sentence and what follows it, two
+/// messages, the first what the row shows, the second what its tooltip
+/// adds: `(words!(…_description = "First."), words!(…_description_more =
+/// "Then the rest."))`. Never one message cut where a sentence ends.
+pub trait Description {
+    /// Its first sentence, and what follows (none where it is empty).
+    fn parts(self) -> (Words, Option<Words>);
+}
+
+impl Description for Words {
+    fn parts(self) -> (Words, Option<Words>) {
+        (self, None)
+    }
+}
+
+impl Description for (Words, Words) {
+    fn parts(self) -> (Words, Option<Words>) {
+        let (first, more) = self;
+        (first, Some(more).filter(|more| !more.is_empty()))
+    }
+}
+
+impl Description for (Words, Option<Words>) {
+    /// A first sentence and what may follow it, as an owner whose
+    /// settings are alike gives them (a view's columns).
+    fn parts(self) -> (Words, Option<Words>) {
+        let (first, more) = self;
+        (first, more.filter(|more| !more.is_empty()))
+    }
+}
+
+impl Description for &str {
+    /// Text as written (a test's).
+    fn parts(self) -> (Words, Option<Words>) {
+        (Words::as_written(self.to_owned()), None)
+    }
+}
+
+impl Description for String {
+    /// Text as written (a test's).
+    fn parts(self) -> (Words, Option<Words>) {
+        (Words::as_written(self), None)
+    }
+}
+
 /// One setting's declaration. Build it with the constructors below: the
 /// owning plugin states the title, unit, choices and limits, so no editor
 /// needs key-specific knowledge.
@@ -511,7 +557,13 @@ pub struct SettingSpec {
     /// Short human label ("Memory budget"), said where it is drawn; in
     /// English to agents and scripts (ADR-139, 7).
     pub title: Words,
+    /// Its description's first sentence, which its row shows (ADR-072).
     pub description: Words,
+    /// What its description says after it, each a message of its own
+    /// (`Description`): shown under it in the row's tooltip, and heard
+    /// with it by a screen reader; none where one sentence says it all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more: Option<Words>,
     /// The dialog's page it is shown on (`page::*`), by its subject,
     /// whoever owns the key (ADR-072); empty for its owner's own page.
     pub page: String,
@@ -530,8 +582,9 @@ pub struct SettingSpec {
     /// only while that is on; empty for none. The dialog draws it indented
     /// beneath the switch, unavailable while the switch is off.
     pub under: String,
-    /// Unit shown after a numeric value ("MB").
-    pub unit: String,
+    /// The unit a number is written in ("64 MB", "1 line"): its owner's
+    /// words placing the number (`SettingSpec::unit`).
+    pub unit: Option<Unit>,
     pub default: toml::Value,
     pub kind: SettingKind,
     pub constraints: SettingConstraints,
@@ -551,6 +604,67 @@ pub struct SettingSpec {
     /// so the owner orders them by declaring them in it.
     #[serde(skip)]
     pub order: u64,
+}
+
+/// The unit a setting's number is written in: its owner's words placing
+/// the number `n`, which agree with it where a language's words do (a
+/// selector on `n`: one line, 5 lines). A whole number
+/// arrives as a count; one written with a part (`unit_of`), as text.
+#[derive(Clone, Copy)]
+pub struct Unit(pub fn(crate::words::Arg) -> Words);
+
+impl Unit {
+    /// The number `n` written in it.
+    pub fn of(self, n: impl Into<crate::words::Arg>) -> Words {
+        (self.0)(n.into())
+    }
+}
+
+impl std::fmt::Debug for Unit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unit({:?})", self.of("n").english())
+    }
+}
+
+impl serde::Serialize for Unit {
+    /// In English, with `n` where the number goes ("n MB"): what agents
+    /// and scripts read (ADR-139, 7).
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.of("n").english())
+    }
+}
+
+/// The units several owners' settings are written in, core's so that they
+/// are one message (`SettingSpec::unit`).
+pub mod unit {
+    use crate::words::{Arg, Words};
+
+    /// Megabytes: "64 MB".
+    pub fn megabytes(n: Arg) -> Words {
+        crate::words!(
+            settings_unit_megabytes = "{ $n } MB",
+            n = n,
+            note = "A setting's number in megabytes, after its field or slider (64 MB)."
+        )
+    }
+
+    /// A percentage: "100 %".
+    pub fn percent(n: Arg) -> Words {
+        crate::words!(
+            settings_unit_percent = "{ $n } %",
+            n = n,
+            note = "A setting's number in percent, after its slider (100 %)."
+        )
+    }
+
+    /// Seconds: "1.5 s".
+    pub fn seconds(n: Arg) -> Words {
+        crate::words!(
+            settings_unit_seconds = "{ $n } s",
+            n = n,
+            note = "A setting's number in seconds, after its slider (1.5 s): n may be a decimal."
+        )
+    }
 }
 
 /// The file a setting is kept in (ADR-056, ADR-057).
@@ -601,16 +715,18 @@ pub struct SettingConstraints {
     pub per_unit: i64,
     /// The fields of a [`SettingKind::Records`] setting's records.
     pub fields: Vec<RecordField>,
-    /// What one record is called ("tile server"), for "Add tile server".
-    pub record_name: String,
+    /// The words of the button adding a record ("Add tile server"), its
+    /// owner's whole.
+    pub record_add: Words,
     pub record_action: Option<RecordAction>,
     /// Records their owner keeps elsewhere, changed by its commands (see
     /// [`RecordSource`]).
     pub record_source: Option<RecordSource>,
     /// The choices are what is known here and now: others may be found
     /// where skwir runs (the themes a user added to bat). A file's value
-    /// outside them is noted by `Settings::check`, not refused.
-    pub more_choices: String,
+    /// outside them is noted by `Settings::check`, not refused. No words:
+    /// none join them.
+    pub more_choices: Words,
     /// What the default choice, Automatic, comes to here and now: one of
     /// `choices` (the theme's `dark`) or a name of its own (a font's
     /// family); empty when its owner does not say. The dialog shows it
@@ -669,7 +785,8 @@ pub struct Swatch {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Unavailable {
     pub choice: String,
-    pub why: String,
+    /// Said where it is drawn; in English to agents and scripts.
+    pub why: Words,
 }
 
 /// A choice Automatic tries ([`SettingConstraints::tries`]) and the
@@ -681,7 +798,8 @@ pub struct Tried {
 }
 
 impl SettingSpec {
-    fn new(key: &str, title: Words, description: Words, default: toml::Value) -> Self {
+    fn new(key: &str, title: Words, description: impl Description, default: toml::Value) -> Self {
+        let (description, more) = description.parts();
         let kind = match default {
             toml::Value::Boolean(_) => SettingKind::Toggle,
             toml::Value::Integer(_) => SettingKind::Integer,
@@ -693,12 +811,13 @@ impl SettingSpec {
             key: key.into(),
             title,
             description,
+            more,
             page: String::new(),
             section: String::new(),
             section_title: Words::as_written(""),
             essential: false,
             under: String::new(),
-            unit: String::new(),
+            unit: None,
             default,
             kind,
             constraints: SettingConstraints {
@@ -716,13 +835,13 @@ impl SettingSpec {
     pub fn toggle(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: bool,
     ) -> Self {
         Self::new(
             key,
             title.into(),
-            description.into(),
+            description,
             toml::Value::Boolean(default),
         )
     }
@@ -732,7 +851,7 @@ impl SettingSpec {
     pub fn choice(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: &str,
         choices: &[(&str, &str)],
     ) -> Self {
@@ -753,14 +872,14 @@ impl SettingSpec {
     pub fn choice_words(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: &str,
         choices: Vec<(&str, Words)>,
     ) -> Self {
         let mut spec = Self::new(
             key,
             title.into(),
-            description.into(),
+            description,
             toml::Value::String(default.into()),
         );
         spec.kind = SettingKind::Choice;
@@ -776,14 +895,14 @@ impl SettingSpec {
     pub fn integer(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: i64,
         range: (i64, i64),
     ) -> Self {
         let mut spec = Self::new(
             key,
             title.into(),
-            description.into(),
+            description,
             toml::Value::Integer(default),
         );
         spec.constraints.integer_range = Some(range);
@@ -793,27 +912,22 @@ impl SettingSpec {
     pub fn number(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: f64,
     ) -> Self {
-        Self::new(
-            key,
-            title.into(),
-            description.into(),
-            toml::Value::Float(default),
-        )
+        Self::new(key, title.into(), description, toml::Value::Float(default))
     }
 
     pub fn text(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: &str,
     ) -> Self {
         Self::new(
             key,
             title.into(),
-            description.into(),
+            description,
             toml::Value::String(default.into()),
         )
     }
@@ -821,7 +935,7 @@ impl SettingSpec {
     pub fn path(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: &str,
     ) -> Self {
         let mut spec = Self::text(key, title, description, default);
@@ -835,7 +949,7 @@ impl SettingSpec {
     pub fn command(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: &str,
     ) -> Self {
         let mut spec = Self::text(key, title, description, default).validate_with(|value, _| {
@@ -861,10 +975,10 @@ impl SettingSpec {
     pub fn drawn_by_page(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
+        description: impl Description,
         default: toml::Value,
     ) -> Self {
-        let mut spec = Self::new(key, title.into(), description.into(), default);
+        let mut spec = Self::new(key, title.into(), description, default);
         spec.kind = SettingKind::Data;
         spec.page_drawn = true;
         spec
@@ -877,7 +991,12 @@ impl SettingSpec {
     pub fn data(key: &str, description: impl Into<Words>, default: toml::Value) -> Self {
         // Never a row: no title (ADR-139, 8), its description for whoever
         // reads the file.
-        let mut spec = Self::new(key, Words::default(), description.into(), default);
+        let mut spec = Self::new(
+            key,
+            Words::default(),
+            Into::<Words>::into(description),
+            default,
+        );
         spec.kind = SettingKind::Data;
         spec.store = Store::Data;
         spec
@@ -892,23 +1011,24 @@ impl SettingSpec {
         spec
     }
 
-    /// A list of records, each made of `fields` (see [`SettingKind::Records`]).
+    /// A list of records, each made of `fields` (see [`SettingKind::Records`]);
+    /// `add`, the words of the button adding one ("Add tile server").
     pub fn records(
         key: &str,
         title: impl Into<Words>,
-        description: impl Into<Words>,
-        record_name: &str,
+        description: impl Description,
+        add: impl Into<Words>,
         fields: Vec<RecordField>,
     ) -> Self {
         let mut spec = Self::new(
             key,
             title.into(),
-            description.into(),
+            description,
             toml::Value::Array(Vec::new()),
         );
         spec.kind = SettingKind::Records;
         spec.constraints.fields = fields;
-        spec.constraints.record_name = record_name.into();
+        spec.constraints.record_add = add.into();
         spec
     }
 
@@ -1010,7 +1130,7 @@ impl SettingSpec {
     /// Say that `choices` do nothing here and now, each with why, as its
     /// owner knows (`SettingConstraints::unavailable`).
     #[must_use]
-    pub fn unavailable(mut self, choices: &[(&str, &str)]) -> Self {
+    pub fn unavailable<'a>(mut self, choices: impl IntoIterator<Item = (&'a str, Words)>) -> Self {
         for (choice, why) in choices {
             self.mark_unavailable(choice, why);
         }
@@ -1034,33 +1154,33 @@ impl SettingSpec {
     /// (`missing`: why, by the requirement's name), those Automatic tries
     /// and those that need one (`needs`), said unavailable.
     #[must_use]
-    pub fn with_missing(mut self, missing: impl Fn(&str) -> Option<String>) -> Self {
+    pub fn with_missing(mut self, missing: impl Fn(&str) -> Option<Words>) -> Self {
         let tried = self.constraints.tries.iter().chain(&self.constraints.needs);
         for tried in tried.cloned().collect::<Vec<_>>() {
             if let Some(why) = missing(&tried.requires) {
-                self.mark_unavailable(&tried.choice, &why);
+                self.mark_unavailable(&tried.choice, why);
             }
         }
         self
     }
 
-    fn mark_unavailable(&mut self, choice: &str, why: &str) {
+    fn mark_unavailable(&mut self, choice: &str, why: Words) {
         let unavailable = &mut self.constraints.unavailable;
         if !unavailable.iter().any(|u| u.choice == choice) {
             unavailable.push(Unavailable {
                 choice: choice.to_owned(),
-                why: why.to_owned(),
+                why,
             });
         }
     }
 
     /// Why `choice` does nothing here and now, where it does nothing.
-    pub fn unavailable_why(&self, choice: &str) -> Option<&str> {
+    pub fn unavailable_why(&self, choice: &str) -> Option<&Words> {
         self.constraints
             .unavailable
             .iter()
             .find(|u| u.choice == choice)
-            .map(|u| u.why.as_str())
+            .map(|u| &u.why)
     }
 
     /// The choice `delta` steps from `from` among those that do something
@@ -1121,9 +1241,10 @@ impl SettingSpec {
     }
 
     /// Choices others may join where skwir runs, said in a few words
-    /// ("themes you added to bat"): see `SettingConstraints::more_choices`.
+    /// ("themes you added to bat"), placed in a sentence: see
+    /// `SettingConstraints::more_choices`.
     #[must_use]
-    pub fn more_choices(mut self, which: &str) -> Self {
+    pub fn more_choices(mut self, which: impl Into<Words>) -> Self {
         self.constraints.more_choices = which.into();
         self
     }
@@ -1171,52 +1292,62 @@ impl SettingSpec {
         self
     }
 
+    /// Written in `unit`, words placing the number `n`, a selector on it
+    /// where they agree with it: `|n| words!(terminal_lines = "{ $n ->
+    /// [one] … *[other] … }", n = n)`.
     #[must_use]
-    pub fn unit(mut self, unit: &str) -> Self {
-        unit.clone_into(&mut self.unit);
+    pub fn unit(mut self, unit: fn(crate::words::Arg) -> Words) -> Self {
+        self.unit = Some(Unit(unit));
         self
     }
 
     /// Written in `unit`, `per` of the value making one, a power of ten: a
-    /// slider of milliseconds that says "1.5 s" (`unit_of("s", 1000)`).
-    /// The value stays the whole number kept, for agents and scripts; the
-    /// key says what it counts (`_ms`).
+    /// slider of milliseconds that says "1.5 s" (`unit_of(seconds,
+    /// 1000)`), the number placed as text. The value stays the whole
+    /// number kept, for agents and scripts; the key says what it counts
+    /// (`_ms`).
     #[must_use]
-    pub fn unit_of(mut self, unit: &str, per: i64) -> Self {
+    pub fn unit_of(mut self, unit: fn(crate::words::Arg) -> Words, per: i64) -> Self {
         debug_assert!(
             per >= 1 && 10_i64.pow(per.ilog10()) == per,
             "{}: a unit is a power of ten of the value",
             self.key
         );
-        unit.clone_into(&mut self.unit);
+        self.unit = Some(Unit(unit));
         self.constraints.per_unit = per.max(1);
         self
     }
 
     /// `value` as it is written, in its unit (`unit_of`): "64 MB", "1.5 s".
     #[must_use]
-    pub fn written(&self, value: i64) -> String {
-        let per = self.constraints.per_unit.max(1);
-        let number = if per == 1 {
-            value.to_string()
-        } else {
-            let (whole, part) = (value.abs() / per, value.abs() % per);
-            let sign = if value < 0 { "-" } else { "" };
-            if part == 0 {
-                format!("{sign}{whole}")
-            } else {
-                // The part's digits, as many as `per` has places, without
-                // the zeros ending them.
-                let places = per.ilog10() as usize;
-                let part = format!("{part:0places$}");
-                format!("{sign}{whole}.{}", part.trim_end_matches('0'))
-            }
-        };
-        if self.unit.is_empty() {
-            number
-        } else {
-            format!("{number} {}", self.unit)
+    pub fn written(&self, value: i64) -> Words {
+        let number = self.figures(value);
+        match self.unit {
+            Some(unit) => unit.of(number),
+            None => Words::as_written(match number {
+                crate::words::Arg::Count(whole) => whole.to_string(),
+                crate::words::Arg::Text(text) => text.into_owned(),
+                _ => value.to_string(),
+            }),
         }
+    }
+
+    /// `value` in its unit, without it: a count where it is a whole one,
+    /// "1.5" as text for 1500 milliseconds written in seconds. A decimal
+    /// is written as English writes it until numbers arrive with each
+    /// language (PLAN.md, step F).
+    fn figures(&self, value: i64) -> crate::words::Arg {
+        let per = self.constraints.per_unit.max(1);
+        let (whole, part) = (value / per, value.abs() % per);
+        if part == 0 {
+            return whole.into();
+        }
+        let sign = if value < 0 { "-" } else { "" };
+        // The part's digits, as many as `per` has places, without the
+        // zeros ending them.
+        let places = per.ilog10() as usize;
+        let part = format!("{part:0places$}");
+        format!("{sign}{}.{}", whole.abs(), part.trim_end_matches('0')).into()
     }
 
     #[must_use]
@@ -1262,11 +1393,10 @@ impl SettingSpec {
             .map_or_else(|| Words::as_written(value.to_owned()), Clone::clone)
     }
 
-    /// The choice `value` as the window shows it, said in the user's
-    /// language: its label, and for the default, while its owner says what
-    /// it comes to (`now`), that too: "Automatic (Dark)", "Automatic (Noto
-    /// Sans)".
-    pub fn choice_shown(&self, value: &str) -> String {
+    /// The choice `value` as the window shows it: its label, and for the
+    /// default, while its owner says what it comes to (`now`), that too:
+    /// "Automatic (Dark)", "Automatic (Noto Sans)".
+    pub fn choice_shown(&self, value: &str) -> Words {
         let label = self.choice_label(value);
         match self.now_of(value) {
             Some(now) => crate::words!(
@@ -1274,9 +1404,8 @@ impl SettingSpec {
                 choice = label,
                 now = now,
                 note = "A setting's default choice and what it comes to here and now: Automatic (Dark)."
-            )
-            .say(),
-            None => label.say(),
+            ),
+            None => label,
         }
     }
 
@@ -1644,11 +1773,12 @@ impl SettingSpec {
 }
 
 /// What `Settings::check` found: problems, by key, and notes on keys it
-/// cannot judge.
+/// cannot judge, said where they are shown; in English to agents and
+/// scripts (ADR-139, 7).
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Checked {
-    pub problems: Vec<(String, String)>,
-    pub notes: Vec<(String, String)>,
+    pub problems: Vec<(String, Words)>,
+    pub notes: Vec<(String, Words)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1657,7 +1787,8 @@ pub enum SaveState {
     Idle,
     Saving,
     Saved,
-    Failed(String),
+    /// Why the save failed, said where it is shown.
+    Failed(Words),
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -1706,9 +1837,14 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::path(
             STARTUP_FOLDER,
             crate::words!(settings_startup_folder = "Startup folder"),
-            crate::words!(
-                settings_startup_folder_description =
-                    "Used when a chosen folder opens at startup. Leave empty for your home folder."
+            (
+                crate::words!(
+                    settings_startup_folder_description = "Used when a chosen folder opens at startup."
+                ),
+                crate::words!(
+                    settings_startup_folder_description_more = "Leave empty for your home folder.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             "",
         )
@@ -1719,8 +1855,14 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::toggle(
             PRESERVE_ATTRIBUTES_ON_COPY,
             keep_attributes_title(),
-            crate::words!(
-                settings_keep_attributes_description = "Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them."
+            (
+                crate::words!(
+                    settings_keep_attributes_description = "Copies carry their source's tags, rating, comment and where it was downloaded from."
+                ),
+                crate::words!(
+                    settings_keep_attributes_description_more = "Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             true,
         )
@@ -1731,9 +1873,15 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::toggle(
             DROP_ASKS,
             crate::words!(settings_drop_asks = "Ask what dropped files do"),
-            crate::words!(
-                settings_drop_asks_description = "Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
-                note = "Shift, Ctrl and Ctrl+Shift are keys, as the keyboard names them."
+            (
+                crate::words!(
+                    settings_drop_asks_description = "Files dropped in a folder with no key held open a menu: move, copy or link them there.",
+                    note = "Shift, Ctrl and Ctrl+Shift are keys, as the keyboard names them."
+                ),
+                crate::words!(
+                    settings_drop_asks_description_more = "Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
+                    note = "Shift, Ctrl and Ctrl+Shift are keys, as the keyboard names them."
+                ),
             ),
             true,
         )
@@ -1744,9 +1892,15 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::toggle(
             crate::companions::SHOW,
             crate::words!(settings_show_companions = "Show companion files"),
-            crate::words!(
-                settings_show_companions_description = "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Properties lists a file's companions either way.",
-                note = "._ is how a Mac's companion files begin their names; Properties is a dialog."
+            (
+                crate::words!(
+                    settings_show_companions_description = "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars.",
+                    note = "._ is how a Mac's companion files begin their names; Properties is a dialog."
+                ),
+                crate::words!(
+                    settings_show_companions_description_more = "Properties lists a file's companions either way.",
+                    note = "._ is how a Mac's companion files begin their names; Properties is a dialog."
+                ),
             ),
             false,
         )
@@ -1759,8 +1913,14 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::toggle(
             crate::location::FOLDERS_FIRST,
             crate::words!(settings_folders_first = "Folders first"),
-            crate::words!(
-                settings_folders_first_description = "List folders before files, each sorted among themselves. Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none."
+            (
+                crate::words!(
+                    settings_folders_first_description = "List folders before files, each sorted among themselves."
+                ),
+                crate::words!(
+                    settings_folders_first_description_more = "Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
             ),
             true,
         )
@@ -1773,9 +1933,15 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::choice_words(
             crate::fs::SIZE_UNITS_KEY,
             crate::words!(settings_size_units = "Units", note = "How sizes are counted: the setting's title."),
-            crate::words!(
-                settings_size_units_description = "How sizes are counted. Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.",
-                note = "kB, MB, KiB… are units' symbols; 10M, 10MB and 10MiB are as a search is typed, never translated."
+            (
+                crate::words!(
+                    settings_size_units_description = "How sizes are counted.",
+                    note = "kB, MB, KiB… are units' symbols; 10M, 10MB and 10MiB are as a search is typed, never translated."
+                ),
+                crate::words!(
+                    settings_size_units_description_more = "Decimal counts a kilobyte as 1000 bytes (kB, MB, GB), as disks are sold and as macOS and GNOME show sizes; Binary counts 1024 (KiB, MiB, GiB), as KDE does. A search reads 10M as 1024-based either way, 10MB as 1000 and 10MiB as 1024.",
+                    note = "kB, MB, KiB… are units' symbols; 10M, 10MB and 10MiB are as a search is typed, never translated."
+                ),
             ),
             crate::fs::SizeUnits::Decimal.key(),
             vec![
@@ -1798,9 +1964,15 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::choice_words(
             crate::locale::LANGUAGE_KEY,
             crate::words!(settings_language = "Language"),
-            crate::words!(
-                settings_language_description = "The language skwir's window speaks. Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
-                note = "Automatic is a choice of the setting (settings_language_automatic)."
+            (
+                crate::words!(
+                    settings_language_description = "The language skwir's window speaks.",
+                    note = "Automatic is a choice of the setting (settings_language_automatic)."
+                ),
+                crate::words!(
+                    settings_language_description_more = "Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
+                    note = "Automatic is a choice of the setting (settings_language_automatic)."
+                ),
             ),
             crate::locale::AUTOMATIC,
             language_choices(),
@@ -1816,9 +1988,15 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::choice_words(
             CLOSE_SPLIT,
             crate::words!(settings_close_split = "Pane that closes"),
-            crate::words!(
-                settings_close_split_description = "Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
-                note = "Split is a command's name; Other, Active and Right are the setting's choices."
+            (
+                crate::words!(
+                    settings_close_split_description = "Which pane goes when you close the split with Split or F3.",
+                    note = "Split is a command's name; Other, Active and Right are the setting's choices."
+                ),
+                crate::words!(
+                    settings_close_split_description_more = "Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
+                    note = "Split is a command's name; Other, Active and Right are the setting's choices."
+                ),
             ),
             "other",
             vec![
@@ -1948,12 +2126,15 @@ pub(crate) fn register(app: &crate::App) {
                 let result = app.settings.apply(&args.changes).map(|keys| {
                     changed(&app, &keys);
                 });
+                // The error kept for both: the state says it, and a caller
+                // without a window is answered with it.
+                let result = result.map_err(std::sync::Arc::new);
                 guard.state = Some(match &result {
                     Ok(()) => SaveState::Saved,
-                    Err(error) => SaveState::Failed(format!("{error:#}")),
+                    Err(error) => SaveState::Failed(Words::of_error_from(error, 0)),
                 });
                 drop(guard);
-                result
+                result.map_err(|error| anyhow::Error::new(Words::of_error_from(&error, 0)))
             };
             if crate::scheduler::has_window() {
                 // The window follows SaveState, including saves requested by
@@ -2005,10 +2186,9 @@ fn language_choices() -> Vec<(&'static str, Words)> {
     choices
 }
 
-/// A settings file's key no setting has, in English: what `check` finds
-/// is read by agents and scripts (ADR-139, 7).
-fn no_such_setting() -> String {
-    crate::words!(settings_no_such = "no such setting").english()
+/// A settings file's key no setting has.
+fn no_such_setting() -> Words {
+    crate::words!(settings_no_such = "no such setting")
 }
 
 /// Why a save of the settings says nothing of how it went.
@@ -2182,7 +2362,7 @@ impl Drop for SaveGuard {
         let state = self
             .state
             .take()
-            .unwrap_or_else(|| SaveState::Failed(save_did_not_run().say()));
+            .unwrap_or_else(|| SaveState::Failed(save_did_not_run()));
         let mut status = app.settings.status.lock();
         if status.0 == self.id {
             status.1 = state;
@@ -2792,8 +2972,6 @@ impl Settings {
     /// where the file says the new one too, as not read.
     pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
         let renamed = self.renamed.lock().clone();
-        // Said in English: what `check` finds is read by agents and
-        // scripts (ADR-139, 7).
         let moved = |key: &str| {
             renamed.get(key).map(|new| {
                 if Self::lookup(table, new).is_some() {
@@ -2802,14 +2980,12 @@ impl Settings {
                         new = new.as_str(),
                         note = "A settings file's key that has a new name, set too: the new key."
                     )
-                    .english()
                 } else {
                     crate::words!(
                         settings_renamed = "now “{ $new }”: skwir moves it there",
                         new = new.as_str(),
                         note = "A settings file's key that has a new name: the new key."
                     )
-                    .english()
                 }
             })
         };
@@ -2858,7 +3034,7 @@ impl Settings {
                                 note = "A settings file's key that skwir keeps in a file of its own, which does not hold it yet."
                             )
                         };
-                        checked.notes.push((key, note.english()));
+                        checked.notes.push((key, note));
                         continue;
                     }
                     let other = !spec.constraints.more_choices.is_empty()
@@ -2874,13 +3050,12 @@ impl Settings {
                             key,
                             crate::words!(
                                 settings_other_choice = "not one skwir knows here: it may be among { $which }",
-                                which = spec.constraints.more_choices.as_str(),
+                                which = spec.constraints.more_choices.clone(),
                                 note = "A settings file's choice skwir does not know, which may be one found where it runs: which those are (themes you added to bat)."
-                            )
-                            .english(),
+                            ),
                         ));
                     } else if let Err(error) = spec.check(value) {
-                        checked.problems.push((key, error.to_string()));
+                        checked.problems.push((key, Words::of_error(error)));
                     }
                     continue;
                 }
@@ -2896,7 +3071,7 @@ impl Settings {
                                     ("enabled", toml::Value::Boolean(_)) => {}
                                     ("enabled", _) => checked.problems.push((
                                         format!("{key}.enabled"),
-                                        SettingSpec::expected_boolean().english(),
+                                        SettingSpec::expected_boolean(),
                                     )),
                                     _ => checked
                                         .problems
@@ -2914,8 +3089,7 @@ impl Settings {
                                         settings_no_plugin = "no plugin “{ $id }” here: one from outside, or not built in, may take it",
                                         id = id.as_str(),
                                         note = "A settings file names a plugin skwir does not have: its id."
-                                    )
-                                    .english(),
+                                    ),
                                 ),
                             });
                         }
@@ -2924,8 +3098,7 @@ impl Settings {
                             crate::words!(
                                 settings_plugin_table = "expected a table: enabled = true or false",
                                 note = "A plugin's entry in a settings file; enabled, true and false are as the file writes them."
-                            )
-                            .english(),
+                            ),
                         )),
                     }
                     continue;
@@ -2948,14 +3121,19 @@ impl Settings {
                             settings_owner_unknown = "nothing here declares “{ $owner }”: a plugin turned off, or from outside, may",
                             owner = owner_of(&key),
                             note = "A settings file's key under an owner nothing here declares: the owner's id."
-                        )
-                        .english(),
+                        ),
                     ));
                 }
             }
         }
-        checked.problems.sort();
-        checked.notes.sort();
+        // By key, then as English says them: the same order wherever they
+        // are said.
+        checked
+            .problems
+            .sort_by_cached_key(|(key, said)| (key.clone(), said.english()));
+        checked
+            .notes
+            .sort_by_cached_key(|(key, said)| (key.clone(), said.english()));
         checked
     }
 

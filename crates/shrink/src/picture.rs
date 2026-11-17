@@ -14,7 +14,7 @@ use image::{
     DynamicImage, ImageBuffer, ImageDecoder, ImageFormat, ImageReader, Limits, LumaA, Rgba,
 };
 use skwir_core::print::Picture;
-use skwir_core::shrink::Quality;
+use skwir_core::shrink::{Note, Quality};
 use std::borrow::Cow;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -42,7 +42,7 @@ pub struct Written {
     /// Whether it fits `at_most`, when asked.
     pub met: Option<bool>,
     /// What was left as it was, and why: said to the user.
-    pub notes: Vec<String>,
+    pub notes: Vec<Note>,
 }
 
 /// The most bytes a picture file is read at: past what a picture within
@@ -83,11 +83,7 @@ pub fn shrink(input: &Path, output: &Path, options: &Options) -> Result<Option<W
                 && let Some(mut kept) = source.lossless(options.strip)?
             {
                 if !as_stored {
-                    kept.notes.insert(
-                        0,
-                        "Its pixels were kept as they were: written again, they came out larger."
-                            .to_owned(),
-                    );
+                    kept.notes.insert(0, Note::PixelsKept);
                 }
                 keep(&mut best, Some(kept));
             }
@@ -139,7 +135,7 @@ pub fn shrink(input: &Path, output: &Path, options: &Options) -> Result<Option<W
 /// A copy made, and what to say of it.
 struct Candidate {
     bytes: Vec<u8>,
-    notes: Vec<String>,
+    notes: Vec<Note>,
 }
 
 impl Candidate {
@@ -320,11 +316,7 @@ impl<'a> Source<'a> {
         let mut notes = Vec::new();
         let profile = self.profile(pixels.colour());
         if self.icc.is_some() && profile.is_none() && !made_gray {
-            notes.push(
-                "Its colour profile was left out: it is not for the colours the copy is written in, \
-                 which may look different."
-                    .to_owned(),
-            );
+            notes.push(Note::ProfileLeftOut);
         }
         let exif = self.exif_for(strip, true, size, &mut notes);
         let bytes = match &self.container {
@@ -395,9 +387,7 @@ impl<'a> Source<'a> {
         let mut notes = Vec::new();
         let mut exif = self.exif_for(true, false, (self.width, self.height), &mut notes);
         if self.orientation != Orientation::NoTransforms {
-            notes.push(
-                "Its pixels were kept as stored, turned upright by its EXIF as before.".to_owned(),
-            );
+            notes.push(Note::PixelsAsStored);
         }
         let mut out = Vec::with_capacity(self.bytes.len());
         out.extend_from_slice(&[0xFF, 0xD8]);
@@ -432,7 +422,7 @@ impl<'a> Source<'a> {
         strip: bool,
         upright: bool,
         size: (u32, u32),
-        notes: &mut Vec<String>,
+        notes: &mut Vec<Note>,
     ) -> Option<Vec<u8>> {
         let block = self.exif.as_deref()?;
         if strip {
@@ -1087,7 +1077,7 @@ const DATES: [exif::Tag; 9] = [
 /// own, with its `orientation` where the pixels are kept as stored (other
 /// than 1): no location, camera, maker note or thumbnail. None when there
 /// is nothing to keep.
-fn dated(block: &[u8], orientation: u16, notes: &mut Vec<String>) -> Option<Vec<u8>> {
+fn dated(block: &[u8], orientation: u16, notes: &mut Vec<Note>) -> Option<Vec<u8>> {
     let read = exif::Reader::new()
         .continue_on_error(true)
         .read_raw(block.to_vec());
@@ -1096,7 +1086,7 @@ fn dated(block: &[u8], orientation: u16, notes: &mut Vec<String>) -> Option<Vec<
         // What could be read of a block partly damaged.
         Err(exif::Error::PartialResult(partial)) => Some(partial.into_inner().0),
         Err(_) => {
-            notes.push("Its EXIF could not be read, so its date was left out.".to_owned());
+            notes.push(Note::ExifUnread);
             None
         }
     };
@@ -1125,14 +1115,14 @@ fn dated(block: &[u8], orientation: u16, notes: &mut Vec<String>) -> Option<Vec<
         Some(out.into_inner())
     };
     if !unknown.is_empty() {
-        notes.push("Part of its date could not be read, so it was left out.".to_owned());
+        notes.push(Note::DatePartUnread);
     }
     match written(&dates) {
         Some(block) => Some(block),
         None if dates.is_empty() => None,
         // How to turn it kept whatever its date holds.
         None => {
-            notes.push("Its date could not be kept, so it was left out.".to_owned());
+            notes.push(Note::DateNotKept);
             written(&[])
         }
     }
@@ -1895,7 +1885,7 @@ mod tests {
         let icc = profile(*b"RGB ");
         let input = jpeg_of((width, height), data, 95, Some(&exif), Some(&icc), true);
         let (written, copy) = shrunk(&input, options(Quality::Screen));
-        assert_eq!(written.unwrap().notes, Vec::<String>::new());
+        assert_eq!(written.unwrap().notes, Vec::<Note>::new());
         let copy = copy.unwrap();
         let back = image::load_from_memory(&copy).unwrap().to_rgb8();
         // Turned a quarter clockwise: its bottom left now its top left.
@@ -1988,13 +1978,7 @@ mod tests {
         let copy = copy.unwrap();
         let scans = |bytes: &[u8]| Jpeg::parse(bytes).unwrap().scans_at;
         assert_eq!(&input[scans(&input)..], &copy[scans(&copy)..]);
-        assert!(
-            written
-                .unwrap()
-                .notes
-                .iter()
-                .any(|note| note.contains("as stored"))
-        );
+        assert!(written.unwrap().notes.contains(&Note::PixelsAsStored));
         let exif = exif_of(&copy).unwrap();
         // Its pixels still stored sideways, still turned by its EXIF.
         assert_eq!(number(&exif, Tag::Orientation), Some(6));
@@ -2039,7 +2023,7 @@ mod tests {
         let copy = copy.expect("its details left out");
         let scans = |bytes: &[u8]| Jpeg::parse(bytes).unwrap().scans_at;
         assert_eq!(&input[scans(&input)..], &copy[scans(&copy)..]);
-        assert!(written.unwrap().notes[0].contains("kept as they were"));
+        assert_eq!(written.unwrap().notes[0], Note::PixelsKept);
         // Nothing to leave out: no copy rather than a larger one.
         assert_eq!(shrunk(&input, options(Quality::Screen)).0, None);
     }
@@ -2066,10 +2050,7 @@ mod tests {
             .unwrap();
         let (written, copy) = shrunk(&input, options(Quality::Screen));
         let notes = written.unwrap().notes;
-        assert!(
-            notes.iter().any(|note| note.contains("colour profile")),
-            "{notes:?}"
-        );
+        assert!(notes.contains(&Note::ProfileLeftOut), "{notes:?}");
         let copy = copy.unwrap();
         assert_eq!(icc_of(&copy), None);
         let back = image::load_from_memory(&copy).unwrap();
@@ -2589,7 +2570,7 @@ mod tests {
             &[(b"pHYs", phys(11_811, 11_811)), (b"sBIT", vec![5, 6, 5])],
         );
         let (written, copy) = shrunk(&input, options(Quality::Screen));
-        assert_eq!(written.unwrap().notes, Vec::<String>::new());
+        assert_eq!(written.unwrap().notes, Vec::<Note>::new());
         let copy = copy.unwrap();
         assert_eq!(chunk_of(&copy, *b"pHYs"), Some(&phys(11_811, 11_811)[..]));
         assert_eq!(chunk_of(&copy, *b"sBIT"), Some(&[5, 6, 5][..]));
@@ -2680,7 +2661,13 @@ mod tests {
             },
         );
         let notes = written.unwrap().notes;
-        assert!(notes.iter().any(|note| note.contains("date")), "{notes:?}");
+        assert!(
+            notes.iter().any(|note| matches!(
+                note,
+                Note::ExifUnread | Note::DatePartUnread | Note::DateNotKept
+            )),
+            "{notes:?}"
+        );
         let exif = exif_of(&copy.unwrap()).unwrap();
         // Its pixels kept as stored, still turned by its EXIF.
         assert_eq!(number(&exif, Tag::Orientation), Some(6));

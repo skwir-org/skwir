@@ -964,7 +964,7 @@ pub fn render(
                     .text_small()
                     .truncate()
                     .text_color(theme.text_muted)
-                    .child(busy.clone()),
+                    .child(busy.say()),
             );
         } else if let Some((free, total)) = place.space {
             let used = used_fraction(free, total);
@@ -1059,10 +1059,10 @@ pub fn render(
             )
             .child(texts.when(waiting, |d| d.text_color(theme.text_muted)));
         if let Some(why) = &place.unavailable {
-            tip = Some(why.clone().into());
+            tip = Some(why.say().into());
         }
         if let Some(busy) = &busy {
-            tip = Some(busy.clone().into());
+            tip = Some(busy.say().into());
         }
         // What the tooltip says of it (its space, why it waits, what its
         // owner does) is what a screen reader says after its name.
@@ -1360,6 +1360,12 @@ fn row_key(place: &Place) -> u64 {
     crate::elements::key_of((&place.group, &place.location, &place.key, &title))
 }
 
+/// A place as a sentence names it: a tag's by the tag it stands for (data),
+/// any other by its title as the sidebar says it.
+fn named(place: &Place) -> words::Name {
+    words::Name(place.tag.clone().unwrap_or_else(|| place.title.say()))
+}
+
 /// A tag's place as its chip (`tags::place_chip`), as the views draw tags:
 /// it opens as a row does (a click, a middle click for a tab behind, a
 /// right click for its menu), and files dropped on it get what its `drop`
@@ -1378,9 +1384,16 @@ fn pill(
     let tone = theme.tag(color);
     let open = open_invocation(place);
     let tab = open_in_tab(place);
-    // A tag in a category says its own name; the tooltip says where it is.
-    let said = place.title.say();
-    let title: SharedString = skwir_core::metadata::tag_leaf(&said).to_owned().into();
+    // A tag in a category says its own name, from the tag it stands for
+    // (data, never its title read back); the tooltip says where it is.
+    let title: SharedString = place
+        .tag
+        .as_deref()
+        .map_or_else(
+            || place.title.say(),
+            |tag| skwir_core::metadata::tag_leaf(tag).to_owned(),
+        )
+        .into();
     let tip: SharedString = words!(
         sidebar_tag_tip = "{ $tag } · Shift+click: only what has it too · Alt+click: in this folder",
         tag = place.title.clone(),
@@ -1680,28 +1693,37 @@ impl Shell {
                     .places
                     .find(|p| p.group == place.group && p.key() == place.key())
                     .map_or_else(|| said.clone(), |p| p.title.say());
-                // Said once, as the question is asked: `ui.ask` takes text.
+                // The field holds the name the user gave it, if any: left
+                // empty, the place takes back its own (never told by
+                // comparing words, ADR-139).
+                let given = self
+                    .sidebar_sections
+                    .places
+                    .get(&place.group)
+                    .and_then(|a| a.titles.get(&place.key()))
+                    .cloned()
+                    .unwrap_or_default();
                 Some(Invocation::with_args(
                     "ui.ask",
                     &serde_json::json!({
                         "title": words!(
                             sidebar_rename_title = "Rename { $place } in the sidebar",
-                            place = words::Name(said.clone()),
+                            place = words::Name(said),
                             note = "The title of the question renaming a place the sidebar shows (Home, a volume) under a name of the user's, there only."
                         )
-                        .say(),
+                        .to_data(),
                         "accept": words!(
                             sidebar_rename_accept = "Rename",
                             note = "The button that renames a place in the sidebar."
                         )
-                        .say(),
+                        .to_data(),
                         "placeholder": words!(
                             sidebar_rename_placeholder = "Name (empty: { $own })",
                             own = words::Name(own),
                             note = "The empty field of the question renaming a place in the sidebar: left empty, the place takes back its own name, own."
                         )
-                        .say(),
-                        "text": said,
+                        .to_data(),
+                        "text": given,
                         "command": PLACE_COMMAND,
                         "args": { "group": place.group, "key": place.key() },
                         "field": "title",
@@ -1783,7 +1805,7 @@ impl Shell {
         let kept = words!(
             sidebar_kept_by_owner =
                 "{ $place } is kept in the sidebar by its owner: its menu arranges it",
-            place = words::Name(arranged.place.title.say()),
+            place = named(&arranged.place),
             note = "Said when a place the user keeps (a bookmark, a saved search) is arranged as the sidebar arranges the places it offers: its own menu renames, moves or removes it."
         );
         if let Some(hidden) = args.get("hidden").and_then(serde_json::Value::as_bool) {
@@ -1802,7 +1824,7 @@ impl Shell {
                     crate::toast::Toast::new(
                         words!(
                             sidebar_hid = "Hid { $place } from the sidebar",
-                            place = words::Name(arranged.place.title.say()),
+                            place = named(&arranged.place),
                             note = "Said after a place was hidden from the sidebar, with Undo."
                         ),
                         crate::toast::Tone::Info,
@@ -1839,22 +1861,15 @@ impl Shell {
                 return;
             }
             let title = title.as_str().map(str::trim).unwrap_or_default();
-            // Its own name as the sidebar says it: given back, it is the
-            // user's name no more.
-            let own = self
-                .app
-                .registry
-                .places
-                .find(|p| p.group == group && p.key() == key)
-                .map(|p| p.title.say())
-                .unwrap_or_default();
+            // Left empty, it takes back its own name (the question says
+            // so): what was typed is never compared with its words.
             let titles = &mut self
                 .sidebar_sections
                 .places
                 .entry(group.clone())
                 .or_default()
                 .titles;
-            if title.is_empty() || title == own {
+            if title.is_empty() {
                 titles.remove(&key);
             } else {
                 titles.insert(key, title.to_owned());

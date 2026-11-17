@@ -41,12 +41,21 @@ remote_address_password = an address holds no password: the server asks for it
 # The button of a question asked while connecting to a server (a password).
 remote_ask_connect = Connect
 
+# What a password prompt asks when the program asking (rclone) said nothing of its own.
+remote_ask_password = Password
+
+# What an S3 bucket is called: bucket is its name, profile the AWS profile it is reached by (both as written).
+remote_bucket_label = { $bucket } ({ $profile })
+
 # Why a connection or a transfer did not go on: it was stopped.
 remote_cancelled = cancelled
 
 remote_chosen_data = The thumbnails chosen for each remote, by its address
 
 remote_configure_add_as_server = Add as Server…
+
+# The button adding a server to Settings' list of the sidebar's Network servers.
+remote_configure_add_record = Add Server
 
 remote_configure_add_server = Add server…
 
@@ -65,7 +74,7 @@ remote_configure_answers = { $server } answers
 
 remote_configure_at_login = Connect at Login
 
-# remotes: the names of the remotes of rclone's that connect at login, each quoted, separated by commas.
+# remotes: the names of the remotes of rclone's that connect at login, each quoted, as a list.
 remote_configure_at_login_encrypted = { $count ->
         [1] { $remotes } connects at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
        *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
@@ -256,16 +265,16 @@ remote_configure_removed = { $server } is removed
 # server: the name of the server just changed.
 remote_configure_saved = { $server } is saved
 
-# What one record of Settings' list of servers is.
-remote_configure_server_record = Server
-
 remote_configure_server_records = Servers
 
 remote_configure_server_records_description = Every server as Settings lists it: each one's name, kind and where it is kept, what its line does, and whether Skwir changes it (`fixed`: another program does)
 
 remote_configure_servers = Servers
 
-remote_configure_servers_description = The servers of the sidebar's Network section, each changed where it is kept. Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too.
+remote_configure_servers_description = The servers of the sidebar's Network section, each changed where it is kept.
+
+# What a setting's description says after its first sentence, in its tooltip.
+remote_configure_servers_description_more = Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too.
 
 remote_configure_setup_key_login = Set up key login…
 
@@ -302,7 +311,10 @@ remote_connect_description = Open a remote folder by its address (sftp://, smb:/
 remote_connectors = Tools that open addresses
 
 # sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated.
-remote_connectors_description = The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.
+remote_connectors_description = The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab.
+
+# sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated.
+remote_connectors_description_more = On KDE's desktop, kio comes before gvfs.
 
 # Why a device plugged in opens nowhere. programs: the programs that hold it, by their names; device: phone or camera.
 remote_device_held = { $count ->
@@ -388,6 +400,9 @@ remote_gvfs_no_bridge = GVfs mounted { $address } but its FUSE bridge is not run
 
 # address: the server's address (sftp://example.com/).
 remote_gvfs_no_folder = GVfs mounted { $address } but its folder is not there
+
+# What a mount of GVfs no address names is called: host is its server, kind GVfs's name for its protocol (as written).
+remote_gvfs_other_label = { $host } ({ $kind })
 
 # host: the server's name or address, which GVfs was asked to open.
 remote_gvfs_server_silent = { $host } did not answer within { $seconds ->
@@ -495,11 +510,8 @@ remote_kmtpd = KDE's kmtpd
 
 remote_kmtpd_linux_only = KDE's kmtpd is reached on Linux only
 
-# The last two of a list (of programs, of actions): “a” and “b”.
-remote_list_last = { $first } and { $last }
-
-# An item of a list before the others: “a”, then the rest of it.
-remote_list_more = { $first }, { $rest }
+# Why a server is not mounted at login on a Mac: the launch agent that does it is a link to a file that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it.
+remote_login_agent_read_only = the login agent is read-only; change it where it is managed
 
 # part: a path or an argument of the command that connects at login.
 remote_login_control_character = “{ $part }” holds a character a service manager does not read
@@ -547,6 +559,9 @@ remote_login_rclone_not_yet = Mounting rclone's remotes is not available on { $s
 remote_login_rclone_remotes_only = only a remote of rclone's configuration (rclone://name/) connects at login through rclone: nobody is there to give a server's password
 
 remote_login_sshfs_sftp_only = sshfs connects SFTP addresses alone
+
+# Why a server is not mounted at login: the systemd unit that does it is a link to a file that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it.
+remote_login_unit_read_only = the login unit is read-only; change it where it is managed
 
 remote_login_unknown_host = ssh does not know the server's identity yet: connect to it once first
 
@@ -882,6 +897,9 @@ remote_rclone_save = Save
 # scheme: a protocol's name (NFS, AFP, MTP).
 remote_rclone_scheme = rclone does not open { $scheme } addresses
 
+# What a remote of rclone's configuration is called: name is its name, kind rclone's type of storage (drive, sftp), both as written.
+remote_rclone_server_label = { $name } ({ $kind })
+
 # A form's title, where rclone asks a question about a remote it sets up: remote is its name.
 remote_rclone_set_up = Set Up { $remote }
 
@@ -1073,6 +1091,9 @@ remote_server_form_volume = Volume
 
 remote_server_form_volume_help = The shared volume's name, and a folder of it after a /
 
+# Why a server was not added to KDE's network folders: its file is a link to one that cannot be written, as a configuration managed elsewhere (Nix's Home Manager) makes it.
+remote_servers_kde_read_only = KDE's network folder is read-only; change it where it is managed
+
 # Where servers are kept: as the desktop is.
 remote_servers_kept_automatic = Automatic
 
@@ -1084,7 +1105,10 @@ remote_servers_kept_fstab = in the system's fstab
 
 remote_servers_kept_in = Where servers are kept
 
-remote_servers_kept_in_description = Where a server added by its address is kept. Automatic: in KDE's network folders on KDE's desktop, where Dolphin lists them too, and in Skwir's own list elsewhere; a kind KIO does not open (FTPS, AFP) always in Skwir's.
+remote_servers_kept_in_description = Where a server added by its address is kept.
+
+# What a setting's description says after its first sentence, in its tooltip.
+remote_servers_kept_in_description_more = Automatic: in KDE's network folders on KDE's desktop, where Dolphin lists them too, and in Skwir's own list elsewhere; a kind KIO does not open (FTPS, AFP) always in Skwir's.
 
 # Where a server of the Network section is kept, said after its kind or address.
 remote_servers_kept_kde = in KDE's network folders
@@ -1116,6 +1140,9 @@ remote_sftp_onto_server = sftp copies onto a server
 
 # path: a file's path, which sftp's commands cannot hold (a line break in it, or not UTF-8).
 remote_sftp_unsaid = “{ $path }” cannot be said to sftp
+
+# What a share of a server (SMB, AFP, an NFS export) is called in the sidebar and elsewhere: share is its name, server the server's (with its port where it is not the usual one), both as written.
+remote_share_label = { $share } on { $server }
 
 # Why removing failed: path is a file's path, still on the server.
 remote_ssh_still_there = “{ $path }” is still there
@@ -1173,6 +1200,9 @@ remote_thumbnails_of_description = Choose when a remote folder's files show thum
 remote_thumbnails_rule = a rule is automatic, never, small or always
 
 remote_thumbnails_small = Small files
+
+# A place's menu: the row of the submenu choosing when its files show thumbnails.
+remote_thumbnails_submenu = Thumbnails
 
 # What one tool could not do, among the failures of the tools tried. tool: its name (sshfs, GVfs); error: why.
 remote_tool_failed = { $tool }: { $error }

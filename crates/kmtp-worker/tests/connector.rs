@@ -18,6 +18,7 @@ use skwir_core::app::{App, AppConfig};
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
 use skwir_core::registry::Place;
+use skwir_core::words::Words;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector};
 use skwir_plugin_remote::kmtp::Kmtp;
@@ -30,10 +31,10 @@ const UDI: &str = "/org/kde/solid/udev/sys/devices/pci0000:00/usb9/9-1";
 struct NoOne;
 
 impl Ask for NoOne {
-    fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+    fn secret(&self, _: &Words, _: &Words, _: &CancelToken) -> Option<String> {
         None
     }
-    fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+    fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
         false
     }
 }
@@ -145,7 +146,7 @@ fn a_phone_kmtpd_holds_opens_through_it_and_is_let_go_of() {
         .into_iter()
         .find(|k| k.point == top)
         .expect("what is known of it");
-    assert_eq!(known.label, "Example Phone");
+    assert_eq!(known.label.english(), "Example Phone");
     assert_eq!(
         known.thumbnails,
         skwir_core::fs::reach::Thumbnails::Small,

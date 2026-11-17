@@ -111,12 +111,7 @@ pub fn count(n: usize, singular: &str) -> String {
     }
 }
 
-/// A speed: `23.4 MB/s`, said in the user's language.
-pub fn speed(bytes_a_second: f64) -> String {
-    speed_words(bytes_a_second).say()
-}
-
-/// A speed, as words to place in a message (`speed`).
+/// A speed, as words to place in a message: `23.4 MB/s`.
 pub fn speed_words(bytes_a_second: f64) -> skwir_core::words::Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Shown, rounded.
     let bytes = bytes_a_second.max(0.0).round() as u64;
@@ -130,12 +125,7 @@ pub fn speed_words(bytes_a_second: f64) -> skwir_core::words::Words {
 /// How long is left, roughly, so that it counts down rather than ticks:
 /// `a few seconds left`, `about 40 s left` (by fives), `about 12 min
 /// left`, `about 2 h 10 min left` (by tens of minutes), `more than a day
-/// left`.
-pub fn time_left(left: std::time::Duration) -> String {
-    time_left_words(left).say()
-}
-
-/// How long is left, as words to place in a message (`time_left`).
+/// left`, as words to place in a message.
 pub fn time_left_words(left: std::time::Duration) -> skwir_core::words::Words {
     use skwir_core::words;
     let secs = left.as_secs();
@@ -182,12 +172,8 @@ pub fn time_left_words(left: std::time::Duration) -> skwir_core::words::Words {
     }
 }
 
-/// How long something took: `45 s`, `3 min 20 s`, `1 h 5 min`.
-pub fn took(took: std::time::Duration) -> String {
-    took_words(took).say()
-}
-
-/// How long something took, as words to place in a message (`took`).
+/// How long something took, as words to place in a message: `45 s`, `3
+/// min 20 s`, `1 h 5 min`.
 pub fn took_words(took: std::time::Duration) -> skwir_core::words::Words {
     use skwir_core::words;
     let secs = took.as_secs();
@@ -244,9 +230,10 @@ mod tests {
     /// with it; what took long, to the minute past an hour.
     #[test]
     fn speeds_and_times_are_said_roughly() {
-        assert_eq!(super::speed(1536.0), "1.5 kB/s");
-        assert_eq!(super::speed(-1.0), "0 B/s");
-        let left = |secs| super::time_left(Duration::from_secs(secs));
+        let speed = |bytes| super::speed_words(bytes).english();
+        assert_eq!(speed(1536.0), "1.5 kB/s");
+        assert_eq!(speed(-1.0), "0 B/s");
+        let left = |secs| super::time_left_words(Duration::from_secs(secs)).english();
         assert_eq!(left(3), "a few seconds left");
         assert_eq!(left(12), "about 10 s left");
         assert_eq!(left(43), "about 45 s left");
@@ -257,7 +244,7 @@ mod tests {
         assert_eq!(left(3_600), "about 1 h left");
         assert_eq!(left(7_890), "about 2 h 10 min left");
         assert_eq!(left(90_000), "more than a day left");
-        let took = |secs| super::took(Duration::from_secs(secs));
+        let took = |secs| super::took_words(Duration::from_secs(secs)).english();
         assert_eq!(took(45), "45 s");
         assert_eq!(took(180), "3 min");
         assert_eq!(took(200), "3 min 20 s");

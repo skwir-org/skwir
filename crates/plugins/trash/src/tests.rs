@@ -9,6 +9,7 @@ use skwir_core::command::{Invocation, Outcome};
 use skwir_core::entry::keys;
 use skwir_core::location::Location;
 use skwir_core::op::{EntryRef, Operation, Plan, Trash};
+use skwir_core::words::Words;
 
 use super::{TrashPlugin, place};
 
@@ -288,7 +289,7 @@ fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
     let empty = plan(&app, "trash.empty", &serde_json::json!({}));
     assert_eq!(empty.len(), 3);
     assert_eq!(
-        empty.note.as_deref(),
+        empty.note.as_ref().map(Words::english).as_deref(),
         Some("1 file has names elsewhere: 4 B stays on the disk")
     );
     let r = app.executor.execute_blocking(&empty, app.lifetime());

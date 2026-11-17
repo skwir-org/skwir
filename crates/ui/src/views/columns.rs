@@ -951,7 +951,7 @@ impl PaneView for ColumnsView {
             .role(gpui::Role::ListBox)
             .aria_multiselectable()
             .when(shell.a11y, |d| {
-                d.aria_label(shell.ui().place.title.clone())
+                d.aria_label(shell.ui().place.title.say())
                     .aria_size_of_set(count)
             })
             .relative()

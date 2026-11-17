@@ -185,7 +185,9 @@ fn by_kind() -> Keyer {
     let groups: HashMap<Kind, Arc<Group>> = Kind::ALL
         .into_iter()
         .map(|kind| {
-            let group = Group::new(1, kind.title()).with_term(format!("kind:{}", kind.name()));
+            // Said as the groups are keyed: A to Z in the reader's words.
+            let group =
+                Group::new(1, &kind.words().say()).with_term(format!("kind:{}", kind.name()));
             let group = if kind == Kind::Folder {
                 group.of_folders()
             } else {
@@ -668,7 +670,7 @@ fn by_vcs() -> Keyer {
     use skwir_core::vcs::{Known, State};
     let group = |known: Known| {
         let label = match known {
-            Known::Is(state) => state.title().to_owned(),
+            Known::Is(state) => state.words().say(),
             Known::Committed => words!(
                 query_group_unchanged = "Unchanged",
                 note = "A group's heading, grouped by Git state: files as the last commit has them."

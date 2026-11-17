@@ -299,11 +299,15 @@ fn a_heading_begins_as_its_language_begins_a_sentence() {
     assert_eq!(title.heading().english(), "Copy “a.txt” to Docs");
     assert_eq!(casing::heading("tr", "istanbul"), "İstanbul");
     assert_eq!(casing::heading("en", "istanbul"), "Istanbul");
-    assert_eq!(casing::heading("en", "“quoted” first"), "“Quoted” first");
+    // A name keeps its case: past a quote, nothing is cased.
+    assert_eq!(
+        casing::heading("en", "“photos.zip” first"),
+        "“photos.zip” first"
+    );
     assert_eq!(casing::heading("ja", "ファイル"), "ファイル");
-    // In the pseudo-language, past its bracket.
+    // In the pseudo-language, its bracket comes first: nothing is cased.
     let said = title.heading().say_in(&langs(&[PSEUDO, "en"]));
-    assert!(said.starts_with("[Ç"), "{said}");
+    assert!(said.starts_with("[ç"), "{said}");
 }
 
 /// A list is joined as its language joins one.
@@ -373,4 +377,146 @@ fn words_sent_as_data_come_back_as_themselves() {
     assert_eq!(heading.english(), "Hello “Ana”, 3 files");
     let text: Words = serde_json::from_value(serde_json::json!("as an agent wrote it")).unwrap();
     assert_eq!(text.english(), "as an agent wrote it");
+}
+
+/// Every translated catalog of the workspace (`crates/**/l10n/<lang>.ftl`)
+/// says what its crate's English says: each message one the English has,
+/// in the part of Fluent Skwir speaks, naming only the arguments the
+/// English gives. How much of each language is there, and how much is
+/// still a draft (a message whose comment says `draft`), is printed.
+#[test]
+fn every_catalog_says_what_its_english_says() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn named(elements: &[Element], into: &mut BTreeSet<String>) {
+        for element in elements {
+            match element {
+                Element::Text(_) => {}
+                Element::Arg(name) => {
+                    into.insert(name.to_string());
+                }
+                Element::Select { on, variants, .. } => {
+                    into.insert(on.to_string());
+                    for variant in variants.iter() {
+                        named(&variant.value, into);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Each message of `source`: its id, the arguments it names, whether it
+    /// is a draft; or why it cannot be read.
+    fn messages(source: &str) -> Result<BTreeMap<String, (BTreeSet<String>, bool)>, Vec<String>> {
+        let resource = match fluent_syntax::parser::parse(source) {
+            Ok(resource) => resource,
+            Err((_, errors)) => return Err(errors.iter().map(|e| format!("{e:?}")).collect()),
+        };
+        let mut found = BTreeMap::new();
+        let mut problems = Vec::new();
+        for entry in resource.body {
+            let fluent_syntax::ast::Entry::Message(message) = entry else {
+                continue;
+            };
+            let id = message.id.name.to_owned();
+            let draft = message
+                .comment
+                .as_ref()
+                .is_some_and(|comment| comment.content.iter().any(|line| line.trim() == "draft"));
+            let Some(value) = &message.value else {
+                problems.push(format!("{id}: says nothing"));
+                continue;
+            };
+            if !message.attributes.is_empty() {
+                problems.push(format!("{id}: has attributes"));
+            }
+            match super::pattern::from_fluent(value) {
+                Ok(elements) => {
+                    let mut names = BTreeSet::new();
+                    named(&elements, &mut names);
+                    found.insert(id, (names, draft));
+                }
+                Err(why) => problems.push(format!("{id}: {why}")),
+            }
+        }
+        if problems.is_empty() {
+            Ok(found)
+        } else {
+            Err(problems)
+        }
+    }
+
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut folders = Vec::new();
+    let mut walk = vec![crates];
+    while let Some(dir) = walk.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if !path.is_dir() || name == "target" || name == "src" || name == "tests" {
+                continue;
+            }
+            if name == "l10n" {
+                folders.push(path);
+            } else {
+                walk.push(path);
+            }
+        }
+    }
+    let mut problems = Vec::new();
+    let mut said: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    for folder in folders {
+        let english = std::fs::read_to_string(folder.join("en.ftl")).unwrap_or_default();
+        let english = match messages(&english) {
+            Ok(english) => english,
+            Err(why) => {
+                problems.push(format!("{}: en.ftl: {why:?}", folder.display()));
+                continue;
+            }
+        };
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let path = entry.path();
+            let Some(language) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if language == "en" || path.extension().is_none_or(|e| e != "ftl") {
+                continue;
+            }
+            let translated = match messages(&std::fs::read_to_string(&path).unwrap()) {
+                Ok(translated) => translated,
+                Err(why) => {
+                    problems.extend(why.into_iter().map(|w| format!("{}: {w}", path.display())));
+                    continue;
+                }
+            };
+            let tally = said.entry(language.to_owned()).or_default();
+            tally.0 += english.len();
+            for (id, (names, draft)) in &translated {
+                let Some((given, _)) = english.get(id) else {
+                    problems.push(format!(
+                        "{}: {id}: the English has no such message",
+                        path.display()
+                    ));
+                    continue;
+                };
+                for name in names.difference(given) {
+                    problems.push(format!(
+                        "{}: {id}: names ${name}, which the English gives not",
+                        path.display()
+                    ));
+                }
+                tally.1 += 1;
+                if *draft {
+                    tally.2 += 1;
+                }
+            }
+        }
+    }
+    for (language, (english, translated, drafts)) in &said {
+        eprintln!("{language}: {translated} of {english} messages, {drafts} still drafts");
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }

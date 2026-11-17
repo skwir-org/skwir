@@ -60,7 +60,10 @@ git_requirement = Histories of commits
 
 git_states_setting = Show the files' Git state
 
-git_states_setting_description = Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository. The list's Git column says the same.
+git_states_setting_description = Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository.
+
+# What a setting's description says after its first sentence, in its tooltip.
+git_states_setting_description_more = The list's Git column says the same.
 
 # Under a history of commits: reading was stopped before the oldest commit.
 git_stopped = { $count ->

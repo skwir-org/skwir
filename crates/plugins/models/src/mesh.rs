@@ -50,7 +50,7 @@ fn volume(value: f64, unit: &str) -> Option<String> {
 }
 
 /// What the measures say, in the order Properties shows them.
-pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)> {
+pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(words::Words, String)> {
     // An STL states no unit; every slicer reads it in millimetres.
     let unit = measures
         .unit
@@ -65,8 +65,7 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
             words!(
                 models_detail_volume = "Volume",
                 note = "A label in the preview's Properties: how much space the 3D model encloses."
-            )
-            .say(),
+            ),
             said,
         ));
     }
@@ -85,8 +84,7 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
         words!(
             models_detail_watertight = "Watertight",
             note = "A label in the preview's Properties: whether the model's mesh is closed, with no holes, as a 3D print needs."
-        )
-        .say(),
+        ),
         closed.say(),
     ));
     if measures.faces > 0 {
@@ -94,8 +92,7 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
             words!(
                 models_detail_faces = "Faces",
                 note = "A label in the preview's Properties: how many surfaces a CAD model (STEP, IGES) is made of."
-            )
-            .say(),
+            ),
             measures.faces.to_string(),
         ));
     }
@@ -103,8 +100,7 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
         words!(
             models_detail_triangles = "Triangles",
             note = "A label in the preview's Properties: how many triangles the model's mesh has."
-        )
-        .say(),
+        ),
         measures.triangles.to_string(),
     ));
     if measures.objects > 1 {
@@ -112,8 +108,7 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
             words!(
                 models_detail_objects = "Objects",
                 note = "A label in the preview's Properties: how many separate objects the model holds."
-            )
-            .say(),
+            ),
             measures.objects.to_string(),
         ));
     }
@@ -121,7 +116,7 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
 }
 
 /// What the model is, by its format's name, for the toolbar.
-fn title(format: MeshFormat) -> String {
+fn title(format: MeshFormat) -> words::Words {
     // The formats' names, the same in every language.
     let name = match format {
         MeshFormat::Stl => "STL",
@@ -129,7 +124,7 @@ fn title(format: MeshFormat) -> String {
         MeshFormat::Ply => "PLY",
         MeshFormat::Off => "OFF",
         MeshFormat::Gltf => "glTF",
-        MeshFormat::ThreeMf => return "3MF".to_owned(),
+        MeshFormat::ThreeMf => return words::Words::as_written("3MF"),
         MeshFormat::Step => "STEP",
         MeshFormat::Iges => "IGES",
         MeshFormat::Rhino => "Rhino",
@@ -160,29 +155,23 @@ pub fn read<S: FileSource + ?Sized>(
     let missing = drawn.measures.faces_missing;
     let unmeshed = drawn.measures.objects_missing;
     let holes = if missing > 0 {
-        Some(
-            words!(
-                models_faces_missing = "{ $missing } of { $count ->
+        Some(words!(
+            models_faces_missing = "{ $missing } of { $count ->
                    *[other] { $count } faces
                 } could not be drawn",
-                missing = missing,
-                count = drawn.measures.faces,
-                note = "Said under a CAD model drawn with holes: some of its surfaces could not be turned into triangles. missing: how many; count: how many surfaces the model has."
-            )
-            .say(),
-        )
+            missing = missing,
+            count = drawn.measures.faces,
+            note = "Said under a CAD model drawn with holes: some of its surfaces could not be turned into triangles. missing: how many; count: how many surfaces the model has."
+        ))
     } else if unmeshed > 0 {
-        Some(
-            words!(
-                models_objects_unmeshed = "{ $count ->
+        Some(words!(
+            models_objects_unmeshed = "{ $count ->
                     [one] { $count } object stores no mesh and is not drawn
                    *[other] { $count } objects store no mesh and are not drawn
                 }",
-                count = unmeshed,
-                note = "Said under a Rhino model drawn from the meshes it keeps: objects that keep none are left out."
-            )
-            .say(),
-        )
+            count = unmeshed,
+            note = "Said under a Rhino model drawn from the meshes it keeps: objects that keep none are left out."
+        ))
     } else {
         None
     };
@@ -203,15 +192,14 @@ pub fn read<S: FileSource + ?Sized>(
                     millions = format!("{:.1}", drawn.measures.triangles as f64 / 1e6),
                     note = "Said under a model too large to turn at once: a still picture is shown, and the 3D button turns it anyway. millions: the number of triangles in millions (2.4)."
                 )
-                .say()
             });
-            let notice: Vec<String> = holes.into_iter().chain(large).collect();
+            let notices: Vec<words::Words> = holes.into_iter().chain(large).collect();
             Found {
                 title: title(format),
                 picture: Some(picture),
                 details,
                 mesh_available: true,
-                notice: (!notice.is_empty()).then(|| notice.join(" · ")),
+                notice: skwir_core::inspection::notices_said(&notices),
                 ..Found::default()
             }
         }
@@ -235,9 +223,9 @@ mod tests {
             faces_missing: 0,
             objects_missing: 0,
         };
-        let said = |d: Vec<(String, String)>| {
+        let said = |d: Vec<(words::Words, String)>| {
             d.into_iter()
-                .map(|(l, v)| format!("{l}: {v}"))
+                .map(|(l, v)| format!("{}: {v}", l.english()))
                 .collect::<Vec<_>>()
         };
         assert_eq!(

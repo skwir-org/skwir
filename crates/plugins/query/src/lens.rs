@@ -222,7 +222,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
             }
             files.eval(&c, false) == Verdict::Yes
         }),
-        waits: waits.into_iter().map(|what| what.words().say()).collect(),
+        waits: waits.into_iter().map(Waits::words).collect(),
         metadata,
         lens,
         next_change: q.next_change(),
@@ -430,7 +430,12 @@ mod tests {
     #[test]
     fn what_only_a_search_can_tell_waits_and_is_said() {
         let read = read_filter(r#"README content:"water filter""#).expect("read");
-        assert_eq!(read.waits, ["contents"]);
+        let waits: Vec<String> = read
+            .waits
+            .iter()
+            .map(skwir_core::words::Words::english)
+            .collect();
+        assert_eq!(waits, ["contents"]);
         assert!(!read.metadata);
         let names: Vec<String> = folder()
             .iter()

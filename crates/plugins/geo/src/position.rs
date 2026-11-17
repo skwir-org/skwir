@@ -13,6 +13,8 @@ use std::path::Path;
 use skwir_core::CancelToken;
 use skwir_core::entry::{Value, keys};
 use skwir_core::fields::FieldProvider;
+use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_platform::mime::{self, Kind};
 
 pub struct Positions;
@@ -32,15 +34,28 @@ impl FieldProvider for Positions {
     fn id(&self) -> &'static str {
         "geo-positions"
     }
-    /// Advanced with the place names' data.
+    /// Advanced with the place names' data, and with what a place keeps:
+    /// 2, where it is as data (`places::Placed`), said where it is shown.
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn keys(&self) -> &'static [&'static str] {
         &[keys::POSITION, PLACE, keys::TAKEN]
     }
-    fn label(&self, key: &str) -> Option<&'static str> {
-        (key == PLACE).then_some("Place")
+    fn label(&self, key: &str) -> Option<Words> {
+        (key == PLACE).then(|| {
+            words!(
+                geo_place_label = "Place",
+                note = "A row's label in a picture's or a video's Properties: the town it was taken in or near."
+            )
+        })
+    }
+    /// A place, in words: its name, or how far and which way from one.
+    fn said(&self, key: &str, value: &Value) -> Option<Words> {
+        (key == PLACE)
+            .then(|| crate::places::Placed::of(value))
+            .flatten()
+            .map(|placed| placed.words())
     }
     /// `GeoNames`' names are credited (CC BY 4.0); Natural Earth's are in
     /// the public domain.
@@ -78,12 +93,12 @@ impl FieldProvider for Positions {
         keys.iter()
             .map(|&key| {
                 Ok(match key {
-                    // Said once, where it is read: a field's value is text,
-                    // kept by the file's identity.
+                    // Kept as data, by the file's identity; said where it
+                    // is shown (`said`).
                     PLACE => taken
                         .at
                         .and_then(crate::places::describe)
-                        .map(|words| Value::Text(words.say().into())),
+                        .map(|placed| placed.to_value()),
                     keys::TAKEN => taken.clock.map(Value::UInt),
                     _ => taken.at.map(skwir_core::geo::LatLon::to_value),
                 })

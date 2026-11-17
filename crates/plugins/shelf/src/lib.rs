@@ -82,7 +82,7 @@ impl State {
                 ID,
                 TALLY,
                 skwir_core::tally::Tally {
-                    label: shelf_title().say(),
+                    label: shelf_title(),
                     count: self.items.len() as u64,
                     open: Some(Invocation::new("shelf.open")),
                 },
@@ -529,8 +529,7 @@ impl LocationProvider for ShelfProvider {
                 words!(
                     shelf_remove_verb = "Remove from Shelf",
                     note = "What Delete does on the shelf, as its menu item says it."
-                )
-                .say(),
+                ),
                 Invocation::new("shelf.remove"),
             )),
             tools: vec![

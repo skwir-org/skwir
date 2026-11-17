@@ -18,6 +18,9 @@ markdown_detail_words = Words
 # A note under an HTML file's preview: it is read as a document, inert.
 markdown_html_reading_mode = Reading mode · scripts, fonts and remote content are not loaded
 
+# Why a notebook is not previewed: the file is larger than the preview reads. size: that bound (16 MB).
+markdown_notebook_file_too_large = Notebook exceeds { $size } preview limit
+
 # An error in place of a Jupyter notebook written in an older format.
 markdown_notebook_format = Only notebooks in format 4 (Jupyter 4 and later) are read
 

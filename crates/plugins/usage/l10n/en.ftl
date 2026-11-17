@@ -25,6 +25,9 @@ usage_network_folder = A network folder: Refresh (F5) measures it, reading every
 
 usage_no_pane = no such pane
 
+# Why a folder's disk usage is not shown. system: the system's name (Windows).
+usage_not_yet = Disk usage is not available on { $system } yet
+
 # Said in the Usage view: some folders' changes cannot be followed as they happen.
 usage_partly_watched = Some folders cannot be monitored; rechecking periodically
 

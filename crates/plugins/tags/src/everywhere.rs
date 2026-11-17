@@ -486,8 +486,7 @@ fn start_all(
                     note = "As tags_plan_note_in, then merged: how many files kept one tag of two (tags_merged_into, tags_merged_names)."
                 ),
             };
-            // Said now: a plan's note is text until it is words.
-            app.propose(plan.with_note(note.say()));
+            app.propose(plan.with_note(note));
         },
     );
     Ok(())

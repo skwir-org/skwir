@@ -11,6 +11,7 @@ use skwir_core::{
     command::{Invocation, Outcome},
     plugin::Plugin,
     settings::{SaveState, SettingSpec, Settings},
+    words::Words,
 };
 
 struct Preferences(AtomicUsize);
@@ -369,15 +370,33 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
 /// what is kept stays the whole number agents and scripts read.
 #[test]
 fn a_value_is_written_in_its_unit() {
-    let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096)).unit("MB");
-    assert_eq!(budget.written(64), "64 MB");
+    let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096)).unit(mb);
+    assert_eq!(budget.written(64).english(), "64 MB");
     let bare = SettingSpec::integer("sample.count", "Count", "d", 3, (0, 9));
-    assert_eq!(bare.written(3), "3");
+    assert_eq!(bare.written(3).english(), "3");
+    let lines = SettingSpec::integer("sample.lines", "Lines", "d", 1, (0, 9000)).unit(|n| {
+        skwir_core::words!(
+            test_lines = "{ $n ->
+                [one] { $n } line
+               *[other] { $n } lines
+            }",
+            n = n
+        )
+    });
+    assert_eq!(lines.written(1).english(), "1 line", "it agrees");
+    assert_eq!(lines.written(5000).english(), "5,000 lines");
     let wait = SettingSpec::integer("sample.wait_ms", "Wait", "d", 1500, (0, 5000))
         .step(250)
-        .unit_of("s", 1000)
+        .unit_of(
+            |n| skwir_core::words!(test_seconds = "{ $n } s", n = n),
+            1000,
+        )
         .slider();
-    assert_eq!(wait.unit, "s");
+    assert_eq!(
+        serde_json::to_value(&wait).unwrap()["unit"],
+        "n s",
+        "an agent reads where the number goes"
+    );
     assert_eq!(wait.constraints.per_unit, 1000);
     for (value, written) in [
         (1500, "1.5 s"),
@@ -389,19 +408,30 @@ fn a_value_is_written_in_its_unit() {
         (1005, "1.005 s"),
         (-1500, "-1.5 s"),
     ] {
-        assert_eq!(wait.written(value), written, "{value}");
+        assert_eq!(wait.written(value).english(), written, "{value}");
     }
+}
+
+/// Megabytes, for the tests' settings.
+fn mb(n: skwir_core::words::Arg) -> skwir_core::words::Words {
+    skwir_core::words!(test_mb = "{ $n } MB", n = n)
 }
 
 #[test]
 fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096))
-        .unit("MB")
+        .unit(mb)
         .step(16)
         .section_of("memory", "Memory");
     assert_eq!(budget.kind, skwir_core::settings::SettingKind::Integer);
     assert_eq!(budget.owner(), "sample");
-    assert_eq!((budget.unit.as_str(), budget.constraints.step), ("MB", 16));
+    assert_eq!(
+        (
+            budget.unit.map(|unit| unit.of(16).english()),
+            budget.constraints.step
+        ),
+        (Some("16 MB".to_owned()), 16)
+    );
     let engine = SettingSpec::choice(
         "sample.engine",
         "Engine",
@@ -413,14 +443,18 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     assert_eq!(engine.choice_label("unknown").english(), "unknown");
     // What the default comes to, shown beside it alone: a choice by its
     // label, a name as it is, nothing when it comes to itself.
-    assert_eq!(engine.choice_shown("first"), "First");
+    assert_eq!(engine.choice_shown("first").english(), "First");
     let engine = engine.now("second");
-    assert_eq!(engine.choice_shown("first"), "First (The second)");
-    assert_eq!(engine.choice_shown("second"), "The second");
+    assert_eq!(engine.choice_shown("first").english(), "First (The second)");
+    assert_eq!(engine.choice_shown("second").english(), "The second");
     let english = |words: Option<skwir_core::words::Words>| words.map(|w| w.english());
     assert_eq!(english(engine.now_of("first")), Some("The second".into()));
     assert_eq!(
-        engine.clone().now("Noto Sans").choice_shown("first"),
+        engine
+            .clone()
+            .now("Noto Sans")
+            .choice_shown("first")
+            .english(),
         "First (Noto Sans)"
     );
     assert_eq!(english(engine.now("first").now_of("first")), None);
@@ -476,22 +510,26 @@ fn a_choice_that_does_nothing_here_says_why_and_is_stepped_over() {
     )
     .tries(&[("fast", "fast-helper"), ("slow", "slow-helper")])
     .needs(&[("chosen", "chosen-helper")])
-    .unavailable(&[("other", "Not on this system")])
+    .unavailable([("other", Words::as_written("Not on this system"))])
     .with_missing(|name| {
-        (name == "fast-helper" || name == "chosen-helper").then(|| format!("{name} not found"))
+        (name == "fast-helper" || name == "chosen-helper")
+            .then(|| Words::as_written(format!("{name} not found")))
     });
-    assert_eq!(spec.unavailable_why("other"), Some("Not on this system"));
-    assert_eq!(spec.unavailable_why("fast"), Some("fast-helper not found"));
-    assert_eq!(spec.unavailable_why("slow"), None);
+    let why = |spec: &SettingSpec, choice: &str| spec.unavailable_why(choice).map(Words::english);
+    assert_eq!(why(&spec, "other").as_deref(), Some("Not on this system"));
+    assert_eq!(why(&spec, "fast").as_deref(), Some("fast-helper not found"));
+    assert_eq!(why(&spec, "slow"), None);
     assert_eq!(
-        spec.unavailable_why("chosen"),
+        why(&spec, "chosen").as_deref(),
         Some("chosen-helper not found"),
         "a choice Automatic does not try needs its helper too"
     );
-    assert_eq!(spec.unavailable_why("auto"), None);
+    assert_eq!(why(&spec, "auto"), None);
     // Said once, the owner's word first.
-    let again = spec.clone().unavailable(&[("other", "Something else")]);
-    assert_eq!(again.unavailable_why("other"), Some("Not on this system"));
+    let again = spec
+        .clone()
+        .unavailable([("other", Words::as_written("Something else"))]);
+    assert_eq!(why(&again, "other").as_deref(), Some("Not on this system"));
     // Stepping goes from one that does something to the next that does,
     // and stays at an end.
     assert_eq!(spec.step_choice("auto", 1), "slow");
@@ -777,7 +815,7 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
         .check(&stale.parse().unwrap(), &["fresh".to_owned()]);
     assert!(checked.problems.is_empty(), "{checked:?}");
     assert_eq!(
-        checked.notes,
+        english(&checked.notes),
         [
             (
                 "plugins.stale.enabled".to_owned(),
@@ -802,7 +840,7 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
         .settings
         .check(&both.parse().unwrap(), &["fresh".to_owned()]);
     assert_eq!(
-        checked.notes,
+        english(&checked.notes),
         [
             (
                 "plugins.stale.enabled".to_owned(),
@@ -816,6 +854,14 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
     );
 }
 
+/// What a check found, by key, in English.
+fn english(found: &[(String, Words)]) -> Vec<(String, String)> {
+    found
+        .iter()
+        .map(|(key, said)| (key.clone(), said.english()))
+        .collect()
+}
+
 #[test]
 fn records_are_checked_field_by_field_and_never_hold_a_secret() {
     use skwir_core::settings::{RecordField, SettingSpec};
@@ -823,7 +869,7 @@ fn records_are_checked_field_by_field_and_never_hold_a_secret() {
         "sample.servers",
         "Servers",
         "",
-        "server",
+        "Add server",
         vec![
             RecordField::text("name", "Name", "", "").required(),
             RecordField::integer("zoom", "Zoom", "", (0, 22)),
@@ -876,7 +922,7 @@ fn a_list_skwir_starts_filled_is_changed_by_its_names_never_by_its_ids() {
         "sample.names",
         "Names",
         "",
-        "name",
+        "Add name",
         vec![RecordField::text("name", "Name", "", "").required()],
     )
     .starting_with([named("README.md"), named("cover.*")]);
@@ -914,7 +960,7 @@ fn a_list_skwir_starts_filled_is_changed_by_its_names_never_by_its_ids() {
         );
     }
     // A list built from nothing is never changed: it is the user's data.
-    let built = SettingSpec::records("sample.servers", "Servers", "", "server", Vec::new());
+    let built = SettingSpec::records("sample.servers", "Servers", "", "Add server", Vec::new());
     assert!(!built.records_changed(&built.parse(r#"[{"id":"a"}]"#).unwrap()));
 }
 
@@ -1435,12 +1481,10 @@ fn what_is_kept_apart_is_no_setting_to_declare() {
     assert!(checked.problems.is_empty(), "{checked:?}");
     let keys: Vec<&str> = checked.notes.iter().map(|(k, _)| k.as_str()).collect();
     assert_eq!(keys, ["sample.saved", "sample.session"], "{checked:?}");
-    assert!(checked.notes[0].1.contains("data file"), "{checked:?}");
-    assert!(
-        checked.notes[0].1.contains("until skwir keeps"),
-        "{checked:?}"
-    );
-    assert!(checked.notes[1].1.contains("state file"), "{checked:?}");
+    let notes = english(&checked.notes);
+    assert!(notes[0].1.contains("data file"), "{checked:?}");
+    assert!(notes[0].1.contains("until skwir keeps"), "{checked:?}");
+    assert!(notes[1].1.contains("state file"), "{checked:?}");
 }
 
 /// A key kept apart is its file's, whole: a table the settings file still
@@ -1530,7 +1574,7 @@ fn a_key_kept_apart_replaces_the_settings_file_s_copy_whole() {
         .notes
         .iter()
         .find(|(key, _)| key == "sample.colors")
-        .map(|(_, note)| note.as_str())
+        .map(|(_, note)| note.english())
         .unwrap_or_default();
     assert!(note.contains("never this one"), "{checked:?}");
 }
@@ -1595,7 +1639,7 @@ fn settings_from_a_file_are_checked_as_the_dialog_checks_them() {
             .problems
             .iter()
             .find(|(k, _)| k == key)
-            .map(|(_, problem)| problem.clone())
+            .map(|(_, problem)| problem.english())
             .unwrap()
     };
     assert_eq!(said("sample.engine"), "choose one of first, second");

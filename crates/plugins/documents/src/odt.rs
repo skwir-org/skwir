@@ -1,7 +1,7 @@
 //! An `OpenDocument` text (`.odt`, `.ott`) read as text: its body walked
 //! into blocks, each paragraph shaped by its styles and lists.
 use crate::blocks::{self, Builder, Look, Read, Shape, is_code, is_quote};
-use crate::package::{self, Package};
+use crate::package::{self, Package, Part};
 use roxmltree::Node;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{Align, Script};
@@ -930,7 +930,7 @@ pub(crate) fn read<S: FileSource + ?Sized>(
     cancel: &CancelToken,
 ) -> anyhow::Result<Read> {
     let mut package = Package::open(file, cancel)?;
-    if let Some(manifest) = package.text("META-INF/manifest.xml", "Manifest", cancel)?
+    if let Some(manifest) = package.text("META-INF/manifest.xml", Part::Manifest, cancel)?
         && manifest.contains("encryption-data")
     {
         anyhow::bail!(words!(
@@ -939,7 +939,7 @@ pub(crate) fn read<S: FileSource + ?Sized>(
         ));
     }
     let content = package
-        .text("content.xml", "The document's text", cancel)?
+        .text("content.xml", Part::Text, cancel)?
         .ok_or_else(|| {
             anyhow::anyhow!(words!(
                 documents_odt_no_content = "This is not an OpenDocument text: it has no content",
@@ -948,7 +948,7 @@ pub(crate) fn read<S: FileSource + ?Sized>(
         })?;
     let doc = package::xml(&content)?;
     let mut styles = Styles::default();
-    let styles_xml = package.text("styles.xml", "Styles", cancel)?;
+    let styles_xml = package.text("styles.xml", Part::Styles, cancel)?;
     let styles_doc = styles_xml.as_deref().map(package::xml).transpose()?;
     if let Some(named) = styles_doc
         .as_ref()
@@ -1092,7 +1092,7 @@ pub(crate) fn about<S: FileSource + ?Sized>(
 /// its application counted.
 fn details(package: &mut Package, cancel: &CancelToken) -> Vec<(&'static str, String)> {
     let mut facts = Vec::new();
-    let Ok(Some(xml)) = package.text("meta.xml", "Properties", cancel) else {
+    let Ok(Some(xml)) = package.text("meta.xml", Part::Properties, cancel) else {
         return facts;
     };
     let Ok(doc) = package::xml(&xml) else {

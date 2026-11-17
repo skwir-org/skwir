@@ -195,35 +195,17 @@ pub mod limits {
 
         /// The refusal of a file past one of these bounds, saying
         /// `message`: one the panel offers Full preview for
-        /// (`inspection::TooLarge`) while they are the quick ones.
-        pub fn refuse(self, message: impl Into<String>) -> anyhow::Error {
-            let message = message.into();
-            if self.whole {
-                anyhow::anyhow!(message)
-            } else {
-                skwir_core::inspection::TooLarge(message).into()
-            }
-        }
-
-        /// [`Bounds::refuse`], saying `message`: a whole message, its
-        /// bound an argument of it (ADR-139), never a fragment the refusal
-        /// is written around.
-        pub fn refuse_words(self, message: impl Into<skwir_core::words::Words>) -> anyhow::Error {
+        /// (`inspection::TooLarge`) while they are the quick ones. A whole
+        /// message, its bound an argument of it (ADR-139), never a
+        /// fragment the refusal is written around.
+        pub fn refuse(self, message: impl Into<skwir_core::words::Words>) -> anyhow::Error {
             let message: skwir_core::words::Words = message.into();
             if self.whole {
                 message.into()
             } else {
-                // Transitional: `TooLarge` holds text, said once here
-                // (ADR-139).
-                skwir_core::inspection::TooLarge(message.say()).into()
+                skwir_core::inspection::TooLarge(message).into()
             }
         }
-    }
-
-    /// A limit for messages, said as every size is (`fs::size_said`,
-    /// ADR-139, 9): `16.8 MB`, or `16.0 MiB`.
-    pub fn describe(bytes: usize) -> String {
-        skwir_core::fs::size_said(bytes as u64)
     }
 }
 
@@ -685,37 +667,19 @@ pub fn read<S: FileSource + ?Sized>(
     Ok(out)
 }
 /// A whole file of at most `limit` bytes, a bound `bounds` chose (a font's
-/// `binary_input`, a circuit's own): past it, refused by `bounds`, with
-/// `what` in the message, so the panel offers Full preview while they are
-/// the quick ones. Its length is asked first: a file far past the bound is
-/// refused unread.
-///
-/// Transitional: `what` is a fragment the refusal is written around;
-/// [`read_within_words`] takes the refusal whole (ADR-139).
+/// `binary_input`, a circuit's own): past it, refused by `bounds` saying
+/// `refusal`, so the panel offers Full preview while they are the quick
+/// ones. `refusal` is a whole message, the bound an argument of it
+/// (`words::Size`). Its length is asked first: a file far past the bound
+/// is refused unread.
 pub fn read_within<'a, S: FileSource + ?Sized>(
-    file: &'a S,
-    limit: usize,
-    bounds: limits::Bounds,
-    what: &str,
-    cancel: &CancelToken,
-) -> anyhow::Result<Cow<'a, [u8]>> {
-    whole_within(file, limit, cancel, || {
-        bounds.refuse(format!(
-            "{what} exceeds {} preview limit",
-            limits::describe(limit)
-        ))
-    })
-}
-/// [`read_within`], refused past `limit` saying `refusal`: a whole
-/// message, the bound an argument of it (`words::Size`).
-pub fn read_within_words<'a, S: FileSource + ?Sized>(
     file: &'a S,
     limit: usize,
     bounds: limits::Bounds,
     refusal: impl Into<Words>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
-    whole_within(file, limit, cancel, move || bounds.refuse_words(refusal))
+    whole_within(file, limit, cancel, move || bounds.refuse(refusal))
 }
 /// A whole file of at most `limit` bytes, else what `refuse` makes.
 fn whole_within<'a, S: FileSource + ?Sized>(
@@ -730,43 +694,19 @@ fn whole_within<'a, S: FileSource + ?Sized>(
     bytes.ok_or_else(refuse)
 }
 /// A file read whole (a font, a message, a notebook) within `bounds`'
-/// `binary_input` (`read_within`).
-///
-/// Transitional: [`read_file_words`] takes the refusal whole (ADR-139).
+/// `binary_input`, refused past it saying `refusal` (`read_within`).
 pub fn read_file<'a, S: FileSource + ?Sized>(
-    file: &'a S,
-    bounds: limits::Bounds,
-    what: &str,
-    cancel: &CancelToken,
-) -> anyhow::Result<Cow<'a, [u8]>> {
-    read_within(file, bounds.binary_input(), bounds, what, cancel)
-}
-/// [`read_file`], refused saying `refusal` (`read_within_words`): its
-/// bound is `bounds.binary_input()`.
-pub fn read_file_words<'a, S: FileSource + ?Sized>(
     file: &'a S,
     bounds: limits::Bounds,
     refusal: impl Into<Words>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
-    read_within_words(file, bounds.binary_input(), bounds, refusal, cancel)
+    read_within(file, bounds.binary_input(), bounds, refusal, cancel)
 }
-/// Read a whole file of at most `limit` bytes, or fail with `what` in the message.
-///
-/// Transitional: [`read_bounded_words`] takes the refusal whole (ADR-139).
+/// A whole file of at most `limit` bytes, refused past it saying
+/// `refusal`: a whole message, the bound an argument of it
+/// (`words::Size`).
 pub fn read_bounded<'a, S: FileSource + ?Sized>(
-    file: &'a S,
-    limit: usize,
-    what: &str,
-    cancel: &CancelToken,
-) -> anyhow::Result<Cow<'a, [u8]>> {
-    whole_within(file, limit, cancel, || {
-        anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit))
-    })
-}
-/// [`read_bounded`], refused past `limit` saying `refusal`: a whole
-/// message, the bound an argument of it (`words::Size`).
-pub fn read_bounded_words<'a, S: FileSource + ?Sized>(
     file: &'a S,
     limit: usize,
     refusal: impl Into<Words>,
@@ -776,37 +716,25 @@ pub fn read_bounded_words<'a, S: FileSource + ?Sized>(
         anyhow::Error::from(Into::<Words>::into(refusal))
     })
 }
-/// Copy at most `limit` bytes from a stream; more is an error, never a truncation.
-///
-/// Transitional: [`copy_bounded_words`] takes the refusal whole (ADR-139).
+/// Copy at most `limit` bytes from a stream; more is refused saying
+/// `refusal` (a whole message, the bound an argument of it), never a
+/// truncation.
 pub fn copy_bounded(
-    source: impl Read,
-    limit: usize,
-    what: &str,
-    cancel: &CancelToken,
-) -> anyhow::Result<Vec<u8>> {
-    copy_with(source, limit, cancel, |limit| {
-        anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit))
-    })
-}
-/// [`copy_bounded`], refused past `limit` saying `refusal`: a whole
-/// message, the bound an argument of it (`words::Size`).
-pub fn copy_bounded_words(
     source: impl Read,
     limit: usize,
     refusal: impl Into<Words>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
-    copy_with(source, limit, cancel, move |_| {
+    copy_with(source, limit, cancel, move || {
         anyhow::Error::from(Into::<Words>::into(refusal))
     })
 }
-/// `copy_bounded`, refused past `limit` with what `refuse` makes of it.
+/// `copy_bounded`, refused past `limit` with what `refuse` makes.
 fn copy_with(
     mut source: impl Read,
     limit: usize,
     cancel: &CancelToken,
-    refuse: impl FnOnce(usize) -> anyhow::Error,
+    refuse: impl FnOnce() -> anyhow::Error,
 ) -> anyhow::Result<Vec<u8>> {
     check(cancel)?;
     let mut out = Vec::new();
@@ -817,7 +745,7 @@ fn copy_with(
             break;
         }
         if out.len() + n > limit {
-            return Err(refuse(limit));
+            return Err(refuse());
         }
         out.extend_from_slice(&chunk[..n]);
         check(cancel)?;
@@ -859,14 +787,13 @@ impl Encoding {
         encoding.decode_without_bom_handling(bytes).0
     }
     /// What a preview says about the encoding, or nothing for UTF-8.
-    pub fn notice(self) -> Option<String> {
+    pub fn notice(self) -> Option<Words> {
         (self != Self::Utf8).then(|| {
             words!(
                 inspection_read_as = "Read as { $encoding }",
                 encoding = self.name(),
                 note = "A preview's notice: the text had no mark of its encoding and was read in this one. encoding: its name (Windows-1252, UTF-16LE)."
             )
-            .say()
         })
     }
 }
@@ -910,7 +837,7 @@ pub fn read_text<S: FileSource + ?Sized>(
         size = Size(limit as u64),
         note = "Why a text is not previewed: it is larger than the preview reads. size: that bound (2 MB)."
     );
-    let bytes = read_within_words(file, limit, bounds, refusal, cancel)?;
+    let bytes = read_within(file, limit, bounds, refusal, cancel)?;
     let (text, encoding) = decode(&bytes);
     Ok((text.into_owned(), encoding))
 }
@@ -957,9 +884,8 @@ pub fn plain(
                 count = lines,
                 note = "A text preview's title: how many lines the file has."
             )
-            .say()
         } else {
-            String::new()
+            Words::default()
         },
         blocks: rows
             .into_iter()
@@ -970,7 +896,7 @@ pub fn plain(
                 ..Block::default()
             })
             .collect(),
-        notice: form.encoding.notice().unwrap_or_default(),
+        notices: form.encoding.notice().into_iter().collect(),
         text: Some(skwir_core::inspection::TextFile {
             path: path.to_path_buf(),
             language,
@@ -1041,6 +967,15 @@ pub struct Decoded {
     pub height: u32,
     pub rgba: Vec<u8>,
     pub own: (u32, u32),
+}
+/// Why a picture a document names (beside it, or inside its package) is not
+/// read: it is larger than `limit` bytes (`read_bounded`'s refusal).
+pub fn image_too_large(limit: usize) -> Words {
+    words!(
+        inspection_embedded_image_limit = "Embedded image exceeds { $size } preview limit",
+        size = Size(limit as u64),
+        note = "Why a picture a document names is not shown. size: the largest read (16 MB)."
+    )
 }
 /// A picture decoded with at most `side` pixels on its longer side (bounded
 /// by `limits::PICTURE_SIDE`), never enlarged, with its own size, what 100%
@@ -1165,12 +1100,12 @@ pub fn read_drawing<'a, S: FileSource + ?Sized>(
             note = "Why an SVG drawing is not previewed: it is larger than the preview reads. size: that bound (16 MB)."
         )
     };
-    let bytes = read_file_words(file, bounds, refusal(), cancel)?;
+    let bytes = read_file(file, bounds, refusal(), cancel)?;
     if bytes.starts_with(&[0x1f, 0x8b]) {
         // Larger inflated than read: refused as a larger file would be.
         let inflated = flate2::read::GzDecoder::new(&bytes[..]);
-        return copy_with(inflated, bounds.binary_input(), cancel, |_| {
-            bounds.refuse_words(refusal())
+        return copy_with(inflated, bounds.binary_input(), cancel, || {
+            bounds.refuse(refusal())
         })
         .map(Cow::Owned);
     }
@@ -1394,21 +1329,13 @@ fn roman(mut n: u32) -> String {
     out
 }
 /// One fact for the panel's Properties, or nothing when the format left it
-/// blank. Bounded: a title can be a whole abstract.
-///
-/// Transitional: [`detail_words`] takes its label as words (ADR-139).
-pub fn detail(label: &str, value: impl AsRef<str>) -> Option<skwir_core::inspection::Detail> {
-    detail_value(value.as_ref()).map(|text| skwir_core::inspection::Detail::new(label, text))
-}
-/// [`detail`], its label a message (`words!`): Properties' labels are said
-/// in the reader's language.
-pub fn detail_words(
+/// blank. Bounded: a title can be a whole abstract. Its label a message
+/// (`words!`), said in the reader's language where Properties shows it.
+pub fn detail(
     label: impl Into<Words>,
     value: impl AsRef<str>,
 ) -> Option<skwir_core::inspection::Detail> {
-    // Transitional: a detail's label is text, said once here (ADR-139).
-    detail_value(value.as_ref())
-        .map(|text| skwir_core::inspection::Detail::new(label.into().say(), text))
+    detail_value(value.as_ref()).map(|text| skwir_core::inspection::Detail::new(label, text))
 }
 /// A fact's value as Properties shows it, bounded; nothing when blank.
 fn detail_value(value: &str) -> Option<String> {
@@ -1422,7 +1349,7 @@ fn detail_value(value: &str) -> Option<String> {
     })
 }
 /// What a rich document cut at `bounds`' `blocks` says in its notice.
-pub fn blocks_notice(bounds: limits::Bounds) -> String {
+pub fn blocks_notice(bounds: limits::Bounds) -> Words {
     words!(
         inspection_blocks_notice = "{ $count ->
                 [one] First { $count } block
@@ -1431,27 +1358,16 @@ pub fn blocks_notice(bounds: limits::Bounds) -> String {
         count = bounds.blocks(),
         note = "A preview's notice: only the beginning of a long document is shown; Source is the button that shows the file's own text."
     )
-    .say()
 }
 /// The facts of `Inspection::details` from `(label, value)` pairs, in order,
-/// leaving out what is blank or `None` (`count` makes a zero blank).
-///
-/// Transitional: [`details_words`] takes the labels as words (ADR-139).
-pub fn details<'a, V: Into<Option<String>>>(
-    facts: impl IntoIterator<Item = (&'a str, V)>,
-) -> Vec<skwir_core::inspection::Detail> {
-    facts
-        .into_iter()
-        .filter_map(|(label, value)| detail(label, value.into()?))
-        .collect()
-}
-/// [`details`], each label a message (`words!`).
-pub fn details_words<V: Into<Option<String>>>(
+/// leaving out what is blank or `None` (`count` makes a zero blank); each
+/// label a message (`words!`).
+pub fn details<V: Into<Option<String>>>(
     facts: impl IntoIterator<Item = (Words, V)>,
 ) -> Vec<skwir_core::inspection::Detail> {
     facts
         .into_iter()
-        .filter_map(|(label, value)| detail_words(label, value.into()?))
+        .filter_map(|(label, value)| detail(label, value.into()?))
         .collect()
 }
 /// The Map view's id (the `geo` plugin's lens): a position shown in
@@ -1463,13 +1379,11 @@ pub const MAP_VIEW: &str = "map";
 /// of a disabled plugin does.
 #[must_use]
 pub fn on_map(detail: skwir_core::inspection::Detail) -> skwir_core::inspection::Detail {
-    // Transitional: a detail's action is text, said once here (ADR-139).
     detail.with_action(
         words!(
             inspection_show_on_map = "Show on map",
             note = "A link after a picture's position in Properties: it opens the Map view."
-        )
-        .say(),
+        ),
         skwir_core::command::Invocation::with_args(
             "ui.view",
             &serde_json::json!({ "id": MAP_VIEW }),
@@ -1548,16 +1462,15 @@ pub fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 /// Header cells: offset, byte positions in row layout, ASCII.
-pub fn hex_columns() -> Vec<String> {
+pub fn hex_columns() -> Vec<Words> {
     vec![
         words!(
             inspection_hex_offset = "Offset",
             note = "A column's header in the hexadecimal view: where each row of bytes is in the file."
-        )
-        .say(),
-        hex_bytes(&(0..HEX_ROW as u8).collect::<Vec<_>>()),
+        ),
+        Words::as_written(hex_bytes(&(0..HEX_ROW as u8).collect::<Vec<_>>())),
         // The character set's name, as written.
-        "ASCII".into(),
+        Words::as_written("ASCII"),
     ]
 }
 
@@ -1590,11 +1503,17 @@ pub fn hex_rows(bytes: &[u8], base: u64) -> Vec<Row> {
 /// `len`-byte source). `offset` must be row aligned; `position` reports where
 /// the caller landed (a search match keeps its exact byte) so the next search
 /// can resume after it.
-pub fn hex_page(title: String, page: &[u8], len: u64, offset: u64, position: u64) -> Inspection {
+pub fn hex_page(
+    title: impl Into<Words>,
+    page: &[u8],
+    len: u64,
+    offset: u64,
+    position: u64,
+) -> Inspection {
     let size = limits::HEX_PAGE;
     Inspection {
         kind: InspectionKind::Hex,
-        title,
+        title: title.into(),
         rows: hex_rows(page, offset),
         columns: hex_columns(),
         position,
@@ -1899,9 +1818,10 @@ mod tests {
         let error = read_text(&path, limits::Bounds::WHOLE, &cancel).unwrap_err();
         assert!(!TooLarge::is(&error), "{error}");
         assert!(error.to_string().contains("33.6 MB"), "{error}");
-        let error = read_file(&path, limits::Bounds::QUICK, "Font", &cancel).unwrap_err();
+        let font = || Words::as_written("Font too large");
+        let error = read_file(&path, limits::Bounds::QUICK, font(), &cancel).unwrap_err();
         assert!(TooLarge::is(&error), "{error}");
-        assert!(read_file(&path, limits::Bounds::WHOLE, "Font", &cancel).is_ok());
+        assert!(read_file(&path, limits::Bounds::WHOLE, font(), &cancel).is_ok());
     }
 
     #[test]
@@ -1917,7 +1837,7 @@ mod tests {
         );
         assert_eq!(rows[1].cells[1], "10 11 12 13");
         assert_eq!(rows[0].cells[2], "................");
-        assert_eq!(hex_columns()[1], rows[0].cells[1]);
+        assert_eq!(hex_columns()[1].english(), rows[0].cells[1]);
         assert_eq!(hex_rows(b"Hi there!\0\xff", 0)[0].cells[2], "Hi there!..");
     }
 
@@ -1929,16 +1849,17 @@ mod tests {
         std::fs::write(&path, "fn main() {\r\n    let x = 1;\n}\n").unwrap();
         let data = plain(&held(&path), None, &cancel).unwrap();
         assert_eq!(data.kind, InspectionKind::Code);
-        assert_eq!(data.title, "3 lines");
+        assert_eq!(data.title.english(), "3 lines");
         assert_eq!(data.blocks[0].text, "fn main() {");
         assert_eq!(data.blocks[1].language.as_deref(), Some("rs"));
-        assert!(data.notice.is_empty() && !data.source_available);
+        assert!(data.notices.is_empty() && !data.source_available);
         let file = data.text.unwrap();
         assert!(file.whole && file.path == path);
         let shown = source(&held(&path), None, &cancel).unwrap();
         assert!(shown.source_available);
         assert_eq!(
-            shown.title, "3 lines",
+            shown.title.english(),
+            "3 lines",
             "said as any text is, never by offset"
         );
 
@@ -1950,14 +1871,14 @@ mod tests {
         assert_eq!(first.blocks[0].language.as_deref(), Some("Makefile"));
         assert_eq!(first.blocks.len() as u64, crate::text_rows::STRIDE);
         assert!(first.title.is_empty() && !first.text.unwrap().whole);
-        assert!(first.notice.is_empty(), "nothing said of pages");
+        assert!(first.notices.is_empty(), "nothing said of pages");
 
         // One endless line is rows of the code view, a line's number once.
         let minified = dir.path().join("app.min.js");
         std::fs::write(&minified, "x".repeat(limits::LINE_BYTES + 1)).unwrap();
         let data = plain(&held(&minified), None, &cancel).unwrap();
         assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Code, 2));
-        assert_eq!(data.title, "1 line");
+        assert_eq!(data.title.english(), "1 line");
     }
 
     /// The name's grammar first; where none knows the name, what the
@@ -2066,8 +1987,8 @@ mod tests {
         );
         assert_eq!(Encoding::Utf8.notice(), None);
         assert_eq!(
-            Encoding::Windows1252.notice().as_deref(),
-            Some("Read as Windows-1252")
+            Encoding::Windows1252.notice().map(|said| said.english()),
+            Some("Read as Windows-1252".to_owned())
         );
 
         let dir = tempfile::tempdir().unwrap();
@@ -2080,7 +2001,10 @@ mod tests {
         );
         let data = plain(&held(&path), None, &cancel).unwrap();
         assert_eq!(data.blocks[1].text, "caf\u{e9};3");
-        assert_eq!(data.notice, "Read as Windows-1252");
+        assert_eq!(
+            data.notice().map(|said| said.english()).as_deref(),
+            Some("Read as Windows-1252")
+        );
     }
 
     #[test]
@@ -2089,14 +2013,18 @@ mod tests {
         assert_eq!(code.kind, InspectionKind::Code);
         assert_eq!(code.blocks.len(), 3);
         assert!(code_lines("", None).blocks.is_empty());
+        let label = Words::as_written;
         let facts = details([
-            ("Words", count(12)),
-            ("Headings", count(0)),
-            ("Author", Some("  ".into())),
-            ("Title", None),
+            (label("Words"), count(12)),
+            (label("Headings"), count(0)),
+            (label("Author"), Some("  ".into())),
+            (label("Title"), None),
         ]);
-        assert_eq!(facts, [skwir_core::inspection::Detail::new("Words", "12")]);
-        assert_eq!(details([("Size", size(1536))])[0].value, "1.5 kB");
+        assert_eq!(
+            facts,
+            [skwir_core::inspection::Detail::new(label("Words"), "12")]
+        );
+        assert_eq!(details([(label("Size"), size(1536))])[0].value, "1.5 kB");
         assert_eq!(size(512), "512 B");
     }
 
@@ -2120,13 +2048,13 @@ mod tests {
 
     #[test]
     fn hex_page_navigates_by_row_aligned_offsets() {
-        let page = hex_page("Hex".into(), &[0; 4096], 10000, 4096, 4100);
+        let page = hex_page(Words::as_written("Hex"), &[0; 4096], 10000, 4096, 4100);
         assert_eq!(page.kind, InspectionKind::Hex);
         assert_eq!(page.previous, Some(0));
         assert_eq!(page.next, Some(8192));
         assert_eq!(page.position, 4100);
         assert_eq!(page.rows.len(), 256);
-        assert_eq!(hex_page("Hex".into(), &[1], 1, 0, 0).next, None);
+        assert_eq!(hex_page(Words::as_written("Hex"), &[1], 1, 0, 0).next, None);
     }
 
     #[test]
@@ -2182,13 +2110,14 @@ mod tests {
     #[test]
     fn copy_bounded_rejects_streams_beyond_the_limit() {
         let cancel = CancelToken::new();
-        let ok = copy_bounded(&b"12345"[..], 5, "Sample", &cancel).unwrap();
+        let refusal = || Words::as_written("Sample exceeds its limit");
+        let ok = copy_bounded(&b"12345"[..], 5, refusal(), &cancel).unwrap();
         assert_eq!(ok, b"12345");
-        let error = copy_bounded(&b"123456"[..], 5, "Sample", &cancel).unwrap_err();
+        let error = copy_bounded(&b"123456"[..], 5, refusal(), &cancel).unwrap_err();
         assert!(error.to_string().contains("Sample exceeds"));
         let big = std::io::repeat(0).take(200_000);
-        assert!(copy_bounded(big, 100_000, "Sample", &cancel).is_err());
+        assert!(copy_bounded(big, 100_000, refusal(), &cancel).is_err());
         cancel.cancel();
-        assert!(copy_bounded(&b"1"[..], 5, "Sample", &cancel).is_err());
+        assert!(copy_bounded(&b"1"[..], 5, refusal(), &cancel).is_err());
     }
 }

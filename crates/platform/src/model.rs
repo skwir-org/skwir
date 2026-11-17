@@ -195,7 +195,7 @@ pub fn draw(
     asked: Asked,
     cancel: &CancelToken,
 ) -> anyhow::Result<Drawn> {
-    let worker = WORKER.require_words(skwir_core::words!(
+    let worker = WORKER.require(skwir_core::words!(
         model_install = "Install { $program } to draw 3D models",
         program = WORKER.executable,
         note =

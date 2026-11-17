@@ -26,8 +26,8 @@ pub struct Features {
     pub about: bool,
     /// It makes a public link to a file (`PublicLink`).
     pub public_link: bool,
-    /// Where its server keeps what is deleted, in the user's words.
-    pub trash: Option<String>,
+    /// Where its server keeps what is deleted, said where it is shown.
+    pub trash: Option<Words>,
 }
 
 /// The remote control of the mount Skwir made at `point`, where it has
@@ -104,10 +104,10 @@ fn configured(fs: &str) -> Option<&str> {
 
 /// Where a remote of `config` (as `config/get` answers it: its `type` and
 /// options) keeps what is deleted, for the kinds of storage whose trash
-/// rclone empties (`CleanUp`), unless its options delete for good. Said
-/// for the window, which names it where a deletion is asked and done
-/// (`fs::reach::Known::trash` is text).
-pub fn trash_of(config: &Value) -> Option<String> {
+/// rclone empties (`CleanUp`), unless its options delete for good: what
+/// the window names where a deletion is asked and done
+/// (`fs::reach::Known::trash`).
+pub fn trash_of(config: &Value) -> Option<Words> {
     let option = |name: &str| config[name].as_str().unwrap_or_default();
     let trash = match config["type"].as_str()? {
         "drive" if option("use_trash") != "false" => {
@@ -129,7 +129,7 @@ pub fn trash_of(config: &Value) -> Option<String> {
         }
         _ => return None,
     };
-    Some(trash.say())
+    Some(trash)
 }
 
 /// `below`, a path below a mount, as rclone names it on its remote: its
@@ -200,7 +200,9 @@ mod tests {
     #[test]
     fn a_cloud_s_trash_is_named_unless_its_options_delete_for_good() {
         assert_eq!(
-            trash_of(&json!({ "type": "drive" })).as_deref(),
+            trash_of(&json!({ "type": "drive" }))
+                .map(|w| w.english())
+                .as_deref(),
             Some("Google Drive's trash")
         );
         assert_eq!(
@@ -208,7 +210,9 @@ mod tests {
             None
         );
         assert_eq!(
-            trash_of(&json!({ "type": "onedrive", "hard_delete": "false" })).as_deref(),
+            trash_of(&json!({ "type": "onedrive", "hard_delete": "false" }))
+                .map(|w| w.english())
+                .as_deref(),
             Some("OneDrive's recycle bin")
         );
         assert_eq!(
@@ -315,14 +319,18 @@ mod tests {
                 json!({ "type": "drive", "scope": "drive" }),
             ],
         );
-        let features = of_mount(point, &CancelToken::new()).unwrap();
+        let mut features = of_mount(point, &CancelToken::new()).unwrap();
+        assert_eq!(
+            features.trash.take().map(|w| w.english()).as_deref(),
+            Some("Google Drive's trash")
+        );
         assert_eq!(
             features,
             Features {
                 fs: "work:".into(),
                 about: true,
                 public_link: true,
-                trash: Some("Google Drive's trash".into()),
+                trash: None,
             }
         );
         let asked: Vec<String> = calls.try_iter().map(|(method, _)| method).collect();

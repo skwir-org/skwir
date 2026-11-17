@@ -220,18 +220,11 @@ impl Display {
                 .iter()
                 .filter_map(|r| r.bytes)
                 .fold(0u64, u64::saturating_add);
-            // Transitional: the notice is said text (ADR-139).
-            let unpacked = words!(
+            data.notices.push(words!(
                 inspector_unpacked = "{ $size } unpacked",
                 size = words::Size(total),
                 note = "Beside an archive's preview: what its files weigh once unpacked."
-            )
-            .say();
-            data.notice = if data.notice.is_empty() {
-                unpacked
-            } else {
-                format!("{} · {unpacked}", data.notice)
-            };
+            ));
         }
         // A picture decoded with the page is uploaded here, its ink read, on
         // the worker; one for later stays in its block, for its size and its
@@ -655,7 +648,7 @@ pub(crate) fn listed(data: &Inspection) -> &[skwir_core::inspection::Row] {
 fn said_row(
     row: gpui::Stateful<gpui::Div>,
     r: &skwir_core::inspection::Row,
-    columns: &[String],
+    columns: &[Words],
     kind: InspectionKind,
     position: usize,
     chosen: bool,
@@ -686,9 +679,9 @@ fn said_row(
                 match columns.get(i).filter(|column| !column.is_empty()) {
                     Some(column) => words!(
                         inspector_cell_said = "{ $column }: { $cell }",
-                        column = column.as_str(),
+                        column = column.clone(),
                         cell = cell,
-                        note = "What a screen reader hears of a cell of a row in a preview's table: its column's header, then what it holds, both as the file writes them."
+                        note = "What a screen reader hears of a cell of a row in a preview's table: its column's header (Skwir's, or the file's own), then what it holds, as the file writes it."
                     )
                     .say(),
                     None => cell,
@@ -1896,7 +1889,7 @@ impl Shell {
                 let (pane, generation) = (self.pane, self.preview.generation);
                 self.open_prompt(
                     crate::prompts::PromptKind::InspectJump { pane, generation },
-                    &jump_to_offset().say(),
+                    jump_to_offset(),
                     "",
                     None,
                     window,
@@ -2938,7 +2931,7 @@ fn edge_step(resting: i8, toward: i8, here: bool) -> (i8, bool) {
 }
 
 fn button(id: &'static str, icon: &'static str, title: &Words, action: &str) -> Button {
-    Button::new(id, icon, title.say(), "ui.inspect").args(serde_json::json!({"action":action}))
+    Button::new(id, icon, title.clone(), "ui.inspect").args(serde_json::json!({"action":action}))
 }
 
 /// What the hex view's jump is called: its button and its prompt.
@@ -3079,11 +3072,37 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             ),
         )
     };
-    let step = |id, icon, title: &Words, args: Option<serde_json::Value>| {
+    // What a row of More calls each, without the key its tooltip says.
+    let names = if printed {
+        (
+            words!(
+                inspector_previous_page_name = "Previous page",
+                note =
+                    "A book's previous button, as a menu's row names it: counted by printed pages."
+            ),
+            words!(
+                inspector_next_page_name = "Next page",
+                note = "A book's next button, as a menu's row names it: counted by printed pages."
+            ),
+        )
+    } else {
+        (
+            words!(
+                inspector_previous_section_name = "Previous section",
+                note = "A preview's previous button, as a menu's row names it: the chapter, sheet or page of rows before."
+            ),
+            words!(
+                inspector_next_section_name = "Next section",
+                note = "A preview's next button, as a menu's row names it: the chapter, sheet or page of rows after."
+            ),
+        )
+    };
+    let step = |id, icon, title: &Words, name: &Words, args: Option<serde_json::Value>| {
         let enabled = args.is_some();
-        Button::new(id, icon, title.say(), "ui.inspect")
+        Button::new(id, icon, title.clone(), "ui.inspect")
             .args(args.unwrap_or_else(|| serde_json::json!({})))
             .enabled(enabled)
+            .named(name.clone())
     };
     // A file of more than one section (sheets, pages of rows, parts) has
     // both arrows on every one of them, the one with nowhere to go
@@ -3094,7 +3113,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::Navigate,
             2,
-            step("inspect-prev", "left", &titles.0, previous),
+            step("inspect-prev", "left", &titles.0, &names.0, previous),
         ));
     }
     if numbered {
@@ -3114,13 +3133,8 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         // A book that lists its printed pages can be counted either way.
         let unit = (!data.printed_pages.is_empty()).then(|| {
             (
-                Button::new(
-                    "inspect-unit",
-                    "",
-                    label::count_by().say(),
-                    "ui.preview_menu",
-                )
-                .args(serde_json::json!({"kind":"unit"})),
+                Button::new("inspect-unit", "", label::count_by(), "ui.preview_menu")
+                    .args(serde_json::json!({"kind":"unit"})),
                 "unit",
             )
         });
@@ -3148,7 +3162,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::Navigate,
             2,
-            step("inspect-next", "right", &titles.1, next),
+            step("inspect-next", "right", &titles.1, &names.1, next),
         ));
     }
     // A picture shown as text (its source, its bytes) is still one of the
@@ -3168,7 +3182,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Button::new(
                 "inspect-outline",
                 "contents",
-                label::contents().say(),
+                label::contents(),
                 "ui.preview_contents",
             )
             .active(state.outline && contents)
@@ -3248,11 +3262,11 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 Button::new(
                     "inspect-text-size",
                     "chevron",
-                    text_size().say(),
+                    text_size(),
                     "ui.preview_menu",
                 )
                 .args(serde_json::json!({"kind":"text"}))
-                .label(crate::sizes::step_label(state.percent(data, &theme.sizes)))
+                .label(crate::sizes::step_words(state.percent(data, &theme.sizes)))
                 .enabled(sized),
             )
             .opens("text"),
@@ -3280,8 +3294,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 words!(
                     inspector_full_width = "Full width",
                     note = "A preview's button: lines of text as wide as the panel, not the reading width chosen in Settings."
-                )
-                .say(),
+                ),
                 "ui.full_width",
             )
                 .active(shell.reading_measure.is_none())
@@ -3298,7 +3311,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Button::new(
                 "inspect-continuous",
                 "continuous",
-                label::continuous().say(),
+                label::continuous(),
                 "ui.text_continuous",
             )
             .active(shell.prefs.text_continuous)
@@ -3365,7 +3378,8 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         }
         .say()
     });
-    let caption = counted.as_deref().unwrap_or(data.title.as_str());
+    let title = data.title.say();
+    let caption = counted.as_deref().unwrap_or(title.as_str());
     if state.text.is_some() {
         let wrap = words!(
             inspector_wrap_lines = "Wrap lines",
@@ -3402,13 +3416,8 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Item::button(
                 Slot::Tools,
                 2,
-                Button::new(
-                    "inspect-search",
-                    "search",
-                    label::find().say(),
-                    "ui.preview_find",
-                )
-                .active(state.finding()),
+                Button::new("inspect-search", "search", label::find(), "ui.preview_find")
+                    .active(state.finding()),
             )
             .opens("find"),
         );
@@ -3459,8 +3468,8 @@ fn text_size_panel(
         ("text200", 200),
     ] {
         presets = presets.child(
-            Button::new(id, "", text_size().say(), "ui.inspect")
-                .label(crate::sizes::step_label(step))
+            Button::new(id, "", text_size(), "ui.inspect")
+                .label(crate::sizes::step_words(step))
                 .args(serde_json::json!({"action":"text_size","percent":step}))
                 .active(percent == step)
                 .render(shell, cx),
@@ -3516,7 +3525,7 @@ pub fn find_panel(
         Button::new(
             "inspect-close-find",
             "close",
-            label::close_find().say(),
+            label::close_find(),
             "ui.preview_find_close",
         ),
     ];
@@ -3551,10 +3560,9 @@ pub(crate) fn paper(display: &Display, theme: &Theme) -> gpui::Hsla {
 }
 
 /// What the frame's notice strip says about this inspection: how it is shown
-/// and what was left out.
+/// and what was left out, said where it is drawn.
 pub fn notice(display: &Display) -> Option<String> {
-    let data = &display.data;
-    (!data.notice.is_empty()).then(|| data.notice.clone())
+    display.data.notice().map(|notice| notice.say())
 }
 
 /// Whether ASCII `text` holds `folded` (`text_rows::fold`) once folded
@@ -4597,14 +4605,12 @@ pub fn content(
             .map_or(0, |widths| widths.len())
             .max(display.data.columns.len());
         for index in 0..count {
-            let column = display.data.columns.get(index).map_or("", String::as_str);
+            let column = display.data.columns.get(index).cloned().unwrap_or_default();
             let said = match sort {
-                Some((sorted, ascending)) if sorted == index => crate::views::list::sorted_header(
-                    Words::as_written(column.to_owned()),
-                    ascending,
-                )
-                .say(),
-                _ => column.to_owned(),
+                Some((sorted, ascending)) if sorted == index => {
+                    crate::views::list::sorted_header(column, ascending).say()
+                }
+                _ => column.say(),
             };
             let (title, clip) = crate::elements::clip::text(said);
             header = header.child(
@@ -5779,9 +5785,12 @@ mod tests {
         let code = crate::code_preview::CodeTheme::own(false);
         let alone = Display::new(
             Inspection {
-                title: "3MF".into(),
+                title: Words::as_written("3MF"),
                 image: Some(tall()),
-                details: vec![skwir_core::inspection::Detail::new("Plates", "2")],
+                details: vec![skwir_core::inspection::Detail::new(
+                    Words::as_written("Plates"),
+                    "2",
+                )],
                 ..Inspection::default()
             },
             &code,
@@ -6272,7 +6281,7 @@ mod tests {
         let display = Display::new(
             Inspection {
                 kind: InspectionKind::Table,
-                columns: vec!["Name".into()],
+                columns: vec![Words::as_written("Name")],
                 rows,
                 ..Inspection::default()
             },

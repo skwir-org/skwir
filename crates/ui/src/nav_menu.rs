@@ -24,7 +24,7 @@ use gpui::{
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::words;
-use skwir_core::words::Name;
+use skwir_core::words::{Name, Words};
 use skwir_core::workspace::PaneId;
 
 use crate::keymap::RunCommand;
@@ -567,11 +567,12 @@ fn rows(shell: &Shell, range: std::ops::Range<usize>, cx: &mut Context<Shell>) -
             let button = Button::new(
                 SharedString::from(format!("nav-{i}")),
                 row.icon,
-                row.tip.clone(),
+                // Said as the menu opened, for as long as it is open.
+                Words::as_written(row.tip.to_string()),
                 row.command,
             )
             .args(row.args.clone())
-            .label(row.label.clone())
+            .label(Words::as_written(row.label.to_string()))
             .menu()
             .active(row.current)
             .enabled(row.enabled)

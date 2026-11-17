@@ -28,7 +28,7 @@ pub const PSEUDO: &str = "en-XA";
 
 /// A crate's message: who says it, which, its English as the code writes
 /// it, and what a translator needs to know of it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Message {
     /// The crate's package name (`skwir-plugin-trash`).
     pub domain: &'static str,
@@ -39,10 +39,10 @@ pub struct Message {
 
 /// What Skwir says: a message with its arguments, or text as written (an
 /// agent's, the system's), shown as it is in every language.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Words(Inner);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Inner {
     Message(&'static Message, Arc<[(&'static str, Arg)]>),
     Written(Cow<'static, str>),
@@ -58,7 +58,7 @@ enum Inner {
 }
 
 /// A message known by its domain and id, as its data carries it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 struct Carried {
     domain: String,
     id: String,
@@ -81,9 +81,17 @@ impl PartialEq for Failure {
 
 impl Eq for Failure {}
 
+impl std::hash::Hash for Failure {
+    /// As it equals: the same error from the same link.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.0).hash(state);
+        self.1.hash(state);
+    }
+}
+
 /// An argument of a message, typed: each said as its type says it in the
 /// reader's language (ADR-139, 5).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     /// Text that is not Skwir's to translate (a path, a command, what the
     /// system said), as it is.
@@ -112,7 +120,7 @@ pub enum Arg {
 }
 
 /// How a list's items are joined.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Join {
     /// All of them: "a, b and c".
     And,
@@ -740,6 +748,48 @@ pub mod data {
         serde::Deserialize::deserialize(deserializer)
     }
 
+    /// `#[serde(with = "skwir_core::words::data::optional")]`: words that
+    /// may be missing (`Option<Words>`), as their data.
+    pub mod optional {
+        use super::{Words, of};
+
+        #[allow(clippy::ref_option)] // The signature serde's `with` calls.
+        pub fn serialize<S: serde::Serializer>(
+            words: &Option<Words>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match words {
+                Some(words) => serializer.serialize_some(&of(words)),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<Words>, D::Error> {
+            serde::Deserialize::deserialize(deserializer)
+        }
+    }
+
+    /// `#[serde(with = "skwir_core::words::data::many")]`: a list of words
+    /// (`Vec<Words>`), each as its data.
+    pub mod many {
+        use super::{Words, of};
+
+        pub fn serialize<S: serde::Serializer>(
+            words: &[Words],
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            serializer.collect_seq(words.iter().map(of))
+        }
+
+        pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Vec<Words>, D::Error> {
+            serde::Deserialize::deserialize(deserializer)
+        }
+    }
+
     pub(super) fn of(words: &Words) -> Value {
         match &words.0 {
             Inner::Message(message, args) => message_of(
@@ -931,15 +981,17 @@ mod plurals {
 /// A sentence's first letter, cased by its language's rules (ICU4X).
 mod casing {
     use icu_casemap::TitlecaseMapper;
-    use icu_casemap::options::{TitlecaseOptions, TrailingCase};
+    use icu_casemap::options::{LeadingAdjustment, TitlecaseOptions, TrailingCase};
     use icu_locale_core::LanguageIdentifier;
 
-    /// `said` with its first letter (past what is not one: a quote, a
-    /// bracket) in its title case in `language`, the rest as it is.
+    /// `said` with its first character in its title case in `language`
+    /// where it is a letter, the rest as it is: a sentence that begins with
+    /// a quote (a name's) is left as it is, so a name is never changed.
     pub fn heading(language: &str, said: &str) -> String {
         let language: LanguageIdentifier = language.parse().unwrap_or(LanguageIdentifier::UNKNOWN);
         let mut options = TitlecaseOptions::default();
         options.trailing_case = Some(TrailingCase::Unchanged);
+        options.leading_adjustment = Some(LeadingAdjustment::None);
         TitlecaseMapper::new()
             .titlecase_segment_to_string(said, &language, options)
             .into_owned()
