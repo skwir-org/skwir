@@ -336,3 +336,41 @@ fn a_sentence_is_cut_around_an_argument() {
     );
     assert_eq!(held.say_around("nothing"), None);
 }
+
+/// Words sent as data come back as the words they are: said in the
+/// reader's language where a catalog has them, their English otherwise;
+/// text as written stays text.
+#[test]
+fn words_sent_as_data_come_back_as_themselves() {
+    let hello = crate::words!(
+        test_carried =
+            "Hello { $who }, { $count ->\n    [one] one file\n   *[other] { $count } files\n}",
+        who = Name("Ana".into()),
+        count = 3
+    );
+    let data = hello.to_data();
+    let back: Words = serde_json::from_value(data.clone()).unwrap();
+    assert_eq!(back.english(), "Hello “Ana”, 3 files");
+    assert_eq!(
+        serde_json::to_value(&back).unwrap(),
+        serde_json::json!("Hello “Ana”, 3 files")
+    );
+    assert_eq!(back.to_data(), data);
+    register(
+        "words-test",
+        env!("CARGO_PKG_NAME"),
+        Catalog::new(
+            "fr",
+            "test_carried = Bonjour { $who }, { $count ->\n    [one] un fichier\n   *[other] { $count } fichiers\n}\n",
+        ),
+    );
+    assert_eq!(
+        back.say_in(&langs(&["fr", "en"])),
+        "Bonjour «\u{202f}Ana\u{202f}», 3 fichiers"
+    );
+    withdraw("words-test");
+    let heading: Words = serde_json::from_value(hello.heading().to_data()).unwrap();
+    assert_eq!(heading.english(), "Hello “Ana”, 3 files");
+    let text: Words = serde_json::from_value(serde_json::json!("as an agent wrote it")).unwrap();
+    assert_eq!(text.english(), "as an agent wrote it");
+}

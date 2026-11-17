@@ -52,6 +52,18 @@ enum Inner {
     /// Words that begin what is shown (a toast, a row), their first letter
     /// cased as the reader's language begins a sentence (`Words::heading`).
     Heading(Box<Words>),
+    /// A message come back from its data (`Words::to_data`): said from the
+    /// catalogs by its domain and id, else as its English was carried.
+    Carried(Arc<Carried>),
+}
+
+/// A message known by its domain and id, as its data carries it.
+#[derive(Debug, PartialEq, Eq)]
+struct Carried {
+    domain: String,
+    id: String,
+    english: String,
+    args: Vec<(String, Arg)>,
 }
 
 /// An error held as words: its chain, said link by link where it is said
@@ -285,7 +297,7 @@ impl Words {
         match &self.0 {
             Inner::Message(message, _) => Some(message),
             Inner::Heading(words) => words.message_of(),
-            Inner::Written(_) | Inner::Error(_) => None,
+            Inner::Written(_) | Inner::Error(_) | Inner::Carried(_) => None,
         }
     }
 
@@ -371,6 +383,17 @@ impl Words {
                 let language = languages.first().map_or(ENGLISH, String::as_str);
                 return out.push_str(&casing::heading(language, &said));
             }
+            Inner::Carried(carried) => {
+                if languages.first().is_some_and(|first| first == PSEUDO) {
+                    return out.push_str(&pseudo(&carried.english));
+                }
+                return match find(&carried.domain, &carried.id, languages) {
+                    Some((said, language)) => {
+                        say(&said, &carried.args, &language, languages, out, false);
+                    }
+                    None => out.push_str(&carried.english),
+                };
+            }
             Inner::Message(message, args) => (*message, args),
         };
         if languages.first().is_some_and(|first| first == PSEUDO) {
@@ -397,15 +420,19 @@ impl Words {
 /// Say `elements` with `args` in `language` (its plurals, its quotes);
 /// nested words in `languages`. In the pseudo-language each argument is
 /// marked, so what is placed wrong shows.
-fn say(
+fn say<N: AsRef<str>>(
     elements: &[Element],
-    args: &[(&'static str, Arg)],
+    args: &[(N, Arg)],
     language: &str,
     languages: &[String],
     out: &mut String,
     marked: bool,
 ) {
-    let arg = |name: &str| args.iter().find(|(n, _)| *n == name).map(|(_, a)| a);
+    let arg = |name: &str| {
+        args.iter()
+            .find(|(n, _)| n.as_ref() == name)
+            .map(|(_, a)| a)
+    };
     for element in elements {
         match element {
             Element::Text(text) => out.push_str(text),
@@ -669,9 +696,181 @@ impl serde::Serialize for Words {
 }
 
 impl<'de> serde::Deserialize<'de> for Words {
-    /// Text that comes in (an agent's plan, a file kept) is as written.
+    /// Text that comes in (an agent's plan, a file kept) is as written;
+    /// words' data (`Words::to_data`) comes back as the words it carries.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Words::as_written)
+        data::Data::deserialize(deserializer).map(data::Data::into_words)
+    }
+}
+
+impl Words {
+    /// These words as data, for what the window sends itself as JSON (a
+    /// form `ui.ask` shows, a menu a plugin answers, a search's chips):
+    /// they come back as the words they are (`Deserialize`), said in the
+    /// reader's language, where `Serialize` writes English for agents. An
+    /// agent's plain text reads as written either way.
+    pub fn to_data(&self) -> serde_json::Value {
+        data::of(self)
+    }
+}
+
+/// Words' data: a message by its domain, id, English and typed arguments,
+/// or text as written. Use `#[serde(with = "skwir_core::words::data")]` on a
+/// field the window sends itself.
+pub mod data {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use serde_json::{Value, json};
+
+    use super::{Arg, Carried, Inner, Join, Kind, Words};
+
+    /// `words` written as their data.
+    pub fn serialize<S: serde::Serializer>(
+        words: &Words,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&of(words), serializer)
+    }
+
+    /// Words read back from their data, or text as written.
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Words, D::Error> {
+        serde::Deserialize::deserialize(deserializer)
+    }
+
+    pub(super) fn of(words: &Words) -> Value {
+        match &words.0 {
+            Inner::Message(message, args) => message_of(
+                message.domain,
+                message.id,
+                &words.english(),
+                args.iter().map(|(n, a)| (*n, a)),
+            ),
+            Inner::Carried(carried) => message_of(
+                &carried.domain,
+                &carried.id,
+                &carried.english,
+                carried.args.iter().map(|(n, a)| (n.as_str(), a)),
+            ),
+            Inner::Heading(inner) => json!({ "heading": of(inner) }),
+            Inner::Written(_) | Inner::Error(_) => Value::String(words.english()),
+        }
+    }
+
+    fn message_of<'a>(
+        domain: &str,
+        id: &str,
+        english: &str,
+        args: impl Iterator<Item = (&'a str, &'a Arg)>,
+    ) -> Value {
+        let args: serde_json::Map<String, Value> = args
+            .map(|(name, arg)| (name.to_owned(), arg_of(arg)))
+            .collect();
+        json!({ "domain": domain, "id": id, "english": english, "args": args })
+    }
+
+    fn arg_of(arg: &Arg) -> Value {
+        match arg {
+            Arg::Text(text) => json!({ "text": text }),
+            Arg::Name(name) => json!({ "name": name }),
+            Arg::Folder(folder) => json!({ "folder": folder }),
+            Arg::Count(n) => json!({ "count": n }),
+            Arg::Size(n) => json!({ "size": n }),
+            Arg::Kind(word) => json!({ "kind": word }),
+            Arg::Words(words) => json!({ "words": of(words) }),
+            Arg::Error(_) => {
+                let mut said = String::new();
+                super::said_arg(arg, super::ENGLISH, &[], &mut said);
+                json!({ "text": said })
+            }
+            Arg::List(join, items) => {
+                let items: Vec<Value> = items.iter().map(arg_of).collect();
+                match join {
+                    Join::And => json!({ "and": items }),
+                    Join::Or => json!({ "or": items }),
+                }
+            }
+        }
+    }
+
+    /// What comes in: text, a heading, or a message.
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    pub(super) enum Data {
+        Text(String),
+        Heading {
+            heading: Box<Data>,
+        },
+        Message {
+            domain: String,
+            id: String,
+            english: String,
+            #[serde(default)]
+            args: BTreeMap<String, ArgData>,
+        },
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub(super) enum ArgData {
+        Text(String),
+        Name(String),
+        Folder(String),
+        Count(i64),
+        Size(u64),
+        Kind(String),
+        Words(Data),
+        And(Vec<ArgData>),
+        Or(Vec<ArgData>),
+    }
+
+    impl Data {
+        pub(super) fn into_words(self) -> Words {
+            match self {
+                Data::Text(text) => Words::as_written(text),
+                Data::Heading { heading } => heading.into_words().heading(),
+                Data::Message {
+                    domain,
+                    id,
+                    english,
+                    args,
+                } => Words(Inner::Carried(Arc::new(Carried {
+                    domain,
+                    id,
+                    english,
+                    args: args.into_iter().map(|(n, a)| (n, a.into_arg())).collect(),
+                }))),
+            }
+        }
+    }
+
+    impl ArgData {
+        fn into_arg(self) -> Arg {
+            match self {
+                ArgData::Text(text) => Arg::Text(text.into()),
+                ArgData::Name(name) => Arg::Name(name),
+                ArgData::Folder(folder) => Arg::Folder(folder),
+                ArgData::Count(n) => Arg::Count(n),
+                ArgData::Size(n) => Arg::Size(n),
+                ArgData::Kind(word) => Arg::Kind(
+                    [Kind::File, Kind::Folder, Kind::Link, Kind::Item]
+                        .into_iter()
+                        .find(|kind| kind.word() == word)
+                        .unwrap_or(Kind::Item)
+                        .word(),
+                ),
+                ArgData::Words(data) => Arg::Words(Box::new(data.into_words())),
+                ArgData::And(items) => Arg::List(
+                    Join::And,
+                    items.into_iter().map(ArgData::into_arg).collect(),
+                ),
+                ArgData::Or(items) => {
+                    Arg::List(Join::Or, items.into_iter().map(ArgData::into_arg).collect())
+                }
+            }
+        }
     }
 }
 
