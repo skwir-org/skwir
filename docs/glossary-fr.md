@@ -122,7 +122,7 @@ decide by the English of the same id and its note for translators.
 | plugin from outside (ADR-045) | module externe | |
 | WebAssembly module | module WebAssembly | |
 | agent | agent | an AI or a script that drives Skwir |
-| Skwir (the product, in prose) | Skwir | « skwir » only where it names the program a terminal runs (`skwir --probe`), a path or an id |
+| Skwir (the product, in prose) | Skwir | « skwir » where it names the program a terminal runs (`skwir --probe`), a path or an id, and where the product shows its name as a brand: the window's title (« Téléchargements — skwir ») and the launcher's name, lowercase by the user's choice (2026-11-17) |
 | Usage (disk usage view) | Occupation | |
 | extract / compress | extraire / compresser | |
 | archive | archive | |

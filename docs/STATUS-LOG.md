@@ -19545,6 +19545,6 @@ The user followed the recommendations on the open questions.
   the desktop's; the `entries` command's "kind" has a note.
 
 **Left as it was:** the window's title and the desktop entry write
-`skwir` in lowercase, the product's name as it presents itself (a
-question for the user); the hex view as a module says its size in
+`skwir` in lowercase, the brand, as the user confirmed (prose says
+"Skwir"); the hex view as a module says its size in
 English until protocol 2 (step H).

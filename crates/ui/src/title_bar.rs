@@ -513,7 +513,9 @@ fn named(button: WindowButton, maximized: bool) -> (Words, &'static str) {
 }
 
 /// The window's title: its active pane's location's (`place`), then
-/// skwir's name; skwir's alone where it has none.
+/// skwir's name; skwir's alone where it has none. The name is the brand,
+/// lowercase as the launcher's (`Name=skwir`), by the user's choice:
+/// prose says "Skwir", the title does not.
 pub(crate) fn window_title(place: &Words) -> Words {
     if place.is_empty() {
         Words::as_written("skwir")
