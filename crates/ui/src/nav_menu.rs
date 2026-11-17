@@ -277,7 +277,8 @@ impl Shell {
                 let inside = match read {
                     Ok(inside) => inside,
                     Err(error) => {
-                        let name = Name(shell.app.location_title(&of).say());
+                        // Plain: a name in these words, isolated there.
+                        let name = Name(shell.app.location_title(&of).say_plain());
                         shell.set_status(
                             words!(
                                 nav_menu_unreadable = "Could not read { $name }: { $error }",

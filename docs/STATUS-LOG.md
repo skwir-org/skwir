@@ -19548,3 +19548,104 @@ The user followed the recommendations on the open questions.
 `skwir` in lowercase, the brand, as the user confirmed (prose says
 "Skwir"); the hex view as a module says its size in
 English until protocol 2 (step H).
+
+## 2026-11-17 (night): Names isolated, French shipped, names by the locale, right-to-left text (ADR-139)
+
+The user chose the four follow-ups; five agents built them, the
+integrator built, checked and wired.
+
+- **A name isolated from its sentence** (ADR-139, 5, promised and not
+  built until now). `Words::say` wraps a `Name` in FSI…PDI inside its
+  quotes (the quotes are the sentence's punctuation) and a `Folder`
+  bare; `english()`, `say_in`, data, `Serialize` and `Display` never
+  carry the marks, and the new `Words::say_plain` says the window's
+  language without them for what leaves the window. The sinks were
+  audited: saved searches' names and titles (which reached agents through
+  `location_title`), the print plugin's file names and PDF text, a place's
+  title and keyring label, a file the editor reads, metadata agents read,
+  a Properties row copied on a click; a name made of said words is
+  tested to carry no mark. Words sent as data carry their English
+  pattern (an optional `pattern` field), so a `ui.ask` title's names are
+  isolated too.
+- **The desktop file, AppStream and macOS in French** (ADR-139, 13):
+  `tools/package/linux/po` (`fr.po`'s nine messages drafted, fuzzy),
+  merged by `tools/package/linux/l10n.sh` in every Linux package (deb,
+  rpm, AUR, AppImage, Nix), checked installed by each package's check;
+  the brand never offered to translators. Byte-identical merges from
+  gettext 0.21 to 1.0; real .deb and .rpm made from kept binaries carry
+  the French. macOS's bundle declares the languages offered (ADR-139
+  amended: a shipped language not offered would mix macOS's menus with
+  Skwir's English).
+- **When a language is offered** (ADR-139, 13): `just words` counts each
+  language's translated and reviewed shares into `catalogs.rs` (nothing
+  read at start: counting there would cost ~1.9 ms and ~600 KiB for
+  French alone) and keeps `tools/words/offered` (90 % reviewed and every
+  message of what is on by default; only a person removes one).
+  Automatic speaks only an offered language, so **a French system gets
+  English until the user's review** (Settings: « Français — incomplet,
+  traduit à 100 %, relu à 0 % », chosen by hand for the review);
+  `lint-all` refuses a release offering one under 75 %. The system's own
+  translations (desktop entries, type names) follow the user's languages
+  whatever Skwir offers (`locale::preferred`). An older bug fixed: a
+  system in British English with French second got French.
+- **Names in the region's order** (ADR-139, 15): ICU4X's numeric sort
+  keys behind `collate`'s seam for `LC_COLLATE` (the region on macOS and
+  Windows), base letters then accents then case, punctuation counted;
+  C and POSIX keep today's keys byte for byte; type-to-find matches at
+  the collation's primary strength (a byte walk turns most ASCII names
+  away first); Group by Name groups by the collation's letters (é under
+  E, Swedish Ä apart). Batches of 64 names or more are keyed on the
+  scheduler's workers while the provider reads on, their place in the
+  stream kept. A new metric, `folder_whole_us` (a pane gone to the
+  folder until its listing is whole and sorted, ADR-120), decided where
+  keys are made, three ways alternated under one load: on the
+  provider's thread in English the folder appeared in 99–124 ms (folded
+  77–99 ms), keyed by the fill job 119–131 ms (it only moved the wait),
+  on workers 67–113 ms. Final, C against English alternated (load
+  7.2–7.6): whole 68.1–70.9 ms against 67.3–70.1 ms, `stream_complete_us`
+  34–39 ms against 35–39 ms; English costs ~32 ms of CPU a listing,
+  inherent to ICU4X. `skwir-bench check` (load 6.3–6.6) within every
+  budget: `folder_whole_us` 67–71 ms (budget 200 ms), `stream_complete_us`
+  37–38 ms (100 ms; keyed inline in English it was 69–124 ms and failed
+  once at 109.7 ms), `collate_keys_us` 43 ms against 15 ms folded,
+  `collate_prefix_us` 0.7 ms against 2.1 ms folded; five new budgets,
+  none moved. The release binary grows about 1.4 MiB
+  with the collator's data (an isolated probe; the wired binary is not
+  yet measured).
+- **Right-to-left text drawn and edited right** (ADR-139, 12, level 1;
+  amended): gpui patches 0069 (levels, glyphs in drawn order, so a
+  right-to-left line wraps on Linux at all and in text order everywhere,
+  macOS's row order included; carets, selections and IME rectangles by
+  the drawn letters; decorations following their characters), 0070
+  (DirectWrite's runs by their level, compiled only: under Wine 11 its
+  DirectWrite selects no font) and 0071 (word characters by Unicode
+  property for every script, CJK breaking between characters, Thai and
+  its kin between characters for want of a dictionary; the bidirectional
+  controls and joiners glue). Skwir's one text field moves its caret as
+  the line is drawn. Seen on Xvfb: Hebrew and mixed names renamed (the
+  stem's highlight exactly over the Hebrew, End, Home, arrows, clicks, a
+  selection across the turn in two spans), Hebrew typed in the address
+  field, a Hebrew paragraph wrapped by whole words, Arabic with digits.
+  Left-to-right text runs the old code; word characters classified once
+  per block of 256 (ASCII 7 ns a character against 12 before).
+
+**Checked:** `just words --check` and `--release`, the French catalogs
+(0 errors in 47), clippy `-D warnings` on every default crate and target,
+`just check-cross`, the default members' tests and the binary's, gpui's
+text tests on a copy (67, and 32 of cosmic-text's), patches 0001–0071
+reproducing `vendor/zed` from Zed 37faef81, `just release-tools-check`,
+the bench's budgets.
+
+**Not checked:** macOS and Windows beyond compiling; the window with the
+collation wired (unit tests only for its order, type-to-find and groups);
+full package builds; `just package-macos`; the binary's size once wired;
+idle memory (`just idle-pss`, the user's display).
+
+**Seen, left:** a right-to-left paragraph is drawn from its box's left
+edge (level 3); a grid's two-line names (`name_lines.rs`) may cut a long
+word in any script; Tibetan's breaks; `cargo deny` fails on two new
+advisories (chrono through gpui, humantime through the jump and query
+plugins: newly unmaintained, no update), unrelated to this work.
+
+**Disk:** `target/debug/incremental` deleted twice (61 and 29 GB) with no
+build running; the root fell to 7 GB once during the agents' builds.

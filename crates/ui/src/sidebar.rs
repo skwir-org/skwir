@@ -1686,13 +1686,14 @@ impl Shell {
             Role::Offered => {
                 let place = &arranged.place;
                 // Its names as the sidebar says them: the field shows one.
-                let said = place.title.say();
+                // Plain: each is a name in other words, isolated there.
+                let said = place.title.say_plain();
                 let own = self
                     .app
                     .registry
                     .places
                     .find(|p| p.group == place.group && p.key() == place.key())
-                    .map_or_else(|| said.clone(), |p| p.title.say());
+                    .map_or_else(|| said.clone(), |p| p.title.say_plain());
                 // The field holds the name the user gave it, if any: left
                 // empty, the place takes back its own (never told by
                 // comparing words, ADR-139).

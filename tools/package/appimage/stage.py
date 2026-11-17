@@ -71,8 +71,9 @@ def main():
         dest = APP / "usr/bin" if program == "skwir" else helpers
         copy(pathlib.Path(os.environ["CARGO_TARGET_DIR"]) / "dist" / program, dest / program)
     copy(ROOT / "target/pdfium/libpdfium.so", helpers / "libpdfium.so")
-    copy(TOOLS / "linux/org.skwir.skwir.desktop", APP / "usr/share/applications/org.skwir.skwir.desktop")
-    copy(TOOLS / "linux/org.skwir.skwir.metainfo.xml", APP / "usr/share/metainfo/org.skwir.skwir.metainfo.xml")
+    # The desktop entry and the metainfo in every language translated
+    # (ADR-139), in usr/share/applications and usr/share/metainfo.
+    subprocess.run(["sh", str(TOOLS / "linux/l10n.sh"), "merge", str(APP / "usr/share")], check=True)
     copy(ROOT / "crates/ui/assets/org.skwir.skwir.svg", APP / "usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg")
     # Skwir's own fonts, read when they are drawn (ADR-118).
     shutil.copytree(ROOT / "target/fonts/fonts", APP / "usr/share/skwir/fonts")

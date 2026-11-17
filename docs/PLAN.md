@@ -3699,9 +3699,9 @@ is not Skwir's to translate). The translators' notes were swept the same
 day (counts given selectors, lists as `List` arguments, numbers as
 `Decimal`s, the search's reading by its subject's kind, English
 reworded), and the last English made in code on 2026-11-17's evening.
-Left: a name is quoted but not isolated from its sentence (ADR-139, 5,
-and words.md promise both): no U+2068/U+2069 around it in the window's
-words, so a right-to-left name can reorder the punctuation beside it.
+A name is isolated from its sentence since 2026-11-17's night
+(ADR-139, 5): FSI…PDI inside its quotes in the window's words, never in
+agents' English, data or what leaves the window (`Words::say_plain`).
   - By crate, one owner each: agents in parallel own the plugin crates,
     the integrator owns core and the UI.
   - Every literal becomes a message, every `format!` sentence one
@@ -3748,9 +3748,15 @@ words, so a right-to-left name can reorder the punctuation beside it.
   settled with the user the same day and the drafts brought to it. Each crate's catalogs ship
   with the program (`crates/skwir/src/catalogs.rs`, made by `just
   words`), a plugin's registered while it is enabled; the Language
-  setting offers each language by its own name. Left: the user's review
-  of the drafts in the window, the desktop file and the AppStream
-  metainfo, macOS's localizations, the 90 % / 75 % offers, Weblate.
+  setting offers each language by its own name. Built the same night:
+  the desktop file and the AppStream metainfo through PO
+  (`tools/package/linux/po`, merged by every Linux package, French
+  drafted, fuzzy), macOS's bundle declaring the languages offered, and
+  when a language is offered (`tools/words/offered`, counted by `just
+  words`; Automatic speaks French once the user has reviewed 90 % of it,
+  "incomplete" in Settings until then; `lint-all` refuses a release
+  offering one under 75 %). Left: the user's review of the drafts in the
+  window (and `fr.po`'s nine), Weblate.
   - A glossary settled with the user first: Skwir's terms, and French
     typography (« », U+202F before `; : ! ?`).
   - Every crate's `fr.ftl`, drafted by a model crate by crate as each is
@@ -3779,17 +3785,26 @@ them, with `core.folder_names` for the names on disk (16).
 
 **Later tracks**, each its own step once A to G are done:
 - **Name order by the locale** (ADR-139, 15): ICU4X's numeric sort keys
-  behind `collate`'s seam, with a bench case on `flat100k`.
+  behind `collate`'s seam, with a bench case on `flat100k`. Built
+  2026-11-17 (`LC_COLLATE`, the folded order kept for C and POSIX,
+  type-to-find and Group by Name following it); its gate, a streamed
+  listing within budget, is being met.
 - **User folders' shown names** on Windows and macOS (ADR-139, 16), and
   `core.folder_names`, unavailable on Linux.
 - **The screen reader's language:** AccessKit, and a gpui patch.
-- **gpui patches:**
-  - DirectWrite's bidirectional text;
-  - line breaking in Greek and other scripts;
+- **gpui patches:** built 2026-11-17, right-to-left text laid out,
+  wrapped and edited right on every system (0069; macOS's rows came from
+  gpui's own wrapping), DirectWrite's right-to-left runs (0070, compiled
+  only), and word characters by Unicode property for every script, the
+  bidirectional controls as glue (0071). Left:
   - the CJK fallback's language;
   - macOS's Window menu found by a flag rather than by its English
     title.
-- **Right-to-left windows.**
+- **Right-to-left windows** (level 3): a mirrored layout, and a
+  right-to-left paragraph aligned from its right edge (today drawn from
+  the left, its trailing space showing at each wrapped row's left).
+- **A grid's names** balanced on two lines (`name_lines.rs`) may cut a
+  long word in any script, Latin included.
 
 ---
 

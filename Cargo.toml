@@ -189,6 +189,11 @@ icu_time = "2.4"
 icu_casemap = "2.4"
 icu_list = { version = "2.4", features = ["alloc"] }
 icu_locale_core = "2.4"
+# Names in the locale's order (ADR-139, 15). `unstable` names the sink a
+# key is written to, which lets type-to-find stop a name's key as soon as
+# it differs; an update of ICU4X that changes it fails to build, never
+# silently.
+icu_collator = { version = "2.4", features = ["unstable"] }
 jiff = "0.2"
 plist = { version = "1", default-features = false }
 # Grammars match with Ferroni, a pure-Rust port of Oniguruma (ADR-060).

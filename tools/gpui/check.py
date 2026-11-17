@@ -42,6 +42,9 @@ RUNS = [
         # items where they are drawn (0052).
         "elements::list", "elements::div::scroll_axis_tests",
         "text_system::line_wrapper", "text_system::line_layout", "style::tests",
+        # Right-to-left text: levels, carets and spans (0069), a run's colour
+        # and underline following its characters.
+        "text_system::bidi", "text_system::line::tests::a_decoration_follows",
         # Upstream's, and what an action sees of a key held down (0032).
         "key_dispatch",
         # The accessibility tree (0030) and what an element writes into it

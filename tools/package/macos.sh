@@ -11,7 +11,8 @@
 # helper, with libarchive linked in, and the media helper), PDFium in
 # Contents/Frameworks (ADR-041) and GStreamer, cut down to what the media
 # helper plays with, a framework in Contents/Frameworks (ADR-076), and in
-# Contents/Resources the icon, the type database (ADR-037) in share/mime,
+# Contents/Resources the icon, an .lproj for each language skwir speaks
+# (ADR-139), the type database (ADR-037) in share/mime,
 # and in licenses skwir's licence, its crates' notices
 # (tools/package/notices/macos), PDFium's, libarchive's and its
 # compressors' (tools/package/libarchive.sh), and GStreamer's and its
@@ -112,6 +113,24 @@ body = b"".join(kind.encode() + struct.pack(">I", 8 + len(png)) + png
 out.write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
 EOF
 
+# The languages skwir speaks (ADR-139, 13): English, and each it offers
+# (tools/words/offered, kept by `just words`), declared so that macOS's own
+# menus and its per-app language follow, each an .lproj saying what
+# Info.plist says to a person (the brand alone, the same in every
+# language). A language only shipped, not offered, is left out: Automatic
+# never speaks it, and a Mac in it would mix macOS's menus in it with
+# skwir's English. The development region is English.
+languages="en $(sed '/^#/d; /^[[:space:]]*$/d' tools/words/offered | LC_ALL=C sort -u | tr '\n' ' ')"
+for language in $languages; do
+    mkdir -p "$app/Contents/Resources/$language.lproj"
+    cat > "$app/Contents/Resources/$language.lproj/InfoPlist.strings" <<'STRINGS'
+/* What Info.plist says to a person: skwir's name, the brand, the same in every language. */
+CFBundleName = "skwir";
+CFBundleDisplayName = "skwir";
+STRINGS
+done
+
+# shellcheck disable=SC2086 # one <string> per language
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -120,6 +139,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>skwir</string>
     <key>CFBundleDisplayName</key><string>skwir</string>
     <key>CFBundleIdentifier</key><string>org.skwir.skwir</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key><array>$(printf '<string>%s</string>' $languages)</array>
     <key>CFBundleExecutable</key><string>skwir</string>
     <key>CFBundleIconFile</key><string>skwir</string>
     <key>CFBundlePackageType</key><string>APPL</string>

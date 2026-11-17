@@ -251,7 +251,7 @@ fn entry_of(found: &Found) -> (EntryId, Entry) {
     );
     entry
         .metadata
-        .set(keys::PLACE_KIND, Value::Text(kind.say().into()), by());
+        .set(keys::PLACE_KIND, Value::Text(kind.say_plain().into()), by());
     entry
         .metadata
         .set(ANNOUNCED, Value::Text(found.name.clone().into()), by());

@@ -896,7 +896,7 @@ fn specimen(path: &Path) -> Part {
             print_font_sample = "The quick brown fox jumps over the lazy dog 0123456789",
             note = "The words a font is printed in, at several sizes: a sentence using every letter of the language, then the digits."
         )
-        .say(),
+        .say_plain(),
         sizes: vec![10.0, 14.0, 20.0, 32.0, 48.0],
     }
 }
@@ -1073,7 +1073,7 @@ fn drawn(
                 page = page,
                 note = "What a page drawn as a picture is in a PDF made, for a screen reader: its number."
             )
-            .say(),
+            .say_plain(),
             caption: None,
             orientation: 0,
         });

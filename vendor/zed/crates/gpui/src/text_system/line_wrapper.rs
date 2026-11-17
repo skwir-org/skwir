@@ -1,6 +1,17 @@
 use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
 use collections::HashMap;
-use std::{borrow::Cow, iter, sync::Arc};
+use std::{
+    borrow::Cow,
+    iter,
+    sync::{Arc, OnceLock},
+};
+use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
+use unicode_script::{Script, UnicodeScript};
+
+/// Whether each character of the Basic Multilingual Plane is part of a
+/// word (`LineWrapper::is_word_char`), a page of 256 at a time, each page
+/// worked out the first time a character of it is asked about.
+static WORD_PAGES: [OnceLock<[u64; 4]>; 256] = [const { OnceLock::new() }; 256];
 
 /// Determines whether to truncate text from the start or end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -636,48 +647,121 @@ impl LineWrapper {
         (result, Cow::Owned(runs))
     }
 
-    /// Any character in this list should be treated as a word character,
-    /// meaning it can be part of a word that should not be wrapped.
+    /// Whether `c` is part of a word, which a line does not wrap inside:
+    /// the letters, marks and digits of every script that puts spaces
+    /// between its words (Latin, Greek, Cyrillic, Armenian, Georgian, Hebrew,
+    /// Arabic, Devanagari, Bengali and the rest, by their Unicode
+    /// properties, not by a list of blocks), the punctuation that stays with
+    /// its word, and what glues characters together. The letters and digits
+    /// of scripts written without spaces between words are not: a line
+    /// wraps between any two of them (`breaks_between_characters`), but
+    /// never before a mark, which stays with its letter.
     pub(crate) fn is_word_char(c: char) -> bool {
-        // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
-        c.is_ascii_alphanumeric() ||
-        // Latin script in Unicode for French, German, Spanish, etc.
-        // Latin-1 Supplement
-        // https://en.wikipedia.org/wiki/Latin-1_Supplement
-        matches!(c, '\u{00C0}'..='\u{00FF}') ||
-        // Latin Extended-A
-        // https://en.wikipedia.org/wiki/Latin_Extended-A
-        matches!(c, '\u{0100}'..='\u{017F}') ||
-        // Latin Extended-B
-        // https://en.wikipedia.org/wiki/Latin_Extended-B
-        matches!(c, '\u{0180}'..='\u{024F}') ||
-        // Cyrillic for Russian, Ukrainian, etc.
-        // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
-        matches!(c, '\u{0400}'..='\u{04FF}') ||
+        if c.is_ascii() {
+            // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
+            return c.is_ascii_alphanumeric() ||
+            // Some other known special characters that should be treated as word characters,
+            // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+            // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
+            // is included so it stays attached to the preceding word when wrapping.
+            matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
+            // Closing punctuation never starts a line (UAX #14 LB13: no break
+            // before `!`, `)`, `]`, `}`, closing quotes or an ellipsis) — `plz!`,
+            // `see)`, `quoted”` wrap as one word instead of orphaning the mark on
+            // the next line. `/` and `?` stay break opportunities so long paths
+            // and URLs (`a/b`, `foo?b=2`) can wrap.
+            matches!(c, '!' | ')' | ']' | '}' | '"');
+        }
+        // Beyond ASCII, a character of the Basic Multilingual Plane is
+        // answered from its page (256 characters), classified the first
+        // time one of it is asked about: the category and script look-ups
+        // below cost a page once, not every character a wrap reads.
+        let code = u32::from(c);
+        if code < 0x1_0000 {
+            let page = WORD_PAGES[(code >> 8) as usize].get_or_init(|| {
+                let mut bits = [0u64; 4];
+                for low in 0..256 {
+                    if char::from_u32((code & !0xFF) | low)
+                        .is_some_and(Self::is_word_char_beyond_ascii)
+                    {
+                        bits[(low >> 6) as usize] |= 1 << (low & 63);
+                    }
+                }
+                bits
+            });
+            let low = code & 0xFF;
+            return (page[(low >> 6) as usize] >> (low & 63)) & 1 == 1;
+        }
+        Self::is_word_char_beyond_ascii(c)
+    }
 
-        // Vietnamese (https://vietunicode.sourceforge.net/charset/)
-        matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
-        matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
+    /// `is_word_char` of a character beyond ASCII, worked out.
+    fn is_word_char_beyond_ascii(c: char) -> bool {
+        // As in ASCII: `won’t`, `‘twas`, `quoted”`, `«guillemets»`,
+        // `well…`; `⋯`, which Zed keeps at the end of a line.
+        if matches!(c, '’' | '‘' | '”' | '»' | '…' | '⋯') ||
+            // Non-breaking glue characters
+            matches!(c, '\u{202F}' | '\u{00A0}' | '\u{2011}') ||
+            // What a line never breaks before (UAX #14): a joiner (ZWJ,
+            // LB8a; the word joiner and the zero width no-break space,
+            // LB11), and the bidirectional marks, embeddings, overrides and
+            // isolates, which are combining marks to it (CM, LB9). They draw
+            // nothing, and a name isolated in a sentence (FSI … PDI, inside
+            // its quotes) wraps as its words and its quotes do.
+            matches!(
+                c,
+                '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{061C}' | '\u{200E}' | '\u{200F}'
+                    | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+            )
+        {
+            return true;
+        }
+        // One look-up of the character's general category.
+        match c.general_category_group() {
+            // A mark stays with its letter, in every script.
+            GeneralCategoryGroup::Mark => true,
+            // The letters and digits of a script written with spaces
+            // between its words.
+            GeneralCategoryGroup::Letter | GeneralCategoryGroup::Number => {
+                !Self::breaks_between_characters(c)
+            }
+            _ => false,
+        }
+    }
 
-        // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
-        matches!(c, '\u{0980}'..='\u{09FF}') ||
-
-        // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
-        // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
-        // is included so it stays attached to the preceding word when wrapping.
-        matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
-        // Closing punctuation never starts a line (UAX #14 LB13: no break
-        // before `!`, `)`, `]`, `}`, closing quotes or an ellipsis) — `plz!`,
-        // `see)`, `quoted”` wrap as one word instead of orphaning the mark on
-        // the next line. `/` and `?` stay break opportunities so long paths
-        // and URLs (`a/b`, `foo?b=2`) can wrap.
-        matches!(c, '!' | ')' | ']' | '}' | '"' | '”' | '»' | '…') ||
-        // `⋯` character is special used in Zed, to keep this at the end of the line.
-        matches!(c, '⋯') ||
-
-        // Non-breaking glue characters
-        matches!(c, '\u{202F}' | '\u{00A0}' | '\u{2011}')
+    /// Whether `c` is a letter or digit of a script written without spaces
+    /// between its words, which a line breaks between any two characters:
+    /// Chinese, Japanese, Korean (UAX #14 breaks between Hangul syllables,
+    /// as browsers do but where `word-break: keep-all` is asked), Yi and the
+    /// other ideographic scripts; and Thai, Lao, Khmer, Myanmar and the Tai
+    /// scripts, whose words a line should break between by a dictionary
+    /// (UAX #14 class SA): gpui has none, so they break between characters
+    /// too, never inside one (a mark stays with its letter), rather than
+    /// run as one word as wide as the sentence. The scripts before Thai
+    /// (U+0E00) are none of them: a Latin, Greek, Hebrew or Indic letter
+    /// looks nothing up.
+    fn breaks_between_characters(c: char) -> bool {
+        u32::from(c) >= 0x0E00
+            && matches!(
+                c.script(),
+                Script::Han
+                    | Script::Hiragana
+                    | Script::Katakana
+                    | Script::Bopomofo
+                    | Script::Hangul
+                    | Script::Yi
+                    | Script::Tangut
+                    | Script::Nushu
+                    | Script::Khitan_Small_Script
+                    | Script::Thai
+                    | Script::Lao
+                    | Script::Khmer
+                    | Script::Myanmar
+                    | Script::Tai_Tham
+                    | Script::Tai_Viet
+                    | Script::Tai_Le
+                    | Script::New_Tai_Lue
+            )
     }
 
     #[inline(always)]
@@ -1392,6 +1476,11 @@ mod tests {
         assert_word("see)");
         assert_word("quoted”");
         assert_word("well…");
+        // A name isolated inside its quotes: no break beside the marks.
+        assert_word("\u{2068}name\u{2069}”");
+        assert_word("a\u{200f}b\u{202e}c\u{202c}");
+        // Joiners: zero width, word, and the no-break space of zero width.
+        assert_word("a\u{200d}b\u{2060}c\u{feff}");
 
         // Space
         assert_not_word("foo bar");
@@ -1413,6 +1502,59 @@ mod tests {
         assert_word("АБВГДЕЖЗИЙКЛМНОП");
         // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
         assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
+        // The pages kept answer as each character is worked out.
+        for c in (0x80..0x1_0000).filter_map(char::from_u32) {
+            assert_eq!(
+                LineWrapper::is_word_char(c),
+                LineWrapper::is_word_char_beyond_ascii(c),
+                "U+{:04X}",
+                u32::from(c)
+            );
+        }
+        // Every script that puts spaces between its words, by its letters',
+        // marks' and digits' properties: Hebrew with its points, Arabic
+        // with its digits and a vowel mark, Greek, Armenian, Georgian,
+        // Devanagari (a virama, vowel signs, digits), Tamil, Ethiopic,
+        // Canadian syllabics, an accent typed apart, Latin-1's letters and
+        // numbers beyond the blocks once listed.
+        assert_word("שלום");
+        assert_word("\u{5e9}\u{5c1}\u{5b8}\u{5dc}\u{5d5}\u{5b9}\u{5dd}");
+        assert_word("مرحبا");
+        assert_word("\u{661}\u{662}\u{663}\u{64e}");
+        assert_not_word("שלום עולם");
+        assert_word("Ελληνικά");
+        assert_word("Հայերեն");
+        assert_word("ქართული");
+        assert_word("हिन्दी१२३");
+        assert_word("தமிழ்");
+        assert_word("አማርኛ");
+        assert_word("ᐃᓄᒃᑎᑐᑦ");
+        assert_word("e\u{301}");
+        assert_word("µ²½ªº");
+        // A symbol is a place to wrap, as in ASCII (`2+3`).
+        assert_not_word("2×3");
+        // Scripts written without spaces between words: a line breaks
+        // between any two of their letters (Chinese, Japanese, Bopomofo,
+        // Korean, Yi; Thai and Lao, which gpui breaks by no dictionary)...
+        for text in [
+            "中文",
+            "ひらがな",
+            "カタカナ",
+            "ㄅㄆ",
+            "한국어",
+            "ꆈꌠ",
+            "ไทย",
+            "ລາວ",
+        ] {
+            for c in text.chars() {
+                assert!(!LineWrapper::is_word_char(c), "{c:?} in {text}");
+            }
+        }
+        // ... but never before a mark, which stays with its letter: Thai's
+        // vowel sign and tone mark, Khmer's coeng, a Japanese voiced mark.
+        assert_word("\u{e35}\u{e48}");
+        assert_word("\u{17d2}");
+        assert_word("\u{3099}");
         // Bengali
         assert_word("গিয়েছিলেন");
         assert_word("ছেলে");

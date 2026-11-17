@@ -3,14 +3,15 @@
   <id>org.skwir.skwir</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
-  <name>skwir</name>
+  <name translate="no">skwir</name>
   <developer id="org.skwir">
+    <!-- Translators: who makes skwir, as software centres say it. -->
     <name>The skwir authors</name>
   </developer>
   <summary>Browse, find and organize your files</summary>
   <description>
     <p>
-      skwir is an augmented file manager, built to be driven by humans and
+      Skwir is an augmented file manager, built to be driven by humans and
       agents alike.
     </p>
     <ul>

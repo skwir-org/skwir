@@ -917,8 +917,10 @@ fn shown(app: &App, pane: PaneId) -> anyhow::Result<(Location, Option<String>)> 
 /// What the listing of `location` is called in words: its name (a
 /// folder's own, a search's, a tag's), with what filters it, said as the
 /// window says it: the dialog, the plan and the file's name show it.
+/// Plainly (`Words::say_plain`): a file's name, and the PDF's text, hold no
+/// mark isolating a name, as everything printed is said.
 fn listing_named(app: &App, location: &Location, filter: Option<&str>) -> String {
-    listing::filtered(app.location_title(location).say(), filter)
+    listing::filtered(app.location_title(location).say_plain(), filter)
 }
 
 /// Where the PDF of what `location` lists is saved unless another folder
@@ -966,7 +968,7 @@ fn sidebar_folders(app: &App) -> Vec<(String, PathBuf)> {
         .into_iter()
         .filter(|place| matches!(place.group.as_str(), "places" | "bookmarks"))
         .filter(|place| place.unavailable.is_none() && place.activate.is_none())
-        .filter_map(|place| Some((place.title.say(), place.location.path()?)))
+        .filter_map(|place| Some((place.title.say_plain(), place.location.path()?)))
         .collect()
 }
 
@@ -1125,7 +1127,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
                         more = rest.len(),
                         note = "The title of a print of several files, in the system's print dialog and the queue: the first's name, then how many more."
                     )
-                    .say(),
+                    .say_plain(),
                 ),
             };
             let lane = skwir_core::fs::reach::lane(&entries[0].path);
@@ -1136,7 +1138,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
                 skwir_core::fs::reach::lane(&entries.first().with_context(nothing_to_print)?.path);
             (
                 Printed::Sheet,
-                contact_sheet_title().say(),
+                contact_sheet_title().say_plain(),
                 lane,
                 Make::Sheet(entries),
             )
@@ -1957,7 +1959,7 @@ impl op::Effect for MakePdf {
         };
         // Said here: the PDF's title is text.
         let title = match &self.of {
-            Of::Sheet { .. } => contact_sheet_title().say(),
+            Of::Sheet { .. } => contact_sheet_title().say_plain(),
             of => display_name(&of.from()),
         };
         let layout = Layout {

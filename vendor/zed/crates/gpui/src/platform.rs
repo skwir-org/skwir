@@ -1763,13 +1763,20 @@ impl PlatformTextSystem for NoopTextSystem {
             position = px(0.);
         }
 
-        LineLayout {
+        let layout = LineLayout {
             font_size,
             width: position,
             ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
             descent: font_size * (metrics.descent / metrics.units_per_em as f32),
             runs,
             len: text.len(),
+            bidi_levels: None,
+        };
+        // Right-to-left text laid out as it reads, as a platform lays it
+        // out, so tests of it see what a window shows.
+        match crate::BidiLevels::of(text) {
+            Some(levels) => layout.laid_out_as_read(&levels, text),
+            None => layout,
         }
     }
 

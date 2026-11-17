@@ -7,6 +7,11 @@
 //!
 //! As data that leaves the process (JSON for agents, scripts and the CLI),
 //! `Words` is its English text: agents read English (ADR-139, 7).
+//!
+//! Where the window draws them (`Words::say`), a name and a folder named in
+//! a sentence are isolated from it (`isolated`): between FSI and PDI, inside
+//! the quotes. Nothing else carries those marks: not English, not words said
+//! in given languages, not text that leaves the window (`Words::say_plain`).
 
 mod catalog;
 mod pattern;
@@ -16,8 +21,8 @@ use std::fmt;
 use std::sync::Arc;
 
 pub use catalog::{
-    Catalog, Shipped, find, languages_of, register, register_shipped, register_shipped_of_program,
-    ship, shipped_languages, withdraw,
+    Catalog, Share, Shipped, find, languages_of, register, register_shipped,
+    register_shipped_of_program, share_of, ship, ship_shares, shipped_languages, withdraw,
 };
 pub use pattern::{Element, Key, Variant, from_fluent};
 
@@ -56,7 +61,7 @@ enum Inner {
     /// cased as the reader's language begins a sentence (`Words::heading`).
     Heading(Box<Words>),
     /// A message come back from its data (`Words::to_data`): said from the
-    /// catalogs by its domain and id, else as its English was carried.
+    /// catalogs by its domain and id, else from its English as carried.
     Carried(Arc<Carried>),
 }
 
@@ -65,7 +70,11 @@ enum Inner {
 struct Carried {
     domain: String,
     id: String,
+    /// Its English as English said it, for data that carries no pattern.
     english: String,
+    /// Its English's shape, which says it with its arguments as the code's
+    /// own message does (its names isolated where the window draws them).
+    pattern: Option<Vec<Element>>,
     args: Vec<(String, Arg)>,
 }
 
@@ -100,10 +109,12 @@ pub enum Arg {
     /// system said), as it is.
     Text(Cow<'static, str>),
     /// A file's, a place's or a tag's name: quoted as the language quotes,
-    /// its bidirectional controls shown, never obeyed.
+    /// its bidirectional controls shown, never obeyed, isolated from the
+    /// sentence where the window draws it.
     Name(String),
     /// A folder's name where it is a destination ("to Docs"): unquoted,
-    /// its bidirectional controls shown, never obeyed.
+    /// its bidirectional controls shown, never obeyed, isolated from the
+    /// sentence where the window draws it.
     Folder(String),
     /// A count: chooses the plural, written with its groups as the
     /// reader's language writes them ("1,234", « 1 234 »).
@@ -505,23 +516,26 @@ impl Words {
     /// text that follows it up to the next (a line of facts drawn apart,
     /// wrapping only between them: the caller draws each argument). `None`
     /// where these words are no message placing each of `names` once.
+    ///
+    /// Said for the window, as [`Words::say`] says it: the other names are
+    /// isolated, each within one part. An argument cut out leaves no mark
+    /// isolating it in the parts (the caller draws it, an element of its
+    /// own that nothing beside it reorders); a name cut out leaves its
+    /// quotes there, the sentence's (`cut_mark`).
     pub fn say_apart(&self, names: &[&str]) -> Option<(String, Vec<(usize, String)>)> {
         let Inner::Message(message, args) = &self.0 else {
             return None;
         };
         // A private-use character a name for each argument cut out.
-        let mark = |at: usize| char::from_u32(0xF8E0 + u32::try_from(at).ok()?);
+        let mark = |at: usize| char::from_u32(CUT + u32::try_from(at).ok()?);
         let marked: Arc<[(&'static str, Arg)]> = args
             .iter()
             .map(|(n, a)| match names.iter().position(|name| name == n) {
-                Some(at) => (
-                    *n,
-                    Arg::Text(Cow::Owned(mark(at).unwrap_or('\u{F8FF}').to_string())),
-                ),
+                Some(at) => (*n, cut_mark(a, mark(at).unwrap_or(CUT_ONE))),
                 None => (*n, a.clone()),
             })
             .collect();
-        let said = Words(Inner::Message(message, marked)).say();
+        let said = Words(Inner::Message(message, marked)).said_for_window(Isolation::NotCut);
         let mut before = String::new();
         let mut placed: Vec<(usize, String)> = Vec::with_capacity(names.len());
         for c in said.chars() {
@@ -541,9 +555,9 @@ impl Words {
     /// comes before it and what comes after, the language choosing where it
     /// goes (a link inside a sentence: the caller draws the argument
     /// itself). `None` where these words are no message placing `name`
-    /// once.
+    /// once. Said for the window, its other names isolated, the one cut out
+    /// leaving only its quotes, as [`Words::say_apart`] says.
     pub fn say_around(&self, name: &str) -> Option<(String, String)> {
-        const MARK: &str = "\u{F8FF}";
         let Inner::Message(message, args) = &self.0 else {
             return None;
         };
@@ -551,14 +565,14 @@ impl Words {
             .iter()
             .map(|(n, a)| {
                 if *n == name {
-                    (*n, Arg::Text(Cow::Borrowed(MARK)))
+                    (*n, cut_mark(a, CUT_ONE))
                 } else {
                     (*n, a.clone())
                 }
             })
             .collect();
-        let said = Words(Inner::Message(message, marked)).say();
-        let mut parts = said.split(MARK);
+        let said = Words(Inner::Message(message, marked)).said_for_window(Isolation::NotCut);
+        let mut parts = said.split(CUT_ONE);
         let (before, after) = (parts.next()?, parts.next()?);
         parts
             .next()
@@ -567,9 +581,23 @@ impl Words {
     }
 
     /// Said in the languages Skwir speaks to the user (`locale::languages`):
-    /// what the window draws. The languages are kept on each thread, read
-    /// again only when they move (`revision`): a frame says many words.
+    /// what the window draws, each name isolated from the sentence around
+    /// it (`isolated`). The languages are kept on each thread, read again
+    /// only when they move (`revision`): a frame says many words.
     pub fn say(&self) -> String {
+        self.said_for_window(Isolation::Names)
+    }
+
+    /// Said as [`Words::say`] says them (the window's languages, its
+    /// numbers and dates), but with no mark isolating a name: for what
+    /// leaves the window as text rather than being drawn (the clipboard, a
+    /// file's name, words a name is made of, a name kept as data), where an
+    /// invisible mark would be a character of the text.
+    pub fn say_plain(&self) -> String {
+        self.said_for_window(Isolation::None)
+    }
+
+    fn said_for_window(&self, isolation: Isolation) -> String {
         thread_local! {
             static SAID_IN: std::cell::RefCell<(u64, Vec<String>)> =
                 const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
@@ -580,19 +608,21 @@ impl Words {
                 *languages = crate::locale::languages();
                 *at = now;
             }
-            (languages.clone(), formats::Formats::window())
+            (languages.clone(), formats::Formats::window(isolation))
         });
         formats::within(formats, || self.say_in(&languages))
     }
 
     /// Said in English: what agents, scripts and logs read, its numbers
-    /// and dates as English writes them.
+    /// and dates as English writes them, no name isolated.
     pub fn english(&self) -> String {
         formats::within(formats::Formats::english(), || self.say_in(&[]))
     }
 
     /// Said in the first of `languages` that has its message, English
-    /// last.
+    /// last. Its names are isolated only where `say` says it (an error's
+    /// chain said for the window says its links through here): on its own,
+    /// it writes no mark.
     pub fn say_in(&self, languages: &[String]) -> String {
         let mut out = String::new();
         self.say_into(&mut out, languages);
@@ -611,13 +641,26 @@ impl Words {
             }
             Inner::Carried(carried) => {
                 if languages.first().is_some_and(|first| first == PSEUDO) {
-                    return out.push_str(&pseudo(&carried.english));
+                    // As a message is: its arguments marked, where its
+                    // pattern came with it.
+                    let Some(english) = &carried.pattern else {
+                        return out.push_str(&pseudo(&carried.english));
+                    };
+                    let mut said = String::new();
+                    say(english, &carried.args, ENGLISH, languages, &mut said, true);
+                    return out.push_str(&pseudo(&said));
                 }
-                return match find(&carried.domain, &carried.id, languages) {
-                    Some((said, language)) => {
+                return match (
+                    find(&carried.domain, &carried.id, languages),
+                    &carried.pattern,
+                ) {
+                    (Some((said, language)), _) => {
                         say(&said, &carried.args, &language, languages, out, false);
                     }
-                    None => out.push_str(&carried.english),
+                    (None, Some(english)) => {
+                        say(english, &carried.args, ENGLISH, languages, out, false);
+                    }
+                    (None, None) => out.push_str(&carried.english),
                 };
             }
             Inner::Message(message, args) => (*message, args),
@@ -708,7 +751,7 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
     match arg {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
-        Arg::Folder(name) => out.push_str(&shown_controls(name)),
+        Arg::Folder(name) => isolated(&shown_controls(name), out),
         Arg::Count(n) => out.push_str(&numbers::grouped(&formats::numbers(), *n)),
         Arg::Decimal(value, digits) => {
             out.push_str(&numbers::decimal(&formats::numbers(), *value, *digits));
@@ -763,7 +806,8 @@ fn say_error(failure: &Failure, languages: &[String], out: &mut String) {
 
 /// `name` quoted as `language` quotes: “…” in English, « … » in French
 /// (narrow spaces inside), „…“ in German, «…» in Spanish, Italian and
-/// Russian, 「…」 in Japanese and Chinese.
+/// Russian, 「…」 in Japanese and Chinese; isolated inside its quotes where
+/// the window draws it (`isolated`).
 fn quoted(language: &str, name: &str, out: &mut String) {
     let base = language.split('-').next().unwrap_or(language);
     let (open, close) = match base {
@@ -774,8 +818,77 @@ fn quoted(language: &str, name: &str, out: &mut String) {
         _ => ("“", "”"),
     };
     out.push_str(open);
-    out.push_str(name);
+    isolated(name, out);
     out.push_str(close);
+}
+
+/// FIRST STRONG ISOLATE and POP DIRECTIONAL ISOLATE (UAX #9): what keeps a
+/// name apart from the sentence it is said in, where the window draws it.
+const FSI: char = '\u{2068}';
+const PDI: char = '\u{2069}';
+
+/// Whether names are isolated where words are being said (`isolated`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Isolation {
+    /// None is: English (agents, logs, tests), words said in given
+    /// languages alone (`say_in`), text that leaves the window
+    /// (`say_plain`).
+    None,
+    /// Every name: what the window draws (`say`).
+    Names,
+    /// Every name but those a sentence is cut around (`say_around`,
+    /// `say_apart`): their caller draws them apart.
+    NotCut,
+}
+
+/// The private-use characters a sentence cut around its arguments stands in
+/// their places with: `say_apart`'s, one an argument from `CUT` on, and
+/// `say_around`'s.
+const CUT: u32 = 0xF8E0;
+const CUT_ONE: char = '\u{F8FF}';
+
+/// What stands in the place of `arg` while a sentence is cut around it:
+/// `mark`, quoted as the argument is where it is a name (the quotes belong
+/// to the sentence, as they do around a name said in it), else bare.
+fn cut_mark(arg: &Arg, mark: char) -> Arg {
+    match arg {
+        Arg::Name(_) => Arg::Name(mark.to_string()),
+        _ => Arg::Text(Cow::Owned(mark.to_string())),
+    }
+}
+
+/// `name`, said in a sentence: between FSI and PDI where the window draws
+/// it (`Words::say`), so that a name written right to left (Hebrew,
+/// Arabic), or one that ends in digits or punctuation, reorders nothing of
+/// the sentence around it, nor the sentence anything of it, whatever the
+/// sentence's direction (UAX #9, X5c: the isolate takes its direction from
+/// the name's first strong letter). The quotes stay outside, the
+/// sentence's: in it, they open and close in its direction, as its other
+/// punctuation does; inside, a name in Hebrew would draw them reversed.
+/// The name holds no control of its own that could end the isolate early
+/// or reverse what follows it: `shown_controls` showed every one as a tag.
+/// As it is wherever else words are said (`Isolation::None`), and where it
+/// is a mark a sentence is cut around (`Isolation::NotCut`); an empty name
+/// takes no marks.
+fn isolated(name: &str, out: &mut String) {
+    let cut = || {
+        let mut chars = name.chars();
+        matches!(
+            (chars.next(), chars.next()),
+            (Some(c), None) if (CUT..=u32::from(CUT_ONE)).contains(&u32::from(c))
+        )
+    };
+    let isolates = match formats::isolation() {
+        Isolation::None => false,
+        Isolation::Names => true,
+        Isolation::NotCut => !cut(),
+    };
+    if !isolates || name.is_empty() {
+        return out.push_str(name);
+    }
+    out.push(FSI);
+    out.push_str(name);
+    out.push(PDI);
 }
 
 /// A name's bidirectional controls shown as tags, never obeyed (ADR-139,
@@ -811,11 +924,14 @@ pub fn shown_controls(name: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// The locales numbers and dates are written in while words are said: the
-/// system's for the window (`say`), English's for agents (`english`), and
-/// English's for words said in given languages (`say_in`) outside both.
+/// The locales numbers and dates are written in while words are said, and
+/// whether names are isolated: the system's, names isolated, for the window
+/// (`say`); English's, none isolated, for agents (`english`), and for words
+/// said in given languages (`say_in`) outside both.
 mod formats {
     use std::cell::RefCell;
+
+    use super::Isolation;
 
     #[derive(Clone)]
     pub struct Formats {
@@ -823,14 +939,16 @@ mod formats {
         dates: String,
         /// Dates as ISO 8601 writes them (the window's dates setting).
         iso: bool,
+        isolation: Isolation,
     }
 
     impl Formats {
-        pub fn window() -> Self {
+        pub fn window(isolation: Isolation) -> Self {
             Formats {
                 numbers: crate::locale::numbers(),
                 dates: crate::locale::dates(),
                 iso: crate::locale::iso_dates(),
+                isolation,
             }
         }
 
@@ -839,6 +957,7 @@ mod formats {
                 numbers: super::ENGLISH.to_owned(),
                 dates: super::ENGLISH.to_owned(),
                 iso: false,
+                isolation: Isolation::None,
             }
         }
     }
@@ -872,6 +991,10 @@ mod formats {
 
     pub fn iso() -> bool {
         NOW.with_borrow(|now| now.as_ref().is_some_and(|f| f.iso))
+    }
+
+    pub fn isolation() -> Isolation {
+        NOW.with_borrow(|now| now.as_ref().map_or(Isolation::None, |f| f.isolation))
     }
 }
 
@@ -1189,16 +1312,17 @@ impl Words {
     }
 }
 
-/// Words' data: a message by its domain, id, English and typed arguments,
-/// or text as written. Use `#[serde(with = "skwir_core::words::data")]` on a
-/// field the window sends itself.
+/// Words' data: a message by its domain, id, English (as said, and its
+/// pattern) and typed arguments, or text as written. Use
+/// `#[serde(with = "skwir_core::words::data")]` on a field the window sends
+/// itself.
 pub mod data {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use serde_json::{Value, json};
 
-    use super::{Arg, Carried, Inner, Join, Kind, Words};
+    use super::{Arg, Carried, Element, Inner, Join, Key, Kind, Variant, Words};
 
     /// `words` written as their data.
     pub fn serialize<S: serde::Serializer>(
@@ -1263,12 +1387,14 @@ pub mod data {
                 message.domain,
                 message.id,
                 &words.english(),
+                Some(message.english),
                 args.iter().map(|(n, a)| (*n, a)),
             ),
             Inner::Carried(carried) => message_of(
                 &carried.domain,
                 &carried.id,
                 &carried.english,
+                carried.pattern.as_deref(),
                 carried.args.iter().map(|(n, a)| (n.as_str(), a)),
             ),
             Inner::Heading(inner) => json!({ "heading": of(inner) }),
@@ -1280,12 +1406,49 @@ pub mod data {
         domain: &str,
         id: &str,
         english: &str,
+        pattern: Option<&[Element]>,
         args: impl Iterator<Item = (&'a str, &'a Arg)>,
     ) -> Value {
         let args: serde_json::Map<String, Value> = args
             .map(|(name, arg)| (name.to_owned(), arg_of(arg)))
             .collect();
-        json!({ "domain": domain, "id": id, "english": english, "args": args })
+        let mut data = json!({ "domain": domain, "id": id, "english": english, "args": args });
+        if let Some(pattern) = pattern {
+            data["pattern"] = pattern_of(pattern);
+        }
+        data
+    }
+
+    /// A message's English shape as data: text as a string, an argument
+    /// as `{"arg": name}`, a selector as `{"select": on, "variants": [{"key":
+    /// word or number, "value": [...]}], "default": index}`.
+    fn pattern_of(elements: &[Element]) -> Value {
+        Value::Array(
+            elements
+                .iter()
+                .map(|element| match element {
+                    Element::Text(text) => Value::String(text.to_string()),
+                    Element::Arg(name) => json!({ "arg": name }),
+                    Element::Select {
+                        on,
+                        variants,
+                        default,
+                    } => {
+                        let variants: Vec<Value> = variants
+                            .iter()
+                            .map(|variant| {
+                                let key = match &variant.key {
+                                    Key::Word(word) => json!(word),
+                                    Key::Number(n) => json!(n),
+                                };
+                                json!({ "key": key, "value": pattern_of(&variant.value) })
+                            })
+                            .collect();
+                        json!({ "select": on, "variants": variants, "default": default })
+                    }
+                })
+                .collect(),
+        )
     }
 
     fn arg_of(arg: &Arg) -> Value {
@@ -1300,8 +1463,13 @@ pub mod data {
             Arg::Kind(word) => json!({ "kind": word }),
             Arg::Words(words) => json!({ "words": of(words) }),
             Arg::Error(_) => {
-                let mut said = String::new();
-                super::said_arg(arg, super::ENGLISH, &[], &mut said);
+                // In English, whatever saying it is within: data carries no
+                // mark.
+                let said = super::formats::within(super::formats::Formats::english(), || {
+                    let mut said = String::new();
+                    super::said_arg(arg, super::ENGLISH, &[], &mut said);
+                    said
+                });
                 json!({ "text": said })
             }
             Arg::List(join, items) => {
@@ -1327,8 +1495,69 @@ pub mod data {
             id: String,
             english: String,
             #[serde(default)]
+            pattern: Option<Vec<ElementData>>,
+            #[serde(default)]
             args: BTreeMap<String, ArgData>,
         },
+    }
+
+    /// A part of a message's English shape, as `pattern_of` writes it.
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    pub(super) enum ElementData {
+        Text(String),
+        Arg {
+            arg: String,
+        },
+        Select {
+            select: String,
+            variants: Vec<VariantData>,
+            default: usize,
+        },
+    }
+
+    #[derive(serde::Deserialize)]
+    pub(super) struct VariantData {
+        key: KeyData,
+        value: Vec<ElementData>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    pub(super) enum KeyData {
+        Word(String),
+        Number(i64),
+    }
+
+    impl ElementData {
+        fn into_element(self) -> Element {
+            match self {
+                ElementData::Text(text) => Element::Text(text.into()),
+                ElementData::Arg { arg } => Element::Arg(arg.into()),
+                ElementData::Select {
+                    select,
+                    variants,
+                    default,
+                } => Element::Select {
+                    on: select.into(),
+                    variants: variants
+                        .into_iter()
+                        .map(|variant| Variant {
+                            key: match variant.key {
+                                KeyData::Word(word) => Key::Word(word.into()),
+                                KeyData::Number(n) => Key::Number(n),
+                            },
+                            value: variant
+                                .value
+                                .into_iter()
+                                .map(ElementData::into_element)
+                                .collect(),
+                        })
+                        .collect(),
+                    default,
+                },
+            }
+        }
     }
 
     #[derive(serde::Deserialize)]
@@ -1356,11 +1585,15 @@ pub mod data {
                     domain,
                     id,
                     english,
+                    pattern,
                     args,
                 } => Words(Inner::Carried(Arc::new(Carried {
                     domain,
                     id,
                     english,
+                    pattern: pattern.map(|pattern| {
+                        pattern.into_iter().map(ElementData::into_element).collect()
+                    }),
                     args: args.into_iter().map(|(n, a)| (n, a.into_arg())).collect(),
                 }))),
             }

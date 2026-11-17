@@ -161,6 +161,132 @@ fn arguments_are_said_as_their_types_say_them() {
     assert_eq!(back, Words::as_written("Écrit"));
 }
 
+/// Where the window draws it, a name is isolated from its sentence inside
+/// its quotes, and a folder named bare is too: a Hebrew name, and one
+/// whose RLO would reverse what follows it, reorder nothing around them.
+/// English, words said in given languages, text said plainly and data
+/// carry no mark.
+#[test]
+fn a_name_is_isolated_where_the_window_draws_it() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let hebrew = "שלום 2.txt";
+    let moved = |name: &str| {
+        crate::words!(
+            test_isolated_moved = "Moved { $name } to { $folder }",
+            name = Name(name.into()),
+            folder = super::Folder("מסמכים".into())
+        )
+    };
+    let said = moved(hebrew).say();
+    assert_eq!(
+        said,
+        "Moved “\u{2068}שלום 2.txt\u{2069}” to \u{2068}מסמכים\u{2069}"
+    );
+    assert_eq!(moved(hebrew).english(), "Moved “שלום 2.txt” to מסמכים");
+    // The spoof's control is a tag: the isolate holds none that could end
+    // it or reverse the words after it, a PDI of the name's own included.
+    assert_eq!(
+        moved("Hello_\u{202e}gnp.js").say(),
+        "Moved “\u{2068}Hello_⟨RLO⟩gnp.js\u{2069}” to \u{2068}מסמכים\u{2069}"
+    );
+    assert_eq!(
+        moved("Hello_\u{202e}gnp.js").english(),
+        "Moved “Hello_⟨RLO⟩gnp.js” to מסמכים"
+    );
+    let early = moved("a\u{2069}b").say();
+    assert_eq!(early.matches(FSI).count(), 2, "{early}");
+    assert_eq!(early.matches(PDI).count(), 2, "{early}");
+    assert!(early.contains("a⟨PDI⟩b"), "{early}");
+    // Nothing but the window's words carries a mark.
+    for plain in [
+        moved(hebrew).english(),
+        moved(hebrew).say_plain(),
+        moved(hebrew).say_in(&langs(&["fr", "en"])),
+        moved(hebrew).to_string(),
+        serde_json::to_string(&moved(hebrew)).unwrap(),
+        moved(hebrew).to_data().to_string(),
+    ] {
+        assert!(!plain.contains([FSI, PDI]), "{plain}");
+    }
+    assert_eq!(moved(hebrew).say_plain(), moved(hebrew).english());
+    // Words sent as data and back are isolated where they are drawn.
+    let back: Words = serde_json::from_value(moved(hebrew).to_data()).unwrap();
+    assert_eq!(back.say(), said);
+    // A name in words in words, each of a list's, an error's: isolated
+    // where the window says them, in English never.
+    let nested = crate::words!(
+        test_isolated_nested = "{ $what }: { $names }",
+        what = moved(hebrew),
+        names = List::and([Name("א".into()), Name("b".into())])
+    );
+    assert_eq!(
+        nested.say(),
+        format!("{said}: “{FSI}א{PDI}” and “{FSI}b{PDI}”")
+    );
+    let failed = Words::of_error(anyhow::Error::new(moved(hebrew)).context("the plan stopped"));
+    assert_eq!(failed.say(), format!("the plan stopped: {said}"));
+    assert_eq!(
+        failed.english(),
+        "the plan stopped: Moved “שלום 2.txt” to מסמכים"
+    );
+    // The quotes are the sentence's, in every language: outside the
+    // isolate, French's narrow spaces with them.
+    let mut out = String::new();
+    super::formats::within(
+        super::formats::Formats::window(super::Isolation::Names),
+        || super::quoted("fr", hebrew, &mut out),
+    );
+    assert_eq!(out, "«\u{202f}\u{2068}שלום 2.txt\u{2069}\u{202f}»");
+    // A sentence that begins with a folder keeps its case where the window
+    // says it: the mark comes first, which no casing changes.
+    let full = crate::words!(
+        test_isolated_full = "{ $folder } is full",
+        folder = super::Folder("docs".into())
+    );
+    assert_eq!(full.heading().say(), "\u{2068}docs\u{2069} is full");
+    // An empty folder's name takes no marks.
+    let nowhere = crate::words!(
+        test_isolated_nowhere = "Moved to { $folder }",
+        folder = super::Folder(String::new())
+    );
+    assert_eq!(nowhere.say(), "Moved to ");
+}
+
+/// A sentence cut around a name hands back parts the drawing shows right:
+/// the name cut out leaves its quotes, the sentence's, and no mark
+/// isolating it; each other name is isolated whole within one part.
+#[test]
+fn a_sentence_cut_around_a_name_keeps_its_quotes_not_its_marks() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let moved = crate::words!(
+        test_cut_moved = "Moved { $name } to { $folder }",
+        name = Name("שלום.txt".into()),
+        folder = super::Folder("Docs".into())
+    );
+    assert_eq!(
+        moved.say_around("name"),
+        Some(("Moved “".to_owned(), format!("” to {FSI}Docs{PDI}")))
+    );
+    assert_eq!(
+        moved.say_around("folder"),
+        Some((format!("Moved “{FSI}שלום.txt{PDI}” to "), String::new()))
+    );
+    let (before, placed) = moved.say_apart(&["folder", "name"]).unwrap();
+    assert_eq!(before, "Moved “");
+    assert_eq!(placed, vec![(1, "” to ".to_owned()), (0, String::new())]);
+    // Balanced in every part: no part opens an isolate another closes.
+    let (before, after) = moved.say_around("name").unwrap();
+    for part in [before, after] {
+        assert_eq!(
+            part.matches(FSI).count(),
+            part.matches(PDI).count(),
+            "{part}"
+        );
+    }
+}
+
 #[test]
 fn the_pseudo_language_is_english_accented_longer_and_marked() {
     let made = Words::message(&MADE, vec![("name", Name("a.txt".into()).into())]);
@@ -363,6 +489,12 @@ fn words_sent_as_data_come_back_as_themselves() {
         serde_json::json!("Hello “Ana”, 3 files")
     );
     assert_eq!(back.to_data(), data);
+    // Said from the English it carries, as the message is: in the
+    // pseudo-language, its arguments marked.
+    assert_eq!(
+        back.say_in(&langs(&[PSEUDO, "en"])),
+        hello.say_in(&langs(&[PSEUDO, "en"]))
+    );
     register(
         "words-test",
         env!("CARGO_PKG_NAME"),

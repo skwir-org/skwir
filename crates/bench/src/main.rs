@@ -22,6 +22,12 @@ struct Cli {
     /// Directory holding the generated trees.
     #[arg(long, default_value = "bench-data", global = true)]
     root: PathBuf,
+    /// The order names are keyed in, as Skwir orders them by the system's
+    /// (ADR-139, 15): a locale (`sv-SE`, `sv_SE.UTF-8`), or `C` for names
+    /// folded as the C locale keeps them. English whatever this machine
+    /// says, so that runs compare from one machine to another.
+    #[arg(long, default_value = "en-US", global = true)]
+    collation: String,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -142,6 +148,8 @@ fn main() -> Result<()> {
     // The allocator the application ships with (ADR-011).
     skwir_alloc::tune();
     let mut cli = Cli::parse();
+    // Before any name is keyed, as Skwir sets it as it starts.
+    skwir_core::collate::set_locale(skwir_platform::locale::bcp47(&cli.collation).as_deref());
     // Locations are absolute paths: a relative one is the folder shown's,
     // which the bench has none of.
     cli.root = std::path::absolute(&cli.root)?;

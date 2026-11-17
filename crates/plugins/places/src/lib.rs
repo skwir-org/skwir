@@ -302,7 +302,8 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
             "places.open_locked",
             &serde_json::json!({
                 "device": volume.device,
-                "title": title.say(),
+                // Plain: a name the passphrase question says in its words.
+                "title": title.say_plain(),
                 "uuid": identity.uuid,
             }),
         )

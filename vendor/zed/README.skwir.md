@@ -101,6 +101,9 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0066-title-bar-on-windows-and-macos` | An open window's title bar hidden on Windows, made transparent on macOS, as decorations are requested and said (`request_decorations`, `window_decorations`); Windows' `zoom` restores a maximized window; a drag area counts in Windows' hit test where it is frontmost | — |
 | `0067-client-decorations-supported` | A window says whether the application's decorations can be had before they are asked for (`Window::client_decorations_supported`): not where X11 runs no compositor or its window manager reads no `_GTK_FRAME_EXTENTS` | — |
 | `0068-drag-areas-that-keep-the-double-click` | A drag area whose double click is the application's (`WindowControlArea::DragOnly`): Windows moves the window from it but neither maximizes nor restores it there; a non-client release counts the clicks as its press did | — |
+| `0069-right-to-left-text` | A line holding right-to-left text keeps each byte's bidi level (UAX #9) and its glyphs in the order they are drawn: its carets, hit tests and selections answer where it is drawn (`LineLayout::selection_ranges`, `index_left_of`, `index_right_of`), it wraps in its text's order, each row laid out as it reads, and a decoration follows its characters | — |
+| `0070-directwrite-right-to-left-runs` | Windows: a run read right to left is placed from its origin leftward, as DirectWrite draws it, and a line that starts right to left reads so | zed#31102 (open) |
+| `0071-word-characters` | The letters, marks and digits of every script that puts spaces between its words are word characters by their Unicode properties (a Greek, Hebrew, Arabic or Devanagari word wraps whole); Chinese, Japanese, Korean, Thai and the like break between characters, never before a mark; bidi controls and joiners are glue | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1315,3 +1318,180 @@ sees a double click.
 
 Checked: clippy for Windows (`x86_64-pc-windows-gnu`) on Skwir's UI. Not
 run: a gpui window cannot be drawn under Wine.
+
+### 0069: Right-to-left text
+
+Hebrew and Arabic were shaped and drawn right on one line by cosmic-text
+and Core Text, but everything gpui worked out from the glyphs took their
+order in a run for their text's and the order they are drawn in at once:
+a caret in a Hebrew name stood at the wrong end of its letter, a click
+landed on the letter beside it, a selection was one rectangle from where
+its start's caret was to its end's, a color or underline stopped at the
+first glyph whose character came earlier, and a wrapped line was cut in
+the order it is drawn (on macOS, a Hebrew paragraph's last words on its
+first row; on Linux, where cosmic-text hands a line read right to left
+from its right end, never cut at all). `text_system::bidi` says how each
+answer is found; in short:
+
+- **Levels.** A line whose text holds a right-to-left letter or control
+  (`R`, `AL`, `RLE`, `RLO`, `RLI`; a scan of its characters, none for
+  ASCII) keeps each byte's embedding level, UAX #9 run by `unicode-bidi`
+  (already in gpui's tree, by usvg) through rule L1, and each paragraph's
+  (`LineLayout::bidi_levels`, a `BidiLevels`). A paragraph's direction is
+  its first strong character's, as cosmic-text and Core Text take it (and
+  DirectWrite, asked so: 0070). Every other line keeps `None`, and every
+  answer below is worked out as before, by the same code, behind one test
+  of that `Option`: a line all left to right costs no more than it did,
+  but the scan when it is shaped (not each frame it is drawn: the layout is
+  kept). The scan asks the blocks such characters are in before the class
+  table (a test walks every code point): in a release build, on a machine
+  under load (15), 12 to 30 ns for a 30-byte ASCII name, 0.19 to 0.35 µs
+  for a French one, 0.15 to 0.18 µs for 15 CJK characters (1.2 µs asking
+  the table for each); a Hebrew name's levels, 4 to 5 µs.
+- **Drawn order.** The glyphs of such a line are put in the order they
+  are drawn, left to right, where the platform handed them otherwise
+  (cosmic-text a line read right to left from its right end; a run of Core
+  Text's from its end, or its runs in their text's order, which it is free
+  to): each run turned left to right, the runs set side by side
+  (`LineLayout::put_in_drawn_order`). Painting, wrapping and every walk of
+  a line's glyphs assume it.
+- **Cells and carets.** The glyphs side by side with one index are a cell
+  (a letter and its marks, a ligature), from its left edge to the next
+  one's. A place in the text stands where the cell after it begins (its
+  right edge, read right to left) or where the cell before it ends. Where
+  the two differ (the text turns direction), it takes the edge no other
+  place stands at, so every edge is reached: both ends of a Hebrew word in
+  an English name, the far left of "אבג.txt". Where both are free, the
+  edge of the cell at the lower level, the paragraph's own direction
+  (where a Hebrew word starts in an English sentence, the caret stands
+  after the English before it, where a Latin letter typed there goes). `x_for_index`,
+  `closest_index_for_x` and `index_for_x` read them, round trip included;
+  `index_left_of` and `index_right_of` walk them as drawn, for arrow
+  keys; `selection_ranges` gives a selection's spans of x, one for each
+  stretch drawn side by side.
+- **Rows.** Such a line wraps in its text's order (the same rule as
+  `compute_wrap_boundaries`, its cells measured one after another), each
+  row then laid out as it reads: its trailing spaces at their paragraph's
+  level (L1), its cells reordered (L2), its glyphs moved. The rows follow
+  each other along x in the layout a `WrappedLineLayout` draws from, as a
+  wrapped line's rows always have, so painting, alignment, boxes (0060)
+  and what reads a row's ends work unchanged; a line that fits keeps its
+  layout. Where a row starts in the text is `WrappedLineLayout::row_starts`
+  (its first character in the text's order, drawn at its right end in
+  Hebrew), which `TextLayout::row_bounds_for_index` and `wrapped_text`
+  read; `position_for_index` and `index_for_position` answer row by row as
+  above.
+- **Decorations.** A glyph whose character comes before its decoration
+  run's start (one read right to left, painted from its end) has its run
+  looked for from the first again: colors, backgrounds, underlines and
+  strikethroughs follow their characters.
+- **Tests' text system** (`NoopTextSystem`) lays right-to-left text out as
+  it reads, as a platform does, so tests of it see what a window shows.
+
+Not done: a paragraph read right to left is still drawn from its
+element's left (`TextAlign`, its start being its right is a mirrored
+layout's, not this); cosmic-text's mark offsets, which gpui drops for
+every script, are not drawn (a vowel point may sit beside its letter:
+upstream's, unchecked in a window); a line whose runs sit off the
+baseline (0006) is shaped a stretch at a time, each its own paragraph;
+`ShapedLine::split_at` and its cursor cut such a line by its text's order
+as before (Skwir uses neither); a text's minimum content size (0061)
+counts such a line's rows right but grows a row for a box (0060) by its
+cells' places before they are laid out.
+
+The tests are `text_system::bidi::tests` (every right-to-left character
+in the blocks asked first, Hebrew, Arabic with digits, a
+Latin name with a Hebrew part, a Hebrew word between Latin ones, wrapped
+Hebrew and mixed paragraphs, selections, levels, drawn order),
+`text_system::line::tests::a_decoration_follows_its_characters_in_right_to_left_text`
+(nothing was underlined before), and gpui_wgpu's `cosmic_text_system::tests::a_right_to_left_line_is_taken_from_its_left`,
+shaped by cosmic-text.
+
+Checked in a window too (Skwir's debug build on Xvfb, 2026-11-17): Hebrew,
+Arabic and mixed names in the grid and in the rename field, the stem
+selected where it is drawn, Home and End at the text's two ends, the
+arrows walking the letters as drawn (across a Hebrew word in a Latin
+name, one edge a press), a click landing between the letters under it, a
+drag over the turn of direction selecting two spans; a text preview wraps
+a Hebrew paragraph from its first words, a mixed line row by row, Arabic
+with its digits, and a selection's background follows its characters
+there. Compiled for macOS (Skwir's UI type-checked for
+`aarch64-apple-darwin` against the SDK, gpui_apple and gpui_macos with it)
+and for Windows; run on neither. On macOS nothing of Core Text's is
+changed: the rows of a wrapped Hebrew paragraph came out in the wrong
+order there because gpui cut a line in the order it is drawn, which this
+patch does in its text's order on every system.
+
+### 0070: DirectWrite's right-to-left runs
+
+DirectWrite hands `DrawGlyphRun` each run with its origin and its bidi
+level: a run at an odd level reads right to left, its glyphs in their
+text's order and placed leftward from its origin, its right end. gpui
+placed every run where the last ended, rightward: Hebrew and Arabic were
+drawn backwards (zed#31102). Where the text reads both ways (0069's
+`BidiLevels`), each glyph is placed as DirectWrite draws it, from the
+run's origin, leftward at an odd level (an offset along the run's
+direction too), the run turned left to right, and the line moved so its
+left end is at 0. A line whose first strong character reads right to left
+is laid out so (`DWRITE_READING_DIRECTION_RIGHT_TO_LEFT`, its box as wide
+as the line, no wrapping), as cosmic-text and Core Text lay it out. A line
+all left to right is placed as before, by the same code.
+
+The test is `direct_write::tests::right_to_left_runs_are_placed_as_drawn`,
+for Windows itself: under Wine 11 (`just gpui-check-windows
+right_to_left_runs_are_placed_as_drawn`) gpui's DirectWrite selects no font
+at all, Segoe UI, Wine's own Tahoma added from its data folder, or a font
+its system collection lists (Inter, Unifont), so it fails there before
+laying anything out (as Zed's tests of DirectWrite's separators would).
+Checked: it builds for Windows and runs under Wine to that point; Skwir's
+UI passes clippy for Windows (`x86_64-pc-windows-gnu`). Not seen drawn: a
+gpui window cannot be drawn under Wine.
+
+### 0071: Word characters
+
+The wrapper (`LineWrapper::is_word_char`, which `LineLayout`'s wrapping
+asks too) took a word to be made of ASCII, Latin, Cyrillic and Bengali
+letters and some punctuation, from a list of blocks: a Greek, Armenian,
+Georgian, Hebrew, Arabic or Devanagari word wrapped between any two
+letters, and a mark typed apart could be cut from its letter. Beyond
+ASCII, which keeps its rules and goes first:
+
+- **Letters, marks and digits** of every script are word characters, by
+  their general category (`unicode-properties`, already in gpui's tree by
+  usvg's rustybuzz), not by blocks.
+- **But not the letters and digits of scripts written without spaces
+  between words** (by their script, `unicode-script`, there by rustybuzz
+  too): Han, Hiragana, Katakana, Bopomofo, Hangul, Yi, Tangut, Nüshu and
+  Khitan break between any two characters, as before; so do Thai, Lao,
+  Khmer, Myanmar and the Tai scripts, whose words want a dictionary (UAX
+  #14's class SA) that gpui does not have: a line of Thai breaks between
+  characters, where a word may end or not, rather than run as one word as
+  wide as its sentence. Korean breaks between syllables, as UAX #14 and a
+  browser's `word-break: normal` do. A mark of any of them stays with its
+  letter: no line starts with a Thai vowel sign or tone mark.
+- **Glue** beside the punctuation and no-break spaces of before: the
+  joiners (ZWJ, word joiner, zero width no-break space; UAX #14's LB8a and
+  LB11) and the bidirectional marks, embeddings, overrides and isolates
+  (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069; class CM,
+  LB9), so a name isolated inside its quotes (“⁨…⁩”, ADR-139) wraps as its
+  words and its quotes do, and a text's narrowest width keeps the quotes
+  with the name.
+- **What moves:** `×` and `÷`, symbols, are a place to wrap now, as `+`
+  is; `ª`, `º`, `µ`, `²`, `½`, letters and numbers below Latin-1's letters,
+  are word characters.
+- **Speed.** A character of the Basic Multilingual Plane is answered from
+  its page of 256, worked out the first time one of it is asked about
+  (`WORD_PAGES`, 8 KiB at most): measured on a release build under load,
+  6 to 9 ns a character for French, Greek, Hebrew and CJK names, against 9
+  to 12 for the list of blocks before and 20 to 100 asking the tables each
+  time; ASCII 7 against 12. A page costs its 256 look-ups once.
+
+Tibetan (no break before its tsheg, after it) and Japanese kinsoku beyond
+the closing punctuation listed are not done.
+
+The tests are `text_system::line_wrapper::tests::test_is_word_char` (each
+script, the marks, the glue, every page against the characters worked
+out) and `text_system::line_layout::tests::a_word_of_any_script_is_kept_whole`
+(the narrowest width of Greek, Devanagari, Georgian, a name isolated in
+its quotes, Chinese and Thai), and the Hebrew paragraph's narrowest width
+in 0069's `a_hebrew_paragraph_wraps_from_its_first_row`.

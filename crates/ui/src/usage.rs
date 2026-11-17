@@ -2524,9 +2524,11 @@ mod tests {
                 at: 0
             })
         );
+        // The folder named in a sentence is isolated from it, as the window
+        // says names (`Words::say`).
         assert_eq!(
             mkv.hint,
-            "Videos › a.mkv · 400\u{a0}B · 80% of Videos · double-click to go there"
+            "Videos › a.mkv · 400\u{a0}B · 80% of \u{2068}Videos\u{2069} · double-click to go there"
         );
         let thumbs = &blocks[items[0].children[1].key];
         assert_eq!(thumbs.part, Part::Hidden("/r/Videos".into()));
@@ -2621,7 +2623,7 @@ mod tests {
         assert_eq!(items[2].detail.as_ref(), "2 files");
         assert_eq!(
             blocks[0].hint,
-            "node_modules · 1,000 files · 100% of the files in r"
+            "node_modules · 1,000 files · 100% of the files in \u{2068}r\u{2069}"
         );
     }
 

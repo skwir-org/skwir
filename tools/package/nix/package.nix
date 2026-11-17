@@ -19,6 +19,7 @@
   pkg-config,
   cmake,
   python3,
+  gettext,
 
   # What skwir draws and runs with; wgpu opens the GPU's, Wayland's and
   # X's libraries itself, through the program's own search path.
@@ -206,6 +207,8 @@ rustPlatform.buildRustPackage {
     cmake
     makeWrapper
   ]
+  # The desktop entry's and the metainfo's translations, merged (msgfmt).
+  ++ lib.optional stdenv.hostPlatform.isLinux gettext
   # MuPDF's crate makes its bindings with bindgen.
   ++ lib.optional withMupdf rustPlatform.bindgenHook;
 
@@ -247,8 +250,9 @@ rustPlatform.buildRustPackage {
     } > $out/share/licenses/skwir/THIRD-PARTY-NOTICES
   ''
   + lib.optionalString stdenv.hostPlatform.isLinux ''
-    install -Dm644 tools/package/linux/org.skwir.skwir.desktop -t $out/share/applications
-    install -Dm644 tools/package/linux/org.skwir.skwir.metainfo.xml -t $out/share/metainfo
+    # The desktop entry and the metainfo in every language translated
+    # (tools/package/linux/l10n.sh, ADR-139).
+    sh tools/package/linux/l10n.sh merge $out/share
     install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t $out/share/icons/hicolor/scalable/apps
   '';
 

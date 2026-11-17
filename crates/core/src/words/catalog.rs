@@ -239,6 +239,69 @@ pub fn shipped_languages() -> Vec<&'static str> {
     languages
 }
 
+/// How much of one language Skwir's catalogs say, and whether Skwir offers
+/// it (ADR-139, 13). Counted at build time by `just words`
+/// (`tools/words/extract.py`, beside the catalogs in
+/// `crates/skwir/src/catalogs.rs`), so that nothing of the catalogs is
+/// read, nor made resident, to know it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Share {
+    /// Its tag, as its catalogs are named (`fr`).
+    pub language: &'static str,
+    /// All of Skwir's messages: every crate's English.
+    pub messages: u32,
+    /// How many of them its catalogs translate.
+    pub translated: u32,
+    /// How many of those a person reviewed: no longer drafts.
+    pub reviewed: u32,
+    /// Whether Automatic speaks it (`tools/words/offered`): once 90 % of
+    /// all messages and every one of what is on by default were reviewed.
+    /// One that is not is listed as incomplete, for whoever chooses it.
+    pub offered: bool,
+}
+
+impl Share {
+    /// The messages translated, in whole percents of all, rounded down: 100
+    /// only once every one is.
+    pub fn translated_percent(&self) -> u32 {
+        percent(self.translated, self.messages)
+    }
+
+    /// The messages reviewed, in whole percents of all, rounded down.
+    pub fn reviewed_percent(&self) -> u32 {
+        percent(self.reviewed, self.messages)
+    }
+}
+
+fn percent(part: u32, whole: u32) -> u32 {
+    if whole == 0 {
+        return 0;
+    }
+    u32::try_from(u64::from(part.min(whole)) * 100 / u64::from(whole)).unwrap_or(100)
+}
+
+/// Each language's share, handed in as the program starts (`ship_shares`).
+static SHARES: RwLock<&'static [Share]> = RwLock::new(&[]);
+
+/// How much of each language the catalogs shipped say (`ship`), as
+/// `just words` counted it: what the Language setting lists, and which
+/// languages Automatic may speak (`locale::automatic`).
+pub fn ship_shares(shares: &'static [Share]) {
+    *SHARES.write() = shares;
+    // What is said in the system's languages may change with it.
+    CATALOGS.write().1 += 1;
+}
+
+/// The share of `language` (a tag as a catalog is named, any case): `None`
+/// for one no catalog shipped is in, English included, the code's own.
+pub fn share_of(language: &str) -> Option<Share> {
+    SHARES
+        .read()
+        .iter()
+        .find(|share| share.language.eq_ignore_ascii_case(language))
+        .copied()
+}
+
 /// Whether two names are one crate's: its package name (`skwir-plugin-tags`)
 /// and Rust's (`skwir_plugin_tags`).
 fn same_crate(a: &str, b: &str) -> bool {

@@ -1,5 +1,6 @@
 // Made from the crates' l10n folders by `just words` (tools/words/extract.py):
-// never edit by hand. Every catalog but English, compiled in (ADR-139, G).
+// never edit by hand. Every catalog but English, compiled in (ADR-139, G),
+// and how much of each language they say (ADR-139, 13).
 
 #[rustfmt::skip]
 pub static CATALOGS: &[skwir_core::words::Shipped] = &[
@@ -237,5 +238,19 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-ui",
         language: "fr",
         source: include_str!("../../ui/l10n/fr.ftl"),
+    },
+];
+
+/// Of all the messages, how many each language's catalogs translate and
+/// how many of those are reviewed, and whether Skwir offers it
+/// (`tools/words/offered`).
+#[rustfmt::skip]
+pub static SHARES: &[skwir_core::words::Share] = &[
+    skwir_core::words::Share {
+        language: "fr",
+        messages: 6_797,
+        translated: 6_797,
+        reviewed: 0,
+        offered: false,
     },
 ];

@@ -51,7 +51,8 @@ fn header() -> String {
             # \\x20 a space at either end).",
         note = "The first lines of a folder's listing opened as text in the user's editor: each line begins with # (a comment, which is not read back). The arrows say what each edit becomes; the words in the left column may be aligned anew. \\\\, \\xHH, \\x0a and \\x20 are written as they are."
     )
-    .say();
+    // Plain: a file's text, which the editor reads.
+    .say_plain();
     // The listing's lines start on the line after it.
     header.push('\n');
     header

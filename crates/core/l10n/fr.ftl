@@ -2484,7 +2484,10 @@ settings_language_automatic = Automatique
 settings_language_description = La langue que parle la fenêtre de Skwir.
 
 # draft
-settings_language_description_more = Automatique parle la première des langues de votre système que Skwir connaît, sinon l’anglais ; les agents et les scripts reçoivent leurs réponses en anglais quel que soit votre choix.
+settings_language_description_more = Automatique parle la première des langues de votre système dans laquelle la traduction de Skwir est prête, sinon l’anglais. Une langue indiquée comme incomplète n’est parlée que si vous la choisissez, ce qui lui manque étant dit en anglais. Les agents et les scripts reçoivent leurs réponses en anglais, quel que soit votre choix.
+
+# draft
+settings_language_incomplete = { $language } — incomplet, traduit à { $translated } %, relu à { $reviewed } %
 
 # draft
 settings_language_pseudo = Pseudo (pour les tests)

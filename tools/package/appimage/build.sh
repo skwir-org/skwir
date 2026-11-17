@@ -31,6 +31,7 @@ python3 tools/package/appimage/stage.py
 rm -f /build/AppDir/AppRun
 install -m755 tools/package/appimage/AppRun /build/AppDir/AppRun
 desktop-file-validate /build/AppDir/usr/share/applications/org.skwir.skwir.desktop
+tools/package/linux/l10n.sh installed /build/AppDir/usr/share
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
 image="/build/skwir-$version-x86_64.AppImage"
 ARCH=x86_64 /opt/appimagetool/squashfs-root/AppRun \

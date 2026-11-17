@@ -9,9 +9,9 @@
 # Rust toolchain is in its closure, nor a library of a helper it leaves
 # out; skwir opens the window's libraries through its own search path,
 # not LD_LIBRARY_PATH, and names no GStreamer plugins for what it starts;
-# its fonts, notices, desktop entry, metainfo and icon are there; and it
-# checks a settings file without a window. Each closure's
-# size is printed, for the STATUS-LOG.
+# its fonts, notices, icon, desktop entry and metainfo (in every language
+# translated) are there; and it checks a settings file without a window.
+# Each closure's size is printed, for the STATUS-LOG.
 #
 #     tools/package/nix/check.sh [variant…]    (default: minimal default)
 set -eu
@@ -142,6 +142,12 @@ for variant in "$@"; do
             failed=1
         fi
     done
+
+    # The desktop entry and the metainfo in every language translated
+    # (tools/package/linux/l10n.sh, ADR-139).
+    if ! "$here/linux/l10n.sh" installed "$out/share"; then
+        failed=1
+    fi
 
     # A settings file checked as Home Manager's module checks it.
     mkdir -p "$work/home" "$work/run"

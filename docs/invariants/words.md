@@ -84,6 +84,33 @@ sentence, never a sentence assembled from pieces.
   naming it; the marks (U+200E, U+200F, U+061C) are left as they are.
   What is drawn never changes the name: a search, a copy and an
   operation see it as it is.
+- **Where the window draws it, a name is isolated from its sentence**
+  (`Words::say`): FSI (U+2068) before it, PDI (U+2069) after, inside its
+  quotes ("“FSI name PDI”"), and a `Folder`'s alike, bare. The quotes are
+  the sentence's punctuation and open and close in its direction; the
+  name takes its own from its first strong letter (UAX #9), so a Hebrew
+  name, or one ending in digits or a bracket, reorders nothing around it.
+  The name holds no control that could end its isolate early: its own are
+  tags (above). Fluent's own isolation stays off (ADR-139, 3).
+  - **The marks never go** into English (`english()`: agents, MCP, the
+    CLI's help, logs, tests), words said in given languages (`say_in`),
+    data (`to_data`, `Serialize`), nor anything said for the window that
+    leaves it as text: the clipboard, a file's name, a name kept as data
+    (a saved search's), a command's argument, a measure of what is read.
+    Those say `Words::say_plain()`: the window's language, no mark.
+  - **Words said for the window never become a `Name` or a `Folder`**
+    (a place's title in "Could not read “…”"), nor text as written (a
+    search's title made of words, `Words::as_written`, which agents read
+    as it is): they are said with `say_plain()` there, and isolated once,
+    by the words they go in. Said with `say()`, their marks would show as
+    tags, and reach agents in `location_title`'s English.
+  - **What is printed or written to a file is plain** (a PDF's text and
+    name, an editor's buffer, a keyring's label, a metadata value): no
+    mark reaches a document, a program or the disk.
+  - **A sentence cut around an argument** (`say_around`, `say_apart`)
+    hands back parts holding whole isolates only: the argument cut out
+    leaves no mark (the caller draws it, an element of its own that
+    nothing beside it reorders), and a name its quotes.
 - **A count is a count, a size a `Size`, a number with digits after the
   point a `Decimal`, a moment a `Moment`** (its `Shape`: a time, a date,
   a month…): each formatted for the system's number or date locale and
@@ -158,12 +185,38 @@ sentence, never a sentence assembled from pieces.
 - **A plugin's catalogs are a contribution** like its commands:
   registered with its id, withdrawn on disable
   (`crates/skwir/tests/plugins_toggle.rs`).
+- **When a language is offered** (ADR-139, 13): Automatic speaks a
+  language only once `tools/words/offered` names it, and Skwir's own
+  words are said in a system language only then (`locale::languages`).
+  Any other language a catalog is in is listed by the Language setting as
+  incomplete, with its share ("Français — incomplete, 99% translated, 0%
+  reviewed"), and said only to whoever chooses it. What the system
+  translates itself (desktop entries' names, the type database's
+  comments) is read in the user's languages whatever Skwir offers
+  (`locale::preferred`).
+  - A message is translated once its language's catalog has its id, and
+    reviewed once the `# draft` comment above it is gone: a model's or a
+    machine's translation is a draft until a person who speaks the
+    language removes that line.
+  - `just words` counts each language's share into
+    `crates/skwir/src/catalogs.rs` (`words::Share`), so the program reads
+    no catalog to know it; a catalog edited is followed by `just words`.
+    It writes a language into the record once 90% of all messages are
+    reviewed in it and every message of what is on by default is: the
+    crates that are no plugin's, and each plugin whose
+    `enabled_by_default` is not the literal `false`.
+  - Only a person takes a language out of the record, which lists it as
+    incomplete again. Between releases it stays offered, what it lacks
+    said in the next of the reader's languages; a release refuses one
+    under 75% reviewed (`just words --release`, run by `lint-all`).
 - **The checks:**
   - `en.ftl` is current with the code;
   - each catalog has the English's ids, arguments and attributes;
   - every selector has its default;
   - no id has two Englishes in one crate;
-  - no catalog keeps an id the code no longer says.
+  - no catalog keeps an id the code no longer says;
+  - the languages' shares counted and the record current; for a
+    release, no language offered under 75% reviewed.
 
 ## Tests
 

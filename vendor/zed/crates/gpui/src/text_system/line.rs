@@ -100,6 +100,7 @@ impl ShapedLine {
             descent: layout.descent,
             runs: layout.runs.clone(),
             len,
+            bidi_levels: layout.bidi_levels.clone(),
         });
         self
     }
@@ -368,6 +369,12 @@ impl<'a> ShapedLineCursor<'a> {
                 descent: self.line.layout.descent,
                 runs,
                 len: byte_index - previous_index,
+                bidi_levels: self
+                    .line
+                    .layout
+                    .bidi_levels
+                    .as_ref()
+                    .map(|levels| Arc::new(levels.slice(previous_index..byte_index))),
             }),
             text: SharedString::new(&self.line.text[previous_index..byte_index]),
             decoration_runs: decorations,
@@ -651,8 +658,10 @@ fn paint_line(
         // box taller than the text grew the row by (`LineLayout::rows`).
         let rows = layout.rows(line_height, wrap_boundaries);
         let mut row = 0;
-        let mut decoration_runs = decoration_runs.iter();
+        let all_decoration_runs = decoration_runs;
+        let mut decoration_runs = all_decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
+        let mut run_start = 0;
         let mut run_end = 0;
         let mut color = black();
         let mut current_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> = None;
@@ -743,6 +752,14 @@ fn paint_line(
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> =
                     None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
+                // A glyph before its decoration run's start (text read right
+                // to left, painted from its end): its run is looked for from
+                // the first again.
+                if glyph.index < run_start {
+                    decoration_runs = all_decoration_runs.iter();
+                    run_start = 0;
+                    run_end = 0;
+                }
                 if glyph.index >= run_end {
                     let mut style_run = decoration_runs.next();
 
@@ -757,6 +774,7 @@ fn paint_line(
 
                     if let Some(style_run) = style_run {
                         let style_run_start = run_end;
+                        run_start = style_run_start;
                         if let Some((_, underline_style, underline_range)) = &mut current_underline
                         {
                             if style_run.underline.as_ref() != Some(underline_style) {
@@ -798,6 +816,7 @@ fn paint_line(
                         run_end += style_run.len as usize;
                         color = style_run.color;
                     } else {
+                        run_start = run_end;
                         run_end = layout.len;
                         finished_underline = current_underline.take();
                         finished_strikethrough = current_strikethrough.take();
@@ -924,8 +943,10 @@ fn paint_line_background(
         // A background fills its row, as tall as a box in it grew it.
         let rows = layout.rows(line_height, wrap_boundaries);
         let mut row = 0;
-        let mut decoration_runs = decoration_runs.iter();
+        let all_decoration_runs = decoration_runs;
+        let mut decoration_runs = all_decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
+        let mut run_start = 0;
         let mut run_end = 0;
         let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
         let text_system = cx.text_system().clone();
@@ -986,6 +1007,12 @@ fn paint_line_background(
                 prev_glyph_position = glyph.position;
 
                 let mut finished_background: Option<(Point<Pixels>, Hsla)> = None;
+                // As `paint_line` looks for a glyph's decoration run.
+                if glyph.index < run_start {
+                    decoration_runs = all_decoration_runs.iter();
+                    run_start = 0;
+                    run_end = 0;
+                }
                 if glyph.index >= run_end {
                     let mut style_run = decoration_runs.next();
 
@@ -999,6 +1026,7 @@ fn paint_line_background(
                     }
 
                     if let Some(style_run) = style_run {
+                        run_start = run_end;
                         if let Some((_, background_color)) = &mut current_background
                             && style_run.background_color.as_ref() != Some(background_color)
                         {
@@ -1012,6 +1040,7 @@ fn paint_line_background(
                         }
                         run_end += style_run.len as usize;
                     } else {
+                        run_start = run_end;
                         run_end = layout.len;
                         finished_background = current_background.take();
                     }
@@ -1159,6 +1188,7 @@ mod tests {
                     glyphs: shaped_glyphs,
                 }],
                 len: text.len(),
+                bidi_levels: None,
             }),
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
@@ -1195,6 +1225,7 @@ mod tests {
                 run(crate::RunPosition::Baseline, vec![glyph(40., 5)]),
             ],
             len: 6,
+            bidi_levels: None,
         };
         let wraps = [WrapBoundary {
             run_ix: 1,
@@ -1271,6 +1302,7 @@ mod tests {
                 ),
             ],
             len: 7,
+            bidi_levels: None,
         };
         let wraps = [
             WrapBoundary {
@@ -1806,6 +1838,7 @@ mod tests {
                     },
                 ],
                 len: 6,
+                bidi_levels: None,
             }),
             text: "abcdef".into(),
             decoration_runs: SmallVec::new(),
@@ -1945,6 +1978,70 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn a_decoration_follows_its_characters_in_right_to_left_text(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let style = UnderlineStyle {
+                thickness: px(1.),
+                color: Some(hsla(0., 1., 0.5, 1.)),
+                wavy: false,
+            };
+            // "אבג דהו", its first word underlined: drawn "והד גבא", the
+            // underline under the line's right end, where that word is.
+            let text = "\u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{5d5}";
+            let mut line = window.text_system().shape_line(
+                SharedString::new(text),
+                px(16.),
+                &[TextRun {
+                    len: text.len(),
+                    font: font(".ZedMono"),
+                    color: black(),
+                    ..TextRun::default()
+                }],
+                None,
+            );
+            let decoration = DecorationRun {
+                len: 6,
+                color: black(),
+                background_color: None,
+                underline: Some(style),
+                strikethrough: None,
+            };
+            line.decoration_runs = SmallVec::from_vec(vec![
+                decoration.clone(),
+                DecorationRun {
+                    len: 7,
+                    underline: None,
+                    ..decoration
+                },
+            ]);
+            let word = line.selection_ranges(0..6);
+            assert_eq!(word.len(), 1);
+            assert_eq!(word[0].end, line.width);
+            let origin = point(px(4.), px(10.));
+            let mut strokes = Vec::new();
+            line.paint_with_underline_handler(
+                origin,
+                px(20.),
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+                |range, at, width, style, _| strokes.push((range, at.x, width, *style)),
+            )
+            .unwrap();
+            assert_eq!(
+                strokes,
+                [(
+                    0..6,
+                    origin.x + word[0].start,
+                    word[0].end - word[0].start,
+                    style
+                )]
+            );
+        });
+    }
+
     fn underline_test_line(
         text: &str,
         decorations: &[DecorationRun],
@@ -1978,6 +2075,7 @@ mod tests {
             descent: layout.descent,
             runs,
             len: layout.len,
+            bidi_levels: None,
         });
         line
     }
@@ -2048,6 +2146,7 @@ mod tests {
                     },
                 ],
                 len: 10,
+                bidi_levels: None,
             }),
             text: "a😀bcdef".into(),
             decoration_runs: SmallVec::new(),

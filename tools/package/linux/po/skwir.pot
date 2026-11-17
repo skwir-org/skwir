@@ -1,0 +1,60 @@
+# skwir's desktop entry and AppStream metainfo, to translate.
+# Copyright (C) YEAR The skwir authors
+# This file is distributed under the same license as the skwir package.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: skwir\n"
+"Report-Msgid-Bugs-To: https://skwir.org/issues\n"
+"POT-Creation-Date: 2026-11-17 19:27+0100\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Translators: what kind of program skwir is, shown under its name.
+#: org.skwir.skwir.desktop:5
+msgid "File Manager"
+msgstr ""
+
+#: org.skwir.skwir.desktop:6 org.skwir.skwir.metainfo.xml:11
+msgid "Browse, find and organize your files"
+msgstr ""
+
+#. Translators: the words a launcher's search finds skwir by, each followed
+#. by a semicolon, with no space around it. Write those people search with
+#. in your language; they need not be the English words one for one.
+#: org.skwir.skwir.desktop:17
+msgid "files;folders;browser;tags;search;"
+msgstr ""
+
+#. Translators: who makes skwir, as software centres say it.
+#: org.skwir.skwir.metainfo.xml:9
+msgid "The skwir authors"
+msgstr ""
+
+#: org.skwir.skwir.metainfo.xml:13
+msgid ""
+"Skwir is an augmented file manager, built to be driven by humans and agents "
+"alike."
+msgstr ""
+
+#: org.skwir.skwir.metainfo.xml:18
+msgid "Lists, grids and columns that stay responsive on very large folders"
+msgstr ""
+
+#: org.skwir.skwir.metainfo.xml:19
+msgid "Previews of documents, pictures, music, films, archives and maps"
+msgstr ""
+
+#: org.skwir.skwir.metainfo.xml:20
+msgid "Tags kept on the files themselves, where other applications find them"
+msgstr ""
+
+#: org.skwir.skwir.metainfo.xml:21
+msgid "Every change undoable, and planned for review before it is applied"
+msgstr ""

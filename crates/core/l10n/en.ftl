@@ -2302,8 +2302,11 @@ settings_language_automatic = Automatic
 # Automatic is a choice of the setting (settings_language_automatic).
 settings_language_description = The language Skwir's window speaks.
 
-# Automatic is a choice of the setting (settings_language_automatic).
-settings_language_description_more = Automatic speaks the first of your system's languages Skwir has words in, else English; agents and scripts are answered in English whichever you choose.
+# Automatic is a choice of the setting (settings_language_automatic). A translation is ready once a person who speaks the language has reviewed nearly all of it; an incomplete one is listed with how much of it is translated and reviewed (settings_language_incomplete).
+settings_language_description_more = Automatic speaks the first of your system's languages Skwir's translation is ready in, else English. A language listed as incomplete is spoken only if you choose it, with what it lacks in English. Agents and scripts are answered in English whichever you choose.
+
+# A language of the Language setting that Automatic does not speak yet: its name in itself (Français), then how much of Skwir's words it has, in percents of all of them. Reviewed words were accepted by a person who speaks the language; the others are drafts.
+settings_language_incomplete = { $language } — incomplete, { $translated }% translated, { $reviewed }% reviewed
 
 # The pseudo-language, English accented and longer, offered in builds for testing.
 settings_language_pseudo = Pseudo (for testing)

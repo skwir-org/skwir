@@ -212,3 +212,39 @@ fn a_saved_entry_that_does_not_read_is_kept_as_written() {
         "never written over"
     );
 }
+
+/// A name made of words the window says (a search's title, a saved
+/// search's name) is a name, kept and read as text: no mark isolating its
+/// folder's name in it (`Words::say_plain`), neither in the window's words
+/// nor in agents' English (`App::location_title`).
+#[test]
+fn a_name_made_of_words_carries_no_mark() {
+    let marks = ['\u{2068}', '\u{2069}'];
+    let tmp = home_tempdir();
+    let root = tmp.path().join("שלום 2");
+    std::fs::create_dir_all(&root).unwrap();
+    let app = app_in(&tmp.path().join("state"));
+    let search = skwir_plugin_query::location_for("ext:pdf", Some(&root));
+    assert_eq!(app.location_title(&search).english(), "ext:pdf in שלום 2");
+    for said in [
+        app.location_title(&search).say(),
+        skwir_plugin_query::suggested_name(Some(&app), &search.rest),
+    ] {
+        assert!(!said.contains(marks), "{said:?}");
+    }
+    run(
+        &app,
+        "query.save",
+        &serde_json::json!({ "expr": search.rest }),
+    );
+    run(
+        &app,
+        "query.save",
+        &serde_json::json!({ "expr": "kind:image", "at": root }),
+    );
+    let names: Vec<String> = skwir_plugin_query::saved(&app)
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(names, ["ext:pdf in שלום 2", "שלום 2 · kind:image"]);
+}

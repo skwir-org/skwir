@@ -188,7 +188,7 @@ impl Catalog {
         Self::read(
             &sources.app_dirs,
             &sources.lists,
-            &Locale::from_languages(&skwir_core::locale::languages()),
+            &Locale::from_languages(&skwir_core::locale::preferred()),
             &current_desktops(),
         )
     }

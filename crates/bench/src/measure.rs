@@ -126,11 +126,31 @@ pub struct Report {
     /// folder, its names settled later, taken whole (`Kept::exact`) and
     /// compared with the 200 entries, none meeting it.
     pub history_meets_whole: Stat,
+    /// The folder's names keyed by a locale's collation (English, ICU4X's
+    /// numeric keys, ADR-139, 15), as a listing keys what arrives, then
+    /// sorted by their keys, as an order is made on a worker.
+    pub collate_keys: Stat,
+    /// The same by the folded keys the C locale keeps, the names' order
+    /// before ADR-139: what the locale's is measured against.
+    pub collate_keys_folded: Stat,
+    /// Each of the folder's names asked whether it begins with a text none
+    /// does (`file-1`, its first six characters compared in each) by the
+    /// locale's collation (`collate::Prefix`): type-to-find walking the
+    /// whole folder on the window's thread, reaching nothing.
+    pub collate_prefix: Stat,
+    /// The same by the folded beginning the C locale keeps.
+    pub collate_prefix_folded: Stat,
+    /// The folder opened in a pane, as the window opens one, from an empty
+    /// folder: from going to it until the pane's listing is whole, filled
+    /// and sorted on a worker (ADR-120), and its order read, as the window
+    /// draws it. What a person waits for: its names read, keyed and
+    /// placed.
+    pub folder_whole: Stat,
 }
 
 impl Report {
     /// Each measurement by its key in the budgets file.
-    fn metrics(&self) -> [(&'static str, &Stat); 33] {
+    fn metrics(&self) -> [(&'static str, &Stat); 38] {
         [
             ("first_batch_us", &self.first_batch),
             ("list_getdents_us", &self.list_getdents),
@@ -165,6 +185,11 @@ impl Report {
             ("history_put_folder_us", &self.history_put_folder),
             ("history_read_us", &self.history_read),
             ("history_meets_whole_us", &self.history_meets_whole),
+            ("collate_keys_us", &self.collate_keys),
+            ("collate_keys_folded_us", &self.collate_keys_folded),
+            ("collate_prefix_us", &self.collate_prefix),
+            ("collate_prefix_folded_us", &self.collate_prefix_folded),
+            ("folder_whole_us", &self.folder_whole),
         ]
     }
 }
@@ -186,7 +211,12 @@ const OWN_DATA: [&str; 11] = [
 ];
 
 /// The measurements of the flat tree alone.
-const FLAT_ONLY: [&str; 12] = [
+const FLAT_ONLY: [&str; 17] = [
+    "folder_whole_us",
+    "collate_keys_us",
+    "collate_keys_folded_us",
+    "collate_prefix_us",
+    "collate_prefix_folded_us",
     "listing_sort_hydrate_us",
     "listing_sort_update_us",
     "entry_at_selection_us",
@@ -924,6 +954,95 @@ pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
     (Stat::of(hydrate), Stat::of(update))
 }
 
+/// [`Report::folder_whole`]: `dir` gone to in the pane of an app of its
+/// own each run (one that went there before keeps its listing, for Back),
+/// until the pane's listing is whole and its order read.
+fn folder_whole(dir: &Path, runs: usize) -> Stat {
+    use skwir_core::location::Location;
+    let dir = skwir_core::os_path::canonical(dir).expect("tree");
+    let samples = (0..runs)
+        .map(|_| {
+            let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
+                std::env::temp_dir().join("skwir-bench"),
+            ))
+            .expect("app");
+            let pane = app.workspace.read().active_id();
+            let t = Instant::now();
+            app.navigate(pane, &Location::from_path(&dir))
+                .expect("navigate");
+            assert!(
+                app.pump_until_complete(pane, STREAM_DEADLINE),
+                "listing {} did not complete",
+                dir.display()
+            );
+            let shown = {
+                let ws = app.workspace.read();
+                let pane = ws.pane(pane).expect("pane");
+                pane.listing.order_shown(pane.sorting()).len()
+            };
+            let took = t.elapsed();
+            assert!(
+                u64::try_from(shown).unwrap_or(u64::MAX) >= Profile::Flat100k.file_count(),
+                "every file shown"
+            );
+            took
+        })
+        .collect();
+    Stat::of(samples)
+}
+
+/// [`Report::collate_keys`] and the three after it, in their order: the
+/// names of `dir`, read once before, keyed by English's collation and by
+/// the folded one, then sorted; and each tested against a beginning none
+/// has. Says what the keys weigh, beside the names.
+fn collate(dir: &Path, runs: usize, want: impl Fn(&str) -> bool) -> [Stat; 4] {
+    use skwir_core::collate::Collation;
+    let names: Vec<std::ffi::OsString> = std::fs::read_dir(dir)
+        .expect("tree")
+        .map(|e| e.expect("entry").file_name())
+        .collect();
+    let english = Collation::of(Some("en-US"));
+    let folded = Collation::folded();
+    let keys = |collation: &Collation| {
+        let mut keys: Vec<Box<[u8]>> = names.iter().map(|n| collation.sort_key(n)).collect();
+        keys.sort_unstable();
+        keys
+    };
+    let weigh = |collation: &Collation| -> usize { keys(collation).iter().map(|k| k.len()).sum() };
+    let name_bytes: usize = names.iter().map(|n| n.len()).sum();
+    if want("collate_keys_us") || want("collate_keys_folded_us") {
+        eprintln!(
+            "bench: {} names of {name_bytes} bytes keyed in {} bytes by English's collation, {} folded",
+            names.len(),
+            weigh(&english),
+            weigh(&folded)
+        );
+    }
+    if want("collate_prefix_us") {
+        // Its first beginning reads the locale's ASCII once (`Prefix`).
+        let t = Instant::now();
+        std::hint::black_box(Collation::of(Some("en-US")).prefix("f"));
+        eprintln!(
+            "bench: English's collation and its first beginning made in {} us",
+            t.elapsed().as_micros()
+        );
+    }
+    let begun = |collation: &Collation| {
+        let prefix = collation.prefix("file-1");
+        timed(runs, || names.iter().filter(|n| prefix.begins(n)).count())
+    };
+    [
+        measured(want("collate_keys_us"), || {
+            timed(runs, || keys(&english).len())
+        }),
+        measured(want("collate_keys_folded_us"), || {
+            timed(runs, || keys(&folded).len())
+        }),
+        measured(want("collate_prefix_us"), || begun(&english)),
+        measured(want("collate_prefix_folded_us"), || begun(&folded)),
+    ]
+}
+
 /// [`Report::mime_by_name`]: the names of `dir`, typed one by one, the
 /// database loaded before.
 fn mime_by_name(dir: &Path, profile: Profile, runs: usize) -> Stat {
@@ -1432,6 +1551,25 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         mime_by_name(&single, profile, runs)
     });
     let flat = profile == Profile::Flat100k;
+    let [
+        collate_keys,
+        collate_keys_folded,
+        collate_prefix,
+        collate_prefix_folded,
+    ] = if flat
+        && [
+            "collate_keys_us",
+            "collate_keys_folded_us",
+            "collate_prefix_us",
+            "collate_prefix_folded_us",
+        ]
+        .iter()
+        .any(|m| want(m))
+    {
+        collate(&single, runs, want)
+    } else {
+        [Stat::NONE, Stat::NONE, Stat::NONE, Stat::NONE]
+    };
     // After the listings: it leaves the pane's listing of the folder open.
     let entry_at_selection = measured(flat && want("entry_at_selection_us"), || {
         entry_at_selection(&app, &single, runs)
@@ -1492,6 +1630,13 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         history_read: measured(flat && want("history_read_us"), || history_read(runs)),
         history_meets_whole: measured(flat && want("history_meets_whole_us"), || {
             history_meets_whole(runs)
+        }),
+        collate_keys,
+        collate_keys_folded,
+        collate_prefix,
+        collate_prefix_folded,
+        folder_whole: measured(flat && want("folder_whole_us"), || {
+            folder_whole(&single, runs)
         }),
     }
 }

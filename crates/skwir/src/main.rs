@@ -102,12 +102,26 @@ fn main() -> anyhow::Result<()> {
     {
         use skwir_platform::locale::{Category, of};
         skwir_core::locale::set_formats(of(Category::Numeric), of(Category::Time));
+        // Names in the order of the region's collation (ADR-139, 15), set
+        // once before any listing makes a key: C and POSIX keep the folded
+        // order.
+        skwir_core::collate::set_locale(of(Category::Collate).as_deref());
     }
     // The catalogs shipped (ADR-139, G): the program's own now, a plugin's
-    // as it is enabled.
+    // as it is enabled; and how much of each language they say, counted as
+    // they were made, which decides what Automatic speaks (ADR-139, 13).
     skwir_core::words::ship(catalogs::CATALOGS);
+    skwir_core::words::ship_shares(catalogs::SHARES);
     skwir_core::words::register_shipped_of_program("skwir");
     let app = App::new(AppConfig::default())?;
+    // Type-to-find's table for the collation, made on a worker before a
+    // key is typed, never on the window's thread.
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Background,
+        "collate-prewarm",
+        app.lifetime().child(),
+        skwir_core::collate::prewarm,
+    );
 
     // Plugins: each registers its commands, bindings, menus, and places, and
     // can be toggled at runtime through `plugins.<id>.enabled` in settings.

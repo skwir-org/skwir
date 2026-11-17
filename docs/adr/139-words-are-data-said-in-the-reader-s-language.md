@@ -252,6 +252,9 @@ language".
     some right-to-left text wrong (`docs/i18n.md`), so a language written
     right to left (Arabic, Hebrew, Persian) waits for a track of its
     own. A name, isolated (5), is drawn right in any language.
+    Right-to-left text itself (level 1: laid out, wrapped and edited
+    right inside a left-to-right window) is built (amended 2026-11-17,
+    gpui patches 0069 to 0071); the mirrored window is still that track.
 
 13. **Shipping.**
     - **Catalogs are compiled into the program**; a plugin from outside
@@ -259,9 +262,12 @@ language".
     - **The desktop file and the AppStream metainfo** are translated
       through gettext's PO, merged when packaged (`msgfmt --desktop`,
       `--xml`).
-    - **macOS's bundle declares the languages shipped**
+    - **macOS's bundle declares the languages offered**
       (`CFBundleLocalizations`, one `.lproj` each), so its own menus and
-      the per-app language follow. The Windows installer stays English.
+      the per-app language follow. A language shipped but not offered is
+      left out (amended 2026-11-17): Automatic never speaks it, and a Mac
+      in that language would mix macOS's menus in it with Skwir's
+      English. The Windows installer stays English.
     - **When a language is offered** (the user's choice). Automatic
       offers a language once 90 % of its messages are translated and
       reviewed, and every message of what is on by default (core, the

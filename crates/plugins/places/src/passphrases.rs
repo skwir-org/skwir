@@ -224,7 +224,7 @@ fn settle(
     match given {
         Given::Typed(answer) if answer.remember => {
             // What the keyring's own window shows: kept there, in the
-            // language it was said in.
+            // language it was said in, plainly (a text kept, no mark).
             let label = match volume.title {
                 Some(title) => words!(
                     places_keyring_label = "Skwir: { $volume } (encrypted volume)",
@@ -236,7 +236,7 @@ fn settle(
                     note = "What the desktop's keyring shows for a volume's passphrase Skwir keeps, the volume unnamed."
                 ),
             }
-            .say();
+            .say_plain();
             let kept = skwir_platform::secrets::heard(cancel, move || {
                 keyring.keep(&owned, &label, &answer.text)
             });

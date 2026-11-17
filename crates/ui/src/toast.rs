@@ -740,8 +740,9 @@ fn shown_for(toast: &Toast) -> u64 {
         _ => 4,
     };
     // Counted as said: how long its words take to read in the reader's
-    // language, its parts joined.
-    let read = toast.said().say().graphemes(true).count() as u64;
+    // language, its parts joined; plainly, as no mark isolating a name is
+    // read.
+    let read = toast.said().say_plain().graphemes(true).count() as u64;
     weight.max(read.div_ceil(READ_A_SECOND))
 }
 

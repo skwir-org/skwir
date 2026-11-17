@@ -583,12 +583,15 @@ impl TextInput {
     // ------------------------------------------------------------ actions
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
-        if self.at_start() {
+        // What stands before the text is on its left where the caret's
+        // left is the field's: not at the start of a text read right to
+        // left, which is its right end.
+        if self.at_start() && self.drawn_beside(0, true).is_none() {
             cx.emit(AtStart::Left);
         } else if self.selected_range.is_empty() {
-            self.move_to(self.previous_boundary(self.cursor_offset()), cx);
+            self.move_to(self.arrow_from(self.cursor_offset(), true), cx);
         } else {
-            self.move_to(self.selected_range.start, cx);
+            self.move_to(self.selection_end_on(true), cx);
         }
     }
 
@@ -596,34 +599,34 @@ impl TextInput {
         if self.hint_shown().is_some() {
             cx.emit(HintTaken);
         } else if self.selected_range.is_empty() {
-            self.move_to(self.next_boundary(self.selected_range.end), cx);
+            self.move_to(self.arrow_from(self.selected_range.end, false), cx);
         } else {
-            self.move_to(self.selected_range.end, cx);
+            self.move_to(self.selection_end_on(false), cx);
         }
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+        self.select_to(self.arrow_from(self.cursor_offset(), true), cx);
     }
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        self.select_to(self.arrow_from(self.cursor_offset(), false), cx);
     }
 
     fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.previous_word(self.cursor_offset()), cx);
+        self.move_to(self.word_from(self.cursor_offset(), true), cx);
     }
 
     fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.next_word(self.cursor_offset()), cx);
+        self.move_to(self.word_from(self.cursor_offset(), false), cx);
     }
 
     fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.previous_word(self.cursor_offset()), cx);
+        self.select_to(self.word_from(self.cursor_offset(), true), cx);
     }
 
     fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.next_word(self.cursor_offset()), cx);
+        self.select_to(self.word_from(self.cursor_offset(), false), cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -934,6 +937,92 @@ impl TextInput {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
+    /// The line as last drawn, where it still shows the text and some of
+    /// it reads right to left: what the arrows follow as it is drawn. A
+    /// secret's bullets read left to right.
+    fn drawn_bidi(&self) -> Option<&ShapedLine> {
+        self.last_layout.as_ref().filter(|line| {
+            !self.masked
+                && line.has_right_to_left()
+                && line.text.get(..self.content.len()) == Some(self.content.as_ref())
+        })
+    }
+
+    /// The place of the text next to `offset` on its left or its right as
+    /// the line is drawn, passing places inside a character: where some of
+    /// it reads right to left (`ShapedLine::index_left_of`). `None` at that
+    /// end of the line, or where all of it reads left to right.
+    fn drawn_beside(&self, offset: usize, toward_left: bool) -> Option<usize> {
+        let line = self.drawn_bidi()?;
+        let characters: std::collections::HashSet<usize> = self
+            .content
+            .grapheme_indices(true)
+            .map(|(at, _)| at)
+            .chain([self.content.len()])
+            .collect();
+        let mut at = offset;
+        // A step a place at most: never more than the text has.
+        for _ in 0..=self.content.len() {
+            at = if toward_left {
+                line.index_left_of(at)?
+            } else {
+                line.index_right_of(at)?
+            };
+            if at > self.content.len() {
+                return None;
+            }
+            if characters.contains(&at) {
+                return Some(at);
+            }
+        }
+        None
+    }
+
+    /// Where an arrow moves the caret from `offset`: the character on its
+    /// left or right as the line is drawn, so Left goes left in Hebrew too;
+    /// the previous or next one where all of it reads left to right. At an
+    /// end, where it is.
+    fn arrow_from(&self, offset: usize, toward_left: bool) -> usize {
+        if self.drawn_bidi().is_some() {
+            return self.drawn_beside(offset, toward_left).unwrap_or(offset);
+        }
+        if toward_left {
+            self.previous_boundary(offset)
+        } else {
+            self.next_boundary(offset)
+        }
+    }
+
+    /// Where Ctrl and an arrow move the caret from `offset`: the previous
+    /// or next word in the text's order, the other way round where the line
+    /// reads right to left, whose next word is on its left.
+    fn word_from(&self, offset: usize, toward_left: bool) -> usize {
+        let backward = toward_left
+            != self
+                .drawn_bidi()
+                .is_some_and(|line| line.is_right_to_left());
+        if backward {
+            self.previous_word(offset)
+        } else {
+            self.next_word(offset)
+        }
+    }
+
+    /// The end of the selection drawn on the left (or the right): its
+    /// start, or its end where the line reads right to left there.
+    fn selection_end_on(&self, left: bool) -> usize {
+        let range = self.selected_range.clone();
+        let Some(line) = self.drawn_bidi() else {
+            return if left { range.start } else { range.end };
+        };
+        let (start, end) = (line.x_for_index(range.start), line.x_for_index(range.end));
+        if (start <= end) == left {
+            range.start
+        } else {
+            range.end
+        }
+    }
+
     fn previous_boundary(&self, offset: usize) -> usize {
         self.content
             .grapheme_indices(true)
@@ -1087,17 +1176,21 @@ impl EntityInputHandler for TextInput {
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
-        // The layout is of what is shown: bullets, when masked.
+        // The layout is of what is shown: bullets, when masked. Where the
+        // text turns direction, a range is drawn in more than one place: it
+        // is said from the leftmost to the rightmost.
         let left = bounds.left() - self.scroll_x;
+        let shown = self.shown_offset(range.start)..self.shown_offset(range.end);
+        let spans = last_layout.selection_ranges(shown.clone());
+        let (from, to) = if let (Some(first), Some(last)) = (spans.first(), spans.last()) {
+            (first.start, last.end)
+        } else {
+            let at = last_layout.x_for_index(shown.start);
+            (at, at)
+        };
         Some(Bounds::from_corners(
-            point(
-                left + last_layout.x_for_index(self.shown_offset(range.start)),
-                bounds.top(),
-            ),
-            point(
-                left + last_layout.x_for_index(self.shown_offset(range.end)),
-                bounds.bottom(),
-            ),
+            point(left + from, bounds.top()),
+            point(left + to, bounds.bottom()),
         ))
     }
 
@@ -1121,7 +1214,9 @@ struct TextElement {
 struct PrepaintState {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
-    selection: Option<PaintQuad>,
+    /// One for each stretch of the selection drawn side by side: more than
+    /// one where the text turns direction.
+    selection: Vec<PaintQuad>,
     scroll_x: Pixels,
 }
 
@@ -1313,7 +1408,7 @@ impl Element for TextElement {
         let left = bounds.left() - scroll_x;
         let (selection, cursor) = if selected_range.is_empty() {
             (
-                None,
+                Vec::new(),
                 Some(fill(
                     Bounds::new(
                         point(left + cursor_pos, bounds.top()),
@@ -1324,13 +1419,18 @@ impl Element for TextElement {
             )
         } else {
             (
-                Some(fill(
-                    Bounds::from_corners(
-                        point(left + line.x_for_index(selected_range.start), bounds.top()),
-                        point(left + line.x_for_index(selected_range.end), bounds.bottom()),
-                    ),
-                    theme.selection_bg,
-                )),
+                line.selection_ranges(selected_range)
+                    .into_iter()
+                    .map(|span| {
+                        fill(
+                            Bounds::from_corners(
+                                point(left + span.start, bounds.top()),
+                                point(left + span.end, bounds.bottom()),
+                            ),
+                            theme.selection_bg,
+                        )
+                    })
+                    .collect(),
                 None,
             )
         };
@@ -1363,7 +1463,7 @@ impl Element for TextElement {
         // A line longer than the field is clipped to it, never drawn over
         // what sits beside the field.
         window.with_content_mask(Some(gpui::ContentMask::new(bounds)), |window| {
-            if let Some(selection) = prepaint.selection.take() {
+            for selection in prepaint.selection.drain(..) {
                 window.paint_quad(selection);
             }
             let origin = point(bounds.left() - scroll_x, bounds.top());

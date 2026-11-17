@@ -614,11 +614,14 @@ pub struct Entry {
     pub(crate) name_key: NameKey,
 }
 
-/// The order key of an entry's name (`collate::sort_key`), worked out on
-/// the provider's thread as it sends a batch (`EventSink::send`), so the
-/// window's thread does not as the listing takes it: half a microsecond a
-/// name, 50 ms a hundred thousand. A cache of the name, never part of what
-/// an entry is: equal whatever it holds, and taken by the listing.
+/// The order key of an entry's name (`collate::sort_key`, by the region's
+/// collation), worked out as the provider sends it (`EventSink::send`): a
+/// few names on the sender's thread, a batch of 64 or more on a
+/// scheduler's worker while the provider reads on, its place in the stream
+/// kept; never on the window's thread as the listing takes it. About 0.36
+/// µs a name in English, 36 ms a hundred thousand. A cache of the name,
+/// never part of what an entry is: equal whatever it holds, and taken by
+/// the listing.
 #[derive(Clone, Default)]
 pub(crate) struct NameKey(pub(crate) Option<Box<[u8]>>);
 

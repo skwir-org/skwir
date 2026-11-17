@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!--
+  Where msgfmt finds the rules that say what of the metainfo is translated
+  (tools/package/linux/l10n.sh): metainfo.its beside it is AppStream's own
+  (AppStream 1.1.3's data/its, unchanged, under its notice), the rules
+  xgettext extracts with, so what is merged is what was extracted on every
+  system, whichever gettext and AppStream it has. Named apart from
+  gettext's and AppStream's rules, so `msgfmt -L skwir-metainfo` takes
+  these and no other.
+-->
+<locatingRules>
+  <locatingRule name="skwir-metainfo" pattern="*.metainfo.xml">
+    <documentRule localName="component" target="metainfo.its"/>
+  </locatingRule>
+</locatingRules>

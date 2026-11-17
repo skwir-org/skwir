@@ -2,6 +2,8 @@
 # against the minimum over runs. Values are ~3x the reference machine
 # (Intel i7 ADL, btrfs zstd, NVMe, warm cache) to absorb CI runner noise.
 # Tighten them when the reference measurement improves; never loosen without an ADR.
+# Names are keyed in English's collation, as Skwir keys them under a locale
+# that is not C (ADR-139, 15), whatever the machine's (`--collation`).
 
 [flat100k]
 first_batch_us = 1_000
@@ -12,6 +14,10 @@ stat_parallel_us = 40_000
 walk_parallel_us = 90_000
 stream_open_us = 1_000
 stream_first_batch_us = 3_000
+# Names keyed in English (ADR-139, 15) on the scheduler's workers beside the
+# reading, batch by batch: 36.8-49.1 ms under a load of 5, against 40.8-54.4
+# ms for folded keys made on the provider's thread as before, alternated;
+# 69.7-86.6 ms with English's keys made there.
 stream_complete_us = 100_000
 # The tags plugin's provider over 100,000 files without attributes.
 tags_fill_us = 550_000
@@ -66,6 +72,29 @@ history_read_us = 400
 # its names below the folder read once, then each entry's looked up in
 # them, 48-49 ms (561 ms with each entry's claims looked up in it).
 history_meets_whole_us = 150_000
+# The folder's 100,000 names keyed by English's collation (ICU4X's numeric
+# keys at the third strength) and sorted by them: 44-45 ms under a load of
+# 4 (0.37 us a name), against 16-16.5 ms for the folded keys the C locale
+# keeps; the keys weigh 1.19 times the names' bytes, 1.06 folded (ADR-139,
+# 15). Made on workers, never on the window's thread.
+collate_keys_us = 135_000
+collate_keys_folded_us = 50_000
+# Each name asked whether it begins with `file-1`, which none does, as
+# type-to-find walks a folder on the window's thread: 0.76-0.84 ms by
+# English's collation, its names turned away by the walk in ASCII before
+# ICU4X reads them (21-23 ms with ICU4X reading each, under a load of 13
+# to 30); 2.2-2.35 ms folded.
+collate_prefix_us = 2_500
+collate_prefix_folded_us = 7_000
+# The folder opened in a pane of a new app until it is whole, filled and
+# sorted on a worker, its order read (ADR-120): what a person waits for.
+# English's keys made on the scheduler's workers as the folder is read:
+# 74.5-112.6 ms (rounds' minima of 9 runs, loads 3.8-6.8), against 76.8-99.0
+# ms for today's folded keys made on the provider's thread, 99.3-123.8 ms
+# for English's made there, and 119.5-130.6 ms made by the listing that
+# takes them, alternated (ADR-139, 15). Then 67.3-71.3 ms in English and
+# 68.1-70.9 ms folded, both keyed on the workers, under a load of 6 to 8.
+folder_whole_us = 200_000
 
 [deep1m]
 first_batch_us = 500

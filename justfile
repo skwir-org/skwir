@@ -17,6 +17,8 @@ release-check:
 release-tools-check:
     python3 -B -m unittest discover -s tools/release -p 'test_*.py'
     python3 -B -m unittest discover -s tools/build -p 'test_*.py'
+    python3 -B -m unittest discover -s tools/words -p 'test_*.py'
+    python3 -B -m unittest discover -s tools/package -p 'test_*.py'
 
 # Check that tag, crates, package metadata and dated release notes agree.
 release-metadata tag:
@@ -205,9 +207,12 @@ lint:
     tools/build/prune.py record clippy --quiet
     tools/build/prune.py --if-below 40G --quiet
 
-# Each crate's English catalog (l10n/en.ftl), made from its words! calls (ADR-139).
-words:
-    tools/words/extract.py
+# Each crate's English catalog (l10n/en.ftl), made from its words! calls, and
+# the catalogs shipped with how much of each language they say (ADR-139):
+# `--check` fails where one is behind, `--release` also where a language
+# offered (tools/words/offered) is under 75% reviewed (ADR-139, 13).
+words *args:
+    tools/words/extract.py {{args}}
 
 # What no build of the workspace uses any more, out of target/debug: units
 # of other dependencies or features, split debug info no artifact names,
@@ -225,6 +230,7 @@ deny:
 # Lint everything, native workers and the Windows and macOS builds included (CI).
 lint-all: && check-cross
     cargo fmt --all -- --check
+    tools/words/extract.py --release
     cargo clippy --workspace --all-targets -- -D warnings
 
 # Phase 5 (ADR-035): Zig is the C compiler of these builds, `target/cross`
@@ -299,6 +305,15 @@ package-aur:
     cd tools/package/aur && makepkg --printsrcinfo > .SRCINFO
     cd tools/package/aur/skwir-bin && makepkg --printsrcinfo > .SRCINFO
     cd tools/package/aur/skwir-git && makepkg --printsrcinfo > .SRCINFO
+
+# The desktop entry's and the AppStream metainfo's translations, which each
+# Linux package merges (ADR-139, tools/package/linux/po): `check` whether
+# po/skwir.pot is what the two files say, each language's PO sound and
+# merged with it, and what they make valid; `update` makes skwir.pot again
+# and merges each PO with it.
+# The desktop entry's and metainfo's translations: check them, or `update` after their English changed.
+package-l10n action="check":
+    tools/package/linux/l10n.sh {{action}}
 
 # Prepare a verified release's PKGBUILDs and .SRCINFOs in separate AUR checkouts,
 # one per package base (cloned over SSH: requires the AUR SSH key already).

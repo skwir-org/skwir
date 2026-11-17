@@ -1,6 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=skwir
+# Translators: what kind of program skwir is, shown under its name.
 GenericName=File Manager
 Comment=Browse, find and organize your files
 Exec=skwir %f
@@ -10,5 +11,8 @@ StartupNotify=true
 StartupWMClass=org.skwir.skwir
 Categories=System;FileTools;FileManager;
 MimeType=inode/directory;
+# Translators: the words a launcher's search finds skwir by, each followed
+# by a semicolon, with no space around it. Write those people search with
+# in your language; they need not be the English words one for one.
 Keywords=files;folders;browser;tags;search;
 X-GNOME-UsesNotifications=true

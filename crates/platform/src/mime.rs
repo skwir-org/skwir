@@ -261,10 +261,12 @@ fn text_or_binary(head: &[u8]) -> Mime {
 }
 
 /// The `<comment>` of a shared-mime-info type file in the first of the
-/// languages Skwir says its words in that the file has (ADR-139, F: the
-/// database's own translations), else its untranslated one; capitalized.
+/// user's languages (`locale::preferred`) that the file has, whatever
+/// Skwir's own words are said in (ADR-139, F: the database's own
+/// translations, reviewed by its project), else its untranslated one;
+/// capitalized.
 fn comment_of(xml: &str) -> Option<String> {
-    comment_in(xml, &skwir_core::locale::languages())
+    comment_in(xml, &skwir_core::locale::preferred())
 }
 
 /// `xml`'s comment in the first of `languages` it has (`fr-FR` finding

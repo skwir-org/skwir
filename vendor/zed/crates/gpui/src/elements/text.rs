@@ -1063,12 +1063,9 @@ impl TextLayout {
             // The row `position_for_index` places it in: an index where a
             // row wraps ends the row before.
             let row = line
-                .wrap_boundaries
+                .row_starts()
                 .iter()
-                .take_while(|boundary| {
-                    line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
-                        < index - line_start_ix
-                })
+                .take_while(|start| **start < index - line_start_ix)
                 .count();
             return Some(Bounds::new(
                 Point {
@@ -1175,11 +1172,7 @@ impl TextLayout {
 
         for wrapped in self.0.borrow().as_ref().unwrap().lines.iter() {
             let mut seen = 0;
-            for boundary in wrapped.layout.wrap_boundaries.iter() {
-                let index = wrapped.layout.unwrapped_layout.runs[boundary.run_ix].glyphs
-                    [boundary.glyph_ix]
-                    .index;
-
+            for index in wrapped.layout.row_starts() {
                 accumulator.push_str(&wrapped.text[seen..index]);
                 accumulator.push('\n');
                 seen = index;

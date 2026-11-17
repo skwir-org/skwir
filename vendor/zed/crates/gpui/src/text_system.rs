@@ -1,9 +1,11 @@
+mod bidi;
 mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
+pub use bidi::BidiLevels;
 pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;

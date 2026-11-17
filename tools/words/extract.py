@@ -5,12 +5,25 @@ Every `words!(id = "English", …, note = "…")` of a crate's sources is a
 message of that crate: written to `<crate>/l10n/en.ftl`, sorted by id, its
 note as a comment above it. Never edited by hand.
 
-    tools/words/extract.py           write every crate's en.ftl
-    tools/words/extract.py --check   fail where one is not what the code says
+    tools/words/extract.py             write every crate's en.ftl
+    tools/words/extract.py --check     fail where one is not what the code says
+    tools/words/extract.py --release   the same, and fail where a language
+                                       offered is under 75% reviewed
 
 It also writes the program's list of shipped catalogs,
 crates/skwir/src/catalogs.rs: every crate's `l10n/<language>.ftl` but
-English, compiled in (ADR-139, G).
+English, compiled in (ADR-139, G); and how much of each language they say,
+counted here so that the program reads nothing to know it (ADR-139, 13).
+
+When a language is offered (ADR-139, 13): Automatic speaks a language once
+it is in the record of languages offered, `tools/words/offered`. This tool
+adds one there once 90% of all Skwir's messages are translated and reviewed
+in it (a message is reviewed once the `# draft` comment above it is gone),
+and every message of what is on by default is: the program's own crates
+and each plugin on by default. Only a person takes one out, which sends it
+back to incomplete: a release refuses a language offered under 75% reviewed
+(`--release`), while between releases it stays offered, its missing
+messages said in English.
 
 Refused, in either mode: an id with two Englishes in one crate, and an
 English that parts a number from its unit, or a dimension's numbers from
@@ -19,7 +32,9 @@ joins them (`{ $n }\u{a0}MB`, `{ $width }\u{a0}×\u{a0}{ $height }`); and an
 English that writes a space before a percent sign, which standard
 English writes right after its number (`{ $n }%`). Messages
 of tests (in a tests.rs or a tests/ folder, or whose id begins with
-`test_`) are not a crate's.
+`test_`) are not a crate's. Also refused: a plugin whose
+`enabled_by_default` answers anything but a literal, and a record naming a
+language no catalog is in.
 """
 
 import pathlib
@@ -29,6 +44,19 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HEADER = "# Made from the code by `just words` (tools/words/extract.py): never edit by hand.\n"
 CALL = re.compile(r"\bwords!\s*\(")
+
+# The record of the languages offered, and the shares that move a language
+# in (a percent of all messages reviewed) and that a release refuses under.
+OFFERED = ROOT / "tools" / "words" / "offered"
+OFFER_AT = 90
+KEEP_AT = 75
+# A plugin's crate (by its package name): on by default unless its plugin
+# answers `enabled_by_default` with `false`, a literal this tool reads.
+PLUGIN_CRATE = "skwir-plugin-"
+DEFAULT_SAID = re.compile(r"\bfn\s+enabled_by_default\b")
+DEFAULT_ANSWER = re.compile(r"fn\s+enabled_by_default\s*\(\s*&\s*self\s*\)\s*->\s*bool\s*\{\s*(true|false)\s*\}")
+# A message's first line in a catalog: its id at the line's start, then `=`.
+MESSAGE = re.compile(r"([a-zA-Z][a-zA-Z0-9_-]*) *=")
 
 # A number (an argument, or digits) and a unit's symbol after it, or a
 # dimension's `×`, parted by a plain space. Units written as words (pixels,
@@ -142,6 +170,142 @@ def crate_of(path):
     raise ValueError(f"{path} is in no crate")
 
 
+def shown(path):
+    """`path` as a problem names it: from the repository's root."""
+    try:
+        return path.relative_to(ROOT)
+    except ValueError:
+        return path
+
+
+def messages_of(source):
+    """Each message of a catalog's `source`, by its id: whether it is a
+    draft, a line of the `#` comment just above it (attached, as Fluent
+    attaches it: no blank line between) saying `draft`. A message goes on
+    over its indented and blank lines, and over every line while a
+    placeable it opened is open, as the program's own index reads it
+    (`crates/core/src/words/catalog.rs`)."""
+    found, comment = {}, []
+    open_message, depth, in_string, escaped = False, 0, False, False
+
+    def braces(text):
+        nonlocal depth, in_string, escaped
+        for c in text:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif c == "\\":
+                    escaped = True
+                elif c == '"':
+                    in_string = False
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth = max(depth - 1, 0)
+            elif c == '"' and depth:
+                in_string = True
+
+    for line in source.splitlines():
+        if open_message and (depth or line.startswith((" ", "\t")) or not line.strip()):
+            braces(line)
+            continue
+        open_message, depth, in_string, escaped = False, 0, False, False
+        if line.startswith("#"):
+            # A message's own comment; a group's or the file's (`##`,
+            # `###`) is no message's.
+            comment = comment + [line[1:].strip()] if line == "#" or line.startswith("# ") else []
+            continue
+        message = MESSAGE.match(line)
+        if message:
+            found[message.group(1)] = "draft" in comment
+            open_message = True
+            braces(line[message.end() :])
+        comment = []
+    return found
+
+
+def on_by_default(folder, name):
+    """Whether Skwir comes with the crate `name` (in `folder`) on: the
+    program's own crates always, a plugin's unless its plugin answers
+    `enabled_by_default` with `false`. Raises where it answers anything but
+    a literal, which this tool cannot read."""
+    if not name.startswith(PLUGIN_CRATE):
+        return True
+    answers = []
+    for path in sorted((folder / "src").rglob("*.rs")):
+        text = path.read_text()
+        for said in DEFAULT_SAID.finditer(text):
+            line_start = text.rfind("\n", 0, said.start()) + 1
+            if "//" in text[line_start : said.start()]:
+                continue
+            answer = DEFAULT_ANSWER.match(text, said.start())
+            if not answer:
+                raise ValueError(
+                    f"{shown(path)}: `enabled_by_default` answers no literal `true` or `false`,"
+                    " which `just words` reads to know whether its words are on by default"
+                )
+            answers.append(answer.group(1) == "true")
+    # None said: the plugin's default, on.
+    return all(answers)
+
+
+def shares(found, names):
+    """Each language a catalog is in, by its tag, sorted: of all the
+    crates' messages, how many it translates and how many of those are
+    reviewed, and whether every message of the crates on by default is
+    reviewed. `found` holds each crate's messages by its folder, `names`
+    its package name. Also the problems met."""
+    problems, defaults = [], {}
+    for folder in found:
+        try:
+            defaults[folder] = on_by_default(folder, names[folder])
+        except ValueError as why:
+            problems.append(str(why))
+            defaults[folder] = True
+    total = sum(len(messages) for messages in found.values())
+    languages = sorted(
+        {path.stem for folder in found for path in (folder / "l10n").glob("*.ftl") if path.stem != "en"}
+    )
+    out = []
+    for language in languages:
+        share = {"language": language, "messages": total, "translated": 0, "reviewed": 0, "default_whole": True}
+        for folder, messages in sorted(found.items()):
+            path = folder / "l10n" / f"{language}.ftl"
+            said = messages_of(path.read_text()) if path.exists() else {}
+            translated = [id_ for id_ in said if id_ in messages]
+            reviewed = sum(1 for id_ in translated if not said[id_])
+            share["translated"] += len(translated)
+            share["reviewed"] += reviewed
+            if reviewed < len(messages) and defaults[folder]:
+                share["default_whole"] = False
+        out.append(share)
+    return out, problems
+
+
+def percent(share, key):
+    """A share's `key` (translated, reviewed) in whole percents of all
+    messages, rounded down: 100 only once every message is."""
+    return share[key] * 100 // share["messages"] if share["messages"] else 0
+
+
+def meets_bar(share):
+    """Whether Automatic offers the language from now on (ADR-139, 13)."""
+    return bool(share["messages"]) and share["reviewed"] * 100 >= OFFER_AT * share["messages"] and share["default_whole"]
+
+
+def under_floor(share):
+    """Whether a release refuses the language, offered (ADR-139, 13)."""
+    return share["reviewed"] * 100 < KEEP_AT * share["messages"]
+
+
+def read_offered(path):
+    """The languages the record offers, in its order."""
+    if not path.exists():
+        return []
+    lines = (line.strip() for line in path.read_text().splitlines())
+    return [line for line in lines if line and not line.startswith("#")]
+
+
 def catalogs():
     """Each crate's messages, by its folder: id to (English, note)."""
     found, problems = {}, []
@@ -205,11 +369,13 @@ def ftl(messages):
 CATALOGS_RS = ROOT / "crates" / "skwir" / "src" / "catalogs.rs"
 
 
-def shipped():
-    """The program's list of shipped catalogs, as Rust."""
+def shipped(language_shares, offered):
+    """The program's list of shipped catalogs, and each language's share
+    (`offered` the languages Automatic speaks), as Rust."""
     lines = [
         "// Made from the crates' l10n folders by `just words` (tools/words/extract.py):",
-        "// never edit by hand. Every catalog but English, compiled in (ADR-139, G).",
+        "// never edit by hand. Every catalog but English, compiled in (ADR-139, G),",
+        "// and how much of each language they say (ADR-139, 13).",
         "",
         "#[rustfmt::skip]",
         "pub static CATALOGS: &[skwir_core::words::Shipped] = &[",
@@ -226,18 +392,79 @@ def shipped():
             f'        source: include_str!("../../{relative.as_posix()}"),',
             "    },",
         ]
+    lines += [
+        "];",
+        "",
+        "/// Of all the messages, how many each language's catalogs translate and",
+        "/// how many of those are reviewed, and whether Skwir offers it",
+        "/// (`tools/words/offered`).",
+        "#[rustfmt::skip]",
+        "pub static SHARES: &[skwir_core::words::Share] = &[",
+    ]
+    for share in language_shares:
+        lines += [
+            "    skwir_core::words::Share {",
+            f'        language: "{share["language"]}",',
+            f"        messages: {share['messages']:_},",
+            f"        translated: {share['translated']:_},",
+            f"        reviewed: {share['reviewed']:_},",
+            f"        offered: {'true' if share['language'] in offered else 'false'},",
+            "    },",
+        ]
     lines.append("];")
     return "\n".join(lines) + "\n"
 
 
+def said_share(share, offered):
+    """A language's share, as `just words` tells it."""
+    state = "offered" if share["language"] in offered else "incomplete"
+    return (
+        f"{share['language']}: {percent(share, 'translated')}% of {share['messages']} messages translated,"
+        f" {percent(share, 'reviewed')}% reviewed; {state}"
+    )
+
+
 def main():
-    unknown = [arg for arg in sys.argv[1:] if arg != "--check"]
+    flags = ("--check", "--release")
+    unknown = [arg for arg in sys.argv[1:] if arg not in flags]
     if unknown:
-        print(f"unknown argument {unknown[0]}: only --check", file=sys.stderr)
+        print(f"unknown argument {unknown[0]}: only --check or --release", file=sys.stderr)
         return 2
-    check = "--check" in sys.argv[1:]
+    release = "--release" in sys.argv[1:]
+    check = release or "--check" in sys.argv[1:]
     found, problems = catalogs()
-    wanted_rs = shipped()
+    names = {folder: crate_of(folder / "Cargo.toml")[1] for folder in found}
+    language_shares, share_problems = shares(found, names)
+    problems += share_problems
+    record = read_offered(OFFERED)
+    known = {share["language"] for share in language_shares}
+    problems += [
+        f"{shown(OFFERED)}: {tag} is no language a catalog is in" for tag in record if tag not in known
+    ]
+    promoted = [share for share in language_shares if share["language"] not in record and meets_bar(share)]
+    offered = set(record) | {share["language"] for share in promoted}
+    for share in promoted:
+        if check:
+            problems.append(
+                f"{share['language']}: {percent(share, 'reviewed')}% reviewed, and all of what is on by"
+                f" default: offered once `just words` writes it in {shown(OFFERED)}"
+            )
+        else:
+            kept = OFFERED.read_text().rstrip("\n") + "\n" if OFFERED.exists() else ""
+            OFFERED.write_text(f"{kept}{share['language']}\n")
+            print(f"{shown(OFFERED)}: {share['language']} offered from now on ({percent(share, 'reviewed')}% reviewed)")
+    for share in language_shares:
+        if share["language"] in record and under_floor(share):
+            said = (
+                f"{share['language']} is offered with only {percent(share, 'reviewed')}% of its messages"
+                f" reviewed, and a release offers none under {KEEP_AT}%: review more of it, or take it out"
+                f" of {shown(OFFERED)}, which lists it as incomplete again"
+            )
+            if release:
+                problems.append(said)
+            else:
+                print(f"warning: {said}", file=sys.stderr)
+    wanted_rs = shipped(language_shares, offered)
     now_rs = CATALOGS_RS.read_text() if CATALOGS_RS.exists() else None
     if now_rs != wanted_rs:
         if check:
@@ -245,6 +472,8 @@ def main():
         else:
             CATALOGS_RS.write_text(wanted_rs)
             print(f"{CATALOGS_RS.relative_to(ROOT)}: made again")
+            for share in language_shares:
+                print(f"  {said_share(share, offered)}")
     for folder, messages in sorted(found.items()):
         path = folder / "l10n" / "en.ftl"
         wanted = ftl(messages)

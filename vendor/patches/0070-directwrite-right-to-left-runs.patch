@@ -1,0 +1,208 @@
+0070 directwrite-right-to-left-runs: Windows: a run read right to left is placed from its origin leftward, as DirectWrite draws it (zed#31102), and a line that starts right to left reads so
+
+diff --git a/crates/gpui_windows/src/direct_write.rs b/crates/gpui_windows/src/direct_write.rs
+index fe9b2c7..0dd7318 100644
+--- a/crates/gpui_windows/src/direct_write.rs
++++ b/crates/gpui_windows/src/direct_write.rs
+@@ -610,6 +610,11 @@ impl DirectWriteState {
+ 
+             let mut utf8_offset = 0usize;
+             let mut utf16_offset = 0u32;
++            // Right-to-left text is placed as each run reads, and a line
++            // that starts right to left reads so (its first strong
++            // character's direction, as cosmic-text and Core Text take it).
++            let bidi = BidiLevels::of(text);
++            let reads_right_to_left = bidi.as_ref().is_some_and(BidiLevels::is_right_to_left);
+             let text_layout = {
+                 let first_run = &font_runs[0];
+                 let font_info = &self.fonts[first_run.font_id.0];
+@@ -629,6 +634,10 @@ impl DirectWriteState {
+                 if let Some(ref fallbacks) = font_info.fallbacks {
+                     format.SetFontFallback(fallbacks)?;
+                 }
++                if reads_right_to_left {
++                    format.SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT)?;
++                    format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
++                }
+ 
+                 let layout = components.factory.CreateTextLayout(
+                     text_wide,
+@@ -685,6 +694,13 @@ impl DirectWriteState {
+ 
+                 break_ligatures = !break_ligatures;
+             }
++            if reads_right_to_left {
++                // A line read right to left starts at its box's right edge:
++                // the box as wide as the line, so it is drawn from 0.
++                let mut metrics = DWRITE_TEXT_METRICS::default();
++                text_layout.GetMetrics(&mut metrics)?;
++                text_layout.SetMaxWidth(metrics.widthIncludingTrailingWhitespace)?;
++            }
+ 
+             let mut runs = Vec::new();
+             let mut renderer_context = RendererContext {
+@@ -693,6 +709,8 @@ impl DirectWriteState {
+                 index_converter: StringIndexConverter::new(text),
+                 runs: &mut runs,
+                 width: 0.0,
++                bidi: bidi.is_some(),
++                left: f32::INFINITY,
+             };
+             text_layout.Draw(
+                 Some((&raw mut renderer_context).cast::<c_void>().cast_const()),
+@@ -701,6 +719,14 @@ impl DirectWriteState {
+                 0.0,
+             )?;
+             let width = px(renderer_context.width);
++            if renderer_context.bidi && renderer_context.left.is_finite() {
++                // Placed where DirectWrite draws each run: the line's left
++                // end at 0, as gpui draws a line.
++                let left = px(renderer_context.left);
++                for glyph in runs.iter_mut().flat_map(|run| run.glyphs.iter_mut()) {
++                    glyph.position.x -= left;
++                }
++            }
+ 
+             Ok(LineLayout {
+                 font_size,
+@@ -1477,6 +1503,12 @@ struct RendererContext<'t, 'a, 'b> {
+     index_converter: StringIndexConverter<'a>,
+     runs: &'b mut Vec<ShapedRun>,
+     width: f32,
++    /// Whether some of the text reads right to left: its runs are then
++    /// placed where DirectWrite draws them (their origin and level), not
++    /// one after another.
++    bidi: bool,
++    /// Where the leftmost run starts, where `bidi`.
++    left: f32,
+ }
+ 
+ #[derive(Debug)]
+@@ -1575,7 +1607,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
+     fn DrawGlyphRun(
+         &self,
+         clientdrawingcontext: *const ::core::ffi::c_void,
+-        _baselineoriginx: f32,
++        baselineoriginx: f32,
+         _baselineoriginy: f32,
+         _measuringmode: DWRITE_MEASURING_MODE,
+         glyphrun: *const DWRITE_GLYPH_RUN,
+@@ -1664,6 +1696,13 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
+         let mut utf16_idx = desc.textPosition as usize;
+         let mut glyph_idx = 0;
+         let mut glyphs = Vec::with_capacity(glyph_count);
++        // A run is placed where DirectWrite draws it where the text reads
++        // both ways: from its origin, rightward or, at an odd level,
++        // leftward, its glyphs given in their text's order. (Before, every
++        // run followed the last rightward: one read right to left was drawn
++        // backwards, zed#31102.)
++        let right_to_left = context.bidi && glyphrun.bidiLevel % 2 == 1;
++        let mut pen = baselineoriginx;
+         for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
+             context.index_converter.advance_to_utf16_ix(utf16_idx);
+             utf16_idx += cluster_utf16_len;
+@@ -1676,19 +1715,37 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
+                 let is_emoji =
+                     color_font && is_color_glyph(font_face, id, &context.components.factory);
+                 let this_glyph_idx = glyph_idx + cluster_glyph_idx;
++                let advance = glyph_advances[this_glyph_idx];
++                // An offset along the run's direction: leftward in a run
++                // read right to left.
++                let offset = glyph_offsets[this_glyph_idx].advanceOffset;
++                let x = if !context.bidi {
++                    context.width + offset
++                } else if right_to_left {
++                    pen -= advance;
++                    pen - offset
++                } else {
++                    let x = pen + offset;
++                    pen += advance;
++                    x
++                };
+                 glyphs.push(ShapedGlyph {
+                     id,
+-                    position: point(
+-                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
+-                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
+-                    ),
++                    position: point(px(x), px(-glyph_offsets[this_glyph_idx].ascenderOffset)),
+                     index: context.index_converter.utf8_ix,
+                     is_emoji,
+                 });
+-                context.width += glyph_advances[this_glyph_idx];
++                context.width += advance;
+             }
+             glyph_idx += cluster_glyph_count;
+         }
++        if context.bidi {
++            context.left = context.left.min(baselineoriginx.min(pen));
++        }
++        if right_to_left {
++            // Left to right, as gpui walks a line's glyphs.
++            glyphs.reverse();
++        }
+         context.runs.push(ShapedRun {
+             font_id,
+             glyphs,
+@@ -2163,6 +2220,61 @@ mod tests {
+         Ok(())
+     }
+ 
++    /// A run read right to left is placed as DirectWrite draws it, from
++    /// its origin leftward (zed#31102), and a line that starts right to
++    /// left reads so: gpui takes it from its left and answers carets as it
++    /// reads.
++    #[test]
++    fn right_to_left_runs_are_placed_as_drawn() -> Result<()> {
++        let platform_text_system = Arc::new(DirectWriteTextSystem::new(None)?);
++        // Windows' interface font, which draws Hebrew. (Under Wine 11 no
++        // font is selected at all, this one or another.)
++        let font = Font {
++            family: "Segoe UI".into(),
++            ..Default::default()
++        };
++        platform_text_system.font_id(&font)?;
++        let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(platform_text_system)));
++        let shape = |text: &str| {
++            let runs = [TextRun {
++                len: text.len(),
++                font: font.clone(),
++                ..Default::default()
++            }];
++            text_system.shape_line(text.to_string().into(), px(14.0), &runs, None)
++        };
++        // "אבג abc": "abc" on the left, then the space, then "גבא".
++        let text = "\u{5d0}\u{5d1}\u{5d2} abc";
++        let line = shape(text);
++        let glyphs: Vec<_> = line.runs.iter().flat_map(|run| &run.glyphs).collect();
++        let indices: Vec<usize> = glyphs.iter().map(|glyph| glyph.index).collect();
++        assert_eq!(indices, [7, 8, 9, 6, 4, 2, 0]);
++        assert!(
++            glyphs
++                .windows(2)
++                .all(|pair| pair[0].position.x < pair[1].position.x)
++        );
++        assert!(glyphs[0].position.x.abs() < px(0.5));
++        assert!(line.is_right_to_left());
++        assert_eq!(line.closest_index_for_x(line.width), 0);
++        assert_eq!(line.x_for_index(text.len()), glyphs[3].position.x);
++        // "abc אבג" reads left to right, its Hebrew word drawn reversed.
++        let text = "abc \u{5d0}\u{5d1}\u{5d2}";
++        let line = shape(text);
++        let indices: Vec<usize> = line
++            .runs
++            .iter()
++            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
++            .collect();
++        assert_eq!(indices, [0, 1, 2, 3, 8, 6, 4]);
++        assert!(!line.is_right_to_left());
++        // A line all left to right is placed as it always was.
++        let latin = shape("abc");
++        assert!(!latin.has_right_to_left());
++        assert!(latin.runs[0].glyphs[0].position.x.abs() < px(0.5));
++        Ok(())
++    }
++
+     #[test]
+     fn test_cluster_map() {
+         let cluster_map = [0];

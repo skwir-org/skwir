@@ -300,8 +300,8 @@ impl OpenContext {
         let (tx, rx) = crossbeam_channel::unbounded();
         (
             EventSink {
-                tx,
-                waker: self.waker.clone(),
+                out: Arc::new(Out::new(tx, self.waker.clone())),
+                keyers: Some(self.scheduler.clone()),
             },
             rx,
         )
@@ -309,28 +309,154 @@ impl OpenContext {
 }
 
 /// Sender half of a listing channel. Never blocks; wakes the UI.
+///
+/// The names of what arrives or is renamed are keyed for the order
+/// (`Entry::name_key`) before the listing takes them, never on the window's
+/// thread: a locale's key costs about 0.36 us, 36 ms a hundred thousand
+/// (ADR-139, 15). A batch of many is keyed on one of the scheduler's
+/// workers while the provider goes on listing, so a folder's names are
+/// keyed beside its reading rather than after it; a few are keyed where
+/// they are sent. Events arrive in the order they were sent: one waits
+/// for the batches before it to be keyed.
 #[derive(Clone)]
 pub struct EventSink {
-    tx: Sender<ListingEvent>,
-    waker: Option<Waker>,
+    out: Arc<Out>,
+    /// The workers a batch of many names is keyed on; none for a sink
+    /// made without a scheduler, which keys where it sends.
+    keyers: Option<Scheduler>,
 }
 
-impl EventSink {
-    /// Queue an event. Returns false if the receiver is gone.
-    pub fn send(&self, mut event: ListingEvent) -> bool {
-        // The order key of each name arriving, worked out here, on the
-        // provider's thread, rather than on the window's as the listing
-        // takes them (`Entry::name_key`).
-        if let ListingEvent::Added(batch) = &mut event {
+/// Fewer names than this are keyed where they are sent: about what
+/// handing a batch to a worker costs (a job queued and a worker woken,
+/// some microseconds), a few names' keys.
+const KEYED_APART: usize = 64;
+
+/// What a sink passes on, and what waits to be.
+struct Out {
+    tx: Sender<ListingEvent>,
+    waker: Option<Waker>,
+    waiting: parking_lot::Mutex<Waiting>,
+    /// The receiver was found gone.
+    gone: std::sync::atomic::AtomicBool,
+}
+
+/// Events sent and not yet passed on, in their order: a batch's place is
+/// empty while its names are keyed.
+#[derive(Default)]
+struct Waiting {
+    /// The number of the first of them, counted from the sink's first.
+    first: u64,
+    events: std::collections::VecDeque<Option<ListingEvent>>,
+}
+
+impl Out {
+    fn new(tx: Sender<ListingEvent>, waker: Option<Waker>) -> Self {
+        Out {
+            tx,
+            waker,
+            waiting: parking_lot::Mutex::default(),
+            gone: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Pass `event` on, under the lock of what waits so that nothing
+    /// passes it.
+    fn pass(&self, event: ListingEvent) {
+        if self.tx.send(event).is_err() {
+            self.gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Pass on what waits first and is ready, then wake the window once.
+    fn pass_ready(&self, waiting: &mut Waiting) -> bool {
+        let mut passed = false;
+        while let Some(Some(_)) = waiting.events.front() {
+            if let Some(Some(event)) = waiting.events.pop_front() {
+                self.pass(event);
+                waiting.first += 1;
+                passed = true;
+            }
+        }
+        passed
+    }
+
+    fn wake(&self) {
+        if let Some(w) = &self.waker {
+            w();
+        }
+    }
+
+    fn is_gone(&self) -> bool {
+        self.gone.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Each name `event` brings keyed for the order (`Entry::name_key`).
+fn key_names(event: &mut ListingEvent) {
+    match event {
+        ListingEvent::Added(batch) => {
             for entry in batch {
                 entry.name_key.0 = Some(crate::collate::sort_key(&entry.name));
             }
         }
-        let ok = self.tx.send(event).is_ok();
-        if let Some(w) = &self.waker {
-            w();
+        ListingEvent::Renamed(pairs) => {
+            for (_, entry) in pairs {
+                entry.name_key.0 = Some(crate::collate::sort_key(&entry.name));
+            }
         }
-        ok
+        _ => {}
+    }
+}
+
+impl EventSink {
+    /// Queue an event. Returns false if the receiver is gone (found so by
+    /// an event passed on before, where one waits to be keyed).
+    pub fn send(&self, mut event: ListingEvent) -> bool {
+        let names = match &event {
+            ListingEvent::Added(batch) => batch.len(),
+            ListingEvent::Renamed(pairs) => pairs.len(),
+            _ => 0,
+        };
+        let keyers = self.keyers.as_ref().filter(|_| names >= KEYED_APART);
+        let Some(keyers) = keyers else {
+            key_names(&mut event);
+            let mut waiting = self.out.waiting.lock();
+            if waiting.events.is_empty() {
+                self.out.pass(event);
+                drop(waiting);
+                self.out.wake();
+            } else {
+                // After the batches before it, once they are keyed.
+                waiting.events.push_back(Some(event));
+            }
+            return !self.out.is_gone();
+        };
+        let at = {
+            let mut waiting = self.out.waiting.lock();
+            waiting.events.push_back(None);
+            waiting.first + (waiting.events.len() as u64 - 1)
+        };
+        let out = Arc::clone(&self.out);
+        // Never skipped: what is sent after it waits for its place to fill.
+        keyers.spawn(
+            Priority::Visible,
+            "listing.keys",
+            CancelToken::new(),
+            move || {
+                key_names(&mut event);
+                let mut waiting = out.waiting.lock();
+                let place = usize::try_from(at - waiting.first).unwrap_or(usize::MAX);
+                if let Some(slot) = waiting.events.get_mut(place) {
+                    *slot = Some(event);
+                }
+                let passed = out.pass_ready(&mut waiting);
+                drop(waiting);
+                if passed {
+                    out.wake();
+                }
+            },
+        );
+        !self.out.is_gone()
     }
 }
 
@@ -4658,6 +4784,156 @@ impl Listing {
 mod tests {
     use super::*;
     use crate::entry::EntryKind;
+
+    /// A name arriving or renamed is keyed by its sender, on the provider's
+    /// thread, never on the window's as the listing takes it (ADR-139,
+    /// 15); an update, whose name is mostly the one keyed, is not.
+    #[test]
+    fn names_arriving_or_renamed_are_keyed_by_their_sender() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let sink = EventSink {
+            out: Arc::new(Out::new(tx, None)),
+            keyers: None,
+        };
+        let entry = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let old = entry(1, "a").id;
+        sink.send(ListingEvent::Added(vec![entry(1, "a")]));
+        sink.send(ListingEvent::Renamed(vec![(old, entry(1, "b"))]));
+        sink.send(ListingEvent::Updated(vec![entry(1, "b")]));
+        let keyed =
+            |e: &Entry| e.name_key.0.as_deref() == Some(&*crate::collate::sort_key(&e.name));
+        match rx.try_recv() {
+            Ok(ListingEvent::Added(batch)) => assert!(keyed(&batch[0])),
+            other => panic!("{other:?}"),
+        }
+        match rx.try_recv() {
+            Ok(ListingEvent::Renamed(pairs)) => assert!(keyed(&pairs[0].1)),
+            other => panic!("{other:?}"),
+        }
+        match rx.try_recv() {
+            Ok(ListingEvent::Updated(batch)) => assert!(batch[0].name_key.0.is_none()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A folder's names arrive keyed for the order, its batches of many
+    /// keyed on the scheduler's workers (ADR-139, 15), and so does a name
+    /// it renames: the listing that takes them, on the window's thread or
+    /// a worker's, keys none of them.
+    #[test]
+    fn a_folder_s_names_arrive_keyed_and_so_do_its_renames() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("folder");
+        std::fs::create_dir(&dir).expect("folder");
+        for i in 0..300 {
+            std::fs::write(dir.join(format!("file {i}.txt")), b"").expect("file");
+        }
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path().join("state")))
+            .expect("app");
+        let open = app.open_location(&Location::from_path(&dir)).expect("open");
+        let keyed =
+            |e: &Entry| e.name_key.0.as_deref() == Some(&*crate::collate::sort_key(&e.name));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let next = || {
+            open.events()
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("an event before the deadline")
+        };
+        let mut arrived = 0;
+        loop {
+            match next() {
+                ListingEvent::Added(batch) => {
+                    assert!(batch.iter().all(keyed), "every name keyed");
+                    arrived += batch.len();
+                }
+                ListingEvent::Complete => break,
+                _ => {}
+            }
+        }
+        assert_eq!(arrived, 300);
+        std::fs::rename(dir.join("file 7.txt"), dir.join("renamed.txt")).expect("rename");
+        loop {
+            match next() {
+                ListingEvent::Renamed(pairs) => {
+                    assert_eq!(pairs[0].1.name, "renamed.txt");
+                    assert!(pairs.iter().all(|(_, e)| keyed(e)));
+                    break;
+                }
+                ListingEvent::Added(batch) => assert!(batch.iter().all(keyed)),
+                _ => {}
+            }
+        }
+        open.close();
+    }
+
+    /// A batch of many names is keyed on a worker while its sender goes on;
+    /// what is sent after it waits for it, so that events arrive keyed and
+    /// in the order they were sent.
+    #[test]
+    fn a_batch_keyed_on_a_worker_arrives_in_its_place() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let sink = EventSink {
+            out: Arc::new(Out::new(tx, None)),
+            keyers: Some(Scheduler::new(2)),
+        };
+        let entry = |ino, name: String| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let rounds: u64 = 30;
+        for round in 0..rounds {
+            let many = (0..500)
+                .map(|i| entry(round * 1000 + i, format!("f{i}")))
+                .collect();
+            assert!(sink.send(ListingEvent::Added(many)));
+            assert!(sink.send(ListingEvent::Added(vec![entry(
+                round * 1000 + 999,
+                format!("few {round}")
+            )])));
+            assert!(sink.send(ListingEvent::Removed(vec![entry(round, String::new()).id])));
+        }
+        assert!(sink.send(ListingEvent::Complete));
+        let next = || {
+            rx.recv_timeout(std::time::Duration::from_secs(30))
+                .expect("every event passed on")
+        };
+        let keyed =
+            |e: &Entry| e.name_key.0.as_deref() == Some(&*crate::collate::sort_key(&e.name));
+        for round in 0..rounds {
+            match next() {
+                ListingEvent::Added(batch) => {
+                    assert_eq!(batch.len(), 500);
+                    assert_eq!(batch[0].id.file, crate::FileId::new(1, round * 1000));
+                    assert!(batch.iter().all(keyed));
+                }
+                other => panic!("{other:?}"),
+            }
+            match next() {
+                ListingEvent::Added(batch) => {
+                    assert_eq!(batch[0].name, format!("few {round}").as_str());
+                    assert!(keyed(&batch[0]));
+                }
+                other => panic!("{other:?}"),
+            }
+            assert!(matches!(next(), ListingEvent::Removed(_)));
+        }
+        assert!(matches!(next(), ListingEvent::Complete));
+    }
 
     /// What `escape` writes reads back; a `%` not followed by two hex
     /// digits (a sign among them) is itself.

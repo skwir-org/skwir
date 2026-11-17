@@ -2,8 +2,9 @@
 # The RPM packages (ADR-040, ADR-041), made on the distribution they are
 # for (Fedora, openSUSE…), whose libraries they depend on: the programs
 # shipped (tools/package/programs) built for shipping, PDFium and skwir's
-# own fonts fetched (tools/package/pdfium.sh, fonts.py), then
-# cargo-generate-rpm, from
+# own fonts fetched (tools/package/pdfium.sh, fonts.py), the desktop
+# entry and the metainfo merged with their translations
+# (tools/package/linux/l10n.sh), then cargo-generate-rpm, from
 # crates/skwir/Cargo.toml's [package.metadata.generate-rpm]: skwir, and
 # skwir-media, skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-math
 # and skwir-mupdf (its variants).
@@ -33,6 +34,9 @@ cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/build/link-ordered --check "${CARGO_TARGET_DIR:-target}/dist/skwir"
 tools/package/pdfium.sh "$platform" target/pdfium
 python3 tools/package/fonts.py target/fonts
+# The desktop entry and the metainfo in every language translated
+# (ADR-139), merged where the package's assets take them.
+tools/package/linux/l10n.sh merge target/l10n
 cargo generate-rpm -p crates/skwir --profile dist
 for variant in media poppler djvulibre mermaid math mupdf; do
     cargo generate-rpm -p crates/skwir --profile dist --variant "$variant"

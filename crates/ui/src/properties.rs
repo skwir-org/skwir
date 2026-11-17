@@ -63,6 +63,10 @@ pub struct Row {
     pub label: SharedString,
     /// What a click on the row copies, and what `Show::Text` shows.
     pub value: SharedString,
+    /// What a click copies instead, where `value` is words said for the
+    /// window: the same words said plainly (`Words::say_plain`), without
+    /// the marks isolating a name, which the clipboard would keep.
+    pub copied: Option<SharedString>,
     pub show: Show,
     /// Who says so, when it is not the filesystem: the user, a plugin, a model.
     pub source: Option<SharedString>,
@@ -186,6 +190,7 @@ impl Row {
         Row {
             label: label.into(),
             value: value.into(),
+            copied: None,
             show: Show::Text,
             source: None,
             actions: Vec::new(),
@@ -195,6 +200,15 @@ impl Row {
             gist: None,
             lead: None,
             tip: None,
+        }
+    }
+
+    /// A row whose value is `value`, words: said for the window where it
+    /// shows, said plainly where a click copies it.
+    pub fn said(label: impl Into<SharedString>, value: &Words) -> Self {
+        Row {
+            copied: Some(value.say_plain().into()),
+            ..Row::new(label, value.say())
         }
     }
 
@@ -908,13 +922,13 @@ pub fn entry_groups(
     if let Some(owner) = meta.value(keys::COMPANION_OF).and_then(Value::as_str) {
         let gone = meta.value(keys::COMPANION_OF_GONE).is_some();
         let owner = Name(owner.to_owned());
-        location.push(Row::new(
+        location.push(Row::said(
             words!(
                 properties_beside = "Beside",
                 note = "A row's label in Properties, for a file that keeps another's notes: the file it belongs to."
             )
             .say(),
-            if gone {
+            &if gone {
                 words!(
                     properties_companion_of_gone = "{ $name }, which is gone",
                     name = owner,
@@ -926,8 +940,7 @@ pub fn entry_groups(
                     name = owner,
                     note = "In Properties, for a file that keeps another's notes: the name of that file, quoted."
                 )
-            }
-            .say(),
+            },
         ));
     }
     // Folded, it says the first: where the file was, or where it is.
@@ -1406,7 +1419,7 @@ pub fn plugin_rows(
                             .collect(),
                         actions_shown: property.actions_shown,
                         gist: property.gist.map(|gist| Gist::Said(gist.say().into())),
-                        ..Row::new(property.label.say(), property.value.say())
+                        ..Row::said(property.label.say(), &property.value)
                     },
                 }
             })),
@@ -2976,6 +2989,7 @@ fn row_element(
     // What is inside the row is known within it.
     let id = g * 1000 + r;
     let (label, value, copies) = (row.label.clone(), row.value.clone(), row.copies);
+    let clipboard = row.copied.clone().unwrap_or_else(|| value.clone());
     let shown = row.links_shown();
     let said = match &row.show {
         Show::Text => {
@@ -3009,7 +3023,7 @@ fn row_element(
                 this.set_status(not_text(), true, cx);
                 return;
             }
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(clipboard.to_string()));
             // The row by its label, as it is shown and quoted as a name
             // is: nothing done to its words.
             this.set_status(

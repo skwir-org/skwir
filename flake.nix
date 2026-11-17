@@ -150,6 +150,7 @@
           ffmpeg # the media and preview checks' clips (H.264, VP9, Opus, FLAC), pinned
           zig # the C compiler of the Windows and macOS checks
           cargo-zigbuild
+          gettext # the desktop entry's and metainfo's translations (tools/package/linux/l10n.sh)
           # The type database the macOS and Windows packages carry,
           # compiled from vendor/shared-mime-info (ADR-037): the program
           # alone, so the shell's data folders keep the desktop's database.

@@ -1,0 +1,17 @@
+# The languages Skwir offers (ADR-139, 13): Automatic speaks them, and the
+# Language setting lists them by their names alone. Any other language a
+# catalog is in is listed as incomplete, with its share, for whoever
+# chooses it, and Automatic never picks it.
+#
+# One tag a line, as its catalogs are named (fr). `just words` adds a
+# language once 90% of all Skwir's messages are translated and reviewed in
+# it (a message is reviewed once the `# draft` above it is gone), and every
+# message of what is on by default is: the program's own crates (core, the
+# platform, the window, the host of plugins from outside) and each plugin
+# on by default.
+#
+# Only a person takes one out, which lists it as incomplete again: a
+# release refuses a language here with less than 75% of its messages
+# reviewed (`just words --release`), while between releases it stays
+# offered, what it lacks said in English. Its line comes back only once it
+# meets the bar again.

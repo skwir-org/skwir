@@ -131,22 +131,19 @@ impl<K: std::hash::Hash + Eq> Made<K> {
     }
 }
 
-/// By the first letter as the name sort folds it (É with E): 0–9 for a
-/// number, Other for a name that begins with neither, first; a letter of
-/// another script a group of its own. Read from the name's collation key
-/// the listing holds (`Of::collated_name`), each group found by its first
-/// character: nothing made per entry.
+/// By the first letter as the names' order puts it (`collate::initial`:
+/// É under E; Ä under A in German, after Z in Swedish): Other for a name
+/// that begins with neither a letter nor a digit, then 0–9, first; a
+/// letter of another script a group of its own. Each group found by the
+/// name's first character, as the collation reads it once: nothing made
+/// per entry.
 fn by_name() -> Keyer {
-    let made = Made::<char>::new();
+    use skwir_core::collate::Initial;
+    let made = Made::<Initial>::new();
     Arc::new(move |e: &Of<'_>| {
-        let key = e.collated_name();
-        let first = std::str::from_utf8(&key)
-            .ok()
-            .and_then(|k| k.chars().next())
-            .or_else(|| String::from_utf8_lossy(&key).chars().next());
-        match first {
-            // A run of digits starts with the marker `0`.
-            Some('0') => made.get('0', || {
+        let initial = skwir_core::collate::initial(&e.name);
+        match initial {
+            Initial::Digit => made.get(initial, || {
                 Group::ranked(
                     1,
                     &words!(
@@ -156,17 +153,11 @@ fn by_name() -> Keyer {
                     .say(),
                 )
             }),
-            Some(c) if c.is_alphabetic() => made.get(c, || {
-                let mut bytes = [0; 4];
-                Group {
-                    rank: 2,
-                    key: Arc::from(c.encode_utf8(&mut bytes).as_bytes()),
-                    label: Arc::from(c.to_uppercase().collect::<String>()),
-                    folders: false,
-                    term: None,
-                }
+            // Ordered among the letters by the letter's collation key.
+            Initial::Letter(letter) => made.get(initial, || {
+                Group::new(2, letter.encode_utf8(&mut [0; 4]))
             }),
-            _ => made.get('\0', || {
+            Initial::Other => made.get(initial, || {
                 Group::ranked(
                     0,
                     &words!(

@@ -392,10 +392,11 @@ async fn serve(shared: &Arc<Shared>, job: Job) {
         Err(error) => Err(anyhow::anyhow!("{error:#}")),
     }
     // Whatever the server or the network said, never the key: said for
-    // the window that shows it, in its language.
+    // the window that shows it, in its language, plainly (an error's text,
+    // kept and logged, holds no mark).
     .map_err(|error| {
         anyhow::anyhow!(redact(
-            &words::Words::of_error(error).say(),
+            &words::Words::of_error(error).say_plain(),
             secret.as_deref()
         ))
     });

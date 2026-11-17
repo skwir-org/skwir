@@ -3,7 +3,7 @@
 # here runs a Mac's program, so this reads what can be read: the zip holds
 # skwir.app alone, its programs executable, and the disk image the same
 # bundle, file for file, beside a link to Applications; Info.plist names
-# what is there;
+# what is there, and the languages skwir speaks, an .lproj each;
 # the icon holds every side; each program is arm64, for macOS 12 or later,
 # linked to the system's libraries alone; the bundle's seal verifies
 # (rcodesign); no program names a folder of the machine that built it.
@@ -33,7 +33,7 @@ mkdir -p "$unpacked"
 # kept; its Info.plist and icon read.
 # shellcheck disable=SC2086 # one argument per program
 python3 - "$made/$name.zip" "$unpacked" "$version" $programs <<'EOF'
-import pathlib, plistlib, stat, struct, sys, zipfile
+import pathlib, plistlib, re, stat, struct, sys, zipfile
 archive, into, version, programs = sys.argv[1], pathlib.Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
 with zipfile.ZipFile(archive) as zipped:
     entries = zipped.infolist()
@@ -71,6 +71,15 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
 assert info["CFBundleShortVersionString"] == version and info["LSMinimumSystemVersion"] == "12.0", info
+# English and each language skwir offers (ADR-139, 13, tools/words/offered),
+# declared, each with its .lproj saying skwir's name.
+offered = pathlib.Path("tools/words/offered").read_text().splitlines()
+languages = ["en", *sorted({line.strip() for line in offered if line.strip() and not line.startswith("#")})]
+assert info["CFBundleDevelopmentRegion"] == "en" and info["CFBundleLocalizations"] == languages, info
+for language in languages:
+    strings = (app / "Resources" / f"{language}.lproj/InfoPlist.strings").read_text()
+    said = dict(re.findall(r'^(\w+) = "([^"]*)";$', strings, re.M))
+    assert said == {"CFBundleName": "skwir", "CFBundleDisplayName": "skwir"}, (language, said)
 icns = (app / "Resources" / f'{info["CFBundleIconFile"]}.icns').read_bytes()
 assert icns[:4] == b"icns" and struct.unpack(">I", icns[4:8])[0] == len(icns), "not an .icns"
 kinds, at = set(), 8
@@ -81,7 +90,8 @@ while at < len(icns):
     at += size
 missing = {"icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"} - kinds
 assert not missing, f"the icon lacks {missing}"
-print(f"ok: the zip holds skwir.app, {len(entries)} files; Info.plist and its icon ({len(kinds)} sides) read")
+print(f"ok: the zip holds skwir.app, {len(entries)} files; Info.plist, its icon ({len(kinds)} sides) "
+      f"and its languages ({', '.join(languages)}) read")
 EOF
 
 # The disk image, opened with the tools that made it: the same bundle, each

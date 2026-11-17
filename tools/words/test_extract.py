@@ -1,0 +1,263 @@
+"""tools/words/extract.py on small catalogs and a made-up tree: how much of
+a language is translated and reviewed, which crates are on by default, and
+when a language is offered and a release refuses it (ADR-139, 13)."""
+import contextlib
+import io
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import extract  # noqa: E402
+
+
+class Messages(unittest.TestCase):
+    def test_a_draft_is_a_message_whose_own_comment_says_so(self):
+        source = "\n".join(
+            [
+                "# French catalog of skwir-sample: every message is a draft until reviewed.",
+                "",
+                "# draft",
+                "plain = Un",
+                "",
+                "reviewed = Deux",
+                "",
+                "# What it counts.",
+                "# draft",
+                "counted = { $n ->",
+                "    [one] un élément",
+                "   *[other] { $n } éléments",
+                "}",
+                "",
+                "## A group's comment is no message's.",
+                "grouped = Quatre",
+                "",
+                "# draft",
+                "",
+                "parted = Cinq, its comment a blank line above",
+                "lines =",
+                "    Six",
+                "    sur deux lignes",
+                "# draft",
+                "after_lines = Sept",
+                "# draft",
+                "braced = { $n ->",
+                "[one] un, its variant at the line's start",
+                "*[other] { $n }",
+                "}",
+                "quoted = { \"{\" } then { $n }",
+                "-term = No message",
+            ]
+        )
+        self.assertEqual(
+            extract.messages_of(source),
+            {
+                "plain": True,
+                "reviewed": False,
+                "counted": True,
+                "grouped": False,
+                "parted": False,
+                "lines": False,
+                "after_lines": True,
+                "braced": True,
+                "quoted": False,
+            },
+        )
+
+    def test_the_program_s_own_catalogs_are_read_whole(self):
+        # Every message begins a line of its own: each is found, and every
+        # draft, marked on the line above it.
+        root = Path(__file__).resolve().parents[2]
+        for path in sorted((root / "crates").glob("*/l10n/*.ftl")):
+            text = path.read_text()
+            found = extract.messages_of(text)
+            lines = text.splitlines()
+            begun = [n for n, line in enumerate(lines) if extract.MESSAGE.match(line)]
+            self.assertEqual(len(found), len(begun), path)
+            drafts = sum(1 for n in begun if n and lines[n - 1] == "# draft")
+            self.assertEqual(sum(found.values()), drafts, path)
+
+
+class Crates(unittest.TestCase):
+    def setUp(self):
+        self.held = tempfile.TemporaryDirectory()
+        self.addCleanup(self.held.cleanup)
+        self.root = Path(self.held.name)
+
+    def crate(self, name, source=""):
+        folder = self.root / name
+        (folder / "src").mkdir(parents=True)
+        (folder / "Cargo.toml").write_text(f'[package]\nname = "{name}"\n')
+        (folder / "src" / "lib.rs").write_text(source)
+        return folder
+
+    def test_a_plugin_is_on_unless_it_answers_false(self):
+        program = self.crate("skwir-sample-core", "fn enabled_by_default(&self) -> bool { false }")
+        self.assertTrue(extract.on_by_default(program, "skwir-sample-core"), "the program's own")
+        silent = self.crate("skwir-plugin-silent", "// See `Plugin::enabled_by_default`.\n")
+        self.assertTrue(extract.on_by_default(silent, "skwir-plugin-silent"))
+        off = self.crate(
+            "skwir-plugin-off",
+            "impl Plugin for Off {\n    // fn enabled_by_default is said below.\n"
+            "    fn enabled_by_default(&self) -> bool {\n        false\n    }\n}\n",
+        )
+        self.assertFalse(extract.on_by_default(off, "skwir-plugin-off"))
+        on = self.crate("skwir-plugin-on", "fn enabled_by_default(&self) -> bool { true }")
+        self.assertTrue(extract.on_by_default(on, "skwir-plugin-on"))
+        unread = self.crate("skwir-plugin-unread", "fn enabled_by_default(&self) -> bool { cfg!(unix) }")
+        with self.assertRaises(ValueError):
+            extract.on_by_default(unread, "skwir-plugin-unread")
+
+    def catalog(self, folder, language, text):
+        (folder / "l10n").mkdir(exist_ok=True)
+        (folder / "l10n" / f"{language}.ftl").write_text(text)
+
+    def test_a_share_counts_every_crate_s_messages(self):
+        core = self.crate("skwir-sample-core")
+        off = self.crate("skwir-plugin-off", "fn enabled_by_default(&self) -> bool { false }")
+        found = {
+            core: {f"core_{n}": ("English", "") for n in range(4)},
+            off: {f"off_{n}": ("English", "") for n in range(6)},
+        }
+        names = {core: "skwir-sample-core", off: "skwir-plugin-off"}
+        # French: the program whole, the plugin off by default all but one.
+        self.catalog(core, "fr", "".join(f"core_{n} = Un\n" for n in range(4)) + "gone = No English\n")
+        self.catalog(off, "fr", "".join(f"off_{n} = Un\n" for n in range(4)) + "# draft\noff_4 = Un\n")
+        # German: one of the program's still a draft; nothing of the plugin.
+        self.catalog(core, "de", "# draft\ncore_0 = Eins\n" + "".join(f"core_{n} = Eins\n" for n in range(1, 4)))
+        shares, problems = extract.shares(found, names)
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            shares,
+            [
+                {"language": "de", "messages": 10, "translated": 4, "reviewed": 3, "default_whole": False},
+                {"language": "fr", "messages": 10, "translated": 9, "reviewed": 8, "default_whole": True},
+            ],
+        )
+        self.assertEqual([extract.percent(share, "translated") for share in shares], [40, 90])
+        self.assertEqual([extract.percent(share, "reviewed") for share in shares], [30, 80])
+        self.assertFalse(any(extract.meets_bar(share) for share in shares))
+        # One more reviewed: 90%, and all of what is on by default.
+        self.catalog(off, "fr", "".join(f"off_{n} = Un\n" for n in range(5)))
+        shares, _ = extract.shares(found, names)
+        self.assertTrue(extract.meets_bar(shares[1]))
+        # The plugin on by default, it would need all of it.
+        (off / "src" / "lib.rs").write_text("")
+        shares, _ = extract.shares(found, names)
+        self.assertFalse(extract.meets_bar(shares[1]))
+
+    def test_shares_round_down(self):
+        share = {"messages": 1000, "translated": 999, "reviewed": 749}
+        self.assertEqual(extract.percent(share, "translated"), 99)
+        self.assertTrue(extract.under_floor(share))
+        self.assertFalse(extract.under_floor({**share, "reviewed": 750}))
+        self.assertEqual(extract.percent({"messages": 0, "translated": 0}, "translated"), 0)
+
+
+class Offering(unittest.TestCase):
+    """The whole tool on a made-up tree: a language offered once it meets
+    the bar, kept between releases under it, refused by a release under
+    75%."""
+
+    def setUp(self):
+        self.held = tempfile.TemporaryDirectory()
+        self.addCleanup(self.held.cleanup)
+        self.root = Path(self.held.name)
+        self.core = self.root / "crates" / "core"
+        (self.core / "src").mkdir(parents=True)
+        # A plugin off by default: what is on by default asks nothing of it.
+        (self.core / "Cargo.toml").write_text('[package]\nname = "skwir-plugin-sample"\n')
+        (self.root / "crates" / "skwir" / "src").mkdir(parents=True)
+        (self.root / "tools" / "words").mkdir(parents=True)
+        self.offered = self.root / "tools" / "words" / "offered"
+        self.offered.write_text("# The languages offered.\n")
+        for name, value in {
+            "ROOT": self.root,
+            "OFFERED": self.offered,
+            "CATALOGS_RS": self.root / "crates" / "skwir" / "src" / "catalogs.rs",
+        }.items():
+            patch = mock.patch.object(extract, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def say(self, count):
+        """The crate says `count` messages."""
+        calls = "".join(f'words!(said_{n} = "Said {n}");\n' for n in range(count))
+        off = "fn enabled_by_default(&self) -> bool {\n    false\n}\n"
+        (self.core / "src" / "lib.rs").write_text(f"{off}fn f() {{\n{calls}}}\n")
+
+    def translate(self, count, reviewed):
+        (self.core / "l10n").mkdir(exist_ok=True)
+        text = "".join(("" if n < reviewed else "# draft\n") + f"said_{n} = Dit {n}\n" for n in range(count))
+        (self.core / "l10n" / "fr.ftl").write_text(text)
+
+    def run_tool(self, *flags):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["extract.py", *flags]):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = extract.main()
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_language_offered_stays_until_a_release_refuses_it(self):
+        self.say(10)
+        self.translate(10, reviewed=8)
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(extract.read_offered(self.offered), [])
+        catalogs = extract.CATALOGS_RS.read_text()
+        self.assertIn('language: "fr",\n        messages: 10,\n        translated: 10,\n        reviewed: 8,', catalogs)
+        self.assertIn("offered: false", catalogs)
+        self.assertEqual(self.run_tool("--check")[0], 0)
+
+        # 90% reviewed: offered, written in the record.
+        self.translate(10, reviewed=9)
+        code, said = self.run_tool("--check")
+        self.assertEqual(code, 1, "the record and the catalogs' list are behind")
+        self.assertIn("offered once `just words`", said)
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(extract.read_offered(self.offered), ["fr"])
+        self.assertTrue(self.offered.read_text().startswith("# The languages offered.\n"))
+        self.assertIn("offered: true", extract.CATALOGS_RS.read_text())
+        self.assertEqual(self.run_tool("--release")[0], 0)
+
+        # Messages added untranslated: 75%, offered still, a release too.
+        self.say(12)
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertIn("offered: true", extract.CATALOGS_RS.read_text())
+        self.assertEqual(self.run_tool("--release")[0], 0)
+
+        # Under 75%: offered between releases, with a warning; a release
+        # refuses it.
+        self.say(13)
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertIn("warning: fr is offered with only 69%", said)
+        self.assertIn("offered: true", extract.CATALOGS_RS.read_text())
+        self.assertEqual(self.run_tool("--check")[0], 0)
+        code, said = self.run_tool("--release")
+        self.assertEqual(code, 1)
+        self.assertIn("a release offers none under 75%", said)
+
+        # Taken out of the record: incomplete again, until it meets the bar.
+        self.offered.write_text("# The languages offered.\n")
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertIn("offered: false", extract.CATALOGS_RS.read_text())
+        self.assertEqual(extract.read_offered(self.offered), [])
+        self.assertEqual(self.run_tool("--release")[0], 0)
+
+    def test_the_record_names_only_languages_a_catalog_is_in(self):
+        self.say(2)
+        self.translate(2, reviewed=0)
+        self.offered.write_text("# The languages offered.\nde\n")
+        code, said = self.run_tool()
+        self.assertEqual(code, 1)
+        self.assertIn("de is no language a catalog is in", said)
+
+
+if __name__ == "__main__":
+    unittest.main()

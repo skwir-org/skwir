@@ -14,7 +14,10 @@ use std::{
     },
 };
 
-use super::LineWrapper;
+use super::{
+    LineWrapper,
+    bidi::{BidiLevels, BidiRow, Cell, Row},
+};
 
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
@@ -31,6 +34,10 @@ pub struct LineLayout {
     pub runs: Vec<ShapedRun>,
     /// The length of the line in utf-8 bytes
     pub len: usize,
+    /// How the line reads in both directions, where any of it reads right
+    /// to left (`text_system::bidi`); `None` where all of it reads left to
+    /// right, its glyphs following its text.
+    pub bidi_levels: Option<Arc<BidiLevels>>,
 }
 
 /// A run of text that has been shaped .
@@ -124,6 +131,9 @@ impl LineLayout {
 
     /// The index for the character at the given x coordinate
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+        if let Some(levels) = &self.bidi_levels {
+            return BidiRow::new(self, levels, &self.whole_row()).index_for_x(x);
+        }
         if x >= self.width {
             None
         } else {
@@ -141,6 +151,9 @@ impl LineLayout {
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
+        if let Some(levels) = &self.bidi_levels {
+            return BidiRow::new(self, levels, &self.whole_row()).closest_index_for_x(x);
+        }
         let mut prev_index = 0;
         let mut prev_x = px(0.);
 
@@ -169,8 +182,14 @@ impl LineLayout {
         self.len
     }
 
-    /// The x position of the character at the given index
+    /// The x position of the character at the given index: where a caret
+    /// stands before it. Where right-to-left text turns the line's
+    /// direction, a place has two edges; it stands at the one no other place
+    /// has (`text_system::bidi`).
     pub fn x_for_index(&self, index: usize) -> Pixels {
+        if let Some(levels) = &self.bidi_levels {
+            return BidiRow::new(self, levels, &self.whole_row()).x_for_index(index);
+        }
         for run in &self.runs {
             for glyph in &run.glyphs {
                 if glyph.index >= index {
@@ -179,6 +198,56 @@ impl LineLayout {
             }
         }
         self.width
+    }
+
+    /// The spans of x a selection of `range` covers, left to right: one for
+    /// each stretch of its characters drawn side by side, so more than one
+    /// where right-to-left text turns the line's direction; one, from
+    /// `x_for_index` of its start to that of its end, on a line all left to
+    /// right. None for an empty range.
+    pub fn selection_ranges(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 2]> {
+        if let Some(levels) = &self.bidi_levels {
+            return BidiRow::new(self, levels, &self.whole_row()).selection(&range);
+        }
+        if range.is_empty() {
+            return SmallVec::new();
+        }
+        smallvec::smallvec![self.x_for_index(range.start)..self.x_for_index(range.end)]
+    }
+
+    /// The place whose caret stands next to `index`'s on its left, as the
+    /// line is drawn: the previous character's on a line all left to right,
+    /// the next one's where the text reads right to left. `None` at the
+    /// line's left end.
+    pub fn index_left_of(&self, index: usize) -> Option<usize> {
+        if let Some(levels) = &self.bidi_levels {
+            return BidiRow::new(self, levels, &self.whole_row()).index_beside(index, true);
+        }
+        self.runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .map(|glyph| glyph.index)
+            .take_while(|at| *at < index)
+            .last()
+    }
+
+    /// The place whose caret stands next to `index`'s on its right, as the
+    /// line is drawn; `None` at the line's right end.
+    pub fn index_right_of(&self, index: usize) -> Option<usize> {
+        if let Some(levels) = &self.bidi_levels {
+            return BidiRow::new(self, levels, &self.whole_row()).index_beside(index, false);
+        }
+        if index >= self.len {
+            return None;
+        }
+        Some(
+            self.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter())
+                .map(|glyph| glyph.index)
+                .find(|at| *at > index)
+                .unwrap_or(self.len),
+        )
     }
 
     /// The corresponding Font at the given index
@@ -236,6 +305,11 @@ impl LineLayout {
             }
         }
 
+        let levels_of = |range: Range<usize>| {
+            self.bidi_levels
+                .as_ref()
+                .map(|levels| Arc::new(levels.slice(range)))
+        };
         let left = LineLayout {
             font_size: self.font_size,
             width: x_offset,
@@ -243,6 +317,7 @@ impl LineLayout {
             descent: self.descent,
             runs: left_runs,
             len: byte_index,
+            bidi_levels: levels_of(0..byte_index),
         };
 
         let right = LineLayout {
@@ -252,6 +327,7 @@ impl LineLayout {
             descent: self.descent,
             runs: right_runs,
             len: self.len - byte_index,
+            bidi_levels: levels_of(byte_index..self.len),
         };
 
         (left, right)
@@ -263,6 +339,9 @@ impl LineLayout {
     /// wrapped at it, no word is broken. A text's minimum content width,
     /// as CSS has it.
     pub fn min_wrap_width(&self, text: &str) -> Pixels {
+        if let Some(levels) = &self.bidi_levels {
+            return min_wrap_width_in_text_order(&self.cells_in_text_order(levels), text);
+        }
         let mut widest = px(0.);
         let mut stretch_x = px(0.);
         let mut started = false;
@@ -284,12 +363,51 @@ impl LineLayout {
         widest.max(self.width - stretch_x)
     }
 
-    fn compute_wrap_boundaries(
+    /// This line wrapped at `wrap_width`, in `max_lines` rows at most: the
+    /// layout its rows are drawn from, and where each row after the first
+    /// starts in it. A line holding right-to-left text wraps in its text's
+    /// order, each row then laid out as it reads (`LineLayout::rows_as_read`);
+    /// any other, and one that fits, is drawn from itself.
+    pub(crate) fn wrapped(
+        self: &Arc<Self>,
+        text: &str,
+        wrap_width: Pixels,
+        max_lines: Option<usize>,
+    ) -> (Arc<LineLayout>, SmallVec<[WrapBoundary; 1]>) {
+        let Some(levels) = &self.bidi_levels else {
+            return (
+                self.clone(),
+                self.compute_wrap_boundaries(text, wrap_width, max_lines),
+            );
+        };
+        let cells = self.cells_in_text_order(levels);
+        let starts = wrap_in_text_order(&cells, text, wrap_width, max_lines);
+        if starts.is_empty() {
+            return (self.clone(), SmallVec::new());
+        }
+        let (laid, boundaries) = self.rows_as_read(levels, text, &cells, &starts);
+        (Arc::new(laid), boundaries)
+    }
+
+    pub(crate) fn compute_wrap_boundaries(
         &self,
         text: &str,
         wrap_width: Pixels,
         max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
+        if let Some(levels) = &self.bidi_levels {
+            // Where each row's first character is drawn in this layout: as
+            // many rows as the line wraps into (what a measure asks), not
+            // the rows themselves, which `wrapped` lays out.
+            let cells = self.cells_in_text_order(levels);
+            let mut boundaries: SmallVec<[WrapBoundary; 1]> =
+                wrap_in_text_order(&cells, text, wrap_width, max_lines)
+                    .into_iter()
+                    .map(|start| cells[start].first)
+                    .collect();
+            boundaries.sort();
+            return boundaries;
+        }
         let mut boundaries = SmallVec::new();
         let mut first_non_whitespace_ix = None;
         let mut last_candidate_ix = None;
@@ -357,6 +475,77 @@ impl LineLayout {
 
         boundaries
     }
+}
+
+/// Where a line whose cells are `cells`, in its text's order, wraps at
+/// `wrap_width`, in `max_lines` rows at most: the first cell of each row but
+/// the first. As `LineLayout::compute_wrap_boundaries` wraps a line, its
+/// cells measured one after another in the text's order.
+fn wrap_in_text_order(
+    cells: &[Cell],
+    text: &str,
+    wrap_width: Pixels,
+    max_lines: Option<usize>,
+) -> SmallVec<[usize; 1]> {
+    let mut starts = SmallVec::new();
+    let mut started = false;
+    let mut last_candidate: Option<(usize, Pixels)> = None;
+    let mut last_boundary = (0, px(0.));
+    let mut prev_ch = '\0';
+    let mut x = px(0.);
+    for (k, cell) in cells.iter().enumerate() {
+        let next_x = x + cell.width();
+        let ch = text
+            .get(cell.index..)
+            .and_then(|rest| rest.chars().next())
+            .unwrap_or(' ');
+        if ch == '\n' {
+            x = next_x;
+            continue;
+        }
+        if wraps_before(prev_ch, ch, started) {
+            last_candidate = Some((k, x));
+        }
+        started |= ch != ' ';
+        if next_x - last_boundary.1 > wrap_width && k > last_boundary.0 {
+            if let Some(max_lines) = max_lines
+                && starts.len() >= max_lines.saturating_sub(1)
+            {
+                break;
+            }
+            last_boundary = last_candidate.take().unwrap_or((k, x));
+            starts.push(last_boundary.0);
+        }
+        prev_ch = ch;
+        x = next_x;
+    }
+    starts
+}
+
+/// `LineLayout::min_wrap_width` of a line whose cells are `cells`, in its
+/// text's order.
+fn min_wrap_width_in_text_order(cells: &[Cell], text: &str) -> Pixels {
+    let mut widest = px(0.);
+    let mut stretch_x = px(0.);
+    let mut started = false;
+    let mut prev_ch = '\0';
+    let mut x = px(0.);
+    for cell in cells {
+        let ch = text
+            .get(cell.index..)
+            .and_then(|rest| rest.chars().next())
+            .unwrap_or(' ');
+        if ch != '\n' {
+            if wraps_before(prev_ch, ch, started) {
+                widest = widest.max(x - stretch_x);
+                stretch_x = x;
+            }
+            started |= ch != ' ';
+            prev_ch = ch;
+        }
+        x += cell.width();
+    }
+    widest.max(x - stretch_x)
 }
 
 /// Whether a line may wrap before `ch`, coming after `prev_ch`, once a
@@ -587,6 +776,70 @@ impl WrappedLineLayout {
         self._index_for_position(position, line_height, true)
     }
 
+    /// Where each row after the first starts in the text, as a byte index:
+    /// its first character in the text's order, which a row of right-to-left
+    /// text draws at its right end.
+    pub fn row_starts(&self) -> SmallVec<[usize; 1]> {
+        let layout = &self.unwrapped_layout;
+        if layout.bidi_levels.is_none() {
+            return self
+                .wrap_boundaries
+                .iter()
+                .map(|boundary| layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
+                .collect();
+        }
+        (1..=self.wrap_boundaries.len())
+            .map(|row| {
+                let from = self.wrap_boundaries[row - 1];
+                let to = self.wrap_boundaries.get(row).copied();
+                layout
+                    .runs
+                    .iter()
+                    .enumerate()
+                    .skip(from.run_ix)
+                    .flat_map(|(run_ix, run)| {
+                        run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
+                            (WrapBoundary { run_ix, glyph_ix }, glyph)
+                        })
+                    })
+                    .skip(from.glyph_ix)
+                    .take_while(|(at, _)| Some(*at) != to)
+                    .map(|(_, glyph)| glyph.index)
+                    .min()
+                    .unwrap_or(layout.len)
+            })
+            .collect()
+    }
+
+    /// Row `row` of a line holding right-to-left text, as places in its
+    /// text and where they are drawn, the row's starts already known
+    /// (`row_starts`).
+    fn bidi_row(&self, levels: &BidiLevels, row: usize, starts: &[usize]) -> (BidiRow, Pixels) {
+        let layout = &self.unwrapped_layout;
+        let start_of = |boundary: &WrapBoundary| {
+            layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+                .position
+                .x
+        };
+        let from = row.checked_sub(1).map(|r| self.wrap_boundaries[r]);
+        let to = self.wrap_boundaries.get(row).copied();
+        let left = from.as_ref().map_or(px(0.), start_of);
+        let bidi_row = BidiRow::new(
+            layout,
+            levels,
+            &Row {
+                from: from.unwrap_or(WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 0,
+                }),
+                to,
+                right: to.as_ref().map_or(layout.width, start_of),
+                end: starts.get(row).copied().unwrap_or(layout.len),
+            },
+        );
+        (bidi_row, left)
+    }
+
     fn _index_for_position(
         &self,
         position: Point<Pixels>,
@@ -594,6 +847,25 @@ impl WrappedLineLayout {
         closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = self.rows(line_height).at(position.y);
+
+        if let Some(levels) = &self.unwrapped_layout.bidi_levels {
+            if wrapped_line_ix > self.wrap_boundaries.len() {
+                return Err(0);
+            }
+            let starts = self.row_starts();
+            let (row, left) = self.bidi_row(levels, wrapped_line_ix, &starts);
+            let x = position.x + left;
+            let (leftmost, rightmost) = row.ends();
+            return if x < left {
+                Err(leftmost)
+            } else if x >= row.right() {
+                Err(rightmost)
+            } else if closest {
+                Ok(row.closest_index_for_x(x))
+            } else {
+                row.index_for_x(x).ok_or(rightmost)
+            };
+        }
 
         let wrapped_line_start_index;
         let wrapped_line_start_x;
@@ -647,6 +919,20 @@ impl WrappedLineLayout {
 
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+        if let Some(levels) = &self.unwrapped_layout.bidi_levels {
+            // The row it is in, where it ends one (as below): the first
+            // whose end it does not pass.
+            let starts = self.row_starts();
+            if index > self.len() {
+                return None;
+            }
+            let row = starts.partition_point(|start| *start < index);
+            let (bidi_row, left) = self.bidi_row(levels, row, &starts);
+            return Some(point(
+                bidi_row.x_for_index(index) - left,
+                self.rows(line_height).top(row),
+            ));
+        }
         let mut line_start_ix = 0;
         let line_end_indices = self
             .wrap_boundaries
@@ -828,10 +1114,10 @@ impl LineLayoutCache {
             drop(state);
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
-            let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+            let (unwrapped_layout, wrap_boundaries) = if let Some(wrap_width) = wrap_width {
+                unwrapped_layout.wrapped(text.as_ref(), wrap_width, max_lines)
             } else {
-                SmallVec::new()
+                (unwrapped_layout, SmallVec::new())
             };
             let layout = Arc::new(WrappedLineLayout {
                 unwrapped_layout,
@@ -896,6 +1182,12 @@ impl LineLayoutCache {
         } else {
             let text = SharedString::from(text);
             let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
+            // Right-to-left text: its levels kept, its glyphs in the order
+            // they are drawn (`text_system::bidi`).
+            layout.bidi_levels = BidiLevels::of(&text).map(Arc::new);
+            if layout.bidi_levels.is_some() {
+                layout.put_in_drawn_order();
+            }
 
             if let Some(force_width) = force_width {
                 apply_force_width_to_layout(&mut layout, force_width);
@@ -1160,6 +1452,7 @@ mod tests {
                 glyphs,
             }],
             len: 0,
+            bidi_levels: None,
         }
     }
 
@@ -1283,6 +1576,32 @@ mod tests {
                 .collect(),
         );
         assert_eq!(layout.min_wrap_width(text), px(100.), "its whole width");
+    }
+
+    #[test]
+    fn a_word_of_any_script_is_kept_whole() {
+        // Each character one glyph 10 px wide: the narrowest a line goes
+        // without breaking a word, a word's trailing space included.
+        let narrowest = |text: &str| {
+            let mut layout = make_layout(
+                text.char_indices()
+                    .enumerate()
+                    .map(|(n, (index, _))| glyph_at(n as f32 * 10., index))
+                    .collect(),
+            );
+            layout.width = px(text.chars().count() as f32 * 10.);
+            layout.len = text.len();
+            f32::from(layout.min_wrap_width(text))
+        };
+        assert_eq!(narrowest("Ελληνικά λέξη"), 90., "Greek");
+        assert_eq!(narrowest("हिन्दी भाषा"), 70., "Devanagari, with its marks");
+        assert_eq!(narrowest("ქართული ენა"), 80., "Georgian");
+        // A name isolated in its quotes is a word with them.
+        assert_eq!(narrowest("“\u{2068}ab\u{2069}”"), 60.);
+        // Chinese breaks between any two characters; Thai too (no
+        // dictionary), but not before its marks: "กี่" is one character.
+        assert_eq!(narrowest("中文字"), 10.);
+        assert_eq!(narrowest("กี่ข"), 30.);
     }
 }
 
@@ -1421,6 +1740,7 @@ mod run_position_tests {
                 shaped(RunPosition::Baseline, vec![glyph(40., 5), glyph(50., 6)]),
             ],
             len: 7,
+            bidi_levels: None,
         };
         let wraps = smallvec::smallvec![
             WrapBoundary {

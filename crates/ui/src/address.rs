@@ -2776,12 +2776,14 @@ fn breadcrumbs(
                 },
                 serde_json::json!({ "location": crumb.location.arg() }),
                 gpui::SharedString::from(
+                    // Its label plain: a name in these words, isolated
+                    // there.
                     if crumb.location.is_path() {
-                        folders_above(crumb.label.say())
+                        folders_above(crumb.label.say_plain())
                     } else {
                         words!(
                             address_above = "Above { $place }",
-                            place = Folder(crumb.label.say()),
+                            place = Folder(crumb.label.say_plain()),
                             note = "The tooltip of a chevron of the address's trail: the places above this one; place: its name."
                         )
                     }
@@ -2802,7 +2804,7 @@ fn breadcrumbs(
             // A folder's menu lists the places of it too (its tags).
             words!(
                 address_in = "In { $place }",
-                place = Folder(of.label.say()),
+                place = Folder(of.label.say_plain()),
                 note = "The tooltip of a chevron of the address's trail: the folders and places inside this one; place: its name."
             )
             .say()
@@ -2817,7 +2819,10 @@ fn breadcrumbs(
     let mut groups = Vec::with_capacity(crumbs.len());
     let above = crumbs.first().and_then(|first| {
         let path = first.location.path()?;
-        path.parent().is_some().then(|| (first.label.say(), path))
+        // Plain: a name in the words of its chevron (`folders_above`).
+        path.parent()
+            .is_some()
+            .then(|| (first.label.say_plain(), path))
     });
     for (index, crumb) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;

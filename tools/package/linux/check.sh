@@ -11,7 +11,8 @@
 # may say it cannot work where the system has none, as a test root has
 # not. skwir's licence and PDFium's notices are installed, and the
 # libraries skwir opens at run time are there, and so are the desktop
-# entry and its icon. Skwir's own fonts are where skwir finds those a
+# entry and the metainfo, in every language translated, and the icon.
+# Skwir's own fonts are where skwir finds those a
 # package carries (ADR-118); with `system-fonts`, for a package that
 # carries none (the AUR's source package), they are the system's optional
 # packages instead: found through fontconfig once what skwir recommends is
@@ -132,6 +133,11 @@ for file in /usr/share/applications/org.skwir.skwir.desktop \
         failed=1
     fi
 done
+# The desktop entry and the metainfo in every language translated
+# (tools/package/linux/l10n.sh, ADR-139).
+if ! "$here/linux/l10n.sh" installed /usr/share; then
+    failed=1
+fi
 for library in libvulkan.so.1 libfontconfig.so.1; do
     if ldconfig -p | grep -q "$library"; then
         echo "ok: $library"

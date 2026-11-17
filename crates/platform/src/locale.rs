@@ -290,4 +290,27 @@ mod tests {
         assert_eq!(of_from(&all, Category::Paper).as_deref(), Some("fr-FR"));
         assert_eq!(of_from(&env(&[("LANG", "C")]), Category::Time), None);
     }
+
+    /// The order of names is `LC_COLLATE`'s (ADR-139, 15), apart from the
+    /// messages' language; C or POSIX there keeps names folded, whatever
+    /// the rest says.
+    #[test]
+    fn names_are_ordered_by_lc_collate() {
+        let of = |pairs: &[(&str, &str)]| of_from(&env(pairs), Category::Collate);
+        let swedish = [("LANG", "en_US.UTF-8"), ("LC_COLLATE", "sv_SE.UTF-8")];
+        assert_eq!(of(&swedish).as_deref(), Some("sv-SE"));
+        assert_eq!(of(&[("LANG", "de_DE.UTF-8")]).as_deref(), Some("de-DE"));
+        assert_eq!(of(&[("LANG", "fr_FR.UTF-8"), ("LC_COLLATE", "C")]), None);
+        assert_eq!(
+            of(&[("LANG", "fr_FR.UTF-8"), ("LC_COLLATE", "POSIX")]),
+            None
+        );
+        assert_eq!(of(&[("LC_ALL", "C.UTF-8"), ("LC_COLLATE", "sv_SE")]), None);
+        assert_eq!(
+            of(&[("LANG", "C.UTF-8"), ("LC_COLLATE", "")]),
+            None,
+            "one set to nothing is not set"
+        );
+        assert_eq!(of(&[]), None, "none said");
+    }
 }

@@ -113,7 +113,7 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
 /// what filters it.
 fn title(app: &App, location: &Location, filter: Option<&str>) -> String {
     let named = location.path().map_or_else(
-        || app.location_title(location).say(),
+        || app.location_title(location).say_plain(),
         |dir| dir.display().to_string(),
     );
     filtered(named, filter)
@@ -129,7 +129,7 @@ pub(crate) fn filtered(named: String, filter: Option<&str>) -> String {
             filter = typed.to_owned(),
             note = "The title of a listing printed: the folder's path or the place's name, then what filters it, as typed."
         )
-        .say(),
+        .say_plain(),
         None => named,
     }
 }
@@ -220,7 +220,7 @@ fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Ve
                         print_kind_place = "Place",
                         note = "In a printed listing's Kind column: a place listed (a tag) that says no kind of its own."
                     )
-                    .say()
+                    .say_plain()
                 },
                 str::to_owned,
             )
@@ -229,7 +229,7 @@ fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Ve
             print_kind_folder = "Folder",
             note = "In a printed listing's Kind column: what a folder is."
         )
-        .say()
+        .say_plain()
     } else {
         skwir_platform::mime::of_entry(entry)
             .and_then(|mime| mime.description())
@@ -271,7 +271,7 @@ fn files(count: u64) -> String {
         count = count,
         note = "In a printed listing's Size column: how many files a place listed (a tag) holds."
     )
-    .say()
+    .say_plain()
 }
 
 #[cfg(test)]

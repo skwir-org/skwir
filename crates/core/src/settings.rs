@@ -1970,14 +1970,14 @@ pub(crate) fn register(app: &crate::App) {
                     note = "Automatic is a choice of the setting (settings_language_automatic)."
                 ),
                 crate::words!(
-                    settings_language_description_more = "Automatic speaks the first of your system's languages Skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
-                    note = "Automatic is a choice of the setting (settings_language_automatic)."
+                    settings_language_description_more = "Automatic speaks the first of your system's languages Skwir's translation is ready in, else English. A language listed as incomplete is spoken only if you choose it, with what it lacks in English. Agents and scripts are answered in English whichever you choose.",
+                    note = "Automatic is a choice of the setting (settings_language_automatic). A translation is ready once a person who speaks the language has reviewed nearly all of it; an incomplete one is listed with how much of it is translated and reviewed (settings_language_incomplete)."
                 ),
             ),
             crate::locale::AUTOMATIC,
             language_choices(),
         )
-        // What Automatic speaks here: the first system language shipped.
+        // What Automatic speaks here: the first system language offered.
         .now(&crate::locale::automatic())
         .page(page::GENERAL)
         .section(section::LANGUAGE)
@@ -2157,11 +2157,12 @@ pub(crate) fn register(app: &crate::App) {
     );
 }
 
-/// Give every pane, and every pane made from now, the user's choice of
-/// folders before files (`location::FOLDERS_FIRST`).
 /// The languages the setting offers: Automatic, English, each language the
 /// program ships catalogs in by its own name, and, in a debug build, the
 /// pseudo-language that shows what is not yet a message (`words::PSEUDO`).
+/// A language Skwir does not offer yet (ADR-139, 13) says so, with how
+/// much of it there is: Automatic never picks it, and it is for whoever
+/// chooses it.
 fn language_choices() -> Vec<(&'static str, Words)> {
     let mut choices = vec![
         (
@@ -2182,7 +2183,25 @@ fn language_choices() -> Vec<(&'static str, Words)> {
             note = "This language's name in itself, as the Language setting lists it in every language: Français in the French catalog, Deutsch in the German one."
         )
         .say_in(&[language.to_owned()]);
-        choices.push((language, Words::as_written(own)));
+        let own = Words::as_written(own);
+        let share = crate::words::share_of(language);
+        if share.is_some_and(|share| share.offered) {
+            choices.push((language, own));
+            continue;
+        }
+        let (translated, reviewed) = share.map_or((0, 0), |share| {
+            (share.translated_percent(), share.reviewed_percent())
+        });
+        choices.push((
+            language,
+            crate::words!(
+                settings_language_incomplete = "{ $language } — incomplete, { $translated }% translated, { $reviewed }% reviewed",
+                language = own,
+                translated = translated,
+                reviewed = reviewed,
+                note = "A language of the Language setting that Automatic does not speak yet: its name in itself (Français), then how much of Skwir's words it has, in percents of all of them. Reviewed words were accepted by a person who speaks the language; the others are drafts."
+            ),
+        ));
     }
     if cfg!(debug_assertions) {
         choices.push((
@@ -2224,6 +2243,8 @@ fn apply_size_units(app: &crate::App) {
     crate::fs::set_size_units(crate::fs::SizeUnits::of_key(&units));
 }
 
+/// Give every pane, and every pane made from now, the user's choice of
+/// folders before files (`location::FOLDERS_FIRST`).
 fn apply_folders_first(app: &crate::App) {
     let first = app
         .settings
@@ -3621,4 +3642,77 @@ pub(crate) fn keep_attributes_title() -> Words {
         settings_keep_attributes = "Keep tags and attributes when copying",
         note = "A setting on the Tags and notes page; a copy that cannot keep them names it too."
     )
+}
+
+#[cfg(test)]
+mod language_tests {
+    use crate::words::{Share, Shipped};
+
+    /// The Language setting lists a language Skwir offers by its own name,
+    /// and one it does not as incomplete, with its share in whole percents
+    /// rounded down (ADR-139, 13).
+    #[test]
+    fn a_language_not_offered_is_listed_as_incomplete_with_its_share() {
+        static SHIPPED: [Shipped; 3] = [
+            Shipped {
+                domain: "skwir-core",
+                language: "fr",
+                source: "settings_language_self = Français\n",
+            },
+            Shipped {
+                domain: "skwir-core",
+                language: "de",
+                source: "settings_language_self = Deutsch\n",
+            },
+            Shipped {
+                domain: "skwir-core",
+                language: "es",
+                source: "settings_language_self = Español\n",
+            },
+        ];
+        static SHARES: [Share; 2] = [
+            Share {
+                language: "fr",
+                messages: 1000,
+                translated: 999,
+                reviewed: 9,
+                offered: false,
+            },
+            Share {
+                language: "de",
+                messages: 1000,
+                translated: 950,
+                reviewed: 920,
+                offered: true,
+            },
+        ];
+        crate::words::ship(&SHIPPED);
+        crate::words::ship_shares(&SHARES);
+        crate::words::register_shipped_of_program("skwir");
+        let said: Vec<(&str, String)> = super::language_choices()
+            .into_iter()
+            .map(|(value, label)| (value, label.english()))
+            .collect();
+        let mut wanted = vec![
+            ("automatic", "Automatic".to_owned()),
+            ("en", "English".to_owned()),
+            (
+                "fr",
+                "Français — incomplete, 99% translated, 0% reviewed".to_owned(),
+            ),
+            ("de", "Deutsch".to_owned()),
+            // Shipped but never counted: offered no more than one short.
+            (
+                "es",
+                "Español — incomplete, 0% translated, 0% reviewed".to_owned(),
+            ),
+        ];
+        if cfg!(debug_assertions) {
+            wanted.push((crate::words::PSEUDO, "Pseudo (for testing)".to_owned()));
+        }
+        assert_eq!(said, wanted);
+        crate::words::withdraw("skwir");
+        crate::words::ship_shares(&[]);
+        crate::words::ship(&[]);
+    }
 }

@@ -33,12 +33,27 @@ workers, check performance or build packages.
    below it every change in full. A short section without the heading
    is shown whole. Only stable
    `v<major>.<minor>.<patch>` tags are currently supported.
-3. After the last fix, run `just startup-order` and commit
+3. Check the languages the release offers (ADR-139, 13):
+   `just words --release`. `tools/words/offered` lists the languages
+   Automatic speaks; any other language a catalog is in is listed in
+   Settings as incomplete, with how much of it is translated and
+   reviewed, for whoever chooses it. `just words` adds a language there
+   once 90% of all messages are reviewed in it (no `# draft` left above
+   them) and every message of what is on by default is (the program's own
+   crates and each plugin on by default), and counts each language's share
+   into `crates/skwir/src/catalogs.rs`. Only a person takes a language
+   out: between releases it stays offered whatever it lacks, said in
+   English, but a release refuses one with less than 75% of its messages
+   reviewed. Review more of it, or take its line out of
+   `tools/words/offered`, which lists it as incomplete again until it
+   meets the bar anew; then run `just words` and commit both files.
+   `lint-all` runs the same check, so `release-check` refuses it too.
+4. After the last fix, run `just startup-order` and commit
    `tools/build/startup-order.txt`: what a start of skwir runs, which the
    packages lay out together (ADR-128). It traces real starts on displays
    of its own and needs a CPU with Intel PT. A list left stale makes the
    packages heavier, not wrong.
-4. Run `just release-metadata v0.1.0`, review and commit the release source,
+5. Run `just release-metadata v0.1.0`, review and commit the release source,
    then create its tag (`git tag -a v0.1.0 -m 'Release 0.1.0'`). Check out
    that commit. Builds and uploads require HEAD to equal the tag and the
    tree to be clean, including untracked files. Ignored build outputs do
@@ -46,6 +61,50 @@ workers, check performance or build packages.
 
 These commands do not commit, create tags or push source for you. Choose
 the actual version and date; the examples do not declare 0.1.0 released.
+
+## What the packages say in other languages
+
+The program carries its own catalogs (ADR-139). What the system shows of
+it before it runs is the packages':
+
+- **The desktop entry and the AppStream metainfo** keep their English in
+  `tools/package/linux/org.skwir.skwir.desktop` and
+  `org.skwir.skwir.metainfo.xml`, valid as they are. Their translations
+  are gettext's PO files in `tools/package/linux/po`: `skwir.pot`, what
+  xgettext extracts (the entry's GenericName, Comment and Keywords; the
+  metainfo's text by AppStream's own rules, carried in `po/its`; never the
+  brand), and one `<language>.po` for each language `po/LINGUAS` names.
+  Each Linux package merges them where it is made (`msgfmt --desktop`,
+  `--xml`, through `tools/package/linux/l10n.sh merge`): `deb.sh` and
+  `rpm.sh` into `target/l10n`, where `crates/skwir/Cargo.toml`'s assets
+  take them; the AUR's PKGBUILDs in `build()`; the AppImage's `stage.py`,
+  whose tree is also the tarball `skwir-bin` installs; the Nix package in
+  `postInstall`. Each needs gettext 0.21 or later: Debian's and Fedora's
+  build dependencies list it, Arch's base-devel holds it, the flake's
+  shell and package have it. `tools/package/linux/check.sh`,
+  `tools/package/nix/check.sh` and the AppImage's build say whether the
+  installed files speak every language of `po/LINGUAS`.
+- **After changing their English,** run `just package-l10n update`: it
+  makes `skwir.pot` again and merges each PO with it, without guessing (a
+  sentence changed loses its translation rather than ship an old one under
+  new English). `just package-l10n` checks that `po/` is current and
+  sound and merges into files that `desktop-file-validate` and
+  `appstreamcli validate --no-net` accept, when they are on `PATH`.
+- **To add a language,** make its PO from the template
+  (`msginit --no-translator -l de -i tools/package/linux/po/skwir.pot -o
+  tools/package/linux/po/de.po`), translate it, name it in `po/LINGUAS`,
+  then run `just package-l10n`.
+- **A model's draft** is marked fuzzy (`#, fuzzy`), as Weblate marks a
+  string needing review. The packages ship drafts, as the program ships its
+  drafted catalogs; whoever accepts one removes its mark. When Weblate
+  takes these files, its msgmerge add-on is set without fuzzy matching,
+  so that a fuzzy mark never means a guess there either.
+- **macOS's bundle** declares English and each language the program's
+  catalogs ship (`crates/skwir/src/catalogs.rs`), with an `.lproj` each
+  (`tools/package/macos.sh`), so macOS's own menus and its per-app language
+  follow; a new language needs nothing more. Each `.lproj` holds what
+  `Info.plist` says to a person, the brand alone today.
+- **Windows' installer** stays English.
 
 ## Build and inspect
 
@@ -60,7 +119,9 @@ just release-verify v0.1.0
 ```
 
 `release-build` first runs `just release-check`: `lint-all` (including
-Windows/macOS cross checks), `deny`, `notices-check` (the packages' notices
+Windows/macOS cross checks, and each crate's catalogs as its code says
+them with the languages offered, `just words --release`), `deny`,
+`notices-check` (the packages' notices
 in `tools/package/notices` are current, ADR-063), `test-all`, `smoke`,
 `a11y-check` (what a screen reader hears, ADR-065), `poppler-check`, `mupdf-check`, `djvu-check`, `bench-check` and
 `release-tools-check`. There is no skip

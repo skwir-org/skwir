@@ -1039,7 +1039,7 @@ impl Open {
             };
             entry.metadata.set(
                 keys::PLACE_KIND,
-                Value::Text(kind.say().into()),
+                Value::Text(kind.say_plain().into()),
                 provenance.clone(),
             );
             // Pictures unchanged: the tile sent with them.

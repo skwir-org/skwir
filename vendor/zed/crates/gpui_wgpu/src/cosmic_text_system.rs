@@ -914,6 +914,7 @@ impl CosmicTextSystemState {
                 descent: Pixels::ZERO,
                 runs: Vec::new(),
                 len: text.len(),
+                bidi_levels: None,
             };
         };
 
@@ -989,6 +990,7 @@ impl CosmicTextSystemState {
             descent: layout.max_descent.into(),
             runs,
             len: text.len(),
+            bidi_levels: None,
         }
     }
 
@@ -1923,6 +1925,47 @@ mod tests {
             line.index_for_position(position, line_height),
             Err(row_end.index)
         );
+        Ok(())
+    }
+
+    /// A line read right to left comes out of cosmic-text from its right
+    /// end; gpui takes it from its left, so it is drawn, wrapped and pointed
+    /// at as it reads (`text_system::bidi`).
+    #[test]
+    fn a_right_to_left_line_is_taken_from_its_left() -> Result<()> {
+        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(text_system()?)));
+        let window_text_system = gpui::WindowTextSystem::new(text_system);
+        // "אבג abc": the Hebrew first, so the line reads right to left.
+        let text: SharedString = "\u{5d0}\u{5d1}\u{5d2} abc".into();
+        let runs = [gpui::TextRun {
+            len: text.len(),
+            font: gpui::font("IBM Plex Sans"),
+            ..Default::default()
+        }];
+        let line = window_text_system.shape_line(text.clone(), gpui::px(14.), &runs, None);
+        let glyphs: Vec<&gpui::ShapedGlyph> =
+            line.runs.iter().flat_map(|run| run.glyphs.iter()).collect();
+        assert!(
+            glyphs
+                .windows(2)
+                .all(|pair| pair[0].position.x <= pair[1].position.x)
+        );
+        // "abc" on the left, then the space, then "גבא".
+        let indices: Vec<usize> = glyphs.iter().map(|glyph| glyph.index).collect();
+        assert_eq!(indices, [7, 8, 9, 6, 4, 2, 0]);
+        assert!(line.is_right_to_left());
+        // The start at the right end, the end where "abc" ends.
+        assert_eq!(line.x_for_index(0), line.width);
+        assert_eq!(line.closest_index_for_x(line.width), 0);
+        assert_eq!(line.x_for_index(text.len()), glyphs[3].position.x);
+        // A Latin line is handed as it always was.
+        let latin_runs = [gpui::TextRun {
+            len: 3,
+            font: gpui::font("IBM Plex Sans"),
+            ..Default::default()
+        }];
+        let latin = window_text_system.shape_line("abc".into(), gpui::px(14.), &latin_runs, None);
+        assert!(!latin.has_right_to_left());
         Ok(())
     }
 
