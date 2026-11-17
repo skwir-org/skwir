@@ -101,6 +101,10 @@ pub enum Arg {
     /// decimal sign and groups ("1.5", « 1,5 »). It chooses no plural: a
     /// selector on it says its default.
     Decimal(i64, u8),
+    /// A moment (`Moment`): written as the reader's dates and times are
+    /// ("14:02", "Tuesday 18:45", "12 Mar 2024", « 12 mars 2024 »), in the
+    /// system's time zone.
+    Moment(Moment),
     /// A size, as the size setting counts it (`fs::size_said`).
     Size(u64),
     /// What something is (`Kind`): a selector chooses by it, so a
@@ -198,6 +202,87 @@ impl Decimal {
 impl From<Decimal> for Arg {
     fn from(decimal: Decimal) -> Self {
         Arg::Decimal(decimal.value, decimal.digits)
+    }
+}
+
+/// A moment, for `Arg::Moment`: when (seconds since 1970, UTC), and what of
+/// it is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Moment {
+    pub at: i64,
+    pub shape: Shape,
+}
+
+/// What of a moment is written, each as the reader's locale writes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Shape {
+    /// The time of day: "14:02" (or "2:02 PM" where the locale says so).
+    Time,
+    /// The weekday: "Tuesday" (a message places it beside a time: CLDR
+    /// writes no weekday and time together well).
+    Weekday,
+    /// The day and the month: "12 Mar", "Mar 12".
+    DayMonth,
+    /// The date: "12 Mar 2024".
+    Date,
+    /// The date and the time: "12 Mar 2024, 14:02".
+    DateTime,
+    /// The date and the time to the second.
+    DateTimeSeconds,
+    /// The month and the year: "March 2024".
+    MonthYear,
+    /// The month: "March".
+    Month,
+}
+
+impl Shape {
+    fn word(self) -> &'static str {
+        match self {
+            Shape::Time => "time",
+            Shape::Weekday => "weekday",
+            Shape::DayMonth => "day_month",
+            Shape::Date => "date",
+            Shape::DateTime => "date_time",
+            Shape::DateTimeSeconds => "date_time_seconds",
+            Shape::MonthYear => "month_year",
+            Shape::Month => "month",
+        }
+    }
+
+    const ALL: [Shape; 8] = [
+        Shape::Time,
+        Shape::Weekday,
+        Shape::DayMonth,
+        Shape::Date,
+        Shape::DateTime,
+        Shape::DateTimeSeconds,
+        Shape::MonthYear,
+        Shape::Month,
+    ];
+}
+
+impl Moment {
+    /// `t`, written as `shape` says; `None` before 1970 or past what a
+    /// date can say.
+    pub fn of(t: std::time::SystemTime, shape: Shape) -> Option<Self> {
+        let at = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        Some(Moment {
+            at: i64::try_from(at).ok()?,
+            shape,
+        })
+    }
+}
+
+impl From<Moment> for Arg {
+    fn from(moment: Moment) -> Self {
+        Arg::Moment(moment)
+    }
+}
+
+impl Moment {
+    /// Written for the window, as the system's locale writes dates.
+    pub fn said(self) -> String {
+        dates::written(&crate::locale::dates(), self)
     }
 }
 
@@ -380,18 +465,20 @@ impl Words {
                 const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
         }
         let now = revision();
-        SAID_IN.with_borrow_mut(|(at, languages)| {
+        let (languages, formats) = SAID_IN.with_borrow_mut(|(at, languages)| {
             if *at != now {
                 *languages = crate::locale::languages();
                 *at = now;
             }
-            self.say_in(languages)
-        })
+            (languages.clone(), formats::Formats::window())
+        });
+        formats::within(formats, || self.say_in(&languages))
     }
 
-    /// Said in English: what agents, scripts and logs read.
+    /// Said in English: what agents, scripts and logs read, its numbers
+    /// and dates as English writes them.
     pub fn english(&self) -> String {
-        self.say_in(&[])
+        formats::within(formats::Formats::english(), || self.say_in(&[]))
     }
 
     /// Said in the first of `languages` that has its message, English
@@ -512,8 +599,11 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
         Arg::Folder(name) => out.push_str(&shown_controls(name)),
-        Arg::Count(n) => out.push_str(&numbers::grouped(language, *n)),
-        Arg::Decimal(value, digits) => out.push_str(&numbers::decimal(language, *value, *digits)),
+        Arg::Count(n) => out.push_str(&numbers::grouped(&formats::numbers(), *n)),
+        Arg::Decimal(value, digits) => {
+            out.push_str(&numbers::decimal(&formats::numbers(), *value, *digits));
+        }
+        Arg::Moment(moment) => out.push_str(&dates::written(&formats::dates(), *moment)),
         Arg::Size(bytes) => crate::fs::size_words(*bytes).say_into(out, languages),
         Arg::Kind(word) => out.push_str(word),
         Arg::Words(words) => words.say_into(out, languages),
@@ -609,6 +699,163 @@ pub fn shown_controls(name: &str) -> Cow<'_, str> {
 
 /// A count with its thousands grouped, as English groups them (`1,234`):
 /// each language's groups arrive with its numbers (PLAN.md, step F).
+/// The locales numbers and dates are written in while words are said: the
+/// system's for the window (`say`), English's for agents (`english`), and
+/// English's for words said in given languages (`say_in`) outside both.
+mod formats {
+    use std::cell::RefCell;
+
+    #[derive(Clone)]
+    pub struct Formats {
+        numbers: String,
+        dates: String,
+    }
+
+    impl Formats {
+        pub fn window() -> Self {
+            Formats {
+                numbers: crate::locale::numbers(),
+                dates: crate::locale::dates(),
+            }
+        }
+
+        pub fn english() -> Self {
+            Formats {
+                numbers: super::ENGLISH.to_owned(),
+                dates: super::ENGLISH.to_owned(),
+            }
+        }
+    }
+
+    thread_local! {
+        static NOW: RefCell<Option<Formats>> = const { RefCell::new(None) };
+    }
+
+    /// `f`'s answer, words said within it writing numbers and dates as
+    /// `formats` says.
+    pub fn within<T>(formats: Formats, f: impl FnOnce() -> T) -> T {
+        let before = NOW.with_borrow_mut(|now| now.replace(formats));
+        let answer = f();
+        NOW.with_borrow_mut(|now| *now = before);
+        answer
+    }
+
+    pub fn numbers() -> String {
+        NOW.with_borrow(|now| {
+            now.as_ref()
+                .map_or_else(|| super::ENGLISH.to_owned(), |f| f.numbers.clone())
+        })
+    }
+
+    pub fn dates() -> String {
+        NOW.with_borrow(|now| {
+            now.as_ref()
+                .map_or_else(|| super::ENGLISH.to_owned(), |f| f.dates.clone())
+        })
+    }
+}
+
+/// Dates and times as each locale writes them (ICU4X, CLDR's data), in the
+/// system's time zone; made once a locale and shape on each thread.
+mod dates {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use icu_datetime::fieldsets;
+    use icu_datetime::{DateTimeFormatter, NoCalendarFormatter};
+
+    use super::{Moment, Shape};
+
+    enum Formatter {
+        Time(NoCalendarFormatter<fieldsets::T>),
+        Weekday(DateTimeFormatter<fieldsets::E>),
+        DayMonth(DateTimeFormatter<fieldsets::MD>),
+        Date(DateTimeFormatter<fieldsets::YMD>),
+        DateTime(DateTimeFormatter<fieldsets::YMDT>),
+        MonthYear(DateTimeFormatter<fieldsets::YM>),
+        Month(DateTimeFormatter<fieldsets::M>),
+    }
+
+    thread_local! {
+        static FORMATTERS: RefCell<HashMap<(String, &'static str), Option<Formatter>>> =
+            RefCell::new(HashMap::new());
+    }
+
+    fn made(locale: &str, shape: Shape) -> Option<Formatter> {
+        let locale: icu_locale_core::Locale = locale.parse().ok()?;
+        let prefs = || (&locale).into();
+        Some(match shape {
+            Shape::Time => {
+                Formatter::Time(NoCalendarFormatter::try_new(prefs(), fieldsets::T::hm()).ok()?)
+            }
+            Shape::Weekday => {
+                Formatter::Weekday(DateTimeFormatter::try_new(prefs(), fieldsets::E::long()).ok()?)
+            }
+            Shape::DayMonth => Formatter::DayMonth(
+                DateTimeFormatter::try_new(prefs(), fieldsets::MD::medium()).ok()?,
+            ),
+            Shape::Date => {
+                Formatter::Date(DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium()).ok()?)
+            }
+            Shape::DateTime => Formatter::DateTime(
+                DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium().with_time_hm())
+                    .ok()?,
+            ),
+            Shape::DateTimeSeconds => Formatter::DateTime(
+                DateTimeFormatter::try_new(prefs(), fieldsets::YMD::medium().with_time_hms())
+                    .ok()?,
+            ),
+            Shape::MonthYear => Formatter::MonthYear(
+                DateTimeFormatter::try_new(prefs(), fieldsets::YM::long()).ok()?,
+            ),
+            Shape::Month => {
+                Formatter::Month(DateTimeFormatter::try_new(prefs(), fieldsets::M::long()).ok()?)
+            }
+        })
+    }
+
+    /// `moment` as `locale` writes its shape, in the system's time zone;
+    /// as ISO 8601 where the locale's data is missing.
+    pub fn written(locale: &str, moment: Moment) -> String {
+        let Ok(at) = jiff::Timestamp::from_second(moment.at) else {
+            return "—".to_owned();
+        };
+        let local = at.to_zoned(jiff::tz::TimeZone::system()).datetime();
+        let as_iso = || local.strftime("%Y-%m-%d %H:%M").to_string();
+        let (Ok(date), Ok(time)) = (
+            icu_calendar::Date::try_new_iso(
+                i32::from(local.year()),
+                local.month().unsigned_abs(),
+                local.day().unsigned_abs(),
+            ),
+            icu_time::Time::try_new(
+                local.hour().unsigned_abs(),
+                local.minute().unsigned_abs(),
+                local.second().unsigned_abs(),
+                0,
+            ),
+        ) else {
+            return as_iso();
+        };
+        let both = icu_time::DateTime { date, time };
+        FORMATTERS.with_borrow_mut(|formatters| {
+            let formatter = formatters
+                .entry((locale.to_owned(), moment.shape.word()))
+                .or_insert_with(|| made(locale, moment.shape));
+            match formatter {
+                None => as_iso(),
+                Some(Formatter::Time(f)) => f.format(&time).to_string(),
+                Some(Formatter::Weekday(f)) => f.format(&both).to_string(),
+                Some(Formatter::DayMonth(f)) => f.format(&both).to_string(),
+                Some(Formatter::Date(f)) => f.format(&both).to_string(),
+                Some(Formatter::DateTime(f)) => f.format(&both).to_string(),
+                Some(Formatter::MonthYear(f)) => f.format(&both).to_string(),
+                Some(Formatter::Month(f)) => f.format(&both).to_string(),
+            }
+        })
+    }
+}
+
 /// Numbers as each language writes them (ICU4X, CLDR's data): its digits,
 /// its groups, its decimal sign. Made once a language on each thread that
 /// asks, as the plurals are.
@@ -838,6 +1085,7 @@ pub mod data {
             Arg::Folder(folder) => json!({ "folder": folder }),
             Arg::Count(n) => json!({ "count": n }),
             Arg::Decimal(value, digits) => json!({ "decimal": [value, digits] }),
+            Arg::Moment(moment) => json!({ "moment": [moment.at, moment.shape.word()] }),
             Arg::Size(n) => json!({ "size": n }),
             Arg::Kind(word) => json!({ "kind": word }),
             Arg::Words(words) => json!({ "words": of(words) }),
@@ -881,6 +1129,7 @@ pub mod data {
         Folder(String),
         Count(i64),
         Decimal((i64, u8)),
+        Moment((i64, String)),
         Size(u64),
         Kind(String),
         Words(Data),
@@ -916,6 +1165,13 @@ pub mod data {
                 ArgData::Folder(folder) => Arg::Folder(folder),
                 ArgData::Count(n) => Arg::Count(n),
                 ArgData::Decimal((value, digits)) => Arg::Decimal(value, digits),
+                ArgData::Moment((at, shape)) => Arg::Moment(super::Moment {
+                    at,
+                    shape: super::Shape::ALL
+                        .into_iter()
+                        .find(|s| s.word() == shape)
+                        .unwrap_or(super::Shape::DateTime),
+                }),
                 ArgData::Size(n) => Arg::Size(n),
                 ArgData::Kind(word) => Arg::Kind(
                     [Kind::File, Kind::Folder, Kind::Link, Kind::Item]

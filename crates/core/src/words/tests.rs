@@ -2,7 +2,7 @@ use std::borrow::Cow::Borrowed as B;
 
 use super::{
     Arg, Catalog, Element, Join, Key, Kind, List, Message, Name, PSEUDO, Size, Variant, Words,
-    casing, lists, numbers, register, withdraw,
+    casing, dates, lists, numbers, register, withdraw,
 };
 
 // English as `words!` writes it: each array a static of its own.
@@ -398,4 +398,43 @@ fn numbers_are_written_as_the_language_writes_them() {
     // never an English sentence with French numbers.
     let moved = crate::words!(test_moved_n = "Moved { $count } files", count = 12_345);
     assert_eq!(moved.say_in(&langs(&["fr", "en"])), "Moved 12,345 files");
+}
+
+/// Moments are written as the dates' locale writes them; numbers and dates
+/// follow the system's locales in the window, English's for agents.
+#[test]
+fn moments_are_written_as_the_locale_writes_dates() {
+    // 2024-03-12 14:02:05 UTC, written in UTC.
+    // SAFETY: a test of its own process, before any thread reads TZ.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("TZ", "UTC");
+    }
+    let at = |shape| super::Moment {
+        at: 1_710_252_125,
+        shape,
+    };
+    let fr = |shape| dates::written("fr", at(shape));
+    let gb = |shape| dates::written("en-GB", at(shape));
+    assert_eq!(gb(super::Shape::Time), "14:02");
+    assert_eq!(fr(super::Shape::Time), "14:02");
+    assert_eq!(gb(super::Shape::DayMonth), "12 Mar");
+    assert_eq!(fr(super::Shape::DayMonth), "12 mars");
+    assert_eq!(fr(super::Shape::Date), "12 mars 2024");
+    assert_eq!(fr(super::Shape::MonthYear), "mars 2024");
+    assert_eq!(
+        dates::written("en-US", at(super::Shape::Time)),
+        "2:02\u{202f}PM"
+    );
+    let today = crate::words!(
+        test_today = "Today { $time }",
+        time = at(super::Shape::Time)
+    );
+    assert_eq!(today.english(), "Today 2:02\u{202f}PM");
+    crate::locale::set_formats(Some("fr-FR".into()), Some("fr-FR".into()));
+    let moved = crate::words!(test_moved_many = "Moved { $count } files", count = 12_345);
+    assert_eq!(moved.say(), "Moved 12\u{202f}345 files");
+    assert_eq!(today.say(), "Today 14:02");
+    assert_eq!(moved.english(), "Moved 12,345 files");
+    crate::locale::set_formats(None, None);
 }

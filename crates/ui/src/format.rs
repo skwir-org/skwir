@@ -5,7 +5,11 @@ use std::time::SystemTime;
 /// `1.2 MB`, `512 B`: as every preview and Properties say it.
 pub use skwir_platform::inspection::size;
 
-/// `YYYY-MM-DD HH:MM` in the local time zone.
+use skwir_core::words::{Moment, Shape};
+
+/// `YYYY-MM-DD HH:MM` in the local time zone: the ISO choice of the dates
+/// setting, and the exact time beside a friendly one. ISO in every
+/// language, as its setting says.
 pub fn time(t: SystemTime) -> String {
     local(t, "%Y-%m-%d %H:%M")
 }
@@ -15,10 +19,10 @@ pub fn exact_time(t: SystemTime) -> String {
     local(t, "%Y-%m-%d %H:%M:%S")
 }
 
-/// `HH:MM`, the time of day, in the local time zone: when something
-/// happened this session.
+/// The time of day, in the local time zone, as the system's locale writes
+/// it ("14:02", "2:02 PM"): when something happened this session.
 pub fn clock(t: SystemTime) -> String {
-    local(t, "%H:%M")
+    Moment::of(t, Shape::Time).map_or_else(|| "—".into(), Moment::said)
 }
 
 /// `YYYY-MM-DD`.
@@ -47,22 +51,41 @@ pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
     };
     let when = timestamp.to_zoned(now.time_zone().clone());
     let (date, today) = (when.date(), now.date());
-    let format = if date == today {
-        "Today %H:%M"
+    let moment = |shape| Moment {
+        at: timestamp.as_second(),
+        shape,
+    };
+    if date == today {
+        skwir_core::words!(
+            format_today = "Today { $time }",
+            time = moment(Shape::Time),
+            note = "When a file changed, today: time is the time of day (Today 14:02)."
+        )
+        .say()
     } else if today.yesterday().is_ok_and(|yesterday| yesterday == date) {
-        "Yesterday %H:%M"
+        skwir_core::words!(
+            format_yesterday = "Yesterday { $time }",
+            time = moment(Shape::Time),
+            note = "When a file changed, yesterday: time is the time of day (Yesterday 09:30)."
+        )
+        .say()
     } else if date < today
         && today
             .checked_sub(jiff::Span::new().days(7))
             .is_ok_and(|week_ago| date > week_ago)
     {
-        "%A %H:%M"
+        skwir_core::words!(
+            format_weekday_time = "{ $weekday } { $time }",
+            weekday = moment(Shape::Weekday),
+            time = moment(Shape::Time),
+            note = "When a file changed, in the last week: weekday is the day's name, time the time of day (Tuesday 18:45)."
+        )
+        .say()
     } else if date.year() == today.year() {
-        "%-d %b"
+        moment(Shape::DayMonth).said()
     } else {
-        "%-d %b %Y"
-    };
-    when.strftime(format).to_string()
+        moment(Shape::Date).said()
+    }
 }
 
 /// `1 item`, `3 items`, said in the user's language (ADR-139).
@@ -276,7 +299,7 @@ mod tests {
         assert_eq!(super::size(1536), "1.5 kB");
         assert_eq!(super::size(5_000_000), "5.0 MB");
         let binary = |bytes| size_said_in(bytes, SizeUnits::Binary);
-        assert_eq!(binary(1023), "1023 B");
+        assert_eq!(binary(1023), "1,023 B");
         assert_eq!(binary(1024), "1.0 KiB");
         assert_eq!(binary(1536), "1.5 KiB");
         assert_eq!(binary(5 * 1024 * 1024), "5.0 MiB");
@@ -285,6 +308,14 @@ mod tests {
 
     #[test]
     fn friendly_dates_are_relative_to_the_day_not_the_minute() {
+        // The dates' locale British, the zone UTC: what the English below
+        // writes (a US locale writes "Today 9:05 AM").
+        // SAFETY: a test of its own process (nextest), before threads read TZ.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("TZ", "UTC");
+        }
+        skwir_core::locale::set_formats(None, Some("en-GB".into()));
         let tz = jiff::tz::TimeZone::UTC;
         let now = jiff::civil::date(2026, 9, 20)
             .at(15, 0, 0, 0)
@@ -311,13 +342,13 @@ mod tests {
             super::friendly_time(at(2026, 9, 15, 8, 0), &now),
             "Tuesday 08:00"
         );
-        assert_eq!(super::friendly_time(at(2026, 9, 13, 8, 0), &now), "13 Sep");
+        assert_eq!(super::friendly_time(at(2026, 9, 13, 8, 0), &now), "13 Sept");
         assert_eq!(
             super::friendly_time(at(2024, 3, 2, 8, 0), &now),
             "2 Mar 2024"
         );
         // A clock ahead of ours (another machine's files) is not "this week".
-        assert_eq!(super::friendly_time(at(2026, 9, 22, 8, 0), &now), "22 Sep");
+        assert_eq!(super::friendly_time(at(2026, 9, 22, 8, 0), &now), "22 Sept");
     }
 
     #[test]

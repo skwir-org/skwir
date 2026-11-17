@@ -2756,6 +2756,9 @@ format_left_seconds = about { $seconds } s left
 # A speed: what is moved each second (23.4 MB/s).
 format_speed = { $size }/s
 
+# When a file changed, today: time is the time of day (Today 14:02).
+format_today = Today { $time }
+
 # How long an action took; h is the hour's symbol.
 format_took_hours = { $hours } h
 
@@ -2770,6 +2773,12 @@ format_took_minutes_seconds = { $minutes } min { $seconds } s
 
 # How long an action took; s is the second's symbol.
 format_took_seconds = { $seconds } s
+
+# When a file changed, in the last week: weekday is the day's name, time the time of day (Tuesday 18:45).
+format_weekday_time = { $weekday } { $time }
+
+# When a file changed, yesterday: time is the time of day (Yesterday 09:30).
+format_yesterday = Yesterday { $time }
 
 # What a screen reader calls the bar of buttons over a preview shown on the whole screen.
 fullscreen_controls = Controls
