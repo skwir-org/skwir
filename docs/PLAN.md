@@ -3695,10 +3695,13 @@ their budgets in every language.
   the pseudo-language leaves no English on the window's surfaces (seen on
   Xvfb), and the transitional `From<&str>` is removed: an English literal
 no longer compiles where words are wanted (`Words::as_written` says what
-is not Skwir's to translate). Left, from
-  the translators' notes: counts without a selector where French must
-  agree, lists still joined in code, numbers still formatted in code, a
-  gender selector for the search's reading, English to reword.
+is not Skwir's to translate). The translators' notes were swept the same
+day (counts given selectors, lists as `List` arguments, numbers as
+`Decimal`s, the search's reading by its subject's kind, English
+reworded), and the last English made in code on 2026-11-17's evening.
+Left: a name is quoted but not isolated from its sentence (ADR-139, 5,
+and words.md promise both): no U+2068/U+2069 around it in the window's
+words, so a right-to-left name can reorder the punctuation beside it.
   - By crate, one owner each: agents in parallel own the plugin crates,
     the integrator owns core and the UI.
   - Every literal becomes a message, every `format!` sentence one
@@ -3741,15 +3744,13 @@ is not Skwir's to translate). Left, from
     `en-US`; French sizes ("1,5 Mo") and numbers grouped with U+202F.
   - *Done when:* the tests pass and `just idle-pss` holds with the data.
 - **G. French.** Drafted 2026-11-17, to review: every crate's `fr.ftl`
-  (6,743 messages, each `# draft`), after `docs/glossary-fr.md`, a
-  proposal not yet settled with the user (its open choices marked); the
-  translators' terms and the English they found wrong are in the
-  session's notes, gathered in the status log. Each crate's catalogs ship
+  (6,743 messages, each `# draft`), after `docs/glossary-fr.md`,
+  settled with the user the same day and the drafts brought to it. Each crate's catalogs ship
   with the program (`crates/skwir/src/catalogs.rs`, made by `just
   words`), a plugin's registered while it is enabled; the Language
   setting offers each language by its own name. Left: the user's review
-  of the glossary and the drafts in the window, the desktop file and the
-  AppStream metainfo, macOS's localizations, the 90 % / 75 % offers.
+  of the drafts in the window, the desktop file and the AppStream
+  metainfo, macOS's localizations, the 90 % / 75 % offers, Weblate.
   - A glossary settled with the user first: Skwir's terms, and French
     typography (« », U+202F before `; : ! ?`).
   - Every crate's `fr.ftl`, drafted by a model crate by crate as each is
