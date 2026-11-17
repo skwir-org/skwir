@@ -871,6 +871,16 @@ pub(super) mod access {
         }
     }
 
+    /// Why a file's group is not changed where groups are not numbers
+    /// (Windows): one message for the plan's check and the step.
+    pub fn group_not_yet() -> crate::words::Words {
+        crate::words!(
+            sys_group_not_yet = "Changing a file's group is not available on { $system } yet",
+            system = crate::system::named(),
+            note = "Why a file's group cannot be changed. system: the system's name (Windows)."
+        )
+    }
+
     /// The user skwir runs as and their groups; `None` where users are not
     /// numbers (Windows).
     #[cfg(unix)]
@@ -1375,11 +1385,7 @@ pub(super) mod access {
         #[allow(clippy::unused_self)]
         pub fn set_group(&self, gid: u32) -> io::Result<()> {
             let _ = gid;
-            Err(crate::system::not_yet_words(crate::words!(
-                sys_group_not_yet = "Changing a file's group is not available on { $system } yet",
-                system = crate::system::named(),
-                note = "Why a file's group is not changed. system: the system's name (Windows)."
-            )))
+            Err(crate::system::not_yet_words(group_not_yet()))
         }
 
         /// The owner's write bit of `mode` as the read-only attribute.

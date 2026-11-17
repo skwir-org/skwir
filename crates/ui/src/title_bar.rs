@@ -192,7 +192,7 @@ pub fn refused(asked: TitleBar, decorations: Decorations, x11: bool) -> bool {
 /// What a refusal means here (`refused`), said beside the setting.
 pub fn refusal() -> Words {
     words!(
-        title_bar_refused = "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
+        title_bar_refused = "Here the desktop keeps its own frame around windows, whatever Skwir asks: Compact and In the top row draw Skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
         note = "Said beside the Title bar setting where the desktop kept its frame when \
                 asked for none. Compact, In the top row and Automatic are the setting's \
                 choices."
@@ -205,7 +205,7 @@ pub fn refusal() -> Words {
 /// the application, as seen when skwir started), said as they are offered.
 pub fn unsupported() -> Words {
     words!(
-        title_bar_unsupported = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir",
+        title_bar_unsupported = "The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to Skwir",
         note = "Said beside the Title bar setting's Compact and In the top row where they \
                 cannot be had."
     )

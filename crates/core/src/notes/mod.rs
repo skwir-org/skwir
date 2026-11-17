@@ -195,7 +195,7 @@ pub struct Holds {
     pub comment: bool,
     pub origin: bool,
     /// What it cannot hold that the others can, a phrase its settings
-    /// place in a sentence ("no comma in a tag"); `None` where it holds
+    /// place in a sentence ("a comma in a tag"); `None` where it holds
     /// all.
     pub limits: Option<crate::words::Words>,
 }

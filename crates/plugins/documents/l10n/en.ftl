@@ -38,12 +38,14 @@ documents_engine_description = Automatic prefers PDFium and falls back to Popple
 
 # A note under a document's preview: only its first paragraphs, headings, tables and pictures (blocks) are shown.
 documents_first_blocks = { $count ->
-       *[other] First { $count } blocks
+        [1] Only the first block is shown
+       *[other] Only the first { $count } blocks are shown
     }
 
 # A note under a document's preview: only the first paragraphs, headings, tables and pictures (blocks) of the part shown are shown.
 documents_first_blocks_of_part = { $count ->
-       *[other] First { $count } blocks of this part
+        [1] Only the first block of this part is shown
+       *[other] Only the first { $count } blocks of this part are shown
     }
 
 # Why a Word or OpenDocument file is not shown: its package holds more parts than the preview reads (4,000).
@@ -52,31 +54,31 @@ documents_members = { $count ->
     }
 
 # Why an OpenDocument file is not shown: the list of its parts (META-INF/manifest.xml) is not there.
-documents_missing_manifest = Manifest is missing
+documents_missing_manifest = The document's manifest is missing
 
 # Why a Word file's footnotes or endnotes are not shown: the part holding them is not there.
-documents_missing_notes = Notes is missing
+documents_missing_notes = The document's notes are missing
 
 # Why a Word file is not shown: the part saying how its lists are numbered is not there.
-documents_missing_numbering = Numbering is missing
+documents_missing_numbering = The document's numbering is missing
 
 # Why a picture of a Word or OpenDocument file is not shown: the file names one it does not hold.
-documents_missing_picture = Embedded image is missing
+documents_missing_picture = An embedded image is missing
 
 # Why what a document says of itself (its title, author) is not shown: the part holding it is not there.
-documents_missing_properties = Properties is missing
+documents_missing_properties = The document's properties are missing
 
 # Why a Word file is not shown: the part that says where its other parts are (its relationships, _rels/*.rels) is not there.
-documents_missing_relationships = Relationships is missing
+documents_missing_relationships = The document's relationships are missing
 
 # Why a Word or OpenDocument file is not shown: the part holding its styles is not there.
-documents_missing_styles = Styles is missing
+documents_missing_styles = The document's styles are missing
 
 # Why a Word or OpenDocument file is not shown: the part holding its text is not there.
 documents_missing_text = The document's text is missing
 
 # Why a document's stored picture is not shown: the picture it names is not there.
-documents_missing_thumbnail = Thumbnail is missing
+documents_missing_thumbnail = The thumbnail is missing
 
 # An error in place of a text document when neither skwir nor Pandoc reads its format.
 documents_no_reader = Nothing installed reads this document as text
@@ -145,7 +147,7 @@ documents_text_documents = Text documents
 documents_text_documents_description = How Word, OpenDocument and RTF documents are shown.
 
 # Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names.
-documents_text_documents_description_more = Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.
+documents_text_documents_description_more = Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: Skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.
 
 # A choice of the Text documents setting: the document laid out in pages, as LibreOffice prints it.
 documents_text_documents_pages = Pages
@@ -154,28 +156,28 @@ documents_text_documents_pages = Pages
 documents_text_documents_reading = Reading
 
 # Why an OpenDocument file is not shown: the list of its parts (META-INF/manifest.xml) unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_manifest = Manifest exceeds { $size } preview limit
+documents_too_large_manifest = The document's manifest exceeds the { $size } preview limit
 
 # Why a Word file's footnotes or endnotes are not shown: the part holding them unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_notes = Notes exceeds { $size } preview limit
+documents_too_large_notes = The document's notes exceed the { $size } preview limit
 
 # Why a Word file is not shown: the part saying how its lists are numbered unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_numbering = Numbering exceeds { $size } preview limit
+documents_too_large_numbering = The document's numbering exceeds the { $size } preview limit
 
 # Why a picture of a Word or OpenDocument file is not shown: it unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_picture = Embedded image exceeds { $size } preview limit
+documents_too_large_picture = An embedded image exceeds the { $size } preview limit
 
 # Why what a document says of itself (its title, author) is not shown: the part holding it unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_properties = Properties exceeds { $size } preview limit
+documents_too_large_properties = The document's properties exceed the { $size } preview limit
 
 # Why a Word file is not shown: the part that says where its other parts are (its relationships) unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_relationships = Relationships exceeds { $size } preview limit
+documents_too_large_relationships = The document's relationships exceed the { $size } preview limit
 
 # Why a Word or OpenDocument file is not shown: the part holding its styles unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_styles = Styles exceeds { $size } preview limit
+documents_too_large_styles = The document's styles exceed the { $size } preview limit
 
 # Why a Word or OpenDocument file is not shown: the part holding its text unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_text = The document's text exceeds { $size } preview limit
+documents_too_large_text = The document's text exceeds the { $size } preview limit
 
 # Why a document's stored picture is not shown: it unpacks past what the preview reads. size: that bound (16 MB).
-documents_too_large_thumbnail = Thumbnail exceeds { $size } preview limit
+documents_too_large_thumbnail = The thumbnail exceeds the { $size } preview limit

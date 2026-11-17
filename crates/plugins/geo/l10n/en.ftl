@@ -24,8 +24,11 @@ geo_altitude_takeoff = { $metres } m above takeoff
 # Why a step of a plan that writes a picture's location does not run: the picture was written since the plan was reviewed.
 geo_changed_since = { $name } changed since the plan was made
 
-# Under a geotag's plan: the time each picture says it was taken was moved by this many seconds to match the track. seconds: a number with its sign (+120). Begins in lower case.
-geo_clocks_corrected = cameras' clocks corrected by { $seconds } s
+# Under a geotag's plan: the time each picture says it was taken was moved by this many seconds to match the track (+120 s: later). sign: plus or minus, as written; seconds: how many. Begins in lower case.
+geo_clocks_corrected = { $sign ->
+        [plus] cameras' clocks corrected by +{ $seconds } s
+       *[minus] cameras' clocks corrected by −{ $seconds } s
+    }
 
 # East, abbreviated, as a picture's place says it (5.6 km E of Example Town).
 geo_compass_e = E
@@ -80,7 +83,8 @@ geo_damaged = The file is damaged ({ $why }); what came before is shown
 
 # A notice under a map of a file with more waypoints and areas than are drawn. count: how many are not drawn.
 geo_dropped_places = { $count ->
-       *[other] { $count } more places than the map shows
+        [one] { $count } more place is not shown on the map
+       *[other] { $count } more places are not shown on the map
     }
 
 # Why a picture's location could not be written: ExifTool, the program that writes it, cannot write one into a file of its format. name: the picture's name.
@@ -204,9 +208,10 @@ geo_fit_unfinished = the recording was not finished
 geo_flight_distance = { $distance } · { $nautical } NM
 
 # Why an X-Plane plan reads as damaged, inside the notice that says so: it holds fewer waypoints than its header counts. expected: that count; read: how many it holds.
-geo_fms_fewer_waypoints = the plan lists { $expected ->
-       *[other] { $expected } waypoints
-    } and holds { $read }
+geo_fms_fewer_waypoints = { $expected ->
+        [one] the plan lists { $expected } waypoint and holds { $read }
+       *[other] the plan lists { $expected } waypoints and holds { $read }
+    }
 
 # Why a .fms file is not shown on a map: its first lines are not an X-Plane flight plan's.
 geo_fms_not_plan = not an X-Plane flight plan
@@ -242,7 +247,7 @@ geo_fpl_not_plan = not a Garmin flight plan
 geo_geojson_invalid = Not valid GeoJSON: { $error }
 
 # Why a GeoJSON file is not shown on a map: it is larger than the preview reads. size: that bound (16 MB).
-geo_geojson_too_large = This GeoJSON file exceeds { $size } preview limit
+geo_geojson_too_large = This GeoJSON file exceeds the { $size } preview limit
 
 # An action: write into pictures where they were taken, read from a GPS track recorded at the same time.
 geo_geotag = Geotag pictures from a track
@@ -338,7 +343,7 @@ geo_lnmpln_not_plan = not a Little Navmap plan
 
 geo_locate = Where is a place
 
-geo_locate_description = The places of that name skwir knows offline, biggest first, with their positions: for scripts and agents
+geo_locate_description = Return the places of that name Skwir knows offline, biggest first, with their positions: for scripts and agents
 
 # What a step found done already, said once its plan ran: the picture already said where it was taken, as it did before. Begins in lower case.
 geo_location_already_back = the location of { $name } was already back
@@ -404,7 +409,7 @@ geo_place_near = { $distance } { $direction } of { $place }
 geo_placed_at = placed { $name } at { $lat }, { $lon }
 
 # Why a QGroundControl plan (a drone mission) is not shown on a map: it is larger than the preview reads. size: that bound (16 MB).
-geo_plan_too_large = This plan exceeds { $size } preview limit
+geo_plan_too_large = This plan exceeds the { $size } preview limit
 
 # Why a .pln file is not shown on a map: it is not a flight plan of Microsoft Flight Simulator.
 geo_pln_not_plan = not a flight simulator plan
@@ -417,6 +422,9 @@ geo_points = Where the files are
 
 # Read by agents and in F1's list of actions. `since` is the name of the command's argument: keep it as it is.
 geo_points_description = The pictures and tracks of what a pane lists that were placed on the map, after the first `since`
+
+# A position in a map's Properties (Start: 45.12345, 6.12345): its latitude then its longitude, in degrees. A language whose decimal sign is a comma separates the two otherwise.
+geo_position = { $lat }, { $lon }
 
 # Why a .plan file of QGroundControl (a drone mission planner) is not shown on a map. error: what the JSON reader says is wrong, in English.
 geo_qgc_invalid = Not a valid QGroundControl plan: { $error }
@@ -518,7 +526,7 @@ geo_text_line_too_long = line { $line } is longer than { $size }
 # A notice under a map of a track with more points than are drawn: one point of every few is drawn. stride: how many points each drawn point stands for.
 geo_thinned = The map shows one point in { $stride }
 
-# The title of a map's preview: the file's format, then what it holds (GPX · 1 track, 1 route, 2 waypoints). contents: a list of counts.
+# The title of a map's preview: the file's format, then what it holds (GPX · 1 track, 1 route and 2 waypoints). contents: a list of counts, each its words (1 track).
 geo_title = { $format } · { $contents }
 
 # Why pictures cannot be geotagged: the track selected does not say when it passed each point (a route planned, not recorded).

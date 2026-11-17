@@ -72,7 +72,7 @@ impl Plugin for PreviewPlugin {
                     note = "A setting's title: which program reads DjVu documents."
                 ),
                 words!(
-                    djvu_engine_description = "Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which skwir carries.",
+                    djvu_engine_description = "Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which Skwir carries.",
                     note = "Automatic is the setting's first choice; DjVuLibre and djvu-rs are the programs' names."
                 ),
                 "auto",

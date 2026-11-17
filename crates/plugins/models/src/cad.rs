@@ -168,7 +168,7 @@ pub fn dxf<S: FileSource + ?Sized>(
         found.whole_available = bounds.cut();
     } else {
         let refusal = words!(
-            models_drawing_exceeds = "The drawing exceeds { $size } preview limit",
+            models_drawing_exceeds = "The drawing exceeds the { $size } preview limit",
             size = words::Size(drawn as u64),
             note = "Why a DXF drawing is not drawn: it grew past what the preview reads while it was read. size: that bound (33.6 MB)."
         );

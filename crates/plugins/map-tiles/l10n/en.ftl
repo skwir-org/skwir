@@ -6,7 +6,7 @@ map_tiles_add_server = Add tile server
 # status: an HTTP status number (404).
 map_tiles_answered = the tile server answered { $status }
 
-# Where a tile archive has tiles: its south-west corner to its north-east one, latitude then longitude, in degrees.
+# Where a tile archive has tiles: its south-west corner to its north-east one, latitude then longitude, each a number of degrees (45.12345). Where a language's decimal sign is a comma, the numbers want another separator.
 map_tiles_area = { $south }, { $west } to { $north }, { $east }
 
 map_tiles_avif_notice = AVIF tiles are not drawn: the map shows where the file has tiles
@@ -18,7 +18,7 @@ map_tiles_check_header_line = { $name }: a header's value is one line
 map_tiles_check_header_name = { $name }: “{ $header }” is not a header name
 
 # name: a tile server's, as the user named it; header: an HTTP header's name (Host).
-map_tiles_check_header_reserved = { $name }: skwir sets the { $header } header itself
+map_tiles_check_header_reserved = { $name }: Skwir sets the { $header } header itself
 
 # name: a tile server's, as the user named it.
 map_tiles_check_https = { $name }: the address must start with https://
@@ -36,7 +36,7 @@ map_tiles_check_subdomains = { $name }: the address uses { "{s}" }, so the serve
 map_tiles_check_unknown_part = { $name }: the address has an unknown part { $part }
 
 # compression: the name of a way to compress (Brotli, Zstandard).
-map_tiles_compressed = The tiles are compressed with { $compression }, which skwir does not read
+map_tiles_compressed = The tiles are compressed with { $compression }, which Skwir does not read
 
 # A tile archive's detail: where on Earth it has tiles.
 map_tiles_detail_area = Area
@@ -82,7 +82,10 @@ map_tiles_format_vector = Vector shapes
 map_tiles_format_webp = WebP pictures
 
 # compression: the name of a way to compress (Brotli, Zstandard).
-map_tiles_its_compressed = Its tiles are compressed with { $compression }, which skwir does not read
+map_tiles_its_compressed = Its tiles are compressed with { $compression }, which Skwir does not read
+
+# The layers of a tile archive's vector tiles, by the names the archive gives them, a list.
+map_tiles_layers = { $layers }
 
 map_tiles_mbtiles_no_metadata = Not an MBTiles file: it has no metadata table
 
@@ -104,7 +107,8 @@ map_tiles_not_address = not an address
 
 map_tiles_not_archive = Not a tile archive
 
-map_tiles_not_modified = the server said nothing changed in a tile never had
+# An error: a tile server answered “not modified” for a tile Skwir did not keep.
+map_tiles_not_modified = the server said the tile had not changed, but Skwir never had it
 
 map_tiles_not_pmtiles = Not a PMTiles file
 
@@ -148,7 +152,7 @@ map_tiles_server_failed = { $name } gave no tile: { $error }
 
 map_tiles_server_headers = Headers
 
-map_tiles_server_headers_description = Sent with every request: User-Agent replaces skwir's, Referer, Authorization… { "{key}" } is replaced by the API key
+map_tiles_server_headers_description = Sent with every request: User-Agent replaces Skwir's, Referer, Authorization… { "{key}" } is replaced by the API key
 
 map_tiles_server_key = API key
 
@@ -187,6 +191,9 @@ map_tiles_test_server = Test a tile server
 
 map_tiles_test_server_description = Ask a tile server for one tile, now, and say what it answered
 
+# How many tiles a tile archive holds, a number (beside Tile count).
+map_tiles_tile_count = { $count }
+
 map_tiles_tile_too_large = A tile of the archive is too large
 
 map_tiles_tiles_notice = Its tiles are not drawn: the map shows where the file has tiles
@@ -208,6 +215,9 @@ map_tiles_unread = the tile could not be read: { $error }
 map_tiles_unreadable_notice = { $why }: the map shows where it has tiles
 
 map_tiles_vector_notice = Vector tiles are not drawn: the map shows where the file has tiles
+
+# The one zoom level a tile archive has tiles for, a number.
+map_tiles_zoom_level = { $level }
 
 # The zoom levels a tile archive has tiles for: from the farthest to the closest.
 map_tiles_zoom_range = { $from } to { $to }

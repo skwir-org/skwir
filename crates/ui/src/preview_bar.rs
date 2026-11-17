@@ -375,6 +375,16 @@ impl Bar {
     }
 }
 
+/// A page's or a chapter's number for `number_tool`'s button, as the
+/// reader's language writes numbers.
+pub fn number(n: u64) -> Words {
+    skwir_core::words!(
+        preview_number = "{ $number }",
+        number = n,
+        note = "The page or chapter shown, between a preview's previous and next buttons: its number (3)."
+    )
+}
+
 /// Where a document or a book is, between its previous and next buttons:
 /// its page or chapter as a button that becomes a field when clicked
 /// (`edit`), then how many there are. `editor` finds the field while it is
@@ -385,7 +395,7 @@ pub fn number_tool(
     bar: &mut Bar,
     (id, title): (&'static str, skwir_core::words::Words),
     edit: (&'static str, serde_json::Value),
-    (value, total): (String, String),
+    (value, total): (Words, skwir_core::words::Arg),
     editor: fn(&Shell) -> Option<&Field>,
     unit: Option<(Button, &'static str)>,
     theme: &Theme,
@@ -408,7 +418,7 @@ pub fn number_tool(
                 .into_any_element(),
             None => Button::new(id, "", title.clone(), edit.0)
                 .args(edit.1.clone())
-                .label(Words::as_written(value.clone()))
+                .label(value.clone())
                 .render(shell, cx)
                 .bg(paper)
                 .border_color(border)
@@ -419,7 +429,7 @@ pub fn number_tool(
         skwir_core::words!(
             preview_of_total = "/ { $total }",
             total = total.clone(),
-            note = "After the page or chapter shown, between a preview's previous and next buttons: how many there are (3 / 12)."
+            note = "After the page or chapter shown, between a preview's previous and next buttons: how many there are (3 / 12), or the last page's name as the document prints it (iv / 212)."
         )
     };
     if let Some((button, popup)) = unit {

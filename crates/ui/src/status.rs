@@ -107,14 +107,15 @@ pub const HEIGHT: f32 = 26.;
 
 /// What the footer says of an answer that is an index's (`Listing::as_of`),
 /// and its tooltip: `as of Today 03:00`, then what answered and what that
-/// leaves out. The moments are said as `format` writes them until they are
-/// `Instant`s (PLAN.md, step F); what answered as its plugin said it.
+/// leaves out. The moment is said as the list says its dates
+/// (`format::friendly_arg`), the exact one as written; what answered as
+/// its plugin said it.
 fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (Words, Words) {
     match as_of.updated {
         Some(updated) => (
             words!(
                 status_as_of = "as of { $when }",
-                when = format::friendly_time(updated, now),
+                when = format::friendly_arg(updated, now),
                 note = "In a pane's footer, after its count, when what answered a search (an \
                         index) was last brought up to date; when: the moment (Today 03:00)."
             ),
@@ -204,7 +205,7 @@ pub(crate) fn render(
     let loading_items = |count: usize| {
         words!(
             status_loading_items = "Loading… { $count ->
-                [one] 1 item
+                [one] { $count } item
                *[other] { $count } items
             }",
             count = count,
@@ -225,7 +226,7 @@ pub(crate) fn render(
         },
         (true, false) => words!(
             status_searching = "Searching… { $count ->
-                [one] 1 result
+                [one] { $count } result
                *[other] { $count } results
             }",
             count = count,
@@ -233,7 +234,7 @@ pub(crate) fn render(
         ),
         (true, true) => words!(
             status_results = "{ $count ->
-                [one] 1 result
+                [one] { $count } result
                *[other] { $count } results
             }",
             count = count,
@@ -243,7 +244,7 @@ pub(crate) fn render(
         (false, _) => match total {
             Some(total) => words!(
                 status_shown_of = "{ $count } of { $total ->
-                    [one] 1 item
+                    [one] { $total } item
                    *[other] { $total } items
                 }",
                 count = count,
@@ -253,7 +254,7 @@ pub(crate) fn render(
             ),
             None => words!(
                 status_items = "{ $count ->
-                    [one] 1 item
+                    [one] { $count } item
                    *[other] { $count } items
                 }",
                 count = count,
@@ -297,7 +298,7 @@ pub(crate) fn render(
     let items = match reading.filter(|_| total.is_some()) {
         Some(crate::quick_filters::Reading::Files(n)) => words!(
             status_reading_files = "{ $items } · Reading { $count ->
-                [one] 1 file
+                [one] { $count } file
                *[other] { $count } files
             }…",
             items = items,
@@ -326,7 +327,10 @@ pub(crate) fn render(
     // What a search walked past (ADR-125): said, never silently.
     let left_out = (left_out > 0).then(|| {
         words!(
-            status_excluded = "{ $count } excluded",
+            status_excluded = "{ $count ->
+                [one] { $count } excluded
+               *[other] { $count } excluded
+            }",
             count = left_out,
             note = "In a search's footer: how many files and folders the user's exclusions left \
                     out."
@@ -340,7 +344,10 @@ pub(crate) fn render(
     };
     let folded = (folded > 0).then(|| {
         words!(
-            status_folded = "{ $count } folded",
+            status_folded = "{ $count ->
+                [one] { $count } folded
+               *[other] { $count } folded
+            }",
             count = folded,
             note = "In a pane's footer: how many files its folded groups hold."
         )
@@ -440,14 +447,20 @@ pub(crate) fn render(
         let bytes = weighs.map_or(selection.bytes.unwrap_or(0), |w| w.selected.unwrap_or(0));
         let text = if bytes > 0 {
             words!(
-                status_selected_weigh = "{ $count } selected · { $size }",
+                status_selected_weigh = "{ $count ->
+                    [one] { $count } selected
+                   *[other] { $count } selected
+                } · { $size }",
                 count = selection.count,
                 size = Size(bytes),
                 note = "In a pane's footer: how many items are selected, then what they weigh."
             )
         } else {
             words!(
-                status_selected = "{ $count } selected",
+                status_selected = "{ $count ->
+                    [one] { $count } selected
+                   *[other] { $count } selected
+                }",
                 count = selection.count,
                 note = "In a pane's footer: how many items are selected."
             )
@@ -521,7 +534,7 @@ pub(crate) fn render(
             (
                 words!(
                     status_cut = "{ $count ->
-                        [one] 1 item cut
+                        [one] { $count } item cut
                        *[other] { $count } items cut
                     }",
                     count = waiting,
@@ -533,7 +546,7 @@ pub(crate) fn render(
             (
                 words!(
                     status_copied = "{ $count ->
-                        [one] 1 item copied
+                        [one] { $count } item copied
                        *[other] { $count } items copied
                     }",
                     count = waiting,
@@ -581,7 +594,7 @@ pub(crate) fn render(
         let words = match (plans, questions) {
             (plans, 0) => words!(
                 status_proposals = "{ $plans ->
-                    [one] 1 proposal to review
+                    [one] { $plans } proposal to review
                    *[other] { $plans } proposals to review
                 }",
                 plans = plans,
@@ -589,7 +602,7 @@ pub(crate) fn render(
             ),
             (0, questions) => words!(
                 status_questions = "{ $questions ->
-                    [one] 1 question
+                    [one] { $questions } question
                    *[other] { $questions } questions
                 }",
                 questions = questions,
@@ -597,10 +610,10 @@ pub(crate) fn render(
             ),
             (plans, questions) => words!(
                 status_proposals_questions = "{ $plans ->
-                    [one] 1 proposal
+                    [one] { $plans } proposal
                    *[other] { $plans } proposals
                 } to review · { $questions ->
-                    [one] 1 question
+                    [one] { $questions } question
                    *[other] { $questions } questions
                 }",
                 plans = plans,
@@ -677,14 +690,14 @@ mod tests {
 
     #[test]
     fn an_index_s_answer_says_as_of_when_and_what_it_leaves_out() {
-        // The dates' locale British, the zone UTC: what the English below
-        // writes.
+        // The zone UTC: what the English below writes. The moment is an
+        // argument of the words, said in English's own formats (a 12-hour
+        // time), whatever the window's locale.
         // SAFETY: a test of its own process (nextest), before threads read TZ.
         #[allow(unsafe_code)]
         unsafe {
             std::env::set_var("TZ", "UTC");
         }
-        skwir_core::locale::set_formats(None, Some("en-GB".into()));
         let now = jiff::Timestamp::from_second(1_800_000_007)
             .unwrap()
             .to_zoned(jiff::tz::TimeZone::UTC);
@@ -696,7 +709,7 @@ mod tests {
         };
         let (text, tip) = as_of_said(&as_of, &now);
         let (text, tip) = (text.english(), tip.english());
-        assert_eq!(text, "as of Today 07:00");
+        assert_eq!(text, "as of Today 7:00\u{202f}AM");
         assert!(tip.starts_with("Found in plocate's database, last brought up to date "));
         assert!(tip.ends_with("is not in this answer."), "{tip}");
 

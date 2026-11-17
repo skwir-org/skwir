@@ -49,6 +49,9 @@ query_chip_in = Dans { $place }
 query_chip_kind = Genre
 
 # draft
+query_chip_kinds = { $kinds }
+
+# draft
 query_chip_modified = Modifié
 
 # draft
@@ -94,7 +97,7 @@ query_depth_here = Ce dossier uniquement
 query_describe = Décrire la recherche
 
 # draft
-query_describe_description = Les pastilles de la recherche, pour qui les dessine : chaque facette (words, kind, modified, taken, size, tag, content, where ; created et accessed une fois définies) avec sa valeur et l’invocation que lance chaque choix, puis les parties qu’aucune facette ne contient
+query_describe_description = Les pastilles de la recherche, telles que la barre d’adresse les dessine pour un panneau qui affiche une recherche : chaque facette (words, kind, modified, taken, size, tag, content, where ; created et accessed une fois définies) avec sa valeur et l’invocation que lance chacun de ses choix, puis les parties qu’aucune facette ne contient
 
 # draft
 query_describe_filter = Décrire le filtre
@@ -418,7 +421,7 @@ query_key_created = Créé
 query_key_depth = Jusqu’à quelle profondeur chercher
 
 # draft
-query_key_depth_example = un nombre de niveaux, 2
+query_key_depth_example = de combien de niveaux de dossiers elle descend : 2
 
 # draft
 query_key_excluded = Dossiers exclus aussi
@@ -482,15 +485,6 @@ query_key_type = Fichiers, dossiers ou liens
 
 # draft
 query_list = Lister les recherches enregistrées
-
-# draft
-query_list_and = { $first } et { $last }
-
-# draft
-query_list_and_more = { $first }, { $rest }
-
-# draft
-query_list_comma = { $first }, { $rest }
 
 # draft
 query_list_description = Renvoyer les recherches enregistrées, dans l’ordre de la barre latérale
@@ -598,7 +592,7 @@ query_nothing_opens = rien n’ouvre { $place } : un dossier s’écrit avec so
 query_nothing_to_save = le panneau n’affiche rien à enregistrer
 
 # draft
-query_only_folders_below = seuls les sous-dossiers d’un dossier peuvent être recherchés
+query_only_folders_below = le panneau n’affiche aucun dossier : seuls les sous-dossiers d’un dossier peuvent être recherchés
 
 # draft
 query_only_in_bytes = seul { $key } accepte des octets qui ne sont pas de l’UTF-8 (\xNN)
@@ -730,22 +724,26 @@ query_reading_images = { $at ->
     }
 
 # draft
-query_reading_last_month = {" "}dont la modification date du mois dernier
-
-# draft
-query_reading_last_week = {" "}dont la modification date de la semaine dernière
-
-# draft
-query_reading_last_year = {" "}dont la modification date de l’année dernière
-
-# draft
-query_reading_modified_in = {" "}dont la modification date de { $year }
+query_reading_modified = { $of ->
+        [extension] {" "}modifiés { $when }
+        [folder] {" "}modifiés { $when }
+        [image] {" "}modifiées { $when }
+        [video] {" "}modifiées { $when }
+        [pictures] {" "}modifiées { $when }
+        [audio] {" "}modifiés { $when }
+        [document] {" "}modifiés { $when }
+        [spreadsheet] {" "}modifiés { $when }
+        [presentation] {" "}modifiées { $when }
+        [text] {" "}modifiés { $when }
+        [archive] {" "}modifiées { $when }
+        [font] {" "}modifiées { $when }
+        [program] {" "}modifiés { $when }
+        [several] {" "}modifiés { $when }
+       *[file] {" "}modifiés { $when }
+    }
 
 # draft
 query_reading_named = {" "}au nom contenant { $names }
-
-# draft
-query_reading_older = {" "}dont la modification date de plus d’un an
 
 # draft
 query_reading_over_1 = {" "}de plus de 1 { $unit }
@@ -772,28 +770,35 @@ query_reading_spreadsheets = { $at ->
     }
 
 # draft
-query_reading_tagged = {" "}avec l’étiquette { $tags }
+query_reading_tagged = {" "}avec { $count ->
+        [one] l’étiquette { $tags }
+       *[other] les étiquettes { $tags }
+    }
 
 # draft
-query_reading_taken_in = {" "}prises en { $year }
+query_reading_taken = { $of ->
+        [extension] {" "}pris { $when }
+        [folder] {" "}pris { $when }
+        [image] {" "}prises { $when }
+        [video] {" "}tournées { $when }
+        [pictures] {" "}prises { $when }
+        [audio] {" "}pris { $when }
+        [document] {" "}pris { $when }
+        [spreadsheet] {" "}pris { $when }
+        [presentation] {" "}prises { $when }
+        [text] {" "}pris { $when }
+        [archive] {" "}prises { $when }
+        [font] {" "}prises { $when }
+        [program] {" "}pris { $when }
+        [several] {" "}pris { $when }
+       *[file] {" "}pris { $when }
+    }
 
 # draft
 query_reading_text = { $at ->
         [first] Texte et code
        *[after] texte et code
     }
-
-# draft
-query_reading_this_month = {" "}dont la modification date de ce mois-ci
-
-# draft
-query_reading_this_week = {" "}dont la modification date de cette semaine
-
-# draft
-query_reading_this_year = {" "}dont la modification date de cette année
-
-# draft
-query_reading_today = {" "}dont la modification date d’aujourd’hui
 
 # draft
 query_reading_under_100 = {" "}de moins de 100 { $unit }
@@ -805,7 +810,34 @@ query_reading_videos = { $at ->
     }
 
 # draft
-query_reading_yesterday = {" "}dont la modification date d’hier
+query_reading_when_last_month = le mois dernier
+
+# draft
+query_reading_when_last_week = la semaine dernière
+
+# draft
+query_reading_when_last_year = l’année dernière
+
+# draft
+query_reading_when_older = il y a plus d’un an
+
+# draft
+query_reading_when_this_month = ce mois-ci
+
+# draft
+query_reading_when_this_week = cette semaine
+
+# draft
+query_reading_when_this_year = cette année
+
+# draft
+query_reading_when_today = aujourd’hui
+
+# draft
+query_reading_when_year = en { $year }
+
+# draft
+query_reading_when_yesterday = hier
 
 # draft
 query_ref_brackets = […] l’un de ceux-ci
@@ -823,7 +855,7 @@ query_ref_contents = Contenu
 query_ref_date = Une année, un mois ou un jour : 2026, 2026-05-14
 
 # draft
-query_ref_date_range = D’une date à l’autre, toutes deux en entier
+query_ref_date_range = Du début de la première date à la fin de la seconde
 
 # draft
 query_ref_duration = Dans les 7 derniers jours : { $m } minutes, { $h } heures, { $d } jours, { $w } semaines, { $mo } mois, { $y } ans
@@ -844,7 +876,7 @@ query_ref_minus = Pas ceci : -draft, -#tag, -kind:image
 query_ref_names = Noms
 
 # draft
-query_ref_not = Négation : NOT a, comme -a
+query_ref_not = Négation : NOT a, aussi écrit -a
 
 # draft
 query_ref_older = Il y a plus d’un an
@@ -868,10 +900,10 @@ query_ref_question = ? un caractère
 query_ref_quotes = Tel quel : {"\u0022"}deux mots{"\u0022"}, {"\u0022"}OR{"\u0022"}, {"\u0022"}#3{"\u0022"}
 
 # draft
-query_ref_rating = Au moins (> < >= <=) ; rating:0 non noté
+query_ref_rating = Au moins (> < >= <=) ; rating:0 trouve les fichiers sans note
 
 # draft
-query_ref_size = Plus de 10 { $mb } : { $decimal } valent chacune mille fois la précédente ; { $binary }, 1024 fois, comme { $alone } seules
+query_ref_size = Plus de 10 { $mb }. Les unités { $decimal } valent chacune 1 000 fois la précédente ; les unités { $binary } valent chacune 1 024 fois la précédente, tout comme { $alone } écrites seules.
 
 # draft
 query_ref_size_range = D’une taille à l’autre, toutes deux comprises
@@ -949,7 +981,7 @@ query_root_not_absolute = la racine de recherche { $path } n’est pas un chemin
 query_root_not_folder = la racine de recherche { $path } n’est pas un dossier : { $error }
 
 # draft
-query_root_not_path = root doit être un chemin
+query_root_not_path = `root` doit être un chemin
 
 # draft
 query_save = Enregistrer la recherche
@@ -1153,13 +1185,13 @@ query_value_symlink = Lien symbolique
 query_value_true = Vrai
 
 # draft
-query_waits_contents = contenu
+query_waits_contents = ce que contiennent les fichiers
 
 # draft
-query_waits_places = lieux
+query_waits_places = où les images ont été prises
 
 # draft
-query_waits_taken = dates de prise de vue
+query_waits_taken = quand les images ont été prises
 
 # draft
 query_when_placeholder = Une date, une plage ou une période : 2026-05, 2026-01-01..2026-03-31, <30d
@@ -1183,4 +1215,4 @@ query_where_hidden_files = Fichiers cachés
 query_where_subfolders = Ce dossier et ses sous-dossiers
 
 # draft
-query_which_saved = quelle recherche enregistrée ? Passez son expr ou son name
+query_which_saved = quelle recherche enregistrée ? Passez son `expr` ou son `name`

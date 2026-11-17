@@ -163,7 +163,7 @@ impl Format {
     ) -> anyhow::Result<Found> {
         let most = bounds.choose(INPUT, WHOLE_INPUT);
         let refusal = words!(
-            circuits_file_exceeds = "The file exceeds { $size } preview limit",
+            circuits_file_exceeds = "The file exceeds the { $size } preview limit",
             size = words::Size(most as u64),
             note = "Why a board, schematic or layer is not drawn: it grew past what is drawn while it was read. size: that bound."
         );

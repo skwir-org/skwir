@@ -519,7 +519,7 @@ impl Shell {
         }
         if let Some(notice) = update.notice {
             // The session continues; its next state update corrects the UI.
-            self.set_status(Words::as_written(notice), false, cx);
+            self.set_status(notice, false, cx);
         }
         if let Some(plan) = update.taken {
             // A plan took the file (ADR-136): the session let go of it and
@@ -1115,9 +1115,9 @@ pub(crate) fn volume_button(
         )
     } else {
         words!(
-            media_volume_level = "Volume · { $level }",
-            level = percent(state.volume),
-            note = "Pointing at a player's speaker button: how loud it plays (80 %)."
+            media_volume_level = "Volume · { $percent }%",
+            percent = percent(state.volume),
+            note = "Pointing at a player's speaker button: how loud it plays, in percent (80%)."
         )
     };
     Button::new(id, speaker_icon(state), title, command)
@@ -1128,8 +1128,9 @@ pub(crate) fn volume_button(
         ))
 }
 
-fn percent(volume: f64) -> String {
-    format!("{:.0}%", (volume * 100.).round())
+/// A volume (1 as recorded) in whole percent, for a message to place.
+fn percent(volume: f64) -> skwir_core::words::Decimal {
+    skwir_core::words::Decimal::of(volume * 100., 0)
 }
 
 /// What a player's volume popup holds, top to bottom: the level, an
@@ -1155,7 +1156,12 @@ pub(crate) fn volume_control(
         )
         .say()
     } else {
-        percent(state.volume)
+        words!(
+            media_volume_percent = "{ $percent }%",
+            percent = percent(state.volume),
+            note = "Over a player's volume slider, and what a screen reader hears of it: how loud it plays, in percent (80%)."
+        )
+        .say()
     };
     let slid = cx.listener(move |this, slid: &Slid, _, cx| {
         // A move or a release it never saw the press of is not its own:

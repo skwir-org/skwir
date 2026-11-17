@@ -275,13 +275,13 @@ pub fn drop(
     let title = match source.as_ref().and_then(|s| s.tag.as_deref()) {
         Some(from) => words!(
             tags_move_tag_plan = "move from tag { $from } to tag { $tag }",
-            from = from,
-            tag = tag.as_str(),
+            from = Name(from.to_owned()),
+            tag = Name(tag.clone()),
             note = "A plan's title: files dragged from one tag's place to another's. from, tag: the tags' names."
         ),
         None => words!(
             tags_add_tag_plan = "add tag { $tag }",
-            tag = tag.as_str(),
+            tag = Name(tag.clone()),
             note = "A plan's title: files dropped on a tag's place. tag: its name."
         ),
     };
@@ -380,7 +380,7 @@ pub fn untag(
     let title = match &address.tag {
         Some(tag) => words!(
             tags_untag_plan = "remove tag { $tag }",
-            tag = tag.as_str(),
+            tag = Name(tag.clone()),
             note = "A plan's title: files taken out of a tag's place. tag: its name."
         ),
         None => words!(
@@ -533,7 +533,7 @@ pub fn export(
             app.propose(skwir_core::op::Plan::with_steps(
                 words!(
                     tags_export_plan = "copy the files tagged { $tag } to { $folder }",
-                    tag = tag.as_str(),
+                    tag = Name(tag.clone()),
                     folder = Folder(Name::of(&dest).0),
                     note = "A plan's title. tag: the tag's name; folder: where the copies go."
                 ),

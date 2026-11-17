@@ -59,8 +59,8 @@ shell_examples = Par exemple
 
 # draft
 shell_line_more = { $line } … et { $more ->
-        [one] { $more } de plus
-       *[other] { $more } de plus
+        [one] { $more } autre chemin
+       *[other] { $more } autres chemins
     }
 
 # draft

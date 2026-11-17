@@ -59,8 +59,8 @@ shrink_in_place_only = { $name } takes only copies written in place: no smaller 
 # A card of the dialog: nothing re-encoded, what is stored twice kept once.
 shrink_lossless = Lossless
 
-# An error an agent or a script reads: `at_most` is the command's argument, and print, screen and small the values its `quality` takes, as written.
-shrink_lossless_at_most = Lossless re-encodes nothing, so it cannot bring a copy under a size: ask `at_most` with print, screen or small
+# An error an agent or a script reads: `at_most` is the command's argument, and lossless, print, screen and small the values its `quality` takes, as written.
+shrink_lossless_at_most = The `lossless` quality re-encodes nothing, so it cannot keep a copy under a size: give `at_most` with the `print`, `screen` or `small` quality
 
 # Said in the dialog; Print, Screen and Small are its cards' titles, and the last words its switch's.
 shrink_lossless_jpeg = Lossless leaves a JPEG as it is: choose Print, Screen or Small, or remove its location and camera details

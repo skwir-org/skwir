@@ -307,8 +307,7 @@ impl op::Effect for Extract {
         } else if src.starts_with(&target) {
             // Never replaced: it would take the archive with it.
             conflict(words!(
-                archives_holds_archive =
-                    "{ $there } holds { $archive }, which it would be extracted from",
+                archives_holds_archive = "{ $there } holds { $archive }, the archive to extract",
                 there = Name::of(&target),
                 archive = Name::of(&src),
                 note = "Why an archive is not extracted: the folder of its name holds the archive itself."

@@ -66,7 +66,7 @@ open_with_none_opens = No application opens { $kind ->
     }
 
 # Said when a pipe, a socket or a device is opened: what would wait or act is never opened.
-open_with_not_a_file = { $name } is not a file: skwir does not open it
+open_with_not_a_file = { $name } is not a file: Skwir does not open it
 
 open_with_not_changed = The default application was not changed: { $error }
 

@@ -1,7 +1,7 @@
 # French catalog of skwir-plugin-name-tags, drafted by a model from en.ftl (ADR-139, step G): every message is a draft until reviewed.
 
 # draft
-name_tags_filetags_limits = les étiquettes avec des espaces ou des catégories, les notes, les commentaires
+name_tags_filetags_limits = une étiquette avec des espaces ou une catégorie, une note ou un commentaire
 
 # draft
 name_tags_left_out = Laissées de côté, car un nom ne peut pas les contenir : { $tags }.
@@ -40,7 +40,7 @@ name_tags_tag_description = Renommer les éléments donnés, ou la sélection, p
 name_tags_tag_menu = Écrire les étiquettes dans le nom
 
 # draft
-name_tags_tagspaces_limits = les étiquettes avec des espaces, des crochets ou des catégories, les notes, les commentaires
+name_tags_tagspaces_limits = une étiquette avec des espaces, des crochets ou une catégorie, une note ou un commentaire
 
 # draft
 name_tags_untag = Étiquettes hors du nom

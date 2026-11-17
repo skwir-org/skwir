@@ -770,7 +770,10 @@ impl Work {
                 work_told_finished_stopped = "{ $finished ->
                     [one] { $finished } action
                    *[other] { $finished } actions
-                } finished, { $stopped } stopped",
+                } finished, { $stopped ->
+                    [one] { $stopped } stopped
+                   *[other] { $stopped } stopped
+                }",
                 finished = finished,
                 stopped = stopped,
                 note = "The title of the desktop's notice of what ended while no one looked: \

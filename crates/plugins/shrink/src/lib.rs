@@ -351,8 +351,8 @@ fn plan_of(app: &App, args: &ReduceArgs, reach: &AppRef) -> anyhow::Result<Plan>
     anyhow::ensure!(
         at_most.is_none() || args.quality != Quality::Lossless,
         words!(
-            shrink_lossless_at_most = "Lossless re-encodes nothing, so it cannot bring a copy under a size: ask `at_most` with print, screen or small",
-            note = "An error an agent or a script reads: `at_most` is the command's argument, and print, screen and small the values its `quality` takes, as written."
+            shrink_lossless_at_most = "The `lossless` quality re-encodes nothing, so it cannot keep a copy under a size: give `at_most` with the `print`, `screen` or `small` quality",
+            note = "An error an agent or a script reads: `at_most` is the command's argument, and lossless, print, screen and small the values its `quality` takes, as written."
         )
     );
     let mut plan = Plan::new(words!(

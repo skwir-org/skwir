@@ -1821,7 +1821,7 @@ impl op::Effect for MakePdf {
                     count = count,
                     pdf = pdf(),
                     folder = folder(),
-                    note = "Said after saving, when the PDF of that name was this already."
+                    note = "What a step found done already, said once its plan ran: the PDF of that name in that folder is this one already. Begins in lower case."
                 )),
             }),
         }

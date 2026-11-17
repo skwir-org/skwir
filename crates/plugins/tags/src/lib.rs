@@ -45,7 +45,7 @@ use skwir_core::registry::{ChoiceLook, KeyBinding, MenuItem, MenuSource};
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{List, Name, Words};
 use skwir_core::workspace::PaneId;
 
 pub use attrs::tags_of;
@@ -319,26 +319,14 @@ fn has_tag(e: &skwir_core::Entry, tag: &str) -> bool {
     }
 }
 
-/// Tags named in a sentence, as written: `a, b`.
-///
-/// Transitional: a list is joined here until words take a list of names
-/// that each language joins its own way (PLAN.md, ADR-139 step F).
-pub(crate) fn tag_list(tags: &[String]) -> String {
-    tags.join(", ")
+/// Tags named in a sentence: each its name, all of them a list (“a”, “b”
+/// and “c”).
+pub(crate) fn tag_list(tags: &[String]) -> List {
+    List::and(tags.iter().cloned().map(Name))
 }
 
-/// Tags named in a sentence, each quoted: `“a”, “b” and “c”`.
-///
-/// Transitional, as [`tag_list`].
-pub(crate) fn quoted_tags(tags: &[String]) -> String {
-    let quoted: Vec<String> = tags.iter().map(|t| format!("“{t}”")).collect();
-    match quoted.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
-        _ => quoted.concat(),
-    }
-}
-
-/// "add tag work", "remove tags a, b", "add tag x and remove tag y".
+/// "add tag “work”", "remove tags “a” and “b”", "add tag “x” and remove
+/// tag “y”".
 fn edit_title(add: &[String], remove: &[String]) -> Words {
     match (add.is_empty(), remove.is_empty()) {
         (false, true) => words!(
@@ -348,7 +336,7 @@ fn edit_title(add: &[String], remove: &[String]) -> Words {
                 } { $tags }",
             count = add.len(),
             tags = tag_list(add),
-            note = "A plan's title. tags: the tags' names, as written, joined by commas; count: how many."
+            note = "A plan's title. tags: the tags' names, a list; count: how many."
         ),
         (true, false) => words!(
             tags_remove_plan = "remove { $count ->
@@ -357,7 +345,7 @@ fn edit_title(add: &[String], remove: &[String]) -> Words {
                 } { $tags }",
             count = remove.len(),
             tags = tag_list(remove),
-            note = "A plan's title. tags: the tags' names, as written, joined by commas; count: how many."
+            note = "A plan's title. tags: the tags' names, a list; count: how many."
         ),
         (false, false) => words!(
             tags_add_remove_plan = "add { $added ->
@@ -371,7 +359,7 @@ fn edit_title(add: &[String], remove: &[String]) -> Words {
             add = tag_list(add),
             removed = remove.len(),
             remove = tag_list(remove),
-            note = "A plan's title. add, remove: the tags' names, as written, joined by commas; added, removed: how many."
+            note = "A plan's title. add, remove: the tags' names, each a list; added, removed: how many."
         ),
         (true, true) => words!(tags_change_plan = "change tags", note = "A plan's title."),
     }
@@ -935,10 +923,10 @@ impl Plugin for TagsPlugin {
                 words!(tags_limit_title = "Room for tagged files"),
                 (
                     words!(
-                        tags_limit_description = "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches."
+                        tags_limit_description = "How much memory Skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches."
                     ),
                     words!(
-                        tags_limit_description_more = "Past it, new tagged files are left out of the tags' folders, and skwir says so.",
+                        tags_limit_description_more = "Past it, new tagged files are left out of the tags' folders, and Skwir says so.",
                         note = "What a setting's description says after its first sentence, in its tooltip."
                     ),
                 ),
@@ -1318,9 +1306,13 @@ impl Plugin for TagsPlugin {
                         words!(tags_remove_all_plan = "remove tags", note = "A plan's title.")
                     } else {
                         words!(
-                            tags_set_plan = "set tags { $tags }",
+                            tags_set_plan = "set { $count ->
+                                    [1] tag
+                                   *[other] tags
+                                } { $tags }",
+                            count = tags.len(),
                             tags = tag_list(&tags),
-                            note = "A plan's title. tags: the tags' names, as written, joined by commas."
+                            note = "A plan's title: the files' tags replaced by these. tags: the tags' names, a list; count: how many."
                         )
                     };
                     // A file that has them already is skipped when applied.
@@ -1748,8 +1740,8 @@ impl Plugin for TagsPlugin {
                         TAG_COLORS.contains(&color),
                         words!(
                             tags_color_one_of = "a tag's color is one of { $colors }",
-                            colors = TAG_COLORS.join(", "),
-                            note = "An error. colors: the colors' names as a command takes them (red, orange…), joined by commas."
+                            colors = List::or(TAG_COLORS),
+                            note = "An error. colors: the colors' names as a command takes them (red, orange…), a list."
                         )
                     );
                 }
@@ -3280,7 +3272,7 @@ mod tests {
         );
         assert_eq!(
             edit.title.english(),
-            "add tags urgent, WORK and remove tag Draft"
+            "add tags “urgent” and “WORK” and remove tag “Draft”"
         );
         app.executor.execute_blocking(&edit, app.lifetime());
         assert_eq!(read_tags(&a), ["Work", "urgent"], "spelling kept");
@@ -3480,10 +3472,10 @@ mod tests {
     #[test]
     fn edit_titles_say_what_changes() {
         let t = |s: &[&str]| s.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
-        assert_eq!(edit_title(&t(&["a"]), &[]).english(), "add tag a");
+        assert_eq!(edit_title(&t(&["a"]), &[]).english(), "add tag “a”");
         assert_eq!(
-            edit_title(&[], &t(&["a", "b"])).english(),
-            "remove tags a, b"
+            edit_title(&[], &t(&["a", "b", "c"])).english(),
+            "remove tags “a”, “b”, and “c”"
         );
         assert_eq!(
             edited(&t(&["A", "b"]), &t(&["a", "c"]), &t(&["B"]), &[]),

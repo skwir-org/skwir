@@ -4,7 +4,7 @@
 about_close = Close
 
 # Said once Copy details in About put them on the clipboard.
-about_copied = Copied skwir’s version and what it runs on
+about_copied = Copied Skwir’s version and what it runs on
 
 # The button in About putting skwir's version and what it runs on on the clipboard, for a report.
 about_copy_details = Copy details
@@ -34,7 +34,7 @@ about_graphics_software = { $graphics } (drawn by the processor)
 about_licences = Licences
 
 # What the About dialog is named to a screen reader.
-about_named = About skwir
+about_named = About Skwir
 
 # The button in About opening where skwir's source code is.
 about_source = Source code
@@ -55,7 +55,7 @@ about_text_from = from { $desktop }
 about_text_label = Text
 
 # In About, where the text's size comes from when no desktop says one.
-about_text_own_size = skwir's own size
+about_text_own_size = Skwir's own size
 
 # In About, the interface's font and size, where they were read and the desktop's text scaling (1.25), then each part's text size (100%).
 about_text_scaled = { $font } { $px } px ({ $pt } pt) { $source }, text scaling { $scaling }; sizes: interface { $interface }, files { $files }, reading { $reading }, code { $code }
@@ -198,10 +198,16 @@ activity_retry = Retry
 # Over Activity's cards: how far the queue of actions started, those ended or running of all of them (2 of 5), and its share (42 %).
 activity_spell_at = { $at } of { $of } · { $percent }
 
-# What a screen reader hears of the bar over Activity's cards: how far the queue of actions started (2 of 5 actions).
-activity_spell_label = { $at } of { $of ->
-        [one] { $of } action
-       *[other] { $of } actions
+# What a screen reader hears of the bar over Activity's cards: how far the queue of actions started, those ended or running (at) of all (of): 2 of 5 actions. Each count chooses its words: where the noun follows the first number, choose it by at.
+activity_spell_label = { $at ->
+        [one] { $at } of { $of ->
+            [one] { $of } action
+           *[other] { $of } actions
+        }
+       *[other] { $at } of { $of ->
+            [one] { $of } action
+           *[other] { $of } actions
+        }
     }
 
 # What the strip says of an action an error stopped, where its title does not fit.
@@ -252,7 +258,7 @@ address_a_to_z = A to Z
 # A sort's direction after its criterion, in the View menu's row: Name, A to Z.
 address_a_to_z_said = A to Z
 
-address_about = About skwir
+address_about = About Skwir
 
 # The tooltip of a chevron of the address's trail: the places above this one; place: its name.
 address_above = Above { $place }
@@ -272,13 +278,13 @@ address_buttons = Buttons…
 address_buttons_tip = Choose the buttons beside the address: which views have one, and whether Up stands after Back and Forward
 
 # The tooltip of a row of the grid's Under names: whether tiles say when the file was last read.
-address_caption_accessed = Whether each tile says its accessed under its name
+address_caption_accessed = Whether each tile says under its name when it was last read
 
 # The tooltip of a row of the grid's Under names: whether tiles say when the file was created.
-address_caption_created = Whether each tile says its created under its name
+address_caption_created = Whether each tile says under its name when it was created
 
 # The tooltip of a row of the grid's Under names, in the trash: whether tiles say when the file was deleted.
-address_caption_deleted = Whether each tile says its deleted under its name
+address_caption_deleted = Whether each tile says under its name when it was deleted
 
 address_caption_dimensions = Whether each tile says its dimensions under its name
 
@@ -291,9 +297,9 @@ address_caption_folder = Whether each tile says its folder under its name
 address_caption_kind = Whether each tile says its kind under its name
 
 # The tooltip of a row of the grid's Under names: whether tiles say when the file was modified.
-address_caption_modified = Whether each tile says its modified under its name
+address_caption_modified = Whether each tile says under its name when it was modified
 
-address_caption_name = Whether each tile says its name under its name
+address_caption_name = Whether each tile says its name
 
 address_caption_owner = Whether each tile says its owner under its name
 
@@ -304,24 +310,24 @@ address_caption_size = Whether each tile says its size under its name
 address_caption_tags = Whether each tile says its tags under its name
 
 # The tooltip of a row of the grid's Under names: whether tiles say when a picture was taken.
-address_caption_taken = Whether each tile says its taken under its name
+address_caption_taken = Whether each tile says under its name when it was taken
 
 address_caption_type = Whether each tile says its type under its name
 
 # The tooltip of a row of the grid's Under names: whether tiles say the file's state in Git.
-address_caption_vcs = Whether each tile says its git under its name
+address_caption_vcs = Whether each tile says its state in Git under its name
 
 # A sort by the files' state in Git: the files changed first.
 address_changes_first = Changes first
 
 # A sort's direction after its criterion, in the View menu's row: Git, Changes first.
-address_changes_first_said = Changes first
+address_changes_first_said = changes first
 
 # A sort by the files' state in Git: the files changed last.
 address_changes_last = Changes last
 
 # A sort's direction after its criterion, in the View menu's row: Git, Changes last.
-address_changes_last_said = Changes last
+address_changes_last_said = changes last
 
 # An item of the View menu, in the tree: close every folder opened in place.
 address_collapse_all = Collapse all
@@ -336,7 +342,7 @@ address_companions_tip = Also list the files that keep another file's notes besi
 # An item of the menu of the buttons beside the address: the buttons as they first were.
 address_default_buttons = Default buttons
 
-address_default_buttons_tip = Back to the buttons skwir comes with
+address_default_buttons_tip = Back to the buttons Skwir comes with
 
 address_default_levels = Default levels
 
@@ -482,7 +488,7 @@ address_quick_filters_tip = Offer the kinds, years and tags of this pane's files
 # The last item of the More menu: end skwir, every window.
 address_quit = Quit
 
-address_quit_tip = Quit skwir
+address_quit_tip = Quit Skwir
 
 # An item of the More menu, while there is nothing to redo; and its tooltip.
 address_redo = Redo
@@ -760,13 +766,13 @@ clipboard_unreachable = { $count ->
 
 # What another application copied is on another protocol, which Skwir does not speak, one whose address names none.
 clipboard_unreachable_remote = { $count ->
-        [one] The clipboard holds { $count } remote: item Skwir cannot reach
-       *[other] The clipboard holds { $count } remote: items Skwir cannot reach
+        [one] The clipboard holds { $count } remote item Skwir cannot reach
+       *[other] The clipboard holds { $count } remote items Skwir cannot reach
     }
 
-commands_about = About skwir
+commands_about = About Skwir
 
-commands_about_description = Show skwir's version and licence, and what it runs on
+commands_about_description = Show Skwir's version and licence, and what it runs on
 
 # A window command's title: answer yes to the question a dialog asks.
 commands_accept = Confirm
@@ -985,7 +991,8 @@ commands_field_reference_description = Show under the field being typed in what 
 
 commands_filter = Filter…
 
-commands_filter_description = Filter the folder shown from the address field as you type, its subfolders left out, from a text; typed in, look in the folder alone
+# Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument.
+commands_filter_description = Filter the folder shown from the address field as you type, its subfolders left out, starting from `text` where it is given; what is typed there is looked for in the folder alone
 
 commands_find = Find a name…
 
@@ -1498,7 +1505,7 @@ commands_note_description = Close a book's note, or go to where it is
 # A window command's title: complete what is typed in the address field (Tab there).
 commands_omnibox_complete = Complete
 
-commands_omnibox_complete_description = Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed
+commands_omnibox_complete_description = Complete what is typed in the address field: with the part the names that match it share, else with the suggestion highlighted; a folder completed is then listed
 
 commands_omnibox_forget = Forget the suggestion
 
@@ -1533,7 +1540,7 @@ commands_peek_close = Close peek
 
 commands_peek_close_description = Close the large preview
 
-commands_peek_description = Look at the file under the cursor in a large preview; run again, or its key held and let go, it closes
+commands_peek_description = Look at the file under the cursor in a large preview, which closes when this runs again, or when its key, held, is let go
 
 # A window command's title: let go of the plan being worked out for what was asked.
 commands_plan_cancel = Stop working out
@@ -1543,7 +1550,8 @@ commands_plan_cancel_description = Let go of the plan being worked out for what 
 # A window command's title: the player pinned at the foot of the side panel.
 commands_player = Player
 
-commands_player_description = Ask the pinned player something (play, pause, next, stop…)
+# Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument and the values it takes.
+commands_player_description = Ask the pinned player what `request` says: `play`, `pause`, `next`, `stop`, `seek_by` some seconds…
 
 commands_player_volume = Player: volume
 
@@ -1616,7 +1624,7 @@ commands_preview_select_all_description = Select all the text the preview shows
 
 commands_preview_zoom = Preview: zoom
 
-commands_preview_zoom_description = Zoom what the preview shows, size what it reads
+commands_preview_zoom_description = Zoom in or out of what the preview shows (a picture, a page, a map, a model), or make larger or smaller the text of what it reads (a book, a document)
 
 commands_printed_pages = Printed page numbers
 
@@ -1634,8 +1642,8 @@ commands_properties_description = Show or hide the properties of the selection (
 # A window command's title: fold one of the groups of Properties (Permissions, Checksums).
 commands_properties_fold = Properties: fold a group
 
-# Read by agents and in F1's list of actions. `Checksums` and `Volume` are the titles of two of Properties' groups, as their headings say them.
-commands_properties_fold_description = Fold one of Properties' groups (`Checksums`, `Volume`…) or unfold it, for every item from now on
+# Read by agents and in F1's list of actions. `Checksums` and `Volume` are the keys of two of Properties' groups, written as they are in every language.
+commands_properties_fold_description = Fold one of Properties' groups, by its key (`Checksums`, `Volume`…), or unfold it, for every item from now on
 
 commands_quick_filters = Toggle Quick filters
 
@@ -1675,7 +1683,8 @@ commands_reader_search_description = Search a document for what the find field h
 
 commands_rename_bulk_case = Change case
 
-commands_rename_bulk_case_description = The next case Rename several gives names, round the last; with a delta, that many steps along them, stopping at the ends
+# Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument.
+commands_rename_bulk_case_description = Choose the next case Rename several gives the names, back to the first after the last; with a `delta`, move that many cases along, stopping at the first or the last
 
 commands_rename_bulk_next = Next field
 
@@ -1691,7 +1700,7 @@ commands_rename_bulk_prompt_description = Rename the selected items together
 
 commands_rename_prompt = Rename…
 
-commands_rename_prompt_description = Rename the selected item, or a place as its location says
+commands_rename_prompt_description = Rename the selected item, or a place of the sidebar in the way its location renames it
 
 commands_reveal = Show in folder
 
@@ -1716,7 +1725,8 @@ commands_search_chip = Search pill's menu
 
 commands_search_chip_description = Open or close a search pill's menu
 
-commands_search_description = Search the folder shown and its subfolders from the address field, from a text; typed in, look below the folder
+# Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument.
+commands_search_description = Search the folder shown and its subfolders from the address field, starting from `text` where it is given; what is typed there is looked for below the folder
 
 commands_select_group = Select the group
 
@@ -1741,7 +1751,7 @@ commands_settings_exclusion_description = A key in the Exclusions page's list: w
 
 commands_settings_exclusion_item = Exclusions page menu item
 
-commands_settings_exclusion_item_description = What a Exclusions page row's menu does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one
+commands_settings_exclusion_item_description = What the menu of a row of the Exclusions page does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one
 
 # A window command's title: what a key does in the list of actions of the settings' Keyboard page.
 commands_settings_key = Keyboard page key
@@ -1927,7 +1937,7 @@ commands_toolbar_submenu_description = Open a submenu of the preview's More or t
 
 commands_undo_history = Undo history
 
-commands_undo_history_description = Open or close the history of what Undo can take back, above the footer's Undo: each action with its own Undo, an undone one's Redo, which take it back alone when nothing after it touched what it did, else name the action that did, and Undo with what came after (ADR-079, 13)
+commands_undo_history_description = Open or close the history of what Undo can take back, above the footer's Undo. Each action there has its own Undo, an undone one its own Redo, which takes it back alone when nothing done after it touched what it did; else the history names the action that did, and offers to undo it with those after it (ADR-079, 13)
 
 commands_up_button = Show the Up button
 
@@ -1972,17 +1982,17 @@ commands_zoom = Zoom
 commands_zoom_description = Size what the view sizes (tiles, rows, a map's scale): in, out or back
 
 count_files = { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }
 
 count_folders = { $count ->
-        [one] 1 folder
+        [one] { $count } folder
        *[other] { $count } folders
     }
 
 count_items = { $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }
 
@@ -1991,22 +2001,22 @@ deleting_already_gone = Already gone
 
 # Under what a deletion takes: what it holds in all, of which some could not be read or is on another drive.
 deleting_at_least_empty_folders = At least { $folders ->
-        [one] 1 empty folder
+        [one] { $folders } empty folder
        *[other] { $folders } empty folders
     }
 
 # Under what a deletion takes: what it holds in all, of which some could not be read or is on another drive.
 deleting_at_least_files = At least { $size } in { $files ->
-        [one] 1 file
+        [one] { $files } file
        *[other] { $files } files
     }
 
 # Under what a deletion takes: what it holds in all, of which some could not be read or is on another drive.
 deleting_at_least_files_folders = At least { $size } in { $files ->
-        [one] 1 file
+        [one] { $files } file
        *[other] { $files } files
     } and { $folders ->
-        [one] 1 folder
+        [one] { $folders } folder
        *[other] { $folders } folders
     }
 
@@ -2016,28 +2026,31 @@ deleting_counting = Counting…
 # Under what a deletion takes, while what it holds is counted: how much so far.
 deleting_counting_so_far = Counting… { $size } so far
 
-# When pointed at the mark after a name in what a deletion takes: the companion files deleted with it (its notes, its sidecars), one path a line.
-deleting_deleted_with = Deleted with it:
-    { $paths }
+# When pointed at the mark after a name in what a deletion takes: the companion files deleted with it (its notes, its sidecars), how many, then one path a line, as written.
+deleting_deleted_with = { $count ->
+        [one] Deleted with it:
+       *[other] Deleted with it:
+    }
+        { $paths }
 
 # Under what a deletion takes: what it holds in all.
 deleting_empty_folders = { $folders ->
-        [one] 1 empty folder
+        [one] { $folders } empty folder
        *[other] { $folders } empty folders
     }
 
 # Under what a deletion takes: what it holds in all.
 deleting_files = { $size } in { $files ->
-        [one] 1 file
+        [one] { $files } file
        *[other] { $files } files
     }
 
 # Under what a deletion takes: what it holds in all.
 deleting_files_folders = { $size } in { $files ->
-        [one] 1 file
+        [one] { $files } file
        *[other] { $files } files
     } and { $folders ->
-        [one] 1 folder
+        [one] { $folders } folder
        *[other] { $folders } folders
     }
 
@@ -2046,13 +2059,13 @@ deleting_folder = folder
 
 # On a folder's row of what a deletion takes: what it holds, of which some could not be read or is on another drive.
 deleting_folder_at_least = at least { $size } · { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }
 
 # On a folder's row of what a deletion takes, while what it holds is counted: how many files so far.
 deleting_folder_counting = { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }…
 
@@ -2061,7 +2074,7 @@ deleting_folder_empty = empty
 
 # On a folder's row of what a deletion takes: what it holds.
 deleting_folder_holds = { $size } · { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }
 
@@ -2086,13 +2099,13 @@ deleting_items = { $count ->
        *[other] Delete { $count } items permanently? This cannot be undone.
     }
 
-# Asked before deleting on a server that keeps what is deleted in a trash of its own; trash: that trash, as the server names it (Google Drive's trash).
+# Asked before deleting on a server that keeps what is deleted in a trash of its own; trash: that trash, as the server names it (Google Drive's trash), words said inside a sentence that carry their own determiner: add no article before it.
 deleting_kept = { $count ->
         [one] Delete { $count } item? It goes to { $trash }; Skwir cannot put it back.
        *[other] Delete { $count } items? They go to { $trash }; Skwir cannot put them back.
     }
 
-# Asked before deleting on a server that keeps what is deleted in a trash of its own; trash: that trash, as the server names it (Google Drive's trash).
+# Asked before deleting on a server that keeps what is deleted in a trash of its own; trash: that trash, as the server names it (Google Drive's trash), words said inside a sentence that carry their own determiner: add no article before it.
 deleting_kept_one = Delete { $name }? It goes to { $trash }; Skwir cannot put it back.
 
 # On a row of what a deletion takes: it is a link (the link goes, not what it leads to).
@@ -2113,8 +2126,11 @@ deleting_one = Delete { $name } permanently? This cannot be undone.
 # What a screen reader hears of a row of what a deletion takes, fact after fact: what it said so far (notes.txt), then the next (500 B).
 deleting_said_and = { $said }, { $fact }
 
-# What a screen reader hears of a row of what a deletion takes, after its name: the companion files deleted with it, by name. Begins in lower case.
-deleting_said_with = deleted with it: { $names }
+# What a screen reader hears of a row of what a deletion takes, after its name: how many companion files are deleted with it, and their names, a list. Begins in lower case.
+deleting_said_with = { $count ->
+        [one] deleted with it: { $names }
+       *[other] deleted with it: { $names }
+    }
 
 # On a row of what a deletion takes: the file's size, alone.
 deleting_size = { $size }
@@ -2217,7 +2233,7 @@ exclusions_already = Already in the list, in { $category }: Show it, rather than
 exclusions_asking_title = Let agents read these files and folders?
 
 # Under the folders a change on the Exclusions page would let agents read: what that means.
-exclusions_asking_why = An agent driving skwir, a plugin from outside skwir and a model could then list them and read what they hold.
+exclusions_asking_why = An agent driving Skwir, a plugin from outside Skwir and a model could then list them and read what they hold.
 
 # Beside a folder on the Exclusions page: a path that is not on this computer.
 exclusions_badge_absent = Not on this computer
@@ -2274,7 +2290,7 @@ exclusions_choose_folder = Choose folder…
 exclusions_copied = Copied { $folder }
 
 # Said on the Exclusions page after one of skwir's exclusions is duplicated. folder: as its row writes it.
-exclusions_copied_builtin = Copied { $folder }: the copy is yours to edit, skwir's is unticked
+exclusions_copied_builtin = Copied { $folder }: the copy is yours to edit, Skwir's is unticked
 
 # The answer of the dialog that makes a category on the Exclusions page.
 exclusions_create = Create
@@ -2352,22 +2368,44 @@ exclusions_found = { $count ->
     }
 
 # After a category's name on the Exclusions page: how many of its folders are excluded from the role chosen (kept), of all it holds (total).
-exclusions_heading_count = { $kept } of { $total } excluded
+exclusions_heading_count = { $kept ->
+        [one] { $kept } of { $total } excluded
+       *[other] { $kept } of { $total } excluded
+    }
 
 # After a category's name on the Exclusions page: how many of its folders the filters find (shown), of all it holds (total), then how many are excluded from the role chosen (kept).
-exclusions_heading_count_found = { $shown } found of { $total } · { $kept } excluded
+exclusions_heading_count_found = { $shown ->
+        [one] { $shown } found
+       *[other] { $shown } found
+    } of { $total } · { $kept ->
+        [one] { $kept } excluded
+       *[other] { $kept } excluded
+    }
 
 # After a category's name on the Exclusions page: how many of its folders are on this computer (shown), of all it holds (total), then how many are excluded from the role chosen (kept).
-exclusions_heading_count_here = { $shown } here of { $total } · { $kept } excluded
+exclusions_heading_count_here = { $shown } here of { $total } · { $kept ->
+        [one] { $kept } excluded
+       *[other] { $kept } excluded
+    }
 
 # What a screen reader hears of a category's heading on the Exclusions page: its name, how many of its folders are excluded from the role (kept) of all (total); where fewer are shown, how many are on this computer or found (shown); folded where it is.
-exclusions_heading_said = { $name }, { $kept } of { $total } { $role ->
-        [searches] excluded from searches and tags
-        [agents] excluded from agents
-       *[index] excluded from the index
+exclusions_heading_said = { $name }, { $kept ->
+        [one] { $kept } of { $total } { $role ->
+            [searches] excluded from searches and tags
+            [agents] excluded from agents
+           *[index] excluded from the index
+        }
+       *[other] { $kept } of { $total } { $role ->
+            [searches] excluded from searches and tags
+            [agents] excluded from agents
+           *[index] excluded from the index
+        }
     }{ $narrowed ->
         [here] , { $shown } here
-        [found] , { $shown } found
+        [found] , { $shown ->
+            [one] { $shown } found
+           *[other] { $shown } found
+        }
        *[all] {""}
     }{ $folded ->
         [yes] , folded
@@ -2489,7 +2527,7 @@ exclusions_names_folders = Folders
 exclusions_names_named = Excludes
 
 # Said on the Exclusions page where Remove is asked of one of skwir's exclusions.
-exclusions_never_removed = skwir's own exclusions are unticked, never removed
+exclusions_never_removed = Skwir's own exclusions are unticked, never removed
 
 # A button of the Exclusions page: opens the dialog that makes a category of the user's.
 exclusions_new_category = New category…
@@ -2498,7 +2536,7 @@ exclusions_new_category = New category…
 exclusions_new_category_title = New category
 
 # The Exclusions page's list with Changed checked, when nothing differs from skwir's.
-exclusions_none_changed = You changed none of skwir's exclusions and added none yet.
+exclusions_none_changed = You changed none of Skwir's exclusions and added none yet.
 
 # The Exclusions page's list when it lists nothing.
 exclusions_none_here = No exclusions here.
@@ -2519,10 +2557,10 @@ exclusions_path_and_all = { $path } and all it holds
 exclusions_pattern_placeholder = ~/VMs, node_modules, cmake-build-*, regex:…
 
 # On the Privacy page of the settings, the way to the Exclusions page: how many exclusions are kept from agents.
-exclusions_privacy = What agents, plugins from outside skwir and models never see: { $count ->
+exclusions_privacy = What agents, plugins from outside Skwir and models never see: { $count ->
         [one] { $count } exclusion
        *[other] { $count } exclusions
-    }, skwir's secrets and yours.
+    }, Skwir's secrets and yours.
 
 # A button of the Privacy page of the settings: opens the Exclusions page on what agents never see.
 exclusions_privacy_open = Exclusions…
@@ -2537,10 +2575,10 @@ exclusions_rename = Rename
 exclusions_rename_category_title = Rename category
 
 # Said on the Exclusions page after one of skwir's exclusions is reset. folder: as its row writes it.
-exclusions_reset = { $folder } is back as skwir ships it
+exclusions_reset = { $folder } is back as Skwir ships it
 
 # The tooltip of a changed row's revert button on the Exclusions page.
-exclusions_reset_tooltip = Reset: back as skwir ships it
+exclusions_reset_tooltip = Reset: back as Skwir ships it
 
 # On the Exclusions page of the settings, a segment of the picker after Excluded from: the folders kept from agents, plugins from outside skwir and models.
 exclusions_role_agents = Agents
@@ -2567,14 +2605,14 @@ exclusions_switch_named = { $category } { $role ->
        *[index] excluded from the index
     }
 
-# Said on the Exclusions page after a category is switched off for the role chosen. category: its name.
+# Said on the Exclusions page after a category is switched off for the role chosen. category: its name, whose gender is not known: where words would agree with it, say it so they need not (an exclusion switched off).
 exclusions_switched_off = { $category }: no longer { $role ->
         [searches] excluded from searches and tags
         [agents] excluded from agents
        *[index] excluded from the index
     }
 
-# Said on the Exclusions page after a category is switched on for the role chosen. category: its name.
+# Said on the Exclusions page after a category is switched on for the role chosen. category: its name, whose gender is not known: where words would agree with it, say it so they need not (an exclusion switched on).
 exclusions_switched_on = { $category }: { $role ->
         [searches] excluded from searches and tags
         [agents] excluded from agents
@@ -2598,11 +2636,17 @@ exclusions_ticked_off = Ticked { $folder }; its category is off for { $role ->
 # The tooltip of a folded category's heading on the Exclusions page.
 exclusions_unfold = Unfold
 
-# Above the Exclusions page's list: what the settings hold of the exclusions that cannot be read. problems: each, where it is and why.
-exclusions_unreadable = Not applied, as it cannot be read: { $problems }
+# Above the Exclusions page's list: what the settings hold of the exclusions and categories that cannot be read. count: how many; problems: a list, each where it is and why, the first few then how many more.
+exclusions_unreadable = { $count ->
+        [one] Not applied, as it cannot be read: { $problems }
+       *[other] Not applied, as they cannot be read: { $problems }
+    }
 
-# Above the Exclusions page's list: what the settings hold of the exclusions that cannot be read. problems: the first few, each where it is and why; more: how many others.
-exclusions_unreadable_more = Not applied, as it cannot be read: { $problems } (and { $more } more)
+# The last item of the list of exclusions that cannot be read, above the Exclusions page's list, after the first few: how many others (a, b, c and 2 more).
+exclusions_unreadable_others = { $count ->
+        [one] { $count } more
+       *[other] { $count } more
+    }
 
 # Said on the Exclusions page after a folder is unticked. folder: as its row writes it.
 exclusions_unticked = { $folder } is no longer { $role ->
@@ -3049,13 +3093,13 @@ inspector_jump = Jump to byte offset
 
 # In a text preview's bar: how many lines the file has.
 inspector_lines = { $count ->
-        [one] 1 line
+        [one] { $count } line
        *[other] { $count } lines
     }
 
 # In a text preview's bar while a large file's lines are counted: how many so far.
 inspector_lines_so_far = { $count ->
-        [one] 1 line
+        [one] { $count } line
        *[other] { $count } lines
     }…
 
@@ -3231,7 +3275,7 @@ keymap_key_tab = Tab
 # Where keys work: a condition that must not hold (not in the trash); condition: the condition.
 keymap_not = not { $condition }
 
-keymap_place_about = About skwir
+keymap_place_about = About Skwir
 
 # A place in the window: the panel of the copies, moves and other work going on.
 keymap_place_activity = Activity
@@ -3389,7 +3433,7 @@ keys_heading_change = { $keys } for “{ $action }” · { $place }
 keys_heading_find = Find the actions of a key
 
 # The heading of the Keyboard page's bar: action's keys as skwir ships them, in place.
-keys_heading_reset = Back to skwir's keys for “{ $action }” · { $place }
+keys_heading_reset = Back to Skwir's keys for “{ $action }” · { $place }
 
 # The heading of the Keyboard page's bar: keys of skwir's (Ctrl+Q) a shortcut of the user's took from action (Quit), in place.
 keys_heading_restore = { $keys } no longer runs “{ $action }” · { $place }
@@ -3504,13 +3548,13 @@ keys_press_to_find = Press the keys to find…
 keys_remove = Remove these keys
 
 # Said in the Keyboard page's bar before an action's keys go back to those skwir ships.
-keys_reset_detail = Its keys go back to skwir's, and your shortcuts that took them go.
+keys_reset_detail = Its keys go back to Skwir's, and your shortcuts that took them go.
 
 # A button of the Keyboard page's bar: an action's keys as skwir ships them.
-keys_reset_save = Back to skwir's keys
+keys_reset_save = Back to Skwir's keys
 
 # The tooltip of a row's revert button on the Keyboard page: its action's keys as skwir ships them.
-keys_reset_tip = Back to skwir's keys
+keys_reset_tip = Back to Skwir's keys
 
 # A button of the Keyboard page's bar: keys of skwir's run their action again.
 keys_restore = Restore
@@ -3592,8 +3636,8 @@ links_inside_missing = { $container } holds no “{ $path }”
 # A link of a document inside an archive; container: the archive's name.
 links_inside_out = This link leads out of { $container }
 
-# A link of a document inside an archive; container: the archive's name.
-links_inside_unlisted = This link names a file inside { $container }
+# A link of a document inside an archive, followed where the archive's files are not listed above the document; container: the archive's name.
+links_inside_unlisted = This link names a file inside { $container }, whose files are not listed here to follow it
 
 # A link names a place in a document that has none of that name; file: the document's name; anchor: the place's name, as the link writes it.
 links_no_anchor = { $file } has no “#{ $anchor }”
@@ -3699,7 +3743,7 @@ loading_location = Loading location…
 
 # A banner above a folder being read: how many of its items were read so far.
 loading_location_read = Loading location… { $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }
 
@@ -3723,13 +3767,13 @@ map_file_tiles_failed = This file's map tiles could not be read: { $error }
 
 # What a screen reader hears a map holds: its areas (shapes drawn filled).
 map_holds_areas = { $count ->
-        [one] 1 area
+        [one] { $count } area
        *[other] { $count } areas
     }
 
 # What a screen reader hears a map holds: its lines (tracks, routes).
 map_holds_lines = { $count ->
-        [one] 1 line
+        [one] { $count } line
        *[other] { $count } lines
     }
 
@@ -3738,7 +3782,7 @@ map_holds_nothing = Nothing with a position
 
 # What a screen reader hears a map holds: its places (points).
 map_holds_places = { $count ->
-        [one] 1 place
+        [one] { $count } place
        *[other] { $count } places
     }
 
@@ -3829,8 +3873,14 @@ map_view_placed_without = { $placed ->
        *[other] { $placed } files placed
     } · { $without } without a position
 
-# The Map view's header while it reads where the folder's files were made. placed: how many it put on the map; candidates: how many pictures and tracks it reads; looked: how many it has read.
-map_view_placing = Placing… { $placed } of { $candidates } pictures and tracks looked at so far: { $looked }
+# The Map view's header while it reads where the folder's files were made. placed: how many it put on the map so far; looked: how many of the pictures and tracks it reads it has read; candidates: how many it reads in all.
+map_view_placing = Placing… { $placed ->
+        [one] { $placed } file placed
+       *[other] { $placed } files placed
+    } · { $looked ->
+        [one] { $looked } of { $candidates } looked at
+       *[other] { $looked } of { $candidates } looked at
+    }
 
 # The button of the Map view's placeholder: look for pictures and tracks in the folders inside too.
 map_view_search_subfolders = Search the subfolders
@@ -3895,11 +3945,14 @@ media_unmute = Unmute
 # A player's speaker button, as a menu's row names it: it opens the player's volume.
 media_volume = Volume
 
-# Pointing at a player's speaker button: how loud it plays (80 %).
-media_volume_level = Volume · { $level }
+# Pointing at a player's speaker button: how loud it plays, in percent (80%).
+media_volume_level = Volume · { $percent }%
 
 # Pointing at a player's speaker button while its sound is muted.
 media_volume_muted = Volume · muted
+
+# Over a player's volume slider, and what a screen reader hears of it: how loud it plays, in percent (80%).
+media_volume_percent = { $percent }%
 
 menu_close_tab = Close Tab
 
@@ -4014,7 +4067,7 @@ model_said = 3D model: { $name }
 
 # What a screen reader hears of the preview of a 3D model: how many triangles its shape has, then what its keys do.
 model_said_holds = { $count ->
-        [one] 1 triangle
+        [one] { $count } triangle
        *[other] { $count } triangles
     }. Arrows turn it, Shift and the arrows move it, the zoom keys zoom it, Ctrl+0 shows it as it opened
 
@@ -4069,6 +4122,12 @@ omnibox_depth_here_label = This folder
 # The address field's card: the search runs once Enter is pressed.
 omnibox_enter_searches = Enter searches
 
+# Under the address field's list, nothing typed: what it takes; > begins a command's name.
+omnibox_footer_nothing = A path (/ or ~), a place, or words to filter; > for a command.
+
+# Under the address field's list, nothing typed: what it takes; keys: the key that searches the folders below; > begins a command's name.
+omnibox_footer_nothing_keys = A path (/ or ~), a place, or words to filter; { $keys } searches below; > for a command.
+
 # Under the address field's list while a scope is typed (@).
 omnibox_footer_scope = Enter searches there.
 
@@ -4114,9 +4173,6 @@ omnibox_help_words = Search where the scope says; they filter the folder at once
 # A row of what the address field takes, in place of an example: any words typed.
 omnibox_help_words_label = words
 
-# A hint under the address field's list: > begins a command's name.
-omnibox_hint_command = > for a command
-
 # A hint under the address field's list; keys: the key that completes what is typed (Tab).
 omnibox_hint_completes = { $keys } completes
 
@@ -4135,22 +4191,16 @@ omnibox_hint_opens = { $keys } opens a file
 # A hint under the address field's list while words are typed.
 omnibox_hint_searches = Enter searches
 
-# A hint under the address field's list; keys: the key that searches the folders below.
-omnibox_hint_searches_below = { $keys } searches below
-
 # A hint under the address field's list while a path is typed; keys: the key that searches the folder named.
 omnibox_hint_searches_folder = { $keys } on a folder searches in it
-
-# A hint under the address field's list, nothing typed: what it takes.
-omnibox_hint_takes = A path (/ or ~), a place, or words to filter
-
-# A hint after Enter writes it: the key named (Tab) writes it too.
-omnibox_hint_too = { $keys } too
 
 # A hint under the list of what the address field takes: Enter writes the example.
 omnibox_hint_writes = Enter writes it
 
-# The line under the address field's list: what the keys do, each hint apart.
+# A hint under the list of what the address field takes: Enter, or the key named (Tab), writes the example.
+omnibox_hint_writes_or = Enter or { $keys } writes it
+
+# The line under the address field's list: what the keys do, a list of hints (Tab completes, Ctrl+O opens a file and Escape goes back).
 omnibox_hints = { $hints }.
 
 # At the end of the highlighted row of the address field's list: Enter runs it, and the key that completes it (Tab).
@@ -4218,11 +4268,11 @@ omnibox_token_filtering = Filtering { $scope }
 # What a screen reader calls the token before the address field's text while words search a place and its folders; scope: the place.
 omnibox_token_searching = Searching { $scope } and below
 
-# Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken), a list.
-omnibox_waits = { $what } need a search.
+# Under the address field's list while words filter: what they name that only a search can tell, a list (what files contain, when pictures were taken: query_waits_*).
+omnibox_waits = Only a search can tell { $what }.
 
-# Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), a list, and the key that searches.
-omnibox_waits_keys = { $what } need a search: { $keys }.
+# Under the address field's list while words filter a folder: what they name that only a search can tell, a list (what files contain, when pictures were taken: query_waits_*), and the key that searches.
+omnibox_waits_keys = Only a search can tell { $what }: { $keys }.
 
 # Where a search looks, the root of the file system: every folder.
 omnibox_whole_disk = Whole disk
@@ -4236,7 +4286,7 @@ outline_empty = No contents
 # A button of the drawer of a preview's contents: keep it open from file to file.
 outline_pin = Keep contents open
 
-palette_about = About skwir
+palette_about = About Skwir
 
 # The label before the palette's field while it asks for an argument; command: the command's name; argument: the argument's name (both identifiers).
 palette_asks = { $command } · { $argument }
@@ -4570,8 +4620,8 @@ placeholder_up = Go to the parent folder
 # A button: stop working out the changes a command would make.
 planning_cancel = Cancel
 
-# Said while a command works out the changes it will make before they are shown; command: its title (Copy, Extract Here).
-planning_working_out = Working out what { $command } does…
+# Said while a command works out the changes it will make before they are shown; command: its title (Copy, Extract Here), as a label before what happens, never the subject of a verb.
+planning_working_out = { $command }: working out the changes…
 
 # The player was asked to play a file no player of this system takes.
 player_cannot_play = This track cannot be played here
@@ -4636,8 +4686,17 @@ preview_count_by = Count by
 # The button and the title of the choices of how long a slideshow shows each picture (5 s), which follow it.
 preview_each_picture_for = Each picture for
 
-# A fact on the preview's card (its type, its size, its date), before the next one.
-preview_fact_then = { $fact } ·
+# The facts on the preview's card under the file's name: its type, its size, when it last changed (PDF document · 1.2 MB · Today 14:02). Each fact is drawn apart, with what follows it up to the next, and the line wraps only between them.
+preview_facts = { $type_name } · { $size } · { $date }
+
+# The facts on the preview's card under the file's name: its size and when it last changed (1.2 MB · Today 14:02). Each fact is drawn apart, the line wrapping only between them.
+preview_facts_size_date = { $size } · { $date }
+
+# The facts on the preview's card under the file's name: its type and when it last changed (Folder · Today 14:02). Each fact is drawn apart, the line wrapping only between them.
+preview_facts_type_date = { $type_name } · { $date }
+
+# The facts on the preview's card under the file's name: its type and its size (PDF document · 1.2 MB). Each fact is drawn apart, the line wrapping only between them.
+preview_facts_type_size = { $type_name } · { $size }
 
 # A preview's button: find words in what it shows.
 preview_find = Find
@@ -4705,7 +4764,10 @@ preview_nothing_shows = Nothing shows this file
 # Said where peek (the preview over the window) is asked with no file under the cursor.
 preview_nothing_to_peek = nothing to peek at
 
-# After the page or chapter shown, between a preview's previous and next buttons: how many there are (3 / 12).
+# The page or chapter shown, between a preview's previous and next buttons: its number (3).
+preview_number = { $number }
+
+# After the page or chapter shown, between a preview's previous and next buttons: how many there are (3 / 12), or the last page's name as the document prints it (iv / 212).
 preview_of_total = / { $total }
 
 # A preview's menu row: open the file in the application the desktop opens it with.
@@ -4792,8 +4854,11 @@ preview_stand_in_twice = { $name } is listed twice
 # A preview's menu row, opening the setting that names the files a folder's preview shows (README, cover).
 preview_stand_ins = Files shown for folders…
 
-# Why a picture is not previewed: it has more pixels than a preview draws. size: its width by its height (8193 × 8193).
-preview_too_many_pixels = Too large to preview ({ $size } pixels, more than { $megapixels } megapixels)
+# Why a picture is not previewed: it has more pixels than a preview draws. width, height: its size in pixels (8193 × 8193); megapixels: the most a preview draws.
+preview_too_many_pixels = Too large to preview ({ $width } × { $height } pixels, more than { $megapixels ->
+        [one] { $megapixels } megapixel
+       *[other] { $megapixels } megapixels
+    })
 
 # A preview's button: turn a 3D model in its view, instead of its still picture.
 preview_turn = 3D
@@ -4858,8 +4923,17 @@ preview_zoom_percent = { $percent }%
 # On a preview's zoom button, where a percentage would be: the picture or page fits the width.
 preview_zoom_width = Width
 
-# The length of a planned route (not a recorded track), on its altitude chart: 12.4 km planned.
+# A distance along a track, on its altitude chart (12.4 km); km is the kilometre's symbol.
+profile_distance_kilometres = { $kilometres } km
+
+# A distance along a track, on its altitude chart, under a kilometre (640 m); m is the metre's symbol.
+profile_distance_metres = { $metres } m
+
+# The length of a planned route (not a recorded track), on its altitude chart: 12.4 km planned. length: a distance with its unit, which chooses no plural: where a word would agree with it, say it so it need not (planned: 12.4 km).
 profile_length_planned = { $length } planned
+
+# An altitude on a track's altitude chart, in metres (812 m); m is the metre's symbol.
+profile_metres = { $metres } m
 
 # Pointing at a track's altitude chart: how far along the track (2.4 km), then the altitude there (812 m).
 profile_readout = { $along } · { $altitude }
@@ -5029,7 +5103,7 @@ properties_contains = Contains
 # What a folder holds, in Properties' Contains: it is empty.
 properties_contains_nothing = Nothing
 
-# Said as a row of Properties is clicked: what it said was copied. what: the row's label (path, size).
+# Said as a row of Properties is clicked: what it said was copied. what: the row's label as it is shown, quoted (“Path”, “Size”), whose gender is not known: where a word would agree with it, say it so none need (the value of “Size” copied).
 properties_copied = Copied { $what }
 
 # A link after a web address in Properties: copy it.
@@ -5082,9 +5156,9 @@ properties_drive_read_only = The drive is read-only
 
 # In Properties: how many drives are mounted inside the folder, left out of what it holds.
 properties_drives_inside = { $count ->
-        [one] 1 drive
-       *[other] { $count } drives
-    } mounted inside
+        [one] { $count } drive mounted inside
+       *[other] { $count } drives mounted inside
+    }
 
 # In Properties, with several items selected: why who may use them cannot be changed.
 properties_drives_read_only = A drive they are on is read-only
@@ -5105,10 +5179,10 @@ properties_exact_size = { $size } ({ $bytes ->
 
 # In Properties: how many files, then how many folders.
 properties_files_and_folders = { $files ->
-        [one] 1 file
+        [one] { $files } file
        *[other] { $files } files
     }, { $folders ->
-        [one] 1 folder
+        [one] { $folders } folder
        *[other] { $folders } folders
     }
 
@@ -5117,10 +5191,10 @@ properties_folder = Folder
 
 # In Properties: how many folders, then how many files.
 properties_folders_and_files = { $folders ->
-        [one] 1 folder
+        [one] { $folders } folder
        *[other] { $folders } folders
     }, { $files ->
-        [one] 1 file
+        [one] { $files } file
        *[other] { $files } files
     }
 
@@ -5270,7 +5344,7 @@ properties_pages = Pages
 
 # A folded heading of Properties: how many pages a document has.
 properties_pages_gist = { $count ->
-        [one] 1 page
+        [one] { $count } page
        *[other] { $count } pages
     }
 
@@ -5355,15 +5429,15 @@ properties_stop_running = Stop running
 # A row's label in Properties: a film's subtitles (their languages).
 properties_subtitles = Subtitles
 
-# Under a value in Properties: a model suggested it, by its name, and how sure it is (80%).
-properties_suggested_by = suggested by { $model } · { $confidence }
+# Under a value in Properties: a model suggested it, by its name, and how sure it is, in percent (80%). The value's gender is not known: where a word would agree with it, choose one that need not (a suggestion of).
+properties_suggested_by = suggested by { $model } · { $confidence }%
 
 # A row's label in Properties: the file's tags.
 properties_tags = Tags
 
 # Inside the title of what changes who may use what is selected: how many items.
 properties_target_items = { $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }
 
@@ -5381,18 +5455,21 @@ properties_unknown = Unknown
 
 # In Properties: how many folders inside could not be read, while what a folder holds was counted.
 properties_unlisted = { $count ->
-        [one] 1 folder
-       *[other] { $count } folders
-    } could not be listed
+        [one] { $count } folder could not be listed
+       *[other] { $count } folders could not be listed
+    }
 
 # In Properties: how many items inside could not be read, while what a folder holds was counted.
 properties_unread = { $count ->
-        [one] 1 item
-       *[other] { $count } items
-    } could not be read
+        [one] { $count } item could not be read
+       *[other] { $count } items could not be read
+    }
 
 # A row's label in Properties: what of a folder could not be counted.
 properties_unreadable = Unreadable
+
+# The value of a field of a file that holds several, in Properties' More: each as the field says it, joined as a list.
+properties_value_list = { $items }
 
 # The value of a field of a file that is yes or no, in Properties' More.
 properties_yes = Yes
@@ -5527,7 +5604,7 @@ quick_filters_only_folders = No files here, only folders
 
 # The Quick filters bar, while it reads what the files' tags, kinds and dates are.
 quick_filters_reading = Reading the details of { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }…
 
@@ -5542,6 +5619,12 @@ reader_find_field = Find in document…
 
 # Drawn in place of a document's page whose picture the reader gave cannot be shown.
 reader_invalid_bitmap = invalid document bitmap
+
+# Under a document's find field: which match is shown, of how many (3 / 12).
+reader_match_of = { $at } / { $count }
+
+# Under a document's find field: which match is shown, of how many, where the search stopped at the most it finds (3 / 1,000+).
+reader_match_of_most = { $at } / { $count }+
 
 # A document preview's button.
 reader_next_page = Next page
@@ -5972,17 +6055,17 @@ settings_buttons_for_views = Show view buttons
 # What a setting kept as data holds, for agents and scripts: true, false, list, grid and columns are as written.
 settings_buttons_for_views_data = The views given a button beside the address (true) or whose button was taken away (false), by id; any other has a button if it shows the files as they are listed (list, grid, columns)
 
-settings_buttons_for_views_description = Show a button for each view beside the address: list, grid, columns, and any other given one from the buttons' menu.
+settings_buttons_for_views_description = Show a button for each view beside the address: list, grid, columns, and any other view given a button in the buttons' menu.
 
 # What a setting's description says after its first sentence, in its tooltip.
-settings_buttons_for_views_description_more = Off, one button stands for them, the view shown, and opens the View menu, as in a pane too narrow for them; its right-click still chooses the buttons.
+settings_buttons_for_views_description_more = Off, one button stands for them all: it shows the view shown and opens the View menu, as in a pane too narrow for them; a right-click on it still chooses the buttons.
 
 settings_cards = Cards
 
-settings_cards_description = Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines.
+settings_cards_description = Draw the panes, the preview's parts and the terminal as cards on the window's frame, set apart by a gutter rather than by lines.
 
 # What a setting's description says after its first sentence, in its tooltip.
-settings_cards_description_more = The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.
+settings_cards_description_more = The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's top row is underlined and the other pane is a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are set apart by lines, as in earlier versions.
 
 # A setting's default choice as a screen reader names it, with what it comes to here and now: Automatic, now Dark.
 settings_choice_now_said = { $choice }, now { $now }
@@ -6001,15 +6084,15 @@ settings_code_appearance = Light or dark
 settings_code_appearance_description = Draw source files and code in documents light or dark.
 
 # Automatic, Light and Dark are the setting's choices.
-settings_code_appearance_description_more = Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.
+settings_code_appearance_description_more = Automatic follows Skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever Skwir looks like.
 
 settings_code_dark_theme = Dark theme
 
 # Light or dark is the name of another setting, Dark one of its choices.
-settings_code_dark_theme_description = The colors of source files and of code in documents when code is dark: while skwir is dark, or always when Light or dark above says Dark.
+settings_code_dark_theme_description = The colors of source files and of code in documents when code is drawn dark: while Skwir looks dark, or always when Light or dark above is set to Dark.
 
 # Default is a choice of the setting; Colors from is the name of another setting; bat is a program's name.
-settings_code_dark_theme_description_more = Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its dark background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
+settings_code_dark_theme_description_more = Default is the code theme of the palette Colors from chooses, where it has one for that look, else Skwir's own, on its dark background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
 
 settings_code_engine = Automatic uses
 
@@ -6024,15 +6107,15 @@ settings_code_font = Code font
 settings_code_font_description = The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width.
 
 # Fonts from is the name of another setting.
-settings_code_font_description_more = Automatic is your desktop's monospace font, as Fonts from reads it, else skwir's own.
+settings_code_font_description_more = Automatic is your desktop's monospace font, as Fonts from reads it, else Skwir's own.
 
 settings_code_light_theme = Light theme
 
 # Light or dark is the name of another setting, Light one of its choices.
-settings_code_light_theme_description = The colors of source files and of code in documents when code is light: while skwir is light, or always when Light or dark above says Light.
+settings_code_light_theme_description = The colors of source files and of code in documents when code is drawn light: while Skwir looks light, or always when Light or dark above is set to Light.
 
 # Default is a choice of the setting; Colors from is the name of another setting; bat is a program's name.
-settings_code_light_theme_description_more = Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its light background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
+settings_code_light_theme_description_more = Default is the code theme of the palette Colors from chooses, where it has one for that look, else Skwir's own, on its light background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.
 
 settings_code_text_size = Code text size
 
@@ -6046,20 +6129,20 @@ settings_code_theme_more = the themes you added to bat
 
 settings_colors_from = Colors from
 
-settings_colors_from_description = Where skwir takes its colors: your desktop's, or one of skwir's palettes.
+settings_colors_from_description = Where Skwir takes its colors: your desktop's, or one of Skwir's palettes.
 
 # Plasma, LXQt, Omarchy, GNOME, MATE, Cinnamon, Xfce, Noctalia, Caelestia and Dux Shell are desktops' names; qt6ct, qt5ct, qtengine and hyprqt6engine programs'.
 settings_colors_from_description_more = Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, Omarchy's theme, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's colors (its theme, with your own GTK style sheet over it, where a desktop shell such as Noctalia, Caelestia or Dux Shell writes its colors), else the color scheme of qt6ct, qt5ct, qtengine or hyprqt6engine; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen.
 
-settings_colors_from_macos = Where skwir takes its colors: macOS's, or one of skwir's palettes.
+settings_colors_from_macos = Where Skwir takes its colors: macOS's, or one of Skwir's palettes.
 
 # Increase contrast is as macOS names its setting.
 settings_colors_from_macos_more = Automatic wears the colors macOS draws its own windows in, with the accent you chose and its Increase contrast. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. Increase contrast is followed whatever is chosen.
 
-settings_colors_from_windows = Where skwir takes its colors: Windows' accent, or one of skwir's palettes.
+settings_colors_from_windows = Where Skwir takes its colors: Windows' accent, or one of Skwir's palettes.
 
 # What a setting's description says after its first sentence, in its tooltip.
-settings_colors_from_windows_more = Automatic wears skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen.
+settings_colors_from_windows_more = Automatic wears Skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen.
 
 settings_contents_pinned = Keep contents open
 
@@ -6147,10 +6230,10 @@ settings_folder_preview_add_name = Add name
 
 settings_folder_preview_file = Show a README or a cover
 
-settings_folder_preview_file_description = In the preview, show a folder by the file that says what it holds: its README, or the cover of an album or of a photo folder.
+settings_folder_preview_file_description = In the preview, show a folder by a file in it that says what it holds: its README, or the cover of an album or of a folder of photos.
 
 # What a setting's description says after its first sentence, in its tooltip.
-settings_folder_preview_file_description_more = The first of the names below that it holds is shown. Its card, its count and its Properties stay the folder's; the × leaves the file for the folder's count. Off, a folder's preview says how many items it holds.
+settings_folder_preview_file_description_more = The file shown is the first of the names below that the folder holds. The card, the count and Properties stay the folder's; the × leaves the file and shows the folder's count. Off, a folder's preview says how many items it holds.
 
 # A field of a file's name a folder's preview looks for.
 settings_folder_preview_name = Name
@@ -6166,10 +6249,10 @@ settings_folder_preview_names_description_more = Letter case is ignored. A folde
 
 settings_font = Font
 
-settings_font_description = The font of skwir's menus, lists, bars and dialogs.
+settings_font_description = The font of Skwir's menus, lists, bars and dialogs.
 
 # Fonts from is the name of another setting; Inter is a font's name.
-settings_font_description_more = Automatic is your desktop's, as Fonts from reads it, else skwir's own, Inter.
+settings_font_description_more = Automatic is your desktop's, as Fonts from reads it, else Skwir's own, Inter.
 
 # Said by settings.check of a value it does not know: it may be among the fonts installed.
 settings_font_more = the fonts installed
@@ -6179,7 +6262,7 @@ settings_font_not_drawn = This font cannot be drawn
 
 settings_fonts_from = Fonts from
 
-settings_fonts_from_description = Where skwir reads the fonts a font setting's Automatic writes in, and their sizes.
+settings_fonts_from_description = Where Skwir reads the fonts a font setting's Automatic writes in, and their sizes.
 
 # What Automatic comes to here, after the setting's description. font: a font's family; points: its size in points (10.5); from: where it was read, a desktop's or a toolkit's name (Plasma, GTK).
 settings_fonts_from_now_read = Now { $font } at { $points } pt, sizes read from { $from }.
@@ -6188,22 +6271,22 @@ settings_fonts_from_now_read = Now { $font } at { $points } pt, sizes read from 
 settings_fonts_from_now_usual = Now { $font } at { $points } pt, the system's usual size, as no desktop names one.
 
 # Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_system = Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.
+settings_fonts_from_system = Automatic is the system font, at the size its applications write in; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size.
 
 # now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_system_now = Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }
+settings_fonts_from_system_now = Automatic is the system font, at the size its applications write in; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size. { $now }
 
 # Inter and JetBrains Mono are fonts' names; Skwir's own, GTK and Qt are the setting's choices.
-settings_fonts_from_toolkits = Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts.
+settings_fonts_from_toolkits = Automatic reads your desktop's own settings, else GTK's, else Qt's. Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the sizes Automatic reads. GTK or Qt reads that toolkit's settings alone, for when the two name different fonts.
 
 # now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Inter and JetBrains Mono are fonts' names; Skwir's own, GTK and Qt are the setting's choices.
-settings_fonts_from_toolkits_now = Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts. { $now }
+settings_fonts_from_toolkits_now = Automatic reads your desktop's own settings, else GTK's, else Qt's. Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the sizes Automatic reads. GTK or Qt reads that toolkit's settings alone, for when the two name different fonts. { $now }
 
 # Text size and Accessibility are as Windows names them; Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_windows = Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.
+settings_fonts_from_windows = Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size.
 
 # now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Text size and Accessibility are as Windows names them; Inter and JetBrains Mono are fonts' names.
-settings_fonts_from_windows_now = Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }
+settings_fonts_from_windows_now = Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size. { $now }
 
 # The caption over settings found or changed: the page they are on, then their section.
 settings_found_on = { $page } › { $section }
@@ -6273,7 +6356,10 @@ settings_grammar_folders_description = Each folder Skwir read for tree-sitter gr
 settings_grammar_folders_description_more = What was nearly found comes first, each saying what to do: a repository a folder too deep, a library with no queries to color with, a folder the tree-sitter CLI's configuration names that is not there.
 
 # A list's title on the Reading page: count is how many grammars were nearly found, listed first.
-settings_grammar_folders_nearly = Where grammars were looked for: { $count } nearly found
+settings_grammar_folders_nearly = Where grammars were looked for: { $count ->
+        [one] { $count } nearly found
+       *[other] { $count } nearly found
+    }
 
 # What a setting kept as data holds, for agents and scripts: bat, plain, skwir, tree-sitter, zed, helix, neovim, system and emacs are its values, as written.
 settings_grammar_for_data = What colors each language chosen on the Reading page: a language's name, in lower case, to bat, plain, or where its tree-sitter grammar was found (skwir, tree-sitter, zed, helix, neovim, system, emacs)
@@ -6287,17 +6373,23 @@ settings_grammar_gone_plain = { $detail } · Plain text chosen is not here: Auto
 # A language's line on the Reading page: detail is what it says before (the files it colors), source where the grammar chosen was found (Zed, Helix), which is gone, so Automatic colors it.
 settings_grammar_gone_tree = { $detail } · { $source }'s grammar chosen is not here: Automatic
 
-# A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), languages the languages it held, as their grammars name them.
+# A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), languages the languages it held, a list, as their grammars name them.
 settings_grammar_held_languages = { $source }: { $languages }
 
-# A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), count how many languages it held, languages the first of them, as their grammars name them, more how many others.
+# A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), count how many languages it held, languages a list of the first of them, as their grammars name them, then how many more.
 settings_grammar_held_more = { $source }: { $count ->
         [one] { $count } language
        *[other] { $count } languages
-    }: { $languages } and { $more } more
+    }: { $languages }
 
 # A folder where grammars were looked for, which held none: source is whose folder it is (Zed, tree-sitter CLI).
 settings_grammar_held_nothing = { $source }: nothing
+
+# The last item of the languages a folder of grammars held, after the first few by name: how many others (rust, python and 12 more).
+settings_grammar_held_others = { $count ->
+        [one] { $count } more
+       *[other] { $count } more
+    }
 
 # What was nearly found where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), said what is wrong with it and what to do.
 settings_grammar_nearly = { $source }: { $said }
@@ -6305,7 +6397,7 @@ settings_grammar_nearly = { $source }: { $said }
 # An error of ui.grammar_choose, asked with no language.
 settings_grammar_no_language = No language is named
 
-# Said of a source of grammars on the Reading page (Zed, the tree-sitter CLI): folders are the folders it is read in, none of which exists.
+# Said of a source of grammars on the Reading page (Zed, the tree-sitter CLI): folders are the folders it is read in, a list of paths, none of which exists.
 settings_grammar_none_there = none of its folders is there: { $folders }
 
 # Under a combined grammar's choice: why is why the helper could not check it.
@@ -6335,7 +6427,7 @@ settings_hints_state = Commands whose shortcut hint was already shown
 
 settings_icon_theme = Icon theme
 
-settings_icon_theme_description = The icons skwir draws files, folders and places with.
+settings_icon_theme_description = The icons Skwir draws files, folders and places with.
 
 # What a setting's description says after its first sentence, in its tooltip.
 settings_icon_theme_description_more = Automatic follows your desktop's choice.
@@ -6347,19 +6439,19 @@ settings_icon_theme_more = the icon themes installed
 settings_in_memory = Settings are kept in memory for this session.
 
 # What a page of the settings window says under its title.
-settings_intro_appearance = How skwir looks.
+settings_intro_appearance = How Skwir looks.
 
 # What a page of the settings window says under its title.
-settings_intro_changed = Every setting that differs from its default and every plugin turned on or off from how skwir comes, each with its way back.
+settings_intro_changed = Every setting that differs from its default and every plugin turned on or off from how Skwir comes, each with its way back.
 
 # What a page of the settings window says under its title.
-settings_intro_exclusions = The files and folders skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside skwir and models see. skwir's own come in categories, each with its switch; tick or untick each, or add yours.
+settings_intro_exclusions = The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours.
 
 # What a page of the settings window says under its title.
-settings_intro_general = The language skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.
+settings_intro_general = The language Skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.
 
 # What a page of the settings window says under its title.
-settings_intro_keyboard = Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace skwir's on the same keys there.
+settings_intro_keyboard = Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace Skwir's on the same keys there.
 
 # What a page of the settings window says under its title.
 settings_intro_media = How pictures follow one another, how audio and video play, how 3D models are drawn and what maps are drawn on.
@@ -6368,13 +6460,13 @@ settings_intro_media = How pictures follow one another, how audio and video play
 settings_intro_network = The servers of the sidebar's Network section, added, edited and removed here as from their menus, and where those added by their address are kept; then the tools that open an address.
 
 # What a page of the settings window says under its title.
-settings_intro_notes = Tags, ratings and comments: how tags are offered, and the places they are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.
+settings_intro_notes = Tags, ratings and comments: how tags are offered, and the places they are kept in, so that the desktop, a Mac and other applications see them too. Every place is read, and what they hold is merged. Each is written as you choose: never; where the file already has notes there; there, and also where the file's volume keeps no attributes (one place is then started, the one its folder already uses first); or for every file edited.
 
 # What a page of the settings window says under its title.
 settings_intro_plugins = Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again.
 
 # What a page of the settings window says under its title.
-settings_intro_privacy = What leaves this machine. An agent driving skwir, and a plugin from outside skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.
+settings_intro_privacy = What leaves this machine. An agent driving Skwir, and a plugin from outside Skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.
 
 # What a page of the settings window says under its title.
 settings_intro_reading = How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each kind.
@@ -6404,21 +6496,21 @@ settings_language_name = Language
 # A list's title on the Reading page: the languages grammars color.
 settings_languages = Languages
 
-settings_languages_description = The languages a grammar was found or added for, each with the files it colors and what colors it.
+settings_languages_description = Each language a grammar was found or added for, with the files it is written in and the grammar that colors them.
 
 # What the Languages list's description says after its first sentence, in its tooltip. folder: where Skwir's grammars folder is (~/.local/share/skwir/grammars). Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name.
-settings_languages_description_at = Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder ({ $folder }) and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.
+settings_languages_description_at = Automatic follows the choice above. bat colors with its own grammar, or with one you added to bat or Sublime Text. Each tree-sitter grammar is named by where it was found, and one that cannot be used is greyed, with the reason. Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder ({ $folder }) and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its own queries, built or not: unbuilt, its queries color the grammar of the same language found elsewhere (Emacs keeps no queries with its grammars). There, languages.toml says which files a language colors.
 
 # What the Languages list's description says after its first sentence, in its tooltip. Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name.
-settings_languages_description_more = Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.
+settings_languages_description_more = Automatic follows the choice above. bat colors with its own grammar, or with one you added to bat or Sublime Text. Each tree-sitter grammar is named by where it was found, and one that cannot be used is greyed, with the reason. Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its own queries, built or not: unbuilt, its queries color the grammar of the same language found elsewhere (Emacs keeps no queries with its grammars). There, languages.toml says which files a language colors.
 
 settings_launch_opens = Open folders from other programs in
 
-# Show in Folder is what browsers call the command; skwir there is the command typed in a terminal.
-settings_launch_opens_description = Where a folder goes that another program opens in Skwir while it runs: Show in Folder from a browser, a launcher, skwir and a folder typed in a terminal.
+# Show in Folder is what browsers call the command; `skwir`, in backquotes, is the command typed in a terminal, written as it is.
+settings_launch_opens_description = Where a folder opens when another program opens it in a running Skwir: a browser's Show in Folder, a launcher, or `skwir` and a folder typed in a terminal.
 
 # What a setting's description says after its first sentence, in its tooltip.
-settings_launch_opens_description_more = A new window opens on it; a tab opens it in the window used last, and Skwir started again with no folder brings that window forward.
+settings_launch_opens_description_more = With A new window, the folder opens in a window of its own; with A tab, it opens in a tab of the window used last, and Skwir started again with no folder brings that window forward.
 
 # Where a folder another program opens in Skwir goes: a tab of the window used last.
 settings_launch_opens_tab = A tab
@@ -6464,14 +6556,14 @@ settings_no_plugin = No plugin matches “{ $typed }”.
 settings_not_installed = { $name } (not installed)
 
 # Said on Changed by you when nothing differs from how skwir comes.
-settings_nothing_changed = Every setting has its default value, and every plugin is as skwir comes.
+settings_nothing_changed = Every setting has its default value, and every plugin is as Skwir comes.
 
 # Said when the settings' search finds nothing: typed is what was typed.
 settings_nothing_found = Nothing matches “{ $typed }”.
 
 settings_notify_desktop = Tell the desktop when a long action ends
 
-settings_notify_desktop_description = The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while skwir's window is in the background.
+settings_notify_desktop_description = The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while Skwir's window is in the background.
 
 # What a setting's description says after its first sentence, in its tooltip.
 settings_notify_desktop_description_more = With the window closed, every action that ends is told. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.
@@ -6507,10 +6599,10 @@ settings_plugin_absent = This plugin is not part of this build.
 # The switch atop a plugin's own page, turning the plugin on or off.
 settings_plugin_enabled = Enabled
 
-# Under a plugin from outside skwir: where it was installed from, a path.
+# Under a plugin from outside Skwir: where it was installed from, a path.
 settings_plugin_from = From { $origin }
 
-# Under a plugin from outside skwir: what it is allowed to do, a list (read files, run programs).
+# Under a plugin from outside Skwir: what it is allowed to do, a list of what each permission lets it do, each beginning in lower case (reads what files hold and starts programs).
 settings_plugin_may = May: { $what }
 
 # Said on a plugin's page while the plugin is off.
@@ -6519,7 +6611,7 @@ settings_plugin_off = Turn the plugin on to change its settings.
 # A caption in the list of the settings' pages, above the plugins' own pages.
 settings_plugin_pages = Plugin settings
 
-# Under a plugin: a program or library it uses was found; program is its name (ffmpeg).
+# Under a plugin: a program or library it uses was found; program is its name (ffmpeg), a program's or a library's, which is not known: where a word would agree with it, choose one that need not (available).
 settings_plugin_requirement_found = { $program } found
 
 # Under a plugin: a program or library it uses is missing; program is its name (ffmpeg), purpose what it is needed for.
@@ -6686,7 +6778,7 @@ settings_text_continuous_description_more = Off shows a screen at a time, ending
 settings_text_size = Text size
 
 # desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one).
-settings_text_size_description = How large skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+settings_text_size_description = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -6696,7 +6788,7 @@ settings_text_size_description = How large skwir writes its menus, bars, the sid
 settings_text_size_more = Bars, rows and menus grow with the text; icons keep their size.
 
 # desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5).
-settings_text_size_now = How large skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+settings_text_size_now = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -6717,10 +6809,10 @@ settings_title_bar = Title bar
 settings_title_bar_description = Where the window's title and its buttons are.
 
 # System, Compact, In the top row and Automatic are the setting's choices. here: what a refusal of the system's means here, a sentence.
-settings_title_bar_description_here = System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. { $here }
+settings_title_bar_description_here = System: the system's title bar, or one of Skwir's like it where the system draws none (GNOME). Compact: a slim bar of Skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of Skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. { $here }
 
 # System, Compact, In the top row and Automatic are the setting's choices.
-settings_title_bar_description_more = System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.
+settings_title_bar_description_more = System: the system's title bar, or one of Skwir's like it where the system draws none (GNOME). Compact: a slim bar of Skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of Skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.
 
 # A page of the settings window, as its list and its header name it.
 settings_title_changed = Changed by you
@@ -6865,8 +6957,8 @@ shell_placeholder_said = { $title }. { $detail }
 # What Quit asks while an action waits for its server to go on.
 shell_quit_one_waits_for_server = An action waits for its server to answer again, to go on by itself. Skwir can wait for it without its window, then quit. Or stop now: it does not go on, and what it finished stays.
 
-# What Quit asks while an action waits for its server to go on. action: the action, by its title, capitalised (Copy to stick).
-shell_quit_waits_for_server = { $action } waits for its server to answer again, to go on by itself. Skwir can wait for it without its window, then quit. Or stop now: it does not go on, and what it finished stays.
+# What Quit asks while an action waits for its server to go on. action: the action, by its title, capitalised (Copy to stick), as a label before what is said of it, never the subject of a verb.
+shell_quit_waits_for_server = { $action }: this action waits for its server to answer again, to go on by itself. Skwir can wait for it without its window, then quit. Or stop now: it does not go on, and what it finished stays.
 
 # The button of the dialog renaming a file that renames it.
 shell_rename_accept = Rename
@@ -6923,7 +7015,7 @@ shortcuts_filter = Filter by action or keys
 # The overview of shortcuts finds nothing; query: what was typed.
 shortcuts_none = No shortcut matches “{ $query }”.
 
-# Said once after a command was run three times with the pointer; keys: its shortcut; action: what it does.
+# Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title, capitalised as a title is (Copy, Move to Trash): where a capital inside a sentence would read wrong, name it as a command (the command Copy).
 shortcuts_tip = Tip: press { $keys } for { $action }. F1 lists the keys for where you are.
 
 # The title of the overview of shortcuts F1 opens: the keys that work where one is.
@@ -6935,13 +7027,13 @@ sidebar_eject = Eject { $place }
 # An item of a sidebar section's menu: hide the places the section holds, its heading left.
 sidebar_fold = Fold
 
-# Said after a place was hidden from the sidebar, with Undo.
+# Said after a place was hidden from the sidebar, with Undo. place: its name, quoted, whose gender is not known: where words would agree with it, name it as a place (the place “Docs” hidden).
 sidebar_hid = Hid { $place } from the sidebar
 
 # The button showing again a place just hidden from the sidebar.
 sidebar_hid_undo = Undo
 
-# Said when a place the user keeps (a bookmark, a saved search) is arranged as the sidebar arranges the places it offers: its own menu renames, moves or removes it.
+# Said when a place the user keeps (a bookmark, a saved search) is arranged as the sidebar arranges the places it offers: its own menu renames, moves or removes it. place: its name, quoted, whose gender is not known: where words would agree with it, name it as a place (the place “Docs”).
 sidebar_kept_by_owner = { $place } is kept in the sidebar by its owner: its menu arranges it
 
 # An item of a sidebar section's menu: put the section after the one below it.
@@ -7018,31 +7110,37 @@ status_as_of_tip = Found in { $index }, last brought up to date { $when }: what 
 
 # In the window's footer: how many items wait to be copied by a paste.
 status_copied = { $count ->
-        [one] 1 item copied
+        [one] { $count } item copied
        *[other] { $count } items copied
     }
 
 # In the window's footer: how many items wait to be moved by a paste.
 status_cut = { $count ->
-        [one] 1 item cut
+        [one] { $count } item cut
        *[other] { $count } items cut
     }
 
 # In a search's footer: how many files and folders the user's exclusions left out.
-status_excluded = { $count } excluded
+status_excluded = { $count ->
+        [one] { $count } excluded
+       *[other] { $count } excluded
+    }
 
 # The tooltip of a search footer's "excluded"; excluded:yes is a term of the query language, as it is typed.
 status_excluded_tip = Files and folders your exclusions leave out (Settings › Exclusions) were walked past: excluded:yes searches them too
 
 # In a pane's footer: how many files its folded groups hold.
-status_folded = { $count } folded
+status_folded = { $count ->
+        [one] { $count } folded
+       *[other] { $count } folded
+    }
 
 # The tooltip of a footer's "folded"; Right is the arrow key.
 status_folded_tip = Files in folded groups: a heading's chevron, or Right on it, opens its group again
 
 # A pane's footer: how many items it lists.
 status_items = { $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }
 
@@ -7054,7 +7152,7 @@ status_loading = Loading…
 
 # A pane's footer while its folder is read: how many items were read so far.
 status_loading_items = Loading… { $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }
 
@@ -7075,22 +7173,22 @@ status_pending_tip = Click to forget.
 
 # In the window's footer: how many plans wait to be reviewed.
 status_proposals = { $plans ->
-        [one] 1 proposal to review
+        [one] { $plans } proposal to review
        *[other] { $plans } proposals to review
     }
 
 # In the window's footer: how many plans wait to be reviewed, then how many questions wait for an answer.
 status_proposals_questions = { $plans ->
-        [one] 1 proposal
+        [one] { $plans } proposal
        *[other] { $plans } proposals
     } to review · { $questions ->
-        [one] 1 question
+        [one] { $questions } question
        *[other] { $questions } questions
     }
 
 # In the window's footer: how many questions wait for an answer.
 status_questions = { $questions ->
-        [one] 1 question
+        [one] { $questions } question
        *[other] { $questions } questions
     }
 
@@ -7099,7 +7197,7 @@ status_reading = { $items } · Reading…
 
 # A pane's footer while a filter reads what files' metadata says: how many items it shows (3 of 12 items), then how many files are still read.
 status_reading_files = { $items } · Reading { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }…
 
@@ -7108,25 +7206,31 @@ status_reading_order = { $items } · Reading… { $read } of { $asked }
 
 # A pane's footer once a search ended: how many it found.
 status_results = { $count ->
-        [one] 1 result
+        [one] { $count } result
        *[other] { $count } results
     }
 
 # A pane's footer while a search runs: how many it found so far.
 status_searching = Searching… { $count ->
-        [one] 1 result
+        [one] { $count } result
        *[other] { $count } results
     }
 
 # In a pane's footer: how many items are selected.
-status_selected = { $count } selected
+status_selected = { $count ->
+        [one] { $count } selected
+       *[other] { $count } selected
+    }
 
 # In a pane's footer: how many items are selected, then what they weigh.
-status_selected_weigh = { $count } selected · { $size }
+status_selected_weigh = { $count ->
+        [one] { $count } selected
+       *[other] { $count } selected
+    } · { $size }
 
 # A filtered pane's footer: how many items are shown, of how many there are.
 status_shown_of = { $count } of { $total ->
-        [one] 1 item
+        [one] { $total } item
        *[other] { $total } items
     }
 
@@ -7222,15 +7326,17 @@ tag_editor_said_tagged = Tagged { $tags }
 # What a screen reader hears of a file after its name: its tags, by their own names (print, Paris), then its rating (4 stars).
 tag_editor_said_tagged_rated = Tagged { $tags }; { $stars }
 
-# A file's rating, of five stars: halves is the rating in half stars (1 to 10), stars the whole stars (halves / 2).
+# A file's rating, of five stars: halves is the rating in half stars (0 to 10), stars the whole stars (halves / 2), which choose their words where the rating is whole (0 stars, 1 star, 4 stars).
 tag_editor_stars = { $halves ->
         [1] ½ star
-        [2] 1 star
         [3] 1½ stars
         [5] 2½ stars
         [7] 3½ stars
         [9] 4½ stars
-       *[other] { $stars } stars
+       *[other] { $stars ->
+            [one] { $stars } star
+           *[other] { $stars } stars
+        }
     }
 
 # Said when the tag editor is asked for while the Tags plugin is off.
@@ -7338,35 +7444,44 @@ timeline_date_taken = taken
 timeline_date_tip = Which time the bars count
 
 # Beside the timeline's buttons: how many files have the date its bars count.
-timeline_dated = { $count } dated
+timeline_dated = { $count ->
+        [one] { $count } dated
+       *[other] { $count } dated
+    }
 
 # Beside the timeline's buttons: how many files are dated before the bars shown.
 timeline_earlier_files = { $count ->
-        [one] 1 file earlier
+        [one] { $count } file earlier
        *[other] { $count } files earlier
     }
 
 # Beside the timeline's buttons: how many files are dated far from all the others (a wrong clock), left out of the bars.
-timeline_far_outside = { $count } far outside
+timeline_far_outside = { $count ->
+        [one] { $count } far outside
+       *[other] { $count } far outside
+    }
 
 # What a screen reader hears of a bar of the timeline: how many files it counts, and their size.
 timeline_holds = { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }, { $size }
 
 # What a screen reader hears of a bar of the timeline: how many files it counts, their size, how many of them are selected.
 timeline_holds_selected = { $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
-    }, { $size }, { $selected } selected
+    }, { $size }, { $selected ->
+        [one] { $selected } selected
+       *[other] { $selected } selected
+    }
 
 # Beside the timeline's buttons, last: what the pointer does on its bars.
 timeline_how = click or drag across bars to list their files
 
 # Beside the timeline's buttons: how many files are dated after the bars shown.
 timeline_later_files = { $count ->
-        [one] 1 file later
+        [one] { $count } file later
        *[other] { $count } files later
     }
 
@@ -7398,7 +7513,10 @@ timeline_said = { $date } by { $bucket ->
     }, { $info }. Left and Right go from bar to bar, Shift extends, Enter lists the files
 
 # Beside the timeline's buttons, pointing at a bar: how many of its files are selected.
-timeline_selected = { $count } selected
+timeline_selected = { $count ->
+        [one] { $count } selected
+       *[other] { $count } selected
+    }
 
 # A button of the timeline: count the files of the folders inside too.
 timeline_subtree = subtree
@@ -7443,7 +7561,7 @@ title_bar_maximize = Maximize window
 title_bar_minimize = Minimize window
 
 # Said beside the Title bar setting where the desktop kept its frame when asked for none. Compact, In the top row and Automatic are the setting's choices.
-title_bar_refused = Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.
+title_bar_refused = Here the desktop keeps its own frame around windows, whatever Skwir asks: Compact and In the top row draw Skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.
 
 # A button of the window's title bar, and what a screen reader calls it: give a maximized window its size back.
 title_bar_restore = Restore window
@@ -7455,7 +7573,7 @@ title_bar_system = System
 title_bar_top_row = In the top row
 
 # Said beside the Title bar setting's Compact and In the top row where they cannot be had.
-title_bar_unsupported = The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to skwir
+title_bar_unsupported = The window manager keeps its own title bar: no compositor runs, or it cannot leave the frame to Skwir
 
 # The window's title, in its title bar and the system's list of windows; place: the title of where its active pane is (Downloads).
 title_bar_window_title = { $place } — skwir
@@ -7543,22 +7661,40 @@ toast_also_undone = part of it was already undone
 # How far the copy of one item is: what it moved of its size (1.1 GB of 4.3 GB).
 toast_bar_bytes = { $done } of { $whole }
 
-# How far an action is: the items it finished of all (0 of 2 items).
-toast_bar_items = { $finished } of { $count ->
-        [one] { $count } item
-       *[other] { $count } items
+# How far an action is: the items it finished of all (0 of 2 items). Each count chooses its words: where the noun follows the first number, choose it by finished.
+toast_bar_items = { $finished ->
+        [one] { $finished } of { $count ->
+            [one] { $count } item
+           *[other] { $count } items
+        }
+       *[other] { $finished } of { $count ->
+            [one] { $count } item
+           *[other] { $count } items
+        }
     }
 
-# How far an action is: the items it finished of all, then what it moved of all it moves (1 of 3 items · 3.2 GB of 8.6 GB).
-toast_bar_items_bytes = { $finished } of { $count ->
-        [one] { $count } item
-       *[other] { $count } items
+# How far an action is: the items it finished of all, then what it moved of all it moves (1 of 3 items · 3.2 GB of 8.6 GB). Each count chooses its words: where the noun follows the first number, choose it by finished.
+toast_bar_items_bytes = { $finished ->
+        [one] { $finished } of { $count ->
+            [one] { $count } item
+           *[other] { $count } items
+        }
+       *[other] { $finished } of { $count ->
+            [one] { $count } item
+           *[other] { $count } items
+        }
     } · { $done } of { $whole }
 
-# How far an action is: the items it finished of all, then what it moved (1,286 of 40,000 items · 82.3 kB).
-toast_bar_items_moved = { $finished } of { $count ->
-        [one] { $count } item
-       *[other] { $count } items
+# How far an action is: the items it finished of all, then what it moved (1,286 of 40,000 items · 82.3 kB). Each count chooses its words: where the noun follows the first number, choose it by finished.
+toast_bar_items_moved = { $finished ->
+        [one] { $finished } of { $count ->
+            [one] { $count } item
+           *[other] { $count } items
+        }
+       *[other] { $finished } of { $count ->
+            [one] { $count } item
+           *[other] { $count } items
+        }
     } · { $done }
 
 # done: what the action did before it was cancelled (Copied 3 items to Docs).
@@ -7577,7 +7713,7 @@ toast_copied = { $count ->
 # why: what stopped it, as the system or the step said it (permission denied).
 toast_copy_failed = Couldn't copy { $name } to { $folder }: { $why }
 
-# what: what the step said it would do (extract “a.zip” to Downloads); why: what stopped it, as the system or the step said it (permission denied).
+# what: what the step said it would do, words that begin with a verb as an instruction does (extract “a.zip” to Downloads): where the word before it would change with the verb's first sound (de, d’), say it so none does; why: what stopped it, as the system or the step said it (permission denied).
 toast_could_not = Couldn't { $what }: { $why }
 
 # why: what stopped it, as the system or the step said it (permission denied).
@@ -7598,7 +7734,7 @@ toast_deleted = { $count ->
        *[other] Deleted { $count } items permanently
     }
 
-# trash: the trash the server keeps what is deleted in, as it names it (Google Drive's trash).
+# trash: the trash the server keeps what is deleted in, as it names it (Google Drive's trash), words said inside a sentence that carry their own determiner: add no article before it.
 toast_deleted_kept = { $count ->
         [1] Deleted { $name } (in { $trash })
        *[other] Deleted { $count } items (in { $trash })
@@ -7920,7 +8056,7 @@ usage_go_there = double-click to go there
 
 # Usage: a block standing for the hidden files of a folder, while hidden files are not shown.
 usage_hidden_items = { $count ->
-        [one] 1 hidden item
+        [one] { $count } hidden item
        *[other] { $count } hidden items
     }
 
@@ -7947,7 +8083,7 @@ usage_legend_kind = { $kind } { $size }
 
 # Between Usage's Fewer and More levels buttons: how many levels of folders it draws.
 usage_levels = { $count ->
-        [one] 1 level
+        [one] { $count } level
        *[other] { $count } levels
     }
 
@@ -7991,7 +8127,7 @@ usage_other_files = Other files
 
 # Usage: the name of the block standing for entries too small to draw each.
 usage_other_items = { $count ->
-        [one] 1 other item
+        [one] { $count } other item
        *[other] { $count } other items
     }
 
@@ -8006,7 +8142,7 @@ usage_scanning = Scanning…
 
 # The line under Usage's map while it counts again: how many folders it read so far.
 usage_scanning_read = Scanning… { $count ->
-        [one] 1 folder
+        [one] { $count } folder
        *[other] { $count } folders
     } read
 
@@ -8027,7 +8163,7 @@ usage_sizes = { $size } · { $alloc } on disk
 
 # Usage, pointing at the block standing for entries too small to draw each.
 usage_smaller_items = { $count ->
-        [one] 1 smaller item
+        [one] { $count } smaller item
        *[other] { $count } smaller items
     }
 
@@ -8105,7 +8241,7 @@ views_board = Board
 
 # The title of the board's last column, which holds the groups past those given a column each.
 views_board_more_groups = { $count ->
-        [one] 1 more group
+        [one] { $count } more group
        *[other] { $count } more groups
     }
 
@@ -8159,7 +8295,7 @@ views_group_arriving = arriving
 
 # What a screen reader hears of a group's heading: its label (Today, Images), then how many it holds.
 views_group_said = { $group }, { $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }
 
@@ -8194,7 +8330,10 @@ work_told_finished = { $count ->
 work_told_finished_stopped = { $finished ->
         [one] { $finished } action
        *[other] { $finished } actions
-    } finished, { $stopped } stopped
+    } finished, { $stopped ->
+        [one] { $stopped } stopped
+       *[other] { $stopped } stopped
+    }
 
 # The title of the desktop's notice of what ended while no one looked: how many actions an error stopped.
 work_told_stopped = { $count ->

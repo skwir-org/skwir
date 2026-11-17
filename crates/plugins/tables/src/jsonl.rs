@@ -58,7 +58,7 @@ pub fn table(
         anyhow::ensure!(
             line.len() <= limits::TEXT_INPUT,
             words!(
-                tables_line_too_long = "A line exceeds { $size } preview limit",
+                tables_line_too_long = "A line exceeds the { $size } preview limit",
                 size = words::Size(limits::TEXT_INPUT as u64),
                 note =
                     "Why a JSON Lines file could not be shown. size: the bound on a line (2 MB)."
@@ -134,7 +134,7 @@ pub fn table(
         wide.then(|| {
             words!(
                 tables_keys_cut = "{ $count ->
-                   *[other] Only the first { $count } keys shown
+                   *[other] Only the first { $count } keys are shown
                 }",
                 count = bounds.table_columns(),
                 note = "A note under a JSON Lines table whose objects have more keys (its columns) than are shown."

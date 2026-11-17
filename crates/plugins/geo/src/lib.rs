@@ -238,7 +238,7 @@ impl Plugin for GeoPlugin {
             "geo.locate",
             words!(geo_locate = "Where is a place"),
             words!(
-                geo_locate_description = "The places of that name skwir knows offline, biggest first, with their positions: for scripts and agents"
+                geo_locate_description = "Return the places of that name Skwir knows offline, biggest first, with their positions: for scripts and agents"
             ),
             |args, _| {
                 let places: Vec<serde_json::Value> = places::find(&args.name)
@@ -598,7 +598,7 @@ fn read<S: FileSource + ?Sized>(
         }
         Format::QgcPlan => {
             let refusal = words!(
-                geo_plan_too_large = "This plan exceeds { $size } preview limit",
+                geo_plan_too_large = "This plan exceeds the { $size } preview limit",
                 size = words::Size(bounds.binary_input() as u64),
                 note = "Why a QGroundControl plan (a drone mission) is not shown on a map: it is larger than the preview reads. size: that bound (16 MB)."
             );
@@ -616,7 +616,7 @@ fn read<S: FileSource + ?Sized>(
         }
         Format::GeoJson => {
             let refusal = words!(
-                geo_geojson_too_large = "This GeoJSON file exceeds { $size } preview limit",
+                geo_geojson_too_large = "This GeoJSON file exceeds the { $size } preview limit",
                 size = words::Size(bounds.binary_input() as u64),
                 note = "Why a GeoJSON file is not shown on a map: it is larger than the preview reads. size: that bound (16 MB)."
             );
@@ -653,8 +653,8 @@ fn kmz_document<'a>(names: impl Iterator<Item = &'a str>) -> Option<String> {
         .map(|name| (*name).to_owned())
 }
 
-/// A length or a height in metres, `value` the number already written.
-fn in_metres(value: String) -> Words {
+/// A length or a height in metres.
+fn in_metres(value: words::Decimal) -> Words {
     words!(
         geo_metres = "{ $metres } m",
         metres = value,
@@ -662,8 +662,8 @@ fn in_metres(value: String) -> Words {
     )
 }
 
-/// A distance in kilometres, `value` the number already written.
-pub(crate) fn in_kilometres(value: String) -> Words {
+/// A distance in kilometres.
+pub(crate) fn in_kilometres(value: words::Decimal) -> Words {
     words!(
         geo_kilometres = "{ $km } km",
         km = value,
@@ -671,13 +671,24 @@ pub(crate) fn in_kilometres(value: String) -> Words {
     )
 }
 
+/// A position, its latitude and longitude in degrees to five places (a
+/// metre or so).
+fn position(lat: f64, lon: f64) -> Words {
+    words!(
+        geo_position = "{ $lat }, { $lon }",
+        lat = words::Decimal::of(lat, 5),
+        lon = words::Decimal::of(lon, 5),
+        note = "A position in a map's Properties (Start: 45.12345, 6.12345): its latitude then its longitude, in degrees. A language whose decimal sign is a comma separates the two otherwise."
+    )
+}
+
 pub fn distance(metres: f64) -> Words {
     if metres < 1000. {
-        in_metres(format!("{metres:.0}"))
+        in_metres(words::Decimal::of(metres, 0))
     } else if metres < 100_000. {
-        in_kilometres(format!("{:.1}", metres / 1000.))
+        in_kilometres(words::Decimal::of(metres / 1000., 1))
     } else {
-        in_kilometres(format!("{:.0}", metres / 1000.))
+        in_kilometres(words::Decimal::of(metres / 1000., 0))
     }
 }
 
@@ -764,7 +775,7 @@ fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(Words, Option<
             .map(|stamp| stamp.to_zoned(zone.clone()).date())
     });
     let moving = (!totals.moving.is_zero()).then_some(totals.moving);
-    let metres = |value: f64| in_metres(format!("{value:.0}")).say();
+    let metres = |value: f64| in_metres(words::Decimal::of(value, 0)).say();
     vec![
         (
             distance_label(),
@@ -792,7 +803,7 @@ fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(Words, Option<
             moving.map(|m| {
                 words!(
                     geo_speed = "{ $speed } km/h",
-                    speed = format!("{:.1}", totals.distance / m.as_secs_f64() * 3.6),
+                    speed = words::Decimal::of(totals.distance / m.as_secs_f64() * 3.6, 1),
                     note =
                         "A speed in kilometres per hour, in a map's Properties. speed: the number."
                 )
@@ -849,7 +860,7 @@ const NAUTICAL_MILE: f64 = 1852.;
 /// An altitude as a plan's reader thinks of it: feet for a flight
 /// (`35 000 ft · 10 668 m`), metres from its datum for a mission.
 fn plan_altitude(kind: PlanKind, metres: f32, datum: Datum) -> Words {
-    let written = format!("{metres:.0}");
+    let written = words::Decimal::of(f64::from(metres), 0);
     match kind {
         PlanKind::Flight => {
             let feet = group_thousands((metres / FOOT / 100.).round() * 100.);
@@ -921,7 +932,7 @@ fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(Words, Option<St
             words!(
                 geo_flight_distance = "{ $distance } · { $nautical } NM",
                 distance = distance(c.routes.distance),
-                nautical = format!("{:.0}", c.routes.distance / NAUTICAL_MILE),
+                nautical = words::Decimal::of(c.routes.distance / NAUTICAL_MILE, 0),
                 note = "A flight plan's distance in a map's Properties: in metres or kilometres, then in nautical miles. distance: the first, with its unit; nautical: the number of nautical miles."
             )
             .say()
@@ -1062,7 +1073,7 @@ fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
                 geo_fact_start = "Start",
                 note = "A label in a map's Properties: the latitude and longitude of the file's first point."
             ),
-            start.map(|at| format!("{:.5}, {:.5}", at.lat, at.lon)),
+            start.map(|at| position(at.lat, at.lon).say()),
         ),
         (name_label(), c.name.clone()),
         (description_label(), c.description.clone()),
@@ -1210,7 +1221,8 @@ pub(crate) fn inspect_as<S: FileSource + ?Sized>(
     if dropped > 0 {
         notes.push(words!(
             geo_dropped_places = "{ $count ->
-               *[other] { $count } more places than the map shows
+                [one] { $count } more place is not shown on the map
+               *[other] { $count } more places are not shown on the map
             }",
             count = dropped,
             note = "A notice under a map of a file with more waypoints and areas than are drawn. count: how many are not drawn."
@@ -1225,17 +1237,11 @@ pub(crate) fn inspect_as<S: FileSource + ?Sized>(
             if contents.is_empty() {
                 format.name()
             } else {
-                // Transitional: a list argument (ADR-139)
-                let contents = contents
-                    .iter()
-                    .map(Words::say)
-                    .collect::<Vec<_>>()
-                    .join(", ");
                 words!(
                     geo_title = "{ $format } · { $contents }",
                     format = format.name(),
-                    contents = contents,
-                    note = "The title of a map's preview: the file's format, then what it holds (GPX · 1 track, 1 route, 2 waypoints). contents: a list of counts."
+                    contents = words::List::and(contents),
+                    note = "The title of a map's preview: the file's format, then what it holds (GPX · 1 track, 1 route and 2 waypoints). contents: a list of counts, each its words (1 track)."
                 )
             }
         }
@@ -1319,11 +1325,14 @@ mod tests {
         std::fs::write(&path, gpx::tests::HIKE).unwrap();
         let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.kind, InspectionKind::Map);
-        assert_eq!(data.title.english(), "GPX · 1 track, 1 route, 2 waypoints");
+        assert_eq!(
+            data.title.english(),
+            "GPX · 1 track, 1 route, and 2 waypoints"
+        );
         assert_eq!(fact(&data, "Distance"), Some("222 m"));
         assert_eq!(fact(&data, "Duration"), Some("0:02:00"));
         assert_eq!(fact(&data, "Climb"), Some("20 m"));
-        assert_eq!(fact(&data, "Highest point"), Some("1520 m"));
+        assert_eq!(fact(&data, "Highest point"), Some("1,520 m"));
         assert_eq!(fact(&data, "Name"), Some("Café & ridge"));
         assert_eq!(fact(&data, "Start"), Some("45.00000, 6.00000"));
         assert!(data.source_available);
@@ -1396,7 +1405,7 @@ mod tests {
         assert!(Provider.accepts(&hike));
         assert_eq!(
             show(&hike).title.english(),
-            "GPX · 1 track, 1 route, 2 waypoints"
+            "GPX · 1 track, 1 route, and 2 waypoints"
         );
         let trip = PreviewRequest::holding(
             gone("trip.kmz"),
@@ -1427,7 +1436,7 @@ mod tests {
     fn distances_and_durations_read_as_people_say_them() {
         assert_eq!(distance(850.4).english(), "850 m");
         assert_eq!(distance(42_195.).english(), "42.2 km");
-        assert_eq!(distance(1_234_567.).english(), "1235 km");
+        assert_eq!(distance(1_234_567.).english(), "1,235 km");
         assert_eq!(
             duration(Duration::from_secs(3 * 3600 + 42 * 60 + 10)),
             "3:42:10"

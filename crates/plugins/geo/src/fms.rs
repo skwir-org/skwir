@@ -187,9 +187,10 @@ pub fn read<R: BufRead>(
         && keys.read < expected
     {
         damaged = Some(Damaged(words!(
-            geo_fms_fewer_waypoints = "the plan lists { $expected ->
-               *[other] { $expected } waypoints
-            } and holds { $read }",
+            geo_fms_fewer_waypoints = "{ $expected ->
+                [one] the plan lists { $expected } waypoint and holds { $read }
+               *[other] the plan lists { $expected } waypoints and holds { $read }
+            }",
             expected = expected,
             read = keys.read,
             note = "Why an X-Plane plan reads as damaged, inside the notice that says so: it holds fewer waypoints than its header counts. expected: that count; read: how many it holds."

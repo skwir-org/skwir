@@ -313,8 +313,8 @@ impl NotesStore for FinderStore {
             comment: true,
             origin: true,
             limits: Some(skwir_core::words!(
-                tags_finder_limits = "no rating; seven colors",
-                note = "What a Mac's Finder tags cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings."
+                tags_finder_limits = "a rating, or a tag color other than the Finder's seven",
+                note = "What a Mac's Finder tags cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings (app_notes_read_limits)."
             )),
         }
     }

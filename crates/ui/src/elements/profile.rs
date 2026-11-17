@@ -145,7 +145,11 @@ impl Profile {
 
     /// The readout at a point: how far `along` it is, its `altitude`, and
     /// what the altitude is measured from.
-    pub fn readout(&self, along: String, altitude: String) -> skwir_core::words::Words {
+    pub fn readout(
+        &self,
+        along: skwir_core::words::Words,
+        altitude: skwir_core::words::Words,
+    ) -> skwir_core::words::Words {
         use skwir_core::words;
         match self.datum {
             Datum::Sea => words!(
@@ -218,8 +222,14 @@ pub struct Prepaint {
     readout: Option<(gpui::Point<Pixels>, gpui::Point<Pixels>, ShapedLine)>,
 }
 
-fn metres(value: f32) -> String {
-    format!("{value:.0} m")
+/// An altitude, in whole metres, as the reader's language writes numbers.
+fn metres(value: f32) -> skwir_core::words::Words {
+    skwir_core::words!(
+        profile_metres = "{ $metres } m",
+        metres = skwir_core::words::Decimal::of(f64::from(value), 0),
+        note =
+            "An altitude on a track's altitude chart, in metres (812 m); m is the metre's symbol."
+    )
 }
 
 impl Element for Chart {
@@ -273,8 +283,8 @@ impl Element for Chart {
                 plot.origin + point(px(x), px(y))
             })
             .collect();
-        let shape = |text: String, color: Hsla, window: &mut Window| {
-            super::map::shape(text.into(), color, window)
+        let shape = |text: skwir_core::words::Words, color: Hsla, window: &mut Window| {
+            super::map::shape(text.say().into(), color, window)
         };
         let mut labels = vec![
             (
@@ -294,9 +304,8 @@ impl Element for Chart {
             skwir_core::words!(
                 profile_length_planned = "{ $length } planned",
                 length = distance(p.length),
-                note = "The length of a planned route (not a recorded track), on its altitude chart: 12.4 km planned."
+                note = "The length of a planned route (not a recorded track), on its altitude chart: 12.4 km planned. length: a distance with its unit, which chooses no plural: where a word would agree with it, say it so it need not (planned: 12.4 km)."
             )
-            .say()
         } else {
             distance(p.length)
         };
@@ -310,7 +319,7 @@ impl Element for Chart {
             let (x, y) = p.place(along, altitude, w, h);
             let at = plot.origin + point(px(x), px(y));
             let text = shape(
-                p.readout(distance(along), metres(altitude)).say(),
+                p.readout(distance(along), metres(altitude)),
                 self.colors.text,
                 window,
             );
@@ -426,11 +435,22 @@ impl Element for Chart {
     }
 }
 
-fn distance(metres: f64) -> String {
+/// A distance along a track: in whole metres under a kilometre, else in
+/// kilometres to the tenth, as the reader's language writes numbers.
+fn distance(metres: f64) -> skwir_core::words::Words {
+    use skwir_core::words::Decimal;
     if metres < 1000. {
-        format!("{metres:.0} m")
+        skwir_core::words!(
+            profile_distance_metres = "{ $metres } m",
+            metres = Decimal::of(metres, 0),
+            note = "A distance along a track, on its altitude chart, under a kilometre (640 m); m is the metre's symbol."
+        )
     } else {
-        format!("{:.1} km", metres / 1000.)
+        skwir_core::words!(
+            profile_distance_kilometres = "{ $kilometres } km",
+            kilometres = Decimal::of(metres / 1000., 1),
+            note = "A distance along a track, on its altitude chart (12.4 km); km is the kilometre's symbol."
+        )
     }
 }
 
@@ -503,7 +523,7 @@ mod tests {
         let p = Profile::of(&doc).unwrap();
         assert!(p.planned);
         assert_eq!(
-            p.readout("1 m".into(), "2 m".into()).english(),
+            p.readout(distance(1.), metres(2.)).english(),
             "1 m · 2 m above takeoff"
         );
         assert!(Profile::of(&GeoDoc::default()).is_none());

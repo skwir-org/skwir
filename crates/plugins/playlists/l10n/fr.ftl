@@ -26,8 +26,9 @@ playlists_detail_tracks = Pistes
 
 # draft
 playlists_first_tracks = { $count ->
-        [one] { $count } première piste · Source montre la suite
-       *[other] { $count } premières pistes · Source montre la suite
+        [1] Seule la première piste est affichée · Source montre la suite
+        [one] Seule la première piste est affichée · Source montre la suite
+       *[other] Seules les { $count } premières pistes sont affichées · Source montre la suite
     }
 
 # draft

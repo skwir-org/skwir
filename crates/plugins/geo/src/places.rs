@@ -244,9 +244,9 @@ fn reach(rank: u8) -> f64 {
 fn distance_words(metres: f64) -> Words {
     let tenths = (metres / 100.).round();
     if tenths < 100. {
-        crate::in_kilometres(format!("{:.1}", tenths / 10.))
+        crate::in_kilometres(words::Decimal::of(tenths / 10., 1))
     } else {
-        crate::in_kilometres((metres / 1000.).round().to_string())
+        crate::in_kilometres(words::Decimal::of(metres / 1000., 0))
     }
 }
 

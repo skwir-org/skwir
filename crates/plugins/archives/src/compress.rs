@@ -269,13 +269,14 @@ impl op::Effect for Compress {
             // Never replaced: it would take what goes in with it.
             conflict(if input.path == target {
                 words!(
-                    archives_among_inputs = "{ $name } is among what it compresses",
+                    archives_among_inputs = "{ $name } is among what goes into the archive",
                     name = Name::of(&target),
                     note = "Why an archive is not made: its name is taken by something that goes in it."
                 )
             } else {
                 words!(
-                    archives_holds_input = "{ $there } holds { $input }, which it compresses",
+                    archives_holds_input =
+                        "{ $there } holds { $input }, which goes into the archive",
                     there = Name::of(&target),
                     input = Name::of(&input.path),
                     note = "Why an archive is not made: the folder of its name holds something that goes in it."

@@ -46,12 +46,12 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
             crate::words!(keymap_shortcuts = "Your shortcuts", note = "A setting on the Keyboard page: the list of keys the user binds."),
             (
                 crate::words!(
-                    keymap_shortcuts_description = "Keys you bind, over the ones skwir and its plugins set.",
-                    note = "skwir is the program's name."
+                    keymap_shortcuts_description = "Keys you bind, over the ones Skwir and its plugins set.",
+                    note = "Skwir is the program's name."
                 ),
                 crate::words!(
                     keymap_shortcuts_description_more = "Leave the command empty to free a key.",
-                    note = "skwir is the program's name."
+                    note = "A setting's further description on the Keyboard page: a shortcut with no command frees its key."
                 ),
             ),
             crate::words!(

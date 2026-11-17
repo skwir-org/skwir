@@ -43,8 +43,8 @@ shell_examples = For example
 
 # line: a command line with the first paths it is given, as its shell reads them; more: how many paths it is given beyond them.
 shell_line_more = { $line } … and { $more ->
-        [one] { $more } more
-       *[other] { $more } more
+        [one] { $more } more path
+       *[other] { $more } more paths
     }
 
 # command: a command line that names its arguments itself ("$@", $1); paths: the paths it is given, as its shell reads them.

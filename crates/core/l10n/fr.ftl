@@ -193,9 +193,6 @@ access_group_already = { $inside ->
     }
 
 # draft
-access_group_not_yet = La modification du groupe d’un fichier n’est pas encore disponible sous { $system }
-
-# draft
 access_in_trash = { $name } est dans la corbeille : restaurez-le d’abord
 
 # draft
@@ -557,7 +554,7 @@ app_group_unfold_all = Déplier tous les groupes
 app_history = Historique des annulations
 
 # draft
-app_history_description = Renvoyer les actions qu’Annuler peut défaire, la plus récente d’abord (ADR-079, 13) : pour chacune son entrée (ce que undo et redo prennent comme entry), son titre, quand elle s’est appliquée (en secondes depuis 1970, UTC), si elle s’exécute, attend, est faite ou annulée, et quand son Annuler (le Rétablir d’une action annulée) peut agir : maintenant, une fois qu’elle se termine, après l’action nommée (à annuler, ou à rétablir, celle-là d’abord), pendant qu’elle se fait, ou jamais ; with, les entrées que undo with_after emporte avec elle
+app_history_description = Renvoyer les actions qu’Annuler peut défaire, la plus récente d’abord (ADR-079, 13). Chacune donne son `entry` (ce que undo et redo reçoivent comme `entry`), son `title`, `at` : quand elle s’est appliquée (en secondes depuis 1970, UTC), son `state` (en cours, en attente, faite ou annulée), `can` : ce que son Annuler, ou le Rétablir d’une action annulée, peut faire maintenant (`now` ; `once_ended`, tant qu’elle s’exécute ou attend ; `after`, une fois l’action qu’il nomme annulée ou rétablie d’abord ; `going`, pendant qu’elle est annulée ou rétablie ; `never`), et `with` : les entrées que undo avec `with_after` défait avec elle
 
 # draft
 app_hydrate = Charger les métadonnées
@@ -855,16 +852,19 @@ app_trash_description = Mettre à la corbeille la sélection, ou les éléments 
 
 # draft
 app_trash_none_kept = { $count ->
-        [one] Il se trouve dans un dossier réseau, qui ne garde pas de corbeille
+        [1] Il se trouve dans un dossier réseau, qui ne garde pas de corbeille
+        [one] Ils se trouvent dans des dossiers réseau, qui ne gardent pas de corbeille
        *[other] Ils se trouvent dans des dossiers réseau, qui ne gardent pas de corbeille
     }
 
 # draft
 app_trash_others_kept = { $count ->
-        [one] Il se trouve dans un dossier réseau, qui ne garde pas de corbeille
+        [1] Il se trouve dans un dossier réseau, qui ne garde pas de corbeille
+        [one] Ils se trouvent dans des dossiers réseau, qui ne gardent pas de corbeille
        *[other] Ils se trouvent dans des dossiers réseau, qui ne gardent pas de corbeille
     } ; { $kept ->
-        [one] l’autre élément va à la corbeille
+        [1] l’autre élément va à la corbeille
+        [one] { $kept } autre élément va à la corbeille
        *[other] les { $kept } autres éléments vont à la corbeille
     }
 
@@ -887,7 +887,7 @@ app_undo_with_after = with_after annule une entrée avec ce qui est venu après 
 app_up = Dossier parent
 
 # draft
-app_up_description = Aller au parent du dossier courant, ou à l’emplacement qui précède celui affiché dans son fil d’Ariane (la catégorie d’une étiquette, le dossier où cherche une recherche), celui qu’on quitte y étant sélectionné
+app_up_description = Aller au dossier qui contient celui affiché, ou à l’emplacement qui le précède dans son fil d’Ariane (la catégorie d’une étiquette, le dossier où cherche une recherche), et y sélectionner celui qu’on vient de quitter
 
 # draft
 clash_taken = { $name } est déjà là
@@ -912,9 +912,9 @@ command_with_args = { $title } ({ $args })
 
 # draft
 entry_kept_elsewhere = { $count ->
-        [one] { $count } fichier a
-       *[other] { $count } fichiers ont
-    } d’autres noms ailleurs : le disque garde { $size }
+        [one] { $count } fichier a d’autres noms ailleurs : le disque garde ses { $size }
+       *[other] { $count } fichiers ont d’autres noms ailleurs : le disque garde leurs { $size }
+    }
 
 # draft
 exclusions_agent_exposes = un agent ne peut pas rendre lisibles des dossiers privés ({ $folders }) : vous seul pouvez le faire, dans Paramètres, Exclusions
@@ -944,13 +944,13 @@ exclusions_beside_name = { $sibling } : beside désigne un fichier ou un dossie
 exclusions_beside_path = { $pattern } : à côté d’un fichier, le dossier se donne par un nom (target), pas par un chemin
 
 # draft
-exclusions_builtin_id = skwir. désigne les dossiers propres à skwir ; donnez aux vôtres un nom sans point
+exclusions_builtin_id = skwir. désigne les dossiers propres à Skwir ; donnez aux vôtres un nom sans point
 
 # draft
 exclusions_categories = Catégories d’exclusions
 
 # draft
-exclusions_categories_description = Ce qui a changé dans les catégories d’exclusions de skwir (un rôle activé ou désactivé : searches, agents, index), et les vôtres (un nom)
+exclusions_categories_description = Ce qui a changé dans les catégories d’exclusions de Skwir (un rôle activé ou désactivé : searches, agents, index), et les vôtres (un nom)
 
 # draft
 exclusions_categories_table = les catégories de dossiers sont une table, par identifiant
@@ -968,7 +968,7 @@ exclusions_empty = un dossier a besoin d’un nom ou d’un chemin
 exclusions_entries = Exclusions
 
 # draft
-exclusions_entries_description = Ce qui a changé dans les exclusions de skwir (un rôle décoché, une catégorie), et les vôtres : un motif (un nom, un chemin, un glob ou regex:…, de fichiers, de dossiers ou des deux, avec beside), ou holding (un fichier que contient un dossier), ce qu’elle est, sa catégorie et les rôles dont ce qu’elle désigne est exclu
+exclusions_entries_description = Ce qui a changé dans les exclusions de Skwir (un rôle décoché, une catégorie), et les vôtres : un motif (un nom, un chemin, un glob ou regex:…, de fichiers, de dossiers ou des deux, avec beside), ou holding (un fichier que contient un dossier), ce qu’elle est, sa catégorie et les rôles dont ce qu’elle désigne est exclu
 
 # draft
 exclusions_entries_table = les exclusions sont une table, par identifiant
@@ -983,7 +983,7 @@ exclusions_holding_alone = beside et names vont avec pattern, pas avec holding
 exclusions_holding_name = holding est le nom d’un fichier que contient un dossier
 
 # draft
-exclusions_id_dot = un identifiant à vous ne contient pas de point : ceux qui en ont sont à skwir et à ses modules
+exclusions_id_dot = un identifiant à vous ne contient pas de point : ceux qui en ont sont à Skwir et à ses modules
 
 # draft
 exclusions_legacy_folders = Dossiers privés (avant les exclusions)
@@ -1181,10 +1181,10 @@ exclusions_shell_variables_description = Lire aussi depuis votre shell de connex
 exclusions_shell_variables_description_more = Un Skwir lancé depuis votre bureau ne voit pas ce qu’exportent .zshrc ou config.fish. Le shell est interrogé en arrière-plan dès que ses fichiers changent, et seules les variables que nomment ces chemins sont gardées.
 
 # draft
-exclusions_unreadable = { $more ->
-        [0] Une exclusion ne peut pas être lue, elle ne s’applique donc pas : { $first }
-        [one] Une exclusion ne peut pas être lue, elle ne s’applique donc pas (et { $more } de plus) : { $first }
-       *[other] Des exclusions ne peuvent pas être lues, elles ne s’appliquent donc pas (et { $more } de plus) : { $first }
+exclusions_unreadable = { $count ->
+        [1] Une exclusion ne peut pas être lue, elle ne s’applique donc pas : { $first }
+        [one] { $count } exclusion ne peut pas être lue, elle ne s’applique donc pas. La première : { $first }
+       *[other] { $count } exclusions ne peuvent pas être lues, elles ne s’appliquent donc pas. La première : { $first }
     }
 
 # draft
@@ -1257,10 +1257,10 @@ exec_undo_held = « { $title } » ne peut pas être annulé seul : « { $
 exec_undo_held_for_good = « { $title } » ne peut pas être annulé : « { $other } », demandé après, a touché à ce qu’il a fait et ne peut pas être annulé
 
 # draft
-exec_undo_held_running = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après et en cours, a touché à ce qu’il a fait ; annulez-le d’abord
+exec_undo_held_running = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après et en cours, modifie ce qu’il a fait ; annulez-le d’abord
 
 # draft
-exec_undo_held_waiting = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après et en attente, touche à ce qu’il a fait ; annulez-le d’abord
+exec_undo_held_waiting = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après et en attente, modifiera ce qu’il a fait ; annulez-le d’abord
 
 # draft
 exec_undone_already = « { $title } » est déjà annulé
@@ -1449,7 +1449,7 @@ keymap_refused = { $keys } : { $error }
 keymap_shortcuts = Vos raccourcis
 
 # draft
-keymap_shortcuts_description = Les touches que vous associez, par-dessus celles que définissent skwir et ses modules.
+keymap_shortcuts_description = Les touches que vous associez, par-dessus celles que définissent Skwir et ses modules.
 
 # draft
 keymap_shortcuts_description_more = Laissez la commande vide pour libérer une touche.
@@ -1494,13 +1494,13 @@ notes_comment_command = Commenter
 notes_comment_description = Définir le commentaire des éléments donnés, ou celui de la sélection, ou le retirer avec un texte vide (plan)
 
 # draft
-notes_comment_set = commentaire de { $name } défini
-
-# draft
-notes_comment_set_already = { $name } avait déjà ce commentaire
-
-# draft
 notes_comment_title = définir le commentaire
+
+# draft
+notes_commented = commentaire de { $name } défini
+
+# draft
+notes_commented_already = { $name } avait déjà ce commentaire
 
 # draft
 notes_gone = { $name } n’est plus là
@@ -1594,7 +1594,11 @@ notes_tagged_already = { $name } était déjà étiqueté avec { $tags }
 notes_take_tag = retirer l’étiquette { $tag } de { $name }
 
 # draft
-notes_take_tags = retirer { $tags } de { $name }
+notes_take_tags = { $count ->
+        [1] retirer l’étiquette { $tags } de { $name }
+        [one] retirer les étiquettes { $tags } de { $name }
+       *[other] retirer les étiquettes { $tags } de { $name }
+    }
 
 # draft
 notes_took_tag = étiquette { $tag } retirée de { $name }
@@ -1603,11 +1607,16 @@ notes_took_tag = étiquette { $tag } retirée de { $name }
 notes_took_tag_already = l’étiquette { $tag } était déjà absente de { $name }
 
 # draft
-notes_took_tags = étiquettes { $tags } retirées de { $name }
+notes_took_tags = { $count ->
+        [1] étiquette { $tags } retirée de { $name }
+        [one] étiquettes { $tags } retirées de { $name }
+       *[other] étiquettes { $tags } retirées de { $name }
+    }
 
 # draft
 notes_took_tags_already = { $count ->
-        [one] l’étiquette { $tags } était déjà absente de { $name }
+        [1] l’étiquette { $tags } était déjà absente de { $name }
+        [one] les étiquettes { $tags } étaient déjà absentes de { $name }
        *[other] les étiquettes { $tags } étaient déjà absentes de { $name }
     }
 
@@ -1669,7 +1678,7 @@ op_attribute_name_not_utf8 = un attribut de { $name } a un nom qui n’est pas e
 op_attributes_not_kept = conserver les étiquettes et autres attributs lors de la copie : { $folder } ne conserve aucun attribut, et rien n’est réglé pour les conserver à côté ; désactivez « { $setting } » dans Paramètres pour copier sans eux
 
 # draft
-op_attributes_refused = conserver les étiquettes et autres attributs lors de la copie ; vérifiez que la destination prend en charge les attributs étendus et ses permissions, ou désactivez « { $setting } » dans Paramètres
+op_attributes_refused = conserver les étiquettes et autres attributs lors de la copie : vérifiez que la destination garde les attributs étendus et vous permet de les écrire, ou désactivez « { $setting } » dans Paramètres
 
 # draft
 op_attributes_unread = les étiquettes et attributs de { $name } n’ont pas pu être lus
@@ -1687,7 +1696,10 @@ op_batch_copying = copie de { $count ->
 op_batch_link = « { $path } » est un lien
 
 # draft
-op_batch_read_short = « { $path } » : { $read } octets lus sur { $bytes }
+op_batch_read_short = { $read ->
+        [one] « { $path } » : seul { $read } octet sur { $bytes } a pu être lu
+       *[other] « { $path } » : seuls { $read } octets sur { $bytes } ont pu être lus
+    }
 
 # draft
 op_change_copy = copier { $from } -> { $to }
@@ -1778,7 +1790,7 @@ op_foreign_folder = ce dossier appartient à un autre utilisateur, et ses permis
 op_holds_mount_point = { $name } contient « { $point } », où un disque ou un dossier distant est monté : éjectez-le d’abord
 
 # draft
-op_holes_unix_only = un fichier creux n’est copié tel quel que sous Unix
+op_holes_not_yet = Copier un fichier à trous (un fichier creux) n’est pas encore disponible sous { $system }
 
 # draft
 op_identity_unread = l’identité de l’élément n’a pas pu être lue
@@ -1790,10 +1802,10 @@ op_in_trash_already = { $name } est déjà dans la corbeille
 op_in_trash_restore_first = { $name } est dans la corbeille : restaurez-le d’abord
 
 # draft
-op_left_after_removal = { $count ->
-        [1] il reste « { $path } »
-        [one] il reste « { $path } »
-       *[other] il reste « { $path } » et { $more } de plus
+op_left_after_removal = { $more ->
+        [0] il reste « { $path } »
+        [one] il reste « { $path } » et { $more } autre
+       *[other] il reste « { $path } » et { $more } autres
     }
 
 # draft
@@ -1838,7 +1850,7 @@ op_moved_into_itself = un dossier ne peut pas être déplacé dans lui-même
 op_moved_stays = ce qui a été déplacé reste où il était
 
 # draft
-op_moves_nothing = il ne déplace rien entre ses dossiers (un appareil photo) : seules des copies y sont faites
+op_moves_nothing = cet appareil (un appareil photo) ne peut pas déplacer de fichiers entre ses dossiers : seules des copies peuvent y être faites
 
 # draft
 op_name_character = un nom ne peut pas contenir « { $character } »
@@ -1883,13 +1895,13 @@ op_no_longer_in_trash = { $name } n’est plus dans la corbeille
 op_no_longer_there = { $name } n’est plus là
 
 # draft
-op_no_record = { $name } n’est pas une fiche de corbeille
+op_no_record = { $name } n’est pas la fiche de corbeille d’un élément
 
 # draft
 op_no_room = Pas assez de place dans { $folder } : { $needs } nécessaires, { $free } libres
 
 # draft
-op_no_trash_s = { $name } n’appartient à aucune corbeille
+op_no_trash_s = { $name } ne désigne aucun élément d’une corbeille
 
 # draft
 op_no_trash_there = { $name } est dans un dossier réseau monté par un programme, qui n’a pas de corbeille
@@ -1985,7 +1997,10 @@ op_place_taken_in_trash = un autre élément { $name } a pris sa place dans la c
 op_plan_steps_kind = un plan liste chacune de ses étapes : `{ $kind }` n’en est pas une
 
 # draft
-op_read_short = seuls { $read } de ses { $bytes } octets ont pu être lus
+op_read_short = { $read ->
+        [one] seul { $read } octet sur { $bytes } a pu être lu
+       *[other] seuls { $read } octets sur { $bytes } ont pu être lus
+    }
 
 # draft
 op_record_unread = la fiche de corbeille { $name } n’a pas pu être lue
@@ -2072,7 +2087,7 @@ orders_not_saved = L’ordre de tri n’a pas été retenu : { $error }
 os_path_not_absolute = { $path } n’est pas un chemin absolu
 
 # draft
-permissions_names_private = ceci nomme un dossier privé, que skwir tient à l’écart des agents (Paramètres, Confidentialité)
+permissions_names_private = ceci nomme un dossier privé, que Skwir tient à l’écart des agents (Paramètres, Confidentialité)
 
 # draft
 permissions_network = utilise le réseau
@@ -2081,7 +2096,7 @@ permissions_network = utilise le réseau
 permissions_programs = lance des programmes
 
 # draft
-permissions_reaches_machine = consulter { $path } ferait contacter une autre machine par le système, ce qu’un agent ne peut pas faire sans qu’on le lui demande : l’utilisateur l’ouvre d’abord dans skwir
+permissions_reaches_machine = consulter { $path } ferait contacter une autre machine par le système, ce qu’un agent ne peut pas faire sans qu’on le lui demande : l’utilisateur l’ouvre d’abord dans Skwir
 
 # draft
 permissions_read = lit le contenu des fichiers
@@ -2295,14 +2310,14 @@ registry_tags = Étiquettes
 
 # draft
 settings_apart_own = { $file ->
-        [state] l’état de la fenêtre, pas un paramètre : skwir lit le sien, dans son fichier d’état, jamais celui-ci
-       *[data] ce que vous créez dans skwir (recherches enregistrées, étiquettes épinglées, couleurs des étiquettes), pas un paramètre : skwir lit les siens, dans son fichier de données, jamais ceux-ci
+        [state] l’état de la fenêtre, pas un paramètre : Skwir lit le sien, dans son fichier d’état, jamais celui-ci
+       *[data] ce que vous créez dans Skwir (recherches enregistrées, étiquettes épinglées, couleurs des étiquettes), pas un paramètre : Skwir lit les siens, dans son fichier de données, jamais ceux-ci
     }
 
 # draft
 settings_apart_until = { $file ->
-        [state] l’état de la fenêtre, pas un paramètre : lu ici seulement jusqu’à ce que skwir garde le sien, dans son fichier d’état
-       *[data] ce que vous créez dans skwir (recherches enregistrées, étiquettes épinglées, couleurs des étiquettes), pas un paramètre : lu ici seulement jusqu’à ce que skwir garde les siens, dans son fichier de données
+        [state] l’état de la fenêtre, pas un paramètre : lu ici seulement jusqu’à ce que Skwir garde le sien, dans son fichier d’état
+       *[data] ce que vous créez dans Skwir (recherches enregistrées, étiquettes épinglées, couleurs des étiquettes), pas un paramètre : lu ici seulement jusqu’à ce que Skwir garde les siens, dans son fichier de données
     }
 
 # draft
@@ -2315,7 +2330,7 @@ settings_apply_description = Modifier des préférences, chaque clé avec le tex
 settings_check = Vérifier les paramètres
 
 # draft
-settings_check_description = Vérifier un fichier de paramètres, ou des paramètres donnés sous forme de table, au regard des paramètres que ce skwir déclare : échoue en disant ce qui ne va pas (une valeur qu’un paramètre n’accepte pas, une clé qu’aucun paramètre n’a), et signale les clés dont il ne connaît pas le propriétaire
+settings_check_description = Vérifier un fichier de paramètres, ou des paramètres donnés sous forme de table, au regard des paramètres que cette version de Skwir déclare : échoue en disant ce qui ne va pas (une valeur qu’un paramètre n’accepte pas, une clé qu’aucun paramètre n’a), et signale les clés dont il ne connaît pas le propriétaire
 
 # draft
 settings_check_invalid = « { $path } » n’est pas valide : { $problem }
@@ -2466,10 +2481,10 @@ settings_language = Langue
 settings_language_automatic = Automatique
 
 # draft
-settings_language_description = La langue que parle la fenêtre de skwir.
+settings_language_description = La langue que parle la fenêtre de Skwir.
 
 # draft
-settings_language_description_more = Automatique parle la première des langues de votre système que skwir connaît, sinon l’anglais ; les agents et les scripts reçoivent leurs réponses en anglais quel que soit votre choix.
+settings_language_description_more = Automatique parle la première des langues de votre système que Skwir connaît, sinon l’anglais ; les agents et les scripts reçoivent leurs réponses en anglais quel que soit votre choix.
 
 # draft
 settings_language_pseudo = Pseudo (pour les tests)
@@ -2496,7 +2511,7 @@ settings_not_file_value = pas une valeur qu’un fichier peut contenir : { $err
 settings_not_text = ce n’est pas du texte
 
 # draft
-settings_other_choice = pas un choix que skwir connaît ici : il peut figurer parmi { $which }
+settings_other_choice = pas un choix que Skwir connaît ici : il peut figurer parmi { $which }
 
 # draft
 settings_owner_unknown = rien ici ne déclare « { $owner } » : un module désactivé, ou externe, peut le faire
@@ -2539,10 +2554,10 @@ settings_record_needs_id = chaque enregistrement doit avoir un identifiant
 settings_records_share_id = deux enregistrements ont le même identifiant { $id }
 
 # draft
-settings_renamed = désormais « { $new } » : skwir l’y déplace
+settings_renamed = désormais « { $new } » : Skwir l’y déplace
 
 # draft
-settings_renamed_both = non lu : « { $new } » est défini, et c’est lui que skwir lit
+settings_renamed_both = non lu : « { $new } » est défini, et c’est lui que Skwir lit
 
 # draft
 settings_save_did_not_run = l’enregistrement des paramètres n’a pas eu lieu
@@ -2708,20 +2723,20 @@ settings_unknown = paramètre inconnu : { $key }
 
 # draft
 settings_unreadable_kept = { $file ->
-        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : skwir a démarré sans elles et n’y enregistre rien tant que « { $path } » n’est pas corrigé ou supprimé ({ $error }).
-       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : skwir a démarré avec ses valeurs par défaut et n’y enregistre rien tant que « { $path } » n’est pas corrigé ou supprimé ({ $error }).
+        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : Skwir a démarré sans elles et n’y enregistre rien tant que « { $path } » n’est pas corrigé ou supprimé ({ $error }).
+       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : Skwir a démarré avec ses valeurs par défaut et n’y enregistre rien tant que « { $path } » n’est pas corrigé ou supprimé ({ $error }).
     }
 
 # draft
 settings_unreadable_set_aside = { $file ->
-        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : skwir a démarré sans elles. Le fichier a été mis de côté sous le nom { $aside }.
-       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : skwir a démarré avec ses valeurs par défaut. Le fichier a été mis de côté sous le nom { $aside }.
+        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : Skwir a démarré sans elles. Le fichier a été mis de côté sous le nom { $aside }.
+       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : Skwir a démarré avec ses valeurs par défaut. Le fichier a été mis de côté sous le nom { $aside }.
     }
 
 # draft
 settings_unreadable_unsaved = { $file ->
-        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : skwir a démarré sans elles et n’y enregistre rien cette fois-ci.
-       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : skwir a démarré avec ses valeurs par défaut et n’y enregistre rien cette fois-ci.
+        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : Skwir a démarré sans elles et n’y enregistre rien cette fois-ci.
+       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : Skwir a démarré avec ses valeurs par défaut et n’y enregistre rien cette fois-ci.
     }
 
 # draft

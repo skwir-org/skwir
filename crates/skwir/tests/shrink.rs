@@ -376,7 +376,10 @@ fn lossless_with_a_size_is_refused() {
         .with("quality", "lossless")
         .with("at_most", "10 KB");
     let refused = app.dispatch(&invocation).expect_err("refused");
-    assert!(format!("{refused:#}").contains("Lossless"), "{refused:#}");
+    assert!(
+        format!("{refused:#}").contains("The `lossless` quality"),
+        "{refused:#}"
+    );
 }
 
 /// A step of a plan made while the plugin was on is refused once it is

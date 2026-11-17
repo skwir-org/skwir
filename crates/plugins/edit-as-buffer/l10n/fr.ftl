@@ -25,7 +25,7 @@ edit_as_buffer_empty_name = un nom ne peut pas être vide
 edit_as_buffer_failed = modifier comme texte : { $error }
 
 # draft
-edit_as_buffer_header = # skwir : modifiez cette liste, enregistrez et quittez.
+edit_as_buffer_header = # Skwir : modifiez cette liste, enregistrez et quittez.
     #   changer un nom                -> renommer
     #   supprimer une ligne           -> mettre à la corbeille
     #   nom avec une barre oblique    -> déplacer dans ce dossier (créé au besoin)

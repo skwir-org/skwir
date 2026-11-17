@@ -231,7 +231,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
     let notice = match (log.stopped, log.more, log.names_cut) {
         (true, _, true) => Some(words!(
             git_stopped_names_cut = "{ $count ->
-                [one] The newest { $count } commit: reading stopped before the oldest. Some commits have more branches and tags than are shown
+                [1] Only the newest commit: reading stopped before the oldest. Some commits have more branches and tags than are shown
                *[other] The newest { $count } commits: reading stopped before the oldest. Some commits have more branches and tags than are shown
             }",
             count = count,
@@ -239,7 +239,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         )),
         (true, _, false) => Some(words!(
             git_stopped = "{ $count ->
-                [one] The newest { $count } commit: reading stopped before the oldest
+                [1] Only the newest commit: reading stopped before the oldest
                *[other] The newest { $count } commits: reading stopped before the oldest
             }",
             count = count,
@@ -247,7 +247,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         )),
         (false, true, true) => Some(words!(
             git_newest_names_cut = "{ $count ->
-                [one] The newest { $count } commit. Some commits have more branches and tags than are shown
+                [1] Only the newest commit. Some commits have more branches and tags than are shown
                *[other] The newest { $count } commits. Some commits have more branches and tags than are shown
             }",
             count = count,
@@ -255,7 +255,7 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         )),
         (false, true, false) => Some(words!(
             git_newest = "{ $count ->
-                [one] The newest { $count } commit
+                [1] Only the newest commit
                *[other] The newest { $count } commits
             }",
             count = count,
@@ -290,13 +290,21 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
         ),
         value: if log.more || log.stopped {
             words!(
-                git_commits_shown = "{ $count } shown",
+                git_commits_shown = "{ $count ->
+                    [one] { $count } commit shown
+                   *[other] { $count } commits shown
+                }",
                 count = count,
-                note = "How many commits a history lists, older ones left."
+                note = "The value beside Commits in a history's Properties when older commits are left out: how many it lists."
             )
             .say()
         } else {
-            count.to_string()
+            words!(
+                git_commits = "{ $count }",
+                count = count,
+                note = "The value beside Commits in a history's Properties: how many commits it lists, all of them."
+            )
+            .say()
         },
         action: None,
     }];

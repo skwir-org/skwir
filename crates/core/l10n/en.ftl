@@ -192,9 +192,6 @@ access_group_already = { $inside ->
        *[no] the group of { $name } was already as asked
     }
 
-# Why a file's group cannot be changed. system: the system's name (Windows).
-access_group_not_yet = Changing a file's group is not available on { $system } yet
-
 # Why who may use a file cannot be changed: it is in the trash.
 access_in_trash = { $name } is in the trash: restore it first
 
@@ -498,7 +495,7 @@ app_group_unfold_all = Unfold all groups
 # The name of an action, in the palette, menus and F1's list.
 app_history = Undo history
 
-app_history_description = Return the actions Undo can take back, newest first (ADR-079, 13): each one's entry (what undo and redo take as entry), title, when it applied (seconds since 1970, UTC), whether it runs, waits, is done or undone, and what its Undo (an undone one's Redo) can do now: now, once it ends, after the action named (undo, or redo, that one first), being done, or never; with, the entries undo with_after takes with it
+app_history_description = Return the actions Undo can take back, newest first (ADR-079, 13). Each gives its `entry` (what undo and redo are given as `entry`), its `title`, `at`: when it applied (seconds since 1970, UTC), its `state` (running, waiting, done or undone), `can`: what its Undo, or an undone action's Redo, can do now (`now`; `once_ended`, while it runs or waits; `after`, once the action it names is undone or redone first; `going`, while it is being undone or redone; `never`), and `with`: the entries that undo with `with_after` takes back with it
 
 # An action's name, for scripts and agents: read the files' sizes, dates and notes.
 app_hydrate = Load metadata
@@ -571,7 +568,7 @@ app_notes_read = Read
 # Under the Read switch of a place notes are kept (a file's attributes, a file beside it, its name).
 app_notes_read_all = It holds all of a file's notes.
 
-# Under the Read switch of a place notes are kept: what it cannot hold that the others can, a phrase the place gives (no comma in a tag).
+# Under the Read switch of a place notes are kept: what it cannot hold that the others can, a phrase the place gives (a comma in a tag).
 app_notes_read_limits = What it cannot hold: { $limits }.
 
 # In the tooltip of the Read switch of a place notes are kept, after what it holds.
@@ -763,16 +760,16 @@ app_trash_description = Trash the selection, or the entries given (plan)
 
 # Said under the question asking to delete files for good, of those in network folders, which keep no trash: how many they are.
 app_trash_none_kept = { $count ->
-        [one] It is in a network folder, which keeps no trash
+        [1] It is in a network folder, which keeps no trash
        *[other] They are in network folders, which keep no trash
     }
 
 # Said under the question asking to delete files for good, of those in network folders, which keep no trash (count), and the others, which go to the trash (kept).
 app_trash_others_kept = { $count ->
-        [one] It is in a network folder, which keeps no trash
+        [1] It is in a network folder, which keeps no trash
        *[other] They are in network folders, which keep no trash
     }; { $kept ->
-        [one] the other item goes to the trash
+        [1] the other item goes to the trash
        *[other] the other { $kept } items go to the trash
     }
 
@@ -793,7 +790,7 @@ app_undo_with_after = with_after takes back an entry with what came after it: na
 # An action's name: go up to the folder holding the one shown.
 app_up = Parent directory
 
-app_up_description = Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in), the one left selected there
+app_up_description = Go to the folder holding the one shown, or to the place before it in its trail (a tag's category, the folder a search looks in), and select there the one just left
 
 # Why a copy, a move or a link does not go on, where no one is asked: its name is taken in the folder it goes to.
 clash_taken = { $name } is already there
@@ -818,9 +815,9 @@ command_with_args = { $title } ({ $args })
 
 # A note of a deletion's review: files deleted here have other names (hard links) elsewhere, so what they hold stays on the disk.
 entry_kept_elsewhere = { $count ->
-        [one] { $count } file has
-       *[other] { $count } files have
-    } names elsewhere: { $size } stays on the disk
+        [one] { $count } file has names elsewhere: the disk keeps its { $size }
+       *[other] { $count } files have names elsewhere: the disk keeps their { $size }
+    }
 
 # Said to an agent that asked to change the exclusions: what it would have let agents read, each as the Exclusions page says it. Settings and Exclusions are a dialog's and its page's names.
 exclusions_agent_exposes = an agent may not make private folders readable ({ $folders }): only you can, in Settings, Exclusions
@@ -850,13 +847,13 @@ exclusions_beside_name = { $sibling }: beside names a file or a folder, not a pa
 exclusions_beside_path = { $pattern }: beside a file, the folder is a name (target), not a path
 
 # An exclusion in the settings refused: its id begins with skwir. (as written), which only Skwir's own have, yet it names a folder.
-exclusions_builtin_id = skwir. names skwir's own folders; give yours a name without a dot
+exclusions_builtin_id = skwir. names Skwir's own folders; give yours a name without a dot
 
 # A setting drawn by the Exclusions page, read in the settings file and by agents.
 exclusions_categories = Exclusion categories
 
-# skwir is the program's name; searches, agents and index are the roles' keys, as written.
-exclusions_categories_description = What changed of skwir's categories of exclusions (a role switched: searches, agents, index), and yours (a name)
+# Skwir is the program's name; searches, agents and index are the roles' keys, as written.
+exclusions_categories_description = What changed of Skwir's categories of exclusions (a role switched: searches, agents, index), and yours (a name)
 
 # The categories of exclusions in the settings refused: they are written as a TOML table, each under its id.
 exclusions_categories_table = folder categories are a table, by id
@@ -874,7 +871,7 @@ exclusions_empty = a folder needs a name or a path
 exclusions_entries = Exclusions
 
 # Read in the settings file and by agents. regex:, beside and holding are written so.
-exclusions_entries_description = What changed of skwir's exclusions (a role unticked, a category), and yours: a pattern (a name, a path, a glob or regex:…, of files, folders or both, with beside), or holding (a file a folder holds), what it is, its category, and the roles it is excluded from
+exclusions_entries_description = What changed of Skwir's exclusions (a role unticked, a category), and yours: a pattern (a name, a path, a glob or regex:…, of files, folders or both, with beside), or holding (a file a folder holds), what it is, its category, and the roles it is excluded from
 
 # The exclusions in the settings refused: they are written as a TOML table, each under its id.
 exclusions_entries_table = exclusions are a table, by id
@@ -888,8 +885,8 @@ exclusions_holding_alone = beside and names go with a pattern, not with holding
 # An exclusion refused: holding is the field's name, which takes a file's name, not a path.
 exclusions_holding_name = holding is the name of a file a folder holds
 
-# An exclusion or a category of the user's in the settings refused: an id with a dot is Skwir's (skwir is the program's name).
-exclusions_id_dot = an id of yours has no dot: those are skwir's and its plugins'
+# An exclusion or a category of the user's in the settings refused: an id with a dot is Skwir's (Skwir is the program's name).
+exclusions_id_dot = an id of yours has no dot: those are Skwir's and its plugins'
 
 # A setting of an older version (0.3.1) still read, in the settings file.
 exclusions_legacy_folders = Private folders (before exclusions)
@@ -1086,10 +1083,10 @@ exclusions_shell_variables_description = Read variables such as CARGO_HOME from 
 # CARGO_HOME, .zshrc and config.fish are names, as written.
 exclusions_shell_variables_description_more = A Skwir started from your desktop does not see what .zshrc or config.fish export. The shell is asked in the background once its files change, and only the variables these paths name are kept.
 
-# A notice leading to the Exclusions page: exclusions in the settings that cannot be read, so they keep nothing private. How many more besides the first, then the first: where it is and why.
-exclusions_unreadable = { $more ->
-        [0] An exclusion cannot be read, so it does not apply: { $first }
-       *[other] An exclusion cannot be read, so it does not apply (and { $more } more): { $first }
+# A notice leading to the Exclusions page: exclusions in the settings that cannot be read, so they keep nothing private. count: how many; first: the first of them, where it is and why.
+exclusions_unreadable = { $count ->
+        [1] An exclusion cannot be read, so it does not apply: { $first }
+       *[other] { $count } exclusions cannot be read, so they do not apply. The first: { $first }
     }
 
 # What one of Skwir's exclusions is, where it names several folders: what the first says it is, then this.
@@ -1162,10 +1159,10 @@ exec_undo_held = “{ $title }” cannot be undone alone: “{ $other }”, aske
 exec_undo_held_for_good = “{ $title }” cannot be undone: “{ $other }”, asked after it, touched what it did and cannot be undone
 
 # Why an action cannot be undone by itself: another action, asked after it and running now, changed the same files. title, other: the two actions' titles.
-exec_undo_held_running = “{ $title }” cannot be undone alone: “{ $other }”, asked after it, running, touched what it did; undo that first
+exec_undo_held_running = “{ $title }” cannot be undone alone: “{ $other }”, asked after it and running now, is changing what it did; undo that first
 
 # Why an action cannot be undone by itself: another action, asked after it and waiting to run, will change the same files. title, other: the two actions' titles.
-exec_undo_held_waiting = “{ $title }” cannot be undone alone: “{ $other }”, asked after it, waiting, touched what it did; undo that first
+exec_undo_held_waiting = “{ $title }” cannot be undone alone: “{ $other }”, asked after it and waiting to run, will change what it did; undo that first
 
 # Why an undo asked of an action does nothing: it was undone before. title: the action's title.
 exec_undone_already = “{ $title }” is undone already
@@ -1330,10 +1327,10 @@ keymap_refused = { $keys }: { $error }
 # A setting on the Keyboard page: the list of keys the user binds.
 keymap_shortcuts = Your shortcuts
 
-# skwir is the program's name.
-keymap_shortcuts_description = Keys you bind, over the ones skwir and its plugins set.
+# Skwir is the program's name.
+keymap_shortcuts_description = Keys you bind, over the ones Skwir and its plugins set.
 
-# skwir is the program's name.
+# A setting's further description on the Keyboard page: a shortcut with no command frees its key.
 keymap_shortcuts_description_more = Leave the command empty to free a key.
 
 # A shortcut refused: its keys and the action's name, both as written.
@@ -1373,13 +1370,13 @@ notes_comment_command = Comment
 # Read by agents and in F1's list of actions.
 notes_comment_description = Set the comment of the entries given, or the selection's, or remove it with an empty text (plan)
 
-# A step of a plan, done: the past of “set”. Begins in lower case.
-notes_comment_set = set the comment of { $name }
-
-notes_comment_set_already = { $name } already had that comment
-
 # A plan's title: the files' comment is set. Begins in lower case.
 notes_comment_title = set the comment
+
+# A step of a plan, done: a file was given a comment (the past of “set”, as notes_uncommented is of notes_uncomment). Begins in lower case.
+notes_commented = set the comment of { $name }
+
+notes_commented_already = { $name } already had that comment
 
 notes_gone = { $name } is not there any more
 
@@ -1434,7 +1431,7 @@ notes_renamed_tag = renamed the tag { $tag } to { $to } on { $name }
 
 notes_renamed_tag_already = the tag { $tag } was already { $to } on { $name }
 
-# A step of a plan. Begins in lower case.
+# A step of a plan, to do: give a file a comment (its words are not said). Begins in lower case.
 notes_set_comment = set the comment of { $name }
 
 # A rating in whole stars (4 stars).
@@ -1449,7 +1446,7 @@ notes_stars_half = { $whole ->
        *[other] { $whole }½ stars
     }
 
-# A step of a plan: give a file tags (their names, by commas). Begins in lower case.
+# A step of a plan: give a file tags (their names, as a list). Begins in lower case.
 notes_tag = tag { $name } { $tags }
 
 notes_tagged = tagged { $name } { $tags }
@@ -1459,19 +1456,26 @@ notes_tagged_already = { $name } was already tagged { $tags }
 # A step of a plan: take a tag (its name) off a file. Begins in lower case.
 notes_take_tag = take { $tag } off { $name }
 
-# A step of a plan: take tags (their names, by commas) off a file. Begins in lower case.
-notes_take_tags = take { $tags } off { $name }
+# A step of a plan: take tags off a file. count: how many; tags: their names, as a list. Begins in lower case.
+notes_take_tags = { $count ->
+        [1] take the tag { $tags } off { $name }
+       *[other] take the tags { $tags } off { $name }
+    }
 
 notes_took_tag = took { $tag } off { $name }
 
 notes_took_tag_already = { $tag } was already off { $name }
 
-notes_took_tags = took { $tags } off { $name }
+# A step of a plan, done: tags taken off a file. count: how many; tags: their names, as a list. Begins in lower case.
+notes_took_tags = { $count ->
+        [1] took the tag { $tags } off { $name }
+       *[other] took the tags { $tags } off { $name }
+    }
 
-# Tags (their names, by commas, as many as the count) found already off a file.
+# Tags found already off a file. count: how many; tags: their names, as a list. Begins in lower case.
 notes_took_tags_already = { $count ->
-        [one] { $tags } was already off { $name }
-       *[other] { $tags } were already off { $name }
+        [1] the tag { $tags } was already off { $name }
+       *[other] the tags { $tags } were already off { $name }
     }
 
 # A step of a plan. Begins in lower case.
@@ -1526,7 +1530,7 @@ op_attribute_name_not_utf8 = an attribute of { $name } has a non-UTF-8 name, whi
 op_attributes_not_kept = keep tags and other attributes while copying: { $folder } keeps no attributes, and nothing is set to keep them beside it; turn off “{ $setting }” in Settings to copy without them
 
 # What a copy could not do, its why after it: write a file's tags and other extended attributes where it goes. setting: the setting's title. Begins in lower case.
-op_attributes_refused = keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “{ $setting }” in Settings
+op_attributes_refused = keep tags and other attributes while copying: check that the destination keeps extended attributes and lets you write them, or turn off “{ $setting }” in Settings
 
 # What a step could not do: read a file's extended attributes (its tags among them); why follows.
 op_attributes_unread = the tags and attributes of { $name } could not be read
@@ -1544,7 +1548,10 @@ op_batch_copying = { $transfer } copying { $count ->
 op_batch_link = “{ $path }” is a link
 
 # Why a batch of copies failed: a source ended early (a server stopped serving it). path: its path; read, bytes: how many bytes were read, how many it holds.
-op_batch_read_short = “{ $path }”: { $read } of its { $bytes } bytes could be read
+op_batch_read_short = { $read ->
+        [one] “{ $path }”: only { $read } byte of { $bytes } could be read
+       *[other] “{ $path }”: only { $read } bytes of { $bytes } could be read
+    }
 
 # A line of a plan's review, terse as a listing: a file copied, its path then its copy's. Begins in lower case.
 op_change_copy = copy { $from } -> { $to }
@@ -1633,8 +1640,8 @@ op_foreign_folder = this folder belongs to another user and its permissions woul
 # Why a folder is not deleted or put in the trash: a drive or a server's files are shown in a folder inside it. point: that folder's path from it.
 op_holds_mount_point = { $name } holds “{ $point }”, where a drive or a remote is mounted: eject it first
 
-# Why a copy failed: a file whose parts were never written (a sparse file) is copied as such on Unix only.
-op_holes_unix_only = a file with holes is copied on Unix alone
+# Why a copy failed: a file some parts of which were never written (a sparse file) is copied as such only on Unix. system: the system's name (Windows).
+op_holes_not_yet = Copying a file with holes (a sparse file) is not available on { $system } yet
 
 # Why a step does not go on: what tells a file apart from others (its device and inode) could not be read.
 op_identity_unread = the entry's identity could not be read
@@ -1645,9 +1652,9 @@ op_in_trash_already = { $name } is in the trash already
 # Why a step does not act on a file: it is in the trash.
 op_in_trash_restore_first = { $name } is in the trash: restore it first
 
-# What a folder removed in part left: the first file still there (its path from the folder above) and how many more.
-op_left_after_removal = { $count ->
-        [1] “{ $path }” is left
+# What a folder removed in part left: the first file still there (its path from the folder above) and how many more besides it.
+op_left_after_removal = { $more ->
+        [0] “{ $path }” is left
        *[other] “{ $path }” and { $more } more are left
     }
 
@@ -1691,7 +1698,7 @@ op_moved_into_itself = a folder cannot be moved into itself
 op_moved_stays = what was moved stays where it was
 
 # Why a step that moves or stages files in a folder failed: the device it is on (a camera) does not move files between its folders.
-op_moves_nothing = it moves nothing between its folders (a camera): only copies are made there
+op_moves_nothing = this device (a camera) cannot move files between its folders: only copies can be made there
 
 # Why a name typed for a file is refused on Windows: it holds a character Windows keeps for itself (\ : * ? " < > |).
 op_name_character = a name cannot contain “{ $character }”
@@ -1736,13 +1743,13 @@ op_no_longer_in_trash = { $name } is no longer in the trash
 op_no_longer_there = { $name } is no longer there
 
 # Why a step on the trash does not go on: the file named as what the trash keeps of an item (its .trashinfo) is not one.
-op_no_record = { $name } is no trash's record
+op_no_record = { $name } is not a trash's record of an item
 
 # Why an action does not go on: the drive it writes to has too little free. folder: the folder written into, by its name; needs, free: sizes.
 op_no_room = Not enough room in { $folder }: { $needs } needed, { $free } free
 
 # Why the undo of a folder restored into one there does not go on: the trash's record of it names no item of a trash.
-op_no_trash_s = { $name } is no trash's
+op_no_trash_s = { $name } names no item of a trash
 
 # Why a file is not put in the trash: its folder is a server's, mounted by a program (sshfs, rclone, GVfs), where no trash is kept.
 op_no_trash_there = { $name } is in a network folder a program mounts, which keeps no trash
@@ -1832,13 +1839,16 @@ op_path_no_name = “{ $path }” has no name
 op_pipe_not_made = the pipe { $name } could not be made
 
 # Why a file restored from a trashed folder is not put back in it: another file took its place there.
-op_place_taken_in_trash = { $name } is in its place in the trash
+op_place_taken_in_trash = another { $name } has taken its place in the trash
 
 # Why a plan given as data is refused: one of its steps is of a kind that holds several. kind: that kind's identifier.
 op_plan_steps_kind = a plan lists each of its steps: `{ $kind }` is none
 
-# Why a copy failed: its source ended early (a server stopped serving it). read, bytes: how many bytes were read, how many it holds.
-op_read_short = { $read } of its { $bytes } bytes could be read
+# Why a copy failed: its source ended early (a server stopped serving it). read: how many bytes were read; bytes: how many it holds. Begins in lower case.
+op_read_short = { $read ->
+        [one] only { $read } byte of { $bytes } could be read
+       *[other] only { $read } bytes of { $bytes } could be read
+    }
 
 # What a step on the trash could not do: read what the trash keeps of an item (its .trashinfo); why follows.
 op_record_unread = the trash's record { $name } could not be read
@@ -1925,7 +1935,7 @@ orders_not_saved = The order was not remembered: { $error }
 os_path_not_absolute = { $path } is not an absolute path
 
 # Told to an agent that named a private folder; Settings and Privacy name the page where folders are made private.
-permissions_names_private = this names a private folder, which skwir keeps from agents (Settings, Privacy)
+permissions_names_private = this names a private folder, which Skwir keeps from agents (Settings, Privacy)
 
 # What a plugin may do, on the Plugins page after “May:”. Begins in lower case.
 permissions_network = uses the network
@@ -1934,7 +1944,7 @@ permissions_network = uses the network
 permissions_programs = starts programs
 
 # Told to an agent that named a path on a server: the path.
-permissions_reaches_machine = looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first
+permissions_reaches_machine = looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in Skwir first
 
 # What a plugin may do, on the Plugins page after “May:”. Begins in lower case.
 permissions_read = reads what files hold
@@ -2135,16 +2145,16 @@ registry_open_with = Open With
 # A submenu of a file's menu: its tags, each a check, and the tags editor.
 registry_tags = Tags
 
-# A settings file's key that skwir keeps in a file of its own, which holds it already.
+# A settings file's key that Skwir keeps in a file of its own, which holds it already.
 settings_apart_own = { $file ->
-        [state] the window's state, not a setting: skwir reads its own, in its state file, never this one
-       *[data] what you make in skwir (saved searches, pinned tags, tags' colours), not a setting: skwir reads its own, in its data file, never this one
+        [state] the window's state, not a setting: Skwir reads its own, in its state file, never this one
+       *[data] what you make in Skwir (saved searches, pinned tags, tags' colours), not a setting: Skwir reads its own, in its data file, never this one
     }
 
-# A settings file's key that skwir keeps in a file of its own, which does not hold it yet.
+# A settings file's key that Skwir keeps in a file of its own, which does not hold it yet.
 settings_apart_until = { $file ->
-        [state] the window's state, not a setting: read from here only until skwir keeps its own, in its state file
-       *[data] what you make in skwir (saved searches, pinned tags, tags' colours), not a setting: read from here only until skwir keeps its own, in its data file
+        [state] the window's state, not a setting: read from here only until Skwir keeps its own, in its state file
+       *[data] what you make in Skwir (saved searches, pinned tags, tags' colours), not a setting: read from here only until Skwir keeps its own, in its data file
     }
 
 settings_apply = Save settings
@@ -2155,7 +2165,7 @@ settings_apply_description = Change preferences, each key with the text its row 
 settings_check = Check settings
 
 # Read by agents and in F1's list of actions.
-settings_check_description = Check a settings file, or settings given as a table, against the settings this skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know
+settings_check_description = Check a settings file, or settings given as a table, against the settings this build of Skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know
 
 # A settings file to check that is no TOML: its path, then what is wrong and where.
 settings_check_invalid = “{ $path }” is not valid: { $problem }
@@ -2289,10 +2299,10 @@ settings_language = Language
 settings_language_automatic = Automatic
 
 # Automatic is a choice of the setting (settings_language_automatic).
-settings_language_description = The language skwir's window speaks.
+settings_language_description = The language Skwir's window speaks.
 
 # Automatic is a choice of the setting (settings_language_automatic).
-settings_language_description_more = Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.
+settings_language_description_more = Automatic speaks the first of your system's languages Skwir has words in, else English; agents and scripts are answered in English whichever you choose.
 
 # The pseudo-language, English accented and longer, offered in builds for testing.
 settings_language_pseudo = Pseudo (for testing)
@@ -2306,7 +2316,7 @@ settings_last_location = The folder shown when the window was last closed
 # The key is a setting's, as a file writes it.
 settings_managed = { $key } is managed by its owning commands
 
-# A settings file names a plugin skwir does not have: its id.
+# A settings file names a plugin Skwir does not have: its id.
 settings_no_plugin = no plugin “{ $id }” here: one from outside, or not built in, may take it
 
 settings_no_such = no such setting
@@ -2317,8 +2327,8 @@ settings_not_file_value = not a value a file holds: { $error }
 # Why a settings file could not be read: its bytes are no text.
 settings_not_text = it is not text
 
-# A settings file's choice skwir does not know, which may be one found where it runs: which those are (themes you added to bat).
-settings_other_choice = not one skwir knows here: it may be among { $which }
+# A settings file's choice Skwir does not know, which may be one found where it runs: which those are (themes you added to bat).
+settings_other_choice = not one Skwir knows here: it may be among { $which }
 
 # A settings file's key under an owner nothing here declares: the owner's id.
 settings_owner_unknown = nothing here declares “{ $owner }”: a plugin turned off, or from outside, may
@@ -2358,10 +2368,10 @@ settings_record_needs_id = every record needs an id
 settings_records_share_id = two records share the id { $id }
 
 # A settings file's key that has a new name: the new key.
-settings_renamed = now “{ $new }”: skwir moves it there
+settings_renamed = now “{ $new }”: Skwir moves it there
 
 # A settings file's key that has a new name, set too: the new key.
-settings_renamed_both = not read: “{ $new }” is set, which skwir reads
+settings_renamed_both = not read: “{ $new }” is set, which Skwir reads
 
 settings_save_did_not_run = settings save did not run
 
@@ -2514,22 +2524,22 @@ settings_unit_seconds = { $n } s
 # A setting's key no setting has.
 settings_unknown = unknown setting: { $key }
 
-# Told at startup: a file of skwir's could not be read (why) nor renamed (its path, and why not).
+# Told at startup: a file of Skwir's could not be read (why) nor renamed (its path, and why not).
 settings_unreadable_kept = { $file ->
-        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
-       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
     }
 
-# Told at startup: a file of skwir's could not be read (why, in a few words) and was renamed (its new name).
+# Told at startup: a file of Skwir's could not be read (why, in a few words) and was renamed (its new name).
 settings_unreadable_set_aside = { $file ->
-        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them. The file was set aside as { $aside }.
-       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults. The file was set aside as { $aside }.
+        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them. The file was set aside as { $aside }.
+       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults. The file was set aside as { $aside }.
     }
 
-# Told at startup: a file of skwir's could not be read; why, in a few words.
+# Told at startup: a file of Skwir's could not be read; why, in a few words.
 settings_unreadable_unsaved = { $file ->
-        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them, and saves nothing there this time.
-       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults, and saves nothing there this time.
+        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there this time.
+       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there this time.
     }
 
 # A quality of a smaller copy: nothing lost.
@@ -2796,7 +2806,7 @@ suggest_terms = Add a term
 # Why a folder removed is not made again by its undo: the permissions it kept are none a folder can have.
 sys_bad_folder_permissions = invalid directory permissions
 
-# Why a file's group is not changed. system: the system's name (Windows).
+# Why a file's group cannot be changed. system: the system's name (Windows).
 sys_group_not_yet = Changing a file's group is not available on { $system } yet
 
 # Why a change of access failed on Linux: the system's /proc folder, through which it reaches the file, is missing.

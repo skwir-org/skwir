@@ -1261,7 +1261,7 @@ impl Plugin for RenameBulkPlugin {
             Ok(Outcome::Value(serde_json::json!({ "renames": shown, "count": renames.len(), "first": first })))
         })
         .data();
-        app.commands.register::<ReferenceArgs, _>(ID, Topic::Files, "rename_bulk.reference", words!(rename_bulk_reference = "Say what a bulk rename's field takes"), words!(rename_bulk_reference_description = "Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives the first of the entries given or selected under the rename as given, and recipes filling the regex and its replacement", note = "Read by agents: `field` is the argument, and template, regex and replacement its values, as written."), |a, app| {
+        app.commands.register::<ReferenceArgs, _>(ID, Topic::Files, "rename_bulk.reference", words!(rename_bulk_reference = "Say what a bulk rename's field takes"), words!(rename_bulk_reference_description = "Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives for the first of the entries given or selected, the rename's other arguments being as given, and recipes filling the regex and its replacement", note = "Read by agents: `field` is the argument, and template, regex and replacement its values, as written."), |a, app| {
             let spec = a.args.spec.clone();
             let first = first_item(app, a.args)?;
             Ok(Outcome::Value(serde_json::to_value(reference(a.field, first.as_ref(), &spec))?))

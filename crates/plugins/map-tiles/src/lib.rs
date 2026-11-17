@@ -214,7 +214,7 @@ impl Plugin for MapTilesPlugin {
                         "headers",
                         words!(map_tiles_server_headers = "Headers"),
                         words!(
-                            map_tiles_server_headers_description = "Sent with every request: User-Agent replaces skwir's, Referer, Authorization… { \"{key}\" } is replaced by the API key"
+                            map_tiles_server_headers_description = "Sent with every request: User-Agent replaces Skwir's, Referer, Authorization… { \"{key}\" } is replaced by the API key"
                         ),
                     ),
                     RecordField::secret(
@@ -375,8 +375,8 @@ impl Source {
                             map_tiles_server_answered =
                                 "{ $name } answered with a tile of { $width }×{ $height }",
                             name = Name(name),
-                            width = image.width.to_string(),
-                            height = image.height.to_string(),
+                            width = image.width,
+                            height = image.height,
                             note =
                                 "name: a tile server's; width and height: the tile's, in pixels."
                         ),

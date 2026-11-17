@@ -70,8 +70,8 @@ pub fn call(
                 anyhow::ensure!(
                     mode == PlanMode::Propose || channel::connect(address).await.is_err(),
                     skwir_core::words!(
-                        control_no_script_endpoint = "the window has no script endpoint: restart skwir before running this command",
-                        note = "Read by scripts: the window running is an older skwir's, which takes no script's command."
+                        control_no_script_endpoint = "the window has no script endpoint: restart Skwir before running this command",
+                        note = "Read by scripts: the window running is an older Skwir's, which takes no script's command."
                     )
                 );
                 return Err(error.into());

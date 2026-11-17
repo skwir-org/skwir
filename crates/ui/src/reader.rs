@@ -255,7 +255,7 @@ impl Shell {
             self.set_status(
                 words!(
                     reader_page_refused = "Enter a page number from 1 to { $last }",
-                    last = document_pages(self).to_string(),
+                    last = document_pages(self),
                     note = "Said where a page typed is not a page of the document. last: its last page's number."
                 ),
                 true,
@@ -945,21 +945,30 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     ));
     // A document that names its pages can show and take those names.
     let labels = page_labels(shell);
+    // A page's name as the document prints it is as written; a number is
+    // written as the reader's language writes numbers.
     let (value, total) = match labels.filter(|_| shell.prefs.printed_pages) {
         Some(labels) => (
-            labels
-                .get(current as usize - 1)
-                .filter(|label| !label.is_empty())
-                .cloned()
-                .unwrap_or_else(|| "–".to_owned()),
-            labels
-                .iter()
-                .rev()
-                .find(|label| !label.is_empty())
-                .cloned()
-                .unwrap_or_default(),
+            Words::as_written(
+                labels
+                    .get(current as usize - 1)
+                    .filter(|label| !label.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| "–".to_owned()),
+            ),
+            skwir_core::words::Arg::from(
+                labels
+                    .iter()
+                    .rev()
+                    .find(|label| !label.is_empty())
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
         ),
-        None => (current.to_string(), pages.to_string()),
+        None => (
+            crate::preview_bar::number(u64::from(current)),
+            skwir_core::words::Arg::from(pages),
+        ),
     };
     let unit = labels.map(|_| {
         bar.popups
@@ -1063,17 +1072,22 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             note = "Under a document's find field while it looks for the words."
         )
         .say()
-    } else {
-        format!(
-            "{} / {}{}",
-            reader.active_hit.map_or(0, |i| i + 1),
-            reader.hits.len(),
-            if reader.hits.len() == skwir_core::document::MAX_HITS {
-                "+"
-            } else {
-                ""
-            }
+    } else if reader.hits.len() == skwir_core::document::MAX_HITS {
+        words!(
+            reader_match_of_most = "{ $at } / { $count }+",
+            at = reader.active_hit.map_or(0, |i| i + 1),
+            count = reader.hits.len(),
+            note = "Under a document's find field: which match is shown, of how many, where the search stopped at the most it finds (3 / 1,000+)."
         )
+        .say()
+    } else {
+        words!(
+            reader_match_of = "{ $at } / { $count }",
+            at = reader.active_hit.map_or(0, |i| i + 1),
+            count = reader.hits.len(),
+            note = "Under a document's find field: which match is shown, of how many (3 / 12)."
+        )
+        .say()
     };
     let matches = |id, icon, title, delta: i32| {
         Button::new(id, icon, title, "ui.preview_match")

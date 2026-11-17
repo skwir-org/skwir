@@ -221,7 +221,7 @@ fn ask(
         !refs.iter().any(|r| check.holds(&r.path)) && check.named_in(&args).is_none(),
         words!(
             extend_private_file =
-                "a private file: a plugin from outside skwir does not see it (Settings, Privacy)",
+                "a private file: a plugin from outside Skwir does not see it (Settings, Privacy)",
             note = "An error: a command of a plugin from outside Skwir was given a file the user keeps private. Settings, Privacy is where. In lower case."
         )
     );

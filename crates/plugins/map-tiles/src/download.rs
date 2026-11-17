@@ -472,7 +472,8 @@ async fn fetch(
         304 => {
             let stale = stale.ok_or_else(|| {
                 anyhow::anyhow!(words!(
-                    map_tiles_not_modified = "the server said nothing changed in a tile never had"
+                    map_tiles_not_modified = "the server said the tile had not changed, but Skwir never had it",
+                    note = "An error: a tile server answered “not modified” for a tile Skwir did not keep."
                 ))
             })?;
             Ok(Cached {

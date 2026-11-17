@@ -26,7 +26,7 @@ use skwir_core::entry::keys;
 use skwir_core::fs::count::{self, Count};
 use skwir_core::op::{Change, PlanId};
 use skwir_core::words;
-use skwir_core::words::{Name, Size, Words};
+use skwir_core::words::{List, Name, Size, Words};
 use skwir_core::{CancelToken, EntryKind, Plan};
 use skwir_platform::calendar::Calendar;
 
@@ -284,7 +284,8 @@ impl Deleting {
                 trash = kept_in.clone(),
                 note = "Asked before deleting on a server that keeps what is deleted in a \
                         trash of its own; trash: that trash, as the server names it (Google \
-                        Drive's trash)."
+                        Drive's trash), words said inside a sentence that carry their own \
+                        determiner: add no article before it."
             ),
             (Some(kept_in), None) => words!(
                 deleting_kept = "{ $count ->
@@ -297,7 +298,8 @@ impl Deleting {
                 trash = kept_in.clone(),
                 note = "Asked before deleting on a server that keeps what is deleted in a \
                         trash of its own; trash: that trash, as the server names it (Google \
-                        Drive's trash)."
+                        Drive's trash), words said inside a sentence that carry their own \
+                        determiner: add no article before it."
             ),
             (None, Some(name)) => words!(
                 deleting_one = "Delete { $name } permanently? This cannot be undone.",
@@ -402,7 +404,7 @@ impl Deleting {
                 None => Words::as_written("…"),
                 Some(c) if !c.done => words!(
                     deleting_folder_counting = "{ $count ->
-                        [one] 1 file
+                        [one] { $count } file
                        *[other] { $count } files
                     }…",
                     count = c.files,
@@ -415,7 +417,7 @@ impl Deleting {
                 ),
                 Some(c) if at_least(&c) => words!(
                     deleting_folder_at_least = "at least { $size } · { $count ->
-                        [one] 1 file
+                        [one] { $count } file
                        *[other] { $count } files
                     }",
                     size = Size(c.size),
@@ -425,7 +427,7 @@ impl Deleting {
                 ),
                 Some(c) => words!(
                     deleting_folder_holds = "{ $size } · { $count ->
-                        [one] 1 file
+                        [one] { $count } file
                        *[other] { $count } files
                     }",
                     size = Size(c.size),
@@ -443,19 +445,24 @@ impl Deleting {
         if row.companions.is_empty() {
             return None;
         }
-        // Transitional: a list argument (ADR-139).
+        // One path a line, each as the address writes it: a block of
+        // paths, as written, not a list said in words.
         let paths: Vec<SharedString> = row
             .companions
             .iter()
             .map(|path| written(path, self.home.as_deref(), &self.remotes))
             .collect();
         let said = words!(
-            deleting_deleted_with = "Deleted with it:
+            deleting_deleted_with = "{ $count ->
+                [one] Deleted with it:
+               *[other] Deleted with it:
+            }
                 { $paths }",
+            count = paths.len(),
             paths = paths.join("\n"),
             note = "When pointed at the mark after a name in what a deletion takes: the \
-                    companion files deleted with it (its notes, its sidecars), one path a \
-                    line."
+                    companion files deleted with it (its notes, its sidecars), how many, then \
+                    one path a line, as written."
         );
         Some(said.say().into())
     }
@@ -532,7 +539,7 @@ impl Deleting {
             (0, 0) => return None,
             (0, folders) if at_least => words!(
                 deleting_at_least_empty_folders = "At least { $folders ->
-                    [one] 1 empty folder
+                    [one] { $folders } empty folder
                    *[other] { $folders } empty folders
                 }",
                 folders = folders,
@@ -541,7 +548,7 @@ impl Deleting {
             ),
             (0, folders) => words!(
                 deleting_empty_folders = "{ $folders ->
-                    [one] 1 empty folder
+                    [one] { $folders } empty folder
                    *[other] { $folders } empty folders
                 }",
                 folders = folders,
@@ -549,7 +556,7 @@ impl Deleting {
             ),
             (files, 0) if at_least => words!(
                 deleting_at_least_files = "At least { $size } in { $files ->
-                    [one] 1 file
+                    [one] { $files } file
                    *[other] { $files } files
                 }",
                 size = Size(total.size),
@@ -559,7 +566,7 @@ impl Deleting {
             ),
             (files, 0) => words!(
                 deleting_files = "{ $size } in { $files ->
-                    [one] 1 file
+                    [one] { $files } file
                    *[other] { $files } files
                 }",
                 size = Size(total.size),
@@ -568,10 +575,10 @@ impl Deleting {
             ),
             (files, folders) if at_least => words!(
                 deleting_at_least_files_folders = "At least { $size } in { $files ->
-                    [one] 1 file
+                    [one] { $files } file
                    *[other] { $files } files
                 } and { $folders ->
-                    [one] 1 folder
+                    [one] { $folders } folder
                    *[other] { $folders } folders
                 }",
                 size = Size(total.size),
@@ -582,10 +589,10 @@ impl Deleting {
             ),
             (files, folders) => words!(
                 deleting_files_folders = "{ $size } in { $files ->
-                    [one] 1 file
+                    [one] { $files } file
                    *[other] { $files } files
                 } and { $folders ->
-                    [one] 1 folder
+                    [one] { $folders } folder
                    *[other] { $folders } folders
                 }",
                 size = Size(total.size),
@@ -886,14 +893,17 @@ fn rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<
             let folder = row.folder.clone().filter(|_| listed.folders);
             let said = shell.a11y.then(|| {
                 let with = (!row.companions.is_empty()).then(|| {
-                    // Transitional: a list argument (ADR-139).
-                    let names: Vec<_> = row.companions.iter().map(|c| name_of(c)).collect();
+                    let names = row.companions.iter().map(|c| Name(name_of(c).to_string()));
                     words!(
-                        deleting_said_with = "deleted with it: { $names }",
-                        names = names.join(", "),
+                        deleting_said_with = "{ $count ->
+                            [one] deleted with it: { $names }
+                           *[other] deleted with it: { $names }
+                        }",
+                        count = row.companions.len(),
+                        names = List::and(names),
                         note = "What a screen reader hears of a row of what a deletion takes, \
-                                after its name: the companion files deleted with it, by name. \
-                                Begins in lower case."
+                                after its name: how many companion files are deleted with it, \
+                                and their names, a list. Begins in lower case."
                     )
                 });
                 let mut said = Words::as_written(row.name.to_string());

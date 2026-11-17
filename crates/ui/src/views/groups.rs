@@ -569,7 +569,7 @@ pub fn label(span: &Span) -> Arc<str> {
 pub fn said(span: &Span) -> String {
     skwir_core::words!(
         views_group_said = "{ $group }, { $count ->
-            [one] 1 item
+            [one] { $count } item
            *[other] { $count } items
         }",
         group = label(span).to_string(),

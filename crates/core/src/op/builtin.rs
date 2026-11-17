@@ -110,7 +110,7 @@ fn not_restored(path: &Path) -> Couldnt {
 /// Why a step on a trash's record does not go on: the file is none.
 fn no_record(info: &Path) -> Words {
     words!(
-        op_no_record = "{ $name } is no trash's record",
+        op_no_record = "{ $name } is not a trash's record of an item",
         name = name_of(info),
         note = "Why a step on the trash does not go on: the file named as what the trash keeps of an item (its .trashinfo) is not one."
     )
@@ -2511,10 +2511,13 @@ fn copy_file(
         // goes on, or starts again on a source changed.
         if end < m.len() {
             return Err(anyhow::Error::new(words!(
-                op_read_short = "{ $read } of its { $bytes } bytes could be read",
+                op_read_short = "{ $read ->
+                    [one] only { $read } byte of { $bytes } could be read
+                   *[other] only { $read } bytes of { $bytes } could be read
+                }",
                 read = end,
                 bytes = m.len(),
-                note = "Why a copy failed: its source ended early (a server stopped serving it). read, bytes: how many bytes were read, how many it holds."
+                note = "Why a copy failed: its source ended early (a server stopped serving it). read: how many bytes were read; bytes: how many it holds. Begins in lower case."
             ))
             .context(not_copied(src)));
         }
@@ -2745,8 +2748,9 @@ fn copy_sparse(
                 #[cfg(not(unix))]
                 {
                     anyhow::bail!(words!(
-                        op_holes_unix_only = "a file with holes is copied on Unix alone",
-                        note = "Why a copy failed: a file whose parts were never written (a sparse file) is copied as such on Unix only."
+                        op_holes_not_yet = "Copying a file with holes (a sparse file) is not available on { $system } yet",
+                        system = crate::system::named(),
+                        note = "Why a copy failed: a file some parts of which were never written (a sparse file) is copied as such only on Unix. system: the system's name (Windows)."
                     ))
                 }
             };
@@ -2918,7 +2922,7 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
             }
             Err(e) => {
                 return Err(e).context(words!(
-                    op_attributes_refused = "keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “{ $setting }” in Settings",
+                    op_attributes_refused = "keep tags and other attributes while copying: check that the destination keeps extended attributes and lets you write them, or turn off “{ $setting }” in Settings",
                     setting = crate::settings::keep_attributes_title(),
                     note = "What a copy could not do, its why after it: write a file's tags and other extended attributes where it goes. setting: the setting's title. Begins in lower case."
                 ));
@@ -3027,14 +3031,13 @@ fn remove_recursive(p: &Path) -> anyhow::Result<()> {
                 .display()
                 .to_string();
             error.context(words!(
-                op_left_after_removal = "{ $count ->
-                    [1] “{ $path }” is left
+                op_left_after_removal = "{ $more ->
+                    [0] “{ $path }” is left
                    *[other] “{ $path }” and { $more } more are left
                 }",
-                count = count,
                 path = shown,
                 more = count.saturating_sub(1),
-                note = "What a folder removed in part left: the first file still there (its path from the folder above) and how many more."
+                note = "What a folder removed in part left: the first file still there (its path from the folder above) and how many more besides it."
             ))
         })?;
     } else {
@@ -4160,7 +4163,7 @@ impl super::Effect for Unmerge {
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         let Some(item) = item_of_info(&self.info) else {
             return conflict(words!(
-                op_no_trash_s = "{ $name } is no trash's",
+                op_no_trash_s = "{ $name } names no item of a trash",
                 name = name_of(&self.info),
                 note = "Why the undo of a folder restored into one there does not go on: the trash's record of it names no item of a trash."
             ));
@@ -4499,7 +4502,7 @@ impl super::Effect for ReturnPart {
         }
         if exists(&self.to) {
             return conflict(words!(
-                op_place_taken_in_trash = "{ $name } is in its place in the trash",
+                op_place_taken_in_trash = "another { $name } has taken its place in the trash",
                 name = name_of(&self.to),
                 note = "Why a file restored from a trashed folder is not put back in it: another file took its place there."
             ));

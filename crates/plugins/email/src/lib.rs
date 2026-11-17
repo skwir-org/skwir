@@ -73,7 +73,7 @@ impl PreviewProvider for Provider {
         if attachment.decoded_len() > bounds.binary_input() {
             return Err(bounds.refuse(
                 words!(
-                    email_attachment_too_large = "Attachment exceeds { $size } preview limit",
+                    email_attachment_too_large = "The attachment exceeds the { $size } preview limit",
                     size = words::Size(bounds.binary_input() as u64),
                     note = "Why an attachment is not previewed. size: the largest the preview reads (16 MB)."
                 ),
@@ -276,7 +276,7 @@ fn read<'a>(
     cancel: &CancelToken,
 ) -> anyhow::Result<Cow<'a, [u8]>> {
     let refusal = words!(
-        email_too_large = "Email exceeds { $size } preview limit",
+        email_too_large = "The email exceeds the { $size } preview limit",
         size = words::Size(bounds.binary_input() as u64),
         note = "Why an email is not previewed. size: the largest the preview reads (16 MB)."
     );

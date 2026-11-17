@@ -975,7 +975,10 @@ impl skwir_core::op::Effect for SetPosition {
         let name = || Name::of(&self.entry.path);
         let (will, did, already) = match &self.to {
             Location::At(p) => {
-                let (lat, lon) = (|| format!("{:.5}", p.lat), || format!("{:.5}", p.lon));
+                let (lat, lon) = (
+                    || words::Decimal::of(p.lat, 5),
+                    || words::Decimal::of(p.lon, 5),
+                );
                 (
                     words!(
                         geo_place_at = "place { $name } at { $lat }, { $lon }",
@@ -1419,9 +1422,13 @@ pub(crate) fn plan_geotag(
     let mut notes = left.notes();
     if offset_seconds != 0 {
         notes.push(words!(
-            geo_clocks_corrected = "cameras' clocks corrected by { $seconds } s",
-            seconds = format!("{offset_seconds:+}"),
-            note = "Under a geotag's plan: the time each picture says it was taken was moved by this many seconds to match the track. seconds: a number with its sign (+120). Begins in lower case."
+            geo_clocks_corrected = "{ $sign ->
+                [plus] cameras' clocks corrected by +{ $seconds } s
+               *[minus] cameras' clocks corrected by −{ $seconds } s
+            }",
+            sign = if offset_seconds > 0 { "plus" } else { "minus" },
+            seconds = offset_seconds.unsigned_abs(),
+            note = "Under a geotag's plan: the time each picture says it was taken was moved by this many seconds to match the track (+120 s: later). sign: plus or minus, as written; seconds: how many. Begins in lower case."
         ));
     }
     if steps.is_empty() {
@@ -2377,7 +2384,7 @@ mod tests {
             "{why}"
         );
         assert!(
-            why.ends_with("cameras' clocks corrected by +7200 s"),
+            why.ends_with("cameras' clocks corrected by +7,200 s"),
             "{why}"
         );
     }

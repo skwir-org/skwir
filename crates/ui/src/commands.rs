@@ -186,7 +186,7 @@ mod args {
     /// Properties' group folded or unfolded.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Fold {
-        /// The group's title, as its heading says it (`Permissions`).
+        /// The group's key, the same in every language (`Permissions`).
         group: String,
         /// Fold it (`true`) or unfold it (`false`); else the other way.
         #[serde(default)]
@@ -2033,7 +2033,7 @@ pub fn declare_all(app: &App) {
             note = "A window command's title: look at the file under the cursor in a large preview, while its key is held."
         ),
         words!(
-            commands_peek_description = "Look at the file under the cursor in a large preview; run again, or its key held and let go, it closes"
+            commands_peek_description = "Look at the file under the cursor in a large preview, which closes when this runs again, or when its key, held, is let go"
         ),
     );
     none(
@@ -2066,8 +2066,7 @@ pub fn declare_all(app: &App) {
         "ui.rename_prompt",
         words!(commands_rename_prompt = "Rename…"),
         words!(
-            commands_rename_prompt_description =
-                "Rename the selected item, or a place as its location says"
+            commands_rename_prompt_description = "Rename the selected item, or a place of the sidebar in the way its location renames it"
         ),
     );
     none(
@@ -2123,7 +2122,8 @@ pub fn declare_all(app: &App) {
         "ui.rename_bulk_case",
         words!(commands_rename_bulk_case = "Change case"),
         words!(
-            commands_rename_bulk_case_description = "The next case Rename several gives names, round the last; with a delta, that many steps along them, stopping at the ends"
+            commands_rename_bulk_case_description = "Choose the next case Rename several gives the names, back to the first after the last; with a `delta`, move that many cases along, stopping at the first or the last",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument."
         ),
     );
     declare::<TagsPrompt>(
@@ -2219,7 +2219,8 @@ pub fn declare_all(app: &App) {
         "ui.search",
         words!(commands_search = "Search…"),
         words!(
-            commands_search_description = "Search the folder shown and its subfolders from the address field, from a text; typed in, look below the folder"
+            commands_search_description = "Search the folder shown and its subfolders from the address field, starting from `text` where it is given; what is typed there is looked for below the folder",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument."
         ),
     );
     declare::<Text>(
@@ -2228,7 +2229,8 @@ pub fn declare_all(app: &App) {
         "ui.filter",
         words!(commands_filter = "Filter…"),
         words!(
-            commands_filter_description = "Filter the folder shown from the address field as you type, its subfolders left out, from a text; typed in, look in the folder alone"
+            commands_filter_description = "Filter the folder shown from the address field as you type, its subfolders left out, starting from `text` where it is given; what is typed there is looked for in the folder alone",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument."
         ),
     );
     declare::<Submit>(
@@ -2318,7 +2320,7 @@ pub fn declare_all(app: &App) {
             note = "A window command's title: complete what is typed in the address field (Tab there)."
         ),
         words!(
-            commands_omnibox_complete_description = "Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed"
+            commands_omnibox_complete_description = "Complete what is typed in the address field: with the part the names that match it share, else with the suggestion highlighted; a folder completed is then listed"
         ),
     );
     declare::<Object>(
@@ -2444,9 +2446,9 @@ pub fn declare_all(app: &App) {
         app,
         Topic::Skwir,
         "ui.about",
-        words!(commands_about = "About skwir"),
+        words!(commands_about = "About Skwir"),
         words!(
-            commands_about_description = "Show skwir's version and licence, and what it runs on"
+            commands_about_description = "Show Skwir's version and licence, and what it runs on"
         ),
     );
     declare::<Settings>(
@@ -2521,7 +2523,7 @@ pub fn declare_all(app: &App) {
         "ui.settings_exclusion_item",
         words!(commands_settings_exclusion_item = "Exclusions page menu item"),
         words!(
-            commands_settings_exclusion_item_description = "What a Exclusions page row's menu does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one"
+            commands_settings_exclusion_item_description = "What the menu of a row of the Exclusions page does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one"
         ),
     );
     declare::<Key>(
@@ -2656,7 +2658,7 @@ pub fn declare_all(app: &App) {
         "ui.undo_history",
         words!(commands_undo_history = "Undo history"),
         words!(
-            commands_undo_history_description = "Open or close the history of what Undo can take back, above the footer's Undo: each action with its own Undo, an undone one's Redo, which take it back alone when nothing after it touched what it did, else name the action that did, and Undo with what came after (ADR-079, 13)"
+            commands_undo_history_description = "Open or close the history of what Undo can take back, above the footer's Undo. Each action there has its own Undo, an undone one its own Redo, which takes it back alone when nothing done after it touched what it did; else the history names the action that did, and offers to undo it with those after it (ADR-079, 13)"
         ),
     );
     none(
@@ -3015,8 +3017,8 @@ pub fn declare_all(app: &App) {
             note = "A window command's title: fold one of the groups of Properties (Permissions, Checksums)."
         ),
         words!(
-            commands_properties_fold_description = "Fold one of Properties' groups (`Checksums`, `Volume`…) or unfold it, for every item from now on",
-            note = "Read by agents and in F1's list of actions. `Checksums` and `Volume` are the titles of two of Properties' groups, as their headings say them."
+            commands_properties_fold_description = "Fold one of Properties' groups, by its key (`Checksums`, `Volume`…), or unfold it, for every item from now on",
+            note = "Read by agents and in F1's list of actions. `Checksums` and `Volume` are the keys of two of Properties' groups, written as they are in every language."
         ),
     );
     declare::<Popup>(
@@ -3090,7 +3092,7 @@ pub fn declare_all(app: &App) {
         "ui.preview_zoom",
         words!(commands_preview_zoom = "Preview: zoom"),
         words!(
-            commands_preview_zoom_description = "Zoom what the preview shows, size what it reads"
+            commands_preview_zoom_description = "Zoom in or out of what the preview shows (a picture, a page, a map, a model), or make larger or smaller the text of what it reads (a book, a document)"
         ),
     );
     declare::<Object>(
@@ -3400,8 +3402,8 @@ pub fn declare_all(app: &App) {
             note = "A window command's title: the player pinned at the foot of the side panel."
         ),
         words!(
-            commands_player_description =
-                "Ask the pinned player something (play, pause, next, stop…)"
+            commands_player_description = "Ask the pinned player what `request` says: `play`, `pause`, `next`, `stop`, `seek_by` some seconds…",
+            note = "Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument and the values it takes."
         ),
     );
     declare::<Amount>(

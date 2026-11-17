@@ -19,13 +19,13 @@ markdown_detail_words = Words
 markdown_html_reading_mode = Reading mode · scripts, fonts and remote content are not loaded
 
 # Why a notebook is not previewed: the file is larger than the preview reads. size: that bound (16 MB).
-markdown_notebook_file_too_large = Notebook exceeds { $size } preview limit
+markdown_notebook_file_too_large = The notebook exceeds the { $size } preview limit
 
 # An error in place of a Jupyter notebook written in an older format.
 markdown_notebook_format = Only notebooks in format 4 (Jupyter 4 and later) are read
 
 # Why a notebook is not previewed: its text is longer than the preview reads. size: that bound (2 MB).
-markdown_notebook_too_large = Notebook text exceeds { $size } preview limit
+markdown_notebook_too_large = The notebook's text exceeds the { $size } preview limit
 
 # A note under a notebook: the results of its cells that printed too many lines are cut.
 markdown_outputs_shortened = { $count ->

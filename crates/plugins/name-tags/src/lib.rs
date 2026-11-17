@@ -190,12 +190,12 @@ impl NotesStore for NameStore {
             limits: Some(match self.convention {
                 Convention::Tagspaces => words!(
                     name_tags_tagspaces_limits =
-                        "tags without spaces, brackets or categories, no rating, no comment",
+                        "a tag with spaces, brackets or a category, a rating or a comment",
                     note = "What tags written in a file's name as TagSpaces writes them cannot hold, placed after \"What it cannot hold:\" in its settings."
                 ),
                 Convention::Filetags => words!(
                     name_tags_filetags_limits =
-                        "tags without spaces or categories, no rating, no comment",
+                        "a tag with spaces or a category, a rating or a comment",
                     note = "What tags written in a file's name as filetags writes them cannot hold, placed after \"What it cannot hold:\" in its settings."
                 ),
             }),

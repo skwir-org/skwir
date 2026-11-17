@@ -273,18 +273,20 @@ impl PreviewProvider for Provider {
                     playlists_detail_tracks = "Tracks",
                     note = "A label in the preview's Properties: how many tracks the playlist has."
                 ),
-                Some(if list.more {
-                    words!(
-                        playlists_tracks_more = "{ $count ->
-                           *[other] more than { $count }
-                        }",
-                        count = rows.len(),
-                        note = "The value beside Tracks in the preview's Properties, for a playlist read only as far as its first tracks: more than that many."
+                if list.more {
+                    Some(
+                        words!(
+                            playlists_tracks_more = "{ $count ->
+                               *[other] more than { $count }
+                            }",
+                            count = rows.len(),
+                            note = "The value beside Tracks in the preview's Properties, for a playlist read only as far as its first tracks: more than that many."
+                        )
+                        .say(),
                     )
-                    .say()
                 } else {
-                    rows.len().to_string()
-                }),
+                    inspection::count(rows.len())
+                },
             ),
             (
                 words!(
@@ -313,7 +315,8 @@ impl PreviewProvider for Provider {
             list.more.then(|| {
                 words!(
                     playlists_first_tracks = "{ $count ->
-                       *[other] First { $count } tracks · Source shows the rest
+                        [1] Only the first track is shown · Source shows the rest
+                       *[other] Only the first { $count } tracks are shown · Source shows the rest
                     }",
                     count = bounds.blocks(),
                     note = "A note under a playlist's preview that shows only its first tracks. Source is the preview's button that shows the file as text."
@@ -447,7 +450,7 @@ mod tests {
         let data = read("long.m3u", "a.mp3\n".repeat(limits::BLOCKS + 5).as_bytes());
         assert_eq!(data.rows.len(), limits::BLOCKS);
         assert!(
-            notice(&data).starts_with("First 2,000 tracks"),
+            notice(&data).starts_with("Only the first 2,000 tracks are shown"),
             "{}",
             notice(&data)
         );

@@ -256,11 +256,17 @@ impl MapView {
         let (placed, looked, candidates, complete) = self.counts;
         if !complete {
             words!(
-                map_view_placing = "Placing… { $placed } of { $candidates } pictures and tracks looked at so far: { $looked }",
+                map_view_placing = "Placing… { $placed ->
+                    [one] { $placed } file placed
+                   *[other] { $placed } files placed
+                } · { $looked ->
+                    [one] { $looked } of { $candidates } looked at
+                   *[other] { $looked } of { $candidates } looked at
+                }",
                 placed = placed,
                 candidates = candidates,
                 looked = looked,
-                note = "The Map view's header while it reads where the folder's files were made. placed: how many it put on the map; candidates: how many pictures and tracks it reads; looked: how many it has read."
+                note = "The Map view's header while it reads where the folder's files were made. placed: how many it put on the map so far; looked: how many of the pictures and tracks it reads it has read; candidates: how many it reads in all."
             )
         } else if looked > placed {
             words!(

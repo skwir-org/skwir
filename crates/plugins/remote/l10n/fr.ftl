@@ -22,7 +22,7 @@ remote_address_bad_user = « { $user } » n’est pas un nom d’utilisateur
 remote_address_device_user = « { $text } » : l’adresse d’un périphérique ne nomme aucun utilisateur
 
 # draft
-remote_address_ipv6 = « { $text } » ne termine pas son adresse IPv6 par ]
+remote_address_ipv6 = « { $text } » n’a pas de ] pour terminer son adresse IPv6
 
 # draft
 remote_address_no_protocol = « { $text } » ne nomme aucun protocole
@@ -83,9 +83,9 @@ remote_configure_at_login = Connecter à l’ouverture de session
 
 # draft
 remote_configure_at_login_encrypted = { $count ->
-        [1] { $remotes } se connecte à l’ouverture de session, ce qu’une configuration chiffrée ne permet pas : personne n’est là pour donner son mot de passe. Désactivez d’abord « Connecter à l’ouverture de session »
-        [one] { $remotes } se connecte à l’ouverture de session, ce qu’une configuration chiffrée ne permet pas : personne n’est là pour donner son mot de passe. Désactivez d’abord « Connecter à l’ouverture de session »
-       *[other] { $remotes } se connectent à l’ouverture de session, ce qu’une configuration chiffrée ne permet pas : personne n’est là pour donner son mot de passe. Désactivez d’abord « Connecter à l’ouverture de session »
+        [1] { $remotes } se connecte à l’ouverture de session, ce qu’une configuration chiffrée ne permet pas : personne n’est là pour donner son mot de passe. Désactivez d’abord « Connecter à l’ouverture de session ».
+        [one] { $remotes } se connecte à l’ouverture de session, ce qu’une configuration chiffrée ne permet pas : personne n’est là pour donner son mot de passe. Désactivez d’abord « Connecter à l’ouverture de session ».
+       *[other] { $remotes } se connectent à l’ouverture de session, ce qu’une configuration chiffrée ne permet pas : personne n’est là pour donner son mot de passe. Désactivez d’abord « Connecter à l’ouverture de session ».
     }
 
 # draft
@@ -236,7 +236,7 @@ remote_configure_no_public_link = Aucun lien public n’a été créé : { $err
 remote_configure_not_done = { $done ->
         [added] Le serveur n’a pas été ajouté : { $error }
         [saved] Le serveur n’a pas été enregistré : { $error }
-        [signed_in] Le serveur n’a pas été reconnecté : { $error }
+        [signed_in] La connexion au serveur a échoué : { $error }
         [tested] Le serveur n’a pas été testé : { $error }
         [kept] Le serveur n’a pas été gardé : { $error }
        *[removed] Le serveur n’a pas été retiré : { $error }
@@ -538,6 +538,12 @@ remote_keys_had_it = { $server } avait déjà la clé : ssh se connecte avec el
 remote_keys_in_agent = { $key }, dans l’agent ssh
 
 # draft
+remote_keys_in_file = { $key }, dans { $file }
+
+# draft
+remote_keys_key = { $comment } ({ $kind })
+
+# draft
 remote_keys_keygen_failed = ssh-keygen a échoué : { $said }
 
 # draft
@@ -716,9 +722,9 @@ remote_mounter_trust = Se connecter à ce serveur ?
 
 # draft
 remote_mounter_used_by = { $count ->
-        [1] « { $last } » l’utilise
-        [one] « { $last } » l’utilise
-       *[other] { $first } et « { $last } » l’utilisent
+        [1] { $programs } l’utilise
+        [one] { $programs } l’utilise
+       *[other] { $programs } l’utilisent
     }
 
 # draft
@@ -1110,25 +1116,25 @@ remote_rclone_stopped = rclone s’est arrêté
 remote_rclone_storage = Stockages
 
 # draft
-remote_rclone_trash_box = Corbeille de Box
+remote_rclone_trash_box = la corbeille de Box
 
 # draft
-remote_rclone_trash_drive = Corbeille de Google Drive
+remote_rclone_trash_drive = la corbeille de Google Drive
 
 # draft
-remote_rclone_trash_jottacloud = Corbeille de Jottacloud
+remote_rclone_trash_jottacloud = la corbeille de Jottacloud
 
 # draft
-remote_rclone_trash_mega = Corbeille de MEGA
+remote_rclone_trash_mega = la corbeille de MEGA
 
 # draft
-remote_rclone_trash_onedrive = Corbeille de OneDrive
+remote_rclone_trash_onedrive = la corbeille de OneDrive
 
 # draft
-remote_rclone_trash_pcloud = Corbeille de pCloud
+remote_rclone_trash_pcloud = la corbeille de pCloud
 
 # draft
-remote_rclone_trash_yandex = Corbeille de Yandex Disk
+remote_rclone_trash_yandex = la corbeille de Yandex Disk
 
 # draft
 remote_rclone_trying = Essai de { $remote }
@@ -1473,7 +1479,7 @@ remote_thumbnails_menu_small = Petits fichiers
 remote_thumbnails_never = Jamais
 
 # draft
-remote_thumbnails_not_saved = Le choix de vignettes du dossier distant n’a pas été enregistré : { $error }
+remote_thumbnails_not_saved = Le choix du moment où les fichiers du dossier distant affichent des vignettes n’a pas été enregistré : { $error }
 
 # draft
 remote_thumbnails_of = Vignettes d’un dossier distant

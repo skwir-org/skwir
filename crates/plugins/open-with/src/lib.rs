@@ -293,7 +293,7 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>, cancel: &Can
             app.notify(
                 NotifyLevel::Info,
                 words!(
-                    open_with_not_a_file = "{ $name } is not a file: skwir does not open it",
+                    open_with_not_a_file = "{ $name } is not a file: Skwir does not open it",
                     name = Name::of(&target.path),
                     note = "Said when a pipe, a socket or a device is opened: what would wait or act is never opened."
                 ),

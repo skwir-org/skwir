@@ -570,9 +570,9 @@ impl Inside {
         let container = Name(container.to_owned());
         match self {
             Inside::Unlisted => words!(
-                links_inside_unlisted = "This link names a file inside { $container }",
+                links_inside_unlisted = "This link names a file inside { $container }, whose files are not listed here to follow it",
                 container = container,
-                note = "A link of a document inside an archive; container: the archive's name."
+                note = "A link of a document inside an archive, followed where the archive's files are not listed above the document; container: the archive's name."
             ),
             Inside::Out => words!(
                 links_inside_out = "This link leads out of { $container }",

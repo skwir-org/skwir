@@ -768,7 +768,7 @@ impl App {
                 words!(
                     app_notes_read_limits = "What it cannot hold: { $limits }.",
                     limits = limits,
-                    note = "Under the Read switch of a place notes are kept: what it cannot hold that the others can, a phrase the place gives (no comma in a tag)."
+                    note = "Under the Read switch of a place notes are kept: what it cannot hold that the others can, a phrase the place gives (a comma in a tag)."
                 ),
                 merged,
             ),
@@ -4422,7 +4422,7 @@ mod builtin {
                 note = "An action's name: go up to the folder holding the one shown."
             ),
             words!(
-                app_up_description = "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in), the one left selected there"
+                app_up_description = "Go to the folder holding the one shown, or to the place before it in its trail (a tag's category, the folder a search looks in), and select there the one just left"
             ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
@@ -5447,7 +5447,7 @@ mod builtin {
                     (_, 0) => plan.with_note(
                         words!(
                             app_trash_none_kept = "{ $count ->
-                                [one] It is in a network folder, which keeps no trash
+                                [1] It is in a network folder, which keeps no trash
                                *[other] They are in network folders, which keep no trash
                             }",
                             count = for_good,
@@ -5457,10 +5457,10 @@ mod builtin {
                     (_, kept) => plan.with_note(
                         words!(
                             app_trash_others_kept = "{ $count ->
-                                [one] It is in a network folder, which keeps no trash
+                                [1] It is in a network folder, which keeps no trash
                                *[other] They are in network folders, which keep no trash
                             }; { $kept ->
-                                [one] the other item goes to the trash
+                                [1] the other item goes to the trash
                                *[other] the other { $kept } items go to the trash
                             }",
                             count = for_good,
@@ -5735,7 +5735,7 @@ mod builtin {
                 note = "The name of an action, in the palette, menus and F1's list."
             ),
             words!(
-                app_history_description = "Return the actions Undo can take back, newest first (ADR-079, 13): each one's entry (what undo and redo take as entry), title, when it applied (seconds since 1970, UTC), whether it runs, waits, is done or undone, and what its Undo (an undone one's Redo) can do now: now, once it ends, after the action named (undo, or redo, that one first), being done, or never; with, the entries undo with_after takes with it"
+                app_history_description = "Return the actions Undo can take back, newest first (ADR-079, 13). Each gives its `entry` (what undo and redo are given as `entry`), its `title`, `at`: when it applied (seconds since 1970, UTC), its `state` (running, waiting, done or undone), `can`: what its Undo, or an undone action's Redo, can do now (`now`; `once_ended`, while it runs or waits; `after`, once the action it names is undone or redone first; `going`, while it is being undone or redone; `never`), and `with`: the entries that undo with `with_after` takes back with it"
             ),
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.history())?)),
         )

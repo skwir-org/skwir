@@ -31,15 +31,15 @@ impl Part {
     fn missing(self) -> Words {
         match self {
             Part::Picture => words!(
-                documents_missing_picture = "Embedded image is missing",
+                documents_missing_picture = "An embedded image is missing",
                 note = "Why a picture of a Word or OpenDocument file is not shown: the file names one it does not hold."
             ),
             Part::Relationships => words!(
-                documents_missing_relationships = "Relationships is missing",
+                documents_missing_relationships = "The document's relationships are missing",
                 note = "Why a Word file is not shown: the part that says where its other parts are (its relationships, _rels/*.rels) is not there."
             ),
             Part::Thumbnail => words!(
-                documents_missing_thumbnail = "Thumbnail is missing",
+                documents_missing_thumbnail = "The thumbnail is missing",
                 note = "Why a document's stored picture is not shown: the picture it names is not there."
             ),
             Part::Text => words!(
@@ -47,23 +47,23 @@ impl Part {
                 note = "Why a Word or OpenDocument file is not shown: the part holding its text is not there."
             ),
             Part::Styles => words!(
-                documents_missing_styles = "Styles is missing",
+                documents_missing_styles = "The document's styles are missing",
                 note = "Why a Word or OpenDocument file is not shown: the part holding its styles is not there."
             ),
             Part::Numbering => words!(
-                documents_missing_numbering = "Numbering is missing",
+                documents_missing_numbering = "The document's numbering is missing",
                 note = "Why a Word file is not shown: the part saying how its lists are numbered is not there."
             ),
             Part::Notes => words!(
-                documents_missing_notes = "Notes is missing",
+                documents_missing_notes = "The document's notes are missing",
                 note = "Why a Word file's footnotes or endnotes are not shown: the part holding them is not there."
             ),
             Part::Properties => words!(
-                documents_missing_properties = "Properties is missing",
+                documents_missing_properties = "The document's properties are missing",
                 note = "Why what a document says of itself (its title, author) is not shown: the part holding it is not there."
             ),
             Part::Manifest => words!(
-                documents_missing_manifest = "Manifest is missing",
+                documents_missing_manifest = "The document's manifest is missing",
                 note = "Why an OpenDocument file is not shown: the list of its parts (META-INF/manifest.xml) is not there."
             ),
         }
@@ -74,47 +74,55 @@ impl Part {
         let size = words::Size(limits::BINARY_INPUT as u64);
         match self {
             Part::Picture => words!(
-                documents_too_large_picture = "Embedded image exceeds { $size } preview limit",
+                documents_too_large_picture =
+                    "An embedded image exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a picture of a Word or OpenDocument file is not shown: it unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Relationships => words!(
-                documents_too_large_relationships = "Relationships exceeds { $size } preview limit",
+                documents_too_large_relationships =
+                    "The document's relationships exceed the { $size } preview limit",
                 size = size,
                 note = "Why a Word file is not shown: the part that says where its other parts are (its relationships) unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Thumbnail => words!(
-                documents_too_large_thumbnail = "Thumbnail exceeds { $size } preview limit",
+                documents_too_large_thumbnail = "The thumbnail exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a document's stored picture is not shown: it unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Text => words!(
-                documents_too_large_text = "The document's text exceeds { $size } preview limit",
+                documents_too_large_text =
+                    "The document's text exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a Word or OpenDocument file is not shown: the part holding its text unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Styles => words!(
-                documents_too_large_styles = "Styles exceeds { $size } preview limit",
+                documents_too_large_styles =
+                    "The document's styles exceed the { $size } preview limit",
                 size = size,
                 note = "Why a Word or OpenDocument file is not shown: the part holding its styles unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Numbering => words!(
-                documents_too_large_numbering = "Numbering exceeds { $size } preview limit",
+                documents_too_large_numbering =
+                    "The document's numbering exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a Word file is not shown: the part saying how its lists are numbered unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Notes => words!(
-                documents_too_large_notes = "Notes exceeds { $size } preview limit",
+                documents_too_large_notes =
+                    "The document's notes exceed the { $size } preview limit",
                 size = size,
                 note = "Why a Word file's footnotes or endnotes are not shown: the part holding them unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Properties => words!(
-                documents_too_large_properties = "Properties exceeds { $size } preview limit",
+                documents_too_large_properties =
+                    "The document's properties exceed the { $size } preview limit",
                 size = size,
                 note = "Why what a document says of itself (its title, author) is not shown: the part holding it unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Manifest => words!(
-                documents_too_large_manifest = "Manifest exceeds { $size } preview limit",
+                documents_too_large_manifest =
+                    "The document's manifest exceeds the { $size } preview limit",
                 size = size,
                 note = "Why an OpenDocument file is not shown: the list of its parts (META-INF/manifest.xml) unpacks past what the preview reads. size: that bound (16 MB)."
             ),

@@ -9,7 +9,7 @@
 use skwir_core::reference::{Group, Item, Reference, floor_boundary};
 use skwir_core::suggest::{Ask, Section, Suggestion};
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{List, Words};
 
 use crate::{assist, lang};
 
@@ -67,7 +67,7 @@ fn groups() -> Vec<(Group, Written)> {
         Item::new(
             "NOT",
             words!(
-                query_ref_not = "Not: NOT a, as -a",
+                query_ref_not = "Not: NOT a, also written -a",
                 note = "What NOT means in a search; NOT a and -a are examples as written."
             ),
         )
@@ -103,12 +103,12 @@ fn groups() -> Vec<(Group, Written)> {
     // What the parser reads, said from its own tables; its examples in
     // the units sizes are shown in (ADR-139, 9).
     let units_where = |keep: fn(&str) -> bool| {
-        lang::SIZE_UNITS
-            .iter()
-            .map(|(name, _)| *name)
-            .filter(|name| keep(name))
-            .collect::<Vec<_>>()
-            .join(", ")
+        List::and(
+            lang::SIZE_UNITS
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| keep(name)),
+        )
     };
     let decimal = units_where(|name| name.len() == 2);
     let binary = units_where(|name| name.ends_with("iB"));
@@ -128,25 +128,25 @@ fn groups() -> Vec<(Group, Written)> {
     .item(Item::new(
         format!("size>10{mb}"),
         words!(
-            query_ref_size = "More than 10 { $mb }: { $decimal } each a thousand times the one before; { $binary } 1024 times, as { $alone } alone",
+            query_ref_size = "More than 10 { $mb }. Each of { $decimal } is 1000 times the one before; each of { $binary } is 1024 times, and so is each of { $alone } written alone.",
             mb = mb,
             decimal = decimal,
             binary = binary,
             alone = alone,
-            note = "What size>10MB means in a search, and the units of size it reads. mb: a unit as the size setting writes it; decimal, binary and alone: units as written, separated by commas."
+            note = "What size>10MB means in a search, and the units of size it reads. mb: a unit as the size setting writes it; decimal (kB, MB…), binary (KiB, MiB…) and alone (k, M…): lists of units as written."
         ),
     ))
     .item(Item::new(
         format!("size:1{mb}..100{mb}"),
         words!(
-            query_ref_size_range = "From one to the other, both in",
+            query_ref_size_range = "From one size to the other, both included",
             note = "What a range of sizes means in a search (size:1MB..100MB): both ends included."
         ),
     ))
     .item(Item::new(
         "rating>=3",
         words!(
-            query_ref_rating = "At least (> < >= <=); rating:0 unrated",
+            query_ref_rating = "At least (> < >= <=); rating:0 finds files with no rating",
             note = "What rating>=3 means in a search; the signs and rating:0 are written as the search language writes them."
         ),
     ))
@@ -154,8 +154,8 @@ fn groups() -> Vec<(Group, Written)> {
         "modified:today",
         words!(
             query_ref_period = "A period: { $periods }",
-            periods = periods.join(", "),
-            note = "What modified:today means in a search: a period. periods: the other periods it reads, as written, separated by commas."
+            periods = List::or(periods),
+            note = "What modified:today means in a search: a period. periods: the other periods it reads, as written, a list."
         ),
     ))
     .item(Item::new(
@@ -168,8 +168,8 @@ fn groups() -> Vec<(Group, Written)> {
     .item(Item::new(
         "modified:2026-01..2026-03",
         words!(
-            query_ref_date_range = "From one to the other, both whole",
-            note = "What a range of dates means in a search: both ends included, whole."
+            query_ref_date_range = "From the start of the first to the end of the second",
+            note = "What a range of dates means in a search (modified:2026-01..2026-03): both ends included, whole (January to the end of March)."
         ),
     ))
     .item(Item::new(

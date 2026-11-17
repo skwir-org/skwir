@@ -4,13 +4,13 @@ tags_add = Add tags
 
 tags_add_description = Add tags to the entries given, or the selection (plan)
 
-# A plan's title. tags: the tags' names, as written, joined by commas; count: how many.
+# A plan's title. tags: the tags' names, a list; count: how many.
 tags_add_plan = add { $count ->
         [1] tag
        *[other] tags
     } { $tags }
 
-# A plan's title. add, remove: the tags' names, as written, joined by commas; added, removed: how many.
+# A plan's title. add, remove: the tags' names, each a list; added, removed: how many.
 tags_add_remove_plan = add { $added ->
         [1] tag
        *[other] tags
@@ -31,15 +31,15 @@ tags_already_called = the tag is already called { $to }
 tags_aside_no_name = it has no name a file beside it is named after
 
 # Said after a file's path. name: the Mac's ._ file beside it.
-tags_aside_other_layout = { $name } beside it is laid out otherwise than a Mac writes one, and skwir rewrites no other
+tags_aside_other_layout = { $name } beside it is laid out otherwise than a Mac writes one, and Skwir rewrites no other
 
 # Said after a file's path. name: the Mac's ._ file beside it.
-tags_aside_too_large = { $name } beside it is larger than skwir rewrites
+tags_aside_too_large = { $name } beside it is larger than Skwir rewrites
 
 # Said after a file's path. name: the Mac's ._ file beside it; error: why it could not be read.
 tags_aside_unreadable = { $name } beside it cannot be read: { $error }
 
-tags_aside_unwritable = its Mac attributes are kept in a form skwir does not write
+tags_aside_unwritable = its Mac attributes are kept in a form Skwir does not write
 
 # The same button's tooltip while the folder's tags are shown.
 tags_aspect_close = Back to the folder
@@ -80,7 +80,7 @@ tags_color_green = Green
 
 tags_color_not_saved = The tag's color was not saved: { $error }
 
-# An error. colors: the colors' names as a command takes them (red, orange…), joined by commas.
+# An error. colors: the colors' names as a command takes them (red, orange…), a list.
 tags_color_one_of = a tag's color is one of { $colors }
 
 # A color a tag can wear, in its menu.
@@ -194,44 +194,80 @@ tags_files_not_found = The files tagged { $tag } were not found: { $error }
 # done: what was done to the sidebar's pinned tags (tags_pinned…); filter: the filter the tag's place was shown with, as typed.
 tags_filter_not_kept = { $done }; its filter “{ $filter }” is not kept with it
 
-# What a Mac's Finder tags cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings.
-tags_finder_limits = no rating; seven colors
+# What a Mac's Finder tags cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings (app_notes_read_limits).
+tags_finder_limits = a rating, or a tag color other than the Finder's seven
 
 # As tags_follow_both_will, found done already.
-tags_follow_both_already = { $to } was already pinned and colored as { $from } were
+tags_follow_both_already = { $to } was already pinned and colored as { $count ->
+        [one] { $from } was
+       *[other] { $from } were
+    }
 
 # As tags_follow_both_will, done.
-tags_follow_both_did = kept { $to } pinned and colored as { $from } were
+tags_follow_both_did = kept { $to } pinned and colored as { $count ->
+        [one] { $from } was
+       *[other] { $from } were
+    }
 
-# A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas.
-tags_follow_both_will = keep { $to } pinned and colored as { $from } were
+# A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many.
+tags_follow_both_will = keep { $to } pinned and colored as { $count ->
+        [one] { $from } was
+       *[other] { $from } were
+    }
 
 # As tags_follow_color_will, found done already.
-tags_follow_color_already = { $to } already had the color { $from } had
+tags_follow_color_already = { $to } already had the color { $count ->
+        [one] { $from } had
+       *[other] { $from } had
+    }
 
 # As tags_follow_color_will, done.
-tags_follow_color_did = gave { $to } the color { $from } had
+tags_follow_color_did = gave { $to } the color { $count ->
+        [one] { $from } had
+       *[other] { $from } had
+    }
 
-# A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas.
-tags_follow_color_will = give { $to } the color { $from } had
+# A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many.
+tags_follow_color_will = give { $to } the color { $count ->
+        [one] { $from } had
+       *[other] { $from } had
+    }
 
 # As tags_follow_pin_will, found done already.
-tags_follow_pin_already = { $to } was already pinned where { $from } was
+tags_follow_pin_already = { $to } was already pinned where { $count ->
+        [one] { $from } was
+       *[other] { $from } were
+    }
 
 # As tags_follow_pin_will, done.
-tags_follow_pin_did = pinned { $to } where { $from } was
+tags_follow_pin_did = pinned { $to } where { $count ->
+        [one] { $from } was
+       *[other] { $from } were
+    }
 
-# A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas.
-tags_follow_pin_will = pin { $to } where { $from } was
+# A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many.
+tags_follow_pin_will = pin { $to } where { $count ->
+        [one] { $from } was
+       *[other] { $from } were
+    }
 
 # As tags_follow_unpin_will, found done already.
-tags_follow_unpin_already = { $from } was already unpinned
+tags_follow_unpin_already = { $count ->
+        [one] { $from } was already unpinned
+       *[other] { $from } were already unpinned
+    }
 
 # As tags_follow_unpin_will, done.
-tags_follow_unpin_did = unpinned { $from }
+tags_follow_unpin_did = unpinned { $count ->
+        [one] { $from }
+       *[other] { $from }
+    }
 
-# A step of removing tags from every file. from: the tags, each quoted, joined by commas.
-tags_follow_unpin_will = unpin { $from }
+# A step of removing tags from every file. from: the tags, a list; count: how many.
+tags_follow_unpin_will = unpin { $count ->
+        [one] { $from }
+       *[other] { $from }
+    }
 
 # As tags_give_file_will, found done already.
 tags_give_file_already = { $name } already had the tag { $tag }
@@ -251,7 +287,7 @@ tags_in_no_category = these tags are in no category
 tags_include_sub_tags = Include Sub-Tags
 
 # A notice with a button to the setting Room for tagged files.
-tags_index_full = Some tagged files are left out of the tags: the room skwir gives them is full
+tags_index_full = Some tagged files are left out of the tags: the room Skwir gives them is full
 
 # An error: a tag moved or renamed into a category within it.
 tags_inside_itself = { $tag } cannot go inside itself
@@ -277,10 +313,10 @@ tags_known = Tags known
 
 tags_known_description = `{"{"} generation, tags? {"}"}`: every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first. `generation` numbers them: asked with the one held, `tags` is left out while it is current
 
-tags_limit_description = How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches.
+tags_limit_description = How much memory Skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches.
 
 # What a setting's description says after its first sentence, in its tooltip.
-tags_limit_description_more = Past it, new tagged files are left out of the tags' folders, and skwir says so.
+tags_limit_description_more = Past it, new tagged files are left out of the tags' folders, and Skwir says so.
 
 tags_limit_title = Room for tagged files
 
@@ -288,10 +324,10 @@ tags_list = List tags
 
 tags_list_description = Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet too
 
-# tags: the tags' names, each quoted, the last after “and”.
+# tags: the tags' names, a list of those any of which the files have.
 tags_looking_home = Looking for the files tagged { $tags } in the home folder…
 
-# tags: the tags' names, each quoted, the last after “and”; root: a folder's path.
+# tags: the tags' names, a list of those any of which the files have; root: a folder's path.
 tags_looking_in = Looking for the files tagged { $tags } in “{ $root }”…
 
 # The button that merges the tags into the one typed.
@@ -304,14 +340,20 @@ tags_merge_item = Merge Into One…
 
 tags_merge_placeholder = The tag they become
 
-# A plan's title. tags: the tags' names, each quoted, the last after “and”.
+# A plan's title. tags: the tags' names, each quoted, a list.
 tags_merge_plan = merge the tags { $tags } into { $to }
 
-# Said of a plan renaming tags. merged: how many files; to: the tags' new name.
-tags_merged_into = { $merged } already had { $to } or several of them: they keep it once.
+# Said of a plan renaming tags, after how many files it changes. merged: how many of them had the new name already, or several of the tags it renames; to: the tags' new name.
+tags_merged_into = { $merged ->
+        [one] { $merged } file already had { $to }, or several of the tags renamed: it keeps { $to } once.
+       *[other] { $merged } files already had { $to }, or several of the tags renamed: each keeps { $to } once.
+    }
 
-# Said of a plan renaming tags. merged: how many files.
-tags_merged_names = { $merged } had two of these names: they keep it once.
+# Said of a plan renaming several tags (moved into a category), after how many files it changes. merged: how many of them had two tags whose new names are the same.
+tags_merged_names = { $merged ->
+        [one] { $merged } file had two tags that now have the same name: it keeps that tag once.
+       *[other] { $merged } files had two tags that now have the same name: each keeps that tag once.
+    }
 
 tags_move = Move tag into category
 
@@ -348,10 +390,10 @@ tags_move_out_plan = move the tag { $tag } out of its category
 
 tags_move_placeholder = Category (Places/France)
 
-# A plan's title. tags: the tags' names, each quoted, the last after “and”; into: a category of tags (Places/France).
+# A plan's title. tags: the tags' names, each quoted, a list; into: a category of tags (Places/France).
 tags_move_several_into_plan = move the tags { $tags } into { $into }
 
-# A plan's title. tags: the tags' names, each quoted, the last after “and”.
+# A plan's title. tags: the tags' names, each quoted, a list.
 tags_move_several_plan = move the tags { $tags }
 
 # A plan's title: files dragged from one tag's place to another's. from, tag: the tags' names.
@@ -400,10 +442,10 @@ tags_no_rating = No rating
 # An error: the pane a command named is not there.
 tags_no_such_pane = no such pane
 
-# tags: the tags' names, each quoted, the last after “and”.
+# tags: the tags' names, a list of those any of which the files have.
 tags_none_tagged_home = No file in the home folder is tagged { $tags }
 
-# tags: the tags' names, each quoted, the last after “and”; root: a folder's path.
+# tags: the tags' names, a list of those any of which the files have; root: a folder's path.
 tags_none_tagged_in = No file in “{ $root }” is tagged { $tags }
 
 # An item of a tag's menu, checked while on: the tags within a category become the values of one field, a file having one of them at a time. category: its name.
@@ -514,13 +556,13 @@ tags_remove_from_files = { $count ->
 # An item of the files' menu in a tag's place: takes the tag off them. tag: its name.
 tags_remove_from_verb = Remove from { $tag }
 
-# A plan's title. tags: the tags' names, as written, joined by commas; count: how many.
+# A plan's title. tags: the tags' names, a list; count: how many.
 tags_remove_plan = remove { $count ->
         [1] tag
        *[other] tags
     } { $tags }
 
-# A plan's title. tags: the tags' names, each quoted, the last after “and”.
+# A plan's title. tags: the tags' names, each quoted, a list.
 tags_remove_several_everywhere_plan = remove the tags { $tags } from every file
 
 tags_rename = Rename tag everywhere
@@ -565,8 +607,11 @@ tags_set = Set tags
 
 tags_set_description = Replace the tags of the entries given, or the selection's (plan)
 
-# A plan's title. tags: the tags' names, as written, joined by commas.
-tags_set_plan = set tags { $tags }
+# A plan's title: the files' tags replaced by these. tags: the tags' names, a list; count: how many.
+tags_set_plan = set { $count ->
+        [1] tag
+       *[other] tags
+    } { $tags }
 
 # An item of a tag's menu: its files in the folder shown.
 tags_show_files_here = Show Its Files Here
@@ -654,5 +699,5 @@ tags_which_tag = which tag?
 # A pill of a tag's trail while it lists the files of the tags within it too.
 tags_with_sub_tags = With sub-tags
 
-# What the desktop's attributes cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings.
-tags_xdg_limits = no comma in a tag, no tag colors
+# What the desktop's attributes cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings (app_notes_read_limits).
+tags_xdg_limits = a comma in a tag, or a tag's color

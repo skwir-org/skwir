@@ -981,7 +981,7 @@ impl Plugin for QueryPlugin {
                     Some(r) => Some(
                         Location::parse_os(r.as_os_str())
                             .path()
-                            .ok_or_else(|| anyhow::anyhow!(words!(query_root_not_path = "root must be a path", note = "An error of a command given a root that is no folder's path: root is the argument's name.")))?,
+                            .ok_or_else(|| anyhow::anyhow!(words!(query_root_not_path = "`root` must be a path", note = "An error of a command given a root that is no folder's path: root is the argument's name.")))?,
                     ),
                     // A pane showing another query searches from home.
                     None => app.pane_dir(pane).ok(),
@@ -1110,8 +1110,8 @@ impl Plugin for QueryPlugin {
                             ))
                         })?,
                     (None, None) => anyhow::bail!(words!(
-                        query_which_saved = "which saved search? pass its expr or name",
-                        note = "An error of a command: expr and name are its arguments' names."
+                        query_which_saved = "which saved search? Pass its `expr` or its `name`",
+                        note = "An error of a command: expr and name are its arguments' names, never translated."
                     )),
                 };
                 edits.run(app, Edit::Remove { key }, a.undo);
@@ -1189,7 +1189,7 @@ impl Plugin for QueryPlugin {
             "query.describe",
             words!(query_describe = "Describe search"),
             words!(
-                query_describe_description = "The search's chips for the designer: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation every choice runs, then the parts no facet holds"
+                query_describe_description = "The search's chips, as the address field draws them for a pane that shows a search: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation each of its choices runs, then the parts no facet holds"
             ),
             |a, app| {
                 let expr = match a.expr {
@@ -1430,7 +1430,7 @@ impl Plugin for QueryPlugin {
                         .ok_or_else(|| anyhow::anyhow!(words!(query_no_pane_numbered = "no pane { $pane }", pane = pane.0.to_string(), note = "pane: a pane's number, as agents name it.")))?;
                     let folder = p.location().and_then(Location::path).ok_or_else(|| {
                         anyhow::anyhow!(words!(
-                            query_only_folders_below = "only a folder's subfolders are searched"
+                            query_only_folders_below = "the pane shows no folder: only a folder's subfolders can be searched"
                         ))
                     })?;
                     (folder, p.filter().map(str::to_owned).unwrap_or_default())
@@ -1600,7 +1600,7 @@ impl Plugin for QueryPlugin {
                     Some(r) => Some(
                         Location::parse_os(r.as_os_str())
                             .path()
-                            .ok_or_else(|| anyhow::anyhow!(words!(query_root_not_path = "root must be a path", note = "An error of a command given a root that is no folder's path: root is the argument's name.")))?,
+                            .ok_or_else(|| anyhow::anyhow!(words!(query_root_not_path = "`root` must be a path", note = "An error of a command given a root that is no folder's path: root is the argument's name.")))?,
                     ),
                     None => None,
                 };

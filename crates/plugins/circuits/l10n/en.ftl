@@ -91,7 +91,7 @@ circuits_detail_vias = Vias
 circuits_ends_inside_list = The file ends inside a list
 
 # Why a board, schematic or layer is not drawn: it grew past what is drawn while it was read. size: that bound.
-circuits_file_exceeds = The file exceeds { $size } preview limit
+circuits_file_exceeds = The file exceeds the { $size } preview limit
 
 # A notice under a Gerber layer's picture: some of its shapes were left out.
 circuits_gerber_drawn_in_part = Drawn in part: the layer holds more than is drawn here

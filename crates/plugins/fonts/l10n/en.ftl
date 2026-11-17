@@ -31,7 +31,7 @@ fonts_detail_variable = Variable
 fonts_detail_version = Version
 
 # Why a font is not previewed: it is larger than the preview reads. size: that bound (16 MB).
-fonts_file_too_large = Font exceeds { $size } preview limit
+fonts_file_too_large = The font exceeds the { $size } preview limit
 
 # A note under a font's specimen: glyphs too large to draw were left out.
 fonts_glyphs_skipped = { $count ->
@@ -64,7 +64,7 @@ fonts_sample = The quick brown fox jumps over the lazy dog. 0123456789
 fonts_title = Font · { $name }
 
 # Why a web font is not previewed: unpacked, it is larger than the preview reads. size: that bound (16 MB).
-fonts_too_large = Font exceeds { $size } preview limit
+fonts_too_large = The font exceeds the { $size } preview limit
 
 # An error in place of a font whose scale is out of the OpenType range. units: how many units the font divides its em square into.
 fonts_units_per_em = Font declares { $units ->

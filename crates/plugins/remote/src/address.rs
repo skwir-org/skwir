@@ -661,9 +661,9 @@ fn split_port(hostport: &str) -> Result<(&str, Option<u16>), NotAnAddress> {
             Some(end) => (&hostport[..=end], hostport[end + 1..].strip_prefix(':')),
             None => {
                 return Err(NotAnAddress(words!(
-                    remote_address_ipv6 = "“{ $text }” ends no IPv6 address",
+                    remote_address_ipv6 = "“{ $text }” has no ] to end its IPv6 address",
                     text = hostport,
-                    note = "text: what was typed as a server's address and port."
+                    note = "An error: an address's server opens an IPv6 address with [ but never closes it with ]. text: what was typed as the server's address and port."
                 )));
             }
         }

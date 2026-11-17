@@ -176,7 +176,7 @@ rename_bulk_recipes = Recettes
 rename_bulk_reference = Dire ce que prend un champ du renommage en lot
 
 # draft
-rename_bulk_reference_description = Renvoyer ce que prend `field` (template, regex, replacement) : ses variables ou ses signes, chacun avec ce qu’il donne, selon le renommage tel que donné, pour le premier des éléments donnés ou sélectionnés, et des recettes qui remplissent la regex et son remplacement
+rename_bulk_reference_description = Renvoyer ce que prend `field` (template, regex, replacement) : ses variables ou ses signes, chacun avec ce qu’il donne pour le premier des éléments donnés ou sélectionnés, les autres arguments du renommage étant tels que donnés, et des recettes qui remplissent la regex et son remplacement
 
 # draft
 rename_bulk_regex = Regex

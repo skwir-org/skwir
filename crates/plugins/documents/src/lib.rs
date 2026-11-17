@@ -224,7 +224,7 @@ impl Plugin for PreviewPlugin {
                     note = "Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names."
                 ),
                 words!(
-                    documents_text_documents_description_more = "Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
+                    documents_text_documents_description_more = "Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: Skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
                     note = "Reading, Pages and Pandoc are the setting's three choices; Pandoc and LibreOffice are programs' names."
                 ),
             ),
@@ -472,7 +472,8 @@ impl Reading {
             page.truncated.then(|| {
                 words!(
                     documents_first_blocks = "{ $count ->
-                       *[other] First { $count } blocks
+                        [1] Only the first block is shown
+                       *[other] Only the first { $count } blocks are shown
                     }",
                     count = bounds.blocks(),
                     note = "A note under a document's preview: only its first paragraphs, headings, tables and pictures (blocks) are shown."
@@ -643,7 +644,8 @@ fn shown(read: blocks::Read) -> Inspection {
         read.truncated.then(|| {
             words!(
                 documents_first_blocks_of_part = "{ $count ->
-                   *[other] First { $count } blocks of this part
+                    [1] Only the first block of this part is shown
+                   *[other] Only the first { $count } blocks of this part are shown
                 }",
                 count = limits::BLOCKS,
                 note = "A note under a document's preview: only the first paragraphs, headings, tables and pictures (blocks) of the part shown are shown."

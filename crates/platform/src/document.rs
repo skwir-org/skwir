@@ -802,7 +802,7 @@ impl Manager {
             if !matches!(greeting, WorkerReply::Ready(_)) {
                 return Err(Failure::Broken(
                     words!(
-                        document_reopen = "could not reopen document worker",
+                        document_reopen = "the document worker was started again but did not open the document",
                         note = "Why a page of a document is not shown: the program that reads it was started again and did not open it."
                     )
                     .into(),

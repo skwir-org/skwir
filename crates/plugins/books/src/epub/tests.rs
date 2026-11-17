@@ -389,7 +389,7 @@ fn declared_sizes_do_not_bound_decompression() {
         .to_string();
     assert!(
         error.contains("larger than its declared uncompressed size")
-            || error.contains("EPUB container exceeds 16 MiB"),
+            || error.contains("The EPUB's container exceeds the 16 MiB"),
         "{error}"
     );
 }
@@ -735,7 +735,7 @@ fn an_encrypted_chapter_says_so() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "This EPUB is protected: its chapter is encrypted"
+        "This EPUB is protected: a chapter is encrypted"
     );
     assert!(
         container

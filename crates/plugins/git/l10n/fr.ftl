@@ -16,7 +16,13 @@ git_column_hash = Empreinte
 git_column_names = Branches et étiquettes
 
 # draft
-git_commits_shown = { $count } (liste partielle)
+git_commits = { $count }
+
+# draft
+git_commits_shown = { $count ->
+        [one] { $count } commit affiché
+       *[other] { $count } commits affichés
+    }
 
 # draft
 git_detail_branch = Branche
@@ -35,12 +41,14 @@ git_names_cut = Certains commits ont plus de branches et d’étiquettes que cel
 
 # draft
 git_newest = { $count ->
+        [1] Seul le commit le plus récent
         [one] Le commit le plus récent
        *[other] Les { $count } commits les plus récents
     }
 
 # draft
 git_newest_names_cut = { $count ->
+        [1] Seul le commit le plus récent. Certains commits ont plus de branches et d’étiquettes que celles qui sont affichées
         [one] Le commit le plus récent. Certains commits ont plus de branches et d’étiquettes que celles qui sont affichées
        *[other] Les { $count } commits les plus récents. Certains commits ont plus de branches et d’étiquettes que celles qui sont affichées
     }
@@ -74,12 +82,14 @@ git_states_setting_description_more = La colonne Git de la liste indique la mêm
 
 # draft
 git_stopped = { $count ->
+        [1] Seul le commit le plus récent : lecture arrêtée avant le plus ancien
         [one] Le commit le plus récent : lecture arrêtée avant le plus ancien
        *[other] Les { $count } commits les plus récents : lecture arrêtée avant le plus ancien
     }
 
 # draft
 git_stopped_names_cut = { $count ->
+        [1] Seul le commit le plus récent : lecture arrêtée avant le plus ancien. Certains commits ont plus de branches et d’étiquettes que celles qui sont affichées
         [one] Le commit le plus récent : lecture arrêtée avant le plus ancien. Certains commits ont plus de branches et d’étiquettes que celles qui sont affichées
        *[other] Les { $count } commits les plus récents : lecture arrêtée avant le plus ancien. Certains commits ont plus de branches et d’étiquettes que celles qui sont affichées
     }

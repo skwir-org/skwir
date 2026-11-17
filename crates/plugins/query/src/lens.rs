@@ -131,20 +131,21 @@ enum Waits {
 }
 
 impl Waits {
-    /// What it is called where the filter says what waits.
+    /// What it is called where the filter says what waits: an item of a
+    /// list of what only a search can tell.
     fn words(self) -> Words {
         match self {
             Waits::Contents => words!(
-                query_waits_contents = "contents",
-                note = "What a filter leaves to a search (Enter): what files contain."
+                query_waits_contents = "what files contain",
+                note = "What a filter leaves to a search (Enter), an item of a list placed after “Only a search can tell” (omnibox_waits)."
             ),
             Waits::Taken => words!(
-                query_waits_taken = "dates taken",
-                note = "What a filter leaves to a search (Enter): when pictures were taken."
+                query_waits_taken = "when pictures were taken",
+                note = "What a filter leaves to a search (Enter), an item of a list placed after “Only a search can tell” (omnibox_waits)."
             ),
             Waits::Places => words!(
-                query_waits_places = "places",
-                note = "What a filter leaves to a search (Enter): where pictures were taken."
+                query_waits_places = "where pictures were taken",
+                note = "What a filter leaves to a search (Enter), an item of a list placed after “Only a search can tell” (omnibox_waits)."
             ),
         }
     }
@@ -435,7 +436,7 @@ mod tests {
             .iter()
             .map(skwir_core::words::Words::english)
             .collect();
-        assert_eq!(waits, ["contents"]);
+        assert_eq!(waits, ["what files contain"]);
         assert!(!read.metadata);
         let names: Vec<String> = folder()
             .iter()

@@ -61,16 +61,16 @@ extend_plugin_off = le module est désactivé
 extend_preview_links_closed = Les liens ne sont pas suivis dans un aperçu fait par « { $plugin } » : ce module n’a pas accès au réseau
 
 # draft
-extend_private_file = un fichier privé : un module externe à skwir ne le voit pas (Paramètres, Confidentialité)
+extend_private_file = un fichier privé : un module externe à Skwir ne le voit pas (Paramètres, Confidentialité)
 
 # draft
 extend_private_folder = un dossier privé : aucun module n’y accède
 
 # draft
-extend_private_preview = Ce fichier est privé : un module externe à skwir ne le lit pas (Paramètres, Confidentialité)
+extend_private_preview = Ce fichier est privé : un module externe à Skwir ne le lit pas (Paramètres, Confidentialité)
 
 # draft
-extend_protocol_version = le module utilise la version { $version } du protocole ; skwir prend en charge les versions { $oldest } à { $newest }
+extend_protocol_version = le module utilise la version { $version } du protocole ; Skwir prend en charge les versions { $oldest } à { $newest }
 
 # draft
 extend_requirement_module = Exécution du code WebAssembly de ce module
@@ -86,7 +86,8 @@ extend_thumbnail_not_base64 = une vignette qui n’est pas en base64
 
 # draft
 extend_turned_off = { $count ->
-       *[other] { $plugin } a été désactivé : il n’a pas répondu { $count } fois de suite
+        [one] Le module { $plugin } a été désactivé : il ne répondait plus
+       *[other] Le module { $plugin } a été désactivé : il n’a pas répondu { $count } fois de suite
     }
 
 # draft

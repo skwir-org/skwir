@@ -1,7 +1,7 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
 # Why an attachment is not previewed. size: the largest the preview reads (16 MB).
-email_attachment_too_large = Attachment exceeds { $size } preview limit
+email_attachment_too_large = The attachment exceeds the { $size } preview limit
 
 # A label in the preview's Properties: how many files the email carries.
 email_detail_attachments = Attachments
@@ -49,7 +49,7 @@ email_select_attachment = Select an attachment to preview it
 email_title = Email
 
 # Why an email is not previewed. size: the largest the preview reads (16 MB).
-email_too_large = Email exceeds { $size } preview limit
+email_too_large = The email exceeds the { $size } preview limit
 
 # An attachment the email gives no name, in its list of attachments.
 email_unnamed_attachment = Attachment

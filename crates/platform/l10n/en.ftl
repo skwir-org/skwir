@@ -142,7 +142,7 @@ document_compose_keep = keep the composed document
 document_locate_too_long = text to locate exceeds limit
 
 # Why a page of a document is not shown: the program that reads it was started again and did not open it.
-document_reopen = could not reopen document worker
+document_reopen = the document worker was started again but did not open the document
 
 # Why a search in a PDF's text was not run: what was typed is too long.
 document_search_too_long = search query exceeds limit
@@ -220,10 +220,10 @@ git_patch_not_written = The patch was not written
 git_status_failed = The files' Git state cannot be read: { $said }
 
 # Said of the tree-sitter CLI's configuration file on the Reading page: it is not JSON. error: what the JSON reader said, in English.
-grammars_config_invalid = its configuration does not read ({ $error }): none of its parser directories is read
+grammars_config_invalid = its configuration is not valid JSON ({ $error }), so none of the parser directories it names is read
 
 # Said of the tree-sitter CLI's configuration file on the Reading page: it could not be read.
-grammars_config_unreadable = its configuration does not read (cannot be read): none of its parser directories is read
+grammars_config_unreadable = its configuration cannot be read, so none of the parser directories it names is read
 
 # Why a grammar of Emacs's is not offered: Emacs colors code otherwise. Emacs is an editor's name.
 grammars_emacs_no_colors = Emacs keeps no colors with its grammars: put the grammar's repository in Skwir's grammars folder (it need not be built)
@@ -252,7 +252,7 @@ grammars_no_highlights_repository = no highlights query in its repository, nor i
 grammars_no_library = no library: build the grammar (`tree-sitter build`)
 
 # Said of a folder on the Reading page: the tree-sitter CLI's configuration names it, and it does not exist.
-grammars_parser_dir_missing = a parser directory its configuration names, not there
+grammars_parser_dir_missing = its configuration names this parser directory, which does not exist
 
 # Why a grammar is not offered: an editor's queries color only its own grammars. editor: which editor's (Zed, Helix, Neovim, Emacs are their names).
 grammars_queries_not_lent = no queries installed with it, and { $editor ->
@@ -329,18 +329,21 @@ highlight_tree_sitter_first = Tree-sitter first
 
 # A preview's notice: only the beginning of a long document is shown; Source is the button that shows the file's own text.
 inspection_blocks_notice = { $count ->
-        [one] First { $count } block
-       *[other] First { $count } blocks
-    } · Source shows the rest
+        [1] Only the first block is shown · Source shows the rest
+       *[other] Only the first { $count } blocks are shown · Source shows the rest
+    }
+
+# A count alone, as the value of a row in a preview's Properties (Pages: 1,234).
+inspection_count = { $count }
 
 # Why a compressed drawing (.svgz) is not shown: unpacked, it is larger than the preview reads.
 inspection_drawing_inflated = The drawing is too large to read
 
 # Why an SVG drawing is not previewed: it is larger than the preview reads. size: that bound (16 MB).
-inspection_drawing_too_large = Drawing exceeds { $size } preview limit
+inspection_drawing_too_large = The drawing exceeds the { $size } preview limit
 
 # Why a picture a document names is not shown. size: the largest read (16 MB).
-inspection_embedded_image_limit = Embedded image exceeds { $size } preview limit
+inspection_embedded_image_limit = An embedded image exceeds the { $size } preview limit
 
 # A column's header in the hexadecimal view: where each row of bytes is in the file.
 inspection_hex_offset = Offset
@@ -367,7 +370,7 @@ inspection_show_on_map = Show on map
 inspection_svg_no_size = SVG picture has no size
 
 # Why a text is not previewed: it is larger than the preview reads. size: that bound (2 MB).
-inspection_text_too_large = Text exceeds { $size } preview limit
+inspection_text_too_large = The text exceeds the { $size } preview limit
 
 # Why an XML file is not shown: its DOCTYPE declaration is written in a way the reader does not take.
 inspection_xml_doctype = its document type is not read
@@ -395,6 +398,9 @@ math_failed = The formulas cannot be typeset: { $said }
 
 # What to do to see a document's formulas drawn. program: the math helper's name (skwir-math-worker).
 math_install = Install { $program } to typeset formulas
+
+# A notice in the player: a control (a seek, a track switch) could not be carried out, and playback goes on. why: the player's reason, in English as it wrote it.
+media_control_refused = The player could not do that: { $why }
 
 # Why a play, pause or seek was not done: the player is still taking the ones before, or it has stopped.
 media_controls_busy = video controls busy or session closed
@@ -578,7 +584,7 @@ print_job_install = Install { $program } to print
 
 # Said when a long code file is printed: the rest of its lines are left out.
 print_job_lines_cut = { $count ->
-        [one] Only the first { $count } line is printed
+        [1] Only the first line is printed
        *[other] Only the first { $count } lines are printed
     }
 
@@ -628,10 +634,10 @@ process_failed = { $program } failed ({ $status }): { $said }
 process_not_installed = { $program } is not installed
 
 # A helper program failed, and it is older than Skwir. error: why it failed; program: the helper's file name.
-process_older_build = { $error }. { $program } is from an older build of skwir, which may be why: rebuild or reinstall it
+process_older_build = { $error }. { $program } is from an older build of Skwir, which may be why: rebuild or reinstall it
 
 # A helper program failed, and it is not of the build Skwir is. error: why it failed; program: the helper's file name; theirs, ours: the two builds' versions.
-process_other_build = { $error }. { $program } is from another build of skwir ({ $theirs }; skwir is { $ours }), which may be why: rebuild or reinstall it
+process_other_build = { $error }. { $program } is from another build of Skwir ({ $theirs }; Skwir is { $ours }), which may be why: rebuild or reinstall it
 
 # A program that copies or converts was stopped: it stopped saying how far it went. program: its name (rsync).
 process_stalled_minutes = { $program } stopped: it said nothing of its progress for { $count ->
@@ -661,7 +667,7 @@ process_too_much_output = { $program }: excessive output
 rich_preview_page_no_size = page has no size
 
 # Why a page's stylesheet beside it is not read. size: the largest read (2 MB).
-rich_preview_stylesheet_limit = Stylesheet exceeds { $size } preview limit
+rich_preview_stylesheet_limit = A stylesheet exceeds the { $size } preview limit
 
 # Why a converter does not run. system: the system's name (Windows).
 sandbox_converter_not_yet = Running a converter isolated from your files is not available on { $system } yet
@@ -673,7 +679,7 @@ sandbox_needs_bubblewrap = This needs bubblewrap, to run isolated from your file
 sandbox_needs_sandbox = This needs the system's sandbox, to run isolated from your files
 
 # Why a plugin from outside, a program, does not run. system: the system's name (Windows).
-sandbox_plugin_not_yet = Running a plugin as a program, isolated from your files is not available on { $system } yet
+sandbox_plugin_not_yet = Running a plugin's program isolated from your files is not available on { $system } yet
 
 # The desktop's keyring, which keeps passwords (GNOME Keyring, KWallet), did not answer. error: why.
 secrets_no_keyring = No keyring answered: { $error }

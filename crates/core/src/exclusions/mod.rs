@@ -1165,8 +1165,8 @@ fn user_id(id: &str) -> Result<(), Words> {
     }
     if id.contains('.') {
         return Err(words!(
-            exclusions_id_dot = "an id of yours has no dot: those are skwir's and its plugins'",
-            note = "An exclusion or a category of the user's in the settings refused: an id with a dot is Skwir's (skwir is the program's name)."
+            exclusions_id_dot = "an id of yours has no dot: those are Skwir's and its plugins'",
+            note = "An exclusion or a category of the user's in the settings refused: an id with a dot is Skwir's (Skwir is the program's name)."
         ));
     }
     Ok(())
@@ -1275,7 +1275,7 @@ fn override_problem(entry: &toml::Table) -> Result<(), Words> {
         if key == "folder" || key == "holding" {
             return Err(words!(
                 exclusions_builtin_id =
-                    "skwir. names skwir's own folders; give yours a name without a dot",
+                    "skwir. names Skwir's own folders; give yours a name without a dot",
                 note = "An exclusion in the settings refused: its id begins with skwir. (as written), which only Skwir's own have, yet it names a folder."
             ));
         }
@@ -1373,13 +1373,13 @@ pub(crate) fn tell_problems(app: &crate::App) {
         app.notify_about_setting(
             crate::app::NotifyLevel::Warning,
             words!(
-                exclusions_unreadable = "{ $more ->
-                    [0] An exclusion cannot be read, so it does not apply: { $first }
-                   *[other] An exclusion cannot be read, so it does not apply (and { $more } more): { $first }
+                exclusions_unreadable = "{ $count ->
+                    [1] An exclusion cannot be read, so it does not apply: { $first }
+                   *[other] { $count } exclusions cannot be read, so they do not apply. The first: { $first }
                 }",
-                more = new.len() - 1,
+                count = new.len(),
                 first = first.words(),
-                note = "A notice leading to the Exclusions page: exclusions in the settings that cannot be read, so they keep nothing private. How many more besides the first, then the first: where it is and why."
+                note = "A notice leading to the Exclusions page: exclusions in the settings that cannot be read, so they keep nothing private. count: how many; first: the first of them, where it is and why."
             ),
             ENTRIES_KEY,
         );
@@ -1410,8 +1410,8 @@ pub fn declare(settings: &Settings) {
                 note = "A setting drawn by the Exclusions page, read in the settings file and by agents."
             ),
             words!(
-                exclusions_categories_description = "What changed of skwir's categories of exclusions (a role switched: searches, agents, index), and yours (a name)",
-                note = "skwir is the program's name; searches, agents and index are the roles' keys, as written."
+                exclusions_categories_description = "What changed of Skwir's categories of exclusions (a role switched: searches, agents, index), and yours (a name)",
+                note = "Skwir is the program's name; searches, agents and index are the roles' keys, as written."
             ),
             table(),
         )
@@ -1426,7 +1426,7 @@ pub fn declare(settings: &Settings) {
                 note = "A setting drawn by the Exclusions page: the files and folders left out of searches, kept from agents."
             ),
             words!(
-                exclusions_entries_description = "What changed of skwir's exclusions (a role unticked, a category), and yours: a pattern (a name, a path, a glob or regex:…, of files, folders or both, with beside), or holding (a file a folder holds), what it is, its category, and the roles it is excluded from",
+                exclusions_entries_description = "What changed of Skwir's exclusions (a role unticked, a category), and yours: a pattern (a name, a path, a glob or regex:…, of files, folders or both, with beside), or holding (a file a folder holds), what it is, its category, and the roles it is excluded from",
                 note = "Read in the settings file and by agents. regex:, beside and holding are written so."
             ),
             table(),

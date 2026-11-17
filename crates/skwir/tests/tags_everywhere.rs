@@ -119,7 +119,7 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     );
     let note = plan.note.clone().unwrap().english();
     assert!(note.starts_with("4 files in"), "{note}");
-    assert!(note.contains("1 already had “Job”"), "{note}");
+    assert!(note.contains("1 file already had “Job”"), "{note}");
     // Nothing changed before it was applied.
     assert_eq!(at("a.txt"), ["Work", "x"]);
 
@@ -467,7 +467,7 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
         .unwrap();
     assert_eq!(
         step.describe().to_string(),
-        "keep “travel” pinned and colored as “Trip” were"
+        "keep “travel” pinned and colored as “Trip” was"
     );
     let plan = Plan::with_steps(Words::as_written("rename"), vec![step]);
     let r = app.executor.execute_blocking(&plan, app.lifetime());

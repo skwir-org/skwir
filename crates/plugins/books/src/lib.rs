@@ -81,7 +81,7 @@ impl Plugin for PreviewPlugin {
             ),
             (
                 words!(
-                    books_engine_description = "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out."
+                    books_engine_description = "Automatic reads books with the built-in engine, which reflows their text in the theme and draws fixed-layout pages as the book lays them out."
                 ),
                 words!(
                     books_engine_description_more = "MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others.",

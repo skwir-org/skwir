@@ -2002,13 +2002,17 @@ impl SettingsView {
         };
         let texts = {
             let mut texts = Self::texts(title, plugin.description.say(), theme);
-            // What it may do (ADR-044), and where one from outside skwir is.
-            // Transitional: a list argument (ADR-139).
-            let may = plugin.capabilities.words().map(|may| {
+            // What it may do (ADR-044), a list said as the reader's
+            // language joins one, and where one from outside Skwir is.
+            let may = (!plugin.capabilities.is_empty()).then(|| {
+                let what = plugin
+                    .capabilities
+                    .iter()
+                    .map(skwir_core::permissions::Capability::said);
                 words!(
                     settings_plugin_may = "May: { $what }",
-                    what = may,
-                    note = "Under a plugin from outside skwir: what it is allowed to do, a list (read files, run programs)."
+                    what = skwir_core::words::List::and(what),
+                    note = "Under a plugin from outside Skwir: what it is allowed to do, a list of what each permission lets it do, each beginning in lower case (reads what files hold and starts programs)."
                 )
                 .say()
             });
@@ -2017,7 +2021,7 @@ impl SettingsView {
                     settings_plugin_from = "From { $origin }",
                     origin = origin.clone(),
                     note =
-                        "Under a plugin from outside skwir: where it was installed from, a path."
+                        "Under a plugin from outside Skwir: where it was installed from, a path."
                 )
                 .say()
             });
@@ -2039,7 +2043,7 @@ impl SettingsView {
                             words!(
                                 settings_plugin_requirement_found = "{ $program } found",
                                 program = status.name.clone(),
-                                note = "Under a plugin: a program or library it uses was found; program is its name (ffmpeg)."
+                                note = "Under a plugin: a program or library it uses was found; program is its name (ffmpeg), a program's or a library's, which is not known: where a word would agree with it, choose one that need not (available)."
                             )
                             .say(),
                         )
@@ -2283,7 +2287,7 @@ impl SettingsView {
                 items,
                 words!(
                     settings_nothing_changed =
-                        "Every setting has its default value, and every plugin is as skwir comes.",
+                        "Every setting has its default value, and every plugin is as Skwir comes.",
                     note = "Said on Changed by you when nothing differs from how skwir comes."
                 )
                 .say(),

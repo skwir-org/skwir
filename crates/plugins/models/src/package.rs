@@ -39,7 +39,7 @@ pub(crate) fn member(archive: &mut Archive, name: &str, bound: u64) -> Option<Ve
         note = "Why a part of a model's package is not read: the package has none by that name. member: its name in the package, as written."
     );
     let too_large = words!(
-        models_member_too_large = "{ $member } exceeds { $size } preview limit",
+        models_member_too_large = "{ $member } exceeds the { $size } preview limit",
         member = name,
         size = words::Size(bound as u64),
         note = "Why a part of a model's package is not read: it inflates past what the preview reads. member: its name in the package, as written; size: that bound."

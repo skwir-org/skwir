@@ -2266,8 +2266,9 @@ impl Plugin for RemotePlugin {
                         app.notify(
                             NotifyLevel::Error,
                             words!(
-                                remote_thumbnails_not_saved = "The remote's thumbnails were not saved: { $error }",
-                                error = error
+                                remote_thumbnails_not_saved = "The choice of when the remote's files show thumbnails was not saved: { $error }",
+                                error = error,
+                                note = "An error: the choice made in a remote's Thumbnails menu (automatic, never, small files, always) was not written to the settings."
                             ),
                         );
                     }

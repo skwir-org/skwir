@@ -41,19 +41,29 @@ fn offered(agent: Vec<Key>, defaults: Vec<Key>) -> Vec<(String, Key)> {
 /// A key as the form says it: where it is, its type and comment, then
 /// its fingerprint.
 fn choice(value: &str, key: &Key) -> Choice {
+    // Its comment, type and file are ssh's: as written.
     let kind = key.kind.trim_start_matches("ssh-");
     let said = if key.comment.is_empty() {
-        kind.to_owned()
+        Words::as_written(kind.to_owned())
     } else {
-        format!("{} ({kind})", key.comment)
+        words!(
+            remote_keys_key = "{ $comment } ({ $kind })",
+            comment = key.comment.as_str(),
+            kind = kind,
+            note = "An ssh key as a form lists it: its comment (me@laptop), then its type (ed25519), both as ssh writes them."
+        )
     };
-    // Its comment, type and file are ssh's: as written.
     let title = match &key.file {
-        Some(file) => Words::as_written(format!("{said}, {}", file.display())),
+        Some(file) => words!(
+            remote_keys_in_file = "{ $key }, in { $file }",
+            key = said,
+            file = file.display().to_string(),
+            note = "A key kept in a file: key is its comment and type (me@laptop (ed25519)), or its type alone; file: the file's path."
+        ),
         None => words!(
             remote_keys_in_agent = "{ $key }, in the ssh agent",
             key = said,
-            note = "A key the ssh agent holds: key is its comment and type (me@laptop (ed25519))."
+            note = "A key the ssh agent holds: key is its comment and type (me@laptop (ed25519)), or its type alone."
         ),
     };
     Choice::new(value, title).detail(Words::as_written(key.fingerprint.clone()))
@@ -253,7 +263,7 @@ mod tests {
             choices[0].title.english(),
             "me@laptop (ed25519), in the ssh agent"
         );
-        assert_eq!(choices[1].title.english(), "ed25519, /k/id_ecdsa");
+        assert_eq!(choices[1].title.english(), "ed25519, in /k/id_ecdsa");
         assert_eq!(choices[2].value, NEW);
         assert_eq!(form.fields[0].value, "agent:0", "the agent's first");
         // One there of its name already: no new key offered, nor asked

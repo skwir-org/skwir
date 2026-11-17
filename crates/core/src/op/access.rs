@@ -982,14 +982,7 @@ pub fn reference() -> crate::reference::Reference {
 /// users are not numbers (Windows): a mode may be asked, a group not yet.
 fn refused(me: Option<&Me>, uid: Option<u32>, gid: Option<u32>) -> Option<Words> {
     let Some(me) = me else {
-        return gid.map(|_| {
-            words!(
-                access_group_not_yet =
-                    "Changing a file's group is not available on { $system } yet",
-                system = crate::system::named(),
-                note = "Why a file's group cannot be changed. system: the system's name (Windows)."
-            )
-        });
+        return gid.map(|_| sys::group_not_yet());
     };
     if me.root {
         return None;

@@ -1,7 +1,7 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
 # What tags written in a file's name as filetags writes them cannot hold, placed after "What it cannot hold:" in its settings.
-name_tags_filetags_limits = tags without spaces or categories, no rating, no comment
+name_tags_filetags_limits = a tag with spaces or a category, a rating or a comment
 
 # A note in the review of a plan putting tags in names. tags: the tags left out, as written, separated by commas.
 name_tags_left_out = Left out, as a name cannot hold them: { $tags }.
@@ -34,7 +34,7 @@ name_tags_tag_description = Rename the entries given, or the selection, to hold 
 name_tags_tag_menu = Write Tags into Name
 
 # What tags written in a file's name as TagSpaces writes them cannot hold, placed after "What it cannot hold:" in its settings.
-name_tags_tagspaces_limits = tags without spaces, brackets or categories, no rating, no comment
+name_tags_tagspaces_limits = a tag with spaces, brackets or a category, a rating or a comment
 
 name_tags_untag = Tags out of name
 

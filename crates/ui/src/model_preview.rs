@@ -58,7 +58,7 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
             .say(),
             skwir_core::words!(
                 model_said_holds = "{ $count ->
-                    [one] 1 triangle
+                    [one] { $count } triangle
                    *[other] { $count } triangles
                 }. Arrows turn it, Shift and the arrows move it, the zoom keys zoom it, Ctrl+0 shows it as it opened",
                 count = shown.mesh.triangles(),

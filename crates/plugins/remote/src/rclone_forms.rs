@@ -978,9 +978,9 @@ impl Flow<'_> {
             let why = said(failed);
             let intro = if new {
                 words!(
-                    remote_rclone_unlisted_new = "rclone could not list it: { $why }. Keep it as it is, or go back and change it. Cancel removes it.",
+                    remote_rclone_unlisted_new = "rclone could not list it: { $why }. Keep it as it is, or go back and change it. The Cancel button removes it.",
                     why = why,
-                    note = "why: what rclone said, in its words or Skwir's."
+                    note = "A form's text, about a remote of rclone's just added. why: what rclone said, in its words or Skwir's. Cancel: the form's button, as it is named there."
                 )
             } else {
                 words!(

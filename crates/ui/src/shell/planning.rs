@@ -223,11 +223,12 @@ impl Shell {
                 shell.notice(
                     Toast::new(
                         words!(
-                            planning_working_out = "Working out what { $command } does…",
+                            planning_working_out = "{ $command }: working out the changes…",
                             command = title,
                             note = "Said while a command works out the changes it will make \
                                     before they are shown; command: its title (Copy, Extract \
-                                    Here)."
+                                    Here), as a label before what happens, never the subject \
+                                    of a verb."
                         ),
                         Tone::Info,
                         vec![Action {

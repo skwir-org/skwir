@@ -439,9 +439,12 @@ fn holds(b: &Bar) -> String {
     if b.selected > 0 {
         words!(
             timeline_holds_selected = "{ $count ->
-                [one] 1 file
+                [one] { $count } file
                *[other] { $count } files
-            }, { $size }, { $selected } selected",
+            }, { $size }, { $selected ->
+                [one] { $selected } selected
+               *[other] { $selected } selected
+            }",
             count = b.count,
             size = words::Size(b.bytes),
             selected = b.selected,
@@ -450,7 +453,7 @@ fn holds(b: &Bar) -> String {
     } else {
         words!(
             timeline_holds = "{ $count ->
-                [one] 1 file
+                [one] { $count } file
                *[other] { $count } files
             }, { $size }",
             count = b.count,
@@ -1007,7 +1010,10 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
         if b.selected > 0 {
             said.push(
                 words!(
-                    timeline_selected = "{ $count } selected",
+                    timeline_selected = "{ $count ->
+                        [one] { $count } selected
+                       *[other] { $count } selected
+                    }",
                     count = b.selected,
                     note = "Beside the timeline's buttons, pointing at a bar: how many of its files are selected."
                 )
@@ -1025,7 +1031,10 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
     }
     parts.push(
         words!(
-            timeline_dated = "{ $count } dated",
+            timeline_dated = "{ $count ->
+                [one] { $count } dated
+               *[other] { $count } dated
+            }",
             count = h.total - h.unknown.min(h.total),
             note = "Beside the timeline's buttons: how many files have the date its bars count."
         )
@@ -1045,7 +1054,7 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
         parts.push(
             words!(
                 timeline_earlier_files = "{ $count ->
-                    [one] 1 file earlier
+                    [one] { $count } file earlier
                    *[other] { $count } files earlier
                 }",
                 count = h.before,
@@ -1058,7 +1067,7 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
         parts.push(
             words!(
                 timeline_later_files = "{ $count ->
-                    [one] 1 file later
+                    [one] { $count } file later
                    *[other] { $count } files later
                 }",
                 count = h.after,
@@ -1071,7 +1080,10 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
     if h.outside > 0 {
         parts.push(
             words!(
-                timeline_far_outside = "{ $count } far outside",
+                timeline_far_outside = "{ $count ->
+                    [one] { $count } far outside
+                   *[other] { $count } far outside
+                }",
                 count = h.outside,
                 note = "Beside the timeline's buttons: how many files are dated far from all the others (a wrong clock), left out of the bars."
             )

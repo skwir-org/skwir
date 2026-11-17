@@ -169,14 +169,14 @@ pub struct Kept {
 
 impl Kept {
     /// What a deletion's question says of it: "2 files have names
-    /// elsewhere: 1.2 GB stays on the disk". `None` when nothing stays.
+    /// elsewhere: the disk keeps their 1.2 GB". `None` when nothing stays.
     pub fn words(&self) -> Option<crate::words::Words> {
         (self.files > 0).then(|| {
             crate::words!(
                 entry_kept_elsewhere = "{ $count ->
-                    [one] { $count } file has
-                   *[other] { $count } files have
-                } names elsewhere: { $size } stays on the disk",
+                    [one] { $count } file has names elsewhere: the disk keeps its { $size }
+                   *[other] { $count } files have names elsewhere: the disk keeps their { $size }
+                }",
                 count = self.files,
                 size = crate::words::Size(self.bytes),
                 note = "A note of a deletion's review: files deleted here have other names (hard links) elsewhere, so what they hold stays on the disk."
@@ -880,7 +880,7 @@ mod tests {
         );
         assert_eq!(
             kept.words().map(|words| words.english()).as_deref(),
-            Some("1 file has names elsewhere: 100 B stays on the disk")
+            Some("1 file has names elsewhere: the disk keeps its 100 B")
         );
         assert_eq!(
             kept_by_other_names([&a, &b, &alone]).unwrap().words(),

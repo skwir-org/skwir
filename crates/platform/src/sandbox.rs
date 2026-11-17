@@ -883,7 +883,7 @@ fn plugin_isolated(
 ) -> anyhow::Result<Command> {
     Err(skwir_core::system::not_yet_words(skwir_core::words!(
         sandbox_plugin_not_yet =
-            "Running a plugin as a program, isolated from your files is not available on { $system } yet",
+            "Running a plugin's program isolated from your files is not available on { $system } yet",
         system = skwir_core::system::named(),
         note = "Why a plugin from outside, a program, does not run. system: the system's name (Windows)."
     ))

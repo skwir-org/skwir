@@ -256,8 +256,8 @@ fn unreachable(others: &[String]) -> Words {
         ),
         None => words!(
             clipboard_unreachable_remote = "{ $count ->
-                [one] The clipboard holds { $count } remote: item Skwir cannot reach
-               *[other] The clipboard holds { $count } remote: items Skwir cannot reach
+                [one] The clipboard holds { $count } remote item Skwir cannot reach
+               *[other] The clipboard holds { $count } remote items Skwir cannot reach
             }",
             count = count,
             note = "What another application copied is on another protocol, which Skwir does \

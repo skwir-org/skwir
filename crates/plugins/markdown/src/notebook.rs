@@ -49,7 +49,7 @@ pub struct Notebook {
 /// pictures are inside it.
 pub fn read(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Value> {
     let refusal = words!(
-        markdown_notebook_file_too_large = "Notebook exceeds { $size } preview limit",
+        markdown_notebook_file_too_large = "The notebook exceeds the { $size } preview limit",
         size = words::Size(bounds.binary_input() as u64),
         note = "Why a notebook is not previewed: the file is larger than the preview reads. size: that bound (16 MB)."
     );
@@ -169,7 +169,7 @@ fn spend(read: &mut usize, text: &str, bounds: Bounds) -> anyhow::Result<()> {
     if *read > bounds.text_input() {
         return Err(bounds.refuse(
             words!(
-                markdown_notebook_too_large = "Notebook text exceeds { $size } preview limit",
+                markdown_notebook_too_large = "The notebook's text exceeds the { $size } preview limit",
                 size = words::Size(bounds.text_input() as u64),
                 note = "Why a notebook is not previewed: its text is longer than the preview reads. size: that bound (2 MB)."
             ),

@@ -192,7 +192,7 @@ impl FixedBook {
         )?
         .ok_or_else(|| {
             anyhow::anyhow!(words!(
-                books_page_not_drawn = "the page could not be drawn",
+                books_page_not_drawn = "The page could not be drawn",
                 note = "An error: a page of a book laid out in pages could not be drawn."
             ))
         })
@@ -257,7 +257,7 @@ impl DocumentSession for FixedBook {
         anyhow::ensure!(
             query.len() <= 4096,
             words!(
-                books_search_too_long = "search query exceeds limit",
+                books_search_too_long = "The text searched for is too long",
                 note = "An error: what was searched for in a book is too long."
             )
         );

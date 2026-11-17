@@ -70,7 +70,7 @@ shrink_in_place_only = { $name } n’accepte que des copies écrites sur place 
 shrink_lossless = Sans perte
 
 # draft
-shrink_lossless_at_most = La qualité lossless ne réencode rien, elle ne peut donc pas ramener une copie sous une taille : demandez `at_most` avec print, screen ou small
+shrink_lossless_at_most = La qualité `lossless` ne réencode rien, elle ne peut donc pas garder une copie sous une taille : donnez `at_most` avec la qualité `print`, `screen` ou `small`
 
 # draft
 shrink_lossless_jpeg = Sans perte laisse un JPEG tel quel : choisissez Impression, Écran ou Petite taille, ou retirez sa position et les données de l’appareil photo

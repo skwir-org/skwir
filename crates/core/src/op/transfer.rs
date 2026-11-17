@@ -2159,7 +2159,10 @@ fn copy_one(
     anyhow::ensure!(
         copied >= meta.len(),
         crate::words!(
-            op_batch_read_short = "“{ $path }”: { $read } of its { $bytes } bytes could be read",
+            op_batch_read_short = "{ $read ->
+                [one] “{ $path }”: only { $read } byte of { $bytes } could be read
+               *[other] “{ $path }”: only { $read } bytes of { $bytes } could be read
+            }",
             path = src.display().to_string(),
             read = copied,
             bytes = meta.len(),
@@ -2484,7 +2487,7 @@ mod tests {
         assert!(
             refused
                 .to_string()
-                .contains("moves nothing between its folders")
+                .contains("cannot move files between its folders")
         );
         assert!(names(&dest).is_empty());
         let other = tmp.path().join("elsewhere");

@@ -814,7 +814,7 @@ fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
             .as_ref()
             .map(skwir_core::words::Words::english)
             .as_deref(),
-        Some("1 file has names elsewhere: 8 B stays on the disk")
+        Some("1 file has names elsewhere: the disk keeps its 8 B")
     );
     select(&app, &["a.txt", "b.txt", "c.txt"]);
     assert_eq!(

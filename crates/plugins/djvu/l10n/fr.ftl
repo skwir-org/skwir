@@ -7,7 +7,7 @@ djvu_engine = Moteur DjVu
 djvu_engine_auto = Automatique
 
 # draft
-djvu_engine_description = Automatique préfère DjVuLibre, s’il est installé, et se rabat sur djvu-rs, que skwir embarque.
+djvu_engine_description = Automatique préfère DjVuLibre, s’il est installé, et se rabat sur djvu-rs, que Skwir embarque.
 
 # draft
 djvu_install_either = Installez { $first } ou { $second } pour lire les documents DjVu

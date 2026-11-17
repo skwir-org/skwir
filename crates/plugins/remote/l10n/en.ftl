@@ -21,8 +21,8 @@ remote_address_bad_user = “{ $user }” is no user's name
 # text: what an address of a phone or a camera names as its device.
 remote_address_device_user = “{ $text }”: a device's address names no user
 
-# text: what was typed as a server's address and port.
-remote_address_ipv6 = “{ $text }” ends no IPv6 address
+# An error: an address's server opens an IPv6 address with [ but never closes it with ]. text: what was typed as the server's address and port.
+remote_address_ipv6 = “{ $text }” has no ] to end its IPv6 address
 
 # text: what was typed as an address.
 remote_address_no_protocol = “{ $text }” names no protocol
@@ -76,8 +76,8 @@ remote_configure_at_login = Connect at Login
 
 # remotes: the names of the remotes of rclone's that connect at login, each quoted, as a list.
 remote_configure_at_login_encrypted = { $count ->
-        [1] { $remotes } connects at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
-       *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
+        [1] { $remotes } connects at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first.
+       *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first.
     }
 
 # server: the login and server, or a remote of rclone's.
@@ -196,7 +196,7 @@ remote_configure_no_public_link = No public link was made: { $error }
 remote_configure_not_done = { $done ->
         [added] The server was not added: { $error }
         [saved] The server was not saved: { $error }
-        [signed_in] The server was not signed in: { $error }
+        [signed_in] Signing in to the server failed: { $error }
         [tested] The server was not tested: { $error }
         [kept] The server was not kept: { $error }
        *[removed] The server was not removed: { $error }
@@ -439,8 +439,14 @@ remote_keys_form_title = Set Up Key Login on { $server }
 # server: the login and server (me@nas).
 remote_keys_had_it = { $server } had the key already: ssh logs in with it
 
-# A key the ssh agent holds: key is its comment and type (me@laptop (ed25519)).
+# A key the ssh agent holds: key is its comment and type (me@laptop (ed25519)), or its type alone.
 remote_keys_in_agent = { $key }, in the ssh agent
+
+# A key kept in a file: key is its comment and type (me@laptop (ed25519)), or its type alone; file: the file's path.
+remote_keys_in_file = { $key }, in { $file }
+
+# An ssh key as a form lists it: its comment (me@laptop), then its type (ed25519), both as ssh writes them.
+remote_keys_key = { $comment } ({ $kind })
 
 # said: what ssh-keygen printed, as it wrote it.
 remote_keys_keygen_failed = ssh-keygen failed: { $said }
@@ -584,10 +590,10 @@ remote_mounter_nothing_mounted = it said it mounted, but nothing is mounted ther
 
 remote_mounter_trust = Connect to this server?
 
-# What keeps a mount from being let go of: programs, by the names they run under; first: those before the last, each quoted, joined by commas.
+# What keeps a mount from being let go of: programs, by the names they run under, a list; count: how many.
 remote_mounter_used_by = { $count ->
-        [1] “{ $last }” is using it
-       *[other] { $first } and “{ $last }” are using it
+        [1] { $programs } is using it
+       *[other] { $programs } are using it
     }
 
 remote_mounter_used_by_another = another program is using it
@@ -915,18 +921,25 @@ remote_rclone_stopped = rclone stopped
 # A heading among the kinds of storage to add: those that keep files.
 remote_rclone_storage = Storage
 
+# As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one).
 remote_rclone_trash_box = Box's trash
 
+# Where a cloud keeps what is deleted, said inside a sentence, with its own determiner (English's possessive is one): the deleting dialog and its toasts place it bare (moved to Google Drive's trash).
 remote_rclone_trash_drive = Google Drive's trash
 
+# As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one).
 remote_rclone_trash_jottacloud = Jottacloud's trash
 
+# As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one).
 remote_rclone_trash_mega = MEGA's rubbish bin
 
+# As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one).
 remote_rclone_trash_onedrive = OneDrive's recycle bin
 
+# As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one).
 remote_rclone_trash_pcloud = pCloud's trash
 
+# As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one).
 remote_rclone_trash_yandex = Yandex Disk's trash
 
 # A form's title while a remote of rclone's just made is tried.
@@ -937,8 +950,8 @@ remote_rclone_trying_what = rclone lists its top, as connecting would.
 # why: what rclone said, in its words or Skwir's.
 remote_rclone_unlisted = rclone could not list it: { $why }. Keep it as it is, or go back and change it.
 
-# why: what rclone said, in its words or Skwir's.
-remote_rclone_unlisted_new = rclone could not list it: { $why }. Keep it as it is, or go back and change it. Cancel removes it.
+# A form's text, about a remote of rclone's just added. why: what rclone said, in its words or Skwir's. Cancel: the form's button, as it is named there.
+remote_rclone_unlisted_new = rclone could not list it: { $why }. Keep it as it is, or go back and change it. The Cancel button removes it.
 
 remote_rclone_unmount_late = rclone did not let go of it
 
@@ -1189,7 +1202,8 @@ remote_thumbnails_menu_small = Small Files
 
 remote_thumbnails_never = Never
 
-remote_thumbnails_not_saved = The remote's thumbnails were not saved: { $error }
+# An error: the choice made in a remote's Thumbnails menu (automatic, never, small files, always) was not written to the settings.
+remote_thumbnails_not_saved = The choice of when the remote's files show thumbnails was not saved: { $error }
 
 remote_thumbnails_of = Thumbnails of a remote
 

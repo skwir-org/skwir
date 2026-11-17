@@ -417,7 +417,7 @@ fn direction_said(key: skwir_core::SortKey, up: bool) -> (Words, Words) {
                 note = "A sort by the files' state in Git: the files changed first."
             ),
             words!(
-                address_changes_first_said = "Changes first",
+                address_changes_first_said = "changes first",
                 note = "A sort's direction after its criterion, in the View menu's row: Git, Changes first."
             ),
         ),
@@ -427,7 +427,7 @@ fn direction_said(key: skwir_core::SortKey, up: bool) -> (Words, Words) {
                 note = "A sort by the files' state in Git: the files changed last."
             ),
             words!(
-                address_changes_last_said = "Changes last",
+                address_changes_last_said = "changes last",
                 note = "A sort's direction after its criterion, in the View menu's row: Git, Changes last."
             ),
         ),
@@ -493,7 +493,7 @@ fn caption_tip(key: skwir_core::SortKey) -> Words {
     use skwir_core::SortKey;
     match key {
         SortKey::Name => {
-            words!(address_caption_name = "Whether each tile says its name under its name")
+            words!(address_caption_name = "Whether each tile says its name")
         }
         SortKey::Kind => {
             words!(address_caption_kind = "Whether each tile says its kind under its name")
@@ -508,19 +508,20 @@ fn caption_tip(key: skwir_core::SortKey) -> Words {
             words!(address_caption_size = "Whether each tile says its size under its name")
         }
         SortKey::Modified => words!(
-            address_caption_modified = "Whether each tile says its modified under its name",
+            address_caption_modified = "Whether each tile says under its name when it was modified",
             note = "The tooltip of a row of the grid's Under names: whether tiles say when the file was modified."
         ),
         SortKey::Created => words!(
-            address_caption_created = "Whether each tile says its created under its name",
+            address_caption_created = "Whether each tile says under its name when it was created",
             note = "The tooltip of a row of the grid's Under names: whether tiles say when the file was created."
         ),
         SortKey::Accessed => words!(
-            address_caption_accessed = "Whether each tile says its accessed under its name",
+            address_caption_accessed =
+                "Whether each tile says under its name when it was last read",
             note = "The tooltip of a row of the grid's Under names: whether tiles say when the file was last read."
         ),
         SortKey::Deleted => words!(
-            address_caption_deleted = "Whether each tile says its deleted under its name",
+            address_caption_deleted = "Whether each tile says under its name when it was deleted",
             note = "The tooltip of a row of the grid's Under names, in the trash: whether tiles say when the file was deleted."
         ),
         SortKey::Rating => {
@@ -536,7 +537,7 @@ fn caption_tip(key: skwir_core::SortKey) -> Words {
             words!(address_caption_folder = "Whether each tile says its folder under its name")
         }
         SortKey::Taken => words!(
-            address_caption_taken = "Whether each tile says its taken under its name",
+            address_caption_taken = "Whether each tile says under its name when it was taken",
             note = "The tooltip of a row of the grid's Under names: whether tiles say when a picture was taken."
         ),
         SortKey::Dimensions => words!(
@@ -546,7 +547,7 @@ fn caption_tip(key: skwir_core::SortKey) -> Words {
             words!(address_caption_duration = "Whether each tile says its duration under its name")
         }
         SortKey::Vcs => words!(
-            address_caption_vcs = "Whether each tile says its git under its name",
+            address_caption_vcs = "Whether each tile says its state in Git under its name",
             note = "The tooltip of a row of the grid's Under names: whether tiles say the file's state in Git."
         ),
     }
@@ -1217,7 +1218,7 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
                 Button::new(
                     "view-buttons-reset",
                     "revert",
-                    words!(address_default_buttons_tip = "Back to the buttons skwir comes with"),
+                    words!(address_default_buttons_tip = "Back to the buttons Skwir comes with"),
                     "ui.view_buttons_reset",
                 ),
                 words!(
@@ -1589,10 +1590,10 @@ fn more_panel(
                 Button::new(
                     "menu-about",
                     "info",
-                    words!(address_about = "About skwir"),
+                    words!(address_about = "About Skwir"),
                     "ui.about",
                 ),
-                words!(address_about = "About skwir"),
+                words!(address_about = "About Skwir"),
             ),
         ]
         .into_iter()
@@ -1605,7 +1606,7 @@ fn more_panel(
         Button::new(
             "menu-quit",
             "power",
-            words!(address_quit_tip = "Quit skwir"),
+            words!(address_quit_tip = "Quit Skwir"),
             "ui.quit",
         ),
         words!(

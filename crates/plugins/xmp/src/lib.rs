@@ -202,8 +202,8 @@ impl NotesStore for XmpStore {
             comment: true,
             origin: false,
             limits: Some(skwir_core::words!(
-                xmp_limits = "whole stars; a tag's color only as a color label",
-                note = "What XMP sidecars cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings."
+                xmp_limits = "half stars, or a tag's color other than as a color label",
+                note = "What XMP sidecars cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings: a rating in half stars, a tag's color unless it is one of XMP's color labels."
             )),
         }
     }

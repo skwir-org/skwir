@@ -26,7 +26,8 @@ playlists_detail_tracks = Tracks
 
 # A note under a playlist's preview that shows only its first tracks. Source is the preview's button that shows the file as text.
 playlists_first_tracks = { $count ->
-       *[other] First { $count } tracks · Source shows the rest
+        [1] Only the first track is shown · Source shows the rest
+       *[other] Only the first { $count } tracks are shown · Source shows the rest
     }
 
 # An error: the track a row of a playlist's preview named is not in the playlist.

@@ -4,7 +4,7 @@
 xmp_embedded_label = XMP dans le fichier
 
 # draft
-xmp_limits = les demi-étoiles ; la couleur d’une étiquette, sauf sous forme de libellé de couleur
+xmp_limits = les demi-étoiles, ou la couleur d’une étiquette autrement que comme libellé de couleur
 
 # draft
 xmp_plugin_description = Étiquettes, notes et descriptions dans les fichiers annexes XMP, tels que les applications photo les tiennent ; le XMP des images et des PDF affiché dans Propriétés

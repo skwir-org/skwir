@@ -804,7 +804,7 @@ fn why_empty(quick: &QuickFilters) -> String {
 fn reading(files: usize) -> Words {
     words!(
         quick_filters_reading = "Reading the details of { $count ->
-            [one] 1 file
+            [one] { $count } file
            *[other] { $count } files
         }…",
         count = files,

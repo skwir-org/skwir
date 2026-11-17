@@ -160,7 +160,7 @@ fn explain_as(
         Said::Build(theirs) if theirs == ours => return error,
         Said::Unknown => return error,
         Said::Build(theirs) => skwir_core::words!(
-            process_other_build = "{ $error }. { $program } is from another build of skwir ({ $theirs }; skwir is { $ours }), which may be why: rebuild or reinstall it",
+            process_other_build = "{ $error }. { $program } is from another build of Skwir ({ $theirs }; Skwir is { $ours }), which may be why: rebuild or reinstall it",
             error = error,
             program = name,
             theirs = theirs,
@@ -168,7 +168,7 @@ fn explain_as(
             note = "A helper program failed, and it is not of the build Skwir is. error: why it failed; program: the helper's file name; theirs, ours: the two builds' versions."
         ),
         Said::Nothing => skwir_core::words!(
-            process_older_build = "{ $error }. { $program } is from an older build of skwir, which may be why: rebuild or reinstall it",
+            process_older_build = "{ $error }. { $program } is from an older build of Skwir, which may be why: rebuild or reinstall it",
             error = error,
             program = name,
             note = "A helper program failed, and it is older than Skwir. error: why it failed; program: the helper's file name."
@@ -2545,7 +2545,7 @@ mod tests {
         assert_eq!(
             explained(Some("0.1.0+d264e57ab367"), &other, &live),
             "bwrap failed: invalid digit found in string. skwir-other-worker is from \
-             another build of skwir (0.1.0+a5d0b7a1c2d3; skwir is 0.1.0+d264e57ab367), \
+             another build of Skwir (0.1.0+a5d0b7a1c2d3; Skwir is 0.1.0+d264e57ab367), \
              which may be why: rebuild or reinstall it"
         );
         // An older helper takes the question for its input, and fails or
@@ -2561,7 +2561,7 @@ mod tests {
         for path in [&older, &chatty] {
             assert!(
                 explained(Some("0.1.0"), path, &live).ends_with(
-                    "is from an older build of skwir, which may be why: rebuild or reinstall it"
+                    "is from an older build of Skwir, which may be why: rebuild or reinstall it"
                 ),
                 "{}",
                 path.display()

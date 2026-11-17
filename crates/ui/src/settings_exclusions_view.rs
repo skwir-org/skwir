@@ -643,7 +643,7 @@ impl SettingsView {
             }
             Some(_) => {
                 self.exclusions.said = Some(words!(
-                    exclusions_never_removed = "skwir's own exclusions are unticked, never removed",
+                    exclusions_never_removed = "Skwir's own exclusions are unticked, never removed",
                     note = "Said on the Exclusions page where Remove is asked of one of skwir's exclusions."
                 ));
                 cx.notify();
@@ -901,7 +901,7 @@ impl SettingsView {
                 )
             } else if self.exclusions.changed_only {
                 words!(
-                    exclusions_none_changed = "You changed none of skwir's exclusions and added none yet.",
+                    exclusions_none_changed = "You changed none of Skwir's exclusions and added none yet.",
                     note = "The Exclusions page's list with Changed checked, when nothing differs from skwir's."
                 )
             } else {
@@ -1278,7 +1278,7 @@ impl SettingsView {
                 .tooltip(move |_, cx| {
                     crate::toolbar::tooltip(
                         words!(
-                            exclusions_reset_tooltip = "Reset: back as skwir ships it",
+                            exclusions_reset_tooltip = "Reset: back as Skwir ships it",
                             note = "The tooltip of a changed row's revert button on the Exclusions page."
                         )
                         .say()
@@ -1685,7 +1685,7 @@ impl SettingsView {
                 let said = if builtin {
                     words!(
                         exclusions_copied_builtin =
-                            "Copied { $folder }: the copy is yours to edit, skwir's is unticked",
+                            "Copied { $folder }: the copy is yours to edit, Skwir's is unticked",
                         folder = folder,
                         note = "Said on the Exclusions page after one of skwir's exclusions is duplicated. folder: as its row writes it."
                     )
@@ -1712,7 +1712,7 @@ impl SettingsView {
             (Cursor::Entry(id), Item::Reset) => {
                 let after = model::reset(&catalog, id);
                 let said = words!(
-                    exclusions_reset = "{ $folder } is back as skwir ships it",
+                    exclusions_reset = "{ $folder } is back as Skwir ships it",
                     folder = self.exclusion_words(id),
                     note = "Said on the Exclusions page after one of skwir's exclusions is reset. folder: as its row writes it."
                 );
@@ -2429,7 +2429,7 @@ impl SettingsView {
                     .text_color(theme.text_muted)
                     .child(
                         words!(
-                            exclusions_asking_why = "An agent driving skwir, a plugin from outside skwir and a model could then list them and read what they hold.",
+                            exclusions_asking_why = "An agent driving Skwir, a plugin from outside Skwir and a model could then list them and read what they hold.",
                             note = "Under the folders a change on the Exclusions page would let agents read: what that means."
                         )
                         .say(),
@@ -3261,10 +3261,10 @@ impl SettingsView {
                             .text_color(theme.text_muted)
                             .child(
                                 words!(
-                                    exclusions_privacy = "What agents, plugins from outside skwir and models never see: { $count ->
+                                    exclusions_privacy = "What agents, plugins from outside Skwir and models never see: { $count ->
                                         [one] { $count } exclusion
                                        *[other] { $count } exclusions
-                                    }, skwir's secrets and yours.",
+                                    }, Skwir's secrets and yours.",
                                     count = kept,
                                     note = "On the Privacy page of the settings, the way to the Exclusions page: how many exclusions are kept from agents."
                                 )

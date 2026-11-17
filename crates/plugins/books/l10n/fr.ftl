@@ -49,7 +49,7 @@ books_engine_auto = Automatique
 books_engine_builtin = Intégré
 
 # draft
-books_engine_description = Automatique lit les livres avec le moteur intégré : un texte qui se recompose selon le thème, des pages à mise en page fixe dessinées comme le livre les dispose.
+books_engine_description = Automatique lit les livres avec le moteur intégré, qui recompose leur texte selon le thème et dessine les pages à mise en page fixe comme le livre les dispose.
 
 # draft
 books_engine_description_more = MuPDF met en pages, avec leurs propres styles, tous les livres EPUB, FB2 et MOBI qu’il lit bien ; le moteur intégré lit les autres.
@@ -69,7 +69,7 @@ books_epub_no_package = Le conteneur EPUB ne désigne aucun paquetage
 books_epub_no_pages = Cet EPUB n’a aucune page
 
 # draft
-books_epub_protected_chapter = Cet EPUB est protégé : ce chapitre est chiffré
+books_epub_protected_chapter = Cet EPUB est protégé : un chapitre est chiffré
 
 # draft
 books_epub_protected_container = Cet EPUB est protégé : son fichier conteneur est chiffré
@@ -78,49 +78,49 @@ books_epub_protected_container = Cet EPUB est protégé : son fichier conteneur
 books_epub_protected_contents = Cet EPUB est protégé : son sommaire est chiffré
 
 # draft
-books_epub_protected_encryption = Cet EPUB est protégé : sa liste de chiffrement est elle-même chiffrée
+books_epub_protected_encryption = Cet EPUB est protégé : même sa liste des parties chiffrées est chiffrée
 
 # draft
-books_epub_protected_package = Cet EPUB est protégé : son document de paquetage est chiffré
+books_epub_protected_package = Cet EPUB est protégé : son paquetage est chiffré
 
 # draft
-books_epub_protected_page = Cet EPUB est protégé : cette page est chiffrée
+books_epub_protected_page = Cet EPUB est protégé : une page est chiffrée
 
 # draft
-books_epub_protected_picture = Cet EPUB est protégé : cette image intégrée est chiffrée
+books_epub_protected_picture = Cet EPUB est protégé : une image incorporée est chiffrée
 
 # draft
-books_epub_protected_resource = Cet EPUB est protégé : une de ses ressources est chiffrée
+books_epub_protected_resource = Cet EPUB est protégé : une ressource qu’utilise un chapitre est chiffrée
 
 # draft
-books_epub_protected_stylesheet = Cet EPUB est protégé : sa feuille de style est chiffrée
+books_epub_protected_stylesheet = Cet EPUB est protégé : une feuille de style est chiffrée
 
 # draft
-books_epub_too_large_chapter = Le chapitre dépasse la limite d’aperçu de { $size }
+books_epub_too_large_chapter = Un chapitre dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_container = Le conteneur EPUB dépasse la limite d’aperçu de { $size }
+books_epub_too_large_container = Le conteneur de l’EPUB dépasse la limite d’aperçu de { $size }
 
 # draft
 books_epub_too_large_contents = Le sommaire de l’EPUB dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_encryption = La liste de chiffrement de l’EPUB dépasse la limite d’aperçu de { $size }
+books_epub_too_large_encryption = La liste des parties chiffrées de l’EPUB dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_package = Le document de paquetage de l’EPUB dépasse la limite d’aperçu de { $size }
+books_epub_too_large_package = Le paquetage de l’EPUB dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_page = La page dépasse la limite d’aperçu de { $size }
+books_epub_too_large_page = Une page dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_picture = L’image incorporée dépasse la limite d’aperçu de { $size }
+books_epub_too_large_picture = Une image incorporée dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_resource = La ressource EPUB dépasse la limite d’aperçu de { $size }
+books_epub_too_large_resource = Une ressource de l’EPUB dépasse la limite d’aperçu de { $size }
 
 # draft
-books_epub_too_large_stylesheet = La feuille de style dépasse la limite d’aperçu de { $size }
+books_epub_too_large_stylesheet = Une feuille de style dépasse la limite d’aperçu de { $size }
 
 # draft
 books_epub_too_many_pages = Cet EPUB a trop de pages
@@ -153,8 +153,8 @@ books_fb2_notes = Notes
 books_fb2_too_large = Ce livre FB2 est trop volumineux pour être lu
 
 # draft
-books_fb2_too_many_chapters = Ce livre FB2 compte plus de { $count ->
-       *[other] { $count } chapitres
+books_fb2_too_many_chapters = { $count ->
+       *[other] Ce livre FB2 compte plus de { $count } chapitres
     }
 
 # draft
@@ -217,7 +217,7 @@ books_needs_mupdf = Mise en pages des livres par MuPDF
 books_no_chapters = Aucun chapitre lisible dans ce fichier { $format }
 
 # draft
-books_page_not_drawn = la page n’a pas pu être dessinée
+books_page_not_drawn = La page n’a pas pu être dessinée
 
 # draft
 books_palm_compression = Le texte de ce livre est compressé selon une méthode non prise en charge ({ $code })
@@ -259,7 +259,7 @@ books_search_found = Résultat de recherche dans ce chapitre
 books_search_none = Aucun chapitre correspondant
 
 # draft
-books_search_too_long = la recherche dépasse la longueur permise
+books_search_too_long = Le texte recherché est trop long
 
 # draft
 books_series_number = { $series }, { $number }

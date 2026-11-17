@@ -833,7 +833,7 @@ pub fn read_text<S: FileSource + ?Sized>(
 ) -> anyhow::Result<(String, Encoding)> {
     let limit = bounds.text_input();
     let refusal = words!(
-        inspection_text_too_large = "Text exceeds { $size } preview limit",
+        inspection_text_too_large = "The text exceeds the { $size } preview limit",
         size = Size(limit as u64),
         note = "Why a text is not previewed: it is larger than the preview reads. size: that bound (2 MB)."
     );
@@ -972,7 +972,7 @@ pub struct Decoded {
 /// read: it is larger than `limit` bytes (`read_bounded`'s refusal).
 pub fn image_too_large(limit: usize) -> Words {
     words!(
-        inspection_embedded_image_limit = "Embedded image exceeds { $size } preview limit",
+        inspection_embedded_image_limit = "An embedded image exceeds the { $size } preview limit",
         size = Size(limit as u64),
         note = "Why a picture a document names is not shown. size: the largest read (16 MB)."
     )
@@ -1095,7 +1095,7 @@ pub fn read_drawing<'a, S: FileSource + ?Sized>(
 ) -> anyhow::Result<Cow<'a, [u8]>> {
     let refusal = || {
         words!(
-            inspection_drawing_too_large = "Drawing exceeds { $size } preview limit",
+            inspection_drawing_too_large = "The drawing exceeds the { $size } preview limit",
             size = Size(bounds.binary_input() as u64),
             note = "Why an SVG drawing is not previewed: it is larger than the preview reads. size: that bound (16 MB)."
         )
@@ -1352,9 +1352,9 @@ fn detail_value(value: &str) -> Option<String> {
 pub fn blocks_notice(bounds: limits::Bounds) -> Words {
     words!(
         inspection_blocks_notice = "{ $count ->
-                [one] First { $count } block
-               *[other] First { $count } blocks
-            } · Source shows the rest",
+                [1] Only the first block is shown · Source shows the rest
+               *[other] Only the first { $count } blocks are shown · Source shows the rest
+            }",
         count = bounds.blocks(),
         note = "A preview's notice: only the beginning of a long document is shown; Source is the button that shows the file's own text."
     )
@@ -1391,10 +1391,18 @@ pub fn on_map(detail: skwir_core::inspection::Detail) -> skwir_core::inspection:
     )
 }
 
-/// A count worth stating: nothing for zero, where a Properties row would only
+/// A count worth stating, written as the reader's language writes numbers
+/// (1,234; « 1 234 »): nothing for zero, where a Properties row would only
 /// say that something is absent.
 pub fn count(n: usize) -> Option<String> {
-    (n > 0).then(|| n.to_string())
+    (n > 0).then(|| {
+        words!(
+            inspection_count = "{ $count }",
+            count = n,
+            note = "A count alone, as the value of a row in a preview's Properties (Pages: 1,234)."
+        )
+        .say()
+    })
 }
 /// A size the way the file list shows one: `512 B`, `1.5 KB`, `3.2 GB`, in
 /// binary multiples (the core's, which its own words use too).

@@ -151,7 +151,7 @@ rename_bulk_recipes = Recipes
 rename_bulk_reference = Say what a bulk rename's field takes
 
 # Read by agents: `field` is the argument, and template, regex and replacement its values, as written.
-rename_bulk_reference_description = Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives the first of the entries given or selected under the rename as given, and recipes filling the regex and its replacement
+rename_bulk_reference_description = Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives for the first of the entries given or selected, the rename's other arguments being as given, and recipes filling the regex and its replacement
 
 # The title of what the regex field takes: a regular expression.
 rename_bulk_regex = Regex

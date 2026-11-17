@@ -285,7 +285,7 @@ impl PmTiles {
             unreadable: header.tile_compression.unreadable().map(|compression| {
                 words!(
                     map_tiles_its_compressed =
-                        "Its tiles are compressed with { $compression }, which skwir does not read",
+                        "Its tiles are compressed with { $compression }, which Skwir does not read",
                     compression = compression,
                     note = "compression: the name of a way to compress (Brotli, Zstandard)."
                 )

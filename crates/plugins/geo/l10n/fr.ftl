@@ -25,7 +25,10 @@ geo_altitude_takeoff = { $metres } m au-dessus du point de décollage
 geo_changed_since = { $name } a changé depuis que le plan a été établi
 
 # draft
-geo_clocks_corrected = horloges des appareils photo corrigées de { $seconds } s
+geo_clocks_corrected = { $sign ->
+        [plus] horloges des appareils photo corrigées de +{ $seconds } s
+       *[minus] horloges des appareils photo corrigées de −{ $seconds } s
+    }
 
 # draft
 geo_compass_e = E
@@ -80,7 +83,8 @@ geo_damaged = Le fichier est endommagé ({ $why }) ; ce qui précède est affi
 
 # draft
 geo_dropped_places = { $count ->
-       *[other] { $count } lieux de plus que la carte n’en montre
+        [one] { $count } autre lieu n’est pas affiché sur la carte
+       *[other] { $count } autres lieux ne sont pas affichés sur la carte
     }
 
 # draft
@@ -204,9 +208,10 @@ geo_fit_unfinished = l’enregistrement n’a pas été terminé
 geo_flight_distance = { $distance } · { $nautical } NM
 
 # draft
-geo_fms_fewer_waypoints = le plan annonce { $expected ->
-       *[other] { $expected } points de passage
-    } et en contient { $read }
+geo_fms_fewer_waypoints = { $expected ->
+        [one] le plan annonce { $expected } point de passage et en contient { $read }
+       *[other] le plan annonce { $expected } points de passage et en contient { $read }
+    }
 
 # draft
 geo_fms_not_plan = ce n’est pas un plan de vol X-Plane
@@ -340,7 +345,7 @@ geo_lnmpln_not_plan = ce n’est pas un plan Little Navmap
 geo_locate = Où se trouve un lieu
 
 # draft
-geo_locate_description = Les lieux de ce nom que Skwir connaît hors ligne, les plus grands d’abord, avec leur position : pour les scripts et les agents
+geo_locate_description = Renvoyer les lieux de ce nom que Skwir connaît hors ligne, les plus grands d’abord, avec leur position : pour les scripts et les agents
 
 # draft
 geo_location_already_back = la position de { $name } était déjà restaurée
@@ -423,6 +428,9 @@ geo_points = Où sont les fichiers
 
 # draft
 geo_points_description = Les photos et traces de ce que liste un panneau qui ont été placées sur la carte, après les `since` premières
+
+# draft
+geo_position = { $lat } ; { $lon }
 
 # draft
 geo_qgc_invalid = Plan QGroundControl non valide : { $error }

@@ -14,7 +14,7 @@ use skwir_core::exclusions::{
     Catalog, Category, Entry, Matcher, Names, Role, Switches, Unreadable, Written, YOURS, unique_id,
 };
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{List, Words};
 
 /// The roles the page offers: the index is not built.
 pub(crate) const ROLES: [Role; 2] = [Role::Searches, Role::Agents];
@@ -102,28 +102,32 @@ pub(crate) fn unreadable(catalog: &Catalog) -> Option<Words> {
     if catalog.problems.is_empty() {
         return None;
     }
-    // Transitional: a list argument (ADR-139)
-    let shown = catalog.problems[..catalog.problems.len().min(SHOWN)]
+    // The first few, each where it is and why, then how many more: one
+    // list, joined as the reader's language joins one.
+    let mut problems: Vec<Words> = catalog.problems[..catalog.problems.len().min(SHOWN)]
         .iter()
-        .map(|problem| problem.words().say())
-        .collect::<Vec<_>>()
-        .join("; ");
+        .map(skwir_core::exclusions::Problem::words)
+        .collect();
     let more = catalog.problems.len().saturating_sub(SHOWN);
-    Some(if more > 0 {
-        words!(
-            exclusions_unreadable_more =
-                "Not applied, as it cannot be read: { $problems } (and { $more } more)",
-            problems = shown,
-            more = more,
-            note = "Above the Exclusions page's list: what the settings hold of the exclusions that cannot be read. problems: the first few, each where it is and why; more: how many others."
-        )
-    } else {
-        words!(
-            exclusions_unreadable = "Not applied, as it cannot be read: { $problems }",
-            problems = shown,
-            note = "Above the Exclusions page's list: what the settings hold of the exclusions that cannot be read. problems: each, where it is and why."
-        )
-    })
+    if more > 0 {
+        problems.push(words!(
+            exclusions_unreadable_others = "{ $count ->
+                [one] { $count } more
+               *[other] { $count } more
+            }",
+            count = more,
+            note = "The last item of the list of exclusions that cannot be read, above the Exclusions page's list, after the first few: how many others (a, b, c and 2 more)."
+        ));
+    }
+    Some(words!(
+        exclusions_unreadable = "{ $count ->
+            [one] Not applied, as it cannot be read: { $problems }
+           *[other] Not applied, as they cannot be read: { $problems }
+        }",
+        count = catalog.problems.len(),
+        problems = List::and(problems),
+        note = "Above the Exclusions page's list: what the settings hold of the exclusions and categories that cannot be read. count: how many; problems: a list, each where it is and why, the first few then how many more."
+    ))
 }
 
 /// The folders whose presence the page needs: every path's and path
@@ -225,7 +229,10 @@ impl Heading {
     pub(crate) fn count(&self) -> Words {
         if self.shown == self.total {
             return words!(
-                exclusions_heading_count = "{ $kept } of { $total } excluded",
+                exclusions_heading_count = "{ $kept ->
+                    [one] { $kept } of { $total } excluded
+                   *[other] { $kept } of { $total } excluded
+                }",
                 kept = self.kept,
                 total = self.total,
                 note = "After a category's name on the Exclusions page: how many of its folders are excluded from the role chosen (kept), of all it holds (total)."
@@ -233,16 +240,23 @@ impl Heading {
         }
         match self.narrowed {
             Narrowed::Here => words!(
-                exclusions_heading_count_here =
-                    "{ $shown } here of { $total } · { $kept } excluded",
+                exclusions_heading_count_here = "{ $shown } here of { $total } · { $kept ->
+                    [one] { $kept } excluded
+                   *[other] { $kept } excluded
+                }",
                 shown = self.shown,
                 total = self.total,
                 kept = self.kept,
                 note = "After a category's name on the Exclusions page: how many of its folders are on this computer (shown), of all it holds (total), then how many are excluded from the role chosen (kept)."
             ),
             Narrowed::Found | Narrowed::No => words!(
-                exclusions_heading_count_found =
-                    "{ $shown } found of { $total } · { $kept } excluded",
+                exclusions_heading_count_found = "{ $shown ->
+                    [one] { $shown } found
+                   *[other] { $shown } found
+                } of { $total } · { $kept ->
+                    [one] { $kept } excluded
+                   *[other] { $kept } excluded
+                }",
                 shown = self.shown,
                 total = self.total,
                 kept = self.kept,
@@ -260,13 +274,23 @@ impl Heading {
             Narrowed::Found | Narrowed::No => "found",
         };
         words!(
-            exclusions_heading_said = "{ $name }, { $kept } of { $total } { $role ->
-                [searches] excluded from searches and tags
-                [agents] excluded from agents
-               *[index] excluded from the index
+            exclusions_heading_said = "{ $name }, { $kept ->
+                [one] { $kept } of { $total } { $role ->
+                    [searches] excluded from searches and tags
+                    [agents] excluded from agents
+                   *[index] excluded from the index
+                }
+               *[other] { $kept } of { $total } { $role ->
+                    [searches] excluded from searches and tags
+                    [agents] excluded from agents
+                   *[index] excluded from the index
+                }
             }{ $narrowed ->
                 [here] , { $shown } here
-                [found] , { $shown } found
+                [found] , { $shown ->
+                    [one] { $shown } found
+                   *[other] { $shown } found
+                }
                *[all] {\"\"}
             }{ $folded ->
                 [yes] , folded
@@ -1094,7 +1118,7 @@ pub(crate) fn said_switch(name: &str, role: Role, on: bool) -> Words {
             }",
             category = name.to_owned(),
             role = role,
-            note = "Said on the Exclusions page after a category is switched on for the role chosen. category: its name."
+            note = "Said on the Exclusions page after a category is switched on for the role chosen. category: its name, whose gender is not known: where words would agree with it, say it so they need not (an exclusion switched on)."
         )
     } else {
         words!(
@@ -1105,7 +1129,7 @@ pub(crate) fn said_switch(name: &str, role: Role, on: bool) -> Words {
             }",
             category = name.to_owned(),
             role = role,
-            note = "Said on the Exclusions page after a category is switched off for the role chosen. category: its name."
+            note = "Said on the Exclusions page after a category is switched off for the role chosen. category: its name, whose gender is not known: where words would agree with it, say it so they need not (an exclusion switched off)."
         )
     }
 }

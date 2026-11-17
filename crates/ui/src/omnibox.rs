@@ -3392,14 +3392,12 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
             )
         })
     };
-    // Transitional: a list argument (ADR-139): the hints that apply, each
-    // its own words.
+    // The hints that apply, each its own words, as a list.
     let said = |phrases: Vec<Option<Words>>| {
-        let phrases: Vec<String> = phrases.into_iter().flatten().map(|p| p.say()).collect();
         words!(
             omnibox_hints = "{ $hints }.",
-            hints = phrases.join("; "),
-            note = "The line under the address field's list: what the keys do, each hint apart."
+            hints = words::List::and(phrases.into_iter().flatten()),
+            note = "The line under the address field's list: what the keys do, a list of hints (Tab completes, Ctrl+O opens a file and Escape goes back)."
         )
     };
     let escape = || {
@@ -3417,22 +3415,19 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         .and_then(|p| p.read_filter().map(|r| r.waits.clone()))
         .filter(|w| !w.is_empty() && typed == Typed::Words && here)
         .map(|w| {
-            // A list, its first letter cased where it begins the sentence.
             let what = words::List::and(w);
             match shell.keys_for("ui.search", &serde_json::json!({})) {
                 Some(keys) if !depths => words!(
-                    omnibox_waits_keys = "{ $what } need a search: { $keys }.",
+                    omnibox_waits_keys = "Only a search can tell { $what }: { $keys }.",
                     what = what,
                     keys = keys,
-                    note = "Under the address field's list while words filter a folder: what they name that only a search can tell (contents, dates taken), a list, and the key that searches."
-                )
-                .heading(),
+                    note = "Under the address field's list while words filter a folder: what they name that only a search can tell, a list (what files contain, when pictures were taken: query_waits_*), and the key that searches."
+                ),
                 _ => words!(
-                    omnibox_waits = "{ $what } need a search.",
+                    omnibox_waits = "Only a search can tell { $what }.",
                     what = what,
-                    note = "Under the address field's list while words filter: what they name that only a search can tell (contents, dates taken), a list."
-                )
-                .heading(),
+                    note = "Under the address field's list while words filter: what they name that only a search can tell, a list (what files contain, when pictures were taken: query_waits_*)."
+                ),
             }
         });
     let keys = match typed {
@@ -3452,23 +3447,20 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
             omnibox_footer_scoped_below = "Words search there and below; Backspace takes the scope away, @ lists others; > for a command.",
             note = "Under the address field's list, nothing typed after the scope (a folder, searched below)."
         ),
-        Typed::Nothing => said(vec![
-            Some(words!(
-                omnibox_hint_takes = "A path (/ or ~), a place, or words to filter",
-                note = "A hint under the address field's list, nothing typed: what it takes."
-            )),
-            search(|keys| {
-                words!(
-                    omnibox_hint_searches_below = "{ $keys } searches below",
-                    keys = keys,
-                    note = "A hint under the address field's list; keys: the key that searches the folders below."
-                )
-            }),
-            Some(words!(
-                omnibox_hint_command = "> for a command",
-                note = "A hint under the address field's list: > begins a command's name."
-            )),
-        ]),
+        // What it takes, then the keys: one sentence, whole.
+        Typed::Nothing => search(|keys| {
+            words!(
+                omnibox_footer_nothing_keys = "A path (/ or ~), a place, or words to filter; { $keys } searches below; > for a command.",
+                keys = keys,
+                note = "Under the address field's list, nothing typed: what it takes; keys: the key that searches the folders below; > begins a command's name."
+            )
+        })
+        .unwrap_or_else(|| {
+            words!(
+                omnibox_footer_nothing = "A path (/ or ~), a place, or words to filter; > for a command.",
+                note = "Under the address field's list, nothing typed: what it takes; > begins a command's name."
+            )
+        }),
         Typed::Path | Typed::Place => said(vec![
             tab(),
             key(
@@ -3495,17 +3487,21 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
             note = "Under the address field's list while a scope is typed (@)."
         ),
         Typed::Help => said(vec![
-            Some(words!(
-                omnibox_hint_writes = "Enter writes it",
-                note = "A hint under the list of what the address field takes: Enter writes the example."
-            )),
-            key("ui.omnibox_complete", serde_json::json!({}), |keys| {
-                words!(
-                    omnibox_hint_too = "{ $keys } too",
-                    keys = keys,
-                    note = "A hint after Enter writes it: the key named (Tab) writes it too."
-                )
-            }),
+            Some(
+                key("ui.omnibox_complete", serde_json::json!({}), |keys| {
+                    words!(
+                        omnibox_hint_writes_or = "Enter or { $keys } writes it",
+                        keys = keys,
+                        note = "A hint under the list of what the address field takes: Enter, or the key named (Tab), writes the example."
+                    )
+                })
+                .unwrap_or_else(|| {
+                    words!(
+                        omnibox_hint_writes = "Enter writes it",
+                        note = "A hint under the list of what the address field takes: Enter writes the example."
+                    )
+                }),
+            ),
             escape(),
         ]),
         Typed::Words if here && depths && waits.is_some() => said(vec![

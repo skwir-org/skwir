@@ -38,12 +38,16 @@ documents_engine_description = Automatique préfère PDFium et se rabat sur Popp
 
 # draft
 documents_first_blocks = { $count ->
-       *[other] { $count } premiers blocs
+        [1] Seul le premier bloc est affiché
+        [one] Seul le premier bloc est affiché
+       *[other] Seuls les { $count } premiers blocs sont affichés
     }
 
 # draft
 documents_first_blocks_of_part = { $count ->
-       *[other] { $count } premiers blocs de cette partie
+        [1] Seul le premier bloc de cette partie est affiché
+        [one] Seul le premier bloc de cette partie est affiché
+       *[other] Seuls les { $count } premiers blocs de cette partie sont affichés
     }
 
 # draft
@@ -52,25 +56,25 @@ documents_members = { $count ->
     }
 
 # draft
-documents_missing_manifest = Le manifeste est introuvable
+documents_missing_manifest = Le manifeste du document est introuvable
 
 # draft
-documents_missing_notes = Les notes sont introuvables
+documents_missing_notes = Les notes du document sont introuvables
 
 # draft
-documents_missing_numbering = La numérotation est introuvable
+documents_missing_numbering = La numérotation du document est introuvable
 
 # draft
-documents_missing_picture = L’image incorporée est introuvable
+documents_missing_picture = Une image incorporée est introuvable
 
 # draft
 documents_missing_properties = Les propriétés du document sont introuvables
 
 # draft
-documents_missing_relationships = Les relations sont introuvables
+documents_missing_relationships = Les relations du document sont introuvables
 
 # draft
-documents_missing_styles = Les styles sont introuvables
+documents_missing_styles = Les styles du document sont introuvables
 
 # draft
 documents_missing_text = Le texte du document est introuvable
@@ -148,7 +152,7 @@ documents_text_documents = Documents texte
 documents_text_documents_description = Comment les documents Word, OpenDocument et RTF sont affichés.
 
 # draft
-documents_text_documents_description_more = Lecture montre aussitôt leur texte, leurs titres, listes, tableaux, notes et images, ajustés au panneau : skwir lit les fichiers Word et OpenDocument, Pandoc les RTF. Pages les met en page comme LibreOffice les imprime, ce qui prend quelques secondes pour chacun. Pandoc les fait tous lire par Pandoc. Quand ce dont un choix a besoin n’est pas installé, un autre est utilisé.
+documents_text_documents_description_more = Lecture montre aussitôt leur texte, leurs titres, listes, tableaux, notes et images, ajustés au panneau : Skwir lit les fichiers Word et OpenDocument, Pandoc les RTF. Pages les met en page comme LibreOffice les imprime, ce qui prend quelques secondes pour chacun. Pandoc les fait tous lire par Pandoc. Quand ce dont un choix a besoin n’est pas installé, un autre est utilisé.
 
 # draft
 documents_text_documents_pages = Pages
@@ -157,25 +161,25 @@ documents_text_documents_pages = Pages
 documents_text_documents_reading = Lecture
 
 # draft
-documents_too_large_manifest = Le manifeste dépasse la limite d’aperçu de { $size }
+documents_too_large_manifest = Le manifeste du document dépasse la limite d’aperçu de { $size }
 
 # draft
-documents_too_large_notes = Les notes dépassent la limite d’aperçu de { $size }
+documents_too_large_notes = Les notes du document dépassent la limite d’aperçu de { $size }
 
 # draft
-documents_too_large_numbering = La numérotation dépasse la limite d’aperçu de { $size }
+documents_too_large_numbering = La numérotation du document dépasse la limite d’aperçu de { $size }
 
 # draft
-documents_too_large_picture = L’image incorporée dépasse la limite d’aperçu de { $size }
+documents_too_large_picture = Une image incorporée dépasse la limite d’aperçu de { $size }
 
 # draft
 documents_too_large_properties = Les propriétés du document dépassent la limite d’aperçu de { $size }
 
 # draft
-documents_too_large_relationships = Les relations dépassent la limite d’aperçu de { $size }
+documents_too_large_relationships = Les relations du document dépassent la limite d’aperçu de { $size }
 
 # draft
-documents_too_large_styles = Les styles dépassent la limite d’aperçu de { $size }
+documents_too_large_styles = Les styles du document dépassent la limite d’aperçu de { $size }
 
 # draft
 documents_too_large_text = Le texte du document dépasse la limite d’aperçu de { $size }

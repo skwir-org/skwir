@@ -467,8 +467,12 @@ fn text_of(value: &Value) -> String {
         Value::Float(v) => format!("{v:.3}"),
         Value::Text(v) => v.to_string(),
         Value::Time(v) => crate::format::exact_time(*v),
-        // Transitional: a list argument (ADR-139).
-        Value::List(items) => items.iter().map(text_of).collect::<Vec<_>>().join(", "),
+        Value::List(items) => words!(
+            properties_value_list = "{ $items }",
+            items = words::List::and(items.iter().map(text_of)),
+            note = "The value of a field of a file that holds several, in Properties' More: each as the field says it, joined as a list."
+        )
+        .say(),
     }
 }
 
@@ -494,10 +498,10 @@ fn source_of(provenance: &Provenance) -> Option<SharedString> {
         ),
         Provenance::Model { name, confidence } => Some(
             words!(
-                properties_suggested_by = "suggested by { $model } · { $confidence }",
+                properties_suggested_by = "suggested by { $model } · { $confidence }%",
                 model = name.to_string(),
-                confidence = format!("{:.0}%", confidence * 100.),
-                note = "Under a value in Properties: a model suggested it, by its name, and how sure it is (80%)."
+                confidence = words::Decimal::of(f64::from(*confidence) * 100., 0),
+                note = "Under a value in Properties: a model suggested it, by its name, and how sure it is, in percent (80%). The value's gender is not known: where a word would agree with it, choose one that need not (a suggestion of)."
             )
             .say()
             .into(),
@@ -1224,10 +1228,10 @@ pub(crate) mod label {
 fn folders_and_files(folders: usize, files: usize) -> String {
     words!(
         properties_folders_and_files = "{ $folders ->
-            [one] 1 folder
+            [one] { $folders } folder
            *[other] { $folders } folders
         }, { $files ->
-            [one] 1 file
+            [one] { $files } file
            *[other] { $files } files
         }",
         folders = folders,
@@ -1469,7 +1473,7 @@ impl Targets {
             ),
             Targets::Selection(_) => words!(
                 properties_target_items = "{ $count ->
-                    [one] 1 item
+                    [one] { $count } item
                    *[other] { $count } items
                 }",
                 count = count,
@@ -2048,10 +2052,10 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
             .say(),
             words!(
                 properties_files_and_folders = "{ $files ->
-                    [one] 1 file
+                    [one] { $files } file
                    *[other] { $files } files
                 }, { $folders ->
-                    [one] 1 folder
+                    [one] { $folders } folder
                    *[other] { $folders } folders
                 }",
                 files = now.files,
@@ -2070,9 +2074,9 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
             .say(),
             words!(
                 properties_unlisted = "{ $count ->
-                    [one] 1 folder
-                   *[other] { $count } folders
-                } could not be listed",
+                    [one] { $count } folder could not be listed
+                   *[other] { $count } folders could not be listed
+                }",
                 count = now.unreadable,
                 note = "In Properties: how many folders inside could not be read, while what a folder holds was counted."
             )
@@ -2089,9 +2093,9 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
             .say(),
             words!(
                 properties_unread = "{ $count ->
-                    [one] 1 item
-                   *[other] { $count } items
-                } could not be read",
+                    [one] { $count } item could not be read
+                   *[other] { $count } items could not be read
+                }",
                 count = now.unknown,
                 note = "In Properties: how many items inside could not be read, while what a folder holds was counted."
             )
@@ -2107,9 +2111,9 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
             .say(),
             words!(
                 properties_drives_inside = "{ $count ->
-                    [one] 1 drive
-                   *[other] { $count } drives
-                } mounted inside",
+                    [one] { $count } drive mounted inside
+                   *[other] { $count } drives mounted inside
+                }",
                 count = now.other_drives,
                 note = "In Properties: how many drives are mounted inside the folder, left out of what it holds."
             )
@@ -2212,7 +2216,7 @@ fn measure(shell: &Shell) -> Option<Row> {
             Row::new(label::pages().say(), pages.to_string()).gist(
                 words!(
                     properties_pages_gist = "{ $count ->
-                        [one] 1 page
+                        [one] { $count } page
                        *[other] { $count } pages
                     }",
                     count = pages,
@@ -2562,6 +2566,39 @@ const LINE: f32 = 1.4;
 /// hover to frame it.
 const ROW_PAD: f32 = 1.;
 
+/// A row's label at its narrowest, at 100 %: English's labels wrap in it
+/// ("Owner's rights" on two lines), never cutting a word.
+const LABEL: f32 = 84.;
+/// The widest the labels grow to hold a word, at 100 %: a field's key is
+/// written as it is (`label_of`), one long word, and the values keep their
+/// room; past it, a word is cut as before.
+const LABEL_MOST: f32 = 2. * LABEL;
+
+/// The width all the labels of the panel share, in the rem in force:
+/// `LABEL`, or the widest word of a label where one is wider (« Commentaire »),
+/// so a label wraps between its words and never inside one, and the values
+/// stand in one column. A text's width follows from its words and its font,
+/// known before layout (no bounds read, no frame late, as `nav_menu`
+/// sizes a popup by its widest label): each word measured as gpui's line
+/// wrapper measures it (`name_lines::width`), at the body size the labels
+/// are drawn at. That size and the width are both in rems, so the text size
+/// chosen leaves their ratio as it is.
+fn label_width<'a>(
+    labels: impl Iterator<Item = &'a SharedString>,
+    theme: &Theme,
+    cx: &gpui::App,
+) -> gpui::Rems {
+    let font = gpui::font(theme.font.clone());
+    let size = gpui::px(crate::sizes::Text::Body.rems() * crate::sizes::REM);
+    let widest = labels
+        .flat_map(|label| label.split_whitespace())
+        .map(|word| f32::from(crate::name_lines::width(word, &font, size, cx)))
+        .fold(0., f32::max);
+    // A pixel of slack: the line wrapper's widths summed, against the
+    // shaped line's.
+    sized((widest + 1.).ceil().clamp(LABEL, LABEL_MOST))
+}
+
 /// The section: right under the header's card (`preview::under_card` puts
 /// it there, and nothing else draws it), in the `room` it is given, while
 /// its switch is on (`PreviewState::properties_on`), whatever is shown. It
@@ -2714,6 +2751,15 @@ pub fn render(
     // What else the file says of itself, last: how many rows it has is
     // known only once read, and below it nothing moves.
     groups.extend(content_group(shell));
+    // One width for every label of the panel, folded groups' too, so the
+    // values stand in one column whatever is unfolded.
+    let labels = label_width(
+        groups
+            .iter()
+            .flat_map(|group| group.rows.iter().map(|row| &row.label)),
+        theme,
+        cx,
+    );
     let mut list = div()
         .id("details-list")
         .track_scroll(&preview.properties_scroll)
@@ -2755,7 +2801,7 @@ pub fn render(
             continue;
         }
         for (r, row) in group.rows.into_iter().enumerate() {
-            list = list.child(row_element(shell, row, (g, r), theme, cx));
+            list = list.child(row_element(shell, row, (g, r), labels, theme, cx));
         }
     }
     Some(
@@ -2922,6 +2968,7 @@ fn row_element(
     shell: &Shell,
     row: Row,
     (g, r): (usize, usize),
+    labels: gpui::Rems,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -2962,13 +3009,13 @@ fn row_element(
                 return;
             }
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
-            // Transitional: the row's label lowercased in code (ADR-139):
-            // a row's words for what it copies go with its label.
+            // The row by its label, as it is shown and quoted as a name
+            // is: nothing done to its words.
             this.set_status(
                 words!(
                     properties_copied = "Copied { $what }",
-                    what = label.to_lowercase(),
-                    note = "Said as a row of Properties is clicked: what it said was copied. what: the row's label (path, size)."
+                    what = Name(label.to_string()),
+                    note = "Said as a row of Properties is clicked: what it said was copied. what: the row's label as it is shown, quoted (“Path”, “Size”), whose gender is not known: where a word would agree with it, say it so none need (the value of “Size” copied)."
                 ),
                 false,
                 cx,
@@ -2979,7 +3026,7 @@ fn row_element(
         })
         .child(
             div()
-                .w(sized(84.))
+                .w(labels)
                 .flex_none()
                 .text_color(theme.text_muted)
                 .child(row.label),

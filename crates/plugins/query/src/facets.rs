@@ -30,7 +30,7 @@ use serde::Serialize;
 use skwir_core::command::Invocation;
 use skwir_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_within};
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::{List, Name, Words};
 use skwir_platform::mime::Kind;
 
 use crate::lang::{self, ContentPat, Expr, Query, Term, quote};
@@ -164,47 +164,6 @@ pub fn sizes() -> Presets {
             format!(">1{g}"),
         ),
     ]
-}
-
-/// `items` said as a list: `a, b`, each item as it is.
-pub(crate) fn comma_list(items: Vec<Words>) -> Words {
-    let mut items = items.into_iter().rev();
-    let Some(last) = items.next() else {
-        return Words::default();
-    };
-    items.fold(last, |rest, first| {
-        words!(
-            query_list_comma = "{ $first }, { $rest }",
-            first = first,
-            rest = rest,
-            note = "A list said in a chip (Images, Videos): first, then the rest of the list."
-        )
-    })
-}
-
-/// `items` said as a list: `a`, `a and b`, `a, b and c`.
-pub(crate) fn and_list(items: Vec<Words>) -> Words {
-    let mut items = items.into_iter().rev();
-    let Some(last) = items.next() else {
-        return Words::default();
-    };
-    let Some(before) = items.next() else {
-        return last;
-    };
-    let pair = words!(
-        query_list_and = "{ $first } and { $last }",
-        first = before,
-        last = last,
-        note = "The end of a list in a sentence (PDFs and JPGs): its last two items."
-    );
-    items.fold(pair, |rest, first| {
-        words!(
-            query_list_and_more = "{ $first }, { $rest }",
-            first = first,
-            rest = rest,
-            note = "A list in a sentence (PDFs, JPGs and PNGs): its first item, then the rest of it, which ends in its last two."
-        )
-    })
 }
 
 /// A chip: a facet of the search, or a part of it no facet holds.
@@ -1021,8 +980,13 @@ pub fn describe_for(
             query_chip_kind = "Kind",
             note = "A search's chip: the kinds of its files (images, documents)."
         ),
-        value: (!p.kinds.is_empty())
-            .then(|| comma_list(p.kinds.iter().map(|k| k.words()).collect())),
+        value: (!p.kinds.is_empty()).then(|| {
+            words!(
+                query_chip_kinds = "{ $kinds }",
+                kinds = List::or(p.kinds.iter().map(|k| k.words())),
+                note = "The value of a search's Kind chip: the kinds its files may be of, a list (Images or Videos)."
+            )
+        }),
         written: None,
         icon: "grid".into(),
         choices: Kind::ALL

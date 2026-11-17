@@ -103,6 +103,9 @@ map_tiles_format_webp = Images WebP
 map_tiles_its_compressed = Ses tuiles sont compressées en { $compression }, que Skwir ne sait pas lire
 
 # draft
+map_tiles_layers = { $layers }
+
+# draft
 map_tiles_mbtiles_no_metadata = Ce n’est pas un fichier MBTiles : il n’a pas de table de métadonnées
 
 # draft
@@ -127,7 +130,7 @@ map_tiles_not_address = ce n’est pas une adresse
 map_tiles_not_archive = Ce n’est pas une archive de tuiles
 
 # draft
-map_tiles_not_modified = le serveur a répondu qu’une tuile n’avait pas changé, mais elle n’a jamais été reçue
+map_tiles_not_modified = le serveur a répondu que la tuile n’avait pas changé, mais Skwir ne l’a jamais eue
 
 # draft
 map_tiles_not_pmtiles = Ce n’est pas un fichier PMTiles
@@ -241,6 +244,9 @@ map_tiles_test_server = Tester un serveur de tuiles
 map_tiles_test_server_description = Demander une tuile à un serveur de tuiles, maintenant, et dire ce qu’il a répondu
 
 # draft
+map_tiles_tile_count = { $count }
+
+# draft
 map_tiles_tile_too_large = Une tuile de l’archive est trop grande
 
 # draft
@@ -266,6 +272,9 @@ map_tiles_unreadable_notice = { $why } : la carte montre où le fichier a des t
 
 # draft
 map_tiles_vector_notice = Les tuiles vectorielles ne sont pas dessinées : la carte montre où le fichier a des tuiles
+
+# draft
+map_tiles_zoom_level = { $level }
 
 # draft
 map_tiles_zoom_range = de { $from } à { $to }

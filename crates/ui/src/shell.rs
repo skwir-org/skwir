@@ -3205,12 +3205,14 @@ impl Shell {
                 .filter(|stopped| self.app.executor.waits_for_server(stopped.plan));
             let question = match stopped {
                 Some(stopped) => words!(
-                    shell_quit_waits_for_server = "{ $action } waits for its server to answer \
-                        again, to go on by itself. Skwir can wait for it without its window, \
-                        then quit. Or stop now: it does not go on, and what it finished stays.",
+                    shell_quit_waits_for_server = "{ $action }: this action waits for its \
+                        server to answer again, to go on by itself. Skwir can wait for it \
+                        without its window, then quit. Or stop now: it does not go on, and what \
+                        it finished stays.",
                     action = stopped.title.heading(),
                     note = "What Quit asks while an action waits for its server to go on. \
-                            action: the action, by its title, capitalised (Copy to stick)."
+                            action: the action, by its title, capitalised (Copy to stick), \
+                            as a label before what is said of it, never the subject of a verb."
                 ),
                 None => words!(
                     shell_quit_one_waits_for_server = "An action waits for its server to \

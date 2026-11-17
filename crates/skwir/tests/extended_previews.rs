@@ -697,7 +697,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
     assert_eq!(shown.kind, InspectionKind::Code);
     assert_eq!(
         notice(&shown),
-        "Shown as written: Text exceeds 2.1 MB preview limit"
+        "Shown as written: The text exceeds the 2.1 MB preview limit"
     );
     assert!(!shown.source_available);
     assert!(shown.plain_text().starts_with("<p>Some <b>bold</b>"));
@@ -734,7 +734,10 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
         &CancelToken::new(),
     )
     .unwrap_err();
-    assert_eq!(error.to_string(), "Text exceeds 2.1 MB preview limit");
+    assert_eq!(
+        error.to_string(),
+        "The text exceeds the 2.1 MB preview limit"
+    );
     assert!(
         skwir_core::inspection::TooLarge::is(&error),
         "the panel offers Full preview"
@@ -1101,7 +1104,7 @@ fn compressed_files_and_long_archives_are_listed() {
         skwir_platform::inspection::limits::CONTAINER_MEMBERS
     );
     assert!(
-        notice(&listing).starts_with("First 4,000 members"),
+        notice(&listing).starts_with("Only the first 4,000 members are listed"),
         "{}",
         notice(&listing)
     );

@@ -222,8 +222,8 @@ impl PreviewProvider for Provider {
         } else {
             vec![words!(
                 archives_first_members = "{ $count ->
-                    [one] First { $count } member · open it in an archive application for the rest
-                   *[other] First { $count } members · open it in an archive application for the rest
+                    [1] Only the first member is listed · open the archive in an archive application for the rest
+                   *[other] Only the first { $count } members are listed · open the archive in an archive application for the rest
                 }",
                 count = members.len(),
                 note = "Above an archive's listing cut short: how many of its members are listed."

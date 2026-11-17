@@ -17,7 +17,7 @@ archives_already_held = { $count ->
 archives_already_there = { $name } existe déjà
 
 # draft
-archives_among_inputs = { $name } fait partie de ce qui est compressé
+archives_among_inputs = { $name } fait partie de ce qui va dans l’archive
 
 # draft
 archives_ask_as = { $count ->
@@ -156,8 +156,9 @@ archives_extracted_to = { $archive } extrait vers { $into }
 
 # draft
 archives_first_members = { $count ->
-        [one] Premier élément · ouvrez l’archive dans un gestionnaire d’archives pour voir le reste
-       *[other] Les { $count } premiers éléments · ouvrez l’archive dans un gestionnaire d’archives pour voir le reste
+        [1] Seul le premier élément est listé · ouvrez l’archive dans un gestionnaire d’archives pour voir le reste
+        [one] Seul le premier élément est listé · ouvrez l’archive dans un gestionnaire d’archives pour voir le reste
+       *[other] Seuls les { $count } premiers éléments sont listés · ouvrez l’archive dans un gestionnaire d’archives pour voir le reste
     }
 
 # draft
@@ -170,7 +171,7 @@ archives_format_differs = { $name } indique { $said }, mais le format demandé e
 archives_holds_archive = { $there } contient { $archive }, l’archive à extraire
 
 # draft
-archives_holds_input = { $there } contient { $input }, qui est à compresser
+archives_holds_input = { $there } contient { $input }, qui va dans l’archive
 
 # draft
 archives_in_a_folder = une archive se trouve dans un dossier

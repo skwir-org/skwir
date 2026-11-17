@@ -9,7 +9,7 @@ use skwir_core::App;
 use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin};
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::Name;
 use skwir_plugin_api::Manifest;
 use skwir_plugin_api::manifest::{self, Category as Declared};
 
@@ -312,9 +312,10 @@ impl Runner {
             skwir_core::app::NotifyLevel::Warning,
             words!(
                 extend_turned_off = "{ $count ->
-                   *[other] { $plugin } was turned off: it stopped answering { $count } times in a row
+                    [one] The plugin { $plugin } was turned off: it stopped answering
+                   *[other] The plugin { $plugin } was turned off: it stopped answering { $count } times in a row
                 }",
-                plugin = Words::as_written(self.title.clone()),
+                plugin = Name(self.title.clone()),
                 count = BROKEN_AT_MOST,
                 note = "A notification: a plugin from outside Skwir (its title, as its author wrote it) failed again and again, and Skwir turned it off."
             ),

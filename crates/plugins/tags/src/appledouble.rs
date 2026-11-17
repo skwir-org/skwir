@@ -352,7 +352,7 @@ fn beside(path: &Path) -> Beside {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Beside::None,
         Err(error) => unreadable(error),
         Ok(meta) if meta.len() > skwir_core::fs::file::SIDE_FILE_LIMIT => Beside::Left(words!(
-            tags_aside_too_large = "{ $name } beside it is larger than skwir rewrites",
+            tags_aside_too_large = "{ $name } beside it is larger than Skwir rewrites",
             name = name(),
             note = "Said after a file's path. name: the Mac's ._ file beside it."
         )),
@@ -361,7 +361,7 @@ fn beside(path: &Path) -> Beside {
             Ok(bytes) => match AppleDouble::parse(&bytes) {
                 Some(ad) if ad.writable => Beside::Rewritten(ad),
                 _ => Beside::Left(words!(
-                    tags_aside_other_layout = "{ $name } beside it is laid out otherwise than a Mac writes one, and skwir rewrites no other",
+                    tags_aside_other_layout = "{ $name } beside it is laid out otherwise than a Mac writes one, and Skwir rewrites no other",
                     name = name(),
                     note = "Said after a file's path. name: the Mac's ._ file beside it."
                 )),
@@ -382,7 +382,7 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             words!(
                 tags_aside_unwritable =
-                    "its Mac attributes are kept in a form skwir does not write"
+                    "its Mac attributes are kept in a form Skwir does not write"
             ),
         )
     })?;
@@ -867,7 +867,7 @@ pub(crate) mod tests {
         let mut three = as_a_mac_writes(&[("a", b"1")]);
         three[25] = 3;
         let why = "“._it's song.mp3” beside it is laid out otherwise than a Mac writes one, \
-                   and skwir rewrites no other";
+                   and Skwir rewrites no other";
         for bytes in [version_1, three, b"a stray file".to_vec()] {
             std::fs::write(sidecar(&file).unwrap(), &bytes).unwrap();
             assert!(store.keys(&probe, true).is_empty());

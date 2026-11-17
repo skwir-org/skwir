@@ -74,7 +74,7 @@ open_with_none_opens = Aucune application n’ouvre { $kind ->
     }
 
 # draft
-open_with_not_a_file = { $name } n’est pas un fichier : skwir ne l’ouvre pas
+open_with_not_a_file = { $name } n’est pas un fichier : Skwir ne l’ouvre pas
 
 # draft
 open_with_not_changed = L’application par défaut n’a pas été changée : { $error }

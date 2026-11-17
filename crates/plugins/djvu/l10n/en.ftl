@@ -7,7 +7,7 @@ djvu_engine = DjVu engine
 djvu_engine_auto = Automatic
 
 # Automatic is the setting's first choice; DjVuLibre and djvu-rs are the programs' names.
-djvu_engine_description = Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which skwir carries.
+djvu_engine_description = Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which Skwir carries.
 
 # An error in place of a DjVu document when no engine is installed. first, second: the helper programs' names (skwir-djvulibre-worker, skwir-djvu-worker).
 djvu_install_either = Install { $first } or { $second } to read DjVu documents

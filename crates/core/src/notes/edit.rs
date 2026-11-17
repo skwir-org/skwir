@@ -56,6 +56,11 @@ fn changed_since(what: String) -> Words {
     )
 }
 
+/// Tags' names as a message's list argument, each a name (ADR-139).
+fn tag_list<'a>(tags: impl IntoIterator<Item = &'a String>) -> words::Arg {
+    words::List::and(tags.into_iter().map(|tag| Name(tag.clone()))).into()
+}
+
 fn same_set(a: &[String], b: &[String]) -> bool {
     a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| same_tag(x, y)))
 }
@@ -392,32 +397,31 @@ impl SetNotes {
                     None => said(
                         words!(
                             notes_take_tag = "take { $tag } off { $name }",
-                            tag = r.from.as_str(),
+                            tag = Name(r.from.clone()),
                             name = name(),
                             note = "A step of a plan: take a tag (its name) off a file. Begins in lower case."
                         ),
                         words!(
                             notes_took_tag = "took { $tag } off { $name }",
-                            tag = r.from.as_str(),
+                            tag = Name(r.from.clone()),
                             name = name()
                         ),
                         words!(
                             notes_took_tag_already = "{ $tag } was already off { $name }",
-                            tag = r.from.as_str(),
+                            tag = Name(r.from.clone()),
                             name = name()
                         ),
                     ),
                 });
             }
             if !change.add.is_empty() {
-                // Transitional: a list argument (ADR-139)
-                let added = change.add.join(", ");
+                let added: words::Arg = tag_list(&change.add);
                 parts.push(said(
                     words!(
                         notes_tag = "tag { $name } { $tags }",
                         name = name(),
                         tags = added.clone(),
-                        note = "A step of a plan: give a file tags (their names, by commas). Begins in lower case."
+                        note = "A step of a plan: give a file tags (their names, as a list). Begins in lower case."
                     ),
                     words!(
                         notes_tagged = "tagged { $name } { $tags }",
@@ -431,37 +435,40 @@ impl SetNotes {
                     ),
                 ));
             }
-            let taken: Vec<&str> = change
-                .remove
-                .iter()
-                .chain(&change.within)
-                .map(String::as_str)
-                .collect();
+            let taken: Vec<&String> = change.remove.iter().chain(&change.within).collect();
             if !taken.is_empty() {
                 let count = taken.len();
-                // Transitional: a list argument (ADR-139)
-                let taken = taken.join(", ");
+                let taken: words::Arg = tag_list(taken);
                 parts.push(said(
                     words!(
-                        notes_take_tags = "take { $tags } off { $name }",
+                        notes_take_tags = "{ $count ->
+                            [1] take the tag { $tags } off { $name }
+                           *[other] take the tags { $tags } off { $name }
+                        }",
+                        count = count,
                         tags = taken.clone(),
                         name = name(),
-                        note = "A step of a plan: take tags (their names, by commas) off a file. Begins in lower case."
+                        note = "A step of a plan: take tags off a file. count: how many; tags: their names, as a list. Begins in lower case."
                     ),
                     words!(
-                        notes_took_tags = "took { $tags } off { $name }",
+                        notes_took_tags = "{ $count ->
+                            [1] took the tag { $tags } off { $name }
+                           *[other] took the tags { $tags } off { $name }
+                        }",
+                        count = count,
                         tags = taken.clone(),
-                        name = name()
+                        name = name(),
+                        note = "A step of a plan, done: tags taken off a file. count: how many; tags: their names, as a list. Begins in lower case."
                     ),
                     words!(
                         notes_took_tags_already = "{ $count ->
-                            [one] { $tags } was already off { $name }
-                           *[other] { $tags } were already off { $name }
+                            [1] the tag { $tags } was already off { $name }
+                           *[other] the tags { $tags } were already off { $name }
                         }",
                         count = count,
                         tags = taken,
                         name = name(),
-                        note = "Tags (their names, by commas, as many as the count) found already off a file."
+                        note = "Tags found already off a file. count: how many; tags: their names, as a list. Begins in lower case."
                     ),
                 ));
             }
@@ -511,15 +518,14 @@ impl SetNotes {
                     keys::TAGS,
                 )
             } else {
-                // Transitional: a list argument (ADR-139)
-                let tags = tags.join(", ");
+                let tags: words::Arg = tag_list(tags);
                 (
                     said(
                         words!(
                             notes_tag = "tag { $name } { $tags }",
                             name = name(),
                             tags = tags.clone(),
-                            note = "A step of a plan: give a file tags (their names, by commas). Begins in lower case."
+                            note = "A step of a plan: give a file tags (their names, as a list). Begins in lower case."
                         ),
                         words!(
                             notes_tagged = "tagged { $name } { $tags }",
@@ -585,15 +591,15 @@ impl SetNotes {
                     words!(
                         notes_set_comment = "set the comment of { $name }",
                         name = name(),
-                        note = "A step of a plan. Begins in lower case."
+                        note = "A step of a plan, to do: give a file a comment (its words are not said). Begins in lower case."
                     ),
                     words!(
-                        notes_comment_set = "set the comment of { $name }",
+                        notes_commented = "set the comment of { $name }",
                         name = name(),
-                        note = "A step of a plan, done: the past of “set”. Begins in lower case."
+                        note = "A step of a plan, done: a file was given a comment (the past of “set”, as notes_uncommented is of notes_uncomment). Begins in lower case."
                     ),
                     words!(
-                        notes_comment_set_already = "{ $name } already had that comment",
+                        notes_commented_already = "{ $name } already had that comment",
                         name = name()
                     ),
                 ),
@@ -1082,19 +1088,19 @@ mod tests {
         assert_eq!(
             words.will.english(),
             format!(
-                "rename the tag “a” to “b” on “{name}” and rename the tag “c” to “d” on “{name}” and tag “{name}” new and take old off “{name}”"
+                "rename the tag “a” to “b” on “{name}” and rename the tag “c” to “d” on “{name}” and tag “{name}” “new” and take the tag “old” off “{name}”"
             )
         );
         assert_eq!(
             words.did.english(),
             format!(
-                "renamed the tag “a” to “b” on “{name}” and renamed the tag “c” to “d” on “{name}” and tagged “{name}” new and took old off “{name}”"
+                "renamed the tag “a” to “b” on “{name}” and renamed the tag “c” to “d” on “{name}” and tagged “{name}” “new” and took the tag “old” off “{name}”"
             )
         );
         assert_eq!(
             words.already.as_ref().map(crate::words::Words::english),
             Some(format!(
-                "the tag “a” was already “b” on “{name}” and the tag “c” was already “d” on “{name}” and “{name}” was already tagged new and old was already off “{name}”"
+                "the tag “a” was already “b” on “{name}” and the tag “c” was already “d” on “{name}” and “{name}” was already tagged “new” and the tag “old” was already off “{name}”"
             ))
         );
     }

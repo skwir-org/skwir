@@ -3695,14 +3695,14 @@ impl Executor {
             if let Some((other, running)) = under_way {
                 return refused(if running {
                     crate::words!(
-                        exec_undo_held_running = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it, running, touched what it did; undo that first",
+                        exec_undo_held_running = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it and running now, is changing what it did; undo that first",
                         title = entry.title.clone(),
                         other = other.clone(),
                         note = "Why an action cannot be undone by itself: another action, asked after it and running now, changed the same files. title, other: the two actions' titles."
                     )
                 } else {
                     crate::words!(
-                        exec_undo_held_waiting = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it, waiting, touched what it did; undo that first",
+                        exec_undo_held_waiting = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it and waiting to run, will change what it did; undo that first",
                         title = entry.title.clone(),
                         other = other.clone(),
                         note = "Why an action cannot be undone by itself: another action, asked after it and waiting to run, will change the same files. title, other: the two actions' titles."
@@ -6251,7 +6251,7 @@ mod tests {
             .undo_of_blocking(folder.id, &CancelToken::new())
             .unwrap();
         let error = r.error.map(|e| e.english()).unwrap_or_default();
-        assert!(error.contains("asked after it, running"), "{error}");
+        assert!(error.contains("asked after it and running now"), "{error}");
         assert!(!log.lock().iter().any(|l| l.starts_with("undid /disk")));
         // Itself running: taken back once it ends.
         executor.undo_of(later_id, CancelToken::new());

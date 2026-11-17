@@ -1053,14 +1053,22 @@ fn spell_header(
         .when(a11y, |d| {
             d.aria_label(
                 words!(
-                    activity_spell_label = "{ $at } of { $of ->
-                        [one] { $of } action
-                       *[other] { $of } actions
+                    activity_spell_label = "{ $at ->
+                        [one] { $at } of { $of ->
+                            [one] { $of } action
+                           *[other] { $of } actions
+                        }
+                       *[other] { $at } of { $of ->
+                            [one] { $of } action
+                           *[other] { $of } actions
+                        }
                     }",
                     at = summary.at,
                     of = summary.of,
                     note = "What a screen reader hears of the bar over Activity's cards: how \
-                            far the queue of actions started (2 of 5 actions)."
+                            far the queue of actions started, those ended or running (at) of \
+                            all (of): 2 of 5 actions. Each count chooses its words: where the \
+                            noun follows the first number, choose it by at."
                 )
                 .say(),
             )

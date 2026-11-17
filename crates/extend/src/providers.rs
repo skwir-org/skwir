@@ -98,7 +98,7 @@ fn private(app: &Weak<App>, path: &Path) -> bool {
 /// The words a preview says for a private file.
 fn private_file() -> Words {
     words!(
-        extend_private_preview = "This file is private: a plugin from outside skwir does not read it (Settings, Privacy)",
+        extend_private_preview = "This file is private: a plugin from outside Skwir does not read it (Settings, Privacy)",
         note = "In place of a file's preview a plugin from outside Skwir would make: the user keeps the file private. Settings, Privacy is where."
     )
 }

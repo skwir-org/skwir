@@ -271,8 +271,8 @@ fn filament() -> Words {
     )
 }
 
-/// A weight of filament, `grams` written as a number.
-fn grams(grams: String) -> String {
+/// A weight of filament, `grams` a number.
+fn grams(grams: words::Decimal) -> String {
     words!(
         models_grams = "{ $grams } g",
         grams = grams,
@@ -290,9 +290,9 @@ fn too_large(most: usize) -> Words {
     )
 }
 
-/// A model's size, its three lengths written as numbers, in the unit the
-/// file states (`mm`, `in`, `µm`), if it states one.
-fn size_3d([x, y, z]: [String; 3], unit: Option<&str>) -> String {
+/// A model's size, its three lengths, in the unit the file states (`mm`,
+/// `in`, `µm`), if it states one.
+fn size_3d([x, y, z]: [words::Decimal; 3], unit: Option<&str>) -> String {
     match unit {
         Some(unit) => words!(
             models_size = "{ $unit ->
@@ -320,9 +320,9 @@ fn size_3d([x, y, z]: [String; 3], unit: Option<&str>) -> String {
     .say()
 }
 
-/// A drawing's size, its two lengths written as numbers, in the unit the
-/// file states, if it states one.
-fn size_2d([width, height]: [String; 2], unit: Option<&str>) -> String {
+/// A drawing's size, its two lengths, in the unit the file states, if it
+/// states one.
+fn size_2d([width, height]: [words::Decimal; 2], unit: Option<&str>) -> String {
     match unit {
         Some(unit) => words!(
             models_size_2d = "{ $unit ->

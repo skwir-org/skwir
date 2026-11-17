@@ -63,10 +63,15 @@ pub(crate) fn duration(seconds: f64) -> String {
     .say()
 }
 
-/// A number written with as few decimals as it needs, at most two.
-pub(crate) fn short(n: f64) -> String {
-    let text = format!("{n:.2}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+/// A number with as few decimals as it needs, at most two (1.5, 2, 0.25),
+/// written as the reader's language writes numbers.
+pub(crate) fn short(n: f64) -> words::Decimal {
+    let mut number = words::Decimal::of(n, 2);
+    while number.digits > 0 && number.value % 10 == 0 {
+        number.value /= 10;
+        number.digits -= 1;
+    }
+    number
 }
 
 impl Facts {
@@ -206,7 +211,7 @@ impl Facts {
 }
 
 /// A length of filament, `metres` written as a number.
-fn metres(metres: String) -> String {
+fn metres(metres: words::Decimal) -> String {
     words!(
         models_filament_metres = "{ $metres } m",
         metres = metres,

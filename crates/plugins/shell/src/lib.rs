@@ -276,8 +276,8 @@ impl<'a> Line<'a> {
             }
             words!(
                 shell_line_more = "{ $line } … and { $more ->
-                    [one] { $more } more
-                   *[other] { $more } more
+                    [one] { $more } more path
+                   *[other] { $more } more paths
                 }",
                 line = line,
                 more = more,
@@ -870,7 +870,7 @@ mod tests {
         let line = Line::new("/bin/sh", r#"cp -r "$@" /backup"#);
         assert_eq!(
             line.said(&["/x/a b".into()], 2).english(),
-            r#"cp -r "$@" /backup  with the paths where it names them: '/x/a b' … and 2 more"#
+            r#"cp -r "$@" /backup  with the paths where it names them: '/x/a b' … and 2 more paths"#
         );
         let line = Line::new("/bin/sh", "echo '$@'");
         assert_eq!(
@@ -1034,7 +1034,7 @@ mod tests {
         assert_eq!(
             says,
             format!(
-                "Runs du -sh {} {} {} {} … and 2 more  in {folder}",
+                "Runs du -sh {} {} {} {} … and 2 more paths  in {folder}",
                 path("a b.txt"),
                 path("c.txt"),
                 path("d.txt"),

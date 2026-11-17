@@ -21,11 +21,11 @@ use skwir_core::command::{Invocation, Outcome};
 use skwir_core::metadata::tag_leaf;
 use skwir_core::reference::floor_boundary;
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::{List, Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
-use crate::facets::{self, PERIODS, Presets, periods, sizes};
+use crate::facets::{PERIODS, Presets, periods, sizes};
 use crate::lang;
 
 /// A key of the language: its name, the icon its values are drawn with,
@@ -290,7 +290,7 @@ static KEYS: [KeyInfo; 21] = [
         "layers",
         || {
             words!(
-                query_key_depth_example = "how deep: 2",
+                query_key_depth_example = "how many folders down it looks: 2",
                 note =
                     "The values of the option depth: of a search: how many folders down it looks."
             )
@@ -1086,9 +1086,13 @@ const FILLERS: [&str; 15] = [
     "and", "that", "are",
 ];
 
-/// Sizes by a word, with how a reading says them (after the words before
-/// them): in the units sizes are shown in, written in them (ADR-139, 9).
-fn size_words() -> [(&'static str, String, Words); 6] {
+/// The words read as sizes ([`size_read`]).
+const SIZE_WORDS: [&str; 6] = ["big", "large", "huge", "small", "tiny", "empty"];
+
+/// What the size word `word` of [`SIZE_WORDS`] searches, in the units
+/// sizes are shown in (ADR-139, 9), and how a reading says it after the
+/// words before it: `of` is what those words agree with ([`subject_of`]).
+fn size_read(word: &str, of: &'static str) -> Option<(String, Words)> {
     let [_, k, m, g, ..] = skwir_core::fs::size_units().names();
     let over_100 = || {
         words!(
@@ -1104,11 +1108,9 @@ fn size_words() -> [(&'static str, String, Words); 6] {
             note = "The end of a reading of words as a search (PDFs under 100 kB): it begins with a space. unit: a unit of size as the size setting writes it."
         )
     };
-    [
-        ("big", format!(">100{m}"), over_100()),
-        ("large", format!(">100{m}"), over_100()),
-        (
-            "huge",
+    Some(match word {
+        "big" | "large" => (format!(">100{m}"), over_100()),
+        "huge" => (
             format!(">1{g}"),
             words!(
                 query_reading_over_1 = "{\" \"}over 1 { $unit }",
@@ -1116,17 +1118,33 @@ fn size_words() -> [(&'static str, String, Words); 6] {
                 note = "The end of a reading of words as a search (Videos over 1 GB): it begins with a space. unit: a unit of size as the size setting writes it."
             ),
         ),
-        ("small", format!("<100{k}"), under_100()),
-        ("tiny", format!("<100{k}"), under_100()),
-        (
-            "empty",
+        "small" | "tiny" => (format!("<100{k}"), under_100()),
+        "empty" => (
             ":0".to_owned(),
             words!(
-                query_reading_empty = "{\" \"}that are empty",
-                note = "The end of a reading of words as a search (Files that are empty): it begins with a space."
+                query_reading_empty = "{ $of ->
+                    [extension] {\" \"}that are empty
+                    [folder] {\" \"}that are empty
+                    [image] {\" \"}that are empty
+                    [video] {\" \"}that are empty
+                    [pictures] {\" \"}that are empty
+                    [audio] {\" \"}that are empty
+                    [document] {\" \"}that are empty
+                    [spreadsheet] {\" \"}that are empty
+                    [presentation] {\" \"}that are empty
+                    [text] {\" \"}that are empty
+                    [archive] {\" \"}that are empty
+                    [font] {\" \"}that are empty
+                    [program] {\" \"}that are empty
+                    [several] {\" \"}that are empty
+                   *[file] {\" \"}that are empty
+                }",
+                of = of,
+                note = "The end of a reading of words as a search (Files that are empty): it begins with a space. of: what the files named before it are, for these words to agree with (as query_reading_named)."
             ),
         ),
-    ]
+        _ => return None,
+    })
 }
 
 /// Plain words read as terms, by rules: periods (`last week`, `today`)
@@ -1153,8 +1171,7 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
     let mut kinds: Vec<Kind> = Vec::new();
     let mut when: Option<&str> = None;
     let mut year: Option<String> = None;
-    let size_words = size_words();
-    let mut size: Option<(&str, &Words)> = None;
+    let mut size: Option<&str> = None;
     let mut tagged: Vec<String> = Vec::new();
     let mut names: Vec<(String, bool)> = Vec::new();
     let mut read = 0;
@@ -1199,8 +1216,8 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
             if !exts.iter().any(|e| e == ext) {
                 exts.push((*ext).to_owned());
             }
-        } else if let Some((_, form, says)) = size_words.iter().find(|(w, ..)| *w == lower) {
-            size = Some((form, says));
+        } else if let Some(word) = SIZE_WORDS.iter().find(|w| **w == lower) {
+            size = Some(word);
         } else if let Some(tag) = tags.named_by(&lower, single) {
             if !tagged.contains(tag) {
                 tagged.push(tag.clone());
@@ -1217,6 +1234,8 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
     names.retain(|(w, quoted)| *quoted || !FILLERS.contains(&w.to_lowercase().as_str()));
     let pictures =
         !kinds.is_empty() && kinds.iter().all(|k| matches!(k, Kind::Image | Kind::Video));
+    let of = subject_of(&exts, &kinds);
+    let size = size.and_then(|word| size_read(word, of));
 
     let mut terms: Vec<String> = names
         .iter()
@@ -1242,38 +1261,34 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
             format!("modified:{period}")
         });
     }
-    if let Some((form, _)) = size {
+    if let Some((form, _)) = &size {
         terms.push(format!("size{form}"));
     }
     for tag in &tagged {
         terms.push(format!("tag:{}", lang::quote(tag)));
     }
 
-    let subject = if !exts.is_empty() {
-        facets::and_list(
-            exts.iter()
-                .map(|e| {
-                    words!(
-                        query_reading_extension = "{ $ext }s",
-                        ext = e.to_uppercase(),
-                        note = "Files of an extension, as a reading of words as a search names them (PDFs modified last week). ext: the extension in capitals."
-                    )
-                })
-                .collect(),
-        )
+    let subject: Vec<Words> = if !exts.is_empty() {
+        exts.iter()
+            .map(|e| {
+                words!(
+                    query_reading_extension = "{ $ext }s",
+                    ext = e.to_uppercase(),
+                    note = "Files of an extension, as a reading of words as a search names them (PDFs modified last week). ext: the extension in capitals."
+                )
+            })
+            .collect()
     } else if !kinds.is_empty() {
-        facets::and_list(
-            kinds
-                .iter()
-                .enumerate()
-                .map(|(i, kind)| kind_said(*kind, i == 0))
-                .collect(),
-        )
+        kinds
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| kind_said(*kind, i == 0))
+            .collect()
     } else {
-        words!(
+        vec![words!(
             query_reading_files = "Files",
             note = "The start of a reading of words as a search that names no kind (Files modified today)."
-        )
+        )]
     };
     let by_name = if names.is_empty() {
         Words::default()
@@ -1289,46 +1304,155 @@ pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
             })
             .collect();
         words!(
-            query_reading_named = "{\" \"}named { $names }",
+            query_reading_named = "{ $of ->
+                [extension] {\" \"}named { $names }
+                [folder] {\" \"}named { $names }
+                [image] {\" \"}named { $names }
+                [video] {\" \"}named { $names }
+                [pictures] {\" \"}named { $names }
+                [audio] {\" \"}named { $names }
+                [document] {\" \"}named { $names }
+                [spreadsheet] {\" \"}named { $names }
+                [presentation] {\" \"}named { $names }
+                [text] {\" \"}named { $names }
+                [archive] {\" \"}named { $names }
+                [font] {\" \"}named { $names }
+                [program] {\" \"}named { $names }
+                [several] {\" \"}named { $names }
+               *[file] {\" \"}named { $names }
+            }",
+            of = of,
             names = Name(said.join(" ")),
-            note = "A part of a reading of words as a search (PDFs named “invoice”): it begins with a space. names: the words typed, as written."
+            note = "A part of a reading of words as a search (PDFs named “invoice”): it begins with a space. names: the words typed, as written. of: what the files named before it are, for these words to agree with: extension (PDFs, JPGs), one kind (folder, image, video, audio: music and audio, document, spreadsheet, presentation, text: text and code, archive, font, program), pictures (Images and videos), several (other kinds of several, as Images and documents, of any gender), file (any kind)."
         )
     };
     let tagged = if tagged.is_empty() {
         Words::default()
     } else {
         words!(
-            query_reading_tagged = "{\" \"}tagged { $tags }",
-            tags = facets::and_list(tagged.into_iter().map(Words::as_written).collect()),
-            note = "A part of a reading of words as a search (Images tagged work): it begins with a space. tags: the tags, as written, in a list."
+            query_reading_tagged = "{ $of ->
+                [extension] {\" \"}tagged
+                [folder] {\" \"}tagged
+                [image] {\" \"}tagged
+                [video] {\" \"}tagged
+                [pictures] {\" \"}tagged
+                [audio] {\" \"}tagged
+                [document] {\" \"}tagged
+                [spreadsheet] {\" \"}tagged
+                [presentation] {\" \"}tagged
+                [text] {\" \"}tagged
+                [archive] {\" \"}tagged
+                [font] {\" \"}tagged
+                [program] {\" \"}tagged
+                [several] {\" \"}tagged
+               *[file] {\" \"}tagged
+            } { $count ->
+                [one] { $tags }
+               *[other] { $tags }
+            }",
+            of = of,
+            count = tagged.len(),
+            tags = List::and(tagged.into_iter().map(Name)),
+            note = "A part of a reading of words as a search (Images tagged “work”): it begins with a space. tags: the tags' names, a list; count: how many; of: as in query_reading_named."
         )
     };
-    let year = match &year {
-        None => Words::default(),
-        Some(year) if pictures => words!(
-            query_reading_taken_in = "{\" \"}taken in { $year }",
-            year = year.as_str(),
-            note = "A part of a reading of words as a search (Images taken in 2023): it begins with a space."
-        ),
-        Some(year) => words!(
-            query_reading_modified_in = "{\" \"}modified in { $year }",
-            year = year.as_str(),
-            note = "A part of a reading of words as a search (PDFs modified in 2023): it begins with a space."
-        ),
-    };
+    let year = year.map_or_else(Words::default, |year| {
+        let when = words!(
+            query_reading_when_year = "in { $year }",
+            year = year,
+            note = "When files were modified or taken, placed in query_reading_modified or query_reading_taken: a year, as written (2023)."
+        );
+        if pictures {
+            taken_said(of, when)
+        } else {
+            modified_said(of, when)
+        }
+    });
     Some(Reading {
         label: words!(
             query_reading = "{ $subject }{ $named }{ $tagged }{ $year }{ $period }{ $size }",
-            subject = subject,
+            subject = List::and(subject),
             named = by_name,
             tagged = tagged,
             year = year,
-            period = when.map_or_else(Words::default, period_said),
-            size = size.map_or_else(Words::default, |(_, says)| says.clone()),
-            note = "Plain words read as a search, offered below them (Did you mean: PDFs modified last week). subject: what files; each other part is said beginning with a space, or is nothing."
+            period = when.map_or_else(Words::default, |period| modified_said(
+                of,
+                period_said(period)
+            )),
+            size = size.map_or_else(Words::default, |(_, says)| says),
+            note = "Plain words read as a search, offered below them (Did you mean: PDFs modified last week). subject: what files, a list (Images and videos); each other part is said beginning with a space, or is nothing."
         ),
         expr: terms.join(" "),
     })
+}
+
+/// What a reading's subject is, for the words after it to agree with where
+/// a language makes them agree (French « Images modifiées »): files of
+/// extensions, the kind's own word when one is named, `pictures` for
+/// images and videos together, `several` for other kinds of several,
+/// `file` for files of any kind.
+fn subject_of(exts: &[String], kinds: &[Kind]) -> &'static str {
+    match kinds {
+        _ if !exts.is_empty() => "extension",
+        [] => "file",
+        [kind] => kind.name(),
+        _ if kinds.iter().all(|k| matches!(k, Kind::Image | Kind::Video)) => "pictures",
+        _ => "several",
+    }
+}
+
+/// When files of `of` ([`subject_of`]) were modified, as a reading says it
+/// after the words before it: `when` is a period or a year.
+fn modified_said(of: &'static str, when: Words) -> Words {
+    words!(
+        query_reading_modified = "{ $of ->
+            [extension] {\" \"}modified { $when }
+            [folder] {\" \"}modified { $when }
+            [image] {\" \"}modified { $when }
+            [video] {\" \"}modified { $when }
+            [pictures] {\" \"}modified { $when }
+            [audio] {\" \"}modified { $when }
+            [document] {\" \"}modified { $when }
+            [spreadsheet] {\" \"}modified { $when }
+            [presentation] {\" \"}modified { $when }
+            [text] {\" \"}modified { $when }
+            [archive] {\" \"}modified { $when }
+            [font] {\" \"}modified { $when }
+            [program] {\" \"}modified { $when }
+            [several] {\" \"}modified { $when }
+           *[file] {\" \"}modified { $when }
+        }",
+        of = of,
+        when = when,
+        note = "A part of a reading of words as a search (PDFs modified last week): it begins with a space. when: a period (query_reading_when_*) or a year (query_reading_when_year); of: as in query_reading_named."
+    )
+}
+
+/// When pictures of `of` ([`subject_of`]) were taken, as a reading says it
+/// after the words before it: `when` is a year.
+fn taken_said(of: &'static str, when: Words) -> Words {
+    words!(
+        query_reading_taken = "{ $of ->
+            [extension] {\" \"}taken { $when }
+            [folder] {\" \"}taken { $when }
+            [image] {\" \"}taken { $when }
+            [video] {\" \"}taken { $when }
+            [pictures] {\" \"}taken { $when }
+            [audio] {\" \"}taken { $when }
+            [document] {\" \"}taken { $when }
+            [spreadsheet] {\" \"}taken { $when }
+            [presentation] {\" \"}taken { $when }
+            [text] {\" \"}taken { $when }
+            [archive] {\" \"}taken { $when }
+            [font] {\" \"}taken { $when }
+            [program] {\" \"}taken { $when }
+            [several] {\" \"}taken { $when }
+           *[file] {\" \"}taken { $when }
+        }",
+        of = of,
+        when = when,
+        note = "A part of a reading of words as a search (Images taken in 2023), said of pictures and videos: it begins with a space. when: a year (query_reading_when_year); of: as in query_reading_named (image, video, pictures, or extension for JPGs and the like)."
+    )
 }
 
 /// Files of `kind`, as a reading of words says them: first, or after
@@ -1417,22 +1541,23 @@ fn kind_said(kind: Kind, first: bool) -> Words {
     }
 }
 
-/// When files were changed, as a reading of words says it (after the
-/// words before it): a period of [`PERIODS`].
+/// When files were changed, as a reading of words places it in
+/// [`modified_said`]: a period of [`PERIODS`].
 fn period_said(period: &str) -> Words {
     match period {
         "today" => words!(
-            query_reading_today = "{\" \"}modified today",
-            note = "A part of a reading of words as a search (PDFs modified today): it begins with a space."
+            query_reading_when_today = "today",
+            note =
+                "When files were modified, placed in query_reading_modified (PDFs modified today)."
         ),
-        "yesterday" => words!(query_reading_yesterday = "{\" \"}modified yesterday"),
-        "this-week" => words!(query_reading_this_week = "{\" \"}modified this week"),
-        "last-week" => words!(query_reading_last_week = "{\" \"}modified last week"),
-        "this-month" => words!(query_reading_this_month = "{\" \"}modified this month"),
-        "last-month" => words!(query_reading_last_month = "{\" \"}modified last month"),
-        "this-year" => words!(query_reading_this_year = "{\" \"}modified this year"),
-        "last-year" => words!(query_reading_last_year = "{\" \"}modified last year"),
-        _ => words!(query_reading_older = "{\" \"}modified older than a year"),
+        "yesterday" => words!(query_reading_when_yesterday = "yesterday"),
+        "this-week" => words!(query_reading_when_this_week = "this week"),
+        "last-week" => words!(query_reading_when_last_week = "last week"),
+        "this-month" => words!(query_reading_when_this_month = "this month"),
+        "last-month" => words!(query_reading_when_last_month = "last month"),
+        "this-year" => words!(query_reading_when_this_year = "this year"),
+        "last-year" => words!(query_reading_when_last_year = "last year"),
+        _ => words!(query_reading_when_older = "over a year ago"),
     }
 }
 
@@ -1916,7 +2041,7 @@ mod tests {
             (
                 "report print",
                 "report tag:print",
-                "Files named “report” tagged print",
+                "Files named “report” tagged “print”",
             ),
             (
                 "big downloads",
@@ -1926,7 +2051,7 @@ mod tests {
             (
                 "videos from france",
                 "kind:video tag:Places/France",
-                "Videos tagged Places/France",
+                "Videos tagged “Places/France”",
             ),
             (
                 "invoices 2025 pdfs",

@@ -110,23 +110,34 @@ fn configured(fs: &str) -> Option<&str> {
 pub fn trash_of(config: &Value) -> Option<Words> {
     let option = |name: &str| config[name].as_str().unwrap_or_default();
     let trash = match config["type"].as_str()? {
-        "drive" if option("use_trash") != "false" => {
-            words!(remote_rclone_trash_drive = "Google Drive's trash")
-        }
-        "onedrive" if option("hard_delete") != "true" => {
-            words!(remote_rclone_trash_onedrive = "OneDrive's recycle bin")
-        }
-        "box" => words!(remote_rclone_trash_box = "Box's trash"),
-        "pcloud" => words!(remote_rclone_trash_pcloud = "pCloud's trash"),
-        "mega" if option("use_trash") != "false" => {
-            words!(remote_rclone_trash_mega = "MEGA's rubbish bin")
-        }
-        "jottacloud" if option("hard_delete") != "true" => {
-            words!(remote_rclone_trash_jottacloud = "Jottacloud's trash")
-        }
-        "yandex" if option("hard_delete") != "true" => {
-            words!(remote_rclone_trash_yandex = "Yandex Disk's trash")
-        }
+        "drive" if option("use_trash") != "false" => words!(
+            remote_rclone_trash_drive = "Google Drive's trash",
+            note = "Where a cloud keeps what is deleted, said inside a sentence, with its own determiner (English's possessive is one): the deleting dialog and its toasts place it bare (moved to Google Drive's trash)."
+        ),
+        "onedrive" if option("hard_delete") != "true" => words!(
+            remote_rclone_trash_onedrive = "OneDrive's recycle bin",
+            note = "As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one)."
+        ),
+        "box" => words!(
+            remote_rclone_trash_box = "Box's trash",
+            note = "As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one)."
+        ),
+        "pcloud" => words!(
+            remote_rclone_trash_pcloud = "pCloud's trash",
+            note = "As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one)."
+        ),
+        "mega" if option("use_trash") != "false" => words!(
+            remote_rclone_trash_mega = "MEGA's rubbish bin",
+            note = "As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one)."
+        ),
+        "jottacloud" if option("hard_delete") != "true" => words!(
+            remote_rclone_trash_jottacloud = "Jottacloud's trash",
+            note = "As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one)."
+        ),
+        "yandex" if option("hard_delete") != "true" => words!(
+            remote_rclone_trash_yandex = "Yandex Disk's trash",
+            note = "As remote_rclone_trash_drive: said inside a sentence, with its own determiner (English's possessive is one)."
+        ),
         _ => return None,
     };
     Some(trash)

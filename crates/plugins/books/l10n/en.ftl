@@ -48,7 +48,7 @@ books_engine_auto = Automatic
 # A choice of the Book engine setting: Skwir's own engine.
 books_engine_builtin = Built-in
 
-books_engine_description = Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out.
+books_engine_description = Automatic reads books with the built-in engine, which reflows their text in the theme and draws fixed-layout pages as the book lays them out.
 
 # What a setting's description says after its first sentence, in its tooltip.
 books_engine_description_more = MuPDF lays books out into pages, with their own styles: every EPUB, FB2 and MOBI book it reads well; the built-in engine reads the others.
@@ -67,55 +67,59 @@ books_epub_no_package = EPUB container names no package
 # An error: a book laid out in pages lists none.
 books_epub_no_pages = EPUB has no pages
 
-books_epub_protected_chapter = This EPUB is protected: its chapter is encrypted
+# Why a book, or a chapter of it, is not shown: the book is protected (DRM).
+books_epub_protected_chapter = This EPUB is protected: a chapter is encrypted
 
 # The file that names the book's package (META-INF/container.xml) is encrypted.
-books_epub_protected_container = This EPUB is protected: its epub container is encrypted
+books_epub_protected_container = This EPUB is protected: its container is encrypted
 
 # The book's table of contents is encrypted.
-books_epub_protected_contents = This EPUB is protected: its epub contents is encrypted
+books_epub_protected_contents = This EPUB is protected: its table of contents is encrypted
 
 # Its list of what it encrypts (META-INF/encryption.xml) is itself encrypted.
-books_epub_protected_encryption = This EPUB is protected: its epub encryption is encrypted
+books_epub_protected_encryption = This EPUB is protected: even its list of encrypted parts is encrypted
 
 # The book's package document (the OPF), which lists its chapters, is encrypted.
-books_epub_protected_package = This EPUB is protected: its epub package is encrypted
+books_epub_protected_package = This EPUB is protected: its package is encrypted
 
-books_epub_protected_page = This EPUB is protected: its page is encrypted
+# Why a page of a fixed-layout book is not shown: the book is protected (DRM).
+books_epub_protected_page = This EPUB is protected: a page is encrypted
 
-books_epub_protected_picture = This EPUB is protected: its embedded image is encrypted
+# Why a picture of a book is not shown: the book is protected (DRM).
+books_epub_protected_picture = This EPUB is protected: an embedded image is encrypted
 
 # What a chapter names (a font, a file) is encrypted.
-books_epub_protected_resource = This EPUB is protected: its epub resource is encrypted
+books_epub_protected_resource = This EPUB is protected: a resource a chapter uses is encrypted
 
-books_epub_protected_stylesheet = This EPUB is protected: its stylesheet is encrypted
+# Why a book's styles are not read: the book is protected (DRM).
+books_epub_protected_stylesheet = This EPUB is protected: a stylesheet is encrypted
 
 # Why a book is not shown: a chapter of an EPUB book unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_chapter = Chapter exceeds { $size } preview limit
+books_epub_too_large_chapter = A chapter exceeds the { $size } preview limit
 
 # Why a book is not shown: the file that names its package (META-INF/container.xml) unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_container = EPUB container exceeds { $size } preview limit
+books_epub_too_large_container = The EPUB's container exceeds the { $size } preview limit
 
 # Why a book's contents are not shown: its table of contents unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_contents = EPUB contents exceeds { $size } preview limit
+books_epub_too_large_contents = The EPUB's table of contents exceeds the { $size } preview limit
 
 # Why a book is not shown: its list of what it encrypts (META-INF/encryption.xml) unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_encryption = EPUB encryption exceeds { $size } preview limit
+books_epub_too_large_encryption = The EPUB's list of encrypted parts exceeds the { $size } preview limit
 
 # Why a book is not shown: its package document (the OPF), which lists its chapters, unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_package = EPUB package exceeds { $size } preview limit
+books_epub_too_large_package = The EPUB's package exceeds the { $size } preview limit
 
 # Why a book is not shown: a page of a fixed-layout EPUB book unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_page = Page exceeds { $size } preview limit
+books_epub_too_large_page = A page exceeds the { $size } preview limit
 
 # Why a picture of an EPUB book is not shown: it unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_picture = Embedded image exceeds { $size } preview limit
+books_epub_too_large_picture = An embedded image exceeds the { $size } preview limit
 
 # Why what a chapter of an EPUB book names (a font, a file) is not read: it unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_resource = EPUB resource exceeds { $size } preview limit
+books_epub_too_large_resource = A resource of the EPUB exceeds the { $size } preview limit
 
 # Why a stylesheet of an EPUB book is not read: it unpacks past what the preview reads. size: that bound (16 MB).
-books_epub_too_large_stylesheet = Stylesheet exceeds { $size } preview limit
+books_epub_too_large_stylesheet = A stylesheet exceeds the { $size } preview limit
 
 # An error: a book laid out in pages lists more than can be shown.
 books_epub_too_many_pages = EPUB has too many pages
@@ -124,10 +128,10 @@ books_epub_too_many_pages = EPUB has too many pages
 books_fb2_damaged_picture = This FB2's picture { $id } is damaged
 
 # An error: the FictionBook a zipped FB2 names is not in it.
-books_fb2_document_missing = FB2 document is missing
+books_fb2_document_missing = The FB2 document is missing
 
 # An error: the FictionBook a zipped FB2 holds unpacks past what the preview reads. size: that bound (16 MB).
-books_fb2_document_too_large = FB2 document exceeds { $size } preview limit
+books_fb2_document_too_large = The FB2 document exceeds the { $size } preview limit
 
 # An error: a chapter of a FictionBook asked for is not there. href: the chapter's name.
 books_fb2_missing_chapter = Missing FB2 chapter { $href }
@@ -148,8 +152,8 @@ books_fb2_notes = Notes
 books_fb2_too_large = This FB2 is too large to read
 
 # An error: a FictionBook has more chapters than the preview reads.
-books_fb2_too_many_chapters = This FB2 has more than { $count ->
-       *[other] { $count } chapters
+books_fb2_too_many_chapters = { $count ->
+       *[other] This FB2 book has more than { $count } chapters
     }
 
 # An error: a ZIP file typed as a zipped FictionBook holds no FictionBook.
@@ -212,7 +216,7 @@ books_needs_mupdf = Books laid out into pages by MuPDF
 books_no_chapters = { $format } has no readable chapters
 
 # An error: a page of a book laid out in pages could not be drawn.
-books_page_not_drawn = the page could not be drawn
+books_page_not_drawn = The page could not be drawn
 
 # An error: a Mobipocket book's text is compressed in a way Skwir does not decode. code: the number the book names it by.
 books_palm_compression = This book's text is compressed in a way not read ({ $code })
@@ -252,7 +256,7 @@ books_search_found = Search match in this chapter
 books_search_none = No matching chapter
 
 # An error: what was searched for in a book is too long.
-books_search_too_long = search query exceeds limit
+books_search_too_long = The text searched for is too long
 
 # A book's series in its Properties, and the book's number in it, both as the book writes them (Foundation, 2).
 books_series_number = { $series }, { $number }

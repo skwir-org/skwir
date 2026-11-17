@@ -1820,7 +1820,7 @@ impl StepContext {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 crate::words!(
-                    op_moves_nothing = "it moves nothing between its folders (a camera): only copies are made there",
+                    op_moves_nothing = "this device (a camera) cannot move files between its folders: only copies can be made there",
                     note = "Why a step that moves or stages files in a folder failed: the device it is on (a camera) does not move files between its folders."
                 ),
             ));

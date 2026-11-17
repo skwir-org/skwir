@@ -61,16 +61,16 @@ extend_plugin_off = the plugin is off
 extend_preview_links_closed = Links are not followed in a preview “{ $plugin }” made: it may not use the network
 
 # An error: a command of a plugin from outside Skwir was given a file the user keeps private. Settings, Privacy is where. In lower case.
-extend_private_file = a private file: a plugin from outside skwir does not see it (Settings, Privacy)
+extend_private_file = a private file: a plugin from outside Skwir does not see it (Settings, Privacy)
 
 # An error: a plan answered by a plugin from outside Skwir names a folder the user keeps private. In lower case.
 extend_private_folder = a private folder: a plugin does not reach it
 
 # In place of a file's preview a plugin from outside Skwir would make: the user keeps the file private. Settings, Privacy is where.
-extend_private_preview = This file is private: a plugin from outside skwir does not read it (Settings, Privacy)
+extend_private_preview = This file is private: a plugin from outside Skwir does not read it (Settings, Privacy)
 
 # An error: a plugin from outside Skwir was written for a version of the protocol (how Skwir and plugins talk) Skwir does not speak. The versions are numbers. In lower case.
-extend_protocol_version = the plugin speaks version { $version } of the protocol; skwir speaks { $oldest } to { $newest }
+extend_protocol_version = the plugin speaks version { $version } of the protocol; Skwir speaks { $oldest } to { $newest }
 
 # What a plugin from outside Skwir, a WebAssembly module, needs Skwir's helper for, in the settings' list of what a plugin needs.
 extend_requirement_module = Running this plugin's WebAssembly module
@@ -86,7 +86,8 @@ extend_thumbnail_not_base64 = a thumbnail that is no base64
 
 # A notification: a plugin from outside Skwir (its title, as its author wrote it) failed again and again, and Skwir turned it off.
 extend_turned_off = { $count ->
-       *[other] { $plugin } was turned off: it stopped answering { $count } times in a row
+        [one] The plugin { $plugin } was turned off: it stopped answering
+       *[other] The plugin { $plugin } was turned off: it stopped answering { $count } times in a row
     }
 
 # A notification's button: opens the Plugins page of the settings, where a plugin is turned on again.

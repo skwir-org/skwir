@@ -121,7 +121,7 @@ impl Resources for Local<'_> {
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         let path = local_path(self.base, href)?;
         let refusal = skwir_core::words!(
-            rich_preview_stylesheet_limit = "Stylesheet exceeds { $size } preview limit",
+            rich_preview_stylesheet_limit = "A stylesheet exceeds the { $size } preview limit",
             size = skwir_core::words::Size(limits::TEXT_INPUT as u64),
             note = "Why a page's stylesheet beside it is not read. size: the largest read (2 MB)."
         );

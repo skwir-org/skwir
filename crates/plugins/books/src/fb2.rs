@@ -101,11 +101,11 @@ fn read<S: FileSource + ?Sized>(
             })?
             .clone();
         let missing = words!(
-            books_fb2_document_missing = "FB2 document is missing",
+            books_fb2_document_missing = "The FB2 document is missing",
             note = "An error: the FictionBook a zipped FB2 names is not in it."
         );
         let too_large = words!(
-            books_fb2_document_too_large = "FB2 document exceeds { $size } preview limit",
+            books_fb2_document_too_large = "The FB2 document exceeds the { $size } preview limit",
             size = skwir_core::words::Size(limits::BINARY_INPUT as u64),
             note = "An error: the FictionBook a zipped FB2 holds unpacks past what the preview reads. size: that bound (16 MB)."
         );
@@ -218,8 +218,8 @@ impl Fb2 {
         anyhow::ensure!(
             groups.len() <= limits::BLOCKS,
             words!(
-                books_fb2_too_many_chapters = "This FB2 has more than { $count ->
-                   *[other] { $count } chapters
+                books_fb2_too_many_chapters = "{ $count ->
+                   *[other] This FB2 book has more than { $count } chapters
                 }",
                 count = limits::BLOCKS,
                 note = "An error: a FictionBook has more chapters than the preview reads."

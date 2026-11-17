@@ -852,10 +852,15 @@ impl Build<'_> {
         shown_path(self.root, self.tree, path)
     }
 
-    /// `12 Mar 2024`: when `modified` was.
-    fn when(&self, modified: i64) -> Option<String> {
+    /// When `modified` was, `None` where it is not known.
+    fn modified_at(modified: i64) -> Option<std::time::SystemTime> {
         let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified.try_into().ok()?);
-        (modified > 0).then(|| format::friendly_time(t, self.zoned))
+        (modified > 0).then_some(t)
+    }
+
+    /// `12 Mar 2024`: when `modified` was, for a message to place.
+    fn when(&self, modified: i64) -> Option<skwir_core::words::Arg> {
+        Self::modified_at(modified).map(|t| format::friendly_arg(t, self.zoned))
     }
 
     /// The fills of a block: its outer entry's hue, its last change, or
@@ -901,9 +906,10 @@ impl Build<'_> {
         let said = match self.mode {
             Mode::Size | Mode::Types => format::size(measure),
             Mode::Files => format::files(usize::try_from(measure).unwrap_or(usize::MAX)),
-            Mode::Age => self
-                .when(node.modified)
-                .unwrap_or_else(|| format::size(measure)),
+            Mode::Age => Self::modified_at(node.modified).map_or_else(
+                || format::size(measure),
+                |t| format::friendly_time(t, self.zoned),
+            ),
         };
         let said = if node.incomplete {
             words!(
@@ -1089,7 +1095,7 @@ impl Build<'_> {
         if hidden.count > 0 {
             let what = words!(
                 usage_hidden_items = "{ $count ->
-                    [one] 1 hidden item
+                    [one] { $count } hidden item
                    *[other] { $count } hidden items
                 }",
                 count = hidden.count,
@@ -1137,7 +1143,7 @@ impl Build<'_> {
                     within(
                         words!(
                             usage_smaller_items = "{ $count ->
-                                [one] 1 smaller item
+                                [one] { $count } smaller item
                                *[other] { $count } smaller items
                             }",
                             count = count,
@@ -1166,7 +1172,7 @@ impl Build<'_> {
                 key,
                 words!(
                     usage_other_items = "{ $count ->
-                        [one] 1 other item
+                        [one] { $count } other item
                        *[other] { $count } other items
                     }",
                     count = count,
@@ -1614,7 +1620,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                     let read = usize::try_from(read).unwrap_or(usize::MAX);
                     words!(
                         usage_scanning_read = "Scanning… { $count ->
-                            [one] 1 folder
+                            [one] { $count } folder
                            *[other] { $count } folders
                         } read",
                         count = read,
@@ -1844,7 +1850,7 @@ fn levels(shell: &Shell, theme: &Theme, count: bool, cx: &mut Context<Shell>) ->
     let said = |n: u32| {
         words!(
             usage_levels = "{ $count ->
-                [one] 1 level
+                [one] { $count } level
                *[other] { $count } levels
             }",
             count = n,

@@ -291,47 +291,54 @@ impl Part {
         let size = words::Size(limits::BINARY_INPUT as u64);
         match self {
             Part::Chapter => words!(
-                books_epub_too_large_chapter = "Chapter exceeds { $size } preview limit",
+                books_epub_too_large_chapter = "A chapter exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a book is not shown: a chapter of an EPUB book unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Page => words!(
-                books_epub_too_large_page = "Page exceeds { $size } preview limit",
+                books_epub_too_large_page = "A page exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a book is not shown: a page of a fixed-layout EPUB book unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Picture => words!(
-                books_epub_too_large_picture = "Embedded image exceeds { $size } preview limit",
+                books_epub_too_large_picture =
+                    "An embedded image exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a picture of an EPUB book is not shown: it unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Stylesheet => words!(
-                books_epub_too_large_stylesheet = "Stylesheet exceeds { $size } preview limit",
+                books_epub_too_large_stylesheet =
+                    "A stylesheet exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a stylesheet of an EPUB book is not read: it unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Encryption => words!(
-                books_epub_too_large_encryption = "EPUB encryption exceeds { $size } preview limit",
+                books_epub_too_large_encryption =
+                    "The EPUB's list of encrypted parts exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a book is not shown: its list of what it encrypts (META-INF/encryption.xml) unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Resource => words!(
-                books_epub_too_large_resource = "EPUB resource exceeds { $size } preview limit",
+                books_epub_too_large_resource =
+                    "A resource of the EPUB exceeds the { $size } preview limit",
                 size = size,
                 note = "Why what a chapter of an EPUB book names (a font, a file) is not read: it unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Container => words!(
-                books_epub_too_large_container = "EPUB container exceeds { $size } preview limit",
+                books_epub_too_large_container =
+                    "The EPUB's container exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a book is not shown: the file that names its package (META-INF/container.xml) unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Package => words!(
-                books_epub_too_large_package = "EPUB package exceeds { $size } preview limit",
+                books_epub_too_large_package =
+                    "The EPUB's package exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a book is not shown: its package document (the OPF), which lists its chapters, unpacks past what the preview reads. size: that bound (16 MB)."
             ),
             Part::Contents => words!(
-                books_epub_too_large_contents = "EPUB contents exceeds { $size } preview limit",
+                books_epub_too_large_contents =
+                    "The EPUB's table of contents exceeds the { $size } preview limit",
                 size = size,
                 note = "Why a book's contents are not shown: its table of contents unpacks past what the preview reads. size: that bound (16 MB)."
             ),
@@ -342,44 +349,48 @@ impl Part {
     fn protected(self) -> Words {
         match self {
             Part::Chapter => words!(
-                books_epub_protected_chapter = "This EPUB is protected: its chapter is encrypted"
+                books_epub_protected_chapter = "This EPUB is protected: a chapter is encrypted",
+                note = "Why a book, or a chapter of it, is not shown: the book is protected (DRM)."
             ),
-            Part::Page => {
-                words!(books_epub_protected_page = "This EPUB is protected: its page is encrypted")
-            }
+            Part::Page => words!(
+                books_epub_protected_page = "This EPUB is protected: a page is encrypted",
+                note =
+                    "Why a page of a fixed-layout book is not shown: the book is protected (DRM)."
+            ),
             Part::Picture => words!(
                 books_epub_protected_picture =
-                    "This EPUB is protected: its embedded image is encrypted"
+                    "This EPUB is protected: an embedded image is encrypted",
+                note = "Why a picture of a book is not shown: the book is protected (DRM)."
             ),
             Part::Stylesheet => words!(
                 books_epub_protected_stylesheet =
-                    "This EPUB is protected: its stylesheet is encrypted"
+                    "This EPUB is protected: a stylesheet is encrypted",
+                note = "Why a book's styles are not read: the book is protected (DRM)."
             ),
             Part::Encryption => words!(
                 books_epub_protected_encryption =
-                    "This EPUB is protected: its epub encryption is encrypted",
+                    "This EPUB is protected: even its list of encrypted parts is encrypted",
                 note =
                     "Its list of what it encrypts (META-INF/encryption.xml) is itself encrypted."
             ),
             Part::Resource => words!(
                 books_epub_protected_resource =
-                    "This EPUB is protected: its epub resource is encrypted",
+                    "This EPUB is protected: a resource a chapter uses is encrypted",
                 note = "What a chapter names (a font, a file) is encrypted."
             ),
             Part::Container => words!(
                 books_epub_protected_container =
-                    "This EPUB is protected: its epub container is encrypted",
+                    "This EPUB is protected: its container is encrypted",
                 note =
                     "The file that names the book's package (META-INF/container.xml) is encrypted."
             ),
             Part::Package => words!(
-                books_epub_protected_package =
-                    "This EPUB is protected: its epub package is encrypted",
+                books_epub_protected_package = "This EPUB is protected: its package is encrypted",
                 note = "The book's package document (the OPF), which lists its chapters, is encrypted."
             ),
             Part::Contents => words!(
                 books_epub_protected_contents =
-                    "This EPUB is protected: its epub contents is encrypted",
+                    "This EPUB is protected: its table of contents is encrypted",
                 note = "The book's table of contents is encrypted."
             ),
         }

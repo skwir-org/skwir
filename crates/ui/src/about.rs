@@ -25,7 +25,7 @@ use gpui::{
 };
 
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{Decimal, Words};
 
 use crate::controls::{self, ButtonStyle};
 use crate::keymap::RunCommand;
@@ -120,6 +120,19 @@ fn graphics(specs: &gpui::GpuSpecs) -> Words {
     }
 }
 
+/// The desktop's text scaling (1.25), with as few digits after the point
+/// as say it, three at most, as the reader's language writes numbers.
+fn scaling(factor: f32) -> Decimal {
+    let factor = f64::from(factor);
+    let digits = (0..3u8)
+        .find(|&digits| {
+            let scaled = factor * 10f64.powi(i32::from(digits));
+            (scaled.round() - scaled).abs() < 1e-4
+        })
+        .unwrap_or(3);
+    Decimal::of(factor, digits)
+}
+
 /// The interface's font and size, where they were read, and each part's
 /// step (ADR-117): `Noto Sans 13.3 px (10 pt) from GTK, text scaling 1.25;
 /// sizes: interface 100%, files 110%, reading 100%, code 100%`.
@@ -129,7 +142,7 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
     let source = desktop.from.as_ref().map_or_else(
         || {
             words!(
-                about_text_own_size = "skwir's own size",
+                about_text_own_size = "Skwir's own size",
                 note = "In About, where the text's size comes from when no desktop says one."
             )
         },
@@ -144,9 +157,7 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
     let step = |part| crate::sizes::step_words(theme.sizes.step(part));
     let (font, px, pt) = (
         theme.font.to_string(),
-        // Transitional: a decimal number, said as English writes it
-        // until numbers are arguments of their own (ADR-139, step F).
-        format!("{body:.1}"),
+        Decimal::of(f64::from(body), 1),
         crate::settings::points(body),
     );
     match desktop
@@ -159,7 +170,7 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
             px = px,
             pt = pt,
             source = source,
-            scaling = factor.to_string(),
+            scaling = scaling(factor),
             interface = step(Part::Interface),
             files = step(Part::Files),
             reading = step(Part::Reading),
@@ -314,7 +325,7 @@ impl Shell {
         cx.write_to_clipboard(ClipboardItem::new_string(details(&about.facts)));
         self.set_status(
             words!(
-                about_copied = "Copied skwir’s version and what it runs on",
+                about_copied = "Copied Skwir’s version and what it runs on",
                 note = "Said once Copy details in About put them on the clipboard."
             ),
             false,
@@ -451,7 +462,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .w_auto()
         .aria_label(
             words!(
-                about_named = "About skwir",
+                about_named = "About Skwir",
                 note = "What the About dialog is named to a screen reader."
             )
             .say(),

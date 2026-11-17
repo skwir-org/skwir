@@ -45,6 +45,9 @@ query_chip_in = In { $place }
 # A search's chip: the kinds of its files (images, documents).
 query_chip_kind = Kind
 
+# The value of a search's Kind chip: the kinds its files may be of, a list (Images or Videos).
+query_chip_kinds = { $kinds }
+
 # A search's chip: when its files were last changed.
 query_chip_modified = Modified
 
@@ -88,7 +91,7 @@ query_depth_here = This folder only
 
 query_describe = Describe search
 
-query_describe_description = The search's chips for the designer: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation every choice runs, then the parts no facet holds
+query_describe_description = The search's chips, as the address field draws them for a pane that shows a search: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation each of its choices runs, then the parts no facet holds
 
 query_describe_filter = Describe filter
 
@@ -147,10 +150,10 @@ query_expects_extension = { $key } expects at least one extension
 # An error in a search's text. key: a key of the search language, as written.
 query_expects_folder = { $key } expects a folder
 
-# An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, separated by commas; value: what was typed.
+# An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, a list (folder, image… or program); value: what was typed.
 query_expects_kind = { $key } expects { $kinds }, got `{ $value }`
 
-# An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, separated by commas.
+# An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, a list (folder, image… or program).
 query_expects_kinds = { $key } expects { $kinds }
 
 # An error in a search's text. key: a key of the search language, as written; value: what was typed after it.
@@ -397,7 +400,7 @@ query_key_created = Made
 query_key_depth = How deep to look
 
 # The values of the option depth: of a search: how many folders down it looks.
-query_key_depth_example = how deep: 2
+query_key_depth_example = how many folders down it looks: 2
 
 # What the option excluded: of a search sets: whether it looks in the folders searches leave out.
 query_key_excluded = Excluded folders too
@@ -460,15 +463,6 @@ query_key_taken_example = 2023, last-year, by the camera's clock
 query_key_type = Files, folders or links
 
 query_list = List saved searches
-
-# The end of a list in a sentence (PDFs and JPGs): its last two items.
-query_list_and = { $first } and { $last }
-
-# A list in a sentence (PDFs, JPGs and PNGs): its first item, then the rest of it, which ends in its last two.
-query_list_and_more = { $first }, { $rest }
-
-# A list said in a chip (Images, Videos): first, then the rest of the list.
-query_list_comma = { $first }, { $rest }
 
 query_list_description = Return the saved searches, in sidebar order
 
@@ -563,7 +557,7 @@ query_nothing_opens = nothing opens { $place }: a folder is written as its whole
 
 query_nothing_to_save = the pane shows nothing to save
 
-query_only_folders_below = only a folder's subfolders are searched
+query_only_folders_below = the pane shows no folder: only a folder's subfolders can be searched
 
 # An error in a search's text. key: a key of the search language, as written; \xNN is how such a byte is written: keep it.
 query_only_in_bytes = only { $key } accepts bytes that are not UTF-8 (\xNN)
@@ -633,7 +627,7 @@ query_rating_one = One star or more
 # A rating a search offers.
 query_rating_three = Three stars or more
 
-# Plain words read as a search, offered below them (Did you mean: PDFs modified last week). subject: what files; each other part is said beginning with a space, or is nothing.
+# Plain words read as a search, offered below them (Did you mean: PDFs modified last week). subject: what files, a list (Images and videos); each other part is said beginning with a space, or is nothing.
 query_reading = { $subject }{ $named }{ $tagged }{ $year }{ $period }{ $size }
 
 query_reading_archives = { $at ->
@@ -651,8 +645,24 @@ query_reading_documents = { $at ->
        *[after] documents
     }
 
-# The end of a reading of words as a search (Files that are empty): it begins with a space.
-query_reading_empty = {" "}that are empty
+# The end of a reading of words as a search (Files that are empty): it begins with a space. of: what the files named before it are, for these words to agree with (as query_reading_named).
+query_reading_empty = { $of ->
+        [extension] {" "}that are empty
+        [folder] {" "}that are empty
+        [image] {" "}that are empty
+        [video] {" "}that are empty
+        [pictures] {" "}that are empty
+        [audio] {" "}that are empty
+        [document] {" "}that are empty
+        [spreadsheet] {" "}that are empty
+        [presentation] {" "}that are empty
+        [text] {" "}that are empty
+        [archive] {" "}that are empty
+        [font] {" "}that are empty
+        [program] {" "}that are empty
+        [several] {" "}that are empty
+       *[file] {" "}that are empty
+    }
 
 # Files of an extension, as a reading of words as a search names them (PDFs modified last week). ext: the extension in capitals.
 query_reading_extension = { $ext }s
@@ -676,19 +686,43 @@ query_reading_images = { $at ->
        *[after] images
     }
 
-query_reading_last_month = {" "}modified last month
+# A part of a reading of words as a search (PDFs modified last week): it begins with a space. when: a period (query_reading_when_*) or a year (query_reading_when_year); of: as in query_reading_named.
+query_reading_modified = { $of ->
+        [extension] {" "}modified { $when }
+        [folder] {" "}modified { $when }
+        [image] {" "}modified { $when }
+        [video] {" "}modified { $when }
+        [pictures] {" "}modified { $when }
+        [audio] {" "}modified { $when }
+        [document] {" "}modified { $when }
+        [spreadsheet] {" "}modified { $when }
+        [presentation] {" "}modified { $when }
+        [text] {" "}modified { $when }
+        [archive] {" "}modified { $when }
+        [font] {" "}modified { $when }
+        [program] {" "}modified { $when }
+        [several] {" "}modified { $when }
+       *[file] {" "}modified { $when }
+    }
 
-query_reading_last_week = {" "}modified last week
-
-query_reading_last_year = {" "}modified last year
-
-# A part of a reading of words as a search (PDFs modified in 2023): it begins with a space.
-query_reading_modified_in = {" "}modified in { $year }
-
-# A part of a reading of words as a search (PDFs named “invoice”): it begins with a space. names: the words typed, as written.
-query_reading_named = {" "}named { $names }
-
-query_reading_older = {" "}modified older than a year
+# A part of a reading of words as a search (PDFs named “invoice”): it begins with a space. names: the words typed, as written. of: what the files named before it are, for these words to agree with: extension (PDFs, JPGs), one kind (folder, image, video, audio: music and audio, document, spreadsheet, presentation, text: text and code, archive, font, program), pictures (Images and videos), several (other kinds of several, as Images and documents, of any gender), file (any kind).
+query_reading_named = { $of ->
+        [extension] {" "}named { $names }
+        [folder] {" "}named { $names }
+        [image] {" "}named { $names }
+        [video] {" "}named { $names }
+        [pictures] {" "}named { $names }
+        [audio] {" "}named { $names }
+        [document] {" "}named { $names }
+        [spreadsheet] {" "}named { $names }
+        [presentation] {" "}named { $names }
+        [text] {" "}named { $names }
+        [archive] {" "}named { $names }
+        [font] {" "}named { $names }
+        [program] {" "}named { $names }
+        [several] {" "}named { $names }
+       *[file] {" "}named { $names }
+    }
 
 # The end of a reading of words as a search (Videos over 1 GB): it begins with a space. unit: a unit of size as the size setting writes it.
 query_reading_over_1 = {" "}over 1 { $unit }
@@ -711,25 +745,51 @@ query_reading_spreadsheets = { $at ->
        *[after] spreadsheets
     }
 
-# A part of a reading of words as a search (Images tagged work): it begins with a space. tags: the tags, as written, in a list.
-query_reading_tagged = {" "}tagged { $tags }
+# A part of a reading of words as a search (Images tagged “work”): it begins with a space. tags: the tags' names, a list; count: how many; of: as in query_reading_named.
+query_reading_tagged = { $of ->
+        [extension] {" "}tagged
+        [folder] {" "}tagged
+        [image] {" "}tagged
+        [video] {" "}tagged
+        [pictures] {" "}tagged
+        [audio] {" "}tagged
+        [document] {" "}tagged
+        [spreadsheet] {" "}tagged
+        [presentation] {" "}tagged
+        [text] {" "}tagged
+        [archive] {" "}tagged
+        [font] {" "}tagged
+        [program] {" "}tagged
+        [several] {" "}tagged
+       *[file] {" "}tagged
+    } { $count ->
+        [one] { $tags }
+       *[other] { $tags }
+    }
 
-# A part of a reading of words as a search (Images taken in 2023): it begins with a space.
-query_reading_taken_in = {" "}taken in { $year }
+# A part of a reading of words as a search (Images taken in 2023), said of pictures and videos: it begins with a space. when: a year (query_reading_when_year); of: as in query_reading_named (image, video, pictures, or extension for JPGs and the like).
+query_reading_taken = { $of ->
+        [extension] {" "}taken { $when }
+        [folder] {" "}taken { $when }
+        [image] {" "}taken { $when }
+        [video] {" "}taken { $when }
+        [pictures] {" "}taken { $when }
+        [audio] {" "}taken { $when }
+        [document] {" "}taken { $when }
+        [spreadsheet] {" "}taken { $when }
+        [presentation] {" "}taken { $when }
+        [text] {" "}taken { $when }
+        [archive] {" "}taken { $when }
+        [font] {" "}taken { $when }
+        [program] {" "}taken { $when }
+        [several] {" "}taken { $when }
+       *[file] {" "}taken { $when }
+    }
 
 query_reading_text = { $at ->
         [first] Text and code
        *[after] text and code
     }
-
-query_reading_this_month = {" "}modified this month
-
-query_reading_this_week = {" "}modified this week
-
-query_reading_this_year = {" "}modified this year
-
-# A part of a reading of words as a search (PDFs modified today): it begins with a space.
-query_reading_today = {" "}modified today
 
 # The end of a reading of words as a search (PDFs under 100 kB): it begins with a space. unit: a unit of size as the size setting writes it.
 query_reading_under_100 = {" "}under 100 { $unit }
@@ -739,7 +799,27 @@ query_reading_videos = { $at ->
        *[after] videos
     }
 
-query_reading_yesterday = {" "}modified yesterday
+query_reading_when_last_month = last month
+
+query_reading_when_last_week = last week
+
+query_reading_when_last_year = last year
+
+query_reading_when_older = over a year ago
+
+query_reading_when_this_month = this month
+
+query_reading_when_this_week = this week
+
+query_reading_when_this_year = this year
+
+# When files were modified, placed in query_reading_modified (PDFs modified today).
+query_reading_when_today = today
+
+# When files were modified or taken, placed in query_reading_modified or query_reading_taken: a year, as written (2023).
+query_reading_when_year = in { $year }
+
+query_reading_when_yesterday = yesterday
 
 # What brackets mean in a name searched: keep […] first.
 query_ref_brackets = […] one of these
@@ -756,8 +836,8 @@ query_ref_contents = Contents
 # What modified:2026-05 means in a search; the dates are written as the search language writes them.
 query_ref_date = A year, a month or a day: 2026, 2026-05-14
 
-# What a range of dates means in a search: both ends included, whole.
-query_ref_date_range = From one to the other, both whole
+# What a range of dates means in a search (modified:2026-01..2026-03): both ends included, whole (January to the end of March).
+query_ref_date_range = From the start of the first to the end of the second
 
 # What modified<7d means in a search, and the units of time it reads: each unit as written (m, h, d…), then what it counts.
 query_ref_duration = Within the last 7 days: { $m } minutes, { $h } hours, { $d } days, { $w } weeks, { $mo } months, { $y } years
@@ -778,7 +858,7 @@ query_ref_minus = Not this: -draft, -#tag, -kind:image
 query_ref_names = Names
 
 # What NOT means in a search; NOT a and -a are examples as written.
-query_ref_not = Not: NOT a, as -a
+query_ref_not = Not: NOT a, also written -a
 
 # What modified>1y means in a search.
 query_ref_older = Longer ago than a year
@@ -792,7 +872,7 @@ query_ref_or = Either: a OR b
 # What parentheses mean in a search; (a OR b) c is an example as written.
 query_ref_parens = Together: (a OR b) c
 
-# What modified:today means in a search: a period. periods: the other periods it reads, as written, separated by commas.
+# What modified:today means in a search: a period. periods: the other periods it reads, as written, a list.
 query_ref_period = A period: { $periods }
 
 # What ? means in a name searched: keep ? first.
@@ -802,13 +882,13 @@ query_ref_question = ? one character
 query_ref_quotes = As written: "two words", "OR", "#3"
 
 # What rating>=3 means in a search; the signs and rating:0 are written as the search language writes them.
-query_ref_rating = At least (> < >= <=); rating:0 unrated
+query_ref_rating = At least (> < >= <=); rating:0 finds files with no rating
 
-# What size>10MB means in a search, and the units of size it reads. mb: a unit as the size setting writes it; decimal, binary and alone: units as written, separated by commas.
-query_ref_size = More than 10 { $mb }: { $decimal } each a thousand times the one before; { $binary } 1024 times, as { $alone } alone
+# What size>10MB means in a search, and the units of size it reads. mb: a unit as the size setting writes it; decimal (kB, MB…), binary (KiB, MiB…) and alone (k, M…): lists of units as written.
+query_ref_size = More than 10 { $mb }. Each of { $decimal } is 1000 times the one before; each of { $binary } is 1024 times, and so is each of { $alone } written alone.
 
 # What a range of sizes means in a search (size:1MB..100MB): both ends included.
-query_ref_size_range = From one to the other, both in
+query_ref_size_range = From one size to the other, both included
 
 # What \/ means in a pattern between slashes.
 query_ref_slash = A slash itself: one alone ends the pattern
@@ -874,7 +954,7 @@ query_root_not_absolute = query root { $path } is not an absolute path
 query_root_not_folder = query root { $path } is not a folder: { $error }
 
 # An error of a command given a root that is no folder's path: root is the argument's name.
-query_root_not_path = root must be a path
+query_root_not_path = `root` must be a path
 
 query_save = Save search
 
@@ -1061,14 +1141,14 @@ query_value_symlink = Symlink
 # A value of an option of a search, offered as it is typed: yes.
 query_value_true = True
 
-# What a filter leaves to a search (Enter): what files contain.
-query_waits_contents = contents
+# What a filter leaves to a search (Enter), an item of a list placed after “Only a search can tell” (omnibox_waits).
+query_waits_contents = what files contain
 
-# What a filter leaves to a search (Enter): where pictures were taken.
-query_waits_places = places
+# What a filter leaves to a search (Enter), an item of a list placed after “Only a search can tell” (omnibox_waits).
+query_waits_places = where pictures were taken
 
-# What a filter leaves to a search (Enter): when pictures were taken.
-query_waits_taken = dates taken
+# What a filter leaves to a search (Enter), an item of a list placed after “Only a search can tell” (omnibox_waits).
+query_waits_taken = when pictures were taken
 
 # What the field asking for a date holds while empty; the examples are written as the search language writes them: keep them.
 query_when_placeholder = A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d
@@ -1091,5 +1171,5 @@ query_where_hidden_files = Hidden files
 # The where chip's choice: search the folder and the folders within it.
 query_where_subfolders = This folder and its subfolders
 
-# An error of a command: expr and name are its arguments' names.
-query_which_saved = which saved search? pass its expr or name
+# An error of a command: expr and name are its arguments' names, never translated.
+query_which_saved = which saved search? Pass its `expr` or its `name`

@@ -300,7 +300,7 @@ impl Program {
         if !(OLDEST..=VERSION).contains(&answer.api) {
             running.end();
             anyhow::bail!(words!(
-                extend_protocol_version = "the plugin speaks version { $version } of the protocol; skwir speaks { $oldest } to { $newest }",
+                extend_protocol_version = "the plugin speaks version { $version } of the protocol; Skwir speaks { $oldest } to { $newest }",
                 version = answer.api.to_string(),
                 oldest = OLDEST.to_string(),
                 newest = VERSION.to_string(),

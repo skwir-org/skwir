@@ -15,8 +15,14 @@ git_column_hash = Hash
 # A column's header in a history of commits: the names at each commit.
 git_column_names = Branches and tags
 
-# How many commits a history lists, older ones left.
-git_commits_shown = { $count } shown
+# The value beside Commits in a history's Properties: how many commits it lists, all of them.
+git_commits = { $count }
+
+# The value beside Commits in a history's Properties when older commits are left out: how many it lists.
+git_commits_shown = { $count ->
+        [one] { $count } commit shown
+       *[other] { $count } commits shown
+    }
 
 # A history's detail: the branch checked out.
 git_detail_branch = Branch
@@ -34,13 +40,13 @@ git_names_cut = Some commits have more branches and tags than are shown
 
 # Under a history of commits: older commits are left, read by Full preview.
 git_newest = { $count ->
-        [one] The newest { $count } commit
+        [1] Only the newest commit
        *[other] The newest { $count } commits
     }
 
 # Under a history of commits: older commits are left, and some commits' names are left out.
 git_newest_names_cut = { $count ->
-        [one] The newest { $count } commit. Some commits have more branches and tags than are shown
+        [1] Only the newest commit. Some commits have more branches and tags than are shown
        *[other] The newest { $count } commits. Some commits have more branches and tags than are shown
     }
 
@@ -67,13 +73,13 @@ git_states_setting_description_more = The list's Git column says the same.
 
 # Under a history of commits: reading was stopped before the oldest commit.
 git_stopped = { $count ->
-        [one] The newest { $count } commit: reading stopped before the oldest
+        [1] Only the newest commit: reading stopped before the oldest
        *[other] The newest { $count } commits: reading stopped before the oldest
     }
 
 # Under a history of commits: reading was stopped, and some commits' names are left out.
 git_stopped_names_cut = { $count ->
-        [one] The newest { $count } commit: reading stopped before the oldest. Some commits have more branches and tags than are shown
+        [1] Only the newest commit: reading stopped before the oldest. Some commits have more branches and tags than are shown
        *[other] The newest { $count } commits: reading stopped before the oldest. Some commits have more branches and tags than are shown
     }
 

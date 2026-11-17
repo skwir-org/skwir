@@ -23,7 +23,7 @@ use skwir_core::settings::{SaveState, Section, SettingKind, SettingSpec, page, s
 use std::sync::Mutex;
 
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{List, Words};
 
 use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
@@ -307,7 +307,7 @@ pub fn icon_theme_spec(
         words!(settings_icon_theme = "Icon theme"),
         (
             words!(
-                settings_icon_theme_description = "The icons skwir draws files, folders and places with."
+                settings_icon_theme_description = "The icons Skwir draws files, folders and places with."
             ),
             words!(
                 settings_icon_theme_description_more = "Automatic follows your desktop's choice.",
@@ -395,7 +395,7 @@ pub fn font_spec(
                     settings_code_font_description = "The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width."
                 ),
                 words!(
-                    settings_code_font_description_more = "Automatic is your desktop's monospace font, as Fonts from reads it, else skwir's own.",
+                    settings_code_font_description_more = "Automatic is your desktop's monospace font, as Fonts from reads it, else Skwir's own.",
                     note = "Fonts from is the name of another setting."
                 ),
             ),
@@ -406,10 +406,10 @@ pub fn font_spec(
             words!(settings_font = "Font"),
             (
                 words!(
-                    settings_font_description = "The font of skwir's menus, lists, bars and dialogs."
+                    settings_font_description = "The font of Skwir's menus, lists, bars and dialogs."
                 ),
                 words!(
-                    settings_font_description_more = "Automatic is your desktop's, as Fonts from reads it, else skwir's own, Inter.",
+                    settings_font_description_more = "Automatic is your desktop's, as Fonts from reads it, else Skwir's own, Inter.",
                     note = "Fonts from is the name of another setting; Inter is a font's name."
                 ),
             ),
@@ -497,7 +497,7 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             (
                 match now {
                     Some(points) => words!(
-                        settings_text_size_now = "How large skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+                        settings_text_size_now = "How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -507,7 +507,7 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
                         note = "desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5)."
                     ),
                     None => words!(
-                        settings_text_size_description = "How large skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+                        settings_text_size_description = "How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -654,36 +654,36 @@ fn fonts_from_spec() -> SettingSpec {
     let more = if skwir_platform::desktop_style::TOOLKITS {
         match now {
             Some(now) => words!(
-                settings_fonts_from_toolkits_now = "Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts. { $now }",
+                settings_fonts_from_toolkits_now = "Automatic reads your desktop's own settings, else GTK's, else Qt's. Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the sizes Automatic reads. GTK or Qt reads that toolkit's settings alone, for when the two name different fonts. { $now }",
                 now = now,
                 note = "now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Inter and JetBrains Mono are fonts' names; Skwir's own, GTK and Qt are the setting's choices."
             ),
             None => words!(
-                settings_fonts_from_toolkits = "Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts.",
+                settings_fonts_from_toolkits = "Automatic reads your desktop's own settings, else GTK's, else Qt's. Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the sizes Automatic reads. GTK or Qt reads that toolkit's settings alone, for when the two name different fonts.",
                 note = "Inter and JetBrains Mono are fonts' names; Skwir's own, GTK and Qt are the setting's choices."
             ),
         }
     } else if cfg!(windows) {
         match now {
             Some(now) => words!(
-                settings_fonts_from_windows_now = "Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }",
+                settings_fonts_from_windows_now = "Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size. { $now }",
                 now = now,
                 note = "now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Text size and Accessibility are as Windows names them; Inter and JetBrains Mono are fonts' names."
             ),
             None => words!(
-                settings_fonts_from_windows = "Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.",
+                settings_fonts_from_windows = "Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size.",
                 note = "Text size and Accessibility are as Windows names them; Inter and JetBrains Mono are fonts' names."
             ),
         }
     } else {
         match now {
             Some(now) => words!(
-                settings_fonts_from_system_now = "Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size. { $now }",
+                settings_fonts_from_system_now = "Automatic is the system font, at the size its applications write in; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size. { $now }",
                 now = now,
                 note = "now: what Automatic comes to here, a sentence (settings_fonts_from_now_read). Inter and JetBrains Mono are fonts' names."
             ),
             None => words!(
-                settings_fonts_from_system = "Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size.",
+                settings_fonts_from_system = "Automatic is the system font, at the size its applications write in; Skwir's own uses the fonts Skwir comes with, Inter and JetBrains Mono, at the same size.",
                 note = "Inter and JetBrains Mono are fonts' names."
             ),
         }
@@ -693,7 +693,7 @@ fn fonts_from_spec() -> SettingSpec {
         words!(settings_fonts_from = "Fonts from"),
         (
             words!(
-                settings_fonts_from_description = "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes."
+                settings_fonts_from_description = "Where Skwir reads the fonts a font setting's Automatic writes in, and their sizes."
             ),
             more,
         ),
@@ -713,10 +713,10 @@ fn cards_spec() -> SettingSpec {
         words!(settings_cards = "Cards"),
         (
             words!(
-                settings_cards_description = "Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines."
+                settings_cards_description = "Draw the panes, the preview's parts and the terminal as cards on the window's frame, set apart by a gutter rather than by lines."
             ),
             words!(
-                settings_cards_description_more = "The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.",
+                settings_cards_description_more = "The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's top row is underlined and the other pane is a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are set apart by lines, as in earlier versions.",
                 note =
                     "What a setting's description says after its first sentence, in its tooltip."
             ),
@@ -735,13 +735,13 @@ fn title_bar_spec(said: TitleBarSaid) -> SettingSpec {
     // what a refusal of the system's means here once one was seen.
     let more = if said.here {
         words!(
-            settings_title_bar_description_here = "System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. { $here }",
+            settings_title_bar_description_here = "System: the system's title bar, or one of Skwir's like it where the system draws none (GNOME). Compact: a slim bar of Skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of Skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. { $here }",
             here = crate::title_bar::refusal(),
             note = "System, Compact, In the top row and Automatic are the setting's choices. here: what a refusal of the system's means here, a sentence."
         )
     } else {
         words!(
-            settings_title_bar_description_more = "System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.",
+            settings_title_bar_description_more = "System: the system's title bar, or one of Skwir's like it where the system draws none (GNOME). Compact: a slim bar of Skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of Skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.",
             note = "System, Compact, In the top row and Automatic are the setting's choices."
         )
     };
@@ -835,7 +835,7 @@ fn code_appearance_spec() -> SettingSpec {
                 settings_code_appearance_description = "Draw source files and code in documents light or dark."
             ),
             words!(
-                settings_code_appearance_description_more = "Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.",
+                settings_code_appearance_description_more = "Automatic follows Skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever Skwir looks like.",
                 note = "Automatic, Light and Dark are the setting's choices."
             ),
         ),
@@ -880,7 +880,7 @@ fn colors_from_spec(app: &App) -> SettingSpec {
         (
             words!(
                 settings_colors_from_macos =
-                    "Where skwir takes its colors: macOS's, or one of skwir's palettes."
+                    "Where Skwir takes its colors: macOS's, or one of Skwir's palettes."
             ),
             words!(
                 settings_colors_from_macos_more = "Automatic wears the colors macOS draws its own windows in, with the accent you chose and its Increase contrast. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. Increase contrast is followed whatever is chosen.",
@@ -891,10 +891,10 @@ fn colors_from_spec(app: &App) -> SettingSpec {
         (
             words!(
                 settings_colors_from_windows =
-                    "Where skwir takes its colors: Windows' accent, or one of skwir's palettes."
+                    "Where Skwir takes its colors: Windows' accent, or one of Skwir's palettes."
             ),
             words!(
-                settings_colors_from_windows_more = "Automatic wears skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen.",
+                settings_colors_from_windows_more = "Automatic wears Skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen.",
                 note =
                     "What a setting's description says after its first sentence, in its tooltip."
             ),
@@ -903,7 +903,7 @@ fn colors_from_spec(app: &App) -> SettingSpec {
         (
             words!(
                 settings_colors_from_description =
-                    "Where skwir takes its colors: your desktop's, or one of skwir's palettes."
+                    "Where Skwir takes its colors: your desktop's, or one of Skwir's palettes."
             ),
             words!(
                 settings_colors_from_description_more = "Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, Omarchy's theme, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's colors (its theme, with your own GTK style sheet over it, where a desktop shell such as Noctalia, Caelestia or Dux Shell writes its colors), else the color scheme of qt6ct, qt5ct, qtengine or hyprqt6engine; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen.",
@@ -998,14 +998,11 @@ fn colors_swatch(
 }
 
 /// A size in pixels as a desktop's font settings say it: in points, to
-/// the half.
-pub(crate) fn points(px: f32) -> String {
-    let points = (px * 0.75 * 2.).round() / 2.;
-    if points.fract() == 0. {
-        format!("{points:.0}")
-    } else {
-        format!("{points:.1}")
-    }
+/// the half, its digit after the point written only where it has one
+/// (10, 10.5), as the reader's language writes numbers.
+pub(crate) fn points(px: f32) -> words::Decimal {
+    let points = (f64::from(px) * 0.75 * 2.).round() / 2.;
+    words::Decimal::of(points, u8::from(points.fract() != 0.))
 }
 
 /// What a font setting's Automatic comes to and each part's 100 %, as the
@@ -1315,11 +1312,11 @@ pub fn code_theme_spec(
             words!(settings_code_dark_theme = "Dark theme"),
             (
                 words!(
-                    settings_code_dark_theme_description = "The colors of source files and of code in documents when code is dark: while skwir is dark, or always when Light or dark above says Dark.",
+                    settings_code_dark_theme_description = "The colors of source files and of code in documents when code is drawn dark: while Skwir looks dark, or always when Light or dark above is set to Dark.",
                     note = "Light or dark is the name of another setting, Dark one of its choices."
                 ),
                 words!(
-                    settings_code_dark_theme_description_more = "Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its dark background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.",
+                    settings_code_dark_theme_description_more = "Default is the code theme of the palette Colors from chooses, where it has one for that look, else Skwir's own, on its dark background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.",
                     note = "Default is a choice of the setting; Colors from is the name of another setting; bat is a program's name."
                 ),
             ),
@@ -1330,12 +1327,12 @@ pub fn code_theme_spec(
             words!(settings_code_light_theme = "Light theme"),
             (
                 words!(
-                    settings_code_light_theme_description = "The colors of source files and of code in documents when code is light: while skwir is light, or always when Light or dark above says Light.",
+                    settings_code_light_theme_description = "The colors of source files and of code in documents when code is drawn light: while Skwir looks light, or always when Light or dark above is set to Light.",
                     note =
                         "Light or dark is the name of another setting, Light one of its choices."
                 ),
                 words!(
-                    settings_code_light_theme_description_more = "Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its light background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.",
+                    settings_code_light_theme_description_more = "Default is the code theme of the palette Colors from chooses, where it has one for that look, else Skwir's own, on its light background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own.",
                     note = "Default is a choice of the setting; Colors from is the name of another setting; bat is a program's name."
                 ),
             ),
@@ -1386,8 +1383,10 @@ pub(crate) fn grammar_folders_spec(nearly: usize) -> SettingSpec {
     let title = match nearly {
         0 => words!(settings_grammar_folders = "Where grammars were looked for"),
         n => words!(
-            settings_grammar_folders_nearly =
-                "Where grammars were looked for: { $count } nearly found",
+            settings_grammar_folders_nearly = "Where grammars were looked for: { $count ->
+                [one] { $count } nearly found
+               *[other] { $count } nearly found
+            }",
             count = n,
             note = "A list's title on the Reading page: count is how many grammars were nearly found, listed first."
         ),
@@ -1478,22 +1477,38 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
             n if n <= NAMED => words!(
                 settings_grammar_held_languages = "{ $source }: { $languages }",
                 source = source,
-                // Transitional: a list argument (ADR-139).
-                languages = looked.languages.join(", "),
-                note = "A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), languages the languages it held, as their grammars name them."
+                languages = List::and(looked.languages.iter().map(String::as_str)),
+                note = "A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), languages the languages it held, a list, as their grammars name them."
             ),
-            n => words!(
-                settings_grammar_held_more = "{ $source }: { $count ->
-        [one] { $count } language
-       *[other] { $count } languages
-    }: { $languages } and { $more } more",
-                source = source,
-                count = n,
-                // Transitional: a list argument (ADR-139).
-                languages = looked.languages[..NAMED].join(", "),
-                more = n - NAMED,
-                note = "A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), count how many languages it held, languages the first of them, as their grammars name them, more how many others."
-            ),
+            n => {
+                // The first few by their names, then how many more: one
+                // list, joined as the reader's language joins one.
+                let mut languages: Vec<words::Arg> = looked.languages[..NAMED]
+                    .iter()
+                    .map(|language| language.as_str().into())
+                    .collect();
+                languages.push(
+                    words!(
+                        settings_grammar_held_others = "{ $count ->
+                            [one] { $count } more
+                           *[other] { $count } more
+                        }",
+                        count = n - NAMED,
+                        note = "The last item of the languages a folder of grammars held, after the first few by name: how many others (rust, python and 12 more)."
+                    )
+                    .into(),
+                );
+                words!(
+                    settings_grammar_held_more = "{ $source }: { $count ->
+                        [one] { $count } language
+                       *[other] { $count } languages
+                    }: { $languages }",
+                    source = source,
+                    count = n,
+                    languages = List::and(languages),
+                    note = "A folder where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), count how many languages it held, languages a list of the first of them, as their grammars name them, then how many more."
+                )
+            }
         };
         records.push(serde_json::json!({
             "id": format!("exclusion-{}-{}", looked.source.key(), looked.folder.display()),
@@ -1517,9 +1532,8 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
             "name": source.short_words().say(),
             "detail": words!(
                 settings_grammar_none_there = "none of its folders is there: { $folders }",
-                // Transitional: a list argument (ADR-139).
-                folders = names.join(", "),
-                note = "Said of a source of grammars on the Reading page (Zed, the tree-sitter CLI): folders are the folders it is read in, none of which exists."
+                folders = List::and(names),
+                note = "Said of a source of grammars on the Reading page (Zed, the tree-sitter CLI): folders are the folders it is read in, a list of paths, none of which exists."
             )
             .say(),
             "wraps": true,
@@ -2073,11 +2087,11 @@ pub fn declare(app: &App) {
             words!(settings_launch_opens = "Open folders from other programs in"),
             (
                 words!(
-                    settings_launch_opens_description = "Where a folder goes that another program opens in Skwir while it runs: Show in Folder from a browser, a launcher, skwir and a folder typed in a terminal.",
-                    note = "Show in Folder is what browsers call the command; skwir there is the command typed in a terminal."
+                    settings_launch_opens_description = "Where a folder opens when another program opens it in a running Skwir: a browser's Show in Folder, a launcher, or `skwir` and a folder typed in a terminal.",
+                    note = "Show in Folder is what browsers call the command; `skwir`, in backquotes, is the command typed in a terminal, written as it is."
                 ),
                 words!(
-                    settings_launch_opens_description_more = "A new window opens on it; a tab opens it in the window used last, and Skwir started again with no folder brings that window forward.",
+                    settings_launch_opens_description_more = "With A new window, the folder opens in a window of its own; with A tab, it opens in a tab of the window used last, and Skwir started again with no folder brings that window forward.",
                     note = "What a setting's description says after its first sentence, in its tooltip."
                 ),
             ),
@@ -2196,10 +2210,10 @@ pub fn declare(app: &App) {
             words!(settings_buttons_for_views = "Show view buttons"),
             (
                 words!(
-                    settings_buttons_for_views_description = "Show a button for each view beside the address: list, grid, columns, and any other given one from the buttons' menu."
+                    settings_buttons_for_views_description = "Show a button for each view beside the address: list, grid, columns, and any other view given a button in the buttons' menu."
                 ),
                 words!(
-                    settings_buttons_for_views_description_more = "Off, one button stands for them, the view shown, and opens the View menu, as in a pane too narrow for them; its right-click still chooses the buttons.",
+                    settings_buttons_for_views_description_more = "Off, one button stands for them all: it shows the view shown and opens the View menu, as in a pane too narrow for them; a right-click on it still chooses the buttons.",
                     note = "What a setting's description says after its first sentence, in its tooltip."
                 ),
             ),
@@ -2255,7 +2269,7 @@ pub fn declare(app: &App) {
             words!(settings_notify_desktop = "Tell the desktop when a long action ends"),
             (
                 words!(
-                    settings_notify_desktop_description = "The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while skwir's window is in the background."
+                    settings_notify_desktop_description = "The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while Skwir's window is in the background."
                 ),
                 words!(
                     settings_notify_desktop_description_more = "With the window closed, every action that ends is told. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.",
@@ -2502,18 +2516,18 @@ pub fn declare(app: &App) {
     // reasons send there.
     let languages_more = match skwir_platform::grammars::folder() {
         Some(folder) => words!(
-            settings_languages_description_at = "Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder ({ $folder }) and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.",
+            settings_languages_description_at = "Automatic follows the choice above. bat colors with its own grammar, or with one you added to bat or Sublime Text. Each tree-sitter grammar is named by where it was found, and one that cannot be used is greyed, with the reason. Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder ({ $folder }) and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its own queries, built or not: unbuilt, its queries color the grammar of the same language found elsewhere (Emacs keeps no queries with its grammars). There, languages.toml says which files a language colors.",
             folder = home_shown(&folder),
             note = "What the Languages list's description says after its first sentence, in its tooltip. folder: where Skwir's grammars folder is (~/.local/share/skwir/grammars). Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name."
         ),
         None => words!(
-            settings_languages_description_more = "Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors.",
+            settings_languages_description_more = "Automatic follows the choice above. bat colors with its own grammar, or with one you added to bat or Sublime Text. Each tree-sitter grammar is named by where it was found, and one that cannot be used is greyed, with the reason. Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its own queries, built or not: unbuilt, its queries color the grammar of the same language found elsewhere (Emacs keeps no queries with its grammars). There, languages.toml says which files a language colors.",
             note = "What the Languages list's description says after its first sentence, in its tooltip. Automatic and Plain text are choices; bat, tree-sitter, Sublime Text, Zed, Helix, Neovim and Emacs programs' names; languages.toml a file's name."
         ),
     };
     let languages_description = (
         words!(
-            settings_languages_description = "The languages a grammar was found or added for, each with the files it colors and what colors it."
+            settings_languages_description = "Each language a grammar was found or added for, with the files it is written in and the grammar that colors them."
         ),
         languages_more,
     );
@@ -2593,10 +2607,10 @@ pub fn declare(app: &App) {
             words!(settings_folder_preview_file = "Show a README or a cover"),
             (
                 words!(
-                    settings_folder_preview_file_description = "In the preview, show a folder by the file that says what it holds: its README, or the cover of an album or of a photo folder."
+                    settings_folder_preview_file_description = "In the preview, show a folder by a file in it that says what it holds: its README, or the cover of an album or of a folder of photos."
                 ),
                 words!(
-                    settings_folder_preview_file_description_more = "The first of the names below that it holds is shown. Its card, its count and its Properties stay the folder's; the × leaves the file for the folder's count. Off, a folder's preview says how many items it holds.",
+                    settings_folder_preview_file_description_more = "The file shown is the first of the names below that the folder holds. The card, the count and Properties stay the folder's; the × leaves the file and shows the folder's count. Off, a folder's preview says how many items it holds.",
                     note = "What a setting's description says after its first sentence, in its tooltip."
                 ),
             ),
@@ -3035,7 +3049,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "sliders",
         intro: || {
             words!(
-                settings_intro_general = "The language skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
+                settings_intro_general = "The language Skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
                 note = "What a page of the settings window says under its title."
             )
         },
@@ -3063,7 +3077,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "appearance",
         intro: || {
             words!(
-                settings_intro_appearance = "How skwir looks.",
+                settings_intro_appearance = "How Skwir looks.",
                 note = "What a page of the settings window says under its title."
             )
         },
@@ -3111,7 +3125,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "tag",
         intro: || {
             words!(
-                settings_intro_notes = "Tags, ratings and comments: how tags are offered, and the places they are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.",
+                settings_intro_notes = "Tags, ratings and comments: how tags are offered, and the places they are kept in, so that the desktop, a Mac and other applications see them too. Every place is read, and what they hold is merged. Each is written as you choose: never; where the file already has notes there; there, and also where the file's volume keeps no attributes (one place is then started, the one its folder already uses first); or for every file edited.",
                 note = "What a page of the settings window says under its title."
             )
         },
@@ -3226,7 +3240,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "lock",
         intro: || {
             words!(
-                settings_intro_privacy = "What leaves this machine. An agent driving skwir, and a plugin from outside skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.",
+                settings_intro_privacy = "What leaves this machine. An agent driving Skwir, and a plugin from outside Skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.",
                 note = "What a page of the settings window says under its title."
             )
         },
@@ -3246,7 +3260,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "folder",
         intro: || {
             words!(
-                settings_intro_exclusions = "The files and folders skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside skwir and models see. skwir's own come in categories, each with its switch; tick or untick each, or add yours.",
+                settings_intro_exclusions = "The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours.",
                 note = "What a page of the settings window says under its title."
             )
         },
@@ -3286,7 +3300,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "keyboard",
         intro: || {
             words!(
-                settings_intro_keyboard = "Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace skwir's on the same keys there.",
+                settings_intro_keyboard = "Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace Skwir's on the same keys there.",
                 note = "What a page of the settings window says under its title."
             )
         },
@@ -3306,7 +3320,7 @@ static BUILTIN: [Builtin; 13] = [
         icon: "revert",
         intro: || {
             words!(
-                settings_intro_changed = "Every setting that differs from its default and every plugin turned on or off from how skwir comes, each with its way back.",
+                settings_intro_changed = "Every setting that differs from its default and every plugin turned on or off from how Skwir comes, each with its way back.",
                 note = "What a page of the settings window says under its title."
             )
         },

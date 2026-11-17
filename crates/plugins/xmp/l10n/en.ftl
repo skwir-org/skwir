@@ -3,8 +3,8 @@
 # A row's label in Properties: the keywords, rating and description written inside a picture (its XMP).
 xmp_embedded_label = XMP in the file
 
-# What XMP sidecars cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings.
-xmp_limits = whole stars; a tag's color only as a color label
+# What XMP sidecars cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings: a rating in half stars, a tag's color unless it is one of XMP's color labels.
+xmp_limits = half stars, or a tag's color other than as a color label
 
 xmp_plugin_description = Tags, ratings and descriptions in XMP sidecars, as photo applications keep them; XMP inside pictures and PDFs shown in Properties
 

@@ -16,7 +16,7 @@ archives_already_held = { $count ->
 archives_already_there = { $name } is already there
 
 # Why an archive is not made: its name is taken by something that goes in it.
-archives_among_inputs = { $name } is among what it compresses
+archives_among_inputs = { $name } is among what goes into the archive
 
 # The title of the question asking an archive's name, which follows it in a field.
 archives_ask_as = { $count ->
@@ -147,8 +147,8 @@ archives_extracted_to = extracted { $archive } to { $into }
 
 # Above an archive's listing cut short: how many of its members are listed.
 archives_first_members = { $count ->
-        [one] First { $count } member · open it in an archive application for the rest
-       *[other] First { $count } members · open it in an archive application for the rest
+        [1] Only the first member is listed · open the archive in an archive application for the rest
+       *[other] Only the first { $count } members are listed · open the archive in an archive application for the rest
     }
 
 # Why a member of an archive is not extracted into a folder already there: the folder it goes in went.
@@ -158,10 +158,10 @@ archives_folder_not_there = the folder { $name } goes in is not there
 archives_format_differs = { $name } says { $said }, and the format { $asked }
 
 # Why an archive is not extracted: the folder of its name holds the archive itself.
-archives_holds_archive = { $there } holds { $archive }, which it would be extracted from
+archives_holds_archive = { $there } holds { $archive }, the archive to extract
 
 # Why an archive is not made: the folder of its name holds something that goes in it.
-archives_holds_input = { $there } holds { $input }, which it compresses
+archives_holds_input = { $there } holds { $input }, which goes into the archive
 
 # An error an agent or a script reads: the archive named has no folder (a root).
 archives_in_a_folder = an archive is in a folder

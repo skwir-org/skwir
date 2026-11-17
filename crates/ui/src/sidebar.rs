@@ -1806,7 +1806,7 @@ impl Shell {
             sidebar_kept_by_owner =
                 "{ $place } is kept in the sidebar by its owner: its menu arranges it",
             place = named(&arranged.place),
-            note = "Said when a place the user keeps (a bookmark, a saved search) is arranged as the sidebar arranges the places it offers: its own menu renames, moves or removes it."
+            note = "Said when a place the user keeps (a bookmark, a saved search) is arranged as the sidebar arranges the places it offers: its own menu renames, moves or removes it. place: its name, quoted, whose gender is not known: where words would agree with it, name it as a place (the place “Docs”)."
         );
         if let Some(hidden) = args.get("hidden").and_then(serde_json::Value::as_bool) {
             if !arranged.role.hides() {
@@ -1825,7 +1825,7 @@ impl Shell {
                         words!(
                             sidebar_hid = "Hid { $place } from the sidebar",
                             place = named(&arranged.place),
-                            note = "Said after a place was hidden from the sidebar, with Undo."
+                            note = "Said after a place was hidden from the sidebar, with Undo. place: its name, quoted, whose gender is not known: where words would agree with it, name it as a place (the place “Docs” hidden)."
                         ),
                         crate::toast::Tone::Info,
                         vec![crate::toast::Action {

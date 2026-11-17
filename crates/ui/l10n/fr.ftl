@@ -4,7 +4,7 @@
 about_close = Fermer
 
 # draft
-about_copied = Version de skwir et détails du système copiés
+about_copied = Version de Skwir et détails du système copiés
 
 # draft
 about_copy_details = Copier les détails
@@ -34,7 +34,7 @@ about_graphics_software = { $graphics } (rendu par le processeur)
 about_licences = Licences
 
 # draft
-about_named = À propos de skwir
+about_named = À propos de Skwir
 
 # draft
 about_source = Code source
@@ -55,7 +55,7 @@ about_text_from = d’après { $desktop }
 about_text_label = Texte
 
 # draft
-about_text_own_size = taille propre à skwir
+about_text_own_size = taille propre à Skwir
 
 # draft
 about_text_scaled = { $font } { $px } px ({ $pt } pt) { $source }, mise à l’échelle du texte { $scaling } ; tailles : interface { $interface }, fichiers { $files }, lecture { $reading }, code { $code }
@@ -200,9 +200,9 @@ activity_retry = Réessayer
 activity_spell_at = { $at } sur { $of } · { $percent }
 
 # draft
-activity_spell_label = { $at } sur { $of ->
-        [one] { $of } action
-       *[other] { $of } actions
+activity_spell_label = { $at ->
+        [one] { $at } action sur { $of }
+       *[other] { $at } actions sur { $of }
     }
 
 # draft
@@ -254,7 +254,7 @@ address_a_to_z = De A à Z
 address_a_to_z_said = de A à Z
 
 # draft
-address_about = À propos de skwir
+address_about = À propos de Skwir
 
 # draft
 address_above = Au-dessus de { $place }
@@ -275,7 +275,7 @@ address_buttons = Boutons…
 address_buttons_tip = Choisir les boutons à côté de l’adresse : quelles vues en ont un, et si Dossier parent suit Précédent et Suivant
 
 # draft
-address_caption_accessed = Afficher la date d’accès sous le nom de chaque case
+address_caption_accessed = Afficher la date de consultation sous le nom de chaque case
 
 # draft
 address_caption_created = Afficher la date de création sous le nom de chaque case
@@ -302,7 +302,7 @@ address_caption_kind = Afficher le genre sous le nom de chaque case
 address_caption_modified = Afficher la date de modification sous le nom de chaque case
 
 # draft
-address_caption_name = Afficher le nom sous le nom de chaque case
+address_caption_name = Afficher le nom de chaque case
 
 # draft
 address_caption_owner = Afficher le propriétaire sous le nom de chaque case
@@ -353,7 +353,7 @@ address_companions_tip = Lister aussi les fichiers qui gardent les annotations d
 address_default_buttons = Boutons par défaut
 
 # draft
-address_default_buttons_tip = Revenir aux boutons d’origine de skwir
+address_default_buttons_tip = Revenir aux boutons d’origine de Skwir
 
 # draft
 address_default_levels = Niveaux par défaut
@@ -521,7 +521,7 @@ address_quick_filters_tip = Proposer, au-dessus des fichiers de ce panneau, leur
 address_quit = Quitter
 
 # draft
-address_quit_tip = Quitter skwir
+address_quit_tip = Quitter Skwir
 
 # draft
 address_redo = Rétablir
@@ -818,10 +818,10 @@ clipboard_unreachable_remote = { $count ->
     }
 
 # draft
-commands_about = À propos de skwir
+commands_about = À propos de Skwir
 
 # draft
-commands_about_description = Afficher la version et la licence de skwir, et ce sur quoi il fonctionne
+commands_about_description = Afficher la version et la licence de Skwir, et ce sur quoi il fonctionne
 
 # draft
 commands_accept = Confirmer
@@ -1078,7 +1078,7 @@ commands_field_reference_description = Afficher sous le champ en cours de saisie
 commands_filter = Filtrer…
 
 # draft
-commands_filter_description = Filtrer le dossier affiché depuis le champ d’adresse à mesure que vous tapez, sans ses sous-dossiers, à partir d’un texte ; une fois tapé, chercher dans ce seul dossier
+commands_filter_description = Filtrer le dossier affiché depuis la barre d’adresse à mesure que vous tapez, sans ses sous-dossiers, en partant de `text` s’il est donné ; ce qui y est tapé est cherché dans ce seul dossier
 
 # draft
 commands_find = Rechercher un nom…
@@ -1804,7 +1804,7 @@ commands_note_description = Fermer la note d’un livre, ou aller là où elle s
 commands_omnibox_complete = Compléter
 
 # draft
-commands_omnibox_complete_description = Compléter ce qui est tapé dans la barre d’adresse : par la partie commune aux noms qui commencent ainsi, sinon par la suggestion mise en évidence, un dossier étant alors listé
+commands_omnibox_complete_description = Compléter ce qui est tapé dans la barre d’adresse : par la partie commune aux noms qui y correspondent, sinon par la suggestion mise en évidence ; un dossier ainsi complété est ensuite listé
 
 # draft
 commands_omnibox_forget = Oublier la suggestion
@@ -1852,7 +1852,7 @@ commands_peek_close = Fermer le coup d’œil
 commands_peek_close_description = Fermer le grand aperçu
 
 # draft
-commands_peek_description = Regarder le fichier sous le curseur dans un grand aperçu ; il se ferme quand la commande est exécutée à nouveau, ou quand sa touche, maintenue, est relâchée
+commands_peek_description = Regarder le fichier sous le curseur dans un grand aperçu, qui se ferme quand cette commande est exécutée à nouveau, ou quand sa touche, maintenue, est relâchée
 
 # draft
 commands_plan_cancel = Arrêter la préparation
@@ -1864,7 +1864,7 @@ commands_plan_cancel_description = Abandonner le plan en préparation pour ce qu
 commands_player = Lecteur
 
 # draft
-commands_player_description = Demander quelque chose au lecteur épinglé (lire, mettre en pause, suivant, arrêter…)
+commands_player_description = Demander au lecteur épinglé ce que dit `request` : `play`, `pause`, `next`, `stop`, `seek_by` quelques secondes…
 
 # draft
 commands_player_volume = Lecteur : volume
@@ -1972,7 +1972,7 @@ commands_preview_select_all_description = Sélectionner tout le texte qu’affic
 commands_preview_zoom = Aperçu : zoomer
 
 # draft
-commands_preview_zoom_description = Zoomer sur ce qu’affiche l’aperçu, ou changer la taille de ce qu’il donne à lire
+commands_preview_zoom_description = Zoomer ou dézoomer ce qu’affiche l’aperçu (une image, une page, une carte, un modèle), ou agrandir ou réduire le texte de ce qu’il donne à lire (un livre, un document)
 
 # draft
 commands_printed_pages = Numéros de page imprimés
@@ -1996,7 +1996,7 @@ commands_properties_description = Afficher ou masquer les propriétés de la sé
 commands_properties_fold = Propriétés : replier un groupe
 
 # draft
-commands_properties_fold_description = Replier l’un des groupes des Propriétés (`Checksums`, `Volume`…) ou le déplier, pour chaque élément désormais
+commands_properties_fold_description = Replier l’un des groupes des Propriétés, par sa clé (`Checksums`, `Volume`…), ou le déplier, pour chaque élément désormais
 
 # draft
 commands_quick_filters = Afficher ou masquer les filtres rapides
@@ -2056,7 +2056,7 @@ commands_reader_search_description = Chercher dans un document ce que contient l
 commands_rename_bulk_case = Changer la casse
 
 # draft
-commands_rename_bulk_case_description = Passer à la casse suivante que le renommage en lot donne aux noms, la première revenant après la dernière ; avec un delta, avancer d’autant de crans, en s’arrêtant aux extrémités
+commands_rename_bulk_case_description = Choisir la casse suivante que le renommage en lot donne aux noms, la première revenant après la dernière ; avec un `delta`, avancer d’autant de casses, en s’arrêtant à la première ou à la dernière
 
 # draft
 commands_rename_bulk_next = Champ suivant
@@ -2080,7 +2080,7 @@ commands_rename_bulk_prompt_description = Renommer ensemble les éléments séle
 commands_rename_prompt = Renommer…
 
 # draft
-commands_rename_prompt_description = Renommer l’élément sélectionné, ou un emplacement (celui d’une étiquette) de la façon qu’il prévoit
+commands_rename_prompt_description = Renommer l’élément sélectionné, ou un emplacement de la barre latérale, de la façon que prévoit ce qu’il ouvre
 
 # draft
 commands_reveal = Afficher dans le dossier
@@ -2116,7 +2116,7 @@ commands_search_chip = Menu d’une pastille de recherche
 commands_search_chip_description = Ouvrir ou fermer le menu d’une pastille de recherche
 
 # draft
-commands_search_description = Chercher dans le dossier affiché et ses sous-dossiers depuis la barre d’adresse, à partir d’un texte ; ce que vous y tapez cherche sous le dossier
+commands_search_description = Chercher dans le dossier affiché et ses sous-dossiers depuis la barre d’adresse, en partant de `text` s’il est donné ; ce qui y est tapé est cherché sous le dossier
 
 # draft
 commands_select_group = Sélectionner le groupe
@@ -2416,7 +2416,7 @@ commands_toolbar_submenu_description = Ouvrir un sous-menu du menu Plus de l’a
 commands_undo_history = Historique des annulations
 
 # draft
-commands_undo_history_description = Ouvrir ou fermer l’historique de ce qu’Annuler peut défaire, au-dessus du bouton Annuler de la barre d’état : chaque action avec son propre Annuler, le Rétablir d’une action annulée, qui n’agissent que sur elle quand rien après elle n’a touché à ce qu’elle a fait, sinon nomment l’action qui y a touché, et Annuler avec ce qui a suivi (ADR-079, 13)
+commands_undo_history_description = Ouvrir ou fermer l’historique de ce qu’Annuler peut défaire, au-dessus du bouton Annuler de la barre d’état. Chaque action y a son propre Annuler, une action annulée son propre Rétablir, qui n’agit que sur elle quand rien de ce qui a été fait après elle n’a touché à ce qu’elle a fait ; sinon, l’historique nomme l’action qui y a touché, et propose de l’annuler avec celles qui l’ont suivie (ADR-079, 13)
 
 # draft
 commands_up_button = Afficher le bouton Dossier parent
@@ -2527,7 +2527,10 @@ deleting_counting = Décompte…
 deleting_counting_so_far = Décompte… { $size } pour l’instant
 
 # draft
-deleting_deleted_with = Supprimés avec lui :
+deleting_deleted_with = { $count ->
+        [one] Fichier annexe supprimé avec lui :
+       *[other] Fichiers annexes supprimés avec lui :
+    }
     { $paths }
 
 # draft
@@ -2598,12 +2601,12 @@ deleting_items = { $count ->
 
 # draft
 deleting_kept = { $count ->
-        [one] Supprimer { $count } élément ? Il ira dans la { $trash } ; Skwir ne pourra pas le restaurer.
-       *[other] Supprimer { $count } éléments ? Ils iront dans la { $trash } ; Skwir ne pourra pas les restaurer.
+        [one] Supprimer { $count } élément ? Il ira dans { $trash } ; Skwir ne pourra pas le restaurer.
+       *[other] Supprimer { $count } éléments ? Ils iront dans { $trash } ; Skwir ne pourra pas les restaurer.
     }
 
 # draft
-deleting_kept_one = Supprimer { $name } ? Il ira dans la { $trash } ; Skwir ne pourra pas le restaurer.
+deleting_kept_one = Supprimer { $name } ? Il ira dans { $trash } ; Skwir ne pourra pas le restaurer.
 
 # draft
 deleting_link = lien
@@ -2624,7 +2627,10 @@ deleting_one = Supprimer définitivement { $name } ? Cette action est irréver
 deleting_said_and = { $said }, { $fact }
 
 # draft
-deleting_said_with = supprimés avec lui : { $names }
+deleting_said_with = { $count ->
+        [one] supprimé avec lui : { $names }
+       *[other] supprimés avec lui : { $names }
+    }
 
 # draft
 deleting_size = { $size }
@@ -2732,7 +2738,7 @@ exclusions_already = Déjà dans la liste, dans { $category } : choisissez Affi
 exclusions_asking_title = Laisser les agents lire ces fichiers et dossiers ?
 
 # draft
-exclusions_asking_why = Un agent qui pilote skwir, un module externe à skwir et un modèle d’IA pourraient alors les lister et lire ce qu’ils contiennent.
+exclusions_asking_why = Un agent qui pilote Skwir, un module externe à Skwir et un modèle d’IA pourraient alors les lister et lire ce qu’ils contiennent.
 
 # draft
 exclusions_badge_absent = Absent de cet ordinateur
@@ -2789,7 +2795,7 @@ exclusions_choose_folder = Choisir un dossier…
 exclusions_copied = { $folder } dupliqué
 
 # draft
-exclusions_copied_builtin = { $folder } dupliqué : vous pouvez modifier la copie, celle de skwir est décochée
+exclusions_copied_builtin = { $folder } dupliqué : vous pouvez modifier la copie, celle de Skwir est décochée
 
 # draft
 exclusions_create = Créer
@@ -2868,22 +2874,44 @@ exclusions_found = { $count ->
     }
 
 # draft
-exclusions_heading_count = { $kept } sur { $total } exclus
+exclusions_heading_count = { $kept ->
+        [one] { $kept } exclu sur { $total }
+       *[other] { $kept } exclus sur { $total }
+    }
 
 # draft
-exclusions_heading_count_found = { $shown } trouvés sur { $total } · { $kept } exclus
+exclusions_heading_count_found = { $shown ->
+        [one] { $shown } trouvé
+       *[other] { $shown } trouvés
+    } sur { $total } · { $kept ->
+        [one] { $kept } exclu
+       *[other] { $kept } exclus
+    }
 
 # draft
-exclusions_heading_count_here = { $shown } ici sur { $total } · { $kept } exclus
+exclusions_heading_count_here = { $shown } ici sur { $total } · { $kept ->
+        [one] { $kept } exclu
+       *[other] { $kept } exclus
+    }
 
 # draft
-exclusions_heading_said = { $name }, { $kept } sur { $total } { $role ->
-        [searches] exclus des recherches et des étiquettes
-        [agents] tenus à l’écart des agents
-       *[index] exclus de l’index
+exclusions_heading_said = { $name }, { $kept ->
+        [one] { $kept } sur { $total } { $role ->
+            [searches] exclu des recherches et des étiquettes
+            [agents] tenu à l’écart des agents
+           *[index] exclu de l’index
+        }
+       *[other] { $kept } sur { $total } { $role ->
+            [searches] exclus des recherches et des étiquettes
+            [agents] tenus à l’écart des agents
+           *[index] exclus de l’index
+        }
     }{ $narrowed ->
         [here] , { $shown } ici
-        [found] , { $shown } trouvés
+        [found] , { $shown ->
+            [one] { $shown } trouvé
+           *[other] { $shown } trouvés
+        }
        *[all] {""}
     }{ $folded ->
         [yes] , repliée
@@ -3005,7 +3033,7 @@ exclusions_names_folders = Dossiers
 exclusions_names_named = Exclut
 
 # draft
-exclusions_never_removed = Les exclusions de skwir se décochent, elles ne sont jamais retirées
+exclusions_never_removed = Les exclusions de Skwir se décochent, elles ne sont jamais retirées
 
 # draft
 exclusions_new_category = Nouvelle catégorie…
@@ -3014,7 +3042,7 @@ exclusions_new_category = Nouvelle catégorie…
 exclusions_new_category_title = Nouvelle catégorie
 
 # draft
-exclusions_none_changed = Vous n’avez encore modifié aucune des exclusions de skwir, ni ajouté aucune exclusion.
+exclusions_none_changed = Vous n’avez encore modifié aucune des exclusions de Skwir, ni ajouté aucune exclusion.
 
 # draft
 exclusions_none_here = Aucune exclusion ici.
@@ -3035,10 +3063,10 @@ exclusions_path_and_all = { $path } et tout ce qu’il contient
 exclusions_pattern_placeholder = ~/VMs, node_modules, cmake-build-*, regex:…
 
 # draft
-exclusions_privacy = Ce que les agents, les modules externes à skwir et les modèles d’IA ne voient jamais : { $count ->
+exclusions_privacy = Ce que les agents, les modules externes à Skwir et les modèles d’IA ne voient jamais : { $count ->
         [one] { $count } exclusion
        *[other] { $count } exclusions
-    }, les secrets de skwir et les vôtres.
+    }, les secrets de Skwir et les vôtres.
 
 # draft
 exclusions_privacy_open = Exclusions…
@@ -3053,10 +3081,10 @@ exclusions_rename = Renommer
 exclusions_rename_category_title = Renommer la catégorie
 
 # draft
-exclusions_reset = { $folder } est rétabli tel que skwir le fournit
+exclusions_reset = { $folder } est rétabli tel que Skwir le fournit
 
 # draft
-exclusions_reset_tooltip = Rétablir : tel que skwir le fournit
+exclusions_reset_tooltip = Rétablir : tel que Skwir le fournit
 
 # draft
 exclusions_role_agents = Agents
@@ -3115,10 +3143,16 @@ exclusions_ticked_off = { $folder } coché ; sa catégorie est désactivée po
 exclusions_unfold = Déplier
 
 # draft
-exclusions_unreadable = Ce qui ne peut pas être lu ne s’applique pas : { $problems }
+exclusions_unreadable = { $count ->
+        [one] Impossible à lire, donc sans effet : { $problems }
+       *[other] Impossibles à lire, donc sans effet : { $problems }
+    }
 
 # draft
-exclusions_unreadable_more = Ce qui ne peut pas être lu ne s’applique pas : { $problems } (et { $more } de plus)
+exclusions_unreadable_others = { $count ->
+        [one] { $count } autre
+       *[other] { $count } autres
+    }
 
 # draft
 exclusions_unticked = { $folder } n’est plus { $role ->
@@ -3766,7 +3800,7 @@ keymap_key_tab = Tab
 keymap_not = sauf { $condition }
 
 # draft
-keymap_place_about = À propos de skwir
+keymap_place_about = À propos de Skwir
 
 # draft
 keymap_place_activity = Activité
@@ -3949,7 +3983,7 @@ keys_heading_change = { $keys } pour « { $action } » · { $place }
 keys_heading_find = Trouver les actions d’une touche
 
 # draft
-keys_heading_reset = Retour aux touches de skwir pour « { $action } » · { $place }
+keys_heading_reset = Retour aux touches de Skwir pour « { $action } » · { $place }
 
 # draft
 keys_heading_restore = { $keys } n’exécute plus « { $action } » · { $place }
@@ -4065,13 +4099,13 @@ keys_press_to_find = Appuyez sur les touches à chercher…
 keys_remove = Retirer ces touches
 
 # draft
-keys_reset_detail = Ses touches redeviennent celles de skwir, et vos raccourcis qui les avaient prises disparaissent.
+keys_reset_detail = Ses touches redeviennent celles de Skwir, et vos raccourcis qui les avaient prises disparaissent.
 
 # draft
-keys_reset_save = Revenir aux touches de skwir
+keys_reset_save = Revenir aux touches de Skwir
 
 # draft
-keys_reset_tip = Revenir aux touches de skwir
+keys_reset_tip = Revenir aux touches de Skwir
 
 # draft
 keys_restore = Restaurer
@@ -4156,7 +4190,7 @@ links_inside_missing = { $container } ne contient pas « { $path } »
 links_inside_out = Ce lien mène hors de { $container }
 
 # draft
-links_inside_unlisted = Ce lien désigne un fichier à l’intérieur de { $container }
+links_inside_unlisted = Ce lien désigne un fichier à l’intérieur de { $container }, dont les fichiers ne sont pas listés ici pour qu’il puisse être suivi
 
 # draft
 links_no_anchor = { $file } ne contient pas de « #{ $anchor } »
@@ -4396,7 +4430,13 @@ map_view_placed_without = { $placed ->
     } · { $without } sans position
 
 # draft
-map_view_placing = Placement… { $placed } sur { $candidates } photos et traces, examinées jusqu’ici : { $looked }
+map_view_placing = Placement… { $placed ->
+        [one] { $placed } fichier placé
+       *[other] { $placed } fichiers placés
+    } · { $looked ->
+        [one] { $looked } examiné sur { $candidates }
+       *[other] { $looked } examinés sur { $candidates }
+    }
 
 # draft
 map_view_search_subfolders = Rechercher dans les sous-dossiers
@@ -4462,10 +4502,13 @@ media_unmute = Rétablir le son
 media_volume = Volume
 
 # draft
-media_volume_level = Volume · { $level }
+media_volume_level = Volume · { $percent } %
 
 # draft
 media_volume_muted = Volume · coupé
+
+# draft
+media_volume_percent = { $percent } %
 
 # draft
 menu_close_tab = Fermer l’onglet
@@ -4648,6 +4691,12 @@ omnibox_depth_here_label = Ce dossier
 omnibox_enter_searches = Entrée lance la recherche
 
 # draft
+omnibox_footer_nothing = Un chemin (/ ou ~), un emplacement ou des mots pour filtrer ; > pour une commande.
+
+# draft
+omnibox_footer_nothing_keys = Un chemin (/ ou ~), un emplacement ou des mots pour filtrer ; { $keys } cherche en dessous ; > pour une commande.
+
+# draft
 omnibox_footer_scope = Entrée lance la recherche à cet endroit.
 
 # draft
@@ -4693,9 +4742,6 @@ omnibox_help_words = Cherchent là où le dit la portée, et filtrent aussitôt 
 omnibox_help_words_label = mots
 
 # draft
-omnibox_hint_command = > pour une commande
-
-# draft
 omnibox_hint_completes = { $keys } complète
 
 # draft
@@ -4714,19 +4760,13 @@ omnibox_hint_opens = { $keys } ouvre un fichier
 omnibox_hint_searches = Entrée lance la recherche
 
 # draft
-omnibox_hint_searches_below = { $keys } cherche en dessous
-
-# draft
 omnibox_hint_searches_folder = { $keys } sur un dossier y cherche
 
 # draft
-omnibox_hint_takes = Un chemin (/ ou ~), un emplacement ou des mots pour filtrer
-
-# draft
-omnibox_hint_too = { $keys } aussi
-
-# draft
 omnibox_hint_writes = Entrée l’écrit
+
+# draft
+omnibox_hint_writes_or = Entrée ou { $keys } l’écrit
 
 # draft
 omnibox_hints = { $hints }.
@@ -4798,10 +4838,10 @@ omnibox_token_filtering = Filtrage de { $scope }
 omnibox_token_searching = Recherche dans { $scope } et en dessous
 
 # draft
-omnibox_waits = { $what } : il faut une recherche.
+omnibox_waits = Seule une recherche peut dire { $what }.
 
 # draft
-omnibox_waits_keys = { $what } : il faut une recherche ({ $keys }).
+omnibox_waits_keys = Seule une recherche peut dire { $what } : { $keys }.
 
 # draft
 omnibox_whole_disk = Disque entier
@@ -4816,7 +4856,7 @@ outline_empty = Aucun sommaire
 outline_pin = Garder le sommaire ouvert
 
 # draft
-palette_about = À propos de skwir
+palette_about = À propos de Skwir
 
 # draft
 palette_asks = { $command } · { $argument }
@@ -5350,7 +5390,16 @@ preview_count_by = Compter par
 preview_each_picture_for = Durée de chaque image
 
 # draft
-preview_fact_then = { $fact } ·
+preview_facts = { $type_name } · { $size } · { $date }
+
+# draft
+preview_facts_size_date = { $size } · { $date }
+
+# draft
+preview_facts_type_date = { $type_name } · { $date }
+
+# draft
+preview_facts_type_size = { $type_name } · { $size }
 
 # draft
 preview_find = Rechercher
@@ -5417,6 +5466,9 @@ preview_nothing_shows = Aucun programme installé n’affiche ce fichier
 
 # draft
 preview_nothing_to_peek = rien sous le curseur pour un coup d’œil
+
+# draft
+preview_number = { $number }
 
 # draft
 preview_of_total = / { $total }
@@ -5506,7 +5558,10 @@ preview_stand_in_twice = { $name } figure deux fois dans la liste
 preview_stand_ins = Fichiers affichés pour les dossiers…
 
 # draft
-preview_too_many_pixels = Image trop grande pour l’aperçu ({ $size } pixels, plus de { $megapixels } mégapixels)
+preview_too_many_pixels = Image trop grande pour l’aperçu ({ $width } × { $height } pixels, plus de { $megapixels ->
+        [one] { $megapixels } mégapixel
+       *[other] { $megapixels } mégapixels
+    })
 
 # draft
 preview_turn = 3D
@@ -5572,7 +5627,16 @@ preview_zoom_percent = { $percent } %
 preview_zoom_width = Largeur
 
 # draft
-profile_length_planned = { $length } prévus
+profile_distance_kilometres = { $kilometres } km
+
+# draft
+profile_distance_metres = { $metres } m
+
+# draft
+profile_length_planned = Prévu : { $length }
+
+# draft
+profile_metres = { $metres } m
 
 # draft
 profile_readout = { $along } · { $altitude }
@@ -5743,7 +5807,7 @@ properties_contains = Contient
 properties_contains_nothing = Rien
 
 # draft
-properties_copied = Copié : { $what }
+properties_copied = Valeur { $what } copiée
 
 # draft
 properties_copy_link = Copier
@@ -5795,9 +5859,9 @@ properties_drive_read_only = Le disque est en lecture seule
 
 # draft
 properties_drives_inside = { $count ->
-        [one] { $count } disque monté
-       *[other] { $count } disques montés
-    } à l’intérieur
+        [one] { $count } disque monté à l’intérieur
+       *[other] { $count } disques montés à l’intérieur
+    }
 
 # draft
 properties_drives_read_only = Un des disques où ils se trouvent est en lecture seule
@@ -6070,7 +6134,7 @@ properties_stop_running = Interdire l’exécution
 properties_subtitles = Sous-titres
 
 # draft
-properties_suggested_by = suggéré par { $model } · { $confidence }
+properties_suggested_by = suggestion de { $model } · { $confidence } %
 
 # draft
 properties_tags = Étiquettes
@@ -6107,6 +6171,9 @@ properties_unread = { $count ->
 
 # draft
 properties_unreadable = Illisible
+
+# draft
+properties_value_list = { $items }
 
 # draft
 properties_yes = Oui
@@ -6256,6 +6323,12 @@ reader_find_field = Rechercher dans le document…
 
 # draft
 reader_invalid_bitmap = image de page du document non valide
+
+# draft
+reader_match_of = { $at } / { $count }
+
+# draft
+reader_match_of_most = { $at } / { $count }+
 
 # draft
 reader_next_page = Page suivante
@@ -6699,10 +6772,10 @@ settings_buttons_for_views = Afficher les boutons de vue
 settings_buttons_for_views_data = Les vues dotées d’un bouton à côté de l’adresse (true) ou dont le bouton a été retiré (false), par identifiant ; toute autre vue a un bouton si elle montre les fichiers tels qu’ils sont listés (list, grid, columns)
 
 # draft
-settings_buttons_for_views_description = Afficher un bouton pour chaque vue à côté de l’adresse : liste, grille, colonnes, et toute autre vue à laquelle vous en donnez un depuis le menu des boutons.
+settings_buttons_for_views_description = Afficher un bouton pour chaque vue à côté de l’adresse : liste, grille, colonnes, et toute autre vue à laquelle le menu des boutons en donne un.
 
 # draft
-settings_buttons_for_views_description_more = Désactivé, un seul bouton les représente, celui de la vue affichée, et ouvre le menu Affichage, comme dans un panneau trop étroit pour eux ; un clic droit dessus permet toujours de choisir les boutons.
+settings_buttons_for_views_description_more = Désactivé, un seul bouton les représente toutes : il montre la vue affichée et ouvre le menu Affichage, comme dans un panneau trop étroit pour eux ; un clic droit dessus permet toujours de choisir les boutons.
 
 # draft
 settings_cards = Disposition en cartes
@@ -6732,16 +6805,16 @@ settings_code_appearance = Clair ou sombre
 settings_code_appearance_description = Afficher les fichiers source et le code dans les documents en clair ou en sombre.
 
 # draft
-settings_code_appearance_description_more = Automatique suit le thème de skwir ; Clair ou Sombre garde le code dans le thème choisi plus bas pour cette apparence, avec sa marge, sa sélection et son fond, que skwir soit clair ou sombre.
+settings_code_appearance_description_more = Automatique suit le thème de Skwir ; Clair ou Sombre garde le code dans le thème choisi plus bas pour cette apparence, avec sa marge, sa sélection et son fond, quelle que soit l’apparence de Skwir.
 
 # draft
 settings_code_dark_theme = Thème sombre
 
 # draft
-settings_code_dark_theme_description = Les couleurs des fichiers source et du code dans les documents quand le code est sombre : tant que skwir est sombre, ou toujours quand Clair ou sombre, plus haut, indique Sombre.
+settings_code_dark_theme_description = Les couleurs des fichiers source et du code dans les documents quand le code est dessiné en sombre : tant que Skwir a une apparence sombre, ou toujours quand Clair ou sombre, plus haut, est réglé sur Sombre.
 
 # draft
-settings_code_dark_theme_description_more = Le choix Par défaut prend le thème de code de la palette que choisit Source des couleurs, si elle en a un pour cette apparence, sinon celui de skwir, sur son fond sombre ; un thème apporte son propre fond, son gras et son italique. Les thèmes que vous avez ajoutés à bat, dans son dossier de thèmes, viennent après ceux de bat.
+settings_code_dark_theme_description_more = Le choix Par défaut prend le thème de code de la palette que choisit Source des couleurs, si elle en a un pour cette apparence, sinon celui de Skwir, sur son fond sombre ; un thème apporte son propre fond, son gras et son italique. Les thèmes que vous avez ajoutés à bat, dans son dossier de thèmes, viennent après ceux de bat.
 
 # draft
 settings_code_engine = Automatique utilise
@@ -6759,16 +6832,16 @@ settings_code_font = Police du code
 settings_code_font_description = La police des fichiers source et texte, du code dans les documents, de la vue hexadécimale et du terminal, où chaque lettre a la même largeur.
 
 # draft
-settings_code_font_description_more = Automatique est la police à chasse fixe de votre bureau, telle que la lit Source des polices, sinon celle de skwir.
+settings_code_font_description_more = Automatique est la police à chasse fixe de votre bureau, telle que la lit Source des polices, sinon celle de Skwir.
 
 # draft
 settings_code_light_theme = Thème clair
 
 # draft
-settings_code_light_theme_description = Les couleurs des fichiers source et du code dans les documents quand le code est clair : tant que skwir est clair, ou toujours quand Clair ou sombre, plus haut, indique Clair.
+settings_code_light_theme_description = Les couleurs des fichiers source et du code dans les documents quand le code est dessiné en clair : tant que Skwir a une apparence claire, ou toujours quand Clair ou sombre, plus haut, est réglé sur Clair.
 
 # draft
-settings_code_light_theme_description_more = Le choix Par défaut prend le thème de code de la palette que choisit Source des couleurs, si elle en a un pour cette apparence, sinon celui de skwir, sur son fond clair ; un thème apporte son propre fond, son gras et son italique. Les thèmes que vous avez ajoutés à bat, dans son dossier de thèmes, viennent après ceux de bat.
+settings_code_light_theme_description_more = Le choix Par défaut prend le thème de code de la palette que choisit Source des couleurs, si elle en a un pour cette apparence, sinon celui de Skwir, sur son fond clair ; un thème apporte son propre fond, son gras et son italique. Les thèmes que vous avez ajoutés à bat, dans son dossier de thèmes, viennent après ceux de bat.
 
 # draft
 settings_code_text_size = Taille du texte du code
@@ -6786,22 +6859,22 @@ settings_code_theme_more = les thèmes que vous avez ajoutés à bat
 settings_colors_from = Source des couleurs
 
 # draft
-settings_colors_from_description = Où skwir prend ses couleurs : celles de votre bureau, ou l’une des palettes de skwir.
+settings_colors_from_description = Où Skwir prend ses couleurs : celles de votre bureau, ou l’une des palettes de Skwir.
 
 # draft
 settings_colors_from_description_more = Automatique lit celles de votre bureau (le jeu de couleurs de Plasma, la palette de LXQt, le thème d’Omarchy, le thème GTK que nomment GNOME, MATE, Cinnamon ou Xfce), sinon les couleurs de GTK (son thème, avec par-dessus votre propre feuille de style GTK, où un shell de bureau comme Noctalia, Caelestia ou Dux Shell écrit ses couleurs), sinon le jeu de couleurs de qt6ct, qt5ct, qtengine ou hyprqt6engine ; GTK ou Qt ne lit que celles de cette boîte à outils. Une palette garde sa propre couleur d’accentuation et apporte ses couleurs de code et de terminal, chacune en apparence claire et en apparence sombre. Un contraste renforcé, quand votre bureau le demande, est respecté quel que soit le choix.
 
 # draft
-settings_colors_from_macos = Où skwir prend ses couleurs : celles de macOS, ou l’une des palettes de skwir.
+settings_colors_from_macos = Où Skwir prend ses couleurs : celles de macOS, ou l’une des palettes de Skwir.
 
 # draft
 settings_colors_from_macos_more = Automatique reprend les couleurs dans lesquelles macOS dessine ses propres fenêtres, avec la couleur d’accentuation que vous avez choisie et son réglage Augmenter le contraste. Une palette garde sa propre couleur d’accentuation et apporte ses couleurs de code et de terminal, chacune en apparence claire et en apparence sombre. Augmenter le contraste est respecté quel que soit le choix.
 
 # draft
-settings_colors_from_windows = Où skwir prend ses couleurs : la couleur d’accentuation de Windows, ou l’une des palettes de skwir.
+settings_colors_from_windows = Où Skwir prend ses couleurs : la couleur d’accentuation de Windows, ou l’une des palettes de Skwir.
 
 # draft
-settings_colors_from_windows_more = Automatique reprend les couleurs de skwir avec la couleur d’accentuation choisie dans les paramètres de Windows, ou les couleurs d’un thème de contraste quand l’un d’eux est actif. Une palette garde sa propre couleur d’accentuation et apporte ses couleurs de code et de terminal, chacune en apparence claire et en apparence sombre. Le contraste renforcé qu’exige un thème de contraste est respecté quel que soit le choix.
+settings_colors_from_windows_more = Automatique reprend les couleurs de Skwir avec la couleur d’accentuation choisie dans les paramètres de Windows, ou les couleurs d’un thème de contraste quand l’un d’eux est actif. Une palette garde sa propre couleur d’accentuation et apporte ses couleurs de code et de terminal, chacune en apparence claire et en apparence sombre. Le contraste renforcé qu’exige un thème de contraste est respecté quel que soit le choix.
 
 # draft
 settings_contents_pinned = Garder le sommaire ouvert
@@ -6900,10 +6973,10 @@ settings_folder_preview_add_name = Ajouter un nom
 settings_folder_preview_file = Afficher un README ou une couverture
 
 # draft
-settings_folder_preview_file_description = Dans l’aperçu, montrer un dossier par le fichier qui dit ce qu’il contient : son README, ou la couverture d’un album ou d’un dossier de photos.
+settings_folder_preview_file_description = Dans l’aperçu, montrer un dossier par l’un de ses fichiers qui dit ce qu’il contient : son README, ou la couverture d’un album ou d’un dossier de photos.
 
 # draft
-settings_folder_preview_file_description_more = Le premier des noms ci-dessous qu’il contient est affiché. Sa fiche, son nombre d’éléments et ses Propriétés restent ceux du dossier ; le × quitte le fichier pour revenir au nombre d’éléments du dossier. Désactivé, l’aperçu d’un dossier indique combien d’éléments il contient.
+settings_folder_preview_file_description_more = Le fichier affiché est le premier des noms ci-dessous que contient le dossier. La fiche, le nombre d’éléments et les Propriétés restent ceux du dossier ; le × quitte le fichier et affiche le nombre d’éléments du dossier. Désactivé, l’aperçu d’un dossier indique combien d’éléments il contient.
 
 # draft
 settings_folder_preview_name = Nom
@@ -6924,10 +6997,10 @@ settings_folder_preview_names_description_more = La casse est ignorée. Un dossi
 settings_font = Police
 
 # draft
-settings_font_description = La police des menus, des listes, des barres et des boîtes de dialogue de skwir.
+settings_font_description = La police des menus, des listes, des barres et des boîtes de dialogue de Skwir.
 
 # draft
-settings_font_description_more = Automatique est celle de votre bureau, telle que la lit Source des polices, sinon celle de skwir, Inter.
+settings_font_description_more = Automatique est celle de votre bureau, telle que la lit Source des polices, sinon celle de Skwir, Inter.
 
 # draft
 settings_font_more = les polices installées
@@ -6939,7 +7012,7 @@ settings_font_not_drawn = Cette police ne peut pas être affichée
 settings_fonts_from = Source des polices
 
 # draft
-settings_fonts_from_description = Où skwir lit les polices qu’utilise le choix Automatique d’un paramètre de police, et leurs tailles.
+settings_fonts_from_description = Où Skwir lit les polices qu’utilise le choix Automatique d’un paramètre de police, et leurs tailles.
 
 # draft
 settings_fonts_from_now_read = Actuellement { $font } en { $points } pt, tailles lues depuis { $from }.
@@ -6948,22 +7021,22 @@ settings_fonts_from_now_read = Actuellement { $font } en { $points } pt, taille
 settings_fonts_from_now_usual = Actuellement { $font } en { $points } pt, la taille habituelle du système, aucun bureau n’en indiquant une.
 
 # draft
-settings_fonts_from_system = Automatique est la police du système, à la taille qu’utilisent ses applications ; Polices de Skwir désigne les polices de skwir, Inter et JetBrains Mono, à la même taille.
+settings_fonts_from_system = Automatique est la police du système, à la taille qu’utilisent ses applications ; Polices de Skwir utilise les polices fournies avec Skwir, Inter et JetBrains Mono, à la même taille.
 
 # draft
-settings_fonts_from_system_now = Automatique est la police du système, à la taille qu’utilisent ses applications ; Polices de Skwir désigne les polices de skwir, Inter et JetBrains Mono, à la même taille. { $now }
+settings_fonts_from_system_now = Automatique est la police du système, à la taille qu’utilisent ses applications ; Polices de Skwir utilise les polices fournies avec Skwir, Inter et JetBrains Mono, à la même taille. { $now }
 
 # draft
-settings_fonts_from_toolkits = Automatique lit les réglages propres à votre bureau, sinon ceux de GTK, sinon ceux de Qt ; Polices de Skwir désigne les polices de skwir, Inter et JetBrains Mono, aux tailles que lit Automatique ; GTK ou Qt ne lit que les réglages de cette boîte à outils, utile quand les deux nomment des polices différentes.
+settings_fonts_from_toolkits = Automatique lit les réglages propres à votre bureau, sinon ceux de GTK, sinon ceux de Qt. Polices de Skwir utilise les polices fournies avec Skwir, Inter et JetBrains Mono, aux tailles que lit Automatique. GTK ou Qt ne lit que les réglages de cette boîte à outils, pour le cas où les deux nomment des polices différentes.
 
 # draft
-settings_fonts_from_toolkits_now = Automatique lit les réglages propres à votre bureau, sinon ceux de GTK, sinon ceux de Qt ; Polices de Skwir désigne les polices de skwir, Inter et JetBrains Mono, aux tailles que lit Automatique ; GTK ou Qt ne lit que les réglages de cette boîte à outils, utile quand les deux nomment des polices différentes. { $now }
+settings_fonts_from_toolkits_now = Automatique lit les réglages propres à votre bureau, sinon ceux de GTK, sinon ceux de Qt. Polices de Skwir utilise les polices fournies avec Skwir, Inter et JetBrains Mono, aux tailles que lit Automatique. GTK ou Qt ne lit que les réglages de cette boîte à outils, pour le cas où les deux nomment des polices différentes. { $now }
 
 # draft
-settings_fonts_from_windows = Automatique est la police d’interface de Windows, à la taille qu’utilisent ses nouvelles applications, multipliée par la Taille du texte de ses paramètres d’Accessibilité ; Polices de Skwir désigne les polices de skwir, Inter et JetBrains Mono, à la même taille.
+settings_fonts_from_windows = Automatique est la police d’interface de Windows, à la taille qu’utilisent ses nouvelles applications, multipliée par la Taille du texte de ses paramètres d’Accessibilité ; Polices de Skwir utilise les polices fournies avec Skwir, Inter et JetBrains Mono, à la même taille.
 
 # draft
-settings_fonts_from_windows_now = Automatique est la police d’interface de Windows, à la taille qu’utilisent ses nouvelles applications, multipliée par la Taille du texte de ses paramètres d’Accessibilité ; Polices de Skwir désigne les polices de skwir, Inter et JetBrains Mono, à la même taille. { $now }
+settings_fonts_from_windows_now = Automatique est la police d’interface de Windows, à la taille qu’utilisent ses nouvelles applications, multipliée par la Taille du texte de ses paramètres d’Accessibilité ; Polices de Skwir utilise les polices fournies avec Skwir, Inter et JetBrains Mono, à la même taille. { $now }
 
 # draft
 settings_found_on = { $page } › { $section }
@@ -7036,7 +7109,10 @@ settings_grammar_folders_description = Chaque dossier que Skwir a lu à la reche
 settings_grammar_folders_description_more = Ce qui a failli être trouvé vient en premier, chaque fois avec ce qu’il faut faire : un dépôt placé un dossier trop profond, une bibliothèque sans requêtes pour colorer, un dossier que nomme la configuration de la CLI tree-sitter et qui n’existe pas.
 
 # draft
-settings_grammar_folders_nearly = Où les grammaires ont été cherchées (presque trouvées : { $count })
+settings_grammar_folders_nearly = Où les grammaires ont été cherchées : { $count ->
+        [one] { $count } presque trouvée
+       *[other] { $count } presque trouvées
+    }
 
 # draft
 settings_grammar_for_data = Ce qui colore chaque langage choisi sur la page Lecture : le nom d’un langage, en minuscules, associé à bat, à plain, ou à l’endroit où sa grammaire tree-sitter a été trouvée (skwir, tree-sitter, zed, helix, neovim, system, emacs)
@@ -7057,10 +7133,16 @@ settings_grammar_held_languages = { $source } : { $languages }
 settings_grammar_held_more = { $source } : { $count ->
         [one] { $count } langage
        *[other] { $count } langages
-    } : { $languages } et { $more } de plus
+    } : { $languages }
 
 # draft
 settings_grammar_held_nothing = { $source } : rien
+
+# draft
+settings_grammar_held_others = { $count ->
+        [one] { $count } autre
+       *[other] { $count } autres
+    }
 
 # draft
 settings_grammar_nearly = { $source } : { $said }
@@ -7102,7 +7184,7 @@ settings_hints_state = Commandes dont l’indication de raccourci a déjà été
 settings_icon_theme = Thème d’icônes
 
 # draft
-settings_icon_theme_description = Les icônes avec lesquelles skwir dessine les fichiers, les dossiers et les emplacements.
+settings_icon_theme_description = Les icônes avec lesquelles Skwir dessine les fichiers, les dossiers et les emplacements.
 
 # draft
 settings_icon_theme_description_more = Automatique suit le choix de votre bureau.
@@ -7114,19 +7196,19 @@ settings_icon_theme_more = les thèmes d’icônes installés
 settings_in_memory = Les paramètres sont gardés en mémoire pour cette session.
 
 # draft
-settings_intro_appearance = L’apparence de skwir.
+settings_intro_appearance = L’apparence de Skwir.
 
 # draft
-settings_intro_changed = Chaque paramètre qui diffère de sa valeur par défaut et chaque module activé ou désactivé par rapport à skwir tel qu’il est livré, chacun avec son moyen d’y revenir.
+settings_intro_changed = Chaque paramètre qui diffère de sa valeur par défaut et chaque module activé ou désactivé par rapport à Skwir tel qu’il est livré, chacun avec son moyen d’y revenir.
 
 # draft
-settings_intro_exclusions = Les fichiers et dossiers que skwir laisse de côté : dans les recherches, le décompte des étiquettes et la chronologie, sous le dossier où ils cherchent, et dans ce que voient les agents, les modules externes à skwir et les modèles d’IA. Les exclusions de skwir sont rangées par catégories, chacune avec son interrupteur ; cochez ou décochez chacune, ou ajoutez les vôtres.
+settings_intro_exclusions = Les fichiers et dossiers que Skwir laisse de côté : dans les recherches, le décompte des étiquettes et la chronologie, sous le dossier où ils cherchent, et dans ce que voient les agents, les modules externes à Skwir et les modèles d’IA. Les exclusions de Skwir sont rangées par catégories, chacune avec son interrupteur ; cochez ou décochez chacune, ou ajoutez les vôtres.
 
 # draft
-settings_intro_general = La langue que parle skwir, ce qu’il fait au démarrage et des dossiers qu’ouvrent d’autres programmes, des onglets, de la vue divisée et de l’adresse, de ce que vous glissez-déposez, et pendant qu’une action s’exécute. Les modifications s’appliquent dès que vous les faites.
+settings_intro_general = La langue que parle Skwir, ce qu’il fait au démarrage et des dossiers qu’ouvrent d’autres programmes, des onglets, de la vue divisée et de l’adresse, de ce que vous glissez-déposez, et pendant qu’une action s’exécute. Les modifications s’appliquent dès que vous les faites.
 
 # draft
-settings_intro_keyboard = Chaque action et ses touches, regroupées selon l’endroit où elles agissent. Cliquez sur une touche pour la changer, ou sur + pour en ajouter une : les vôtres y remplacent celles de skwir sur les mêmes touches.
+settings_intro_keyboard = Chaque action et ses touches, regroupées selon l’endroit où elles agissent. Cliquez sur une touche pour la changer, ou sur + pour en ajouter une : les vôtres y remplacent celles de Skwir sur les mêmes touches.
 
 # draft
 settings_intro_media = Comment les images se suivent, comment l’audio et la vidéo sont lus, comment les modèles 3D sont dessinés et sur quel fond sont dessinées les cartes.
@@ -7135,13 +7217,13 @@ settings_intro_media = Comment les images se suivent, comment l’audio et la vi
 settings_intro_network = Les serveurs de la section Réseau de la barre latérale, ajoutés, modifiés et retirés ici comme depuis leurs menus, et l’endroit où sont conservés ceux ajoutés par leur adresse ; puis les outils qui ouvrent une adresse.
 
 # draft
-settings_intro_notes = Étiquettes, notes et commentaires : comment les étiquettes sont proposées, et les stockages où elles sont conservées, pour que le bureau, un Mac et d’autres applications les voient aussi. Chaque stockage est lu et fusionné ; chacun est écrit selon votre choix : jamais, quand le fichier y a déjà des annotations, aussi quand le volume d’un fichier ne garde pas d’attributs (un seul stockage y est alors commencé, celui que son dossier utilise déjà de préférence), ou pour chaque fichier modifié.
+settings_intro_notes = Étiquettes, notes et commentaires : comment les étiquettes sont proposées, et les stockages où elles sont conservées, pour que le bureau, un Mac et d’autres applications les voient aussi. Chaque stockage est lu, et ce qu’ils contiennent est fusionné. Chacun est écrit selon votre choix : jamais ; là où le fichier y a déjà des annotations ; là, et aussi là où le volume du fichier ne garde pas d’attributs (un seul stockage y est alors commencé, celui que son dossier utilise déjà en premier) ; ou pour chaque fichier modifié.
 
 # draft
 settings_intro_plugins = Tout ce qui va au-delà du noyau est un module. En désactiver un retire ses commandes, ses vues et ses paramètres jusqu’à ce qu’il soit réactivé.
 
 # draft
-settings_intro_privacy = Ce qui quitte cet ordinateur. Un agent qui pilote skwir, comme un module externe à skwir, ne voit jamais un dossier privé : ni ses noms, ni ce que contiennent ses fichiers. Ce que chaque module peut faire est indiqué sur sa ligne de la page Modules.
+settings_intro_privacy = Ce qui quitte cet ordinateur. Un agent qui pilote Skwir, comme un module externe à Skwir, ne voit jamais un dossier privé : ni ses noms, ni ce que contiennent ses fichiers. Ce que chaque module peut faire est indiqué sur sa ligne de la page Modules.
 
 # draft
 settings_intro_reading = Comment se lisent dans l’aperçu les documents, les livres, les bandes dessinées, le Markdown, le texte et le code, et quel moteur lit chacun d’eux.
@@ -7174,22 +7256,22 @@ settings_language_name = Langage
 settings_languages = Langages
 
 # draft
-settings_languages_description = Les langages pour lesquels une grammaire a été trouvée ou ajoutée, chacun avec les fichiers qu’il colore et ce qui le colore.
+settings_languages_description = Chaque langage pour lequel une grammaire a été trouvée ou ajoutée, avec les fichiers écrits dans ce langage et la grammaire qui les colore.
 
 # draft
-settings_languages_description_at = Automatique suit le choix ci-dessus ; la grammaire de bat est celle que vous avez ajoutée à bat ou à Sublime Text, le cas échéant ; chaque grammaire tree-sitter est nommée d’après l’endroit où elle a été trouvée, et celle qui ne peut pas servir est grisée, avec la raison ; Texte brut affiche les fichiers sans couleurs. Les grammaires tree-sitter sont cherchées dans le dossier des grammaires de Skwir ({ $folder }) et là où la CLI tree-sitter, Zed, Helix, Neovim, Emacs et le système les gardent. Le dépôt d’une grammaire placé dans le dossier des grammaires de Skwir colore avec ses requêtes, compilé ou non : non compilé, ses requêtes colorent la grammaire du même langage trouvée ailleurs (Emacs n’en garde aucune avec les siennes). Le fichier languages.toml de ce dossier indique quels fichiers colore un langage.
+settings_languages_description_at = Automatique suit le choix ci-dessus. bat colore avec sa propre grammaire, ou avec celle que vous avez ajoutée à bat ou à Sublime Text. Chaque grammaire tree-sitter est nommée d’après l’endroit où elle a été trouvée, et celle qui ne peut pas servir est grisée, avec la raison. Texte brut affiche les fichiers sans couleurs. Les grammaires tree-sitter sont cherchées dans le dossier des grammaires de Skwir ({ $folder }) et là où la CLI tree-sitter, Zed, Helix, Neovim, Emacs et le système les gardent. Le dépôt d’une grammaire placé dans le dossier des grammaires de Skwir colore avec ses propres requêtes, compilé ou non : non compilé, ses requêtes colorent la grammaire du même langage trouvée ailleurs (Emacs ne garde pas de requêtes avec ses grammaires). Dans ce dossier, languages.toml indique quels fichiers colore un langage.
 
 # draft
-settings_languages_description_more = Automatique suit le choix ci-dessus ; la grammaire de bat est celle que vous avez ajoutée à bat ou à Sublime Text, le cas échéant ; chaque grammaire tree-sitter est nommée d’après l’endroit où elle a été trouvée, et celle qui ne peut pas servir est grisée, avec la raison ; Texte brut affiche les fichiers sans couleurs. Les grammaires tree-sitter sont cherchées dans le dossier des grammaires de Skwir et là où la CLI tree-sitter, Zed, Helix, Neovim, Emacs et le système les gardent. Le dépôt d’une grammaire placé dans le dossier des grammaires de Skwir colore avec ses requêtes, compilé ou non : non compilé, ses requêtes colorent la grammaire du même langage trouvée ailleurs (Emacs n’en garde aucune avec les siennes). Le fichier languages.toml de ce dossier indique quels fichiers colore un langage.
+settings_languages_description_more = Automatique suit le choix ci-dessus. bat colore avec sa propre grammaire, ou avec celle que vous avez ajoutée à bat ou à Sublime Text. Chaque grammaire tree-sitter est nommée d’après l’endroit où elle a été trouvée, et celle qui ne peut pas servir est grisée, avec la raison. Texte brut affiche les fichiers sans couleurs. Les grammaires tree-sitter sont cherchées dans le dossier des grammaires de Skwir et là où la CLI tree-sitter, Zed, Helix, Neovim, Emacs et le système les gardent. Le dépôt d’une grammaire placé dans le dossier des grammaires de Skwir colore avec ses propres requêtes, compilé ou non : non compilé, ses requêtes colorent la grammaire du même langage trouvée ailleurs (Emacs ne garde pas de requêtes avec ses grammaires). Dans ce dossier, languages.toml indique quels fichiers colore un langage.
 
 # draft
 settings_launch_opens = Ouvrir les dossiers d’autres programmes dans
 
 # draft
-settings_launch_opens_description = Où va un dossier qu’un autre programme ouvre dans Skwir alors qu’il est déjà lancé : Afficher dans le dossier depuis un navigateur, un lanceur, ou skwir suivi d’un dossier dans un terminal.
+settings_launch_opens_description = Où s’ouvre un dossier qu’un autre programme ouvre dans Skwir déjà lancé : Afficher dans le dossier d’un navigateur, un lanceur, ou `skwir` suivi d’un dossier tapé dans un terminal.
 
 # draft
-settings_launch_opens_description_more = Une nouvelle fenêtre s’ouvre dessus ; un onglet l’ouvre dans la dernière fenêtre utilisée, et Skwir relancé sans dossier met cette fenêtre au premier plan.
+settings_launch_opens_description_more = Avec Une nouvelle fenêtre, le dossier s’ouvre dans une fenêtre à lui ; avec Un onglet, il s’ouvre dans un onglet de la dernière fenêtre utilisée, et Skwir relancé sans dossier met cette fenêtre au premier plan.
 
 # draft
 settings_launch_opens_tab = Un onglet
@@ -7240,7 +7322,7 @@ settings_no_plugin = Aucun module ne correspond à « { $typed } ».
 settings_not_installed = { $name } (non installé)
 
 # draft
-settings_nothing_changed = Chaque paramètre a sa valeur par défaut, et chaque module est tel qu’il est livré avec skwir.
+settings_nothing_changed = Chaque paramètre a sa valeur par défaut, et chaque module est tel qu’il est livré avec Skwir.
 
 # draft
 settings_nothing_found = Rien ne correspond à « { $typed } ».
@@ -7249,7 +7331,7 @@ settings_nothing_found = Rien ne correspond à « { $typed } ».
 settings_notify_desktop = Prévenir le bureau quand une longue action se termine
 
 # draft
-settings_notify_desktop_description = Le bureau affiche une notification quand une action qui a duré 5 secondes ou plus se termine, ou attend son serveur, alors que la fenêtre de skwir est en arrière-plan.
+settings_notify_desktop_description = Le bureau affiche une notification quand une action qui a duré 5 secondes ou plus se termine, ou attend son serveur, alors que la fenêtre de Skwir est en arrière-plan.
 
 # draft
 settings_notify_desktop_description_more = Fenêtre fermée, chaque action qui se termine est signalée. Un clic sur la notification fait revenir la fenêtre, Activité ouverte. Les notifications sont retirées dès que vous revenez dans la fenêtre.
@@ -7282,7 +7364,7 @@ settings_pages = Pages
 settings_path_not_set = Non défini
 
 # draft
-settings_plugin_absent = Cette version de skwir n’intègre pas ce module.
+settings_plugin_absent = Cette version de Skwir n’intègre pas ce module.
 
 # draft
 settings_plugin_enabled = Activé
@@ -7300,7 +7382,7 @@ settings_plugin_off = Activez le module pour modifier ses paramètres.
 settings_plugin_pages = Paramètres des modules
 
 # draft
-settings_plugin_requirement_found = { $program } trouvé
+settings_plugin_requirement_found = { $program } disponible
 
 # draft
 settings_plugin_requirement_missing = { $program } introuvable — { $purpose }
@@ -7489,7 +7571,7 @@ settings_text_continuous_description_more = Désactivé, le texte s’affiche un
 settings_text_size = Taille du texte
 
 # draft
-settings_text_size_description = La taille à laquelle skwir écrit ses menus, ses barres, la barre latérale, les boîtes de dialogue et les vues de fichiers ; 100 % est { $desktop ->
+settings_text_size_description = La taille à laquelle Skwir écrit ses menus, ses barres, la barre latérale, les boîtes de dialogue et les vues de fichiers ; 100 % est { $desktop ->
         [system] la taille du texte de votre système
         [desktop] la taille de police de votre bureau
        *[usual] la taille habituelle, car aucun bureau n’en indique
@@ -7499,7 +7581,7 @@ settings_text_size_description = La taille à laquelle skwir écrit ses menus, s
 settings_text_size_more = Les barres, les lignes et les menus grandissent avec le texte ; les icônes gardent leur taille.
 
 # draft
-settings_text_size_now = La taille à laquelle skwir écrit ses menus, ses barres, la barre latérale, les boîtes de dialogue et les vues de fichiers ; 100 % est { $desktop ->
+settings_text_size_now = La taille à laquelle Skwir écrit ses menus, ses barres, la barre latérale, les boîtes de dialogue et les vues de fichiers ; 100 % est { $desktop ->
         [system] la taille du texte de votre système
         [desktop] la taille de police de votre bureau
        *[usual] la taille habituelle, car aucun bureau n’en indique
@@ -7524,10 +7606,10 @@ settings_title_bar = Barre de titre
 settings_title_bar_description = Où se trouvent le titre de la fenêtre et ses boutons.
 
 # draft
-settings_title_bar_description_here = Système : la barre de titre du système, ou une barre de skwir qui lui ressemble là où le système n’en dessine pas (GNOME). Compacte : une barre fine de skwir sur le cadre de la fenêtre, le titre au milieu. Dans la ligne du haut : les boutons aux deux bouts de la ligne du haut de skwir, dont les parties vides déplacent la fenêtre, comme dans les applications de GNOME. Automatique est la barre de titre du système là où il en dessine une, la ligne du haut là où il n’en dessine pas. { $here }
+settings_title_bar_description_here = Système : la barre de titre du système, ou une barre de Skwir qui lui ressemble là où le système n’en dessine pas (GNOME). Compacte : une barre fine de Skwir sur le cadre de la fenêtre, le titre au milieu. Dans la ligne du haut : les boutons aux deux bouts de la ligne du haut de Skwir, dont les parties vides déplacent la fenêtre, comme dans les applications de GNOME. Automatique est la barre de titre du système là où il en dessine une, la ligne du haut là où il n’en dessine pas. { $here }
 
 # draft
-settings_title_bar_description_more = Système : la barre de titre du système, ou une barre de skwir qui lui ressemble là où le système n’en dessine pas (GNOME). Compacte : une barre fine de skwir sur le cadre de la fenêtre, le titre au milieu. Dans la ligne du haut : les boutons aux deux bouts de la ligne du haut de skwir, dont les parties vides déplacent la fenêtre, comme dans les applications de GNOME. Automatique est la barre de titre du système là où il en dessine une, la ligne du haut là où il n’en dessine pas.
+settings_title_bar_description_more = Système : la barre de titre du système, ou une barre de Skwir qui lui ressemble là où le système n’en dessine pas (GNOME). Compacte : une barre fine de Skwir sur le cadre de la fenêtre, le titre au milieu. Dans la ligne du haut : les boutons aux deux bouts de la ligne du haut de Skwir, dont les parties vides déplacent la fenêtre, comme dans les applications de GNOME. Automatique est la barre de titre du système là où il en dessine une, la ligne du haut là où il n’en dessine pas.
 
 # draft
 settings_title_changed = Modifiés par vous
@@ -7844,13 +7926,19 @@ status_cut = { $count ->
     }
 
 # draft
-status_excluded = Exclus : { $count }
+status_excluded = { $count ->
+        [one] { $count } exclu
+       *[other] { $count } exclus
+    }
 
 # draft
 status_excluded_tip = Les fichiers et dossiers que vos exclusions laissent de côté (Paramètres › Exclusions) n’ont pas été parcourus : excluded:yes les recherche aussi
 
 # draft
-status_folded = Repliés : { $count }
+status_folded = { $count ->
+        [one] { $count } replié
+       *[other] { $count } repliés
+    }
 
 # draft
 status_folded_tip = Fichiers des groupes repliés : le chevron d’un titre, ou la flèche droite sur celui-ci, rouvre son groupe
@@ -7934,10 +8022,16 @@ status_searching = Recherche… { $count ->
     }
 
 # draft
-status_selected = Sélection : { $count }
+status_selected = { $count ->
+        [one] { $count } sélectionné
+       *[other] { $count } sélectionnés
+    }
 
 # draft
-status_selected_weigh = Sélection : { $count } · { $size }
+status_selected_weigh = { $count ->
+        [one] { $count } sélectionné
+       *[other] { $count } sélectionnés
+    } · { $size }
 
 # draft
 status_shown_of = { $count } sur { $total ->
@@ -8041,13 +8135,15 @@ tag_editor_said_tagged_rated = Étiqueté { $tags } ; { $stars }
 # draft
 tag_editor_stars = { $halves ->
         [1] ½ étoile
-        [2] 1 étoile
         [3] 1½ étoile
         [5] 2½ étoiles
         [7] 3½ étoiles
         [9] 4½ étoiles
         [one] { $stars } étoile
-       *[other] { $stars } étoiles
+       *[other] { $stars ->
+            [one] { $stars } étoile
+           *[other] { $stars } étoiles
+        }
     }
 
 # draft
@@ -8157,7 +8253,10 @@ timeline_date_taken = prise de vue
 timeline_date_tip = La date que comptent les barres
 
 # draft
-timeline_dated = { $count } avec date
+timeline_dated = { $count ->
+        [one] { $count } daté
+       *[other] { $count } datés
+    }
 
 # draft
 timeline_earlier_files = { $count ->
@@ -8166,7 +8265,10 @@ timeline_earlier_files = { $count ->
     }
 
 # draft
-timeline_far_outside = { $count } hors plage
+timeline_far_outside = { $count ->
+        [one] { $count } hors plage
+       *[other] { $count } hors plage
+    }
 
 # draft
 timeline_holds = { $count ->
@@ -8178,7 +8280,10 @@ timeline_holds = { $count ->
 timeline_holds_selected = { $count ->
         [one] { $count } fichier
        *[other] { $count } fichiers
-    }, { $size }, dont { $selected } en sélection
+    }, { $size }, dont { $selected ->
+        [one] { $selected } sélectionné
+       *[other] { $selected } sélectionnés
+    }
 
 # draft
 timeline_how = cliquez ou glissez sur les barres pour lister leurs fichiers
@@ -8217,7 +8322,10 @@ timeline_said = { $date }, par { $bucket ->
     }, { $info }. Les flèches gauche et droite passent d’une barre à l’autre, Maj étend la sélection, Entrée liste les fichiers
 
 # draft
-timeline_selected = sélection : { $count }
+timeline_selected = { $count ->
+        [one] { $count } sélectionné
+       *[other] { $count } sélectionnés
+    }
 
 # draft
 timeline_subtree = sous-dossiers
@@ -8262,7 +8370,7 @@ title_bar_maximize = Maximiser la fenêtre
 title_bar_minimize = Minimiser la fenêtre
 
 # draft
-title_bar_refused = Ici, le bureau garde son propre cadre autour des fenêtres, quoi que skwir demande : Compacte et Dans la ligne du haut dessinent la barre de skwir à l’intérieur, ses coins, son ombre et ses bords restant ceux du bureau. Pour que le bureau dessine aussi une barre de titre, choisissez Automatique.
+title_bar_refused = Ici, le bureau garde son propre cadre autour des fenêtres, quoi que Skwir demande : Compacte et Dans la ligne du haut dessinent la barre de Skwir à l’intérieur, ses coins, son ombre et ses bords restant ceux du bureau. Pour que le bureau dessine aussi une barre de titre, choisissez Automatique.
 
 # draft
 title_bar_restore = Restaurer la fenêtre
@@ -8274,7 +8382,7 @@ title_bar_system = Système
 title_bar_top_row = Dans la ligne du haut
 
 # draft
-title_bar_unsupported = Le gestionnaire de fenêtres garde sa propre barre de titre : aucun compositeur n’est actif, ou il ne peut pas laisser le cadre à skwir
+title_bar_unsupported = Le gestionnaire de fenêtres garde sa propre barre de titre : aucun compositeur n’est actif, ou il ne peut pas laisser le cadre à Skwir
 
 # draft
 title_bar_window_title = { $place } — skwir
@@ -8379,21 +8487,21 @@ toast_also_undone = une partie avait déjà été annulée
 toast_bar_bytes = { $done } sur { $whole }
 
 # draft
-toast_bar_items = { $finished } sur { $count ->
-        [one] { $count } élément
-       *[other] { $count } éléments
+toast_bar_items = { $finished ->
+        [one] { $finished } élément sur { $count }
+       *[other] { $finished } éléments sur { $count }
     }
 
 # draft
-toast_bar_items_bytes = { $finished } sur { $count ->
-        [one] { $count } élément
-       *[other] { $count } éléments
+toast_bar_items_bytes = { $finished ->
+        [one] { $finished } élément sur { $count }
+       *[other] { $finished } éléments sur { $count }
     } · { $done } sur { $whole }
 
 # draft
-toast_bar_items_moved = { $finished } sur { $count ->
-        [one] { $count } élément
-       *[other] { $count } éléments
+toast_bar_items_moved = { $finished ->
+        [one] { $finished } élément sur { $count }
+       *[other] { $finished } éléments sur { $count }
     } · { $done }
 
 # draft
@@ -9060,7 +9168,10 @@ work_told_finished = { $count ->
 work_told_finished_stopped = { $finished ->
         [one] { $finished } action terminée
        *[other] { $finished } actions terminées
-    }, { $stopped } en échec
+    }, { $stopped ->
+        [one] { $stopped } arrêtée
+       *[other] { $stopped } arrêtées
+    }
 
 # draft
 work_told_stopped = { $count ->

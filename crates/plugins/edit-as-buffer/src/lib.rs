@@ -41,7 +41,7 @@ const ID: &str = "edit-as-buffer";
 /// What the buffer says first, each line a comment: how to edit it.
 fn header() -> String {
     let mut header = words!(
-        edit_as_buffer_header = "# skwir: edit this listing, save, and quit.
+        edit_as_buffer_header = "# Skwir: edit this listing, save, and quit.
             #   change a name            -> rename
             #   delete a line            -> move to trash
             #   name with a slash        -> move into that folder (created if needed)
@@ -902,7 +902,7 @@ mod tests {
             (skwir_core::FileId::new(1, 1), "docs".into(), true),
             (skwir_core::FileId::new(1, 2), "a.txt".into(), false),
         ]);
-        assert!(b.starts_with("# skwir"));
+        assert!(b.starts_with("# Skwir"));
         assert!(b.ends_with("   1  docs/\n   2  a.txt\n"));
     }
 

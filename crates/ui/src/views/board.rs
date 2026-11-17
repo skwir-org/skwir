@@ -450,7 +450,7 @@ fn group_columns(rows: &crate::views::groups::RowMap, sorted: &[EntryId]) -> Vec
         columns.push(column(
             skwir_core::words!(
                 views_board_more_groups = "{ $count ->
-                    [one] 1 more group
+                    [one] { $count } more group
                    *[other] { $count } more groups
                 }",
                 count = spans.len() - own,

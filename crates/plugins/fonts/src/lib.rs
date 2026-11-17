@@ -77,7 +77,7 @@ impl PreviewProvider for Provider {
         let bounds = Bounds::of(view);
         let held = req.held()?;
         let refusal = words!(
-            fonts_file_too_large = "Font exceeds { $size } preview limit",
+            fonts_file_too_large = "The font exceeds the { $size } preview limit",
             size = words::Size(bounds.binary_input() as u64),
             note = "Why a font is not previewed: it is larger than the preview reads. size: that bound (16 MB)."
         );
@@ -124,7 +124,7 @@ fn unpacked(
             if over {
                 return Err(bounds.refuse(
                     words!(
-                        fonts_too_large = "Font exceeds { $size } preview limit",
+                        fonts_too_large = "The font exceeds the { $size } preview limit",
                         size = words::Size(bounds.binary_input() as u64),
                         note = "Why a web font is not previewed: unpacked, it is larger than the preview reads. size: that bound (16 MB)."
                     ),

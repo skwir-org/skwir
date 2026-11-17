@@ -25,7 +25,7 @@ edit_as_buffer_empty_name = a name cannot be empty
 edit_as_buffer_failed = edit as text: { $error }
 
 # The first lines of a folder's listing opened as text in the user's editor: each line begins with # (a comment, which is not read back). The arrows say what each edit becomes; the words in the left column may be aligned anew. \\, \xHH, \x0a and \x20 are written as they are.
-edit_as_buffer_header = # skwir: edit this listing, save, and quit.
+edit_as_buffer_header = # Skwir: edit this listing, save, and quit.
     #   change a name            -> rename
     #   delete a line            -> move to trash
     #   name with a slash        -> move into that folder (created if needed)

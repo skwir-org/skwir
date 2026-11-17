@@ -600,16 +600,18 @@ pub fn stars_said(rating: u64) -> Words {
     words!(
         tag_editor_stars = "{ $halves ->
             [1] ½ star
-            [2] 1 star
             [3] 1½ stars
             [5] 2½ stars
             [7] 3½ stars
             [9] 4½ stars
-           *[other] { $stars } stars
+           *[other] { $stars ->
+                [one] { $stars } star
+               *[other] { $stars } stars
+            }
         }",
         halves = rating,
         stars = rating / 2,
-        note = "A file's rating, of five stars: halves is the rating in half stars (1 to 10), stars the whole stars (halves / 2)."
+        note = "A file's rating, of five stars: halves is the rating in half stars (0 to 10), stars the whole stars (halves / 2), which choose their words where the rating is whole (0 stars, 1 star, 4 stars)."
     )
 }
 

@@ -3,7 +3,7 @@
 # Under Save as, while it holds a folder alone: several files saved a PDF each.
 print_alone = Each PDF named after its file, in this folder
 
-# Said after saving, when the PDF of that name was this already.
+# What a step found done already, said once its plan ran: the PDF of that name in that folder is this one already. Begins in lower case.
 print_already_saved = { $what ->
         [file] { $name } was already saved as { $pdf } in { $folder }
         [files] { $name } and { $more } more were already saved as { $pdf } in { $folder }

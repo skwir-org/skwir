@@ -232,7 +232,7 @@ tags_files_not_found = Les fichiers étiquetés { $tag } n’ont pas été trouv
 tags_filter_not_kept = { $done } ; son filtre « { $filter } » n’est pas gardé avec elle
 
 # draft
-tags_finder_limits = les notes ; plus de sept couleurs
+tags_finder_limits = une note, ou une couleur d’étiquette autre que les sept du Finder
 
 # draft
 tags_follow_both_already = l’étiquette { $to } était déjà épinglée et colorée comme { $from }
@@ -262,10 +262,16 @@ tags_follow_pin_did = étiquette { $to } épinglée à la position de { $from }
 tags_follow_pin_will = épingler l’étiquette { $to } à la position de { $from }
 
 # draft
-tags_follow_unpin_already = l’épinglage de { $from } était déjà retiré
+tags_follow_unpin_already = { $count ->
+        [one] l’épinglage de { $from } était déjà retiré
+       *[other] les épinglages de { $from } étaient déjà retirés
+    }
 
 # draft
-tags_follow_unpin_did = épinglage de { $from } retiré
+tags_follow_unpin_did = { $count ->
+        [one] épinglage de { $from } retiré
+       *[other] épinglages de { $from } retirés
+    }
 
 # draft
 tags_follow_unpin_will = désépingler { $from }
@@ -358,10 +364,16 @@ tags_merge_placeholder = L’étiquette qu’elles deviennent
 tags_merge_plan = fusionner les étiquettes { $tags } en { $to }
 
 # draft
-tags_merged_into = Fichiers qui avaient déjà { $to } ou plusieurs de ces étiquettes, et n’en gardent qu’une : { $merged }.
+tags_merged_into = { $merged ->
+        [one] { $merged } fichier avait déjà { $to }, ou plusieurs des étiquettes renommées : il ne garde { $to } qu’une fois.
+       *[other] { $merged } fichiers avaient déjà { $to }, ou plusieurs des étiquettes renommées : chacun ne garde { $to } qu’une fois.
+    }
 
 # draft
-tags_merged_names = Fichiers qui avaient deux de ces noms, et n’en gardent qu’un : { $merged }.
+tags_merged_names = { $merged ->
+        [one] { $merged } fichier avait deux étiquettes qui portent désormais le même nom : il ne garde cette étiquette qu’une fois.
+       *[other] { $merged } fichiers avaient deux étiquettes qui portent désormais le même nom : chacun ne garde cette étiquette qu’une fois.
+    }
 
 # draft
 tags_move = Déplacer l’étiquette dans une catégorie
@@ -661,7 +673,11 @@ tags_set = Définir les étiquettes
 tags_set_description = Remplacer les étiquettes des éléments donnés, ou celles de la sélection (plan)
 
 # draft
-tags_set_plan = définir les étiquettes { $tags }
+tags_set_plan = définir { $count ->
+        [1] l’étiquette
+        [one] l’étiquette
+       *[other] les étiquettes
+    } { $tags }
 
 # draft
 tags_show_files_here = Afficher ses fichiers ici
@@ -767,4 +783,4 @@ tags_which_tag = quelle étiquette ?
 tags_with_sub_tags = Avec les sous-étiquettes
 
 # draft
-tags_xdg_limits = une virgule dans une étiquette, les couleurs des étiquettes
+tags_xdg_limits = une virgule dans une étiquette, ou la couleur d’une étiquette

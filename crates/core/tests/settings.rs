@@ -873,11 +873,11 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
         [
             (
                 "plugins.stale.enabled".to_owned(),
-                "now “plugins.fresh.enabled”: skwir moves it there".to_owned()
+                "now “plugins.fresh.enabled”: Skwir moves it there".to_owned()
             ),
             (
                 "stale.engine".to_owned(),
-                "now “fresh.engine”: skwir moves it there".to_owned()
+                "now “fresh.engine”: Skwir moves it there".to_owned()
             ),
         ]
     );
@@ -898,11 +898,11 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
         [
             (
                 "plugins.stale.enabled".to_owned(),
-                "not read: “plugins.fresh.enabled” is set, which skwir reads".to_owned()
+                "not read: “plugins.fresh.enabled” is set, which Skwir reads".to_owned()
             ),
             (
                 "stale.engine".to_owned(),
-                "not read: “fresh.engine” is set, which skwir reads".to_owned()
+                "not read: “fresh.engine” is set, which Skwir reads".to_owned()
             ),
         ]
     );
@@ -1576,7 +1576,7 @@ fn what_is_kept_apart_is_no_setting_to_declare() {
     assert_eq!(keys, ["sample.saved", "sample.session"], "{checked:?}");
     let notes = english(&checked.notes);
     assert!(notes[0].1.contains("data file"), "{checked:?}");
-    assert!(notes[0].1.contains("until skwir keeps"), "{checked:?}");
+    assert!(notes[0].1.contains("until Skwir keeps"), "{checked:?}");
     assert!(notes[1].1.contains("state file"), "{checked:?}");
 }
 

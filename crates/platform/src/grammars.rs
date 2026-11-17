@@ -1322,14 +1322,14 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
         && let Err(error) = read_text(config)
             .ok_or_else(|| {
                 skwir_core::words!(
-                    grammars_config_unreadable = "its configuration does not read (cannot be read): none of its parser directories is read",
+                    grammars_config_unreadable = "its configuration cannot be read, so none of the parser directories it names is read",
                     note = "Said of the tree-sitter CLI's configuration file on the Reading page: it could not be read."
                 )
             })
             .and_then(|text| {
                 serde_json::from_str::<serde_json::Value>(&text).map_err(|e| {
                     skwir_core::words!(
-                        grammars_config_invalid = "its configuration does not read ({ $error }): none of its parser directories is read",
+                        grammars_config_invalid = "its configuration is not valid JSON ({ $error }), so none of the parser directories it names is read",
                         error = e.to_string(),
                         note = "Said of the tree-sitter CLI's configuration file on the Reading page: it is not JSON. error: what the JSON reader said, in English."
                     )
@@ -1354,7 +1354,7 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
                 source: Source::TreeSitter,
                 what: dir.clone(),
                 said: skwir_core::words!(
-                    grammars_parser_dir_missing = "a parser directory its configuration names, not there",
+                    grammars_parser_dir_missing = "its configuration names this parser directory, which does not exist",
                     note = "Said of a folder on the Reading page: the tree-sitter CLI's configuration names it, and it does not exist."
                 ),
                 names_source: false,
@@ -2987,7 +2987,7 @@ mod tests {
             };
             said.clone()
         };
-        assert!(said(&root.join("gone")).contains("not there"));
+        assert!(said(&root.join("gone")).contains("does not exist"));
         assert!(said(&projects.join("gleam-mode/tree-sitter-gleam")).contains("add "));
         assert!(said(&root.join("skwir/old/tree-sitter-foo")).starts_with("one folder too deep"));
         assert!(said(&projects.join("tree-sitter-elm")).starts_with("no library"));
@@ -3025,7 +3025,7 @@ mod tests {
                 .nearly
                 .iter()
                 .any(|n| n.what == root.join("ts-config/config.json")
-                    && n.said.english().contains("does not read")),
+                    && n.said.english().contains("is not valid JSON")),
             "{:#?}",
             report.nearly
         );

@@ -237,7 +237,9 @@ pub struct Info {
     /// How far `mime` is settled.
     pub typing: Typing,
     pub size: Option<String>,
-    pub modified: Option<String>,
+    /// When it last changed, said where it is drawn as the list says its
+    /// dates (`dated`).
+    pub modified: Option<SystemTime>,
     pub is_dir: bool,
     /// Whether `mime` is a picture's (`fullscreen::is_picture_type`), told
     /// with the type, never per frame: the arrows on the whole screen and
@@ -1837,10 +1839,14 @@ fn decode_image(
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
         return Err(bounds.refuse(words!(
-            preview_too_many_pixels = "Too large to preview ({ $size } pixels, more than { $megapixels } megapixels)",
-            size = format!("{w} × {h}"),
-            megapixels = (bounds.picture_pixels() / (1024 * 1024)).to_string(),
-            note = "Why a picture is not previewed: it has more pixels than a preview draws. size: its width by its height (8193 × 8193)."
+            preview_too_many_pixels = "Too large to preview ({ $width } × { $height } pixels, more than { $megapixels ->
+                [one] { $megapixels } megapixel
+               *[other] { $megapixels } megapixels
+            })",
+            width = w,
+            height = h,
+            megapixels = bounds.picture_pixels() / (1024 * 1024),
+            note = "Why a picture is not previewed: it has more pixels than a preview draws. width, height: its size in pixels (8193 × 8193); megapixels: the most a preview draws."
         )));
     }
     let _turn = turn.take();
@@ -3219,7 +3225,7 @@ impl Shell {
     fn describe_version(&mut self, version: &Version, is_dir: bool) {
         // A folder's own size says nothing about what it holds.
         self.preview.info.size = version.size.filter(|_| !is_dir).map(format::size);
-        self.preview.info.modified = version.modified.map(format::time);
+        self.preview.info.modified = version.modified;
         self.preview.properties_at = None;
         self.preview.properties_entry = None;
     }
@@ -7229,32 +7235,25 @@ fn header(
     // its line and still too wide is cut, and says itself whole, before
     // the type it names when pointed at. The rating and the tags follow
     // on the same line (`notes_items`).
+    // Pointed at, each says the type it names; the date its exact time.
     let mime = info.mime.clone().map(gpui::SharedString::from);
-    let facts = [
-        type_label(shell, info),
-        info.size.clone(),
-        info.modified.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    let last = facts.len().saturating_sub(1);
-    let facts = facts.into_iter().enumerate().map(|(index, fact)| {
-        crate::elements::clip::clipped_with(
-            div().id(("preview-fact", index)).min_w_0().truncate(),
-            if index == last {
-                fact
-            } else {
-                words!(
-                    preview_fact_then = "{ $fact } ·",
-                    fact = fact,
-                    note = "A fact on the preview's card (its type, its size, its date), before the next one."
-                )
-                .say()
-            },
-            mime.clone(),
-        )
-    });
+    let exact = info
+        .modified
+        .map(|t| gpui::SharedString::from(format::exact_time(t)));
+    let facts = fact_segments(&header_facts(shell, info))
+        .into_iter()
+        .enumerate()
+        .map(|(index, (fact, said))| {
+            let also = match fact {
+                Fact::Date => exact.clone(),
+                Fact::Type | Fact::Size => mime.clone(),
+            };
+            crate::elements::clip::clipped_with(
+                div().id(("preview-fact", index)).min_w_0().truncate(),
+                said,
+                also,
+            )
+        });
     // Known by the file shown: its trail and facts within it.
     let card = div()
         .id(crate::elements::known_by(
@@ -7416,15 +7415,152 @@ pub(crate) fn said(shell: &Shell) -> Option<(gpui::SharedString, String)> {
     if !shell.a11y || info.name.is_empty() {
         return None;
     }
-    let facts: Vec<String> = [
-        type_label(shell, info),
-        info.size.clone(),
-        info.modified.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    Some((info.name.clone().into(), facts.join(" · ")))
+    let facts = header_facts(shell, info);
+    let said = facts_words(&facts, |_, said| said.clone().into())
+        .map_or_else(|| facts.alone(), |words| words.say());
+    Some((info.name.clone().into(), said))
+}
+
+/// A fact the header shows of the file previewed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fact {
+    Type,
+    Size,
+    Date,
+}
+
+/// The header's facts, each where there is one, said.
+struct Facts {
+    of_type: Option<String>,
+    size: Option<String>,
+    date: Option<String>,
+}
+
+impl Facts {
+    /// Those there are, in the order the message names them.
+    fn there(&self) -> Vec<(Fact, &String)> {
+        [
+            (Fact::Type, self.of_type.as_ref()),
+            (Fact::Size, self.size.as_ref()),
+            (Fact::Date, self.date.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(fact, said)| Some((fact, said?)))
+        .collect()
+    }
+
+    /// The one fact there is, alone (no message places it), or nothing.
+    fn alone(&self) -> String {
+        self.there()
+            .first()
+            .map(|(_, said)| (*said).clone())
+            .unwrap_or_default()
+    }
+}
+
+fn header_facts(shell: &Shell, info: &Info) -> Facts {
+    Facts {
+        of_type: type_label(shell, info),
+        size: info.size.clone(),
+        date: info.modified.map(|t| dated(shell, t)),
+    }
+}
+
+/// The header's facts as one message placing them (ADR-139): its type,
+/// its size, its date, each argument `arg` gives for a fact there is;
+/// `None` where one fact or none is there, said alone.
+fn facts_words(
+    facts: &Facts,
+    arg: impl Fn(Fact, &String) -> skwir_core::words::Arg,
+) -> Option<Words> {
+    let of = |fact: Fact, said: Option<&String>| said.map(|said| arg(fact, said));
+    let (of_type, size, date) = (
+        of(Fact::Type, facts.of_type.as_ref()),
+        of(Fact::Size, facts.size.as_ref()),
+        of(Fact::Date, facts.date.as_ref()),
+    );
+    Some(match (of_type, size, date) {
+        (Some(of_type), Some(size), Some(date)) => words!(
+            preview_facts = "{ $type_name } · { $size } · { $date }",
+            type_name = of_type,
+            size = size,
+            date = date,
+            note = "The facts on the preview's card under the file's name: its type, its size, when it last changed (PDF document · 1.2 MB · Today 14:02). Each fact is drawn apart, with what follows it up to the next, and the line wraps only between them."
+        ),
+        (Some(of_type), Some(size), None) => words!(
+            preview_facts_type_size = "{ $type_name } · { $size }",
+            type_name = of_type,
+            size = size,
+            note = "The facts on the preview's card under the file's name: its type and its size (PDF document · 1.2 MB). Each fact is drawn apart, the line wrapping only between them."
+        ),
+        (Some(of_type), None, Some(date)) => words!(
+            preview_facts_type_date = "{ $type_name } · { $date }",
+            type_name = of_type,
+            date = date,
+            note = "The facts on the preview's card under the file's name: its type and when it last changed (Folder · Today 14:02). Each fact is drawn apart, the line wrapping only between them."
+        ),
+        (None, Some(size), Some(date)) => words!(
+            preview_facts_size_date = "{ $size } · { $date }",
+            size = size,
+            date = date,
+            note = "The facts on the preview's card under the file's name: its size and when it last changed (1.2 MB · Today 14:02). Each fact is drawn apart, the line wrapping only between them."
+        ),
+        _ => return None,
+    })
+}
+
+/// The header's facts as the segments of their line, each a fact with
+/// what its language writes after it up to the next (" · "), in the order
+/// the language places them: the line wraps between the facts, never
+/// inside one (the date). The message is said with a mark in each fact's
+/// place, cut at the marks and each mark replaced by its fact, as
+/// `Words::say_around` cuts a sentence around one argument (core has no
+/// cut for several yet).
+fn fact_segments(facts: &Facts) -> Vec<(Fact, String)> {
+    const MARKS: [(Fact, char); 3] = [
+        (Fact::Type, '\u{F8F0}'),
+        (Fact::Size, '\u{F8F1}'),
+        (Fact::Date, '\u{F8F2}'),
+    ];
+    let mark = |fact: Fact| MARKS.iter().find(|(f, _)| *f == fact).map(|(_, m)| *m);
+    let Some(marked) = facts_words(facts, |fact, _| {
+        mark(fact).map(String::from).unwrap_or_default().into()
+    }) else {
+        return facts
+            .there()
+            .into_iter()
+            .map(|(fact, said)| (fact, said.clone()))
+            .collect();
+    };
+    let marked = marked.say();
+    let there = facts.there();
+    let mut segments: Vec<(Fact, String)> = Vec::new();
+    let mut head = String::new();
+    for c in marked.chars() {
+        let placed = MARKS
+            .iter()
+            .find(|(_, m)| *m == c)
+            .and_then(|(fact, _)| there.iter().find(|(f, _)| f == fact));
+        match (placed, segments.last_mut()) {
+            (Some((fact, said)), _) => {
+                segments.push((*fact, std::mem::take(&mut head) + said.as_str()));
+            }
+            (None, Some((_, segment))) => segment.push(c),
+            (None, None) => head.push(c),
+        }
+    }
+    segments
+}
+
+/// When the file shown last changed, as the list says its dates (the
+/// dates setting): in the reader's words and dates (Today 14:02, 12 Mar),
+/// or as ISO 8601 writes it in every language where that is chosen.
+fn dated(shell: &Shell, t: SystemTime) -> String {
+    if shell.prefs.friendly_dates {
+        format::friendly_time(t, &jiff::Zoned::now())
+    } else {
+        format::time(t)
+    }
 }
 
 fn type_label(shell: &Shell, info: &Info) -> Option<String> {
@@ -8884,7 +9020,7 @@ mod tests {
         assert!(skwir_core::inspection::TooLarge::is(&error), "{error}");
         assert!(matches!(
             super::failure_content(error),
-            super::PreviewContent::TooLarge(why) if why.english().contains("8193 × 8193")
+            super::PreviewContent::TooLarge(why) if why.english().contains("8,193 × 8,193")
         ));
     }
 

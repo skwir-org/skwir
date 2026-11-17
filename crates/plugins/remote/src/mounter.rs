@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::words;
-use skwir_core::words::Words;
+use skwir_core::words::{Name, Words};
 
 use crate::address::Address;
 use crate::connector::{self, Ask, Recognised};
@@ -202,27 +202,21 @@ pub(crate) fn used_by_another() -> Words {
     words!(remote_mounter_used_by_another = "another program is using it")
 }
 
-/// What Eject says when `users` (programs' names) use a mount. The names
-/// before the last are quoted and joined here: a message takes no list.
+/// What Eject says when `users` (programs' names) use a mount.
 fn in_use(users: &[String]) -> Words {
-    match users {
-        [] => used_by_another(),
-        [rest @ .., last] => words!(
-            remote_mounter_used_by = "{ $count ->
-                [1] “{ $last }” is using it
-               *[other] { $first } and “{ $last }” are using it
-            }",
-            count = users.len(),
-            first = rest
-                .iter()
-                .map(|u| format!("“{u}”"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            last = last.as_str(),
-            note = "What keeps a mount from being let go of: programs, by the names they \
-                    run under; first: those before the last, each quoted, joined by commas."
-        ),
+    if users.is_empty() {
+        return used_by_another();
     }
+    words!(
+        remote_mounter_used_by = "{ $count ->
+            [1] { $programs } is using it
+           *[other] { $programs } are using it
+        }",
+        count = users.len(),
+        programs = skwir_core::words::List::and(users.iter().cloned().map(Name)),
+        note = "What keeps a mount from being let go of: programs, by the names they run \
+                under, a list; count: how many."
+    )
 }
 
 /// Let go of the mount at `point` whatever holds it (a lazy unmount: the
@@ -422,7 +416,7 @@ mod tests {
         assert_eq!(in_use(&names(&["vim"])).english(), "“vim” is using it");
         assert_eq!(
             in_use(&names(&["fish", "less", "vim"])).english(),
-            "“fish”, “less” and “vim” are using it"
+            "“fish”, “less”, and “vim” are using it"
         );
         assert_eq!(in_use(&[]).english(), "another program is using it");
     }

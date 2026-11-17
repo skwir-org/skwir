@@ -103,7 +103,7 @@ models_detail_watertight = Watertight
 models_document_title = { $program } document
 
 # Why a DXF drawing is not drawn: it grew past what the preview reads while it was read. size: that bound (33.6 MB).
-models_drawing_exceeds = The drawing exceeds { $size } preview limit
+models_drawing_exceeds = The drawing exceeds the { $size } preview limit
 
 # The title of an AutoCAD drawing's preview. format: the format's name (DWG, DXF).
 models_drawing_title = { $format } drawing
@@ -120,10 +120,11 @@ models_duration_seconds = { $s }s
 # Said under a DXF drawing too large to draw whole: what is past the preview's bounds is left out.
 models_dxf_drawn_in_part = Drawn in part: the drawing holds more than is drawn here
 
-# Said under a CAD model drawn with holes: some of its surfaces could not be turned into triangles. missing: how many; count: how many surfaces the model has.
-models_faces_missing = { $missing } of { $count ->
-       *[other] { $count } faces
-    } could not be drawn
+# Said under a CAD model drawn with holes: some of its surfaces (faces) could not be turned into triangles. missing: how many; count: how many faces the model has.
+models_faces_missing = { $missing ->
+        [one] { $missing } face of { $count } could not be drawn
+       *[other] { $missing } faces of { $count } could not be drawn
+    }
 
 # A length of filament in metres, in the preview's Properties. metres: the number.
 models_filament_metres = { $metres } m
@@ -144,7 +145,7 @@ models_layer_height_mm = { $mm } mm
 models_member_missing = { $member } is missing
 
 # Why a part of a model's package is not read: it inflates past what the preview reads. member: its name in the package, as written; size: that bound.
-models_member_too_large = { $member } exceeds { $size } preview limit
+models_member_too_large = { $member } exceeds the { $size } preview limit
 
 # The title of a 3D model's preview. format: the format's or the program's name (STL, glTF, STEP, Rhino, SketchUp).
 models_model_title = { $format } model

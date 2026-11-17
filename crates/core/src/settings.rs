@@ -1966,11 +1966,11 @@ pub(crate) fn register(app: &crate::App) {
             crate::words!(settings_language = "Language"),
             (
                 crate::words!(
-                    settings_language_description = "The language skwir's window speaks.",
+                    settings_language_description = "The language Skwir's window speaks.",
                     note = "Automatic is a choice of the setting (settings_language_automatic)."
                 ),
                 crate::words!(
-                    settings_language_description_more = "Automatic speaks the first of your system's languages skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
+                    settings_language_description_more = "Automatic speaks the first of your system's languages Skwir has words in, else English; agents and scripts are answered in English whichever you choose.",
                     note = "Automatic is a choice of the setting (settings_language_automatic)."
                 ),
             ),
@@ -2030,7 +2030,7 @@ pub(crate) fn register(app: &crate::App) {
             "settings.check",
             crate::words!(settings_check = "Check settings"),
             crate::words!(
-                settings_check_description = "Check a settings file, or settings given as a table, against the settings this skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know",
+                settings_check_description = "Check a settings file, or settings given as a table, against the settings this build of Skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know",
                 note = "Read by agents and in F1's list of actions."
             ),
             |args, app| {
@@ -2583,12 +2583,12 @@ impl Settings {
                 // Words, said once the settings chose the language.
                 let problem = crate::words!(
                     settings_unreadable_unsaved = "{ $file ->
-                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them, and saves nothing there this time.
-                       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults, and saves nothing there this time.
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there this time.
+                       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there this time.
                     }",
                     file = whose,
                     why = crate::op::io_words(&error),
-                    note = "Told at startup: a file of skwir's could not be read; why, in a few words."
+                    note = "Told at startup: a file of Skwir's could not be read; why, in a few words."
                 );
                 return (toml::Table::new(), Some(problem), false);
             }
@@ -2613,27 +2613,27 @@ impl Settings {
             Ok(aside) => {
                 let problem = crate::words!(
                     settings_unreadable_set_aside = "{ $file ->
-                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them. The file was set aside as { $aside }.
-                       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults. The file was set aside as { $aside }.
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them. The file was set aside as { $aside }.
+                       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults. The file was set aside as { $aside }.
                     }",
                     file = whose,
                     why = why,
                     aside = crate::words::Name::of(&aside),
-                    note = "Told at startup: a file of skwir's could not be read (why, in a few words) and was renamed (its new name)."
+                    note = "Told at startup: a file of Skwir's could not be read (why, in a few words) and was renamed (its new name)."
                 );
                 (toml::Table::new(), Some(problem), true)
             }
             Err(error) => {
                 let problem = crate::words!(
                     settings_unreadable_kept = "{ $file ->
-                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
-                       *[settings] Your settings could not be read ({ $why }), so skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+                       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
                     }",
                     file = whose,
                     why = why,
                     path = path.display().to_string(),
                     error = crate::op::io_words(&error),
-                    note = "Told at startup: a file of skwir's could not be read (why) nor renamed (its path, and why not)."
+                    note = "Told at startup: a file of Skwir's could not be read (why) nor renamed (its path, and why not)."
                 );
                 (toml::Table::new(), Some(problem), false)
             }
@@ -2986,13 +2986,13 @@ impl Settings {
             renamed.get(key).map(|new| {
                 if Self::lookup(table, new).is_some() {
                     crate::words!(
-                        settings_renamed_both = "not read: “{ $new }” is set, which skwir reads",
+                        settings_renamed_both = "not read: “{ $new }” is set, which Skwir reads",
                         new = new.as_str(),
                         note = "A settings file's key that has a new name, set too: the new key."
                     )
                 } else {
                     crate::words!(
-                        settings_renamed = "now “{ $new }”: skwir moves it there",
+                        settings_renamed = "now “{ $new }”: Skwir moves it there",
                         new = new.as_str(),
                         note = "A settings file's key that has a new name: the new key."
                     )
@@ -3028,20 +3028,20 @@ impl Settings {
                         let note = if own {
                             crate::words!(
                                 settings_apart_own = "{ $file ->
-                                    [state] the window's state, not a setting: skwir reads its own, in its state file, never this one
-                                   *[data] what you make in skwir (saved searches, pinned tags, tags' colours), not a setting: skwir reads its own, in its data file, never this one
+                                    [state] the window's state, not a setting: Skwir reads its own, in its state file, never this one
+                                   *[data] what you make in Skwir (saved searches, pinned tags, tags' colours), not a setting: Skwir reads its own, in its data file, never this one
                                 }",
                                 file = file,
-                                note = "A settings file's key that skwir keeps in a file of its own, which holds it already."
+                                note = "A settings file's key that Skwir keeps in a file of its own, which holds it already."
                             )
                         } else {
                             crate::words!(
                                 settings_apart_until = "{ $file ->
-                                    [state] the window's state, not a setting: read from here only until skwir keeps its own, in its state file
-                                   *[data] what you make in skwir (saved searches, pinned tags, tags' colours), not a setting: read from here only until skwir keeps its own, in its data file
+                                    [state] the window's state, not a setting: read from here only until Skwir keeps its own, in its state file
+                                   *[data] what you make in Skwir (saved searches, pinned tags, tags' colours), not a setting: read from here only until Skwir keeps its own, in its data file
                                 }",
                                 file = file,
-                                note = "A settings file's key that skwir keeps in a file of its own, which does not hold it yet."
+                                note = "A settings file's key that Skwir keeps in a file of its own, which does not hold it yet."
                             )
                         };
                         checked.notes.push((key, note));
@@ -3059,9 +3059,9 @@ impl Settings {
                         checked.notes.push((
                             key,
                             crate::words!(
-                                settings_other_choice = "not one skwir knows here: it may be among { $which }",
+                                settings_other_choice = "not one Skwir knows here: it may be among { $which }",
                                 which = spec.constraints.more_choices.clone(),
-                                note = "A settings file's choice skwir does not know, which may be one found where it runs: which those are (themes you added to bat)."
+                                note = "A settings file's choice Skwir does not know, which may be one found where it runs: which those are (themes you added to bat)."
                             ),
                         ));
                     } else if let Err(error) = spec.check(value) {
@@ -3098,7 +3098,7 @@ impl Settings {
                                     crate::words!(
                                         settings_no_plugin = "no plugin “{ $id }” here: one from outside, or not built in, may take it",
                                         id = id.as_str(),
-                                        note = "A settings file names a plugin skwir does not have: its id."
+                                        note = "A settings file names a plugin Skwir does not have: its id."
                                     ),
                                 ),
                             });

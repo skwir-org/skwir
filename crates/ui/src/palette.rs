@@ -66,7 +66,7 @@ fn ui_command_table() -> Vec<(&'static str, &'static str, Words)> {
             words!(palette_command_palette = "Command palette"),
         ),
         ("ui.settings", "{}", words!(palette_settings = "Settings…")),
-        ("ui.about", "{}", words!(palette_about = "About skwir")),
+        ("ui.about", "{}", words!(palette_about = "About Skwir")),
         (
             "ui.rename_prompt",
             "{}",

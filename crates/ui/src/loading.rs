@@ -247,7 +247,7 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
         Banner::said(&match read {
             Some(count) => words!(
                 loading_location_read = "Loading location… { $count ->
-                    [one] 1 item
+                    [one] { $count } item
                    *[other] { $count } items
                 }",
                 count = count,

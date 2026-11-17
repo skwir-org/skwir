@@ -1873,7 +1873,7 @@ impl Shell {
                     return self.set_status(
                         words!(
                             inspector_chapter_refused = "Enter a chapter number from 1 to { $last }",
-                            last = sections.to_string(),
+                            last = sections,
                             note = "Said where a chapter typed is none of the book's. last: its last chapter's number."
                         ),
                         true,
@@ -3117,18 +3117,25 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         ));
     }
     if numbered {
+        // A page's name as the book prints it is as written; a number is
+        // written as the reader's language writes numbers.
         let (value, total) = if printed {
             (
-                page.map_or_else(
+                Words::as_written(page.map_or_else(
                     || "–".to_owned(),
                     |page| data.printed_pages[page].label.clone(),
+                )),
+                skwir_core::words::Arg::from(
+                    data.printed_pages[data.printed_pages.len() - 1]
+                        .label
+                        .clone(),
                 ),
-                data.printed_pages[data.printed_pages.len() - 1]
-                    .label
-                    .clone(),
             )
         } else {
-            ((data.position + 1).to_string(), data.sections.to_string())
+            (
+                crate::preview_bar::number(data.position + 1),
+                skwir_core::words::Arg::from(data.sections),
+            )
         };
         // A book that lists its printed pages can be counted either way.
         let unit = (!data.printed_pages.is_empty()).then(|| {
@@ -3360,7 +3367,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         if done {
             words!(
                 inspector_lines = "{ $count ->
-                    [one] 1 line
+                    [one] { $count } line
                    *[other] { $count } lines
                 }",
                 count = lines,
@@ -3369,7 +3376,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         } else {
             words!(
                 inspector_lines_so_far = "{ $count ->
-                    [one] 1 line
+                    [one] { $count } line
                    *[other] { $count } lines
                 }…",
                 count = lines,

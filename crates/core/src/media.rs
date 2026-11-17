@@ -185,9 +185,10 @@ pub struct Update {
     /// The session moved on to the file queued with `play_next`.
     pub advanced: Option<std::path::PathBuf>,
     /// A control the player could not carry out (for example seeking a
-    /// non-seekable stream). Transient: the session stays usable and a
-    /// `state` with the same generation restores the actual playback state.
-    pub notice: Option<String>,
+    /// non-seekable stream), said where it is shown. Transient: the session
+    /// stays usable and a `state` with the same generation restores the
+    /// actual playback state.
+    pub notice: Option<crate::words::Words>,
     /// Fatal: the session has ended and its controls must be withdrawn.
     /// Why, said where it is shown.
     pub error: Option<crate::words::Words>,

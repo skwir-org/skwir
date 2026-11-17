@@ -122,8 +122,9 @@ models_duration_seconds = { $s } s
 models_dxf_drawn_in_part = Dessin partiel : le dessin contient plus que ce qui est dessiné ici
 
 # draft
-models_faces_missing = Impossible de dessiner { $missing } des { $count ->
-       *[other] { $count } faces
+models_faces_missing = { $missing ->
+        [one] { $missing } face sur { $count } n’a pas pu être dessinée
+       *[other] { $missing } faces sur { $count } n’ont pas pu être dessinées
     }
 
 # draft

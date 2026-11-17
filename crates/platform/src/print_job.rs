@@ -390,7 +390,7 @@ fn code(
     let notice = cut.then(|| {
         words!(
             print_job_lines_cut = "{ $count ->
-                    [one] Only the first { $count } line is printed
+                    [1] Only the first line is printed
                    *[other] Only the first { $count } lines are printed
                 }",
             count = lines.len(),

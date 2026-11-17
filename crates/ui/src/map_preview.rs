@@ -92,7 +92,7 @@ fn holds(shapes: &Shapes) -> String {
         (lines > 0).then(|| {
             words!(
                 map_holds_lines = "{ $count ->
-                    [one] 1 line
+                    [one] { $count } line
                    *[other] { $count } lines
                 }",
                 count = lines,
@@ -102,7 +102,7 @@ fn holds(shapes: &Shapes) -> String {
         (places > 0).then(|| {
             words!(
                 map_holds_places = "{ $count ->
-                    [one] 1 place
+                    [one] { $count } place
                    *[other] { $count } places
                 }",
                 count = places,
@@ -112,7 +112,7 @@ fn holds(shapes: &Shapes) -> String {
         (areas > 0).then(|| {
             words!(
                 map_holds_areas = "{ $count ->
-                    [one] 1 area
+                    [one] { $count } area
                    *[other] { $count } areas
                 }",
                 count = areas,

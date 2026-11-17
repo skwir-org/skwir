@@ -13,7 +13,7 @@ tables_cells_cut = { $count ->
 
 # A note under a table that has more columns than are shown.
 tables_columns_cut = { $count ->
-       *[other] Only the first { $count } columns shown
+       *[other] Only the first { $count } columns are shown
     }
 
 # Why a SQLite database could not be shown as a table.
@@ -42,11 +42,11 @@ tables_detail_tables = Tables
 
 # A note under a JSON Lines table whose objects have more keys (its columns) than are shown.
 tables_keys_cut = { $count ->
-       *[other] Only the first { $count } keys shown
+       *[other] Only the first { $count } keys are shown
     }
 
 # Why a JSON Lines file could not be shown. size: the bound on a line (2 MB).
-tables_line_too_long = A line exceeds { $size } preview limit
+tables_line_too_long = A line exceeds the { $size } preview limit
 
 # A note under a JSON Lines table: lines that are not JSON, shown as they are.
 tables_lines_invalid = { $count ->

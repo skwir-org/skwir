@@ -471,7 +471,7 @@ impl Shell {
                     shortcuts_tip = "Tip: press { $keys } for { $action }. F1 lists the keys for where you are.",
                     keys = keymap::display_keys(&hint.keys),
                     action = action,
-                    note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: what it does."
+                    note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title, capitalised as a title is (Copy, Move to Trash): where a capital inside a sentence would read wrong, name it as a command (the command Copy)."
                 ),
                 Tone::Info,
                 Vec::new(),

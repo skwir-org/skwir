@@ -332,7 +332,8 @@ pub fn describe(
                     name = name(path),
                     trash = trash.clone(),
                     note = "trash: the trash the server keeps what is deleted in, as it names \
-                            it (Google Drive's trash)."
+                            it (Google Drive's trash), words said inside a sentence that carry \
+                            their own determiner: add no article before it."
                 )
             } else {
                 words!(
@@ -489,8 +490,11 @@ pub fn failure(
             toast_could_not = "Couldn't { $what }: { $why }",
             what = words.will.clone(),
             why = why,
-            note = "what: what the step said it would do (extract “a.zip” to Downloads); why: \
-                    what stopped it, as the system or the step said it (permission denied)."
+            note = "what: what the step said it would do, words that begin with a verb as an \
+                    instruction does (extract “a.zip” to Downloads): where the word before it \
+                    would change with the verb's first sound (de, d’), say it so none does; \
+                    why: what stopped it, as the system or the step said it (permission \
+                    denied)."
         ),
         Some(Change::Create {
             path,
@@ -544,40 +548,62 @@ pub(crate) fn amount(items: usize, t: &Transfer) -> Words {
         // Items as they come whole, a batch's before their steps place
         // them (`Transfer::finished`).
         let said = words!(
-            toast_bar_items_bytes = "{ $finished } of { $count ->
-                [one] { $count } item
-               *[other] { $count } items
+            toast_bar_items_bytes = "{ $finished ->
+                [one] { $finished } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }
+               *[other] { $finished } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }
             } · { $done } of { $whole }",
             finished = t.finished,
             count = items,
             done = Size(t.done),
             whole = Size(planned.max(t.done)),
             note = "How far an action is: the items it finished of all, then what it moved of \
-                    all it moves (1 of 3 items · 3.2 GB of 8.6 GB)."
+                    all it moves (1 of 3 items · 3.2 GB of 8.6 GB). Each count chooses its \
+                    words: where the noun follows the first number, choose it by finished."
         );
         return said;
     }
     if t.done > 0 {
         words!(
-            toast_bar_items_moved = "{ $finished } of { $count ->
-                [one] { $count } item
-               *[other] { $count } items
+            toast_bar_items_moved = "{ $finished ->
+                [one] { $finished } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }
+               *[other] { $finished } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }
             } · { $done }",
             finished = t.finished,
             count = items,
             done = Size(t.done),
             note = "How far an action is: the items it finished of all, then what it moved \
-                    (1,286 of 40,000 items · 82.3 kB)."
+                    (1,286 of 40,000 items · 82.3 kB). Each count chooses its words: where the \
+                    noun follows the first number, choose it by finished."
         )
     } else {
         words!(
-            toast_bar_items = "{ $finished } of { $count ->
-                [one] { $count } item
-               *[other] { $count } items
+            toast_bar_items = "{ $finished ->
+                [one] { $finished } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }
+               *[other] { $finished } of { $count ->
+                    [one] { $count } item
+                   *[other] { $count } items
+                }
             }",
             finished = t.finished,
             count = items,
-            note = "How far an action is: the items it finished of all (0 of 2 items)."
+            note = "How far an action is: the items it finished of all (0 of 2 items). Each \
+                    count chooses its words: where the noun follows the first number, choose \
+                    it by finished."
         )
     }
 }

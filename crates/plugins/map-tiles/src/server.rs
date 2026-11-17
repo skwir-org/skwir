@@ -332,7 +332,7 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
                 !RESERVED.contains(&header.to_ascii_lowercase().as_str()),
                 words!(
                     map_tiles_check_header_reserved =
-                        "{ $name }: skwir sets the { $header } header itself",
+                        "{ $name }: Skwir sets the { $header } header itself",
                     name = name.clone(),
                     header = header,
                     note = "name: a tile server's, as the user named it; header: an HTTP header's \

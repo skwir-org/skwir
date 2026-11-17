@@ -166,7 +166,9 @@ impl Shared {
             (self.wake)();
         }
     }
-    /// A control the worker declined. Stale generations are dropped like state.
+    /// A control the worker declined, its reason as the worker wrote it
+    /// (English, as a helper's messages are). Stale generations are dropped
+    /// like state.
     fn notice(&self, generation: u64, message: String) {
         let mut update = self.update.lock();
         if generation > self.generation.load(Ordering::Acquire)
@@ -175,7 +177,11 @@ impl Shared {
             return;
         }
         let empty = update.is_empty();
-        update.notice = Some(message);
+        update.notice = Some(words!(
+            media_control_refused = "The player could not do that: { $why }",
+            why = Words::as_written(message),
+            note = "A notice in the player: a control (a seek, a track switch) could not be carried out, and playback goes on. why: the player's reason, in English as it wrote it."
+        ));
         drop(update);
         if empty {
             (self.wake)();
@@ -908,8 +914,8 @@ mod tests {
             notice.is_some() && state.is_some()
         });
         assert_eq!(
-            notice.as_deref(),
-            Some("this video does not support seeking")
+            notice.map(|notice| notice.english()).as_deref(),
+            Some("The player could not do that: this video does not support seeking")
         );
         assert!(!state.unwrap().seekable);
         assert!(

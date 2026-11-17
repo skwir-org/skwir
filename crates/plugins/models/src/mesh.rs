@@ -156,12 +156,13 @@ pub fn read<S: FileSource + ?Sized>(
     let unmeshed = drawn.measures.objects_missing;
     let holes = if missing > 0 {
         Some(words!(
-            models_faces_missing = "{ $missing } of { $count ->
-                   *[other] { $count } faces
-                } could not be drawn",
+            models_faces_missing = "{ $missing ->
+                    [one] { $missing } face of { $count } could not be drawn
+                   *[other] { $missing } faces of { $count } could not be drawn
+                }",
             missing = missing,
             count = drawn.measures.faces,
-            note = "Said under a CAD model drawn with holes: some of its surfaces could not be turned into triangles. missing: how many; count: how many surfaces the model has."
+            note = "Said under a CAD model drawn with holes: some of its surfaces (faces) could not be turned into triangles. missing: how many; count: how many faces the model has."
         ))
     } else if unmeshed > 0 {
         Some(words!(
@@ -189,7 +190,7 @@ pub fn read<S: FileSource + ?Sized>(
             let large = matches!(asked, Asked::Turned { whole: false }).then(|| {
                 words!(
                     models_shown_as_picture = "Shown as a picture: it has { $millions } million triangles. 3D turns it all the same",
-                    millions = format!("{:.1}", drawn.measures.triangles as f64 / 1e6),
+                    millions = words::Decimal::of(drawn.measures.triangles as f64 / 1e6, 1),
                     note = "Said under a model too large to turn at once: a still picture is shown, and the 3D button turns it anyway. millions: the number of triangles in millions (2.4)."
                 )
             });

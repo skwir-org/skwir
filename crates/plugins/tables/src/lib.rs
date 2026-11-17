@@ -482,7 +482,7 @@ pub(crate) fn cells_cut(count: usize) -> Words {
 pub(crate) fn columns_cut(count: usize) -> Words {
     words!(
         tables_columns_cut = "{ $count ->
-           *[other] Only the first { $count } columns shown
+           *[other] Only the first { $count } columns are shown
         }",
         count = count,
         note = "A note under a table that has more columns than are shown."
@@ -791,7 +791,7 @@ mod tests {
         assert_eq!(columns(&seen), ["n", "name"]);
         assert_eq!(seen.rows[0].cells, unseen.rows[0].cells);
         assert_eq!(seen.rows.len(), 200);
-        assert_eq!(detail(&seen, "Rows").as_deref(), Some("1200"));
+        assert_eq!(detail(&seen, "Rows").as_deref(), Some("1,200"));
     }
 
     /// A file past what a preview holds of its start is read past it by
@@ -927,7 +927,7 @@ mod tests {
         let last_page = (rows as u64 - 1) / 500 * 500;
         let last = read("long.csv", text.as_bytes(), last_page);
         assert_eq!(last.next, None);
-        assert_eq!(rows_detail(&last), Some(rows.to_string()));
+        assert_eq!(rows_detail(&last), Some(grouped(rows as u64)));
         assert_eq!(
             last.title.english(),
             format!(

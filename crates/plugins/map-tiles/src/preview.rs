@@ -12,6 +12,7 @@ use skwir_core::preview::{PreviewProvider, PreviewRequest};
 use skwir_core::scheduler::Scheduler;
 use skwir_core::tiles::Layer;
 use skwir_core::words;
+use skwir_core::words::{Decimal, List};
 use skwir_platform::inspection::{check, details};
 
 use crate::archive::{self, Archive, Format, Kind};
@@ -126,26 +127,33 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
         ..GeoDoc::default()
     };
     let zoom = if about.min_zoom == about.max_zoom {
-        about.min_zoom.to_string()
+        words!(
+            map_tiles_zoom_level = "{ $level }",
+            level = about.min_zoom,
+            note = "The one zoom level a tile archive has tiles for, a number."
+        )
     } else {
         words!(
             map_tiles_zoom_range = "{ $from } to { $to }",
-            from = about.min_zoom.to_string(),
-            to = about.max_zoom.to_string(),
+            from = about.min_zoom,
+            to = about.max_zoom,
             note =
                 "The zoom levels a tile archive has tiles for: from the farthest to the closest."
         )
-        .say()
-    };
+    }
+    .say();
+    // Degrees to five digits after the point: about a metre.
+    let degrees = |d: f64| Decimal::of(d, 5);
     let corners = about.bounds.map(|b| {
         words!(
             map_tiles_area = "{ $south }, { $west } to { $north }, { $east }",
-            south = format!("{:.5}", b.south),
-            west = format!("{:.5}", b.west),
-            north = format!("{:.5}", b.north),
-            east = format!("{:.5}", b.east),
+            south = degrees(b.south),
+            west = degrees(b.west),
+            north = degrees(b.north),
+            east = degrees(b.east),
             note = "Where a tile archive has tiles: its south-west corner to its north-east one, \
-                    latitude then longitude, in degrees."
+                    latitude then longitude, each a number of degrees (45.12345). Where a \
+                    language's decimal sign is a comma, the numbers want another separator."
         )
         .say()
     });
@@ -193,11 +201,25 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
             ),
             (
                 words!(map_tiles_detail_count = "Tile count"),
-                about.tiles.map(|n| n.to_string()),
+                about.tiles.map(|n| {
+                    words!(
+                        map_tiles_tile_count = "{ $count }",
+                        count = n,
+                        note = "How many tiles a tile archive holds, a number (beside Tile count)."
+                    )
+                    .say()
+                }),
             ),
             (
                 words!(map_tiles_detail_layers = "Layers"),
-                Some(about.layers.join(", ")),
+                (!about.layers.is_empty()).then(|| {
+                    words!(
+                        map_tiles_layers = "{ $layers }",
+                        layers = List::and(about.layers.iter().map(String::as_str)),
+                        note = "The layers of a tile archive's vector tiles, by the names the archive gives them, a list."
+                    )
+                    .say()
+                }),
             ),
             (
                 words!(map_tiles_detail_attribution = "Attribution"),
@@ -311,7 +333,7 @@ mod tests {
         assert_eq!(data.title.english(), "PMTiles 3 · Invented Hills");
         assert_eq!(fact(&data, "Tiles"), Some("PNG pictures"));
         assert_eq!(fact(&data, "Zoom"), Some("3"));
-        assert_eq!(fact(&data, "Layers"), Some("water, roads"));
+        assert_eq!(fact(&data, "Layers"), Some("water and roads"));
         assert!(data.notices.is_empty(), "{:?}", data.notices);
         let doc = data.geo.as_deref().unwrap();
         assert!(doc.areas.is_empty(), "its tiles show where it has them");

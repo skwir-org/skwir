@@ -199,17 +199,6 @@ fn plugin_off() -> Words {
     )
 }
 
-/// “a”, “b”.
-///
-/// Transitional: a list is joined here until words take a list of names
-/// that each language joins its own way (PLAN.md, ADR-139 step F).
-fn quoted(tags: &[String]) -> String {
-    tags.iter()
-        .map(|t| format!("“{t}”"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// The pins and colors follow `from` renamed `to`, or removed.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Follow {
@@ -279,7 +268,8 @@ impl Operation for Follow {
         serde_json::to_value(self).expect("serializable")
     }
     fn describe(&self) -> Change {
-        let from = quoted(&self.from);
+        let from = || crate::tag_list(&self.from);
+        let count = self.from.len();
         // What moves, when known: the pin, the color, or both.
         let (pins, colors) = self
             .moves
@@ -290,82 +280,130 @@ impl Operation for Follow {
             Some(new) if pins && !colors => change(
                 &self.root,
                 words!(
-                    tags_follow_pin_will = "pin { $to } where { $from } was",
+                    tags_follow_pin_will = "pin { $to } where { $count ->
+                        [one] { $from } was
+                       *[other] { $from } were
+                    }",
                     to = named(new),
-                    from = from.as_str(),
-                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas."
+                    from = from(),
+                    count = count,
+                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many."
                 ),
                 words!(
-                    tags_follow_pin_did = "pinned { $to } where { $from } was",
+                    tags_follow_pin_did = "pinned { $to } where { $count ->
+                        [one] { $from } was
+                       *[other] { $from } were
+                    }",
                     to = named(new),
-                    from = from.as_str(),
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_pin_will, done."
                 ),
                 words!(
-                    tags_follow_pin_already = "{ $to } was already pinned where { $from } was",
+                    tags_follow_pin_already = "{ $to } was already pinned where { $count ->
+                        [one] { $from } was
+                       *[other] { $from } were
+                    }",
                     to = named(new),
-                    from = from.as_str(),
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_pin_will, found done already."
                 ),
             ),
             Some(new) if colors && !pins => change(
                 &self.root,
                 words!(
-                    tags_follow_color_will = "give { $to } the color { $from } had",
+                    tags_follow_color_will = "give { $to } the color { $count ->
+                        [one] { $from } had
+                       *[other] { $from } had
+                    }",
                     to = named(new),
-                    from = from.as_str(),
-                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas."
+                    from = from(),
+                    count = count,
+                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many."
                 ),
                 words!(
-                    tags_follow_color_did = "gave { $to } the color { $from } had",
+                    tags_follow_color_did = "gave { $to } the color { $count ->
+                        [one] { $from } had
+                       *[other] { $from } had
+                    }",
                     to = named(new),
-                    from = from.as_str(),
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_color_will, done."
                 ),
                 words!(
-                    tags_follow_color_already = "{ $to } already had the color { $from } had",
+                    tags_follow_color_already = "{ $to } already had the color { $count ->
+                        [one] { $from } had
+                       *[other] { $from } had
+                    }",
                     to = named(new),
-                    from = from.as_str(),
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_color_will, found done already."
                 ),
             ),
             Some(new) => change(
                 &self.root,
                 words!(
-                    tags_follow_both_will = "keep { $to } pinned and colored as { $from } were",
+                    tags_follow_both_will = "keep { $to } pinned and colored as { $count ->
+                        [one] { $from } was
+                       *[other] { $from } were
+                    }",
                     to = named(new),
-                    from = from.as_str(),
-                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, each quoted, joined by commas."
+                    from = from(),
+                    count = count,
+                    note = "A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many."
                 ),
                 words!(
-                    tags_follow_both_did = "kept { $to } pinned and colored as { $from } were",
+                    tags_follow_both_did = "kept { $to } pinned and colored as { $count ->
+                        [one] { $from } was
+                       *[other] { $from } were
+                    }",
                     to = named(new),
-                    from = from.as_str(),
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_both_will, done."
                 ),
                 words!(
                     tags_follow_both_already =
-                        "{ $to } was already pinned and colored as { $from } were",
+                        "{ $to } was already pinned and colored as { $count ->
+                        [one] { $from } was
+                       *[other] { $from } were
+                    }",
                     to = named(new),
-                    from = from.as_str(),
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_both_will, found done already."
                 ),
             ),
             None => change(
                 &self.root,
                 words!(
-                    tags_follow_unpin_will = "unpin { $from }",
-                    from = from.as_str(),
-                    note = "A step of removing tags from every file. from: the tags, each quoted, joined by commas."
+                    tags_follow_unpin_will = "unpin { $count ->
+                        [one] { $from }
+                       *[other] { $from }
+                    }",
+                    from = from(),
+                    count = count,
+                    note = "A step of removing tags from every file. from: the tags, a list; count: how many."
                 ),
                 words!(
-                    tags_follow_unpin_did = "unpinned { $from }",
-                    from = from.as_str(),
+                    tags_follow_unpin_did = "unpinned { $count ->
+                        [one] { $from }
+                       *[other] { $from }
+                    }",
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_unpin_will, done."
                 ),
                 words!(
-                    tags_follow_unpin_already = "{ $from } was already unpinned",
-                    from = from.as_str(),
+                    tags_follow_unpin_already = "{ $count ->
+                        [one] { $from } was already unpinned
+                       *[other] { $from } were already unpinned
+                    }",
+                    from = from(),
+                    count = count,
                     note = "As tags_follow_unpin_will, found done already."
                 ),
             ),

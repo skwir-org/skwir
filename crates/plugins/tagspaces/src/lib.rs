@@ -219,7 +219,7 @@ impl NotesStore for TagSpacesStore {
             comment: true,
             origin: false,
             limits: Some(skwir_core::words!(
-                tagspaces_limits = "no rating",
+                tagspaces_limits = "a rating",
                 note = "What TagSpaces sidecars cannot hold that other places notes are kept can, placed after \"What it cannot hold:\" in its settings."
             )),
         }

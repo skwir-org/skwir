@@ -137,7 +137,7 @@ pub(crate) enum Target {
     Change(ActionId, Chip),
     /// A default the user's record hides.
     Restore(ActionId, Chip),
-    /// Back to skwir's keys, when that takes keys from other actions.
+    /// Back to Skwir's keys, when that takes keys from other actions.
     Reset(ActionId),
     /// Keys whose actions to list.
     Find,
@@ -850,7 +850,7 @@ impl SettingsView {
                 .tooltip(move |_, cx| {
                     crate::toolbar::tooltip(
                         words!(
-                            keys_reset_tip = "Back to skwir's keys",
+                            keys_reset_tip = "Back to Skwir's keys",
                             note = "The tooltip of a row's revert button on the Keyboard page: its action's keys as skwir ships them."
                         )
                         .say()
@@ -1456,7 +1456,7 @@ impl SettingsView {
         }
     }
 
-    /// Back to skwir's keys for `id`: at once, unless that takes keys from
+    /// Back to Skwir's keys for `id`: at once, unless that takes keys from
     /// other actions (a shortcut of the user's over one of its defaults),
     /// which the bar says first; refused when an action that keeps a key
     /// would have none.
@@ -1901,7 +1901,7 @@ impl SettingsView {
             )
             .say(),
             (Target::Reset(_), Some(action)) => words!(
-                keys_heading_reset = "Back to skwir's keys for “{ $action }” · { $place }",
+                keys_heading_reset = "Back to Skwir's keys for “{ $action }” · { $place }",
                 action = action.title.clone(),
                 place = action.place.clone(),
                 note = "The heading of the Keyboard page's bar: action's keys as skwir ships them, in place."
@@ -1947,7 +1947,7 @@ impl SettingsView {
                     .child(
                         div().text_body().text_color(theme.text_muted).child(
                             words!(
-                                keys_reset_detail = "Its keys go back to skwir's, and your shortcuts that took them go.",
+                                keys_reset_detail = "Its keys go back to Skwir's, and your shortcuts that took them go.",
                                 note = "Said in the Keyboard page's bar before an action's keys go back to those skwir ships."
                             )
                             .say(),
@@ -2017,7 +2017,7 @@ impl SettingsView {
                             note = "A button of the Keyboard page's bar: keys of skwir's run their action again."
                         ),
                         Target::Reset(_) => words!(
-                            keys_reset_save = "Back to skwir's keys",
+                            keys_reset_save = "Back to Skwir's keys",
                             note = "A button of the Keyboard page's bar: an action's keys as skwir ships them."
                         ),
                         _ => words!(

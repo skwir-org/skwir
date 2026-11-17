@@ -1373,7 +1373,7 @@ fn not_done(done: &'static str, error: anyhow::Error) -> Words {
         remote_configure_not_done = "{ $done ->
             [added] The server was not added: { $error }
             [saved] The server was not saved: { $error }
-            [signed_in] The server was not signed in: { $error }
+            [signed_in] Signing in to the server failed: { $error }
             [tested] The server was not tested: { $error }
             [kept] The server was not kept: { $error }
            *[removed] The server was not removed: { $error }
@@ -1754,8 +1754,8 @@ fn connecting_at_login_alone(remotes: &Remotes) -> anyhow::Result<()> {
         connecting.is_empty(),
         words!(
             remote_configure_at_login_encrypted = "{ $count ->
-                [1] { $remotes } connects at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
-               *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first
+                [1] { $remotes } connects at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first.
+               *[other] { $remotes } connect at login, which an encrypted configuration cannot: nobody is there to give its password. Turn Connect at Login off first.
             }",
             count = connecting.len(),
             remotes = skwir_core::words::List::and(

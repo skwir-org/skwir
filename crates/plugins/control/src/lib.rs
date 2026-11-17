@@ -264,7 +264,7 @@ async fn listen(
         Ok(None) => {
             tracing::info!("another skwir listens for agents and scripts");
             shared.lock().not = Some(words!(
-                control_another_listens = "another skwir window listens",
+                control_another_listens = "another Skwir window listens",
                 note = "Read by agents: why this window does not listen for agents and scripts. In lower case."
             ));
             return;
@@ -344,7 +344,7 @@ impl Tools {
                 // lists, which must not move with the window's language.
                 let description = if gate == AgentGate::Asks {
                     words!(
-                        control_tool_asks = "{ $description } (asks the user in skwir's window first)",
+                        control_tool_asks = "{ $description } (asks the user in Skwir's window first)",
                         description = spec.description.clone(),
                         note = "Read by agents: a command's description, for a command an agent runs only once the user allows it."
                     )
@@ -373,8 +373,8 @@ impl ServerHandler for Tools {
         // Read by agents: in English (ADR-139, 7).
         info.instructions = Some(
             words!(
-                control_instructions = "skwir, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in skwir's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you.",
-                note = "Read by agents: what an AI agent is told of skwir as it connects. entries and location are arguments' names, as typed."
+                control_instructions = "Skwir, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in Skwir's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you.",
+                note = "Read by agents: what an AI agent is told of Skwir as it connects. entries and location are arguments' names, as typed."
             )
             .english(),
         );
@@ -397,7 +397,7 @@ impl ServerHandler for Tools {
         let Some(app) = self.app.upgrade() else {
             return Ok(failed(
                 &words!(
-                    control_closing = "skwir is closing",
+                    control_closing = "Skwir is closing",
                     note = "Read by agents: why a command was not run."
                 )
                 .english(),
@@ -523,7 +523,7 @@ fn admit(
 ) -> anyhow::Result<()> {
     if let Some(path) = check.elsewhere_in(&invocation.args) {
         anyhow::bail!(words!(
-            control_elsewhere = "looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
+            control_elsewhere = "looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in Skwir first",
             path = path.display().to_string(),
             note = "Read by agents: why their command is refused. The path is one the agent named."
         ));
@@ -532,7 +532,7 @@ fn admit(
         check.named_in(&invocation.args).is_none(),
         words!(
             control_private =
-                "this names a private folder, which skwir keeps from agents (Settings, Privacy)",
+                "this names a private folder, which Skwir keeps from agents (Settings, Privacy)",
             note = "Read by agents: why their command is refused. Settings, Privacy is where the user keeps folders from agents."
         )
     );
@@ -547,7 +547,7 @@ fn admit(
         AgentGate::Runs => Ok(()),
         AgentGate::Refused => anyhow::bail!(words!(
             control_user_only =
-                "`{ $command }` answers the user in skwir's window: only the user runs it",
+                "`{ $command }` answers the user in Skwir's window: only the user runs it",
             command = spec.name.to_string(),
             note = "Read by agents: why their command is refused. The command's id, as typed."
         )),
@@ -597,12 +597,12 @@ fn allowed(
         match answer.recv_timeout(Duration::from_millis(200)) {
             Ok(true) => return Ok(()),
             Ok(false) => anyhow::bail!(words!(
-                control_not_allowed = "the user did not allow it",
+                control_not_allowed = "the user did not allow this command to run",
                 note = "Read by agents: the user refused to let their command run."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 anyhow::bail!(words!(
-                    control_closed_unasked = "skwir closed before the user answered",
+                    control_closed_unasked = "Skwir closed before the user answered",
                     note = "Read by agents: the window closed while the user was asked whether their command may run."
                 ))
             }
@@ -710,7 +710,7 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
                         "verdict": "unanswered",
                         "plan": title,
                         "error": words!(
-                            control_closed_unreviewed = "skwir closed before the plan was answered",
+                            control_closed_unreviewed = "Skwir closed before the plan was answered",
                             note = "Read by agents: the window closed while the plan they proposed waited for the user's review."
                         ),
                     }),
@@ -725,7 +725,7 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
                         "verdict": "waiting",
                         "plan": title,
                         "note": words!(
-                            control_plan_waits = "the plan waits for the user's review in skwir",
+                            control_plan_waits = "the plan waits for the user's review in Skwir",
                             note = "Read by agents: the user has not reviewed the plan they proposed yet."
                         ),
                     }),

@@ -1588,7 +1588,7 @@ fn group_words(group: &str) -> Option<Words> {
             keymap_place_shortcuts = "Shortcut overview",
             note = "A place in the window: the overview of shortcuts F1 opens."
         ),
-        "about" => words!(keymap_place_about = "About skwir"),
+        "about" => words!(keymap_place_about = "About Skwir"),
         "settings" => words!(keymap_place_settings = "Settings"),
         _ => return None,
     })

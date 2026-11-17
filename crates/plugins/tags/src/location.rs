@@ -778,7 +778,7 @@ impl Places {
                     app.notify_about_setting(
                         skwir_core::app::NotifyLevel::Warning,
                         words!(
-                            tags_index_full = "Some tagged files are left out of the tags: the room skwir gives them is full",
+                            tags_index_full = "Some tagged files are left out of the tags: the room Skwir gives them is full",
                             note = "A notice with a button to the setting Room for tagged files."
                         ),
                         crate::index::LIMIT_SETTING,

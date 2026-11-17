@@ -46,8 +46,32 @@ fn local(t: SystemTime, format: &str) -> String {
 /// Nothing here depends on the minute, so a list that is not re-rendered
 /// goes stale only at midnight, when the shell refreshes once.
 pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
+    match friendly(t, now) {
+        Friendly::Said(words) => words.say(),
+        Friendly::Date(moment) => moment.said(),
+    }
+}
+
+/// `friendly_time` as an argument a message places ("as of { $when }"):
+/// words where it is said in words, a moment where it is a date, so a
+/// message never receives it said already (ADR-139).
+pub fn friendly_arg(t: SystemTime, now: &jiff::Zoned) -> skwir_core::words::Arg {
+    match friendly(t, now) {
+        Friendly::Said(words) => words.into(),
+        Friendly::Date(moment) => moment.into(),
+    }
+}
+
+/// What `friendly_time` says: in words (today, yesterday, a weekday), or
+/// as a date.
+enum Friendly {
+    Said(skwir_core::words::Words),
+    Date(Moment),
+}
+
+fn friendly(t: SystemTime, now: &jiff::Zoned) -> Friendly {
     let Ok(timestamp) = jiff::Timestamp::try_from(t) else {
-        return "—".into();
+        return Friendly::Said(skwir_core::words::Words::as_written("—"));
     };
     let when = timestamp.to_zoned(now.time_zone().clone());
     let (date, today) = (when.date(), now.date());
@@ -56,35 +80,32 @@ pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
         shape,
     };
     if date == today {
-        skwir_core::words!(
+        Friendly::Said(skwir_core::words!(
             format_today = "Today { $time }",
             time = moment(Shape::Time),
             note = "When a file changed, today: time is the time of day (Today 14:02)."
-        )
-        .say()
+        ))
     } else if today.yesterday().is_ok_and(|yesterday| yesterday == date) {
-        skwir_core::words!(
+        Friendly::Said(skwir_core::words!(
             format_yesterday = "Yesterday { $time }",
             time = moment(Shape::Time),
             note = "When a file changed, yesterday: time is the time of day (Yesterday 09:30)."
-        )
-        .say()
+        ))
     } else if date < today
         && today
             .checked_sub(jiff::Span::new().days(7))
             .is_ok_and(|week_ago| date > week_ago)
     {
-        skwir_core::words!(
+        Friendly::Said(skwir_core::words!(
             format_weekday_time = "{ $weekday } { $time }",
             weekday = moment(Shape::Weekday),
             time = moment(Shape::Time),
             note = "When a file changed, in the last week: weekday is the day's name, time the time of day (Tuesday 18:45)."
-        )
-        .say()
+        ))
     } else if date.year() == today.year() {
-        moment(Shape::DayMonth).said()
+        Friendly::Date(moment(Shape::DayMonth))
     } else {
-        moment(Shape::Date).said()
+        Friendly::Date(moment(Shape::Date))
     }
 }
 
@@ -92,7 +113,7 @@ pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
 pub fn items(n: usize) -> String {
     skwir_core::words!(
         count_items = "{ $count ->
-        [one] 1 item
+        [one] { $count } item
        *[other] { $count } items
     }",
         count = n
@@ -104,7 +125,7 @@ pub fn items(n: usize) -> String {
 pub fn files(n: usize) -> String {
     skwir_core::words!(
         count_files = "{ $count ->
-        [one] 1 file
+        [one] { $count } file
        *[other] { $count } files
     }",
         count = n
@@ -116,7 +137,7 @@ pub fn files(n: usize) -> String {
 pub fn folders(n: usize) -> String {
     skwir_core::words!(
         count_folders = "{ $count ->
-        [one] 1 folder
+        [one] { $count } folder
        *[other] { $count } folders
     }",
         count = n

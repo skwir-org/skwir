@@ -546,7 +546,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             crate::tests::notice(&data),
-            "Only the first 64 columns shown"
+            "Only the first 64 columns are shown"
         );
         let fact = |data: &Inspection, label: &str| {
             data.details
@@ -554,8 +554,8 @@ pub(crate) mod tests {
                 .find(|d| d.label.english() == label)
                 .map(|d| d.value.clone())
         };
-        assert_eq!(fact(&data, "Rows").as_deref(), Some("1000000"));
-        assert_eq!(fact(&data, "Columns").as_deref(), Some("16384"));
+        assert_eq!(fact(&data, "Rows").as_deref(), Some("1,000,000"));
+        assert_eq!(fact(&data, "Columns").as_deref(), Some("16,384"));
         assert_eq!(fact(&data, "Sheets").as_deref(), Some("2"));
         // Turned to again, the page is read alone, its sheet's size known.
         let again = table(&book, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();

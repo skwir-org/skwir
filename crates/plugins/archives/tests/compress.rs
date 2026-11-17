@@ -1071,7 +1071,10 @@ fn replace_never_puts_in_the_trash_what_it_reads() {
         panic!("{ended:?}")
     };
     let error = error.expect("refused").english();
-    assert!(error.contains("is among what it compresses"), "{error}");
+    assert!(
+        error.contains("is among what goes into the archive"),
+        "{error}"
+    );
     assert_eq!(std::fs::read(&old).unwrap(), before, "never trashed");
 
     // A folder holding the archive extracted under its name, merged into:

@@ -312,7 +312,7 @@ fn path_named(text: &str) -> Option<PathBuf> {
 /// What an agent is told of a path that would reach another machine.
 fn reaches_another_machine(path: &Path) -> crate::words::Words {
     crate::words!(
-        permissions_reaches_machine = "looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
+        permissions_reaches_machine = "looking up { $path } would make the system reach another machine, which an agent may not do unasked: the user opens it in Skwir first",
         path = path.display().to_string(),
         note = "Told to an agent that named a path on a server: the path."
     )
@@ -322,7 +322,7 @@ fn reaches_another_machine(path: &Path) -> crate::words::Words {
 fn names_private() -> crate::words::Words {
     crate::words!(
         permissions_names_private =
-            "this names a private folder, which skwir keeps from agents (Settings, Privacy)",
+            "this names a private folder, which Skwir keeps from agents (Settings, Privacy)",
         note = "Told to an agent that named a private folder; Settings and Privacy name the page where folders are made private."
     )
 }

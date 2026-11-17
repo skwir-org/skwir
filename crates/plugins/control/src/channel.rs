@@ -51,7 +51,7 @@ impl std::fmt::Display for NotListening {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(
             &skwir_core::words!(
-                control_not_listening = "skwir is not open, or Agents and scripts is off: open skwir and turn it on in Settings, Plugins",
+                control_not_listening = "Skwir is not open, or Agents and scripts is off: open Skwir and turn it on in Settings, Plugins",
                 note = "Read by scripts and agents: no window answers. Agents and scripts is a plugin's name; Settings, Plugins is where it is turned on."
             ),
             f,

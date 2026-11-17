@@ -858,7 +858,7 @@ impl Parser<'_> {
                             key = "kind:",
                             kinds = kind_words(),
                             value = word,
-                            note = "An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, separated by commas; value: what was typed."
+                            note = "An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, a list (folder, image… or program); value: what was typed."
                         ))
                     })?;
                     if !kinds.contains(&kind) {
@@ -870,7 +870,7 @@ impl Parser<'_> {
                         query_expects_kinds = "{ $key } expects { $kinds }",
                         key = "kind:",
                         kinds = kind_words(),
-                        note = "An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, separated by commas."
+                        note = "An error in a search's text. key: a key of the search language; kinds: the words it takes, as written, a list (folder, image… or program)."
                     )));
                 }
                 Ok(Term::Kind(kinds))
@@ -1039,13 +1039,9 @@ fn parse_inside(v: &str) -> Result<Term, ParseError> {
 }
 
 /// The words `kind:` takes, for an error message: words of the search
-/// language, as written.
-fn kind_words() -> String {
-    let words: Vec<&str> = skwir_platform::mime::Kind::ALL
-        .iter()
-        .map(|k| k.name())
-        .collect();
-    words.join(", ")
+/// language, as written, a list.
+fn kind_words() -> words::List {
+    words::List::or(skwir_platform::mime::Kind::ALL.iter().map(|k| k.name()))
 }
 
 fn parse_content(v: &str, quoted: bool, cs: bool) -> Result<ContentPat, ParseError> {

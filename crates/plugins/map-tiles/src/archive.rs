@@ -206,7 +206,7 @@ pub(crate) fn inflate(
     if let Some(compression) = compression.unreadable() {
         anyhow::bail!(words!(
             map_tiles_compressed =
-                "The tiles are compressed with { $compression }, which skwir does not read",
+                "The tiles are compressed with { $compression }, which Skwir does not read",
             compression = compression,
             note = "compression: the name of a way to compress (Brotli, Zstandard)."
         ));

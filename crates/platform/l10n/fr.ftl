@@ -142,7 +142,7 @@ document_compose_keep = garder le document composé
 document_locate_too_long = le texte à trouver dépasse la longueur permise
 
 # draft
-document_reopen = le programme auxiliaire de documents, relancé, n’a pas pu rouvrir le document
+document_reopen = le programme auxiliaire de documents a été relancé mais n’a pas ouvert le document
 
 # draft
 document_search_too_long = la recherche dépasse la longueur permise
@@ -220,10 +220,10 @@ git_patch_not_written = Le patch n’a pas été écrit
 git_status_failed = L’état Git des fichiers ne peut pas être lu : { $said }
 
 # draft
-grammars_config_invalid = sa configuration est illisible ({ $error }) : aucun de ses dossiers d’analyseurs n’est lu
+grammars_config_invalid = sa configuration n’est pas du JSON valide ({ $error }), donc aucun des dossiers d’analyseurs qu’elle nomme n’est lu
 
 # draft
-grammars_config_unreadable = sa configuration est illisible (elle ne peut pas être lue) : aucun de ses dossiers d’analyseurs n’est lu
+grammars_config_unreadable = sa configuration ne peut pas être lue, donc aucun des dossiers d’analyseurs qu’elle nomme n’est lu
 
 # draft
 grammars_emacs_no_colors = Emacs ne garde aucune couleur avec ses grammaires : placez le dépôt de la grammaire dans le dossier des grammaires de Skwir (inutile de le compiler)
@@ -252,7 +252,7 @@ grammars_no_highlights_repository = aucune requête highlights dans son dépôt,
 grammars_no_library = aucune bibliothèque : compilez la grammaire (`tree-sitter build`)
 
 # draft
-grammars_parser_dir_missing = un dossier d’analyseurs que nomme sa configuration, absent
+grammars_parser_dir_missing = sa configuration nomme ce dossier d’analyseurs, qui n’existe pas
 
 # draft
 grammars_queries_not_lent = aucune requête installée avec elle, et celles { $editor ->
@@ -329,9 +329,13 @@ highlight_tree_sitter_first = Tree-sitter d’abord
 
 # draft
 inspection_blocks_notice = { $count ->
-        [one] Premier bloc
-       *[other] { $count } premiers blocs
-    } · Source affiche la suite
+        [1] Seul le premier bloc est affiché · Source affiche la suite
+        [one] Seul le premier bloc est affiché · Source affiche la suite
+       *[other] Seuls les { $count } premiers blocs sont affichés · Source affiche la suite
+    }
+
+# draft
+inspection_count = { $count }
 
 # draft
 inspection_drawing_inflated = Le dessin est trop grand pour être lu
@@ -340,7 +344,7 @@ inspection_drawing_inflated = Le dessin est trop grand pour être lu
 inspection_drawing_too_large = Le dessin dépasse la limite d’aperçu de { $size }
 
 # draft
-inspection_embedded_image_limit = L’image incorporée dépasse la limite d’aperçu de { $size }
+inspection_embedded_image_limit = Une image incorporée dépasse la limite d’aperçu de { $size }
 
 # draft
 inspection_hex_offset = Décalage
@@ -395,6 +399,9 @@ math_failed = Les formules ne peuvent pas être composées : { $said }
 
 # draft
 math_install = Installez { $program } pour composer les formules
+
+# draft
+media_control_refused = Le lecteur n’a pas pu le faire : { $why }
 
 # draft
 media_controls_busy = commandes vidéo occupées, ou session fermée
@@ -578,6 +585,7 @@ print_job_install = Installez { $program } pour imprimer
 
 # draft
 print_job_lines_cut = { $count ->
+        [1] Seule la première ligne est imprimée
         [one] Seule la première ligne est imprimée
        *[other] Seules les { $count } premières lignes sont imprimées
     }
@@ -628,10 +636,10 @@ process_failed = { $program } a échoué ({ $status }) : { $said }
 process_not_installed = { $program } n’est pas installé
 
 # draft
-process_older_build = { $error }. { $program } provient d’une version plus ancienne de skwir, ce qui en est peut-être la cause : recompilez-le ou réinstallez-le
+process_older_build = { $error }. { $program } provient d’une version plus ancienne de Skwir, ce qui en est peut-être la cause : recompilez-le ou réinstallez-le
 
 # draft
-process_other_build = { $error }. { $program } provient d’une autre version de skwir ({ $theirs } ; skwir est en { $ours }), ce qui en est peut-être la cause : recompilez-le ou réinstallez-le
+process_other_build = { $error }. { $program } provient d’une autre version de Skwir ({ $theirs } ; Skwir est en { $ours }), ce qui en est peut-être la cause : recompilez-le ou réinstallez-le
 
 # draft
 process_stalled_minutes = { $program } a été arrêté : il n’a rien dit de sa progression pendant { $count ->
@@ -661,7 +669,7 @@ process_too_much_output = { $program } : sortie excessive
 rich_preview_page_no_size = la page n’a pas de taille
 
 # draft
-rich_preview_stylesheet_limit = La feuille de style dépasse la limite d’aperçu de { $size }
+rich_preview_stylesheet_limit = Une feuille de style dépasse la limite d’aperçu de { $size }
 
 # draft
 sandbox_converter_not_yet = Lancer un convertisseur à l’écart de vos fichiers n’est pas encore disponible sous { $system }
@@ -673,7 +681,7 @@ sandbox_needs_bubblewrap = Ceci nécessite bubblewrap, pour s’exécuter à l�
 sandbox_needs_sandbox = Ceci nécessite le bac à sable du système, pour s’exécuter à l’écart de vos fichiers
 
 # draft
-sandbox_plugin_not_yet = Lancer un module en tant que programme, à l’écart de vos fichiers, n’est pas encore disponible sous { $system }
+sandbox_plugin_not_yet = Lancer le programme d’un module à l’écart de vos fichiers n’est pas encore disponible sous { $system }
 
 # draft
 secrets_no_keyring = Aucun trousseau n’a répondu : { $error }
