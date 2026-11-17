@@ -1,7 +1,7 @@
 # French glossary
 
 Status: drafted 2026-11-17 for ADR-139's step G and **settled with the
-user on 2026-11-17**, but for the two choices still marked **(?)**. Every `fr.ftl` is drafted from it, each message
+user on 2026-11-17**. Every `fr.ftl` is drafted from it, each message
 marked `# draft` until reviewed. A term changed here is changed in the
 drafts by search.
 
@@ -87,7 +87,7 @@ decide by the English of the same id and its note for translators.
 | view: list, grid, columns, board | vue : liste, grille, colonnes, tableau | |
 | sort by / group by | trier par / regrouper par | |
 | folders first | dossiers en premier | |
-| name, size, modified, created, accessed | nom, taille, modifié, créé, consulté | as column headers: Nom, Taille, Modifié le **(?)** |
+| name, size, modified, created, accessed | nom, taille, modifié, créé, consulté | as column headers: Nom, Taille, Modifié le |
 | type (a file's) | type | its type name, the MIME type's description (« Image PNG ») |
 | kind (what a type is: image, video, document…; `mime::Kind`) | genre | « Genre », « du même genre »; `kind:` stays as written |
 | a book's literary genre | genre littéraire | « Genre littéraire » in a book's Properties, never confused with a file's kind |
@@ -126,7 +126,7 @@ decide by the English of the same id and its note for translators.
 | Usage (disk usage view) | Occupation | |
 | extract / compress | extraire / compresser | |
 | archive | archive | |
-| Make Smaller Copy | Faire une copie allégée **(?)** | |
+| Make Smaller Copy | Faire une copie allégée | |
 | print / save as PDF | imprimer / enregistrer en PDF | |
 | page, booklet | page, livret | |
 | player, track, playlist | lecteur, piste, liste de lecture | |

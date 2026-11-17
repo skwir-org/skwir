@@ -19500,9 +19500,9 @@ it. French keeps « 42 % », a narrow no-break space (the glossary).
 
 The user followed the recommendations on the open questions.
 
-- **The French glossary is settled** (`docs/glossary-fr.md`), but for two
-  rows still marked (?) that were never put to the user (« Modifié le »
-  as a column header, « Faire une copie allégée »): a tag « étiquette »,
+- **The French glossary is settled** (`docs/glossary-fr.md`), « Modifié
+  le » as a column header and « Faire une copie allégée » confirmed after:
+  a tag « étiquette »,
   notes « annotations » (a rating is « note »), a kind « genre » (a
   book's own « Genre littéraire »), the Shelf « Étagère », a plugin
   « module » (another program's keep their French: « greffons
