@@ -96,6 +96,9 @@ sentence, never a sentence assembled from pieces.
   only. `just words --check` refuses an English that parts them, and
   the catalogs' test a translation that parts an argument its English
   joins. A unit written as a word ("pixels") is prose, which may break.
+  English writes a percent sign right after its number, with no space
+  (`{ $n }%`, "100%"); a language that spaces it joins it (French
+  « 42 % », a narrow no-break space).
 - **Words in words are a `Words` argument** (a plan's title in a
   toast). A message never receives another message already said as a
   string.

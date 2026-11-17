@@ -1724,7 +1724,8 @@ fn family_of(name: &str) -> Option<Words> {
         ),
         "ui.text_size" => words!(
             commands_family_text_size = "Text size",
-            note = "A family of keys, one row of F1's list: the text larger, smaller or back at 100 %."
+            note =
+                "A family of keys, one row of F1's list: the text larger, smaller or back at 100%."
         ),
         "ui.preview_zoom" => words!(
             commands_family_preview_zoom = "Preview: zoom",
@@ -2005,7 +2006,7 @@ pub fn declare_all(app: &App) {
         "ui.text_size",
         words!(commands_text_size = "Text size"),
         words!(
-            commands_text_size_description = "Write a part of the window larger or smaller, a step at a time, or back at 100\u{a0}%: the file views by default, else the interface, reading or code, as its setting does"
+            commands_text_size_description = "Write a part of the window larger or smaller, a step at a time, or back at 100%: the file views by default, else the interface, reading or code, as its setting does"
         ),
     );
     none(

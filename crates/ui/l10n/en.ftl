@@ -72,7 +72,7 @@ activity_actions = { $count ->
        *[other] { $count } actions
     }
 
-# What the strip says of an action that joined: its title, capitalised (Copy 3 items to Docs), then how far it is (42 %, getting ready…).
+# What the strip says of an action that joined: its title, capitalised (Copy 3 items to Docs), then how far it is (42%, getting ready…).
 activity_announced = { $title } · { $doing }
 
 # What a screen reader hears of an action that joined: its title, capitalised (Copy 3 items to Docs).
@@ -87,7 +87,7 @@ activity_announced_waiting_heard = { $what } { $why }
 # What the strip says of an action that joined and waits its turn, where there is little room: its title, capitalised (Rename to b.txt).
 activity_announced_waits_turn = { $what } · waits its turn
 
-# How far what runs is (42 %), then how long it has left (about 3 min left).
+# How far what runs is (42%), then how long it has left (about 3 min left).
 activity_at_left = { $percent } · { $left }
 
 # A button of an action under way or waiting: cancel it.
@@ -141,7 +141,7 @@ activity_getting_ready = getting ready…
 # What an action does before its first step or byte: its checks.
 activity_getting_ready_opening = Getting ready…
 
-# How what runs goes (42 % · about 3 min left), then how many actions wait their turn.
+# How what runs goes (42% · about 3 min left), then how many actions wait their turn.
 activity_how_waiting = { $how } · { $count } waiting
 
 # Where an action goes, as its card says it when pointed at: the paths of the folders it brings something into.
@@ -171,19 +171,19 @@ activity_pause = Pause
 # A button of the strip: pause every action running.
 activity_pause_all = Pause all
 
-# What the strip says while every action running is paused, after other words: how far (42 %).
+# What the strip says while every action running is paused, after other words: how far (42%).
 activity_paused_at = paused at { $percent }
 
-# What the strip says while every action running is paused: how far (42 %).
+# What the strip says while every action running is paused: how far (42%).
 activity_paused_at_opening = Paused at { $percent }
 
-# How far an action is, in percent (42 %).
-activity_percent = { $percent } %
+# How far an action is, in percent (42%).
+activity_percent = { $percent }%
 
 # How far the queue of actions started: those ended or running of all of them (2 of 5).
 activity_queue = { $at } of { $of }
 
-# How far the queue of actions started (2 of 5), then how what runs goes (42 % · about 3 min left).
+# How far the queue of actions started (2 of 5), then how what runs goes (42% · about 3 min left).
 activity_queue_how = { $queue } · { $how }
 
 # A button of an action paused: let it go on.
@@ -195,7 +195,7 @@ activity_resume_all = Resume all
 # A button of the strip, beside an action an error stopped: try what failed again.
 activity_retry = Retry
 
-# Over Activity's cards: how far the queue of actions started, those ended or running of all of them (2 of 5), and its share (42 %).
+# Over Activity's cards: how far the queue of actions started, those ended or running of all of them (2 of 5), and its share (42%).
 activity_spell_at = { $at } of { $of } · { $percent }
 
 # What a screen reader hears of the bar over Activity's cards: how far the queue of actions started, those ended or running (at) of all (of): 2 of 5 actions. Each count chooses its words: where the noun follows the first number, choose it by at.
@@ -228,7 +228,7 @@ activity_stopping_button = Stopping…
 # What the strip says while every action running was cancelled and stops.
 activity_stopping_opening = Stopping…
 
-# What a screen reader hears of the strip in the footer, which opens Activity: what it says (Copy 3 items to Docs · 42 %).
+# What a screen reader hears of the strip in the footer, which opens Activity: what it says (Copy 3 items to Docs · 42%).
 activity_strip_label = Activity: { $said }
 
 # How many actions wait their turn (3 waiting).
@@ -246,10 +246,10 @@ activity_waiting_not_counted = Waiting · { $count ->
        *[other] { $count } quick ones
     } not counted
 
-# The strip's words: what runs (Copy 3 items to Docs, 2 actions), how it goes (42 % · about 3 min left).
+# The strip's words: what runs (Copy 3 items to Docs, 2 actions), how it goes (42% · about 3 min left).
 activity_what_how = { $what } · { $how }
 
-# The strip's words: what runs (Copy 3 items to Docs, 2 actions), how far the queue started (2 of 5), how it goes (42 % · about 3 min left).
+# The strip's words: what runs (Copy 3 items to Docs, 2 actions), how far the queue started (2 of 5), how it goes (42% · about 3 min left).
 activity_what_queue_how = { $what } · { $queue } · { $how }
 
 # A sort's direction, alphabetical.
@@ -977,7 +977,7 @@ commands_family_preview_page = Preview: turn the page
 # A family of keys, one row of F1's list: the preview zoomed in, out or back.
 commands_family_preview_zoom = Preview: zoom
 
-# A family of keys, one row of F1's list: the text larger, smaller or back at 100 %.
+# A family of keys, one row of F1's list: the text larger, smaller or back at 100%.
 commands_family_text_size = Text size
 
 # A family of keys, one row of F1's list: zoom in, out or back.
@@ -1865,7 +1865,7 @@ commands_text_continuous_description = Read a book, a document or a message as o
 
 commands_text_size = Text size
 
-commands_text_size_description = Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does
+commands_text_size_description = Write a part of the window larger or smaller, a step at a time, or back at 100%: the file views by default, else the interface, reading or code, as its setting does
 
 commands_timeline = Timeline
 
@@ -3154,7 +3154,7 @@ inspector_previous_section = Previous section · [
 # A preview's previous button, as a menu's row names it: the chapter, sheet or page of rows before.
 inspector_previous_section_name = Previous section
 
-# Pointing at a preview's text size button and at each size it offers (100 %).
+# Pointing at a preview's text size button and at each size it offers (100%).
 inspector_text_size = Text size
 
 # A choice of a preview's text size: the size Settings gives this kind of text.
@@ -4521,7 +4521,7 @@ palette_text_size_files_in = Files text: larger
 
 palette_text_size_files_out = Files text: smaller
 
-palette_text_size_files_reset = Files text: 100 %
+palette_text_size_files_reset = Files text: 100%
 
 palette_timeline = Timeline
 
@@ -6137,10 +6137,10 @@ settings_code_light_theme_description_more = Default is the code theme of the pa
 
 settings_code_text_size = Code text size
 
-settings_code_text_size_description = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one.
+settings_code_text_size_description = The size of source and text files, the byte view and the terminal; 100% is your desktop's monospace font size where it names one.
 
-# points: the size 100 % comes to here, in points (10.5).
-settings_code_text_size_now = The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one, now { $points } pt.
+# points: the size 100% comes to here, in points (10.5).
+settings_code_text_size_now = The size of source and text files, the byte view and the terminal; 100% is your desktop's monospace font size where it names one, now { $points } pt.
 
 # Said by settings.check of a value it does not know: it may be among the themes you added to bat (a program).
 settings_code_theme_more = the themes you added to bat
@@ -6231,17 +6231,17 @@ settings_file_at = { $path }. It lists only what differs from the defaults.
 
 settings_files_opacity = Files background opacity
 
-settings_files_opacity_description = How much the files and the terminal hide what is behind the window; at 100 % they hide it.
+settings_files_opacity_description = How much the files and the terminal hide what is behind the window; at 100% they hide it.
 
 settings_files_text_size = Files text size
 
-settings_files_text_size_description = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size.
+settings_files_text_size_description = How large names and details are written in the list, the grid, the columns and the board; 100% is the interface's size.
 
 # What the Files text size setting's description says after its first sentence, in its tooltip.
 settings_files_text_size_more = Rows and labels grow with the text, while icons and pictures keep the zoom's size.
 
-# points: the size 100 % comes to here, in points (10.5).
-settings_files_text_size_now = How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size, now { $points } pt.
+# points: the size 100% comes to here, in points (10.5).
+settings_files_text_size_now = How large names and details are written in the list, the grid, the columns and the board; 100% is the interface's size, now { $points } pt.
 
 # The button adding a name to the list of files a folder's preview looks for.
 settings_folder_preview_add_name = Add name
@@ -6588,10 +6588,10 @@ settings_notify_desktop_description_more = With the window closed, every action 
 
 settings_opacity = Background opacity
 
-# What the background opacity settings' descriptions say after their first sentence, in their tooltip: below 100 %.
+# What the background opacity settings' descriptions say after their first sentence, in their tooltip: below 100%.
 settings_opacity_below = Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
 
-settings_opacity_description = How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100 % they hide it.
+settings_opacity_description = How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100% they hide it.
 
 # The button opening the settings file in an editor.
 settings_open_file = Open
@@ -6652,7 +6652,7 @@ settings_preview_opacity = Preview background opacity
 settings_preview_opacity_description = How much a preview hides what is behind the window, whatever it shows.
 
 # Properties is the name of a panel.
-settings_preview_opacity_description_more = That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
+settings_preview_opacity_description_more = That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100% it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.
 
 settings_printed_pages = Printed page numbers
 
@@ -6687,10 +6687,10 @@ settings_reading_font_description_more = Automatic is your desktop's document fo
 
 settings_reading_text_size = Reading text size
 
-settings_reading_text_size_description = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at.
+settings_reading_text_size_description = The size books, Markdown and HTML files, documents and mail open at; 100% is the size browsers write a page's text at.
 
-# points: the size 100 % comes to here, in points (12).
-settings_reading_text_size_now = The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at, now { $points } pt.
+# points: the size 100% comes to here, in points (12).
+settings_reading_text_size_now = The size books, Markdown and HTML files, documents and mail open at; 100% is the size browsers write a page's text at, now { $points } pt.
 
 settings_reading_width = Reading width
 
@@ -6795,8 +6795,8 @@ settings_text_continuous_description_more = Off shows a screen at a time, ending
 
 settings_text_size = Text size
 
-# desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one).
-settings_text_size_description = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+# desktop: where 100% is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one).
+settings_text_size_description = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100% is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -6805,8 +6805,8 @@ settings_text_size_description = How large Skwir writes its menus, bars, the sid
 # What the Text size setting's description says after its first sentence, in its tooltip.
 settings_text_size_more = Bars, rows and menus grow with the text; icons keep their size.
 
-# desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5).
-settings_text_size_now = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is { $desktop ->
+# desktop: where 100% is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5).
+settings_text_size_now = How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100% is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
@@ -8221,13 +8221,13 @@ views_arriving_from = From { $folder }
 # On a pill beside a file a copy brings into the folder: its copy is paused.
 views_arriving_paused = paused
 
-# What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42 %).
+# What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42%).
 views_arriving_said_at = arriving, { $percent }
 
 # What a screen reader hears after the name of a file a copy brings into the folder.
 views_arriving_said_copying = arriving, copying
 
-# What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42 %).
+# What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42%).
 views_arriving_said_paused = arriving, paused at { $percent }
 
 # What a screen reader hears after the name of a file a copy brings into the folder.

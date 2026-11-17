@@ -651,9 +651,9 @@ pub mod unit {
     /// A percentage: "100 %".
     pub fn percent(n: Arg) -> Words {
         crate::words!(
-            settings_unit_percent = "{ $n }\u{a0}%",
+            settings_unit_percent = "{ $n }%",
             n = n,
-            note = "A setting's number in percent, after its slider (100 %)."
+            note = "A setting's number in percent, after its slider (100%)."
         )
     }
 

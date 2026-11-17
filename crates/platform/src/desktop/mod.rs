@@ -1011,8 +1011,8 @@ mod tests {
     #[test]
     fn a_tip_is_cut_to_fit_whole_characters() {
         let text = |units: &[u16]| String::from_utf16(&units[..units.len() - 1]).unwrap();
-        let short = tip("Finishing 2 actions", "42 %", 128);
-        assert_eq!(text(&short), "Finishing 2 actions\n42 %");
+        let short = tip("Finishing 2 actions", "42%", 128);
+        assert_eq!(text(&short), "Finishing 2 actions\n42%");
         assert_eq!(short.last(), Some(&0));
         assert_eq!(text(&tip("Finishing", "", 128)), "Finishing");
 
@@ -1154,7 +1154,7 @@ mod tests {
 
         let presence = Presence {
             title: "Finishing 2 actions".into(),
-            said: "Copy 3 items to Backup · 42 %".into(),
+            said: "Copy 3 items to Backup · 42%".into(),
             about: "Copy 3 items to Backup".into(),
             fraction: Some(0.42),
             standing: Standing::Running,

@@ -601,7 +601,7 @@ fn notice(title: &str, body: &str, kind: Kind) -> Notice {
 fn presence(standing: Standing, pause: Option<bool>) -> Presence {
     Presence {
         title: "Finishing 2 actions".into(),
-        said: "Copy 3 items to Back & up · 42 % · about 3 min left".into(),
+        said: "Copy 3 items to Back & up · 42% · about 3 min left".into(),
         about: "Copy 3 items to Back & up".into(),
         fraction: Some(0.42),
         standing,
@@ -968,7 +968,7 @@ fn the_presence_is_an_item_in_the_tray() {
     assert_eq!((empty.as_str(), icons.len()), ("", 0));
     assert_eq!(title, "Finishing 2 actions");
     assert_eq!(
-        said, "Copy 3 items to Back &amp; up · 42 % · about 3 min left",
+        said, "Copy 3 items to Back &amp; up · 42% · about 3 min left",
         "read as markup"
     );
     assert_eq!(harness.notified(), 0, "no notice beside the tray");
@@ -1184,7 +1184,7 @@ fn a_bus_started_again_while_the_tray_is_lost_waits_for_nothing() {
     // Asked of a bus started again before its listener tells it.
     *harness.session.lock() = Some(connect(&harness.daemon.address).unwrap());
     backend.presence(Some(&Presence {
-        said: "Copy 3 items to Back & up · 43 %".into(),
+        said: "Copy 3 items to Back & up · 43%".into(),
         ..running.clone()
     }));
     assert_eq!(harness.notified(), 1, "a notice in the item's place");
@@ -1255,7 +1255,7 @@ fn without_a_tray_the_presence_is_a_notice_that_stays() {
 
     // A percent, the words that change with it: not shown again.
     let further = Presence {
-        said: "Copy 3 items to Back & up · 43 % · about 3 min left".into(),
+        said: "Copy 3 items to Back & up · 43% · about 3 min left".into(),
         fraction: Some(0.43),
         ..running.clone()
     };
@@ -1302,7 +1302,7 @@ fn without_a_tray_the_presence_is_a_notice_that_stays() {
     harness.emit("NotificationClosed", &(id, 2u32));
     until("forgotten", &|| harness.showing.lock().resident.is_none());
     backend.presence(Some(&Presence {
-        said: "Move 2 items to Archive · 50 %".into(),
+        said: "Move 2 items to Archive · 50%".into(),
         ..other.clone()
     }));
     assert_eq!(harness.notified(), 3, "closed by the user: not again");

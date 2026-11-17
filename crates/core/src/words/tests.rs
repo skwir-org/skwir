@@ -387,16 +387,18 @@ fn words_sent_as_data_come_back_as_themselves() {
 /// in the part of Fluent Skwir speaks, naming only the arguments the
 /// English gives, and keeping on one line what the English keeps there: an
 /// argument the English joins to the words beside it by a no-break space
-/// (a number to its unit, `{ $n }\u{a0}MB`, `10\u{a0}{ $unit }`) is never
-/// parted from them by a plain one. How much of each language is there, and how much is still a
-/// draft (a message whose comment says `draft`), is printed.
+/// (a number to its unit, `{ $n }\u{a0}MB`, `10\u{a0}{ $unit }`) or to a
+/// percent sign (`{ $n }%`) is never parted from them by a plain one. How
+/// much of each language is there, and how much is still a draft (a
+/// message whose comment says `draft`), is printed.
 #[test]
 fn every_catalog_says_what_its_english_says() {
     use std::collections::{BTreeMap, BTreeSet};
 
     /// The words beside each argument of `elements`: the arguments joined
-    /// to them by a no-break space, and those parted from them by a plain
-    /// one, each with the side (`<` the words before, `>` those after).
+    /// to them by a no-break space (or to a percent sign, with none), and
+    /// those parted from them by a plain one, each with the side (`<` the
+    /// words before, `>` those after).
     #[derive(Default)]
     struct Follows {
         joined: BTreeSet<String>,
@@ -409,7 +411,7 @@ fn every_catalog_says_what_its_english_says() {
             match element {
                 Element::Arg(name) => {
                     if let Some(Element::Text(after)) = elements.get(at + 1) {
-                        if after.starts_with(NO_BREAK) {
+                        if after.starts_with(NO_BREAK) || after.starts_with('%') {
                             into.joined.insert(format!("{name}>"));
                         } else if after.starts_with(' ') {
                             into.parted.insert(format!("{name}>"));

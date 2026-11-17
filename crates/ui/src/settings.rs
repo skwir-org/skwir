@@ -478,12 +478,12 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             (
                 match now {
                     Some(points) => words!(
-                        settings_files_text_size_now = "How large names and details are written in the list, the grid, the columns and the board; 100\u{a0}% is the interface's size, now { $points }\u{a0}pt.",
+                        settings_files_text_size_now = "How large names and details are written in the list, the grid, the columns and the board; 100% is the interface's size, now { $points }\u{a0}pt.",
                         points = points,
-                        note = "points: the size 100 % comes to here, in points (10.5)."
+                        note = "points: the size 100% comes to here, in points (10.5)."
                     ),
                     None => words!(
-                        settings_files_text_size_description = "How large names and details are written in the list, the grid, the columns and the board; 100\u{a0}% is the interface's size."
+                        settings_files_text_size_description = "How large names and details are written in the list, the grid, the columns and the board; 100% is the interface's size."
                     ),
                 },
                 words!(
@@ -497,23 +497,23 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             (
                 match now {
                     Some(points) => words!(
-                        settings_text_size_now = "How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100\u{a0}% is { $desktop ->
+                        settings_text_size_now = "How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100% is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
     }, now { $points }\u{a0}pt.",
                         desktop = desktop,
                         points = points,
-                        note = "desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5)."
+                        note = "desktop: where 100% is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one). points: the size it comes to here, in points (10.5)."
                     ),
                     None => words!(
-                        settings_text_size_description = "How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100\u{a0}% is { $desktop ->
+                        settings_text_size_description = "How large Skwir writes its menus, bars, the sidebar, dialogs and file views; 100% is { $desktop ->
         [system] your system's text size
         [desktop] your desktop's font size
        *[usual] the usual size, as no desktop names one
     }.",
                         desktop = desktop,
-                        note = "desktop: where 100 % is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one)."
+                        note = "desktop: where 100% is read (system: macOS's or Windows'; desktop: the desktop's font settings; usual: none names one)."
                     ),
                 },
                 words!(
@@ -527,12 +527,12 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             (
                 match now {
                     Some(points) => words!(
-                        settings_reading_text_size_now = "The size books, Markdown and HTML files, documents and mail open at; 100\u{a0}% is the size browsers write a page's text at, now { $points }\u{a0}pt.",
+                        settings_reading_text_size_now = "The size books, Markdown and HTML files, documents and mail open at; 100% is the size browsers write a page's text at, now { $points }\u{a0}pt.",
                         points = points,
-                        note = "points: the size 100 % comes to here, in points (12)."
+                        note = "points: the size 100% comes to here, in points (12)."
                     ),
                     None => words!(
-                        settings_reading_text_size_description = "The size books, Markdown and HTML files, documents and mail open at; 100\u{a0}% is the size browsers write a page's text at."
+                        settings_reading_text_size_description = "The size books, Markdown and HTML files, documents and mail open at; 100% is the size browsers write a page's text at."
                     ),
                 },
                 preview_buttons(),
@@ -545,12 +545,12 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             (
                 match now {
                     Some(points) => words!(
-                        settings_code_text_size_now = "The size of source and text files, the byte view and the terminal; 100\u{a0}% is your desktop's monospace font size where it names one, now { $points }\u{a0}pt.",
+                        settings_code_text_size_now = "The size of source and text files, the byte view and the terminal; 100% is your desktop's monospace font size where it names one, now { $points }\u{a0}pt.",
                         points = points,
-                        note = "points: the size 100 % comes to here, in points (10.5)."
+                        note = "points: the size 100% comes to here, in points (10.5)."
                     ),
                     None => words!(
-                        settings_code_text_size_description = "The size of source and text files, the byte view and the terminal; 100\u{a0}% is your desktop's monospace font size where it names one."
+                        settings_code_text_size_description = "The size of source and text files, the byte view and the terminal; 100% is your desktop's monospace font size where it names one."
                     ),
                 },
                 preview_buttons(),
@@ -576,7 +576,7 @@ fn opacity_spec(ground: Ground) -> SettingSpec {
     let below = || {
         words!(
             settings_opacity_below = "Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.",
-            note = "What the background opacity settings' descriptions say after their first sentence, in their tooltip: below 100 %."
+            note = "What the background opacity settings' descriptions say after their first sentence, in their tooltip: below 100%."
         )
     };
     let (key, title, description) = match ground {
@@ -585,7 +585,7 @@ fn opacity_spec(ground: Ground) -> SettingSpec {
             words!(settings_opacity = "Background opacity"),
             (
                 words!(
-                    settings_opacity_description = "How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100\u{a0}% they hide it."
+                    settings_opacity_description = "How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100% they hide it."
                 ),
                 below(),
             ),
@@ -595,7 +595,7 @@ fn opacity_spec(ground: Ground) -> SettingSpec {
             words!(settings_files_opacity = "Files background opacity"),
             (
                 words!(
-                    settings_files_opacity_description = "How much the files and the terminal hide what is behind the window; at 100\u{a0}% they hide it."
+                    settings_files_opacity_description = "How much the files and the terminal hide what is behind the window; at 100% they hide it."
                 ),
                 below(),
             ),
@@ -609,7 +609,7 @@ fn opacity_spec(ground: Ground) -> SettingSpec {
                         "How much a preview hides what is behind the window, whatever it shows."
                 ),
                 words!(
-                    settings_preview_opacity_description_more = "That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100\u{a0}% it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.",
+                    settings_preview_opacity_description_more = "That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100% it hides it. Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.",
                     note = "Properties is the name of a panel."
                 ),
             ),
@@ -5844,7 +5844,7 @@ mod tests {
         for part in crate::sizes::Part::ALL {
             let spec = super::text_size_spec(part);
             let shown = spec.description.english();
-            assert!(shown.contains("; 100\u{a0}% is "), "{shown}");
+            assert!(shown.contains("; 100% is "), "{shown}");
             assert!(spec.more.is_some(), "the rest in its tooltip: {shown}");
         }
     }

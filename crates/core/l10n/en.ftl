@@ -2515,8 +2515,8 @@ settings_toml_on_line = { $problem } on line { $line }
 # A setting's number in megabytes, after its field or slider (64 MB).
 settings_unit_megabytes = { $n } MB
 
-# A setting's number in percent, after its slider (100 %).
-settings_unit_percent = { $n } %
+# A setting's number in percent, after its slider (100%).
+settings_unit_percent = { $n }%
 
 # A setting's number in seconds, after its slider (1.5 s): n may be a decimal.
 settings_unit_seconds = { $n } s

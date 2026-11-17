@@ -432,7 +432,7 @@ pub(crate) fn announced(
             title = title.clone(),
             doing = doing,
             note = "What the strip says of an action that joined: its title, capitalised (Copy \
-                    3 items to Docs), then how far it is (42 %, getting ready…)."
+                    3 items to Docs), then how far it is (42%, getting ready…)."
         );
         return Some(Announced {
             short: sentence.clone(),
@@ -477,9 +477,9 @@ pub(crate) fn percent_words(fraction: f32) -> Words {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let percent = (fraction.clamp(0., 1.) * 100.).floor() as u32;
     words!(
-        activity_percent = "{ $percent }\u{a0}%",
+        activity_percent = "{ $percent }%",
         percent = percent,
-        note = "How far an action is, in percent (42 %)."
+        note = "How far an action is, in percent (42%)."
     )
 }
 
@@ -536,14 +536,14 @@ fn how(summary: &Summary, sending_files: Option<usize>, opening: bool) -> Words 
                 activity_paused_at_opening = "Paused at { $percent }",
                 percent = at,
                 note = "What the strip says while every action running is paused: how far \
-                        (42 %)."
+                        (42%)."
             )
         } else {
             words!(
                 activity_paused_at = "paused at { $percent }",
                 percent = at,
                 note = "What the strip says while every action running is paused, after other \
-                        words: how far (42 %)."
+                        words: how far (42%)."
             )
         })
     } else if let Some(files) = sending_files {
@@ -554,7 +554,7 @@ fn how(summary: &Summary, sending_files: Option<usize>, opening: bool) -> Words 
                 activity_at_left = "{ $percent } · { $left }",
                 percent = at,
                 left = format::time_left_words(left),
-                note = "How far what runs is (42 %), then how long it has left (about 3 min \
+                note = "How far what runs is (42%), then how long it has left (about 3 min \
                         left)."
             ),
             None => at,
@@ -566,7 +566,7 @@ fn how(summary: &Summary, sending_files: Option<usize>, opening: bool) -> Words 
             activity_how_waiting = "{ $how } · { $count } waiting",
             how = said,
             count = waiting,
-            note = "How what runs goes (42 % · about 3 min left), then how many actions wait \
+            note = "How what runs goes (42% · about 3 min left), then how many actions wait \
                     their turn."
         ),
         (None, waiting) => waiting_count(waiting),
@@ -631,7 +631,7 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [Words; 3] {
             queue = queue,
             how = how_after.clone(),
             note = "How far the queue of actions started (2 of 5), then how what runs goes \
-                    (42 % · about 3 min left)."
+                    (42% · about 3 min left)."
         )
     };
     let rich = match (what, queue.clone()) {
@@ -641,14 +641,14 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [Words; 3] {
             queue = queue,
             how = how_after.clone(),
             note = "The strip's words: what runs (Copy 3 items to Docs, 2 actions), how far the \
-                    queue started (2 of 5), how it goes (42 % · about 3 min left)."
+                    queue started (2 of 5), how it goes (42% · about 3 min left)."
         ),
         (Some(what), None) => words!(
             activity_what_how = "{ $what } · { $how }",
             what = what,
             how = how_after.clone(),
             note = "The strip's words: what runs (Copy 3 items to Docs, 2 actions), how it goes \
-                    (42 % · about 3 min left)."
+                    (42% · about 3 min left)."
         ),
         (None, Some(queue)) => queue_how(queue),
         (None, None) => how_alone.clone(),
@@ -1022,7 +1022,7 @@ fn spell_header(
             of = summary.of,
             percent = percent_words(summary.fraction),
             note = "Over Activity's cards: how far the queue of actions started, those ended \
-                    or running of all of them (2 of 5), and its share (42 %)."
+                    or running of all of them (2 of 5), and its share (42%)."
         )
     } else {
         waiting_count(summary.waiting)
@@ -1629,7 +1629,7 @@ pub fn strip(
             activity_strip_label = "Activity: { $said }",
             said = words.clone(),
             note = "What a screen reader hears of the strip in the footer, which opens \
-                    Activity: what it says (Copy 3 items to Docs · 42 %)."
+                    Activity: what it says (Copy 3 items to Docs · 42%)."
         )
         .say()
         .into();
@@ -3109,10 +3109,10 @@ mod tests {
     #[test]
     fn a_share_is_said_whole_and_never_full_before_the_end() {
         let percent = |fraction| percent_words(fraction).english();
-        assert_eq!(percent(0.0), "0\u{a0}%");
-        assert_eq!(percent(0.429), "42\u{a0}%");
-        assert_eq!(percent(0.999), "99\u{a0}%");
-        assert_eq!(percent(1.0), "100\u{a0}%");
+        assert_eq!(percent(0.0), "0%");
+        assert_eq!(percent(0.429), "42%");
+        assert_eq!(percent(0.999), "99%");
+        assert_eq!(percent(1.0), "100%");
     }
 
     /// The spell of work counts each action once (ADR-114, amended
@@ -3215,9 +3215,9 @@ mod tests {
         assert_eq!(
             strip_said(&between, &s),
             [
-                "1 of 2 · 50\u{a0}% · 1 waiting".to_owned(),
-                "1 of 2 · 50\u{a0}% · 1 waiting".to_owned(),
-                "50\u{a0}%".to_owned(),
+                "1 of 2 · 50% · 1 waiting".to_owned(),
+                "1 of 2 · 50% · 1 waiting".to_owned(),
+                "50%".to_owned(),
             ]
         );
         let first = waiting(0, 2);
@@ -3260,16 +3260,16 @@ mod tests {
         assert_eq!(
             strip_said(&one, &s),
             [
-                "Copy 3 items to Backup · 42\u{a0}% · about 3\u{a0}min left".to_owned(),
-                "42\u{a0}% · about 3\u{a0}min left".to_owned(),
-                "42\u{a0}%".to_owned(),
+                "Copy 3 items to Backup · 42% · about 3\u{a0}min left".to_owned(),
+                "42% · about 3\u{a0}min left".to_owned(),
+                "42%".to_owned(),
             ]
         );
         let paused = Summary {
             paused: true,
             ..s.clone()
         };
-        assert_eq!(how(&paused, None, false).english(), "paused at 42\u{a0}%");
+        assert_eq!(how(&paused, None, false).english(), "paused at 42%");
         let stopping = Summary {
             stopping: true,
             ..s.clone()
@@ -3306,16 +3306,16 @@ mod tests {
         assert_eq!(
             strip_said(&queued, &s),
             [
-                "Copy 3 items to Backup · 2 of 3 · 47\u{a0}% · about 3\u{a0}min left · 1 waiting"
+                "Copy 3 items to Backup · 2 of 3 · 47% · about 3\u{a0}min left · 1 waiting"
                     .to_owned(),
-                "2 of 3 · 47\u{a0}% · about 3\u{a0}min left · 1 waiting".to_owned(),
-                "47\u{a0}%".to_owned(),
+                "2 of 3 · 47% · about 3\u{a0}min left · 1 waiting".to_owned(),
+                "47%".to_owned(),
             ]
         );
         let paused = Summary { paused: true, ..s };
         assert_eq!(
             how(&paused, None, false).english(),
-            "paused at 47\u{a0}% · 1 waiting"
+            "paused at 47% · 1 waiting"
         );
     }
 }

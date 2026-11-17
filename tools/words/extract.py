@@ -15,7 +15,9 @@ English, compiled in (ADR-139, G).
 Refused, in either mode: an id with two Englishes in one crate, and an
 English that parts a number from its unit, or a dimension's numbers from
 their `×`, by a plain space, where a line may break: a no-break space
-joins them (`{ $n }\u{a0}MB`, `{ $width }\u{a0}×\u{a0}{ $height }`). Messages
+joins them (`{ $n }\u{a0}MB`, `{ $width }\u{a0}×\u{a0}{ $height }`); and an
+English that writes a space before a percent sign, which standard
+English writes right after its number (`{ $n }%`). Messages
 of tests (in a tests.rs or a tests/ folder, or whose id begins with
 `test_`) are not a crate's.
 """
@@ -34,12 +36,14 @@ CALL = re.compile(r"\bwords!\s*\(")
 # word to tell.
 NUMBER = r"(?:\{ *\$[a-z0-9_]+ *\}|\d)"
 UNIT = (
-    r"(?:[kKMGTP]i?B(?:/s)?|B|%|s|ms|µs|min|h|px|pt|ems?|µm|mm|cm|dm|m|km|mi|ft|yd|mil|NM"
+    r"(?:[kKMGTP]i?B(?:/s)?|B|s|ms|µs|min|h|px|pt|ems?|µm|mm|cm|dm|m|km|mi|ft|yd|mil|NM"
     r"|[mck]?m[²³]|in[²³]|ft[²³]|dpi|ppi|MP|fps|k?Hz|[kM]bps|km/h|mph|k?g|°C?)(?![\w²³/'’])"
     r"|\{ *\$[a-z0-9_]*unit *\}"
 )
 # Digits before an argument: the argument is their unit (`1 { $next }`).
 PARTED = re.compile(rf"{NUMBER} (?:{UNIT})|\d \{{ *\$|{NUMBER} ×|× {NUMBER}")
+# A space of any kind before a percent sign: English writes `42%`.
+SPACED_PERCENT = re.compile(rf"{NUMBER}[ \u00a0\u202f]%")
 
 
 def string_literal(text, at):
@@ -164,6 +168,12 @@ def catalogs():
                     f"{relative}: `{id_}` parts a number from its unit with a plain space"
                     f" ({parted.group(0)!r}), where a line may break: join them with a"
                     " no-break space, `\\u{a0}`"
+                )
+            spaced = SPACED_PERCENT.search(english)
+            if spaced:
+                problems.append(
+                    f"{relative}: `{id_}` writes a space before a percent sign"
+                    f" ({spaced.group(0)!r}): English writes it right after its number (42%)"
                 )
     return {folder: messages for folder, messages in found.items() if messages}, problems
 

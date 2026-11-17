@@ -63,7 +63,7 @@ pub fn said(arriving: &Arriving) -> String {
         _ if arriving.paused => words!(
             views_arriving_said_paused = "arriving, paused at { $percent }",
             percent = percent_of(arriving),
-            note = "What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42 %)."
+            note = "What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42%)."
         ),
         Arrives::Waiting => words!(
             views_arriving_said_waiting = "arriving, waiting",
@@ -80,7 +80,7 @@ pub fn said(arriving: &Arriving) -> String {
         Arrives::Moving(_) | Arrives::Landed => words!(
             views_arriving_said_at = "arriving, { $percent }",
             percent = percent_of(arriving),
-            note = "What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42 %)."
+            note = "What a screen reader hears after the name of a file a copy brings into the folder. percent: how far it came (42%)."
         ),
     }
     .say()

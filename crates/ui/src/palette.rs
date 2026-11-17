@@ -191,7 +191,7 @@ fn ui_command_table() -> Vec<(&'static str, &'static str, Words)> {
         (
             "ui.text_size",
             r#"{"part":"files","dir":"reset"}"#,
-            words!(palette_text_size_files_reset = "Files text: 100\u{a0}%"),
+            words!(palette_text_size_files_reset = "Files text: 100%"),
         ),
         (
             "ui.map_view_fit",

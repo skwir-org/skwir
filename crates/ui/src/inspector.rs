@@ -3449,7 +3449,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
 fn text_size() -> Words {
     words!(
         inspector_text_size = "Text size",
-        note = "Pointing at a preview's text size button and at each size it offers (100 %)."
+        note = "Pointing at a preview's text size button and at each size it offers (100%)."
     )
 }
 

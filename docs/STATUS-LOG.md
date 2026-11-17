@@ -19487,3 +19487,11 @@ mount the entry above used was not set up again.
 
 **Disk:** `target/debug/incremental` (120 GB) deleted under the
 standing leave of 2026-11-17, with no build running.
+
+**Percents, the user's choice:** the English wrote them two ways, "42 %"
+in Activity and the text sizes' settings, "42%" for the volume, the
+zoom and the dock. Now as standard English writes them, "42%", in 37
+messages and notes; `just words --check` refuses a space of any kind
+before a percent sign in English, and the catalogs' test a translation
+that parts an argument from the percent sign its English writes after
+it. French keeps « 42 % », a narrow no-break space (the glossary).
