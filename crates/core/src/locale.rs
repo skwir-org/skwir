@@ -114,6 +114,25 @@ pub fn languages() -> Vec<String> {
     languages
 }
 
+/// The language Automatic speaks: the first of the system's languages the
+/// program ships words in (`fr-FR` finding `fr`), else English.
+pub fn automatic() -> String {
+    let shipped = crate::words::shipped_languages();
+    let system = LANGUAGES.read().system.clone();
+    system
+        .iter()
+        .find_map(|language| {
+            let mut tag = language.as_str();
+            loop {
+                if let Some(found) = shipped.iter().find(|s| s.eq_ignore_ascii_case(tag)) {
+                    return Some((*found).to_owned());
+                }
+                tag = tag.rsplit_once('-')?.0;
+            }
+        })
+        .unwrap_or_else(|| ENGLISH.to_owned())
+}
+
 /// What moves whenever [`languages`] would answer otherwise.
 pub fn revision() -> u64 {
     LANGUAGES.read().revision

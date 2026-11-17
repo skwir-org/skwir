@@ -227,6 +227,18 @@ pub fn ship(catalogs: &'static [Shipped]) {
     *SHIPPED.write() = catalogs;
 }
 
+/// The languages the program ships catalogs in, once each, in the order
+/// first shipped.
+pub fn shipped_languages() -> Vec<&'static str> {
+    let mut languages: Vec<&'static str> = Vec::new();
+    for one in *SHIPPED.read() {
+        if !languages.contains(&one.language) {
+            languages.push(one.language);
+        }
+    }
+    languages
+}
+
 /// Whether two names are one crate's: its package name (`skwir-plugin-tags`)
 /// and Rust's (`skwir_plugin_tags`).
 fn same_crate(a: &str, b: &str) -> bool {

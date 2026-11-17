@@ -3270,6 +3270,9 @@ format_left_seconds = encore environ { $seconds } s
 format_speed = { $size }/s
 
 # draft
+format_today = Aujourd’hui à { $time }
+
+# draft
 format_took_hours = { $hours } h
 
 # draft
@@ -3283,6 +3286,12 @@ format_took_minutes_seconds = { $minutes } min { $seconds } s
 
 # draft
 format_took_seconds = { $seconds } s
+
+# draft
+format_weekday_time = { $weekday } à { $time }
+
+# draft
+format_yesterday = Hier à { $time }
 
 # draft
 fullscreen_controls = Commandes

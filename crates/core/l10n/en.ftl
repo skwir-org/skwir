@@ -2297,6 +2297,9 @@ settings_language_description_more = Automatic speaks the first of your system's
 # The pseudo-language, English accented and longer, offered in builds for testing.
 settings_language_pseudo = Pseudo (for testing)
 
+# This language's name in itself, as the Language setting lists it in every language: Français in the French catalog, Deutsch in the German one.
+settings_language_self = English
+
 # What a key of the state file holds, for whoever reads it.
 settings_last_location = The folder shown when the window was last closed
 

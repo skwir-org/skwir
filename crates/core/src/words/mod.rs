@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 pub use catalog::{
     Catalog, Shipped, find, languages_of, register, register_shipped, register_shipped_of_program,
-    ship, withdraw,
+    ship, shipped_languages, withdraw,
 };
 pub use pattern::{Element, Key, Variant, from_fluent};
 

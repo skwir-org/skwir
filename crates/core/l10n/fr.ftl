@@ -1290,6 +1290,39 @@ fs_not_regular = pas un fichier ordinaire
 fs_server_no_xattrs = ce serveur ne garde pas d’attributs étendus
 
 # draft
+fs_size_bytes = { $n } o
+
+# draft
+fs_size_gb = { $n } Go
+
+# draft
+fs_size_gib = { $n } Gio
+
+# draft
+fs_size_kb = { $n } ko
+
+# draft
+fs_size_kib = { $n } Kio
+
+# draft
+fs_size_mb = { $n } Mo
+
+# draft
+fs_size_mib = { $n } Mio
+
+# draft
+fs_size_pb = { $n } Po
+
+# draft
+fs_size_pib = { $n } Pio
+
+# draft
+fs_size_tb = { $n } To
+
+# draft
+fs_size_tib = { $n } Tio
+
+# draft
 fs_sync_not_yet = L’écriture jusqu’au disque n’est pas encore disponible sous { $system }
 
 # draft
@@ -2440,6 +2473,9 @@ settings_language_description_more = Automatique parle la première des langues 
 
 # draft
 settings_language_pseudo = Pseudo (pour les tests)
+
+# draft
+settings_language_self = Français
 
 # draft
 settings_last_location = Le dossier affiché à la dernière fermeture de la fenêtre

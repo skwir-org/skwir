@@ -1977,8 +1977,8 @@ pub(crate) fn register(app: &crate::App) {
             crate::locale::AUTOMATIC,
             language_choices(),
         )
-        // English is all skwir speaks yet.
-        .now(crate::locale::ENGLISH)
+        // What Automatic speaks here: the first system language shipped.
+        .now(&crate::locale::automatic())
         .page(page::GENERAL)
         .section(section::LANGUAGE)
         .essential(),
@@ -2159,9 +2159,9 @@ pub(crate) fn register(app: &crate::App) {
 
 /// Give every pane, and every pane made from now, the user's choice of
 /// folders before files (`location::FOLDERS_FIRST`).
-/// The languages the setting offers: Automatic, English, and, in a debug
-/// build, the pseudo-language that shows what is not yet a message
-/// (`words::PSEUDO`).
+/// The languages the setting offers: Automatic, English, each language the
+/// program ships catalogs in by its own name, and, in a debug build, the
+/// pseudo-language that shows what is not yet a message (`words::PSEUDO`).
 fn language_choices() -> Vec<(&'static str, Words)> {
     let mut choices = vec![
         (
@@ -2174,6 +2174,16 @@ fn language_choices() -> Vec<(&'static str, Words)> {
         // A language by its own name, in every language.
         (crate::locale::ENGLISH, Words::as_written("English")),
     ];
+    // Each language the program ships, named by its own catalog: the
+    // message that says the language's name in itself.
+    for language in crate::words::shipped_languages() {
+        let own = crate::words!(
+            settings_language_self = "English",
+            note = "This language's name in itself, as the Language setting lists it in every language: Français in the French catalog, Deutsch in the German one."
+        )
+        .say_in(&[language.to_owned()]);
+        choices.push((language, Words::as_written(own)));
+    }
     if cfg!(debug_assertions) {
         choices.push((
             crate::words::PSEUDO,
