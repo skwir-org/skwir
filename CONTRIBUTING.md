@@ -62,6 +62,15 @@ Two rules matter from the first commit:
   own files, and run through nextest, which keeps them out of your Trash,
   settings and cache (`tools/test/isolate-xdg.sh`).
 
+## Commits
+
+Commit messages follow [Conventional
+Commits](https://www.conventionalcommits.org/): the type (`feat`, `fix`,
+`perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`), the area in
+parentheses where there is one, then what the change does, in the
+imperative: `fix(windows): start the Git helper without a console`. The
+body says why. `AGENTS.md` ("Conventions") has the rest.
+
 ## Licence
 
 Skwir is under the Apache License 2.0. What you contribute is under it

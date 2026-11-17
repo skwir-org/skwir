@@ -546,6 +546,25 @@ working in an area, also read that area's rules (see
 - What the pointer does has a key: the middle button's background tab is
   Ctrl+Enter; the right button's menu is the Menu key and Shift+F10;
   Ctrl+click is Ctrl+arrows then Ctrl+Space.
+- **Commit messages** follow Conventional Commits (since 2026-11-17;
+  what came before keeps its sentences): `type(scope): what it does`,
+  in the imperative, begun in lowercase (a name keeps its capital), no
+  full stop, 72 characters at most:
+  `fix(windows): start the Git helper without a console`.
+  - The type is `feat` (something new a person, a script or an agent
+    can do), `fix`, `perf`, `refactor`, `docs` (documents alone: an
+    ADR, the plan, the guide), `test`, `build` (Cargo, the flake, the
+    packages), `ci` or `chore`.
+  - The scope, which may be left out, is the one area changed: an area
+    rule's name (`shell`, `views`, `remote`, `words`…), a plugin's id,
+    `core`, `platform`, `gpui` (`vendor/zed`), or the one system that
+    sees it (`windows`, `macos`).
+  - A change that builds or amends an ADR names it at the end:
+    `feat(words): say dates by the locale (ADR-139)`.
+  - A change that breaks what people, scripts or agents rely on (a
+    command, a setting or a key renamed or gone) takes `!` before the
+    colon, and a `BREAKING CHANGE:` footer says what to do instead.
+  - The body says why, and what was checked; trailers come last.
 
 ## Area rules
 
