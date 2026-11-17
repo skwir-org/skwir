@@ -345,6 +345,11 @@ pub struct Transfer {
     /// says.
     pub sending: Option<usize>,
     pub sending_bytes: Option<u64>,
+    /// Of `done`, what the server has, for a plan writing into a mount
+    /// that sends to its server after (ADR-102, ADR-113 amended): what it
+    /// wrote there is done once the server has it, as a bar draws it over
+    /// what was written. `None` for any other plan.
+    pub on_server: Option<u64>,
     /// What the plan will move in all, when known.
     pub planned: Option<u64>,
     /// Bytes a second, over the last seconds: what it writes, or, while a
@@ -2149,6 +2154,7 @@ impl Executor {
                     step_total: read.total.saturating_sub(read.steps.total),
                     sending: read.sending,
                     sending_bytes: read.send_left,
+                    on_server: read.on_server,
                     planned: read.planned,
                     speed: read.measured.speed,
                     left: read.measured.left,

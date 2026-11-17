@@ -153,3 +153,34 @@ cancelled meanwhile waited for each reader's 4 MiB.
   as they copy their own again.
 - **Decision 4 amended**: a file's holes, counted done as they are
   passed over, are done, never speed, as a clone's bytes are.
+
+### 2026-11-17: a bar into a mount that sends after is what the server has
+
+Copied onto an rclone mount that sends after (ADR-102), nine files of
+151 MB went into its cache in under a second, then took 47 s to reach
+the server at 3 MB/s. Point 5 said what the speed and time left say in
+each phase, nothing of the bar: it counted what was written, so the
+strip said "100 %" and the card's bar stood full for the whole sending,
+under "about 40 s left".
+
+- **Decision 5 amended**: a plan writing into such a mount draws two
+  layers in one bar, as a player draws what is loaded under what is
+  played. Under, lighter (`Theme::cached`), what it wrote; over it, in
+  the accent, what the server has: what it wrote less what the mount
+  says it still sends (`transfer::Left`), all it wrote once a write-out
+  sent it, never less than said before (`Transfer::on_server`). The
+  percent, the strip, Activity's header and the desktop's progress
+  follow what the server has, so 100 % is the copy done. Both count
+  the same bytes: no speed is guessed, and the time each phase takes
+  shows as how fast each layer moves. While it writes, the percent
+  says what the server has (0 % before the first write-out), and its
+  words that what it writes is then sent. A move writing out as it goes counts what it
+  writes after a write-out as not sent until the next.
+- **Rejected: one bar of two segments, each as wide as its phase's
+  time.** The time of the sending is known only once it starts, after
+  the writing: the split would rest on a guessed speed (the mount's
+  last, none on a first copy), and a right guess makes the writing a
+  sliver (151 MB at disk speed against 3 MB/s: under 1 %).
+- **Rejected: the bar starting again for the sending.** It would go
+  back from 100 % to 0 %, and the strip's narrowest words (the percent
+  alone) would drop with nothing saying why.

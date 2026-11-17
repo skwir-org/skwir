@@ -187,6 +187,14 @@ pub(super) struct Meter {
     /// (`UNTOLD` while it has not said).
     sent: AtomicU64,
     send_left: AtomicU64,
+    /// Of what it wrote, the most the server was said to have, for a
+    /// plan writing into a mount that sends after: what it wrote by its
+    /// last write-out, and what a mount says it sent since. Never less, as
+    /// a bar never goes back.
+    on_server: AtomicU64,
+    /// A write-out sent what it wrote ([`Self::sent_out`]): all of it is
+    /// where it goes while it wrote nothing since.
+    sent_out: AtomicBool,
 }
 
 /// The steps of a plan that ended, and `done` and `total` as the next one
@@ -501,6 +509,14 @@ impl Meter {
         self.sends_after.store(true, Ordering::Relaxed);
     }
 
+    /// A write-out sent every mount what it wrote (`StepContext::write_out`):
+    /// what it wrote so far is where it goes.
+    pub(super) fn sent_out(&self) {
+        self.on_server
+            .fetch_max(self.done.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.sent_out.store(true, Ordering::Relaxed);
+    }
+
     /// A step ended: the next one's bytes count from here.
     pub(super) fn step_ended(&self) {
         let mut steps = self.steps.lock();
@@ -673,15 +689,31 @@ impl Meter {
         // large file's ranges, `ranges`) shows as moved: it is here, and
         // a bar waiting for the range written next would stand still while
         // the others come, then jump. Never less than shown before.
-        let done = self.done.load(Ordering::Relaxed);
-        let done = done.saturating_add(self.arriving.load(Ordering::Relaxed));
+        let written = self.done.load(Ordering::Relaxed);
+        let done = written.saturating_add(self.arriving.load(Ordering::Relaxed));
         let done = self.shown.fetch_max(done, Ordering::Relaxed).max(done);
         let total = self.total.load(Ordering::Relaxed);
         let planned = self.planned(&steps, total);
         let items = self.items.load(Ordering::Relaxed);
         let sending = self.sending.load(Ordering::Relaxed).checked_sub(1);
         let send_left = self.send_left.load(Ordering::Relaxed);
-        let then_sends = sending.is_none() && self.sends_after.load(Ordering::Relaxed);
+        let sends_after = self.sends_after.load(Ordering::Relaxed);
+        // What the server has of what it wrote, for a plan writing into a
+        // mount that sends after: what it wrote less what the mount still
+        // sends, while it says it; what a write-out sent; never less than
+        // said before.
+        let on_server = sends_after.then(|| {
+            let has = match sending {
+                Some(_) if send_left != UNTOLD => written.saturating_sub(send_left),
+                _ => 0,
+            };
+            self.on_server.fetch_max(has, Ordering::Relaxed).max(has)
+        });
+        // A write-out sent all it wrote, and it wrote nothing since: its
+        // end waits for no mount.
+        let sent_all = self.sent_out.load(Ordering::Relaxed)
+            && on_server.is_some_and(|on_server| on_server >= written);
+        let then_sends = sending.is_none() && sends_after && !sent_all;
         let left = match (sending, planned) {
             (Some(_), _) if send_left != UNTOLD => speed::Left::Bytes(send_left),
             // Its end waits for a mount to send what it wrote, untold.
@@ -707,6 +739,7 @@ impl Meter {
             planned,
             sending,
             send_left: (sending.is_some() && send_left != UNTOLD).then_some(send_left),
+            on_server,
             then_sends,
             measured,
         }
@@ -724,6 +757,9 @@ pub(super) struct Reading {
     pub(super) planned: Option<u64>,
     pub(super) sending: Option<usize>,
     pub(super) send_left: Option<u64>,
+    /// Of `done`, what the server has, for a plan writing into a mount
+    /// that sends after; `None` for any other.
+    pub(super) on_server: Option<u64>,
     pub(super) then_sends: bool,
     pub(super) measured: speed::Reading,
 }
@@ -1730,6 +1766,7 @@ impl StepContext {
             self.meter.sending(None);
             sent.map_err(stays)?;
         }
+        self.meter.sent_out();
         let ended = Instant::now();
         self.written_out.set((Some(ended), ended - began));
         // Each is done, whatever the others say: the first failure is told.
@@ -2592,6 +2629,49 @@ mod tests {
         meter.sending(None);
         assert_eq!(moved(), 10, "back to what it wrote");
         assert_eq!(meter.reading(false).sending, None);
+    }
+
+    /// What the server has of what a plan wrote into a mount that sends
+    /// after: nothing while it writes; what it wrote less what the mount
+    /// still sends while it sends, never less than said before; all of it
+    /// once a write-out sent it, and only that once it writes more. A plan
+    /// writing into no such mount has no such part.
+    #[test]
+    fn what_the_server_has_is_what_was_written_less_what_is_still_sent() {
+        use super::super::transfer::Left;
+        let left = |files, bytes| Some(Left { files, bytes });
+        let elsewhere = Meter::new(None);
+        elsewhere.begin(1);
+        elsewhere.advance(100);
+        assert_eq!(elsewhere.reading(false).on_server, None);
+        let meter = Meter::new(None);
+        meter.begin(2);
+        meter.sends_after();
+        let read = || meter.reading(false);
+        assert_eq!((read().on_server, read().then_sends), (Some(0), true));
+        meter.advance(1000);
+        assert_eq!(read().on_server, Some(0), "written, not sent");
+        meter.sending(left(2, None));
+        assert_eq!(read().on_server, Some(0), "untold");
+        meter.sending(left(2, Some(800)));
+        assert_eq!(read().on_server, Some(200));
+        meter.sending(left(2, Some(900)));
+        assert_eq!(read().on_server, Some(200), "never less");
+        meter.sending(left(1, Some(300)));
+        assert_eq!(read().on_server, Some(700));
+        meter.sending(None);
+        assert_eq!(read().on_server, Some(700), "ended, not yet said sent");
+        meter.sent_out();
+        assert_eq!((read().on_server, read().then_sends), (Some(1000), false));
+        // A move writes on after a write-out: what it writes waits for
+        // the next one.
+        meter.advance(500);
+        assert_eq!((read().on_server, read().then_sends), (Some(1000), true));
+        meter.sending(left(1, Some(500)));
+        assert_eq!(read().on_server, Some(1000));
+        meter.sending(None);
+        meter.sent_out();
+        assert_eq!((read().on_server, read().then_sends), (Some(1500), false));
     }
 
     /// What came from a server and waits to be written in its order shows

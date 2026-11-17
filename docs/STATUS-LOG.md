@@ -19393,3 +19393,47 @@ build running freed 15 GB.
 
 **Not checked:** on Windows itself. Wine shows no console windows, so
 only the Git helper's flashing was seen to stop, by the PR's author.
+
+## 2026-11-17: Activity's card and the bar of a copy onto a server
+
+Two things the r/rclone screenshots (2026-11-16) showed in 0.5.1, copying
+nine files of 151 MB onto an rclone mount held to 3 MB/s up:
+
+- **The card's words ran under its Pause and Cancel**, and past its
+  edge: "Sending 1 file to the server, 9 of 9 items". Activity hangs
+  from the footer, which says one line for all it holds
+  (`whitespace_nowrap`); gpui gives a deferred draw the text style of
+  where it hangs, and the line under the card's title says none of its
+  own. Every popup is now laid out in `popover::column`, its text
+  wrapping but where it says otherwise (shell.md, AGENTS.md). The line
+  now takes two lines beside the buttons.
+- **The strip said 100 % and the bar stood full for the 47 s of
+  sending**, the card saying "about 40 s left": the bar counted what
+  was written into the mount's cache, done in under a second. ADR-113
+  amended, as the user chose of three ways: one bar, two layers, what
+  was written under, lighter (`Theme::cached`, `cached_muted`), what
+  the server has over it (`Transfer::on_server`, from the meter: what
+  it wrote less what the mount still sends, all of it once a write-out
+  sent it, never less). The percent, the strip, Activity's header and
+  the desktop's progress follow what the server has.
+
+**Checked:** clippy `-D warnings` on core and the window (every
+target); tests of core, the window and the remote plugin (1,758
+passed): the meter's part through a write, a sending told and untold,
+a write-out and a move's writes after it; the bar's shares by bytes
+and by items. In a window of this tree's debug build on its own
+display (the screenshots' stage, rclone serving WebDAV on this
+machine): the lighter layer full from the first capture, the accent's
+and the strip's percent going 0, 7, 15, 22, 37, 59 % with "about 35 s"
+down to "about 20 s left", the card's line on two lines clear of its
+buttons; paused, both layers and the strip ("Paused at 29 %") gray.
+The view menu, Undo's history and the address card, popups that also
+hang from a bar, look as before.
+
+**Seen, left:** where the card's line wraps, a size may be cut from its
+unit ("151.3 / MB"): sizes are written with a plain space
+(`fs::size_words`), in the words being converted (ADR-139).
+
+The two Wine failures the entry above left as found were the tests'
+own fixtures (a path written from `/`, a config's path pasted into
+JSON), fixed in c8e42d21.

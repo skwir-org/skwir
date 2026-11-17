@@ -39,7 +39,9 @@ use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toast::{Action, Running, Toast, Tone, amount, pace, sending, share, waiting_words};
+use crate::toast::{
+    Action, Running, Toast, Tone, amount, pace, sending, share, waiting_words, written,
+};
 
 /// What `Earlier` keeps: the answers of this session the History does not
 /// hold, newest first.
@@ -296,10 +298,13 @@ pub(crate) struct Summary {
     /// ends, only as more is asked, or as an action stopped goes on, by
     /// what it has left.
     pub fraction: f32,
-    /// The share of each running one, plans then tasks, as `under` holds
+    /// As `fraction`, counting how far the running ones wrote
+    /// (`Fill::written`): at least `fraction`, drawn under it.
+    pub written: f32,
+    /// The fill of each running one, plans then tasks, as `under` holds
     /// them: what Activity's header draws. Empty while nothing runs and
     /// something waits.
-    pub shares: Vec<f32>,
+    pub shares: Vec<Fill>,
     /// Those that ended.
     pub ended: usize,
     /// How far the queue has started, the ended and the running…
@@ -332,22 +337,22 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
     if running == 0 && under.waiting == 0 {
         return None;
     }
-    #[allow(clippy::cast_possible_truncation)] // A share for a bar.
-    let shares: Vec<f32> = under
+    let shares: Vec<Fill> = under
         .plans
         .iter()
-        .map(|(running, t)| share(running.total, t))
+        .map(|(running, t)| Fill::of(running.total, t))
         .chain(
             under
                 .tasks
                 .iter()
-                .map(|task| task.went.unwrap_or(0.) as f32),
+                .map(|task| Fill::at(task.went.unwrap_or(0.) as f32)),
         )
         .collect();
     let at = under.ended + running;
     let of = at + under.waiting;
-    #[allow(clippy::cast_precision_loss)] // Shares for a bar.
-    let fraction = ((under.ended as f32 + shares.iter().sum::<f32>()) / of as f32).clamp(0., 1.);
+    let spell = |shares: f32| ((under.ended as f32 + shares) / of as f32).clamp(0., 1.);
+    let fraction = spell(shares.iter().map(|fill| fill.share).sum());
+    let written = spell(shares.iter().map(|fill| fill.written).sum());
     let left = under.plans.iter().filter_map(|(_, t)| t.left).max();
     let paused = running > 0 && under.tasks.is_empty() && under.plans.iter().all(|(r, _)| r.paused);
     let stopping = running > 0
@@ -358,6 +363,7 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
         && under.plans.iter().all(|(r, t)| getting_ready(r, t));
     Some(Summary {
         fraction,
+        written,
         shares,
         ended: under.ended,
         at,
@@ -383,11 +389,11 @@ impl Summary {
 /// `summary` counts them: full for those ended, as far as each running one
 /// went, empty for those waiting. `None` past `SEGMENTS`: one bar, the
 /// segments too thin to tell apart.
-fn segments(summary: &Summary) -> Option<Vec<f32>> {
+fn segments(summary: &Summary) -> Option<Vec<Fill>> {
     (summary.of <= SEGMENTS).then(|| {
-        std::iter::repeat_n(1., summary.ended)
+        std::iter::repeat_n(Fill::at(1.), summary.ended)
             .chain(summary.shares.iter().copied())
-            .chain(std::iter::repeat_n(0., summary.waiting))
+            .chain(std::iter::repeat_n(Fill::at(0.), summary.waiting))
             .collect()
     })
 }
@@ -1034,18 +1040,21 @@ fn spell_header(
         (None, Some(waiting)) => Some(waiting_count(waiting)),
         (None, None) => None,
     };
-    let color = if summary.paused || summary.stopping {
-        theme.text_muted
-    } else {
-        theme.accent
-    };
+    let muted = summary.paused || summary.stopping;
     let bar = match segments(summary) {
         Some(fills) => div().flex().gap(sized(3.)).children(
             fills
                 .into_iter()
-                .map(|fill| div().flex_1().child(small_bar_full(fill, color, theme))),
+                .map(|fill| div().flex_1().child(small_bar_full(fill, muted, theme))),
         ),
-        None => div().child(small_bar_full(summary.fraction, color, theme)),
+        None => div().child(small_bar_full(
+            Fill {
+                share: summary.fraction,
+                written: summary.written,
+            },
+            muted,
+            theme,
+        )),
     };
     div()
         .id("activity-spell")
@@ -1202,21 +1211,67 @@ fn stopping_said() -> String {
     .say()
 }
 
-/// A small bar: `fraction` of `width` in `color`.
-fn small_bar(width: f32, fraction: f32, color: gpui::Hsla, theme: &Theme) -> gpui::Div {
-    div()
-        .flex_none()
-        .w(px(width))
+/// What a progress bar is filled with: how far it is (`share`), and how
+/// far it wrote (`written`, at least `share`). They differ for a copy into
+/// a mount that sends to its server after: what it wrote that the server
+/// does not have yet lies between, drawn lighter (ADR-113, amended).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Fill {
+    pub share: f32,
+    pub written: f32,
+}
+
+impl Fill {
+    /// `share`, nothing written beyond it.
+    pub(crate) fn at(share: f32) -> Fill {
+        Fill {
+            share,
+            written: share,
+        }
+    }
+
+    /// A running plan's of `items` (`toast::share`, `toast::written`).
+    pub(crate) fn of(items: usize, t: &Transfer) -> Fill {
+        let share = share(items, t);
+        Fill {
+            share,
+            written: written(items, t).max(share),
+        }
+    }
+}
+
+/// A small bar: `fill` of `width` (`filled`).
+fn small_bar(width: f32, fill: Fill, muted: bool, theme: &Theme) -> gpui::Div {
+    filled(div().flex_none().w(px(width)), fill, muted, theme)
+}
+
+/// `bar` drawn 4 px high on its track: `fill`'s share in the accent, over
+/// what it wrote beyond it in `cached`; in `text_muted` and `cached_muted`
+/// where `muted` (paused, stopping).
+fn filled(bar: gpui::Div, fill: Fill, muted: bool, theme: &Theme) -> gpui::Div {
+    let (color, cached) = if muted {
+        (theme.text_muted, theme.cached_muted)
+    } else {
+        (theme.accent, theme.cached)
+    };
+    let layer = |share: f32, color| {
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .h_full()
+            .rounded_full()
+            .bg(color)
+            .w(gpui::relative(share.clamp(0., 1.)))
+    };
+    bar.relative()
         .h(px(4.))
         .rounded_full()
         .bg(theme.border)
-        .child(
-            div()
-                .h_full()
-                .rounded_full()
-                .bg(color)
-                .w(gpui::relative(fraction.clamp(0., 1.))),
-        )
+        .when(fill.written > fill.share, |bar| {
+            bar.child(layer(fill.written, cached))
+        })
+        .child(layer(fill.share, color))
 }
 
 /// A button of the strip: an icon in the footer's height.
@@ -1474,17 +1529,15 @@ pub fn strip(
     let focus = shell.strip_focus(cx);
     let stopped = shell.work.borrow().stopped.clone();
     // What it says, richest first, its colour and bar, and what it offers.
-    let (said, color, fraction, offers) = match summary {
+    let (said, bar, offers) = match summary {
         Some(summary) => {
-            let color = if summary.paused || summary.stopping {
-                theme.text_muted
-            } else {
-                theme.accent
+            let fill = Fill {
+                share: summary.fraction,
+                written: summary.written,
             };
             (
                 words(under, &summary),
-                color,
-                Some(summary.fraction),
+                Some((fill, summary.paused || summary.stopping)),
                 offers(under),
             )
         }
@@ -1509,7 +1562,6 @@ pub fn strip(
                         alone.clone(),
                         alone,
                     ],
-                    theme.error,
                     None,
                     Offers::Stopped {
                         plan: stopped.plan,
@@ -1520,7 +1572,6 @@ pub fn strip(
             // Opened with nothing under way: what Earlier keeps.
             None => (
                 [activity_name(), activity_name(), activity_name()],
-                theme.text_muted,
                 None,
                 Offers::Nothing,
             ),
@@ -1612,11 +1663,11 @@ pub fn strip(
             .when(error, |d| {
                 d.child(controls::glyph("warning", theme.error, 13.))
             })
-            .when_some(fraction, |d, fraction| {
+            .when_some(bar, |d, (fill, muted)| {
                 d.child(small_bar(
                     if last { BAR_NARROW } else { BAR_WIDE },
-                    fraction,
-                    color,
+                    fill,
+                    muted,
                     theme,
                 ))
             })
@@ -2471,7 +2522,8 @@ fn progress_card(
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let (pause_focus, cancel_focus) = focus;
-    let fraction = share(running.total, transfer);
+    let fill = Fill::of(running.total, transfer);
+    let fraction = fill.share;
     let amount = amount(running.total, transfer);
     let plan = running.plan;
     let paused = running.paused;
@@ -2557,15 +2609,7 @@ fn progress_card(
                         .text_color(theme.text_muted)
                         .child(state.say()),
                 )
-                .child(small_bar_full(
-                    fraction,
-                    if paused || stopping {
-                        theme.text_muted
-                    } else {
-                        theme.accent
-                    },
-                    theme,
-                ))
+                .child(small_bar_full(fill, paused || stopping, theme))
                 // How fast, how long: under the bar, quieter than what it
                 // is and how far (ADR-113).
                 .when_some(
@@ -2628,20 +2672,9 @@ fn progress_card(
         })
 }
 
-/// A bar across its card.
-fn small_bar_full(fraction: f32, color: gpui::Hsla, theme: &Theme) -> gpui::Div {
-    div()
-        .h(px(4.))
-        .w_full()
-        .rounded_full()
-        .bg(theme.border)
-        .child(
-            div()
-                .h_full()
-                .rounded_full()
-                .bg(color)
-                .w(gpui::relative(fraction.clamp(0., 1.))),
-        )
+/// A bar across its card (`filled`).
+fn small_bar_full(fill: Fill, muted: bool, theme: &Theme) -> gpui::Div {
+    filled(div().w_full(), fill, muted, theme)
 }
 
 /// The card of the task `task` (work under way that is no plan: a print):
@@ -2696,7 +2729,7 @@ fn task_card(
                 .when(!amount.is_empty(), |d| {
                     d.child(div().text_body().text_color(theme.text_muted).child(amount))
                 })
-                .child(small_bar_full(fraction, theme.accent, theme)),
+                .child(small_bar_full(Fill::at(fraction), false, theme)),
         )
         .child(if task.cancelling {
             controls::inert_button(
@@ -2811,8 +2844,8 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        EARLIER, Ended, Offers, Summary, Under, announced, cancel_all_said, how, keep, offers,
-        percent_words, segments, showing, summary, waiting_said, words,
+        EARLIER, Ended, Fill, Offers, Summary, Under, announced, cancel_all_said, how, keep,
+        offers, percent_words, segments, showing, summary, waiting_said, words,
     };
     use crate::toast::{Running, waiting_next};
     use skwir_core::op::{PlanId, RunKind, Transfer};
@@ -3157,8 +3190,8 @@ mod tests {
         assert_eq!(twelve.of, 12);
         let fills = segments(&twelve).expect("twelve segments");
         assert_eq!(fills.len(), 12);
-        assert_eq!(&fills[..4], &[1., 1., 1., 0.5]);
-        assert!(fills[4..].iter().all(|&fill| fill == 0.));
+        assert_eq!(&fills[..4], &[1., 1., 1., 0.5].map(Fill::at));
+        assert!(fills[4..].iter().all(|&fill| fill == Fill::at(0.)));
         let thirteen = summary(&under(vec![half], 3, 9)).unwrap();
         assert_eq!(thirteen.of, 13);
         assert_eq!(segments(&thirteen), None, "one bar");

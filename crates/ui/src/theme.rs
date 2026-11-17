@@ -64,7 +64,8 @@
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_accent` for text and glyphs on an
-//!   `accent` fill, `lanes` for a history's graph (the tags' hues),
+//!   `accent` fill, `cached` and `cached_muted` under a progress bar's
+//!   fill for what is written and not yet sent, `lanes` for a history's graph (the tags' hues),
 //!   `on_tags` for a glyph on a tag's color (a swatch's
 //!   check), `handle` for an edge being dragged, `band` and
 //!   `band_edge` for the rubber band, `term` behind what the query
@@ -260,6 +261,12 @@ pub struct Theme {
     pub picture_backdrop: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
     pub chart: Hsla,
+    /// Under a progress bar's fill (`accent`), how far a copy into a mount
+    /// that sends to its server after wrote: written there, not yet sent
+    /// (ADR-113, amended). `cached_muted` under a paused or stopping one's
+    /// `text_muted`.
+    pub cached: Hsla,
+    pub cached_muted: Hsla,
     /// Laid over the Usage map's block under the pointer, and the line
     /// inside its edge.
     pub block_hover: Hsla,
@@ -1026,6 +1033,8 @@ impl Theme {
             placeholder: border.opacity(0.6),
             picture_backdrop: kept.picture_backdrop,
             chart: accent.opacity(0.6),
+            cached: accent.opacity(0.35),
+            cached_muted: text_muted.opacity(0.35),
             block_hover: kept.block_hover,
             caption_close: kept.caption_close,
             on_caption_close: kept.on_caption_close,

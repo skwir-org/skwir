@@ -527,7 +527,8 @@ pub fn failure(
 /// began, ADR-113) moves by them, its items counted beside; one of one item
 /// counts the bytes it said as it began. Else it counts its items, the
 /// bytes of the one under way moving the bar between two counts: its bytes
-/// are known only as each item starts.
+/// are known only as each item starts. One writing into a mount that sends
+/// after is as far as the server has it (`share`).
 pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     (share(items, t), amount(items, t).say())
 }
@@ -609,8 +610,22 @@ pub(crate) fn amount(items: usize, t: &Transfer) -> Words {
 }
 
 /// How far a running plan's bar is, from 0 to 1, as `bar` says it: by its
-/// bytes where they are known in all, else by its items.
+/// bytes where they are known in all, else by its items. A plan writing
+/// into a mount that sends to its server after is as far as the server
+/// has it (ADR-113, amended): of how far it wrote (`written`, drawn under
+/// it), the share the server has of the bytes written.
 pub(crate) fn share(items: usize, t: &Transfer) -> f32 {
+    let written = written(items, t);
+    match t.on_server {
+        Some(on_server) => written * (on_server as f32 / t.done.max(1) as f32).clamp(0., 1.),
+        None => written,
+    }
+}
+
+/// How far a running plan wrote, from 0 to 1: its bar's `share`, but for
+/// a plan writing into a mount that sends after, where what the server
+/// does not have yet is drawn between the two.
+pub(crate) fn written(items: usize, t: &Transfer) -> f32 {
     let by_bytes = |whole: u64| (t.done as f32 / whole.max(1) as f32).clamp(0., 1.);
     if items <= 1 {
         return by_bytes(t.planned.unwrap_or(t.total).max(t.done));
@@ -1671,7 +1686,7 @@ pub fn render_answer(
 mod tests {
     use super::{
         Action, After, End, Running, Toast, ToastState, Tone, bar, finished_actions, made_alone,
-        pace, show_action, shown_for, waiting_words,
+        pace, share, show_action, shown_for, waiting_words, written,
     };
     use skwir_core::op::{Change, PlanId, RunKind, Transfer};
     use skwir_core::words::Words;
@@ -2284,6 +2299,52 @@ mod tests {
             ..one
         };
         assert_eq!(bar(1, &one_sized), (0.25, "1.1 GB of 4.3 GB".into()));
+    }
+
+    /// Into a mount that sends after (ADR-113, amended): the bar is as far
+    /// as the server has it, of how far it wrote, which is drawn under it;
+    /// counted by its bytes or its items alike. Any other plan wrote as far
+    /// as its bar is.
+    #[test]
+    fn a_bar_into_a_mount_that_sends_after_is_what_the_server_has() {
+        let sized = Transfer {
+            done: 3 << 30,
+            total: 4 << 30,
+            ended: 1,
+            finished: 1,
+            planned: Some(4 << 30),
+            ..Transfer::default()
+        };
+        assert_eq!((share(3, &sized), written(3, &sized)), (0.75, 0.75));
+        let writing = Transfer {
+            on_server: Some(0),
+            ..sized
+        };
+        assert_eq!((share(3, &writing), written(3, &writing)), (0., 0.75));
+        let sending = Transfer {
+            done: 4 << 30,
+            ended: 3,
+            finished: 3,
+            sending: Some(1),
+            on_server: Some(1 << 30),
+            ..writing
+        };
+        assert_eq!((share(3, &sending), written(3, &sending)), (0.25, 1.));
+        assert_eq!(
+            bar(3, &sending).1,
+            "3 of 3 items · 4.3 GB of 4.3 GB",
+            "what it wrote, in words"
+        );
+        // Not sized: by its items, half of what it wrote half sent.
+        let items = Transfer {
+            done: 100,
+            total: 100,
+            ended: 2,
+            finished: 2,
+            on_server: Some(50),
+            ..Transfer::default()
+        };
+        assert_eq!((share(4, &items), written(4, &items)), (0.25, 0.5));
     }
 
     /// How fast and how long, when that can be told: nothing before, a
