@@ -34,7 +34,9 @@ sentence, never a sentence assembled from pieces.
     joined by the language's patterns ("a, b et c").
   - A link inside a sentence is drawn from `Words::say_around(name)`:
     what comes before the argument and after it, the language placing
-    it.
+    it; several arguments drawn apart (a line of facts wrapping only
+    between them) from `Words::say_apart(names)`. Never cut said text
+    in the caller.
 - **The same words in another role are another message**: a menu
   item's "Copy" and a toast's "Copied" are two.
 - **A message an agent or a log reads is still a message**: the reader

@@ -438,6 +438,44 @@ impl Words {
         Words(Inner::Heading(Box::new(self.clone())))
     }
 
+    /// Said in the reader's languages, cut around its arguments `names`:
+    /// the text before the first one placed, then each placed, in the
+    /// order the language places them, by its index in `names`, with the
+    /// text that follows it up to the next (a line of facts drawn apart,
+    /// wrapping only between them: the caller draws each argument). `None`
+    /// where these words are no message placing each of `names` once.
+    pub fn say_apart(&self, names: &[&str]) -> Option<(String, Vec<(usize, String)>)> {
+        let Inner::Message(message, args) = &self.0 else {
+            return None;
+        };
+        // A private-use character a name for each argument cut out.
+        let mark = |at: usize| char::from_u32(0xF8E0 + u32::try_from(at).ok()?);
+        let marked: Arc<[(&'static str, Arg)]> = args
+            .iter()
+            .map(|(n, a)| match names.iter().position(|name| name == n) {
+                Some(at) => (
+                    *n,
+                    Arg::Text(Cow::Owned(mark(at).unwrap_or('\u{F8FF}').to_string())),
+                ),
+                None => (*n, a.clone()),
+            })
+            .collect();
+        let said = Words(Inner::Message(message, marked)).say();
+        let mut before = String::new();
+        let mut placed: Vec<(usize, String)> = Vec::with_capacity(names.len());
+        for c in said.chars() {
+            match (0..names.len()).find(|&at| mark(at) == Some(c)) {
+                Some(at) if placed.iter().any(|(seen, _)| *seen == at) => return None,
+                Some(at) => placed.push((at, String::new())),
+                None => match placed.last_mut() {
+                    Some((_, after)) => after.push(c),
+                    None => before.push(c),
+                },
+            }
+        }
+        (placed.len() == names.len()).then_some((before, placed))
+    }
+
     /// Said in the reader's languages, cut around its argument `name`: what
     /// comes before it and what comes after, the language choosing where it
     /// goes (a link inside a sentence: the caller draws the argument

@@ -7517,39 +7517,41 @@ fn facts_words(
 /// `Words::say_around` cuts a sentence around one argument (core has no
 /// cut for several yet).
 fn fact_segments(facts: &Facts) -> Vec<(Fact, String)> {
-    const MARKS: [(Fact, char); 3] = [
-        (Fact::Type, '\u{F8F0}'),
-        (Fact::Size, '\u{F8F1}'),
-        (Fact::Date, '\u{F8F2}'),
-    ];
-    let mark = |fact: Fact| MARKS.iter().find(|(f, _)| *f == fact).map(|(_, m)| *m);
-    let Some(marked) = facts_words(facts, |fact, _| {
-        mark(fact).map(String::from).unwrap_or_default().into()
-    }) else {
-        return facts
-            .there()
+    const ORDER: [Fact; 3] = [Fact::Type, Fact::Size, Fact::Date];
+    let there = facts.there();
+    let apart = facts_words(facts, |_, said| said.clone().into()).and_then(|words| {
+        let names: Vec<&str> = ORDER
+            .iter()
+            .filter(|fact| there.iter().any(|(f, _)| f == *fact))
+            .map(|fact| match fact {
+                Fact::Type => "type_name",
+                Fact::Size => "size",
+                Fact::Date => "date",
+            })
+            .collect();
+        let shown: Vec<Fact> = ORDER
+            .iter()
+            .copied()
+            .filter(|fact| there.iter().any(|(f, _)| f == fact))
+            .collect();
+        words
+            .say_apart(&names)
+            .map(|(head, placed)| (head, placed, shown))
+    });
+    let Some((mut head, placed, shown)) = apart else {
+        return there
             .into_iter()
             .map(|(fact, said)| (fact, said.clone()))
             .collect();
     };
-    let marked = marked.say();
-    let there = facts.there();
-    let mut segments: Vec<(Fact, String)> = Vec::new();
-    let mut head = String::new();
-    for c in marked.chars() {
-        let placed = MARKS
-            .iter()
-            .find(|(_, m)| *m == c)
-            .and_then(|(fact, _)| there.iter().find(|(f, _)| f == fact));
-        match (placed, segments.last_mut()) {
-            (Some((fact, said)), _) => {
-                segments.push((*fact, std::mem::take(&mut head) + said.as_str()));
-            }
-            (None, Some((_, segment))) => segment.push(c),
-            (None, None) => head.push(c),
-        }
-    }
-    segments
+    placed
+        .into_iter()
+        .filter_map(|(at, after)| {
+            let fact = *shown.get(at)?;
+            let said = there.iter().find(|(f, _)| *f == fact)?.1;
+            Some((fact, std::mem::take(&mut head) + said.as_str() + &after))
+        })
+        .collect()
 }
 
 /// When the file shown last changed, as the list says its dates (the

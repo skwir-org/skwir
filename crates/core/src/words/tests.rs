@@ -616,3 +616,27 @@ fn shipped_catalogs_come_and_go_with_their_crate() {
     withdraw("outside");
     assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
 }
+
+/// A sentence is cut around several arguments, each in the order the
+/// language places it, with what follows it.
+#[test]
+fn a_sentence_is_cut_around_several_arguments() {
+    let facts = crate::words!(
+        test_facts = "{ $kind } · { $size } · { $when }",
+        kind = Words::as_written("PDF"),
+        size = Words::as_written("1 MB"),
+        when = Words::as_written("today")
+    );
+    assert_eq!(
+        facts.say_apart(&["when", "kind", "size"]),
+        Some((
+            String::new(),
+            vec![
+                (1, " · ".to_owned()),
+                (2, " · ".to_owned()),
+                (0, String::new())
+            ]
+        ))
+    );
+    assert_eq!(facts.say_apart(&["kind", "nothing"]), None);
+}
