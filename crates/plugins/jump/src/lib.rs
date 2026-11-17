@@ -487,7 +487,7 @@ impl skwir_core::suggest::SuggestSource for Places {
                     || c.path.display().to_string(),
                     |n| n.to_string_lossy().into_owned(),
                 );
-                let mut row = Suggestion::new(Section::Go, name)
+                let mut row = Suggestion::new(Section::Go, Words::as_written(name))
                     .icon(if dir { "folder" } else { "open" })
                     .rank(i32::try_from(i).unwrap_or(i32::MAX) + 20)
                     .runs(Invocation::with_args(

@@ -708,6 +708,7 @@ fn unlist(folders: &mut HashMap<PathBuf, Vec<PlanId>>, plan: PlanId, its: &[Path
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::words::Words;
 
     fn arrival(steps: Option<Range<usize>>) -> Arrival {
         Arrival {
@@ -791,7 +792,7 @@ mod tests {
     /// copy's from its source: a folder put back is drawn as one.
     #[test]
     fn what_a_restore_brings_is_read_from_its_item_in_the_trash() {
-        let plan = Plan::with_steps("restore", vec![Box::new(PutBack)]);
+        let plan = Plan::with_steps(Words::as_written("restore"), vec![Box::new(PutBack)]);
         let arrivals = arrivals_of(&plan, false, Instant::now(), &HashMap::new());
         assert_eq!(arrivals.len(), 1);
         assert_eq!(arrivals[0].name, "it's back");

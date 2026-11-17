@@ -6027,7 +6027,7 @@ mod tests {
             crate::fs::reach::Known {
                 point: point.clone(),
                 address: Some(Location::parse("sftp://me@example.com/")),
-                label: "me@example.com".into(),
+                label: crate::words::Words::as_written("me@example.com"),
                 thumbnails: crate::fs::reach::Thumbnails::default(),
                 forget: None,
                 trash: None,
@@ -6044,7 +6044,12 @@ mod tests {
             Place {
                 forget: Some(super::Invocation::new("test.forget")),
                 opens: Opens::AsKept(Some("kind:image".into())),
-                ..Place::new("searches", "Summer", "folder", kept)
+                ..Place::new(
+                    "searches",
+                    crate::words::Words::as_written("Summer"),
+                    "folder",
+                    kept,
+                )
             },
         );
         assert!(app.kept_place(&shown, Some("kind:image")).is_some());

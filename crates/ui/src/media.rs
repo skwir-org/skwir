@@ -519,7 +519,7 @@ impl Shell {
         }
         if let Some(notice) = update.notice {
             // The session continues; its next state update corrects the UI.
-            self.set_status(notice, false, cx);
+            self.set_status(Words::as_written(notice), false, cx);
         }
         if let Some(plan) = update.taken {
             // A plan took the file (ADR-136): the session let go of it and
@@ -1834,7 +1834,6 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     use crate::toolbar::MenuPart;
     let state = &shell.preview.media.state;
     let toggle = |id: &'static str, icon: &'static str, title: Words, command, on| {
-        let title = title.say();
         MenuPart::Row(
             Button::new(id, icon, title.clone(), command)
                 .label(title)

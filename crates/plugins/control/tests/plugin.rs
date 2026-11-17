@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use skwir_core::app::{App, AppConfig};
 use skwir_core::command::{NoArgs, Outcome, Topic};
+use skwir_core::words::Words;
 use skwir_plugin_control::{Control, ID, PlanMode, channel, client};
 
 #[test]
@@ -30,8 +31,8 @@ fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
         "test",
         Topic::Files,
         "test.answer",
-        "Answer",
-        "Answers 42",
+        Words::as_written("Answer"),
+        Words::as_written("Answers 42"),
         |_, _| Ok(Outcome::Value(json!(42))),
     );
     app.plugins.add(Arc::new(Control::default()), &app);
@@ -142,8 +143,8 @@ fn a_command_that_changes_the_window_wakes_it() {
             "test",
             Topic::Files,
             "test.show",
-            "Show",
-            "Shows",
+            Words::as_written("Show"),
+            Words::as_written("Shows"),
             |_, _| Ok(Outcome::Done),
         )
         .shows();
@@ -152,8 +153,8 @@ fn a_command_that_changes_the_window_wakes_it() {
             "test",
             Topic::Files,
             "test.read",
-            "Read",
-            "Reads",
+            Words::as_written("Read"),
+            Words::as_written("Reads"),
             |_, _| Ok(Outcome::Value(json!(42))),
         )
         .reads();

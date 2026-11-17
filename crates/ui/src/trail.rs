@@ -169,8 +169,11 @@ mod tests {
         let trail = Trail {
             base: Some("/home/someone/Photos".into()),
             crumbs: vec![
-                Crumb::new("Tags", Location::new("tags", "/?in=x")),
-                Crumb::new("Places", Location::new("tags", "/Places?in=x")),
+                Crumb::new(Words::as_written("Tags"), Location::new("tags", "/?in=x")),
+                Crumb::new(
+                    Words::as_written("Places"),
+                    Location::new("tags", "/Places?in=x"),
+                ),
             ],
             filters: Vec::new(),
             toggles: Vec::new(),

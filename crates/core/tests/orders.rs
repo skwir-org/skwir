@@ -13,6 +13,7 @@ use skwir_core::command::{Invocation, Outcome};
 use skwir_core::grouping::GroupBy;
 use skwir_core::location::{Location, SortKey, SortSpec};
 use skwir_core::orders::{ORDERS, Order};
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 // Taken whole: each call reads as the command it runs, `json!` in place.
@@ -291,11 +292,17 @@ fn a_folder_remembers_the_view_it_is_shown_in() {
     let revision = std::sync::Arc::default();
     app.registry.views.add(
         "test",
-        ViewSpec::named("grid", "Grid", "grid", std::sync::Arc::clone(&revision)).remembered(),
+        ViewSpec::named(
+            "grid",
+            Words::as_written("Grid"),
+            "grid",
+            std::sync::Arc::clone(&revision),
+        )
+        .remembered(),
     );
     app.registry.views.add(
         "test",
-        ViewSpec::named("columns", "Columns", "columns", revision),
+        ViewSpec::named("columns", Words::as_written("Columns"), "columns", revision),
     );
     navigate(&app, &sorted);
     let pane = active(&app);

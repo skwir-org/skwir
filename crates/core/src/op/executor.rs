@@ -5220,7 +5220,7 @@ mod tests {
 
         fn plan(&self) -> Plan {
             Plan::with_steps(
-                self.path.display().to_string(),
+                Words::as_written(self.path.display().to_string()),
                 vec![Box::new(self.clone())],
             )
         }
@@ -5372,7 +5372,7 @@ mod tests {
                     }) as Box<dyn Operation>
                 })
                 .collect();
-            Plan::with_steps(title, steps)
+            Plan::with_steps(Words::as_written(title.to_owned()), steps)
         }
 
         fn said(&self) -> Vec<String> {
@@ -5547,7 +5547,7 @@ mod tests {
             &log,
         );
         let plan = Plan::with_steps(
-            "copy 2 items to dest",
+            Words::as_written("copy 2 items to dest"),
             vec![
                 Box::new(gate.clone()),
                 copy(&src.join("it's a.bin")),
@@ -5651,7 +5651,7 @@ mod tests {
             .zip(&named)
             .map(|(w, named)| (named.as_str(), &w.waits_for))
             .collect();
-        let copying = WaitsFor::Action("/stick/dest/photos".into());
+        let copying = WaitsFor::Action(Words::as_written("/stick/dest/photos"));
         assert_eq!(
             said,
             [
@@ -5821,7 +5821,7 @@ mod tests {
             log: Arc::clone(&log),
         };
         executor.execute(
-            Plan::with_steps("copy", vec![Box::new(copy)]),
+            Plan::with_steps(Words::as_written("copy"), vec![Box::new(copy)]),
             CancelToken::new(),
         );
         assert!(
@@ -5944,7 +5944,7 @@ mod tests {
             [
                 (
                     "/servers/one/a/photos/it's 1.jpg",
-                    &WaitsFor::Action("/servers/one/a/photos".into()),
+                    &WaitsFor::Action(Words::as_written("/servers/one/a/photos")),
                 ),
                 ("/servers/one/b/videos", &WaitsFor::Server),
             ]
@@ -6048,7 +6048,7 @@ mod tests {
             conflict: false,
         };
         executor.execute(
-            Plan::with_steps("probe", vec![Box::new(probe)]),
+            Plan::with_steps(Words::as_written("probe"), vec![Box::new(probe)]),
             CancelToken::new(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -6103,7 +6103,7 @@ mod tests {
     fn a_plan_going_on_by_itself_is_under_way_as_it_is_handed_over() {
         let executor = Executor::new(Scheduler::new(1));
         assert!(!executor.busy_or_waiting());
-        let rest = Plan::new("copy “it's a.bin” to the server");
+        let rest = Plan::new(Words::as_written("copy “it's a.bin” to the server"));
         let plan = rest.id;
         let waits = Waits {
             server: None,
@@ -6183,7 +6183,7 @@ mod tests {
         executor.execute_blocking(&rename.plan(), &CancelToken::new());
         assert_eq!(
             executor.undo_target(),
-            Some(("/disk/notes/a.txt".into(), false)),
+            Some((Words::as_written("/disk/notes/a.txt"), false)),
             "the last asked, ended"
         );
         let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
@@ -6194,7 +6194,10 @@ mod tests {
             "beside the copy"
         );
         // The copy is the latest now: Undo waits for it.
-        assert_eq!(executor.undo_target(), Some(("/stick/photos".into(), true)));
+        assert_eq!(
+            executor.undo_target(),
+            Some((Words::as_written("/stick/photos"), true))
+        );
         assert!(executor.undo(CancelToken::new()).is_some());
         std::thread::sleep(Duration::from_millis(100));
         assert!(!log.lock().iter().any(|l| l == "undid /stick/photos"));
@@ -6383,7 +6386,7 @@ mod tests {
             h[1].can,
             Can::After {
                 entry: folder,
-                title: "/disk/notes".into(),
+                title: Words::as_written("/disk/notes"),
                 since: Since::Done
             }
         );
@@ -6428,7 +6431,7 @@ mod tests {
             h[0].can,
             Can::After {
                 entry: rename,
-                title: "/disk/notes/it’s a.txt".into(),
+                title: Words::as_written("/disk/notes/it’s a.txt"),
                 since: Since::Undone
             }
         );
@@ -6544,7 +6547,7 @@ mod tests {
             plan: None,
             joins: None,
             title: None,
-            named: Words::from(""),
+            named: Words::as_written(""),
             footprint: Arc::default(),
             exact: None,
             meets: None,
@@ -6596,7 +6599,7 @@ mod tests {
         // Two steps, the undo of its second (taken back first) waiting.
         let held = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
         run(&Plan::with_steps(
-            "/disk/notes",
+            Words::as_written("/disk/notes"),
             vec![
                 Box::new(Gate::new("/disk/notes", false, true, &log)) as Box<dyn Operation>,
                 Box::new(Gate::new("/disk/notes/y", false, true, &log).undo_held(&held)),
@@ -6682,7 +6685,7 @@ mod tests {
         let executor = Executor::new(Scheduler::new(2));
         let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let rename = Plan::with_steps(
-            "rename",
+            Words::as_written("rename"),
             vec![
                 Box::new(Gate::new("/disk/photos/it’s a.jpg", false, true, &log))
                     as Box<dyn Operation>,
@@ -6699,7 +6702,10 @@ mod tests {
                 Gate::new(&format!("/disk/photos/copied {n}.jpg"), false, true, &log).settling(),
             ) as Box<dyn Operation>
         }));
-        executor.execute(Plan::with_steps("copy", steps), CancelToken::new());
+        executor.execute(
+            Plan::with_steps(Words::as_written("copy"), steps),
+            CancelToken::new(),
+        );
         assert!(logged(&log, "began /disk/photos/copied 0.jpg"));
         let free = |executor: &Executor| {
             let h = executor.history().rows;
@@ -6820,7 +6826,7 @@ mod tests {
         let read = |seq: u64, blocked_by: &[u64]| Read {
             seq,
             stacked: seq,
-            title: format!("entry {seq}").into(),
+            title: Words::as_written(format!("entry {seq}")),
             asked: Vec::new(),
             at: SystemTime::UNIX_EPOCH,
             undone: false,
@@ -6833,7 +6839,7 @@ mod tests {
             seq: 3,
             plan: None,
             joins: None,
-            title: "entry 3".into(),
+            title: Words::as_written("entry 3"),
             meets: Some([1, 2].into_iter().collect()),
             running: true,
         };
@@ -6847,7 +6853,7 @@ mod tests {
             seq: 4,
             plan: None,
             joins: None,
-            title: "later".into(),
+            title: Words::as_written("later"),
             meets: Some([1].into_iter().collect()),
             running: false,
         };
@@ -6888,7 +6894,7 @@ mod tests {
         assert!(logged(&log, "began /disk/c"));
         let one = Gate::new("/disk/c/one", false, true, &log).plan();
         let two = Plan::with_steps(
-            "two",
+            Words::as_written("two"),
             vec![
                 Box::new(Gate::new("/disk/c/a", false, true, &log)) as Box<dyn Operation>,
                 Box::new(Gate::new("/disk/c/b", false, true, &log)),
@@ -6998,7 +7004,7 @@ mod tests {
         let executor = Executor::new(Scheduler::new(1));
         let unsaid = |makes| {
             Plan::with_steps(
-                "unsaid",
+                Words::as_written("unsaid"),
                 vec![Box::new(Unsaid { makes }) as Box<dyn Operation>],
             )
         };
@@ -7074,7 +7080,10 @@ mod tests {
     #[test]
     fn a_plan_is_shown_and_cancelled_while_it_is_checked() {
         let executor = Executor::new(Scheduler::new(1));
-        let plan = Plan::with_steps("read", vec![Box::new(Reading) as Box<dyn Operation>]);
+        let plan = Plan::with_steps(
+            Words::as_written("read"),
+            vec![Box::new(Reading) as Box<dyn Operation>],
+        );
         let id = plan.id;
         executor.execute_whole(plan, CancelToken::new());
         events_until(
@@ -7102,7 +7111,7 @@ mod tests {
         assert!(logged(&log, "began /stick/photos"));
         let applied = Arc::new(AtomicUsize::new(0));
         let unknown = Plan::with_steps(
-            "unknown",
+            Words::as_written("unknown"),
             vec![Box::new(Probe {
                 applied: Arc::clone(&applied),
                 conflict: false,
@@ -7209,7 +7218,10 @@ mod tests {
                 conflict: false,
             }) as Box<dyn Operation>
         };
-        let plan = Plan::with_steps("copies", vec![probe(), Box::new(Needless), probe()]);
+        let plan = Plan::with_steps(
+            Words::as_written("copies"),
+            vec![probe(), Box::new(Needless), probe()],
+        );
         let r = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!((r.applied, r.skipped, r.error), (2, 1, None));
         assert!(!r.cancelled);
@@ -7234,7 +7246,7 @@ mod tests {
         let applied = Arc::new(AtomicUsize::new(0));
         for n in 0..JOURNAL_ENTRIES + 5 {
             let plan = Plan::with_steps(
-                format!("plan {n}"),
+                Words::as_written(format!("plan {n}")),
                 vec![Box::new(Probe {
                     applied: Arc::clone(&applied),
                     conflict: false,
@@ -7251,10 +7263,10 @@ mod tests {
         let mut big = Journal::default();
         for n in 0..3 {
             big.undo.push(JournalEntry {
-                title: n.to_string().into(),
+                title: Words::as_written(n.to_string()),
                 applied_at: SystemTime::now(),
                 plan: Some(Plan::with_steps(
-                    "x",
+                    Words::as_written("x"),
                     (0..=JOURNAL_BYTES / 256)
                         .map(|_| Box::new(Panics) as Box<dyn Operation>)
                         .collect(),
@@ -7285,14 +7297,17 @@ mod tests {
                 conflict: false,
             }) as Box<dyn Operation>
         };
-        let plan = Plan::with_steps("panics", vec![probe(), Box::new(Panics), probe()]);
+        let plan = Plan::with_steps(
+            Words::as_written("panics"),
+            vec![probe(), Box::new(Panics), probe()],
+        );
         let r = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!(r.applied, 1);
         assert_eq!(
             r.error.as_ref().map(Words::english).as_deref(),
             Some("it failed unexpectedly")
         );
-        let next = Plan::with_steps("next", vec![probe()]);
+        let next = Plan::with_steps(Words::as_written("next"), vec![probe()]);
         let r = executor.execute_blocking(&next, &CancelToken::new());
         assert_eq!((r.applied, r.error), (1, None));
         assert_eq!(applied.load(Ordering::SeqCst), 2);
@@ -7314,7 +7329,7 @@ mod tests {
         executor.set_waker(Some(Arc::new(move || {
             let _ = tx.try_send(());
         })));
-        let plan = Plan::with_steps("two", vec![probe(false), probe(true)]);
+        let plan = Plan::with_steps(Words::as_written("two"), vec![probe(false), probe(true)]);
         let id = plan.id;
         executor.execute_whole(plan, CancelToken::new());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -7389,7 +7404,10 @@ mod tests {
         };
         // The server gone: its top read by no one.
         mode(0o000);
-        let plan = Plan::with_steps("make folders", vec![mkdir("a"), mkdir("b")]);
+        let plan = Plan::with_steps(
+            Words::as_written("make folders"),
+            vec![mkdir("a"), mkdir("b")],
+        );
         let r = executor.execute_blocking(&plan, &CancelToken::new());
         assert!(r.error.is_some() && r.applied == 0, "{r:?}");
         events_until(
@@ -7402,7 +7420,7 @@ mod tests {
         let elsewhere = tmp.path().join("elsewhere");
         executor.execute_blocking(
             &Plan::with_steps(
-                "make one here",
+                Words::as_written("make one here"),
                 vec![Box::new(super::super::Mkdir { path: elsewhere })],
             ),
             &CancelToken::new(),
@@ -7435,7 +7453,7 @@ mod tests {
         let blocked = Box::new(super::super::Mkdir {
             path: served.join("a file").join("below"),
         }) as Box<dyn Operation>;
-        let plan = Plan::with_steps("make below", vec![blocked]);
+        let plan = Plan::with_steps(Words::as_written("make below"), vec![blocked]);
         let r = executor.execute_blocking(&plan, &CancelToken::new());
         assert!(r.error.is_some(), "{r:?}");
         std::thread::sleep(Duration::from_millis(600));
@@ -7472,7 +7490,7 @@ mod tests {
         };
         let here = tmp.path().join("it's here");
         let plan = Plan::with_steps(
-            "make folders",
+            Words::as_written("make folders"),
             vec![
                 Box::new(super::super::Mkdir { path: here.clone() }) as Box<dyn Operation>,
                 Box::new(super::super::Mkdir {
@@ -7514,7 +7532,7 @@ mod tests {
         let executor = Executor::new(Scheduler::new(1));
         let applied = Arc::new(AtomicUsize::new(0));
         let plan = Plan::with_steps(
-            "one",
+            Words::as_written("one"),
             vec![Box::new(Probe {
                 applied: Arc::clone(&applied),
                 conflict: false,
@@ -7566,7 +7584,7 @@ mod tests {
                 })
             })
             .collect();
-        let plan = Plan::with_steps("Delete", steps);
+        let plan = Plan::with_steps(Words::as_written("Delete"), steps);
         let executor = Executor::new(Scheduler::new(2));
         let before = READ.load(Ordering::Relaxed);
         let done = executor.execute_blocking(&plan, &CancelToken::new());
@@ -7664,7 +7682,7 @@ mod tests {
         #[cfg(not(windows))]
         {
             let rename = Plan::with_steps(
-                "Rename",
+                Words::as_written("Rename"),
                 vec![Box::new(super::super::Rename {
                     entry: super::super::EntryRef::from_path(&song).unwrap(),
                     new_name: "it's the song.ogg".into(),
@@ -7679,7 +7697,7 @@ mod tests {
         }
 
         let delete = Plan::with_steps(
-            "Delete",
+            Words::as_written("Delete"),
             vec![Box::new(super::super::Delete {
                 entry: super::super::EntryRef::from_path(&song).unwrap(),
             }) as Box<dyn Operation>],
@@ -7705,7 +7723,7 @@ mod tests {
             closes.lock().take();
         }));
         let again = Plan::with_steps(
-            "Delete",
+            Words::as_written("Delete"),
             vec![Box::new(super::super::Delete {
                 entry: super::super::EntryRef::from_path(&song).unwrap(),
             }) as Box<dyn Operation>],
@@ -7752,7 +7770,7 @@ mod tests {
         };
         make(&["it's a.txt", "b.txt", "c.txt"]);
         let plan = Plan::with_steps(
-            "delete",
+            Words::as_written("delete"),
             vec![delete("it's a.txt"), delete("b.txt"), delete("c.txt")],
         );
         std::fs::remove_file(name("b.txt")).unwrap();
@@ -7769,7 +7787,7 @@ mod tests {
         // one gone and one there, done, said by its last step.
         make(&["it's a.txt", "b.txt", "c.txt"]);
         let mut plan = Plan::with_steps(
-            "delete",
+            Words::as_written("delete"),
             vec![delete("it's a.txt"), delete("b.txt"), delete("c.txt")],
         );
         for n in ["it's a.txt", "b.txt"] {
@@ -7801,7 +7819,7 @@ mod tests {
         std::fs::create_dir(name("it's in")).unwrap();
         make(&["it's in/d.txt", "e.txt"]);
         let nested = Plan::with_steps(
-            "delete",
+            Words::as_written("delete"),
             vec![
                 Box::new(super::super::Delete {
                     entry: EntryRef::from_path(name("it's in")).unwrap(),
@@ -7870,7 +7888,10 @@ mod tests {
                 preserve_attributes: true,
             })
         };
-        let plan = Plan::with_steps("copy", vec![copy("it's d"), copy("it's d/x.txt")]);
+        let plan = Plan::with_steps(
+            Words::as_written("copy"),
+            vec![copy("it's d"), copy("it's d/x.txt")],
+        );
         let tally = tally_of(&plan);
         assert_eq!((tally.done.count, tally.already.count), (1, 1));
         // Two links to one file: the second's already there before the run.
@@ -7888,7 +7909,10 @@ mod tests {
                     new_name: None,
                 })
             };
-            let tally = tally_of(&Plan::with_steps("link", vec![link("A"), link("B")]));
+            let tally = tally_of(&Plan::with_steps(
+                Words::as_written("link"),
+                vec![link("A"), link("B")],
+            ));
             assert_eq!((tally.done.count, tally.already.count), (1, 1));
         }
         // One file written through two of its names.
@@ -7901,10 +7925,16 @@ mod tests {
                 wrote: std::sync::Arc::clone(&wrote),
             })
         };
-        let tally = tally_of(&Plan::with_steps("tag", vec![mark("one"), mark("two")]));
+        let tally = tally_of(&Plan::with_steps(
+            Words::as_written("tag"),
+            vec![mark("one"), mark("two")],
+        ));
         assert_eq!((tally.done.count, tally.already.count), (2, 0));
         // Already written before this run: found done.
-        let tally = tally_of(&Plan::with_steps("tag", vec![mark("one")]));
+        let tally = tally_of(&Plan::with_steps(
+            Words::as_written("tag"),
+            vec![mark("one")],
+        ));
         assert_eq!((tally.done.count, tally.already.count), (0, 1));
     }
 

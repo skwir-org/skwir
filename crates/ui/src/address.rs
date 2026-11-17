@@ -1196,8 +1196,7 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
             address_view_button_tip = "Whether the { $view } view has a button",
             view = spec.title.clone(),
             note = "view: a view's name (List, Grid, Columns)."
-        )
-        .say();
+        );
         MenuPart::Row(menu_item(
             Button::new(
                 format!("view-button-{}", spec.id),
@@ -2544,35 +2543,29 @@ pub fn search_title(
     app: &skwir_core::App,
     location: Option<&Location>,
     editing: bool,
-) -> Option<String> {
+) -> Option<Words> {
     if !skwir_core::suggest::searched(app) {
         return None;
     }
     if editing {
-        return Some(
-            words!(
-                address_edit_search = "Edit this search",
-                note = "The tooltip of the magnifier at the address's end over a search."
-            )
-            .say(),
-        );
+        return Some(words!(
+            address_edit_search = "Edit this search",
+            note = "The tooltip of the magnifier at the address's end over a search."
+        ));
     }
     let location = location.filter(|l| app.searchable(l))?;
-    Some(
-        if location.is_path() {
-            words!(
-                address_search_folder = "Search this folder and its subfolders",
-                note = "The tooltip of the magnifier at the address's end over a folder."
-            )
-        } else {
-            words!(
-                address_search_place = "Search { $place }",
-                place = app.location_title(location),
-                note = "The tooltip of the magnifier at the address's end over a place words can search (a tag, Recent); place: its name."
-            )
-        }
-        .say(),
-    )
+    Some(if location.is_path() {
+        words!(
+            address_search_folder = "Search this folder and its subfolders",
+            note = "The tooltip of the magnifier at the address's end over a folder."
+        )
+    } else {
+        words!(
+            address_search_place = "Search { $place }",
+            place = app.location_title(location),
+            note = "The tooltip of the magnifier at the address's end over a place words can search (a tag, Recent); place: its name."
+        )
+    })
 }
 
 /// The pane a location's tool is run with (`ToolPane`), or `None` while
@@ -2979,6 +2972,7 @@ mod tests {
     };
     use crate::sidebar::Root;
     use skwir_core::location::{Location, ToolPane};
+    use skwir_core::words::Words;
     use skwir_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -3038,10 +3032,10 @@ mod tests {
 
     fn views() -> Vec<ViewSpec> {
         vec![
-            ViewSpec::named("list", "List", "list", Arc::default()),
-            ViewSpec::named("tree", "Tree", "tree", Arc::default()).alternate(),
-            ViewSpec::named("grid", "Grid", "grid", Arc::default()),
-            ViewSpec::named("usage", "Usage", "usage", Arc::default()).lens(),
+            ViewSpec::named("list", Words::as_written("List"), "list", Arc::default()),
+            ViewSpec::named("tree", Words::as_written("Tree"), "tree", Arc::default()).alternate(),
+            ViewSpec::named("grid", Words::as_written("Grid"), "grid", Arc::default()),
+            ViewSpec::named("usage", Words::as_written("Usage"), "usage", Arc::default()).lens(),
         ]
     }
 
@@ -3156,14 +3150,14 @@ mod tests {
         let tag = |name: &str| Location::new("tag", name);
         let deep = Trail {
             crumbs: vec![
-                Crumb::new("Places", tag("places")),
-                Crumb::new("France", tag("places/france")),
+                Crumb::new(Words::as_written("Places"), tag("places")),
+                Crumb::new(Words::as_written("France"), tag("places/france")),
             ],
             ..Trail::default()
         };
         assert!(goes_up(Some(&tag("places/france")), Some(&deep)));
         let first = Trail {
-            crumbs: vec![Crumb::new("Places", tag("places"))],
+            crumbs: vec![Crumb::new(Words::as_written("Places"), tag("places"))],
             ..Trail::default()
         };
         assert!(!goes_up(Some(&tag("places")), Some(&first)));

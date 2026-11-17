@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use skwir_core::app::AppConfig;
 use skwir_core::command::{NoArgs, Outcome, Topic};
 use skwir_core::op::Mkdir;
+use skwir_core::words::Words;
 use skwir_core::{App, Plan};
 use skwir_plugin_control::channel::Address;
 use skwir_plugin_control::client;
@@ -32,8 +33,8 @@ fn app(root: &Path) -> Arc<App> {
             "test",
             Topic::Files,
             "test.answer",
-            "Answer",
-            "Answers 42",
+            Words::as_written("Answer"),
+            Words::as_written("Answers 42"),
             |_, _| Ok(Outcome::Value(json!(42))),
         )
         .reads();
@@ -43,10 +44,10 @@ fn app(root: &Path) -> Arc<App> {
             "test",
             Topic::Files,
             "test.make",
-            "Make a folder",
-            "Makes a folder of this name",
+            Words::as_written("Make a folder"),
+            Words::as_written("Makes a folder of this name"),
             move |args, _| {
-                let mut plan = Plan::new("Make a folder");
+                let mut plan = Plan::new(Words::as_written("Make a folder"));
                 plan.push(Mkdir {
                     path: folders.join(args.name),
                 });
@@ -59,8 +60,8 @@ fn app(root: &Path) -> Arc<App> {
         "test",
         Topic::Files,
         "test.act",
-        "Act",
-        "Acts at once",
+        Words::as_written("Act"),
+        Words::as_written("Acts at once"),
         |_, _| Ok(Outcome::Value(json!("acted"))),
     );
     // Answers the window's own question: never an agent's.
@@ -69,8 +70,8 @@ fn app(root: &Path) -> Arc<App> {
             "test",
             Topic::Files,
             "test.answer_dialog",
-            "Answer the dialog",
-            "Presses for the user",
+            Words::as_written("Answer the dialog"),
+            Words::as_written("Presses for the user"),
             |_, _| Ok(Outcome::Done),
         )
         .user_only();
@@ -81,8 +82,8 @@ fn app(root: &Path) -> Arc<App> {
             "test",
             Topic::Files,
             "test.paths",
-            "Paths",
-            "Answers paths",
+            Words::as_written("Paths"),
+            Words::as_written("Answers paths"),
             move |_, _| {
                 Ok(Outcome::Value(json!({
                     "entries": [
@@ -581,8 +582,8 @@ fn what_an_agent_counts_leaves_private_files_out() {
             "test",
             Topic::Files,
             "test.targets",
-            "Targets",
-            "The names of what a command is handed",
+            Words::as_written("Targets"),
+            Words::as_written("The names of what a command is handed"),
             |_, app| {
                 let names: Vec<String> = app
                     .targets(None, Vec::new())?

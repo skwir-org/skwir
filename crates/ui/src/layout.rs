@@ -19,6 +19,7 @@
 
 use gpui::{Context, Window};
 use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
@@ -232,15 +233,14 @@ impl Layout {
     /// The Split toggle's icon and tooltip: the split it makes, or shows
     /// (while split, the tooltip is `Shell::split_close_tip`).
     /// The tooltip is said where it is drawn.
-    pub fn split_button(&self) -> (&'static str, String) {
+    pub fn split_button(&self) -> (&'static str, Words) {
         if self.stacked() {
             (
                 "split-rows",
                 words!(
                     layout_split_rows = "Split panes one above the other",
                     note = "The Split toggle's tooltip: what it makes."
-                )
-                .say(),
+                ),
             )
         } else {
             (
@@ -248,8 +248,7 @@ impl Layout {
                 words!(
                     layout_split_side = "Split panes side by side",
                     note = "The Split toggle's tooltip: what it makes."
-                )
-                .say(),
+                ),
             )
         }
     }
@@ -273,7 +272,7 @@ impl Shell {
 
     /// The Split toggle's tooltip while split: the pane it closes, by
     /// where it is. Said where it is drawn.
-    pub fn split_close_tip(&self) -> Option<String> {
+    pub fn split_close_tip(&self) -> Option<Words> {
         let closes = self.split_closes()?;
         let first = self.panes.first().is_some_and(|p| p.id == closes);
         let tip = match (self.layout.stacked(), first) {
@@ -294,7 +293,7 @@ impl Shell {
                 note = "The Split toggle's tooltip while split: the pane it closes."
             ),
         };
-        Some(tip.say())
+        Some(tip)
     }
 
     /// `ui.split { axis? }`. Without an axis, split or close the split as

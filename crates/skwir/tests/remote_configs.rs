@@ -1245,7 +1245,7 @@ fn what_rclone_says_a_storage_can_do_shapes_its_mount() {
     let on_dav = mounted(&app, "rclone://dav/");
     let _left_dav = Unmounted(on_dav.clone());
     let plan = skwir_core::op::Plan::with_steps(
-        "move",
+        Words::as_written("move"),
         vec![Box::new(skwir_core::op::Move::new(
             skwir_core::op::EntryRef::from_path(on_dav.join("a folder")).unwrap(),
             on_dav.join("elsewhere"),

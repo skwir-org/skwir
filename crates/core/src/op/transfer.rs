@@ -2180,6 +2180,7 @@ fn copy_one(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    use crate::words::Words;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::time::{Duration, SystemTime};
 
@@ -2237,7 +2238,7 @@ mod tests {
 
     fn copies(entries: &[PathBuf], dest: &Path) -> Plan {
         Plan::with_steps(
-            "copy",
+            Words::as_written("copy"),
             entries
                 .iter()
                 .map(|e| {
@@ -2780,7 +2781,7 @@ mod tests {
 
     fn moves(entries: &[PathBuf], dest: &Path) -> Plan {
         Plan::with_steps(
-            "move",
+            Words::as_written("move"),
             entries
                 .iter()
                 .map(|e| {
@@ -2950,7 +2951,7 @@ mod tests {
         let removals = Arc::new(Mutex::new(Vec::new()));
         let executor = fake_removing(&removals);
         let plan = Plan::with_steps(
-            "delete",
+            Words::as_written("delete"),
             entries
                 .iter()
                 .map(|e| {

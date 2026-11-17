@@ -609,19 +609,21 @@ mod tests {
 
     #[test]
     fn a_form_refuses_what_its_fields_cannot_hold() {
-        let form = Form::new("Add Server", "Add")
-            .field(Field::text("name", "Name").required())
+        let form = Form::new(Words::as_written("Add Server"), Words::as_written("Add"))
+            .field(Field::text("name", Words::as_written("Name")).required())
             .field(Field::new(
                 "port",
-                "Port",
+                Words::as_written("Port"),
                 Kind::Integer { min: 1, max: 65535 },
             ))
-            .field(Field::new("key", "Key", Kind::Secret { kept: true }).required())
+            .field(
+                Field::new("key", Words::as_written("Key"), Kind::Secret { kept: true }).required(),
+            )
             .field(Field::new(
                 "kind",
-                "Kind",
+                Words::as_written("Kind"),
                 Kind::Choice {
-                    choices: vec![Choice::new("s3", "Amazon S3")],
+                    choices: vec![Choice::new("s3", Words::as_written("Amazon S3"))],
                     open: false,
                 },
             ));
@@ -656,22 +658,25 @@ mod tests {
         let row = |choices: &[(&str, &str)]| Kind::Row {
             choices: choices
                 .iter()
-                .map(|(value, accept)| Choice::new(*value, *value).accept(*accept))
+                .map(|(value, accept)| {
+                    Choice::new(*value, Words::as_written((*value).to_owned()))
+                        .accept(Words::as_written((*accept).to_owned()))
+                })
                 .collect(),
         };
-        let form = Form::new("Print", "OK")
+        let form = Form::new(Words::as_written("Print"), Words::as_written("OK"))
             .field(Field::new(
                 "to",
-                "To",
+                Words::as_written("To"),
                 row(&[("printer", "Print…"), ("pdf", "Save")]),
             ))
             .field(Field::new(
                 "pages",
-                "Pages",
+                Words::as_written("Pages"),
                 row(&[("all", ""), ("ranges", "")]),
             ))
             .field(
-                Field::text("ranges", "Pages to print")
+                Field::text("ranges", Words::as_written("Pages to print"))
                     .required()
                     .when("pages", &["ranges"]),
             );
@@ -698,12 +703,16 @@ mod tests {
     /// secrets, and says why.
     #[test]
     fn a_form_asked_again_keeps_what_was_typed_but_secrets() {
-        let form = Form::new("Add", "Add")
-            .field(Field::text("name", "Name"))
-            .field(Field::new("pass", "Password", Kind::Secret { kept: false }));
+        let form = Form::new(Words::as_written("Add"), Words::as_written("Add"))
+            .field(Field::text("name", Words::as_written("Name")))
+            .field(Field::new(
+                "pass",
+                Words::as_written("Password"),
+                Kind::Secret { kept: false },
+            ));
         let again = form.again(
             &values(&[("name", "nas"), ("pass", "hunter2")]),
-            "A remote is named so",
+            Words::as_written("A remote is named so"),
         );
         assert_eq!(again.fields[0].value, "nas");
         assert_eq!(again.fields[1].value, "");
@@ -719,11 +728,17 @@ mod tests {
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         // No window: nobody can fill it.
         assert!(
-            app.fill(Form::new("t", "OK"), &CancelToken::new())
-                .is_none()
+            app.fill(
+                Form::new(Words::as_written("t"), Words::as_written("OK")),
+                &CancelToken::new()
+            )
+            .is_none()
         );
         app.set_window_shown();
-        let (id, answer) = app.ask_form(Form::new("Add", "Add"));
+        let (id, answer) = app.ask_form(Form::new(
+            Words::as_written("Add"),
+            Words::as_written("Add"),
+        ));
         let asked = app.take_forms();
         assert_eq!(asked.len(), 1);
         assert_eq!(asked[0].id, id);
@@ -738,7 +753,10 @@ mod tests {
         assert!(!app.answer_form(id, None));
 
         // Withdrawn before the window took it: never shown.
-        let (id, _answer) = app.ask_form(Form::new("Gone", "OK"));
+        let (id, _answer) = app.ask_form(Form::new(
+            Words::as_written("Gone"),
+            Words::as_written("OK"),
+        ));
         app.withdraw_form(id);
         assert!(app.take_forms().is_empty());
         assert!(!app.form_waits(id));
@@ -753,7 +771,13 @@ mod tests {
         let cancel = CancelToken::new();
         let filler = {
             let (app, cancel) = (std::sync::Arc::clone(&app), cancel.clone());
-            std::thread::spawn(move || app.fill(Form::new("Wait", "OK"), &cancel).is_none())
+            std::thread::spawn(move || {
+                app.fill(
+                    Form::new(Words::as_written("Wait"), Words::as_written("OK")),
+                    &cancel,
+                )
+                .is_none()
+            })
         };
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let id = loop {
@@ -774,9 +798,9 @@ mod tests {
     fn a_file_to_write_is_named_by_what_the_form_holds() {
         let field = Field::new(
             "save_as",
-            "Save as",
+            Words::as_written("Save as"),
             Kind::Save {
-                folders: vec![Choice::new("~/Documents", "Documents")],
+                folders: vec![Choice::new("~/Documents", Words::as_written("Documents"))],
                 names: vec![
                     Named::new("notes (booklet).pdf").when("layout", &["booklet"]),
                     Named::new("notes.pdf")
@@ -784,8 +808,8 @@ mod tests {
                         .when("together", &["one"]),
                 ],
                 ending: ".pdf".to_owned(),
-                alone: "Each named after its file".into(),
-                beside: "Beside it".into(),
+                alone: Words::as_written("Each named after its file"),
+                beside: Words::as_written("Beside it"),
             },
         );
         let held = |pairs: &[(&str, &str)]| field.save_name(&values(pairs)).to_owned();
@@ -796,6 +820,9 @@ mod tests {
         );
         assert_eq!(held(&[("layout", "as_shown"), ("together", "each")]), "");
         assert_eq!(field.refusal_words("/anywhere/x.pdf"), None);
-        assert_eq!(Field::text("t", "T").save_name(&values(&[])), "");
+        assert_eq!(
+            Field::text("t", Words::as_written("T")).save_name(&values(&[])),
+            ""
+        );
     }
 }

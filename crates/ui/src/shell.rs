@@ -3184,7 +3184,7 @@ impl Shell {
     /// What Quit asks, of what is under way: a plan first, else a task (a
     /// print being sent), else a plan that waits for its server to go on
     /// by itself (ADR-080, 9).
-    fn quit_question(&self) -> String {
+    fn quit_question(&self) -> Words {
         let work = self.work.borrow();
         let tasks = self.app.tasks.running();
         let running = work
@@ -3220,7 +3220,7 @@ impl Shell {
                     note = "What Quit asks while an action waits for its server to go on."
                 ),
             };
-            return question.say();
+            return question;
         }
         let others = (work.running.len() + tasks.len()).saturating_sub(1);
         crate::toast::quit_question(
@@ -4000,7 +4000,7 @@ impl Shell {
                 let request = args.get("request").cloned().unwrap_or_default();
                 match serde_json::from_value(request) {
                     Ok(request) => self.player_request(request, window, cx),
-                    Err(error) => self.set_status(error.to_string(), true, cx),
+                    Err(error) => self.set_status(Words::of_error(error.into()), true, cx),
                 }
             }
             "media_step" => {
@@ -4737,7 +4737,7 @@ impl Shell {
         // technology as the pane's description.
         let said = placeholder.as_ref().filter(|_| self.a11y).map(|p| {
             if p.detail.is_empty() {
-                Words::from(p.title.clone())
+                p.title.clone()
             } else {
                 words!(
                     shell_placeholder_said = "{ $title }. { $detail }",
@@ -4747,8 +4747,8 @@ impl Shell {
                                 files: what it says, then more of it (This folder is empty. \
                                 Drop files here)."
                 )
+                .say()
             }
-            .say()
         });
         let body = if let Some(placeholder) = placeholder {
             let focus = self.ui().placeholder_focus.clone();
@@ -5600,6 +5600,7 @@ fn renamed_said(unhid: Option<String>, left_out: &[String], filtered: bool) -> O
 
 #[cfg(test)]
 mod tests {
+    use skwir_core::words::Words;
     /// A reveal waits ten seconds at most, never acting after; the time
     /// it cannot look (its tab not shown, its folder held back whole) does
     /// not count; its location left, it goes.
@@ -5716,7 +5717,7 @@ mod tests {
     fn a_checksum_is_compared_with_what_is_copied() {
         let sum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
         let said = |copied: &str| {
-            let (said, wrong) = super::compared(sum, copied, Some("SHA-256".into()));
+            let (said, wrong) = super::compared(sum, copied, Some(Words::as_written("SHA-256")));
             (said.english(), wrong)
         };
         assert_eq!(

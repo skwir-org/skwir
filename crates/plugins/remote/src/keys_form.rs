@@ -56,7 +56,7 @@ fn choice(value: &str, key: &Key) -> Choice {
             note = "A key the ssh agent holds: key is its comment and type (me@laptop (ed25519))."
         ),
     };
-    Choice::new(value, title).detail(key.fingerprint.clone())
+    Choice::new(value, title).detail(Words::as_written(key.fingerprint.clone()))
 }
 
 /// The form asking which key, for `top`'s server: a new one too where

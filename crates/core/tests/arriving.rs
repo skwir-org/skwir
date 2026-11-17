@@ -14,6 +14,7 @@ use parking_lot::{Condvar, Mutex};
 use skwir_core::command::Invocation;
 use skwir_core::op::arriving::{Arrives, Arriving};
 use skwir_core::op::{Change, Copy, EntryRef, Operation, Plan, StepContext, StepStatus};
+use skwir_core::words::Words;
 use skwir_core::{CancelToken, Entry};
 
 /// A step that waits until it is opened, holding its plan's run as a long
@@ -101,7 +102,7 @@ fn a_copy_waiting_stands_where_it_will_land_and_goes_once_landed() {
         ))
     };
     let plan = Plan::with_steps(
-        "Copy 2 items",
+        Words::as_written("Copy 2 items"),
         vec![
             Box::new(held.clone()),
             copy("big file.bin"),
@@ -221,7 +222,7 @@ fn what_arrives_is_read_with_its_notes_and_dated_as_its_file_will_be() {
     let asked = std::time::SystemTime::now();
     let held = Held::new();
     let plan = Plan::with_steps(
-        "copy and move",
+        Words::as_written("copy and move"),
         vec![
             Box::new(held.clone()),
             Box::new(Copy::from_settings(

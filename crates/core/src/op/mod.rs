@@ -1610,6 +1610,7 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::{Change, Follow, Followed, Tenses, Through, io_words, said};
+    use crate::words::Words;
     use std::path::{Path, PathBuf};
 
     /// A step's own words naming its file are told apart by their make, not
@@ -1623,7 +1624,10 @@ mod tests {
             to: PathBuf::from("/a/b.txt"),
         };
         let own = |path: &str, words: &str, error: anyhow::Error| {
-            error.context(Couldnt::new(Path::new(path), words.to_owned()))
+            error.context(Couldnt::new(
+                Path::new(path),
+                Words::as_written(words.to_owned()),
+            ))
         };
         let denied =
             || anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
@@ -1737,9 +1741,9 @@ mod tests {
             path: dir.join("a.jpg"),
             field: "position".into(),
             words: Some(Tenses {
-                will: "place “a.jpg” at 10, 20".into(),
-                did: "Placed “a.jpg” at 10, 20".into(),
-                already: Some("“a.jpg” was already at 10, 20".into()),
+                will: Words::as_written("place “a.jpg” at 10, 20"),
+                did: Words::as_written("Placed “a.jpg” at 10, 20"),
+                already: Some(Words::as_written("“a.jpg” was already at 10, 20")),
             }),
         };
         assert_eq!(placed.words(Some(dir)).english(), "place “a.jpg” at 10, 20");

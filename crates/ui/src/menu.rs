@@ -2419,6 +2419,7 @@ fn choice_element(
 
 #[cfg(test)]
 mod tests {
+    use skwir_core::words::Words;
     #[cfg(target_os = "linux")]
     use std::ffi::OsStr;
 
@@ -2532,14 +2533,14 @@ mod tests {
     fn item(title: &str, submenu: Option<&str>) -> MenuItem {
         MenuItem {
             menu: "context".into(),
-            title: title.into(),
+            title: Words::as_written(title.to_owned()),
             command: Invocation::new("noop"),
             when: None,
             order: 0,
             icon: None,
             submenu: submenu.map(|name| skwir_core::registry::Submenu {
                 id: name.to_owned().into(),
-                title: name.to_owned().into(),
+                title: Words::as_written(name.to_owned()),
             }),
             checked: None,
             choice: None,
@@ -2584,7 +2585,7 @@ mod tests {
                 icon: icon.map(str::to_owned),
                 ..item(title, submenu)
             }
-            .value_of("setting", "Setting", look, chosen)
+            .value_of("setting", Words::as_written("Setting"), look, chosen)
         };
         let items = [
             item("Open", None),

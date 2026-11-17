@@ -1043,7 +1043,7 @@ mod tests {
     fn row(entry: u64, state: Done, can: Can, with: Vec<u64>) -> HistoryRow {
         HistoryRow {
             entry,
-            title: format!("rename to it's {entry}.txt").into(),
+            title: Words::as_written(format!("rename to it's {entry}.txt")),
             plans: Vec::new(),
             at: SystemTime::UNIX_EPOCH,
             state,
@@ -1054,7 +1054,7 @@ mod tests {
 
     fn undo_of(plan: PlanId) -> Action {
         Action {
-            label: "Undo".into(),
+            label: Words::as_written("Undo"),
             command: "undo".into(),
             args: serde_json::json!({ "plan": plan }),
         }
@@ -1066,7 +1066,7 @@ mod tests {
     fn a_held_undo_says_why_by_how_the_one_holding_it_stands() {
         let after = |since| Can::After {
             entry: 9,
-            title: "move “a.txt” to /example/b".into(),
+            title: Words::as_written("move “a.txt” to /example/b"),
             since,
         };
         let said = |state, can| why(&row(1, state, can, Vec::new()));
@@ -1126,7 +1126,9 @@ mod tests {
     /// gone from the history, it says so; another button is not its.
     #[test]
     fn an_answers_undo_is_held_as_the_history_says() {
-        let ids: Vec<PlanId> = (0..5).map(|n| Plan::new(format!("plan {n}")).id).collect();
+        let ids: Vec<PlanId> = (0..5)
+            .map(|n| Plan::new(Words::as_written(format!("plan {n}"))).id)
+            .collect();
         let mut by_plan: HashMap<PlanId, HistoryRow> = HashMap::new();
         by_plan.insert(ids[0], row(1, Done::Done, Can::Now, Vec::new()));
         by_plan.insert(ids[1], row(2, Done::Running, Can::OnceEnded, Vec::new()));
@@ -1138,7 +1140,7 @@ mod tests {
                 Done::Done,
                 Can::After {
                     entry: 7,
-                    title: "copy to /example".into(),
+                    title: Words::as_written("copy to /example"),
                     since: Since::Waiting,
                 },
                 Vec::new(),
@@ -1159,14 +1161,14 @@ mod tests {
             Some("No longer in the history")
         );
         let retry = Action {
-            label: "Retry".into(),
+            label: Words::as_written("Retry"),
             command: "retry".into(),
             args: serde_json::json!({ "plan": ids[3] }),
         };
         assert_eq!(undo_held(&retry, &by_plan), None);
         // An Undo naming no plan (the last asked) is the core's to answer.
         let last = Action {
-            label: "Undo".into(),
+            label: Words::as_written("Undo"),
             command: "undo".into(),
             args: serde_json::json!({}),
         };
@@ -1184,7 +1186,7 @@ mod tests {
                 Done::Done,
                 Can::After {
                     entry: 6,
-                    title: "rename".into(),
+                    title: Words::as_written("rename"),
                     since: Since::Done,
                 },
                 vec![6],

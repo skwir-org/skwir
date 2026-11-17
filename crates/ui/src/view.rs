@@ -335,12 +335,14 @@ pub(crate) fn reconcile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use skwir_core::words::Words;
 
     #[test]
     fn plugin_views_follow_registration_lifetime() {
         let mut views = HashMap::new();
         let mut registrations = HashMap::new();
-        let usage = || ViewSpec::named("usage", "Usage", "usage", Arc::default());
+        let usage =
+            || ViewSpec::named("usage", Words::as_written("Usage"), "usage", Arc::default());
         let spec = usage();
         reconcile(&mut views, &mut registrations, std::slice::from_ref(&spec));
         assert!(views.contains_key("usage"));
@@ -353,7 +355,12 @@ mod tests {
         assert!(views.is_empty());
         reconcile(&mut views, &mut registrations, &[usage()]);
         assert!(views.contains_key("usage"));
-        let unknown = ViewSpec::named("unavailable-renderer", "Unknown", "grid", Arc::default());
+        let unknown = ViewSpec::named(
+            "unavailable-renderer",
+            Words::as_written("Unknown"),
+            "grid",
+            Arc::default(),
+        );
         reconcile(&mut views, &mut registrations, &[unknown]);
         assert!(views.is_empty());
     }

@@ -1113,7 +1113,7 @@ fn delete_tail(runs: usize) -> Stat {
                         })
                     })
                     .collect();
-                let plan = Plan::with_steps("Delete", steps);
+                let plan = Plan::with_steps(skwir_core::words::Words::as_written("Delete"), steps);
                 let t = Instant::now();
                 let done = app.executor.execute_blocking(&plan, app.lifetime());
                 let took = t.elapsed();
@@ -1329,7 +1329,7 @@ fn history_read(runs: usize) -> Stat {
     let executor = Executor::new(skwir_core::scheduler::Scheduler::new(2));
     let plan = |n: usize, open: Option<&std::sync::Arc<_>>| {
         Plan::with_steps(
-            format!("action {n}"),
+            skwir_core::words::Words::as_written(format!("action {n}")),
             vec![Box::new(Marks {
                 n,
                 open: open.cloned(),

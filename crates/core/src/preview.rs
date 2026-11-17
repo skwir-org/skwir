@@ -607,6 +607,7 @@ impl Previews {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::words::Words;
     use std::time::Duration;
 
     struct SlowProvider(crossbeam_channel::Sender<()>);
@@ -671,7 +672,7 @@ mod tests {
         }
         fn way(&self) -> Option<Way> {
             self.1.then(|| Way {
-                label: "History".into(),
+                label: Words::as_written("History"),
                 tip: crate::words::Words::default(),
                 icon: "history",
                 folders: true,

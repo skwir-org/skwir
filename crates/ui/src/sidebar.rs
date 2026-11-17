@@ -2355,6 +2355,7 @@ impl Shell {
 mod tests {
     use super::{Role, Sections, arrange, drop_target, group_title, used_fraction};
     use skwir_core::Location;
+    use skwir_core::words::Words;
     use std::path::PathBuf;
 
     #[test]
@@ -2415,7 +2416,7 @@ mod tests {
     fn place(group: &str, location: &str) -> skwir_core::registry::Place {
         skwir_core::registry::Place::new(
             group,
-            location.trim_start_matches('/').to_owned(),
+            skwir_core::words::Words::as_written(location.trim_start_matches('/').to_owned()),
             "",
             Location::parse(location),
         )
@@ -2471,7 +2472,7 @@ mod tests {
         bookmark.forget = Some(skwir_core::command::Invocation::new("places.unbookmark"));
         let recent = place("places", "recent:");
         let mut efi = place("devices", "/dev/sda1");
-        efi.title = "EFI".into();
+        efi.title = Words::as_written("EFI");
         efi.key = Some("volume:1234".into());
         efi.hidden = true;
         let all = vec![
@@ -2548,7 +2549,12 @@ mod tests {
     #[test]
     fn a_volume_to_mount_opens_in_a_tab_once_mounted() {
         let place = |location: &str| {
-            skwir_core::registry::Place::new("devices", "Backup", "", Location::parse(location))
+            skwir_core::registry::Place::new(
+                "devices",
+                Words::as_written("Backup"),
+                "",
+                Location::parse(location),
+            )
         };
         let mut locked = place("device:/dev/sdz");
         locked.activate = Some(skwir_core::command::Invocation::with_args(

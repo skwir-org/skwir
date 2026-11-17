@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use skwir_core::app::{App, AppConfig};
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
+use skwir_core::words::Words;
 
 fn home_tempdir() -> tempfile::TempDir {
     let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
@@ -145,7 +146,7 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
         .edit(skwir_core::op::EntryRef::from_path(&file).unwrap())
         .tags(vec!["trip".into(), "Été".into()])
         .comment(Some("the lake".into()));
-    let mut plan = skwir_core::op::Plan::new("edit");
+    let mut plan = skwir_core::op::Plan::new(Words::as_written("edit"));
     plan.steps.push(Box::new(edit));
     assert!(
         app.executor

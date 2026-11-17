@@ -1,6 +1,7 @@
 use super::*;
 use skwir_core::app::AppConfig;
 use skwir_core::op::{EntryRef, Plan, Rename};
+use skwir_core::words::Words;
 
 fn home_tempdir() -> tempfile::TempDir {
     let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
@@ -18,7 +19,7 @@ fn app(tmp: &Path) -> Arc<App> {
 }
 
 fn run(app: &App, op: Box<dyn skwir_core::op::Operation>) -> Option<String> {
-    let mut plan = Plan::new("op");
+    let mut plan = Plan::new(Words::as_written("op"));
     plan.steps.push(op);
     app.executor
         .execute_blocking(&plan, app.lifetime())

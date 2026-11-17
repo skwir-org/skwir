@@ -1302,7 +1302,7 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .iter()
         .enumerate()
         .map(|(i, word)| {
-            let label = date_title(i).say();
+            let label = date_title(i);
             toolbar::MenuPart::Row(
                 Button::new(
                     format!("tl-date-{word}"),

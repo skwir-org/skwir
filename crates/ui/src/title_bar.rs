@@ -477,7 +477,7 @@ fn button_element(
 /// What a window's button is called, said and shown alike (a screen
 /// reader hears the window's, not another Close), and the command it runs.
 /// Said where it is drawn.
-fn named(button: WindowButton, maximized: bool) -> (String, &'static str) {
+fn named(button: WindowButton, maximized: bool) -> (Words, &'static str) {
     let (title, command) = match button {
         WindowButton::Close => (
             words!(
@@ -509,7 +509,7 @@ fn named(button: WindowButton, maximized: bool) -> (String, &'static str) {
             "ui.maximize_window",
         ),
     };
-    (title.say(), command)
+    (title, command)
 }
 
 /// The window's title: its active pane's location's (`place`), then
@@ -562,7 +562,7 @@ fn caption(
     div()
         .id(id)
         .role(gpui::Role::Button)
-        .when(shell.a11y, |d| d.aria_label(label))
+        .when(shell.a11y, |d| d.aria_label(label.say()))
         .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
             press(&(), window, cx);
         })

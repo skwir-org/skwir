@@ -351,7 +351,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     };
     if let Some(reading) = assist::interpret_in(words, named) {
         let mut row = Suggestion::new(Section::Reading, reading.label.clone())
-            .detail(reading.expr.clone())
+            .detail(Words::as_written(reading.expr.clone()))
             .icon("sliders")
             .runs(search(app, &reading.expr, &scope, ask));
         row.detail_typed = true;
@@ -419,7 +419,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
                         note = "A row of the address field: words written #tag searched in names, not as tags."
                     ),
                 )
-                    .detail(names.clone())
+                    .detail(Words::as_written(names.clone()))
                     .icon("search")
                     .rank(4)
                     .runs(search(app, &names, &scope, ask)),
@@ -539,7 +539,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
         let words = crate::facets::text_of(&recent.expr)
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| recent.expr.clone());
-        let mut row = Suggestion::new(Section::Recent, words.clone())
+        let mut row = Suggestion::new(Section::Recent, Words::as_written(words.clone()))
             .detail(words!(
                 query_field_recent_in = "in { $place }",
                 place = app.location_title(&scope),
@@ -580,7 +580,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
                 (at, Some(saved.expr), detail)
             }
         };
-        let mut row = Suggestion::new(Section::Saved, saved.name)
+        let mut row = Suggestion::new(Section::Saved, Words::as_written(saved.name))
             .detail(detail)
             .icon("star")
             .rank(i32::try_from(rank).unwrap_or(0))

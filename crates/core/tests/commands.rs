@@ -4,15 +4,20 @@ mod common;
 
 use common::*;
 use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
+use skwir_core::words::Words;
 
 #[test]
 fn a_command_that_panics_fails_without_taking_its_caller() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    app.commands
-        .register::<NoArgs, _>("faulty", Topic::Files, "faulty.run", "Run", "", |_, _| {
-            panic!("a fault of its own")
-        });
+    app.commands.register::<NoArgs, _>(
+        "faulty",
+        Topic::Files,
+        "faulty.run",
+        Words::as_written("Run"),
+        Words::as_written(""),
+        |_, _| panic!("a fault of its own"),
+    );
     let error = app
         .dispatch(&Invocation::new("faulty.run"))
         .expect_err("it failed");
@@ -24,8 +29,8 @@ fn a_command_that_panics_fails_without_taking_its_caller() {
         "faulty",
         Topic::Files,
         "faulty.fine",
-        "Fine",
-        "",
+        Words::as_written("Fine"),
+        Words::as_written(""),
         |_, _| Ok(Outcome::Value(1.into())),
     );
     assert!(
@@ -42,14 +47,22 @@ fn a_shadowed_command_returns_when_its_shadow_is_withdrawn() {
         Outcome::Value(v) => v,
         other => panic!("{other:?}"),
     };
-    app.commands
-        .register::<NoArgs, _>("first", Topic::Files, "probe", "Probe", "", |_, _| {
-            Ok(Outcome::Value(1.into()))
-        });
-    app.commands
-        .register::<NoArgs, _>("second", Topic::Files, "probe", "Probe", "", |_, _| {
-            Ok(Outcome::Value(2.into()))
-        });
+    app.commands.register::<NoArgs, _>(
+        "first",
+        Topic::Files,
+        "probe",
+        Words::as_written("Probe"),
+        Words::as_written(""),
+        |_, _| Ok(Outcome::Value(1.into())),
+    );
+    app.commands.register::<NoArgs, _>(
+        "second",
+        Topic::Files,
+        "probe",
+        Words::as_written("Probe"),
+        Words::as_written(""),
+        |_, _| Ok(Outcome::Value(2.into())),
+    );
     assert_eq!(value(&app), 2);
     assert_eq!(
         app.commands
@@ -108,13 +121,13 @@ fn a_command_is_called_by_the_form_of_its_arguments() {
         "sorter",
         Topic::Files,
         "sorter.sort",
-        "Sort",
-        "",
+        Words::as_written("Sort"),
+        Words::as_written(""),
         |_, _| Ok(Outcome::Done),
     );
     declared.forms([Form::new(
         serde_json::json!({"key": "size"}),
-        "Sort by size",
+        Words::as_written("Sort by size"),
     )]);
     declared.keeps_a_key();
     declared.reads();
@@ -146,23 +159,28 @@ fn a_held_key_repeats_only_what_its_command_declares() {
             "player",
             Topic::Files,
             name,
-            "",
-            "",
+            Words::as_written(""),
+            Words::as_written(""),
             |_, _| Ok(Outcome::Done),
         );
     }
     app.commands
-        .register::<serde_json::Value, _>("player", Topic::Files, "player.step", "", "", |_, _| {
-            Ok(Outcome::Done)
-        })
+        .register::<serde_json::Value, _>(
+            "player",
+            Topic::Files,
+            "player.step",
+            Words::as_written(""),
+            Words::as_written(""),
+            |_, _| Ok(Outcome::Done),
+        )
         .repeats(skwir_core::command::always);
     app.commands
         .register::<serde_json::Value, _>(
             "player",
             Topic::Files,
             "player.volume_by",
-            "",
-            "",
+            Words::as_written(""),
+            Words::as_written(""),
             |_, _| Ok(Outcome::Done),
         )
         .repeats(|args| args.get("by").is_some());
@@ -223,16 +241,20 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
     );
     refused("set_access", json!({ "mode": "644", "entrie": [] }));
     // A command that takes none refuses any; one taking any JSON takes all.
-    app.commands
-        .register::<NoArgs, _>("probe", Topic::Files, "probe.none", "None", "", |_, _| {
-            Ok(Outcome::Done)
-        });
+    app.commands.register::<NoArgs, _>(
+        "probe",
+        Topic::Files,
+        "probe.none",
+        Words::as_written("None"),
+        Words::as_written(""),
+        |_, _| Ok(Outcome::Done),
+    );
     app.commands.register::<serde_json::Value, _>(
         "probe",
         Topic::Files,
         "probe.any",
-        "Any",
-        "",
+        Words::as_written("Any"),
+        Words::as_written(""),
         |_, _| Ok(Outcome::Done),
     );
     refused("probe.none", json!({ "pane": 1 }));
@@ -255,8 +277,8 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
         "probe",
         Topic::Files,
         "probe.step",
-        "Step",
-        "",
+        Words::as_written("Step"),
+        Words::as_written(""),
         |_, _| Ok(Outcome::Done),
     );
     assert!(
@@ -273,16 +295,20 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
 fn a_plugin_from_outside_takes_no_other_owners_command() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    app.commands
-        .register::<NoArgs, _>("core", Topic::Files, "probe.kept", "Kept", "", |_, _| {
-            Ok(Outcome::Value("core's".into()))
-        });
+    app.commands.register::<NoArgs, _>(
+        "core",
+        Topic::Files,
+        "probe.kept",
+        Words::as_written("Kept"),
+        Words::as_written(""),
+        |_, _| Ok(Outcome::Value("core's".into())),
+    );
     app.commands.register_dynamic(
         "outsider",
         Topic::Files,
         "probe.kept",
-        "Taken",
-        "",
+        Words::as_written("Taken"),
+        Words::as_written(""),
         serde_json::json!({ "type": "object" }),
         |_, _| Ok(Outcome::Value("the outsider's".into())),
     );
@@ -335,8 +361,8 @@ fn typed_arguments_reach_their_command_without_json() {
         "first",
         Topic::Files,
         "probe.typed",
-        "Probe",
-        "",
+        Words::as_written("Probe"),
+        Words::as_written(""),
         |a, _| Ok(Outcome::Value(a.n.into())),
     );
     assert_eq!(value(&app), 7);
@@ -347,18 +373,22 @@ fn typed_arguments_reach_their_command_without_json() {
         "second",
         Topic::Files,
         "probe.typed",
-        "Probe",
-        "",
+        Words::as_written("Probe"),
+        Words::as_written(""),
         |args, _| Ok(Outcome::Value((args["n"].as_u64().unwrap() * 2).into())),
     );
     assert_eq!(value(&app), 14);
     assert_eq!(SERIALIZED.load(Ordering::Relaxed), 1);
 
     // By one of other arguments.
-    app.commands
-        .register::<Other, _>("third", Topic::Files, "probe.typed", "Probe", "", |a, _| {
-            Ok(Outcome::Value((a.n + 1).into()))
-        });
+    app.commands.register::<Other, _>(
+        "third",
+        Topic::Files,
+        "probe.typed",
+        Words::as_written("Probe"),
+        Words::as_written(""),
+        |a, _| Ok(Outcome::Value((a.n + 1).into())),
+    );
     assert_eq!(value(&app), 8);
     assert_eq!(SERIALIZED.load(Ordering::Relaxed), 2);
 
@@ -382,8 +412,8 @@ fn typed_arguments_reach_their_command_without_json() {
         "faulty",
         Topic::Files,
         "probe.faulty",
-        "Probe",
-        "",
+        Words::as_written("Probe"),
+        Words::as_written(""),
         |_, _| panic!("a fault of its own"),
     );
     let error = app

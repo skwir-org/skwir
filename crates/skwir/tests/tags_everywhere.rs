@@ -14,6 +14,7 @@ use skwir_core::command::Invocation;
 use skwir_core::location::{ListingEvent, Location, OpenLocation};
 use skwir_core::op::Plan;
 use skwir_core::os_path::PathArg;
+use skwir_core::words::Words;
 use skwir_plugin_tags::{read_tags, write_tags};
 
 /// A folder where extended attributes work: not `/tmp`, often a tmpfs.
@@ -400,7 +401,7 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
 
     // Renamed, a file keeps counting; trashed, it is gone.
     let b = root.join("sub/b.txt");
-    let mut plan = Plan::new("rename");
+    let mut plan = Plan::new(Words::as_written("rename"));
     plan.push(skwir_core::op::Rename {
         entry: skwir_core::op::EntryRef::from_path(&b).unwrap(),
         new_name: "it's b.txt".into(),
@@ -411,7 +412,7 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
             .error
             .is_none()
     );
-    let mut plan = Plan::new("trash");
+    let mut plan = Plan::new(Words::as_written("trash"));
     plan.push(skwir_core::op::Trash {
         entry: skwir_core::op::EntryRef::from_path(root.join("sub/it's b.txt")).unwrap(),
     });
@@ -468,7 +469,7 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
         step.describe().to_string(),
         "keep “travel” pinned and colored as “Trip” were"
     );
-    let plan = Plan::with_steps("rename", vec![step]);
+    let plan = Plan::with_steps(Words::as_written("rename"), vec![step]);
     let r = app.executor.execute_blocking(&plan, app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     let pins = || app.settings.get::<Vec<String>>("tags.pinned").unwrap();

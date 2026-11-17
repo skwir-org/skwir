@@ -5473,6 +5473,9 @@ preview_shown_as_written = Affiché tel qu’il est écrit : { $error }
 preview_slideshow = Diaporama
 
 # draft
+preview_slideshow_pace = { $seconds } s
+
+# draft
 preview_slideshow_pause = Suspendre le diaporama
 
 # draft
@@ -5561,6 +5564,9 @@ preview_zoom_in = Zoomer
 
 # draft
 preview_zoom_out = Dézoomer
+
+# draft
+preview_zoom_percent = { $percent } %
 
 # draft
 preview_zoom_width = Largeur

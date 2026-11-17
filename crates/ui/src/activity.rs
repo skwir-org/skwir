@@ -2808,6 +2808,7 @@ mod tests {
     };
     use crate::toast::{Running, waiting_next};
     use skwir_core::op::{PlanId, RunKind, Transfer};
+    use skwir_core::words::Words;
     use std::time::Duration;
 
     /// The strip's words, in English.
@@ -2859,7 +2860,7 @@ mod tests {
         };
         let task = |id: u64, cancelling| skwir_core::task::Running {
             id,
-            title: "Print “it's a.pdf”".into(),
+            title: Words::as_written("Print “it's a.pdf”"),
             went: None,
             cancelling,
         };
@@ -2962,9 +2963,11 @@ mod tests {
         assert_eq!(said.heard.english(), "Copy “it's a” to Backup started");
         let waits = skwir_core::op::Waiting {
             asked: 9,
-            named: "copy “interview.mkv” to Backup".into(),
+            named: Words::as_written("copy “interview.mkv” to Backup"),
             plan: Some(PlanId(2)),
-            waits_for: skwir_core::op::WaitsFor::Action("copy 3 items to Backup".into()),
+            waits_for: skwir_core::op::WaitsFor::Action(Words::as_written(
+                "copy 3 items to Backup",
+            )),
             steps: Some(1),
             heavy: true,
             counts: true,
@@ -3007,13 +3010,19 @@ mod tests {
     #[test]
     fn every_answer_is_kept_in_earlier_and_a_repeat_is_one() {
         use crate::toast::{Toast, Tone};
-        let said = |text: &str| Ended::said(&Toast::new(text, Tone::Error, Vec::new()));
+        let said = |text: &str| {
+            Ended::said(&Toast::new(
+                Words::as_written(text.to_owned()),
+                Tone::Error,
+                Vec::new(),
+            ))
+        };
         let mut earlier = std::collections::VecDeque::new();
         keep(
             &mut earlier,
             Ended::of_plan(
                 PlanId(3),
-                &"Copied “it's.txt” to Stick".into(),
+                &Words::as_written("Copied “it's.txt” to Stick"),
                 Tone::Success,
                 &[],
             ),

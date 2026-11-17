@@ -1055,6 +1055,7 @@ mod tests {
     use skwir_core::SortKey;
     use skwir_core::app::{App, AppConfig};
     use skwir_core::command::{NoArgs, Outcome};
+    use skwir_core::words::Words;
 
     fn titles(app: &App, sorts: &[SortKey]) -> Vec<String> {
         super::offered(app, &[], sorts, &[])
@@ -1072,7 +1073,7 @@ mod tests {
         let copied = || {
             Ok(Outcome::Clipboard {
                 text: "/a".into(),
-                said: "Copied".into(),
+                said: Words::as_written("Copied"),
             })
         };
         app.commands
@@ -1080,8 +1081,8 @@ mod tests {
                 "test",
                 skwir_core::command::Topic::Files,
                 "test.copy",
-                "Copy a test text",
-                "",
+                Words::as_written("Copy a test text"),
+                Words::as_written(""),
                 move |_, _| copied(),
             )
             .reads();
@@ -1090,8 +1091,8 @@ mod tests {
                 "test",
                 skwir_core::command::Topic::Files,
                 "test.rows",
-                "Rows of a test panel",
-                "",
+                Words::as_written("Rows of a test panel"),
+                Words::as_written(""),
                 |_, _| Ok(Outcome::Value(serde_json::json!([]))),
             )
             .data();

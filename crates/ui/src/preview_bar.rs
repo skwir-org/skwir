@@ -408,7 +408,7 @@ pub fn number_tool(
                 .into_any_element(),
             None => Button::new(id, "", title.clone(), edit.0)
                 .args(edit.1.clone())
-                .label(value.clone())
+                .label(Words::as_written(value.clone()))
                 .render(shell, cx)
                 .bg(paper)
                 .border_color(border)
@@ -421,7 +421,6 @@ pub fn number_tool(
             total = total.clone(),
             note = "After the page or chapter shown, between a preview's previous and next buttons: how many there are (3 / 12)."
         )
-        .say()
     };
     if let Some((button, popup)) = unit {
         bar.push(Item::button(Slot::Navigate, 1, button.label(of_total())).opens(popup));
@@ -433,7 +432,7 @@ pub fn number_tool(
             .text_body()
             .text_color(muted)
             .whitespace_nowrap()
-            .child(of_total())
+            .child(of_total().say())
             .into_any_element()
     }));
 }
@@ -450,8 +449,8 @@ pub fn unit_popup(plain: skwir_core::words::Words) -> Popup {
             note = "A choice of how a document's pages are counted: by the numbers printed on them (a book's iv, 12), not by their order in the file."
         );
         for (id, label, on) in [
-            ("unit-plain", plain.say(), false),
-            ("unit-printed", printed.say(), true),
+            ("unit-plain", plain.clone(), false),
+            ("unit-printed", printed, true),
         ] {
             choices = choices.child(
                 Button::new(id, "", label.clone(), "ui.printed_pages")

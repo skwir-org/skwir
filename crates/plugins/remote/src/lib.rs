@@ -2970,7 +2970,7 @@ mod tests {
             "slow"
         }
         fn title(&self) -> Words {
-            "slow".into()
+            Words::as_written("slow")
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Sftp]
@@ -3036,7 +3036,7 @@ mod tests {
             self.id
         }
         fn title(&self) -> Words {
-            self.id.into()
+            Words::as_written(self.id)
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Nfs]
@@ -3079,7 +3079,7 @@ mod tests {
             "configured"
         }
         fn title(&self) -> Words {
-            "configured".into()
+            Words::as_written("configured")
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Sftp]
@@ -3183,7 +3183,7 @@ mod tests {
             "counted"
         }
         fn title(&self) -> Words {
-            "counted".into()
+            Words::as_written("counted")
         }
         fn schemes(&self) -> &'static [Scheme] {
             &[Scheme::Sftp]

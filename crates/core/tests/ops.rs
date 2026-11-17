@@ -15,6 +15,7 @@ use skwir_core::op::{
     Copy, Delete, EntryRef, ExecEvent, Executor, Mkdir, Move, Operation, Plan, Rename, StepContext,
     StepStatus, Swap, Trash,
 };
+use skwir_core::words::Words;
 
 /// Undoing a copy moves the copy to the trash. Point the freedesktop trash
 /// at a scratch directory beside the test trees (the home trash is used for
@@ -167,7 +168,7 @@ fn file_ref(root: &Path, f: usize) -> Option<EntryRef> {
 /// source is gone (moved by an earlier step) are dropped: that is what a UI
 /// would do, since it only offers operations on entries it can see.
 fn make_plan(root: &Path, t: &Tree, steps: &[Step]) -> Plan {
-    let mut plan = Plan::new("prop");
+    let mut plan = Plan::new(Words::as_written("prop"));
     for s in steps {
         let op: Option<Box<dyn Operation>> = match s {
             Step::Rename { file, to } => file_ref(root, *file).map(|e| {
@@ -495,7 +496,7 @@ fn a_companion_s_place_taken_is_a_conflict_before_anything_applies() {
     let app = app(root);
     app.companions
         .register("test", std::sync::Arc::new(Aside { holds: false }));
-    let mut plan = Plan::new("t");
+    let mut plan = Plan::new(Words::as_written("t"));
     plan.push(Move {
         entry: EntryRef::from_path(root.join("it's a.txt")).unwrap(),
         dest_dir: root.join("d"),
@@ -517,7 +518,7 @@ fn plan_round_trips_through_json_and_diff_reports_conflicts() {
     std::fs::write(root.join("a"), b"a").unwrap();
     std::fs::write(root.join("b"), b"b").unwrap();
     let app = app(root);
-    let mut plan = Plan::new("t");
+    let mut plan = Plan::new(Words::as_written("t"));
     plan.push(Rename {
         entry: EntryRef::from_path(root.join("a")).unwrap(),
         new_name: "b".into(),
@@ -630,7 +631,7 @@ fn trashing_or_deleting_a_name_gone_spares_the_files_other_name() {
         } else {
             Box::new(skwir_core::op::Delete { entry })
         };
-        let plan = Plan::with_steps(how, vec![step]);
+        let plan = Plan::with_steps(Words::as_written(how), vec![step]);
         std::fs::remove_file(root.join("b.txt")).unwrap();
         let r = apply(&app, &plan);
         assert_eq!(r.applied, 0, "{how}: nothing left to do");
@@ -667,7 +668,10 @@ fn a_copy_keeps_the_links_among_what_it_copies() {
 
     apply(
         &app,
-        &Plan::with_steps("copy", vec![copy(&root.join("album"), "folder")]),
+        &Plan::with_steps(
+            Words::as_written("copy"),
+            vec![copy(&root.join("album"), "folder")],
+        ),
     );
     assert_eq!(ino("folder/album/a.jpg"), ino("folder/album/b.jpg"));
     assert_ne!(ino("folder/album/a.jpg"), ino("album/a.jpg"), "a copy");
@@ -676,7 +680,7 @@ fn a_copy_keeps_the_links_among_what_it_copies() {
     apply(
         &app,
         &Plan::with_steps(
-            "copy",
+            Words::as_written("copy"),
             vec![
                 copy(&root.join("album/a.jpg"), "items"),
                 copy(&root.join("album/b.jpg"), "items"),
@@ -691,7 +695,10 @@ fn a_copy_keeps_the_links_among_what_it_copies() {
 
     apply(
         &app,
-        &Plan::with_steps("copy", vec![copy(&root.join("album/a.jpg"), "alone")]),
+        &Plan::with_steps(
+            Words::as_written("copy"),
+            vec![copy(&root.join("album/a.jpg"), "alone")],
+        ),
     );
     assert_eq!(links("alone/a.jpg"), 1, "a copy of its own");
 }
@@ -710,7 +717,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     app.executor.set_free(std::sync::Arc::new(|_| Some(10)));
     let plan = || {
         Plan::with_steps(
-            "copy “a.bin”",
+            Words::as_written("copy “a.bin”"),
             vec![Box::new(Copy {
                 entry: EntryRef::from_path(root.join("a.bin")).unwrap(),
                 dest_dir: root.join("dest"),
@@ -870,7 +877,7 @@ fn a_running_plan_is_cancelled_by_id_and_its_partial_result_can_be_undone() {
     let dirs: Vec<PathBuf> = (0..4)
         .map(|i| tmp.path().join(format!("folder {i}")))
         .collect();
-    let mut plan = Plan::new("create folders");
+    let mut plan = Plan::new(Words::as_written("create folders"));
     plan.push(Mkdir {
         path: dirs[0].clone(),
     });
@@ -920,7 +927,7 @@ fn winding_down_stops_a_paused_copy_and_leaves_no_staging_folder() {
     let stick = root.join("stick");
     std::fs::create_dir(&stick).unwrap();
     let plan = Plan::with_steps(
-        "copy",
+        Words::as_written("copy"),
         vec![Box::new(Copy {
             entry: EntryRef::from_path(&album).unwrap(),
             dest_dir: stick.clone(),
@@ -968,7 +975,7 @@ fn winding_down_stops_a_paused_copy_and_leaves_no_staging_folder() {
 
     // Wound down, it starts nothing more.
     let late = Plan::with_steps(
-        "make a folder",
+        Words::as_written("make a folder"),
         vec![Box::new(Mkdir {
             path: stick.join("late"),
         })],
@@ -1019,7 +1026,10 @@ fn a_copy_and_a_new_run_sweep_what_copies_cut_short_left() {
         new_name: None,
         preserve_attributes: true,
     };
-    apply(&app, &Plan::with_steps("copy", vec![Box::new(copy)]));
+    apply(
+        &app,
+        &Plan::with_steps(Words::as_written("copy"), vec![Box::new(copy)]),
+    );
     assert!(stick.join("it's a draft.txt").is_file());
     assert!(!left.exists(), "a copy into the folder sweeps it");
     assert!(running.is_dir(), "a copy that runs keeps its folder");
@@ -1050,7 +1060,7 @@ fn a_copy_and_a_new_run_sweep_what_copies_cut_short_left() {
 fn pausing_plan(app: &std::sync::Arc<App>, root: &Path) -> (Plan, Vec<PathBuf>) {
     let id = std::sync::Arc::new(std::sync::OnceLock::new());
     let dirs: Vec<PathBuf> = (0..3).map(|i| root.join(format!("folder {i}"))).collect();
-    let mut plan = Plan::new("create folders");
+    let mut plan = Plan::new(Words::as_written("create folders"));
     plan.push(ActHere {
         executor: std::sync::Arc::downgrade(&app.executor),
         plan: std::sync::Arc::clone(&id),
@@ -1103,7 +1113,7 @@ fn a_deleted_item_of_a_trash_is_named_as_it_came() {
     .unwrap();
     let other = tmp.path().join("plain  name.txt");
     std::fs::write(&other, b"x").unwrap();
-    let mut plan = Plan::new("delete permanently");
+    let mut plan = Plan::new(Words::as_written("delete permanently"));
     plan.push(Delete {
         entry: EntryRef::from_path(&item).unwrap(),
     });
@@ -1208,14 +1218,14 @@ fn undos_run_in_journal_order_after_the_plans_before_them() {
     // rename waits for the first, which it shares a name with, and the
     // undo for the second, the latest asked (ADR-079).
     let first = Plan::with_steps(
-        "rename a",
+        Words::as_written("rename a"),
         vec![Box::new(Rename {
             entry: a.clone(),
             new_name: "b".into(),
         })],
     );
     let second = Plan::with_steps(
-        "rename b",
+        Words::as_written("rename b"),
         vec![Box::new(Rename {
             entry: EntryRef::new(a.id, root.join("b")),
             new_name: "c".into(),
@@ -1253,7 +1263,10 @@ fn undo_of_a_copy_puts_it_in_the_trash_and_redo_brings_it_back() {
         new_name: None,
         preserve_attributes: true,
     };
-    apply(&app, &Plan::with_steps("copy", vec![Box::new(copy)]));
+    apply(
+        &app,
+        &Plan::with_steps(Words::as_written("copy"), vec![Box::new(copy)]),
+    );
     let copied = root.join("dest/a.txt");
     std::fs::write(&copied, "edited since").unwrap();
     let u = app.executor.undo_blocking(app.lifetime()).unwrap();
@@ -1283,7 +1296,7 @@ fn trashing_many_and_undoing_restores_each() {
             }) as Box<dyn Operation>
         })
         .collect();
-    apply(&app, &Plan::with_steps("trash", steps));
+    apply(&app, &Plan::with_steps(Words::as_written("trash"), steps));
     assert_eq!(std::fs::read_dir(root).unwrap().count(), 0);
     let u = app.executor.undo_blocking(app.lifetime()).unwrap();
     assert!(u.error.is_none(), "{:?}", u.error);
@@ -1312,7 +1325,7 @@ fn copying_onto_an_unrelated_folder_of_the_same_name_conflicts() {
 
     // A finished copy of the same folder is recognised as done.
     std::fs::remove_dir_all(root.join("dest/Photos")).unwrap();
-    let plan = Plan::with_steps("copy", vec![Box::new(copy.clone())]);
+    let plan = Plan::with_steps(Words::as_written("copy"), vec![Box::new(copy.clone())]);
     apply(&app, &plan);
     assert_eq!(copy.check(&ctx), StepStatus::AlreadyDone);
     let again = app.executor.execute_blocking(&plan, app.lifetime());
@@ -1533,7 +1546,7 @@ fn a_name_that_is_not_utf8_survives_rename_undo_and_json() {
     let a = file(&root.join(&raw), "x");
     let app = app(root);
     let plan = Plan::with_steps(
-        "rename",
+        Words::as_written("rename"),
         vec![Box::new(Rename {
             entry: a,
             new_name: "plain.txt".into(),
@@ -1564,7 +1577,7 @@ fn an_applied_swap_is_already_done() {
         a: file(&root.join("a"), "a"),
         b: file(&root.join("b"), "b"),
     };
-    let plan = Plan::with_steps("swap", vec![Box::new(swap.clone())]);
+    let plan = Plan::with_steps(Words::as_written("swap"), vec![Box::new(swap.clone())]);
     apply(&app, &plan);
     assert_eq!(
         swap.check(&StepContext::detached()),
@@ -1613,7 +1626,7 @@ fn a_cross_device_move_redoes_and_is_idempotent() {
     let app = app(root);
     let a = file(&root.join("a"), "a");
     let plan = Plan::with_steps(
-        "move",
+        Words::as_written("move"),
         vec![Box::new(Move {
             entry: a,
             dest_dir: remote.path().to_path_buf(),
@@ -1652,7 +1665,7 @@ fn observers_hear_what_holds_after_each_run_until_withdrawn() {
         }),
     );
     let plan = Plan::with_steps(
-        "move",
+        Words::as_written("move"),
         vec![Box::new(Move {
             entry: EntryRef::from_path(root.join("a")).unwrap(),
             dest_dir: root.join("d"),
@@ -1736,7 +1749,7 @@ fn a_new_file_never_replaces_what_is_there() {
     let root = tmp.path();
     std::fs::write(root.join("taken"), "keep me").unwrap();
     let plan = Plan::with_steps(
-        "new file",
+        Words::as_written("new file"),
         vec![Box::new(skwir_core::op::NewFile {
             path: root.join("taken"),
         })],
@@ -1782,7 +1795,7 @@ fn copy_equivalence_respects_attribute_preference_and_conversion() {
             new_name: None,
             preserve_attributes,
         };
-        Plan::with_steps("copy", vec![Box::new(copy)])
+        Plan::with_steps(Words::as_written("copy"), vec![Box::new(copy)])
             .diff(&app.companions)
             .steps
             .remove(0)
@@ -1826,7 +1839,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
 
     // A copy onto a volume that keeps attributes takes them in: the copy
     // has the tag, and no `._` file beside it.
-    let mut plan = Plan::new("copy");
+    let mut plan = Plan::new(Words::as_written("copy"));
     plan.steps.push(Box::new(Copy {
         entry: EntryRef::from_path(&f).unwrap(),
         dest_dir: root.join("into"),
@@ -1856,7 +1869,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
     assert_eq!(snapshot(&root), before);
 
     // Renamed, moved and trashed with its file, and back with each undo.
-    let mut plan = Plan::new("rename, move");
+    let mut plan = Plan::new(Words::as_written("rename, move"));
     plan.steps.push(Box::new(Rename {
         entry: EntryRef::from_path(&f).unwrap(),
         new_name: "b.txt".into(),
@@ -1864,7 +1877,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
     let r = app.executor.execute_blocking(&plan, app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     assert!(root.join("._b.txt").exists() && !root.join("._it's a.txt").exists());
-    let mut plan = Plan::new("move");
+    let mut plan = Plan::new(Words::as_written("move"));
     plan.steps.push(Box::new(Move {
         entry: EntryRef::from_path(root.join("b.txt")).unwrap(),
         dest_dir: root.join("into"),
@@ -1877,7 +1890,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
             .is_none()
     );
     assert!(root.join("into/._b.txt").exists());
-    let mut plan = Plan::new("trash");
+    let mut plan = Plan::new(Words::as_written("trash"));
     plan.steps.push(Box::new(Trash {
         entry: EntryRef::from_path(root.join("into/b.txt")).unwrap(),
     }));
@@ -1939,7 +1952,7 @@ fn undo_of_one_trashing_is_not_refused_for_another() {
     let app = app(tmp.path());
     let trash = |path: &Path| {
         let plan = Plan::with_steps(
-            "trash",
+            Words::as_written("trash"),
             vec![Box::new(Trash {
                 entry: file(path, "x"),
             })],
@@ -1966,7 +1979,7 @@ fn undo_of_one_trashing_is_not_refused_for_another() {
     apply(
         &app,
         &Plan::with_steps(
-            "delete",
+            Words::as_written("delete"),
             vec![Box::new(Delete {
                 entry: EntryRef::from_path(&item).unwrap(),
             })],
@@ -2009,7 +2022,10 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
     std::fs::write(root.join("._it's a.txt"), "aside").unwrap();
     apply(
         &app,
-        &Plan::with_steps("trash", vec![Box::new(Trash { entry: f })]),
+        &Plan::with_steps(
+            Words::as_written("trash"),
+            vec![Box::new(Trash { entry: f })],
+        ),
     );
     let (info, item) = trashed(&root.join("it's a.txt")).expect("in the trash");
     let (aside_info, _) = trashed(&root.join("._it's a.txt")).expect("its companion too");
@@ -2018,7 +2034,10 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
         dest_dir: root.join("desk"),
         new_name: None,
     };
-    apply(&app, &Plan::with_steps("move", vec![Box::new(out)]));
+    apply(
+        &app,
+        &Plan::with_steps(Words::as_written("move"), vec![Box::new(out)]),
+    );
     assert_eq!(
         std::fs::read_to_string(root.join("desk/it's a.txt")).unwrap(),
         "a"
@@ -2044,7 +2063,10 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
     let old = EntryRef::from_path(root.join("old")).unwrap();
     apply(
         &app,
-        &Plan::with_steps("trash", vec![Box::new(Trash { entry: old })]),
+        &Plan::with_steps(
+            Words::as_written("trash"),
+            vec![Box::new(Trash { entry: old })],
+        ),
     );
     let (info, item) = trashed(&root.join("old")).expect("in the trash");
     let (aside_info, _) = trashed(&root.join("._old")).expect("its companion too");
@@ -2054,7 +2076,10 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
         item: Some(info.as_path().into()),
         landed: Vec::new(),
     };
-    apply(&app, &Plan::with_steps("restore", vec![Box::new(restore)]));
+    apply(
+        &app,
+        &Plan::with_steps(Words::as_written("restore"), vec![Box::new(restore)]),
+    );
     assert!(root.join("old/b.txt").exists() && root.join("._old").exists());
     assert!(!info.exists() && !aside_info.exists());
     undo();
@@ -2123,7 +2148,7 @@ fn removed_directory_inverses_round_trip_and_retry_after_partial_apply() {
                 .unwrap(),
         );
     }
-    let restore = Plan::with_steps("restore removed folders", inverses);
+    let restore = Plan::with_steps(Words::as_written("restore removed folders"), inverses);
     let encoded = serde_json::to_string(&restore.to_data()).unwrap();
     assert!(encoded.contains("restore_directory"));
     let decoded = serde_json::from_str::<serde_json::Value>(&encoded).unwrap();
@@ -2193,7 +2218,7 @@ fn removed_directory_attributes_keep_non_utf8_names_through_serialization() {
         .apply(&StepContext::detached())
         .unwrap()
         .unwrap();
-    let saved = Plan::with_steps("restore bytes", vec![inverse]);
+    let saved = Plan::with_steps(Words::as_written("restore bytes"), vec![inverse]);
     let encoded = serde_json::to_string(&saved.to_data()).unwrap();
     let app = app(tmp.path());
     let decoded: serde_json::Value = serde_json::from_str(&encoded).unwrap();
@@ -2217,7 +2242,7 @@ fn a_plan_that_makes_a_folder_and_fills_it_is_no_conflict() {
     let app = app(root);
     let made = root.join("made");
     let plan = Plan::with_steps(
-        "export",
+        Words::as_written("export"),
         vec![
             Box::new(Mkdir { path: made.clone() }),
             Box::new(Mkdir {
@@ -2284,7 +2309,7 @@ fn a_subvolume_s_files_go_to_the_home_trash_and_back_across_filesystems() {
     apply(
         &app,
         &Plan::with_steps(
-            "trash",
+            Words::as_written("trash"),
             vec![
                 Box::new(Trash {
                     entry: EntryRef::from_path(&file).unwrap(),

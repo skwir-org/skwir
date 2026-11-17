@@ -125,8 +125,7 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     let perspective = skwir_core::words!(
         model_perspective = "Perspective",
         note = "A 3D model preview's button: draw it in perspective, the far smaller than the near, or not."
-    )
-    .say();
+    );
     bar.push(Item::button(
         Slot::View,
         0,
@@ -142,8 +141,7 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
     let smooth = skwir_core::words!(
         model_smooth = "Smooth shading",
         note = "A 3D model preview's button: shade its faces smoothly rather than each flat."
-    )
-    .say();
+    );
     bar.push(Item::button(
         Slot::View,
         0,

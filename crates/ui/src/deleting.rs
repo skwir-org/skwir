@@ -1094,7 +1094,7 @@ mod tests {
 
     fn plan(paths: Vec<PathBuf>) -> Plan {
         Plan::with_steps(
-            "delete permanently",
+            Words::as_written("delete permanently"),
             paths.into_iter().map(delete).collect(),
         )
     }

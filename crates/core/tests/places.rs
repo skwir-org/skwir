@@ -19,6 +19,7 @@ use skwir_core::location::{
     OpenLocation, SortKey, SortSpec, Trail, Verb, Verbs,
 };
 use skwir_core::scheduler::Priority;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 const SCHEME: &str = "fake";
@@ -101,7 +102,10 @@ impl LocationProvider for Fake {
     }
 
     fn trail(&self, location: &Location) -> Option<Trail> {
-        let mut crumbs = vec![Crumb::new("Fake", Location::new(SCHEME, "/"))];
+        let mut crumbs = vec![Crumb::new(
+            Words::as_written("Fake"),
+            Location::new(SCHEME, "/"),
+        )];
         if let Some(name) = location.rest.strip_prefix('/').filter(|n| !n.is_empty()) {
             crumbs.push(Crumb::entry(name, location.clone()));
         }
@@ -118,7 +122,7 @@ impl LocationProvider for Fake {
     fn verbs(&self, _: &Location) -> Verbs {
         Verbs {
             remove: Some(Verb::new(
-                "Remove from Fake",
+                Words::as_written("Remove from Fake"),
                 Invocation::with_args("fake.out", &serde_json::json!({ "why": "test" })),
             )),
             ..Verbs::default()
@@ -301,8 +305,8 @@ fn delete_takes_out_what_the_location_says_and_nothing_where_it_says_nothing() {
             "test",
             Topic::Files,
             "fake.out",
-            "Out",
-            "",
+            Words::as_written("Out"),
+            Words::as_written(""),
             move |a, _| {
                 *asked.lock() = Some(a);
                 Ok(Outcome::Done)
@@ -428,7 +432,7 @@ impl LocationProvider for Flat {
     }
 
     fn title(&self, _: &Location) -> Option<skwir_core::words::Words> {
-        Some("Pile".into())
+        Some(Words::as_written("Pile"))
     }
 
     fn icon(&self, _: &Location) -> Option<&'static str> {
@@ -436,7 +440,10 @@ impl LocationProvider for Flat {
     }
 
     fn empty_state(&self, _: &Location) -> Option<EmptyState> {
-        Some(EmptyState::new("The pile is empty", "Put files on it."))
+        Some(EmptyState::new(
+            Words::as_written("The pile is empty"),
+            Words::as_written("Put files on it."),
+        ))
     }
 }
 
@@ -450,7 +457,10 @@ fn a_place_that_gives_no_trail_reads_as_one_place_by_its_name() {
     app.register_provider("test", Arc::new(Flat));
     let flat = Location::parse("flat:");
     let trail = app.trail(&flat).expect("a trail");
-    assert_eq!(trail.crumbs, [Crumb::new("Pile", flat.clone())]);
+    assert_eq!(
+        trail.crumbs,
+        [Crumb::new(Words::as_written("Pile"), flat.clone())]
+    );
     assert!(trail.base.is_none() && !trail.holds_places);
     assert_eq!(app.parent(&flat), None, "nothing above it");
     assert_eq!(app.location_icon(&flat), Some("shelf"));

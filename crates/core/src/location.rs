@@ -4821,8 +4821,10 @@ mod tests {
 
         let mut failed = Listing::default().filled_elsewhere();
         tx.send(ListingEvent::Added(vec![file(1, "a")])).unwrap();
-        tx.send(ListingEvent::Error(ListingError::new("gone")))
-            .unwrap();
+        tx.send(ListingEvent::Error(ListingError::new(Words::as_written(
+            "gone",
+        ))))
+        .unwrap();
         failed.fill_job(&rx, spec).unwrap().run();
         failed.drain(&rx, long);
         assert!(!failed.is_held() && failed.error().map(Words::english).as_deref() == Some("gone"));
@@ -5029,7 +5031,7 @@ mod tests {
         let mut listing = Listing::default();
         assert_eq!(listing.as_of(), None, "the files as they are");
         let as_of = AsOf {
-            by: "an index".into(),
+            by: Words::as_written("an index"),
             updated: Some(std::time::SystemTime::UNIX_EPOCH),
         };
         let before = listing.version();

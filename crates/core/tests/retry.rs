@@ -15,6 +15,7 @@ use common::*;
 use skwir_core::cancel::CancelToken;
 use skwir_core::op::{Copy, EntryRef, Executor, Operation, Plan};
 use skwir_core::scheduler::Scheduler;
+use skwir_core::words::Words;
 
 const MIB: u64 = 1 << 20;
 
@@ -62,7 +63,7 @@ fn source() -> (tempfile::TempDir, PathBuf, Vec<u8>) {
 
 fn copy_plan(src: &Path, dest: &Path) -> Plan {
     Plan::with_steps(
-        "copy",
+        Words::as_written("copy"),
         vec![Box::new(Copy {
             entry: EntryRef::from_path(src).expect("source"),
             dest_dir: dest.to_path_buf(),

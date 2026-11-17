@@ -2033,7 +2033,12 @@ mod tests {
     fn volume(path: &Path, space: Option<(u64, u64)>) -> Place {
         Place {
             space,
-            ..Place::new("devices", "Disk", "", Location::from_path(path))
+            ..Place::new(
+                "devices",
+                Words::as_written("Disk"),
+                "",
+                Location::from_path(path),
+            )
         }
     }
 
@@ -2060,7 +2065,7 @@ mod tests {
             let mut publisher = places.0.lock();
             publisher.lifetime = Some(CancelToken::new());
             let mut unmounting = volume(&going, Some((1, 2)));
-            unmounting.busy = Some("Unmounting…".into());
+            unmounting.busy = Some(Words::as_written("Unmounting…"));
             publisher.shown = vec![
                 volume(&here, Some((1, 2))),
                 volume(&gone, Some((1, 2))),
@@ -2130,7 +2135,7 @@ mod tests {
 
         said_full();
         let plan = skwir_core::op::Plan::with_steps(
-            "mkdir",
+            Words::as_written("mkdir"),
             vec![Box::new(skwir_core::op::Mkdir {
                 path: tmp.path().join("new"),
             })],
@@ -2220,7 +2225,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         let places = Places::default();
-        let place = |title: &str| Place::new("places", title, "", Location::from_path("/"));
+        let place = |title: &str| {
+            Place::new(
+                "places",
+                Words::as_written(title.to_owned()),
+                "",
+                Location::from_path("/"),
+            )
+        };
         places.0.lock().lifetime = Some(CancelToken::new());
         places.0.lock().generation = 2;
         places.publish(&app, 2, vec![place("new")], Some(Vec::new()));
@@ -2241,12 +2253,18 @@ mod tests {
 
     #[test]
     fn a_rescan_keeps_what_was_measured_until_it_is_measured_again() {
-        let place =
-            |group: &str, path: &str| Place::new(group, path, "", Location::from_path(path));
+        let place = |group: &str, path: &str| {
+            Place::new(
+                group,
+                Words::as_written(path.to_owned()),
+                "",
+                Location::from_path(path),
+            )
+        };
         let mut disk = place("devices", "/run/media/example/disk");
         disk.space = Some((1, 2));
         let mut gone = place("bookmarks", "/example/gone");
-        gone.unavailable = Some("Not found.".into());
+        gone.unavailable = Some(Words::as_written("Not found."));
         let mut unmounted = place("devices", "/dev/sdz1");
         unmounted.activate = Some(Invocation::new("places.mount"));
         // A drive BitLocker locked: the quick scan lists it too.
@@ -2695,7 +2713,12 @@ mod tests {
     fn forget_passphrase_is_offered_where_one_is_kept() {
         let place = |key: &str| Place {
             key: Some(key.to_owned()),
-            ..Place::new("devices", "Backup", "", Location::parse("device:/dev/sdz"))
+            ..Place::new(
+                "devices",
+                Words::as_written("Backup"),
+                "",
+                Location::parse("device:/dev/sdz"),
+            )
         };
         let mut places = vec![
             place("volume:1111-luks"),

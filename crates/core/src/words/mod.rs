@@ -990,21 +990,6 @@ impl Default for Words {
     }
 }
 
-impl From<&str> for Words {
-    /// Transitional (PLAN.md, step E): text not yet a message, shown as it
-    /// is. Goes once every crate is converted.
-    fn from(text: &str) -> Self {
-        Words::as_written(text.to_owned())
-    }
-}
-
-impl From<String> for Words {
-    /// Transitional, as `From<&str>`.
-    fn from(text: String) -> Self {
-        Words::as_written(text)
-    }
-}
-
 impl serde::Serialize for Words {
     /// Its English text: what leaves the process is read by agents and
     /// scripts, in English (ADR-139, 7).

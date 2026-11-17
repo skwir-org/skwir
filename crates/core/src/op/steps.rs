@@ -180,6 +180,7 @@ impl Operation for Steps {
 mod tests {
     use super::*;
     use crate::op::{Mkdir, OpRegistry, Rmdir};
+    use crate::words::Words;
 
     #[test]
     fn several_steps_are_one_and_each_again() {
@@ -200,7 +201,8 @@ mod tests {
         let registry = OpRegistry::default();
         registry.register::<Mkdir>("test");
         registry.register::<Rmdir>("test");
-        let plan = crate::op::Plan::with_steps("both", vec![made(&a), both.clone()]);
+        let plan =
+            crate::op::Plan::with_steps(Words::as_written("both"), vec![made(&a), both.clone()]);
         let data = plan.to_data();
         let kinds: Vec<_> = data.steps.iter().map(|s| s.kind.as_str()).collect();
         assert_eq!(kinds, ["mkdir", "mkdir", "mkdir"]);
@@ -283,8 +285,10 @@ mod tests {
         std::fs::write(&b, "a file, where a folder would be").unwrap();
         let executor = crate::op::Executor::new(crate::scheduler::Scheduler::new(1));
         let cancel = crate::CancelToken::new();
-        let plan =
-            crate::op::Plan::with_steps("half way", vec![Box::new(HalfWay(a.clone(), b.clone()))]);
+        let plan = crate::op::Plan::with_steps(
+            Words::as_written("half way"),
+            vec![Box::new(HalfWay(a.clone(), b.clone()))],
+        );
         let ran = executor.execute_blocking(&plan, &cancel);
         assert!(ran.error.is_some());
         assert!(a.is_dir(), "done partway");

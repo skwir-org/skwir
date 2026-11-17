@@ -192,7 +192,14 @@ impl Running {
     /// A plan just started, for tests elsewhere.
     #[cfg(test)]
     pub(crate) fn for_test(plan: PlanId, title: &str, run: RunKind, total: usize) -> Self {
-        Running::started(plan, title.into(), run, total, None, false)
+        Running::started(
+            plan,
+            Words::as_written(title.to_owned()),
+            run,
+            total,
+            None,
+            false,
+        )
     }
 }
 
@@ -599,7 +606,7 @@ pub(crate) fn share(items: usize, t: &Transfer) -> f32 {
 /// window, then quits; or stops now. No figures: the bar under the
 /// question goes on with them. What runs is said by its title, its
 /// heading (`Words::heading`).
-pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: usize) -> String {
+pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: usize) -> Words {
     let what = match (running, others) {
         (Some((title, true)), 0) => words!(
             toast_quit_paused = "{ $title } is paused.",
@@ -674,7 +681,6 @@ pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: us
         note = "What Quit asks while actions run. what: what runs (Copy to stick is paused.); \
                 how: the two ways on (Skwir can finish it…)."
     )
-    .say()
 }
 
 /// Characters (grapheme clusters, spaces included) read in a second,
@@ -1662,7 +1668,14 @@ mod tests {
         kept_in: Option<&str>,
     ) -> Words {
         let kept_in = kept_in.map(|kept| Words::as_written(kept.to_owned()));
-        super::describe(&title.into(), run, first, named, applied, kept_in.as_ref())
+        super::describe(
+            &Words::as_written(title.to_owned()),
+            run,
+            first,
+            named,
+            applied,
+            kept_in.as_ref(),
+        )
     }
 
     /// `toast::failure` of a plan titled as text, its error and reason as
@@ -1674,18 +1687,25 @@ mod tests {
         error: &str,
         reason: Option<&str>,
     ) -> Words {
-        let reason = reason.map(Words::from);
-        super::failure(&title.into(), failed, named, &error.into(), reason.as_ref())
+        let reason = reason.map(|reason| Words::as_written(reason.to_owned()));
+        super::failure(
+            &Words::as_written(title.to_owned()),
+            failed,
+            named,
+            &Words::as_written(error.to_owned()),
+            reason.as_ref(),
+        )
     }
 
     /// `toast::quit_question` of a plan titled as text.
     fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usize) -> String {
-        let running = running.map(|(title, paused)| (Words::from(title), paused));
+        let running = running.map(|(title, paused)| (Words::as_written(title.to_owned()), paused));
         super::quit_question(
             running.as_ref().map(|(title, paused)| (title, *paused)),
             others,
             waiting,
         )
+        .english()
     }
 
     /// A plan ended says what it did as it was done: one file replaced is
@@ -1695,8 +1715,8 @@ mod tests {
     #[test]
     fn a_plan_ended_says_what_was_done_as_it_was_done() {
         let running = |items: Option<skwir_core::op::Items>| Running {
-            plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
-            title: "copy to /example/it's here".into(),
+            plan: skwir_core::op::Plan::new(Words::as_written("copy to /example/it's here")).id,
+            title: Words::as_written("copy to /example/it's here"),
             run: RunKind::Apply,
             undoes: None,
             total: 1,
@@ -1769,7 +1789,7 @@ mod tests {
                 path: PathBuf::from("/example/it's here/c.txt"),
             }),
             ..Running::for_test(
-                skwir_core::op::Plan::new("trash").id,
+                skwir_core::op::Plan::new(Words::as_written("trash")).id,
                 "move to trash",
                 RunKind::Apply,
                 1,
@@ -1805,7 +1825,7 @@ mod tests {
             trashing(),
             End {
                 skipped: 1,
-                error: Some("no room".into()),
+                error: Some(Words::as_written("no room")),
                 ..End::default()
             },
         );
@@ -1828,10 +1848,15 @@ mod tests {
         // An undo's run as the executor tells it: its own title, and the
         // action it takes back (`title` here).
         let running = |title: &str, run: RunKind| {
-            let mut running = Running::for_test(Plan::new(title).id, title, run, 1);
+            let mut running = Running::for_test(
+                Plan::new(Words::as_written(title.to_owned())).id,
+                title,
+                run,
+                1,
+            );
             if run == RunKind::Undo {
-                running.title = format!("undo {title}").into();
-                running.undoes = Some(title.into());
+                running.title = Words::as_written(format!("undo {title}"));
+                running.undoes = Some(Words::as_written(title.to_owned()));
             }
             running
         };
@@ -1848,9 +1873,11 @@ mod tests {
             path: PathBuf::from("/example/Downloads/photos"),
             directory: true,
             words: Some(Tenses {
-                will: "extract “photos.zip” to Downloads".into(),
-                did: "extracted “photos.zip” to Downloads".into(),
-                already: Some("“photos.zip” was already extracted to Downloads".into()),
+                will: Words::as_written("extract “photos.zip” to Downloads"),
+                did: Words::as_written("extracted “photos.zip” to Downloads"),
+                already: Some(Words::as_written(
+                    "“photos.zip” was already extracted to Downloads",
+                )),
             }),
         };
         let all = |found: Counted| Tally {
@@ -1979,7 +2006,7 @@ mod tests {
         let failed = ended(
             copying(),
             End {
-                error: Some("disk full".into()),
+                error: Some(Words::as_written("disk full")),
                 ..end(&some(1, 1))
             },
         );
@@ -1993,8 +2020,8 @@ mod tests {
     #[test]
     fn what_the_steps_said_follows_what_was_done() {
         let running = || Running {
-            plan: skwir_core::op::Plan::new("save “it's.md” as booklet").id,
-            title: "save “it's.md” as booklet".into(),
+            plan: skwir_core::op::Plan::new(Words::as_written("save “it's.md” as booklet")).id,
+            title: Words::as_written("save “it's.md” as booklet"),
             run: RunKind::Apply,
             undoes: None,
             total: 1,
@@ -2002,9 +2029,9 @@ mod tests {
                 path: PathBuf::from("/example/it's (booklet).pdf"),
                 directory: false,
                 words: Some(skwir_core::op::Tenses {
-                    will: "save “it's.md” as “it's (booklet).pdf”".into(),
-                    did: "saved “it's.md” as “it's (booklet).pdf”".into(),
-                    already: Some("“it's (booklet).pdf” was already saved".into()),
+                    will: Words::as_written("save “it's.md” as “it's (booklet).pdf”"),
+                    did: Words::as_written("saved “it's.md” as “it's (booklet).pdf”"),
+                    already: Some(Words::as_written("“it's (booklet).pdf” was already saved")),
                 }),
             }),
             first_named: None,
@@ -2046,10 +2073,12 @@ mod tests {
     /// read.
     #[test]
     fn a_long_toast_stays_until_read() {
-        let toast = |text: &str, tone, actions: Vec<Action>| Toast::new(text, tone, actions);
+        let toast = |text: &str, tone, actions: Vec<Action>| {
+            Toast::new(Words::as_written(text.to_owned()), tone, actions)
+        };
         let undo = || {
             vec![Action {
-                label: "Undo".into(),
+                label: Words::as_written("Undo"),
                 command: "undo".into(),
                 args: serde_json::json!({}),
             }]
@@ -2074,7 +2103,7 @@ mod tests {
     fn a_toasts_buttons_name_the_plan_it_reports() {
         let tmp = tempfile::tempdir().unwrap();
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let plan = skwir_core::op::Plan::new("rename “it's”").id;
+        let plan = skwir_core::op::Plan::new(Words::as_written("rename “it's”")).id;
         let actions = finished_actions(plan, RunKind::Apply, true, true, false);
         let named: Vec<(String, &str)> = actions
             .iter()
@@ -2103,7 +2132,7 @@ mod tests {
         let words = |named: &str, waits_for| {
             let (what, why) = waiting_words(&Waiting {
                 asked: 7,
-                named: named.into(),
+                named: Words::as_written(named.to_owned()),
                 plan: None,
                 waits_for,
                 steps: Some(1),
@@ -2115,7 +2144,7 @@ mod tests {
         assert_eq!(
             words(
                 "rename to b.txt",
-                WaitsFor::Action("copy to /media/stick".into())
+                WaitsFor::Action(Words::as_written("copy to /media/stick"))
             ),
             "Rename to b.txt / Waits for copy to /media/stick"
         );
@@ -2268,8 +2297,8 @@ mod tests {
     #[test]
     fn a_long_copy_says_what_it_moved_in_how_long() {
         let running = || Running {
-            plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
-            title: "copy to /example/it's here".into(),
+            plan: skwir_core::op::Plan::new(Words::as_written("copy to /example/it's here")).id,
+            title: Words::as_written("copy to /example/it's here"),
             run: RunKind::Apply,
             undoes: None,
             total: 1,
@@ -2492,7 +2521,8 @@ mod tests {
     /// it was for.
     #[test]
     fn a_toast_held_back_keeps_its_time_until_drawn() {
-        let said = |text: &str| Toast::new(text, Tone::Error, Vec::new());
+        let said =
+            |text: &str| Toast::new(Words::as_written(text.to_owned()), Tone::Error, Vec::new());
         let mut toasts = ToastState::default();
         let (held, timed) = toasts.say(said("Could not undo “it's a.txt”"), true);
         assert_eq!(timed, None);
@@ -2520,16 +2550,16 @@ mod tests {
     fn what_joins_an_answer_is_said_again_with_it() {
         let mut toasts = ToastState::default();
         let answer = Toast::new(
-            "Renamed “l'été.txt” to “.l'été.txt”",
+            Words::as_written("Renamed “l'été.txt” to “.l'été.txt”"),
             Tone::Success,
             vec![Action {
-                label: "Undo".into(),
+                label: Words::as_written("Undo"),
                 command: "undo".into(),
                 args: serde_json::json!({ "plan": 7 }),
             }],
         );
         let (shown, _) = toasts.say(answer, false);
-        let note = Words::from("Hidden files are shown, “.l'été.txt” among them");
+        let note = Words::as_written("Hidden files are shown, “.l'été.txt” among them");
         let joined = toasts.joined(Some(shown), &note).expect("still shown");
         assert_eq!(
             joined.said().english(),

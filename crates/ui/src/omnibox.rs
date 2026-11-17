@@ -614,8 +614,12 @@ pub fn path_suggestions(
                     "pane": pane,
                 })
             };
-            let mut row = Suggestion::new(Section::Go, name.text.clone())
-                .detail(complete::written(&folder.path, text, home.as_deref()))
+            let mut row = Suggestion::new(Section::Go, Words::as_written(name.text.clone()))
+                .detail(Words::as_written(complete::written(
+                    &folder.path,
+                    text,
+                    home.as_deref(),
+                )))
                 .icon(if name.dir { "folder" } else { "open" })
                 .rank(i32::try_from(rank).unwrap_or(i32::MAX))
                 .runs(Invocation::with_args("navigate", &run));
@@ -4161,6 +4165,7 @@ mod tests {
         Answer, Location, Omni, Piece, Row, Section, Suggestion, landing, pieces, rest_after,
         scheme_of, scheme_start,
     };
+    use skwir_core::words::Words;
 
     #[test]
     fn schemes_are_told_from_words() {
@@ -4182,7 +4187,7 @@ mod tests {
     #[test]
     fn a_row_answering_the_text_before_adds_only_what_still_follows_it() {
         // `dunes kind:im` answered with `image`; then `a`, then `x` typed.
-        let mut row = Suggestion::new(Section::Complete, "Image");
+        let mut row = Suggestion::new(Section::Complete, Words::as_written("Image"));
         row.completion = Some("dunes kind:image".to_owned());
         row.rest = Some("age".to_owned());
         assert_eq!(rest_after(&row, "dunes kind:ima").as_deref(), Some("ge"));
@@ -4215,7 +4220,12 @@ mod tests {
     /// brought into view with what it is.
     #[test]
     fn a_title_travels_with_its_first_row_and_a_strip_is_one_child() {
-        let row = |section, title: &str| Row::Source(Box::new(Suggestion::new(section, title)));
+        let row = |section, title: &str| {
+            Row::Source(Box::new(Suggestion::new(
+                section,
+                Words::as_written(title.to_owned()),
+            )))
+        };
         let rows = vec![
             row(Section::Run, "Search"),
             row(Section::Complete, "alpine"),
@@ -4243,7 +4253,8 @@ mod tests {
         // by its heading at its first row.
         let under = |heading: &str, title: &str| {
             Row::Source(Box::new(
-                Suggestion::new(Section::Syntax, title).heading(heading),
+                Suggestion::new(Section::Syntax, Words::as_written(title.to_owned()))
+                    .heading(Words::as_written(heading.to_owned())),
             ))
         };
         let rows = vec![
@@ -4269,13 +4280,15 @@ mod tests {
     fn the_arrows_pass_over_what_only_says() {
         use crate::modal::ListMove;
         let term = |title: &str| {
-            let mut row = Suggestion::new(Section::Syntax, title).heading("Terms");
+            let mut row = Suggestion::new(Section::Syntax, Words::as_written(title.to_owned()))
+                .heading(Words::as_written("Terms"));
             row.completion = Some(title.to_owned());
             Row::Source(Box::new(row))
         };
         let note = |title: &str| {
             Row::Source(Box::new(
-                Suggestion::new(Section::Syntax, title).heading("Terms"),
+                Suggestion::new(Section::Syntax, Words::as_written(title.to_owned()))
+                    .heading(Words::as_written("Terms")),
             ))
         };
         let rows = vec![

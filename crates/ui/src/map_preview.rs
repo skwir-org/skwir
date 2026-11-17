@@ -253,7 +253,6 @@ pub fn background_rows(
     let mut list = div().flex().flex_col().gap_1();
     for (value, label) in &backgrounds.choices {
         let chosen = *value == backgrounds.current;
-        let label = label.say();
         list = list.child(
             Button::new(
                 format!("map-background-{value}"),
@@ -262,7 +261,7 @@ pub fn background_rows(
                 "settings.apply",
             )
             .args(serde_json::json!({ "changes": { backgrounds.setting.clone(): value } }))
-            .label(label)
+            .label(label.clone())
             .active(chosen)
             .menu()
             .render(shell, cx),

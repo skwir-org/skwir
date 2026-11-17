@@ -654,6 +654,7 @@ impl Shell {
 mod tests {
     use super::{above_in_trail, parent_rows};
     use skwir_core::fs::subfolders;
+    use skwir_core::words::Words;
     use std::path::Path;
 
     /// From the root down to the folder the trail starts at, which is
@@ -688,11 +689,20 @@ mod tests {
         use skwir_core::Location;
         use skwir_core::location::Crumb;
         let segments = [
-            Crumb::new("Home", Location::from_path("/home/example")),
-            Crumb::new("Papers", Location::from_path("/home/example/Documents")),
-            Crumb::new("Tags", Location::parse("tags:/")),
-            Crumb::new("Places", Location::parse("tags:/Places")),
-            Crumb::new("France", Location::parse("tags:/Places/France")),
+            Crumb::new(
+                Words::as_written("Home"),
+                Location::from_path("/home/example"),
+            ),
+            Crumb::new(
+                Words::as_written("Papers"),
+                Location::from_path("/home/example/Documents"),
+            ),
+            Crumb::new(Words::as_written("Tags"), Location::parse("tags:/")),
+            Crumb::new(Words::as_written("Places"), Location::parse("tags:/Places")),
+            Crumb::new(
+                Words::as_written("France"),
+                Location::parse("tags:/Places/France"),
+            ),
         ];
         let (folder, places) = above_in_trail(&segments, &Location::parse("tags:/Places")).unwrap();
         assert_eq!(
@@ -703,9 +713,15 @@ mod tests {
         assert_eq!(labels, ["Tags", "Places"]);
         // A trail of places only, as the trash's.
         let trash = [
-            Crumb::new("Trash", Location::parse("trash:")),
-            Crumb::new("old project", Location::parse("trash:/t/files/old project")),
-            Crumb::new("sub", Location::parse("trash:/t/files/old project/sub")),
+            Crumb::new(Words::as_written("Trash"), Location::parse("trash:")),
+            Crumb::new(
+                Words::as_written("old project"),
+                Location::parse("trash:/t/files/old project"),
+            ),
+            Crumb::new(
+                Words::as_written("sub"),
+                Location::parse("trash:/t/files/old project/sub"),
+            ),
         ];
         let (folder, places) =
             above_in_trail(&trash, &Location::parse("trash:/t/files/old project/sub")).unwrap();

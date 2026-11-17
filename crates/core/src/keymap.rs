@@ -66,7 +66,7 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
                         keymap_keys_description = "One key with its modifiers, or several one after another: ctrl-shift-n, g h, shift-g",
                         note = "The examples are keys as Skwir writes them: never translated."
                     ),
-                    "ctrl-alt-n",
+                    Words::as_written("ctrl-alt-n"),
                 )
                 .required(),
                 RecordField::text(
@@ -76,13 +76,13 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
                         keymap_command_description = "What the keys run, by name as the palette's commands are registered: mkdir, ui.jump, tab.new. Empty frees the keys",
                         note = "mkdir, ui.jump and tab.new are actions' names: never translated."
                     ),
-                    "ui.jump",
+                    Words::as_written("ui.jump"),
                 ),
                 RecordField::text(
                     "args",
                     crate::words!(keymap_args = "Arguments", note = "A column of the list of shortcuts: what the action is given."),
                     crate::words!(keymap_args_description = "The command's arguments, as a JSON object"),
-                    "{\"location\": \"~\"}",
+                    Words::as_written("{\"location\": \"~\"}"),
                 ),
                 RecordField::text(
                     "when",
@@ -91,7 +91,7 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
                         keymap_where_description = "Where the keys work: empty for anywhere, pane for the file list, with conditions such as selection, single, dir, file, folder",
                         note = "pane, selection, single, dir, file and folder are words the field takes: never translated."
                     ),
-                    "pane selection",
+                    Words::as_written("pane selection"),
                 ),
             ],
         )

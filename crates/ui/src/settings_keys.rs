@@ -872,6 +872,7 @@ mod tests {
     use skwir_core::command::{Invocation, NoArgs, Outcome};
     use skwir_core::keymap::UserBinding;
     use skwir_core::registry::KeyBinding;
+    use skwir_core::words::Words;
 
     fn app() -> (tempfile::TempDir, std::sync::Arc<App>) {
         let tmp = tempfile::tempdir().unwrap();
@@ -1100,8 +1101,8 @@ mod tests {
             "plugin",
             skwir_core::command::Topic::Files,
             "plugin.run",
-            "Run it",
-            "",
+            Words::as_written("Run it"),
+            Words::as_written(""),
             |_, _| Ok(Outcome::Done),
         );
         let waiting = [record(&[
@@ -1349,8 +1350,8 @@ mod tests {
                     "plugin",
                     skwir_core::command::Topic::Files,
                     command,
-                    command,
-                    "",
+                    Words::as_written(command),
+                    Words::as_written(""),
                     |_, _| Ok(Outcome::Done),
                 );
             }

@@ -12,7 +12,7 @@ use skwir_core::op::{Mkdir, Verdict};
 use skwir_core::words::Words;
 
 fn a_folder_plan(path: &std::path::Path) -> Plan {
-    let mut plan = Plan::new("Make a folder");
+    let mut plan = Plan::new(Words::as_written("Make a folder"));
     plan.push(Mkdir {
         path: path.to_owned(),
     });

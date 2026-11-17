@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use common::*;
 use skwir_core::command::Invocation;
 use skwir_core::entry::{Entry, EntryKind, keys};
+use skwir_core::words::Words;
 use skwir_core::workspace::{Loaned, Pane, PaneId};
 use skwir_core::{App, EntryId};
 
@@ -374,7 +375,14 @@ fn what_a_view_lent_goes_with_it() {
     // A plugin turned off withdraws what its view lent with the rest of
     // its contributions; another plugin's leaves it be.
     let revision = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let view = || skwir_core::registry::ViewSpec::named(VIEW, "Usage", "usage", revision.clone());
+    let view = || {
+        skwir_core::registry::ViewSpec::named(
+            VIEW,
+            Words::as_written("Usage"),
+            "usage",
+            revision.clone(),
+        )
+    };
     app.registry.views.add("a plugin", view());
     lend(&app, pane, vec![lent(&file, EntryKind::File)]);
     app.unregister_owner("another plugin");

@@ -959,6 +959,7 @@ fn shown_in_a_pane(app: &skwir_core::App, path: &std::path::Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use skwir_core::words::Words;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -990,7 +991,7 @@ mod tests {
     fn counted(plan: PlanId, title: &str, total: usize, counts: bool) -> ExecEvent {
         ExecEvent::Started {
             plan,
-            title: title.into(),
+            title: skwir_core::words::Words::as_written(title.to_owned()),
             total,
             run: RunKind::Apply,
             items: None,
@@ -1010,7 +1011,7 @@ mod tests {
             },
             named: None,
             status: StepStatus::Pending { reversible: true },
-            error: error.map(skwir_core::words::Words::from),
+            error: error.map(|error| skwir_core::words::Words::as_written(error.to_owned())),
             reason: None,
         })
     }
@@ -1020,7 +1021,7 @@ mod tests {
             plan,
             applied,
             skipped: 0,
-            error: error.map(skwir_core::words::Words::from),
+            error: error.map(|error| skwir_core::words::Words::as_written(error.to_owned())),
             cancelled: false,
             undoable: true,
             items: None,
@@ -1344,7 +1345,7 @@ mod tests {
             ExecEvent::GoesOn {
                 plan: stopped,
                 next,
-                title: "copy 4 items to /mnt/server".into(),
+                title: Words::as_written("copy 4 items to /mnt/server"),
             },
             LOOKED_AT,
         );
@@ -1367,7 +1368,7 @@ mod tests {
             ExecEvent::Retried {
                 plan: failed,
                 next: retry,
-                title: "move 2 items to Stick".into(),
+                title: Words::as_written("move 2 items to Stick"),
             },
             LOOKED_AT,
         );
@@ -1386,9 +1387,10 @@ mod tests {
         let mut work = Work::default();
         // A plan runs, holding the spell open.
         work.take(&app, started(PlanId(1), "copy 9 items", 9), LOOKED_AT);
-        let print = app
-            .tasks
-            .start("Print “it's a.pdf”", skwir_core::CancelToken::new());
+        let print = app.tasks.start(
+            Words::as_written("Print “it's a.pdf”"),
+            skwir_core::CancelToken::new(),
+        );
         work.settle(&app);
         print.went(0.5);
         drop(print);
@@ -1544,7 +1546,7 @@ mod tests {
             ExecEvent::GoesOn {
                 plan,
                 next,
-                title: "copy to /mnt/server".into(),
+                title: Words::as_written("copy to /mnt/server"),
             },
             LOOKED_AT,
         );

@@ -1554,6 +1554,7 @@ fn end_on_signals(app: &skwir_core::App, ending: &Arc<AtomicBool>) {
 
 #[cfg(test)]
 mod tests {
+    use skwir_core::words::Words;
     use std::time::Duration;
 
     use skwir_core::op::{PlanId, RunKind, Transfer};
@@ -1680,7 +1681,7 @@ mod tests {
         };
         work.stopped = Some(Stopped::new(
             PlanId(5),
-            &"copy 3 items to Backup".into(),
+            &Words::as_written("copy 3 items to Backup"),
             true,
         ));
         let shown = presence(&work, &nothing, false);

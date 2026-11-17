@@ -2835,6 +2835,7 @@ mod tests {
     use skwir_core::command::Invocation;
     use skwir_core::keymap::UserBinding;
     use skwir_core::registry::KeyBinding;
+    use skwir_core::words::Words;
 
     fn spec(keys: &str, command: &str, when: Option<&str>, layer: Layer) -> Spec {
         Spec {
@@ -3306,8 +3307,8 @@ mod tests {
             "later",
             skwir_core::command::Topic::Files,
             "later.open",
-            "Open",
-            "",
+            Words::as_written("Open"),
+            Words::as_written(""),
             |_, _| Ok(skwir_core::command::Outcome::Done),
         );
         assert!(!super::dormant(&app, &user[0]));

@@ -18,6 +18,7 @@ use skwir_core::notes::raw::RawKey;
 use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Write, Wrote};
 use skwir_core::op::Plan;
 use skwir_core::os_path::PathArg;
+use skwir_core::words::Words;
 use skwir_plugin_tags::{read_tags, write_tags};
 
 /// A folder where extended attributes work: not `/tmp`, often a tmpfs.
@@ -40,7 +41,7 @@ impl NotesStore for Counting {
         "test.counting"
     }
     fn title(&self) -> skwir_core::words::Words {
-        "Counting".into()
+        Words::as_written("Counting")
     }
     fn kept(&self) -> Kept {
         Kept::Beside

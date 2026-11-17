@@ -76,9 +76,10 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     let trash: Vec<Box<dyn Operation>> = vec![Box::new(Trash {
         entry: EntryRef::from_path(&file).unwrap(),
     })];
-    let r = app
-        .executor
-        .execute_blocking(&Plan::with_steps("move to trash", trash), app.lifetime());
+    let r = app.executor.execute_blocking(
+        &Plan::with_steps(Words::as_written("move to trash"), trash),
+        app.lifetime(),
+    );
     assert!(r.error.is_none(), "{:?}", r.error);
     // Other tests share the home trash: ours is what came from here.
     let ours = |app: &App| {

@@ -500,8 +500,8 @@ mod tests {
 
     fn choice(title: &str, detail: Option<&str>) -> Choice {
         Choice {
-            title: title.into(),
-            detail: detail.map(Words::from),
+            title: Words::as_written(title.to_owned()),
+            detail: detail.map(|detail| Words::as_written(detail.to_owned())),
             icon: None,
             section: None,
             command: Invocation::new("x"),

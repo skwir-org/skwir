@@ -698,6 +698,7 @@ fn list<V: Helps>(
 
 #[cfg(test)]
 mod tests {
+    use skwir_core::words::Words;
     use std::rc::Rc;
 
     use skwir_core::reference::{Group, Item, Reference};
@@ -705,11 +706,14 @@ mod tests {
     use super::{FieldHelp, stepped};
 
     fn help() -> FieldHelp {
-        let mut said = Reference::new("Template").group(
-            Group::new("Parts of the name")
-                .item(Item::new("{name}", "The name"))
-                .item(Item::new("{n}", "A number"))
-                .item(Item::new("{n:03}", "A number, three digits")),
+        let mut said = Reference::new(Words::as_written("Template")).group(
+            Group::new(Words::as_written("Parts of the name"))
+                .item(Item::new("{name}", Words::as_written("The name")))
+                .item(Item::new("{n}", Words::as_written("A number")))
+                .item(Item::new(
+                    "{n:03}",
+                    Words::as_written("A number, three digits"),
+                )),
         );
         said.starts = vec!["{".to_owned()];
         FieldHelp::new("template", Some(Rc::new(said)))

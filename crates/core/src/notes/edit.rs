@@ -1116,7 +1116,7 @@ mod tests {
             "refused"
         }
         fn title(&self) -> skwir_core::words::Words {
-            "Refused".into()
+            Words::as_written("Refused")
         }
         fn kept(&self) -> Kept {
             Kept::Attributes
@@ -1152,7 +1152,7 @@ mod tests {
             "declines"
         }
         fn title(&self) -> skwir_core::words::Words {
-            "Declines".into()
+            Words::as_written("Declines")
         }
         fn kept(&self) -> Kept {
             Kept::Beside
@@ -1198,7 +1198,7 @@ mod tests {
             self.0
         }
         fn title(&self) -> crate::words::Words {
-            self.0.into()
+            crate::words::Words::as_written(self.0)
         }
         fn kept(&self) -> Kept {
             Kept::Beside

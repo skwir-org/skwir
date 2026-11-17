@@ -1960,11 +1960,11 @@ mod tests {
     #[test]
     fn a_tick_says_what_it_does_or_that_it_waits_for_its_category() {
         assert_eq!(
-            said_tick("~/.ssh".into(), Role::Agents, false, true).english(),
+            said_tick(Words::as_written("~/.ssh"), Role::Agents, false, true).english(),
             "~/.ssh is no longer excluded from agents"
         );
         assert_eq!(
-            said_tick("~/.ssh".into(), Role::Searches, false, false).english(),
+            said_tick(Words::as_written("~/.ssh"), Role::Searches, false, false).english(),
             "Unticked ~/.ssh; its category is off for searches and tags"
         );
     }

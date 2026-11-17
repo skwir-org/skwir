@@ -868,7 +868,7 @@ mod tests {
         // The dry run says it as the address writes it.
         let checked = Checked::of((
             PlanDiff {
-                title: "t".into(),
+                title: Words::as_written("t"),
                 note: None,
                 steps,
             },
@@ -885,7 +885,7 @@ mod tests {
     #[test]
     fn diff_lines_carry_change_text_and_status() {
         let diff = PlanDiff {
-            title: "t".into(),
+            title: Words::as_written("t"),
             note: None,
             steps: vec![
                 (

@@ -853,7 +853,7 @@ fn names_of(entries: &[PathBuf]) -> Vec<String> {
 
 fn moves(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
     skwir_core::op::Plan::with_steps(
-        "move",
+        Words::as_written("move"),
         entries
             .iter()
             .map(|e| {
@@ -868,7 +868,7 @@ fn moves(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
 
 fn copies(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
     skwir_core::op::Plan::with_steps(
-        "copy",
+        Words::as_written("copy"),
         entries
             .iter()
             .map(|e| {
@@ -1151,7 +1151,7 @@ fn copies_on_a_server_are_undone_and_deleted_together() {
         .map(|e| up.join(e.file_name().unwrap()))
         .collect();
     let for_good = skwir_core::op::Plan::with_steps(
-        "delete",
+        Words::as_written("delete"),
         there
             .iter()
             .map(|e| {
@@ -3478,7 +3478,7 @@ fn takes_by_gio(name: &str, mounts: &[(PathBuf, ByGio)]) {
 
         for folder in [&up, &within] {
             let gone = skwir_core::op::Plan::with_steps(
-                "delete",
+                Words::as_written("delete"),
                 std::fs::read_dir(folder)
                     .unwrap()
                     .map(|e| {
@@ -3752,7 +3752,7 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let moved = base.join("moved down");
     std::fs::create_dir(&moved).unwrap();
     let plan = skwir_core::op::Plan::with_steps(
-        "move",
+        Words::as_written("move"),
         there
             .iter()
             .map(|e| {

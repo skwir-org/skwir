@@ -925,7 +925,7 @@ mod tests {
     fn dialog() -> Clashes {
         Clashes::new(ClashQuestion {
             id: 1,
-            title: "copy to /example/dest".into(),
+            title: Words::as_written("copy to /example/dest"),
             clashes: vec![
                 clash("/example/dest/a.txt", false, None, true),
                 clash("/example/dest/d", true, None, false),
@@ -1054,7 +1054,7 @@ mod tests {
         let question = |clashes| {
             Clashes::new(ClashQuestion {
                 id: 1,
-                title: "extract".into(),
+                title: Words::as_written("extract"),
                 clashes,
             })
         };
@@ -1110,7 +1110,7 @@ mod tests {
     fn a_kind_no_clash_is_of_has_no_row_for_all() {
         let mut d = Clashes::new(ClashQuestion {
             id: 1,
-            title: "copy to /example/dest".into(),
+            title: Words::as_written("copy to /example/dest"),
             clashes: vec![clash("/example/dest/photos", true, None, false)],
         });
         assert_eq!(d.heads(), 1);
@@ -1134,7 +1134,7 @@ mod tests {
             .collect();
         let mut d = Clashes::new(ClashQuestion {
             id: 1,
-            title: "copy to /example/dest".into(),
+            title: Words::as_written("copy to /example/dest"),
             clashes,
         });
         assert_eq!(d.shown().len(), 1_000);

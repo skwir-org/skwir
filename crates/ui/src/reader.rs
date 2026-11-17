@@ -1084,13 +1084,13 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         matches(
             "reader-prev-match",
             "left",
-            crate::preview_bar::label::previous_match().say(),
+            crate::preview_bar::label::previous_match(),
             -1,
         ),
         matches(
             "reader-next-match",
             "right",
-            crate::preview_bar::label::next_match().say(),
+            crate::preview_bar::label::next_match(),
             1,
         ),
         Button::new(

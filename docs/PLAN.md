@@ -3693,7 +3693,9 @@ their budgets in every language.
   (the API pass), words cross the window's own JSON whole (`to_data`),
   a heading, a list argument and a sentence cut around a link exist, and
   the pseudo-language leaves no English on the window's surfaces (seen on
-  Xvfb). In progress: removing the transitional `From<&str>`. Left, from
+  Xvfb), and the transitional `From<&str>` is removed: an English literal
+no longer compiles where words are wanted (`Words::as_written` says what
+is not Skwir's to translate). Left, from
   the translators' notes: counts without a selector where French must
   agree, lists still joined in code, numbers still formatted in code, a
   gender selector for the search's reading, English to reword.

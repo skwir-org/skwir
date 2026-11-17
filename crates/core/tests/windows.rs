@@ -13,6 +13,7 @@ use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
 use skwir_core::tabs::{LAST_TABS, LAST_WINDOWS, SavedTabs, SavedWindows};
+use skwir_core::words::Words;
 use skwir_core::workspace::{PaneId, TabId, WindowId};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -689,7 +690,7 @@ impl skwir_core::plugin::Plugin for Looking {
         "looking"
     }
     fn title(&self) -> skwir_core::words::Words {
-        "Looking".into()
+        Words::as_written("Looking")
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Files

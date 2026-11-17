@@ -1838,8 +1838,8 @@ mod tests {
         let mut state = DocumentScroll::default();
         assert!(!state.forget_errors(Some(3)));
         assert!(!state.forget_errors(None));
-        Rc::make_mut(&mut state.errors).insert(3, "boom".into());
-        Rc::make_mut(&mut state.errors).insert(7, "boom".into());
+        Rc::make_mut(&mut state.errors).insert(3, Words::as_written("boom"));
+        Rc::make_mut(&mut state.errors).insert(7, Words::as_written("boom"));
         assert!(state.forget_errors(Some(3)));
         assert!(!state.forget_errors(Some(3)));
         assert!(state.errors.contains_key(&7));

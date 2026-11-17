@@ -91,12 +91,16 @@ pub struct Backgrounds {
 }
 
 impl Backgrounds {
-    /// The chosen one's label, as the window says it.
-    pub fn label(&self) -> String {
+    /// The chosen one's label, said where it is drawn; a value no choice
+    /// names, as written.
+    pub fn label(&self) -> Words {
         self.choices
             .iter()
             .find(|(value, _)| *value == self.current)
-            .map_or_else(|| self.current.clone(), |(_, label)| label.say())
+            .map_or_else(
+                || Words::as_written(self.current.clone()),
+                |(_, label)| label.clone(),
+            )
     }
 }
 

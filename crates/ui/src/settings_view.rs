@@ -2790,6 +2790,7 @@ mod tests {
     use super::{lists_pages_at, size_part, written_at};
     use crate::sizes::{Part, Text};
     use crate::theme::{Base, Contrast, Theme};
+    use skwir_core::words::Words;
 
     /// The Plugins page heads its categories by name, and lists plugins
     /// by name, as file names are.
@@ -2811,8 +2812,8 @@ mod tests {
         );
         let plugin = |title: &str| PluginInfo {
             id: "x",
-            title: title.into(),
-            description: "".into(),
+            title: Words::as_written(title.to_owned()),
+            description: Words::as_written(""),
             category: Category::Files,
             enabled: true,
             enabled_by_default: true,
@@ -2837,8 +2838,8 @@ mod tests {
         use skwir_core::plugin::{Category, PluginInfo};
         let plugin = PluginInfo {
             id: "pdf-reader",
-            title: "PDF reader".into(),
-            description: "Reads documents page by page, as an éditeur would".into(),
+            title: Words::as_written("PDF reader"),
+            description: Words::as_written("Reads documents page by page, as an éditeur would"),
             category: Category::ALL[0],
             enabled: true,
             enabled_by_default: true,
@@ -2869,17 +2870,18 @@ mod tests {
     /// its key, its page's title, a choice's label), folded alike.
     #[test]
     fn the_search_finds_a_setting_by_each_word() {
-        use skwir_core::collate::Words;
+        use skwir_core::collate;
         use skwir_core::settings::SettingSpec;
         let spec = SettingSpec::choice(
             "ui.cards",
-            "Draw the panes as cards",
+            Words::as_written("Draw the panes as cards"),
             "Each pane on a ground of its own.",
             "light",
             &[("light", "Légère"), ("none", "None")],
         );
-        let found =
-            |typed: &str| super::spec_matches(&Words::new(typed), &spec, ["Appearance", ""]);
+        let found = |typed: &str| {
+            super::spec_matches(&collate::Words::new(typed), &spec, ["Appearance", ""])
+        };
         assert!(found("cards appearance"), "its title and its page's");
         assert!(found("ground PANES"));
         assert!(found("legere"), "a choice's label, accents folded");
@@ -2932,7 +2934,15 @@ mod tests {
     #[test]
     fn a_choice_of_looks_opens_as_the_list_that_previews() {
         use skwir_core::settings::{SettingSpec, Swatch};
-        let few = || SettingSpec::choice("ui.x", "X", "", "a", &[("a", "A"), ("b", "B")]);
+        let few = || {
+            SettingSpec::choice(
+                "ui.x",
+                Words::as_written("X"),
+                "",
+                "a",
+                &[("a", "A"), ("b", "B")],
+            )
+        };
         assert!(!super::narrows(&few()));
         let swatch = Swatch {
             ground: 0,

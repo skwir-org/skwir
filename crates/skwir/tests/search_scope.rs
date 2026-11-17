@@ -52,7 +52,8 @@ fn a_place_is_a_scope_where_its_provider_says_words_search_it() {
     let folder = Location::from_path(tmp.path().join("it's ünder"));
     let france = tag("Places/l'Été");
     let all_tags = Address::default().location();
-    let title = |location: &Location| search_title(&app, Some(location), false);
+    let title =
+        |location: &Location| search_title(&app, Some(location), false).map(|t| t.english());
 
     assert_eq!(
         title(&folder).as_deref(),
@@ -82,7 +83,9 @@ fn a_place_is_a_scope_where_its_provider_says_words_search_it() {
     }
     assert_eq!(scope_of(&app, &france), Some(france.clone()));
     assert_eq!(
-        search_title(&app, Some(&Location::new("query", "dunes")), true).as_deref(),
+        search_title(&app, Some(&Location::new("query", "dunes")), true)
+            .map(|t| t.english())
+            .as_deref(),
         Some("Edit this search")
     );
 

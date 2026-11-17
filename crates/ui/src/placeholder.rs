@@ -337,6 +337,7 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::{EmptyState, empty_folder, empty_place, failure};
+    use skwir_core::words::Words;
 
     #[test]
     fn failures_read_as_sentences_and_keep_the_system_message() {
@@ -377,7 +378,8 @@ mod tests {
             "You don't have permission to open this folder"
         );
         // A provider's own words are no system's: said as they are.
-        let words = skwir_core::ListingError::new("Could not connect to the server");
+        let words =
+            skwir_core::ListingError::new(Words::as_written("Could not connect to the server"));
         assert_eq!(
             failure(words.kind, &words.message).action,
             Some(("Try again".to_owned(), "refresh"))
@@ -390,7 +392,10 @@ mod tests {
         assert_eq!(folder.title, "This folder is empty");
         assert!(folder.detail.contains("Ctrl+Shift+N"));
         // Any other location says what its provider says, under its glyph.
-        let said = EmptyState::new("The shelf is empty", "Collect files…");
+        let said = EmptyState::new(
+            Words::as_written("The shelf is empty"),
+            Words::as_written("Collect files…"),
+        );
         let shelf = empty_place(Some("shelf"), Some(&said));
         assert_eq!(
             (shelf.icon, shelf.title.as_str()),

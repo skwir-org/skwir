@@ -20,7 +20,7 @@ impl Plugin for Preferences {
         "sample"
     }
     fn title(&self) -> skwir_core::words::Words {
-        "Sample".into()
+        Words::as_written("Sample")
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Files
@@ -29,14 +29,25 @@ impl Plugin for Preferences {
         for spec in [
             SettingSpec::choice(
                 "sample.engine",
-                "Engine",
+                Words::as_written("Engine"),
                 "engine",
                 "first",
                 &[("first", "First"), ("second", "Second")],
             ),
-            SettingSpec::integer("sample.budget", "Budget", "budget", 64, (4, 4096)),
-            SettingSpec::toggle("sample.enabled", "Enabled", "enabled", true),
-            SettingSpec::path("sample.path", "Path", "path", ""),
+            SettingSpec::integer(
+                "sample.budget",
+                Words::as_written("Budget"),
+                "budget",
+                64,
+                (4, 4096),
+            ),
+            SettingSpec::toggle(
+                "sample.enabled",
+                Words::as_written("Enabled"),
+                "enabled",
+                true,
+            ),
+            SettingSpec::path("sample.path", Words::as_written("Path"), "path", ""),
         ] {
             app.settings.declare(spec);
         }
@@ -44,8 +55,11 @@ impl Plugin for Preferences {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         use skwir_core::plugin::Requirement;
         vec![
-            Requirement::new("present", "always there", || true).required(),
-            Requirement::program("skwir-test-no-such-tool", "never installed"),
+            Requirement::new("present", Words::as_written("always there"), || true).required(),
+            Requirement::program(
+                "skwir-test-no-such-tool",
+                Words::as_written("never installed"),
+            ),
         ]
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
@@ -370,11 +384,25 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
 /// what is kept stays the whole number agents and scripts read.
 #[test]
 fn a_value_is_written_in_its_unit() {
-    let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096)).unit(mb);
+    let budget = SettingSpec::integer(
+        "sample.budget",
+        Words::as_written("Budget"),
+        "d",
+        64,
+        (4, 4096),
+    )
+    .unit(mb);
     assert_eq!(budget.written(64).english(), "64 MB");
-    let bare = SettingSpec::integer("sample.count", "Count", "d", 3, (0, 9));
+    let bare = SettingSpec::integer("sample.count", Words::as_written("Count"), "d", 3, (0, 9));
     assert_eq!(bare.written(3).english(), "3");
-    let lines = SettingSpec::integer("sample.lines", "Lines", "d", 1, (0, 9000)).unit(|n| {
+    let lines = SettingSpec::integer(
+        "sample.lines",
+        Words::as_written("Lines"),
+        "d",
+        1,
+        (0, 9000),
+    )
+    .unit(|n| {
         skwir_core::words!(
             test_lines = "{ $n ->
                 [one] { $n } line
@@ -385,13 +413,19 @@ fn a_value_is_written_in_its_unit() {
     });
     assert_eq!(lines.written(1).english(), "1 line", "it agrees");
     assert_eq!(lines.written(5000).english(), "5,000 lines");
-    let wait = SettingSpec::integer("sample.wait_ms", "Wait", "d", 1500, (0, 5000))
-        .step(250)
-        .unit_of(
-            |n| skwir_core::words!(test_seconds = "{ $n } s", n = n),
-            1000,
-        )
-        .slider();
+    let wait = SettingSpec::integer(
+        "sample.wait_ms",
+        Words::as_written("Wait"),
+        "d",
+        1500,
+        (0, 5000),
+    )
+    .step(250)
+    .unit_of(
+        |n| skwir_core::words!(test_seconds = "{ $n } s", n = n),
+        1000,
+    )
+    .slider();
     assert_eq!(
         serde_json::to_value(&wait).unwrap()["unit"],
         "n s",
@@ -419,10 +453,16 @@ fn mb(n: skwir_core::words::Arg) -> skwir_core::words::Words {
 
 #[test]
 fn builders_describe_controls_and_the_schema_serializes_for_agents() {
-    let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096))
-        .unit(mb)
-        .step(16)
-        .section_of("memory", "Memory");
+    let budget = SettingSpec::integer(
+        "sample.budget",
+        Words::as_written("Budget"),
+        "d",
+        64,
+        (4, 4096),
+    )
+    .unit(mb)
+    .step(16)
+    .section_of("memory", Words::as_written("Memory"));
     assert_eq!(budget.kind, skwir_core::settings::SettingKind::Integer);
     assert_eq!(budget.owner(), "sample");
     assert_eq!(
@@ -434,7 +474,7 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     );
     let engine = SettingSpec::choice(
         "sample.engine",
-        "Engine",
+        Words::as_written("Engine"),
         "d",
         "first",
         &[("first", "First"), ("second", "The second")],
@@ -461,7 +501,7 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     // What Automatic tries, found by its requirements: the first there.
     let tried = SettingSpec::choice(
         "sample.engine",
-        "Engine",
+        Words::as_written("Engine"),
         "d",
         "auto",
         &[("auto", "Automatic"), ("fast", "Fast"), ("slow", "Slow")],
@@ -482,7 +522,11 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
         english(tried.now("slow").with_found(|_| true).now_of("auto")),
         Some("Slow".into())
     );
-    let saved = SettingSpec::data("sample.saved", "d", toml::Value::Array(vec![]));
+    let saved = SettingSpec::data(
+        "sample.saved",
+        Words::as_written("d"),
+        toml::Value::Array(vec![]),
+    );
     assert!(!saved.editable());
     assert!(saved.parse("[]").is_err());
     let json = serde_json::to_value(&budget).unwrap();
@@ -497,7 +541,7 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
 fn a_choice_that_does_nothing_here_says_why_and_is_stepped_over() {
     let spec = SettingSpec::choice(
         "sample.engine",
-        "Engine",
+        Words::as_written("Engine"),
         "d",
         "auto",
         &[
@@ -583,7 +627,12 @@ fn the_revision_advances_on_declare_apply_and_undeclare_only() {
 fn a_setting_keeps_the_place_it_was_first_declared_in() {
     let settings = Settings::in_memory();
     for key in ["sample.second", "sample.first", "sample.third"] {
-        settings.declare(SettingSpec::toggle(key, "Title", "Description.", true));
+        settings.declare(SettingSpec::toggle(
+            key,
+            Words::as_written("Title"),
+            "Description.",
+            true,
+        ));
     }
     let order = |key: &str| settings.spec(key).unwrap().order;
     assert!(order("sample.second") < order("sample.first"));
@@ -591,13 +640,18 @@ fn a_setting_keeps_the_place_it_was_first_declared_in() {
     let first = order("sample.first");
     settings.declare(SettingSpec::toggle(
         "sample.first",
-        "Title",
+        Words::as_written("Title"),
         "Again.",
         false,
     ));
     assert_eq!(order("sample.first"), first);
     settings.undeclare("sample.first");
-    settings.declare(SettingSpec::toggle("sample.first", "Title", "Back.", true));
+    settings.declare(SettingSpec::toggle(
+        "sample.first",
+        Words::as_written("Title"),
+        "Back.",
+        true,
+    ));
     assert_eq!(order("sample.first"), first);
 }
 
@@ -666,7 +720,7 @@ fn requirements_are_probed_on_demand_and_notifications_can_name_a_setting() {
     );
     app.notify_about_setting(
         skwir_core::app::NotifyLevel::Warning,
-        "needs a tool",
+        Words::as_written("needs a tool"),
         "sample.engine",
     );
     let notes = app.take_notifications();
@@ -776,7 +830,7 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
             &["stale"]
         }
         fn title(&self) -> skwir_core::words::Words {
-            "Fresh".into()
+            Words::as_written("Fresh")
         }
         fn category(&self) -> skwir_core::plugin::Category {
             skwir_core::plugin::Category::Files
@@ -785,7 +839,7 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
             app.settings.rename("stale.engine", "fresh.engine");
             app.settings.declare(SettingSpec::choice(
                 "fresh.engine",
-                "Engine",
+                Words::as_written("Engine"),
                 "engine",
                 "first",
                 &[("first", "First"), ("second", "Second")],
@@ -867,14 +921,29 @@ fn records_are_checked_field_by_field_and_never_hold_a_secret() {
     use skwir_core::settings::{RecordField, SettingSpec};
     let spec = SettingSpec::records(
         "sample.servers",
-        "Servers",
+        Words::as_written("Servers"),
         "",
-        "Add server",
+        Words::as_written("Add server"),
         vec![
-            RecordField::text("name", "Name", "", "").required(),
-            RecordField::integer("zoom", "Zoom", "", (0, 22)),
-            RecordField::pairs("headers", "Headers", ""),
-            RecordField::secret("key", "Key", ""),
+            RecordField::text(
+                "name",
+                Words::as_written("Name"),
+                Words::as_written(""),
+                Words::as_written(""),
+            )
+            .required(),
+            RecordField::integer(
+                "zoom",
+                Words::as_written("Zoom"),
+                Words::as_written(""),
+                (0, 22),
+            ),
+            RecordField::pairs(
+                "headers",
+                Words::as_written("Headers"),
+                Words::as_written(""),
+            ),
+            RecordField::secret("key", Words::as_written("Key"), Words::as_written("")),
         ],
     );
     let value = spec
@@ -920,10 +989,18 @@ fn a_list_skwir_starts_filled_is_changed_by_its_names_never_by_its_ids() {
     let named = |name: &str| toml::Table::from_iter([("name".to_owned(), name.into())]);
     let spec = SettingSpec::records(
         "sample.names",
-        "Names",
+        Words::as_written("Names"),
         "",
-        "Add name",
-        vec![RecordField::text("name", "Name", "", "").required()],
+        Words::as_written("Add name"),
+        vec![
+            RecordField::text(
+                "name",
+                Words::as_written("Name"),
+                Words::as_written(""),
+                Words::as_written(""),
+            )
+            .required(),
+        ],
     )
     .starting_with([named("README.md"), named("cover.*")]);
     // Its records have ids, which the dialog edits them by, and are what
@@ -960,22 +1037,30 @@ fn a_list_skwir_starts_filled_is_changed_by_its_names_never_by_its_ids() {
         );
     }
     // A list built from nothing is never changed: it is the user's data.
-    let built = SettingSpec::records("sample.servers", "Servers", "", "Add server", Vec::new());
+    let built = SettingSpec::records(
+        "sample.servers",
+        Words::as_written("Servers"),
+        "",
+        Words::as_written("Add server"),
+        Vec::new(),
+    );
     assert!(!built.records_changed(&built.parse(r#"[{"id":"a"}]"#).unwrap()));
 }
 
 #[test]
 fn an_owner_check_runs_after_the_kind() {
     use skwir_core::settings::SettingSpec;
-    let spec = SettingSpec::text("sample.url", "Address", "", "").validate_with(|value, _| {
-        anyhow::ensure!(
-            value
-                .as_str()
-                .is_some_and(|s| s.is_empty() || s.starts_with("https://")),
-            "must start with https://"
-        );
-        Ok(())
-    });
+    let spec = SettingSpec::text("sample.url", Words::as_written("Address"), "", "").validate_with(
+        |value, _| {
+            anyhow::ensure!(
+                value
+                    .as_str()
+                    .is_some_and(|s| s.is_empty() || s.starts_with("https://")),
+                "must start with https://"
+            );
+            Ok(())
+        },
+    );
     assert!(spec.parse("https://example.org").is_ok());
     assert!(spec.parse("ftp://example.org").is_err());
 }
@@ -1065,7 +1150,7 @@ fn an_outside_edit_is_taken_in_under_unsaved_changes() {
     let settings = Settings::load(&path);
     settings.declare(SettingSpec::choice(
         "sample.engine",
-        "Engine",
+        Words::as_written("Engine"),
         "engine",
         "first",
         &[("first", "First"), ("second", "Second")],
@@ -1208,7 +1293,11 @@ fn a_running_skwir_follows_its_settings_file() {
 }
 
 fn state_spec(key: &str) -> SettingSpec {
-    SettingSpec::state(key, "state", toml::Value::Table(toml::Table::new()))
+    SettingSpec::state(
+        key,
+        Words::as_written("state"),
+        toml::Value::Table(toml::Table::new()),
+    )
 }
 
 fn table(path: &std::path::Path) -> toml::Table {
@@ -1317,7 +1406,11 @@ fn read_only_settings_still_keep_the_window_s_state() {
 }
 
 fn data_spec(key: &str) -> SettingSpec {
-    SettingSpec::data(key, "made", toml::Value::Array(Vec::new()))
+    SettingSpec::data(
+        key,
+        Words::as_written("made"),
+        toml::Value::Array(Vec::new()),
+    )
 }
 
 fn searches(names: &[&str]) -> toml::Value {
@@ -1507,14 +1600,14 @@ fn a_key_kept_apart_replaces_the_settings_file_s_copy_whole() {
     let settings = Settings::load(&path).with_state(&state).with_data(&data);
     let colors = SettingSpec::data(
         "sample.colors",
-        "colours",
+        Words::as_written("colours"),
         toml::Value::Table(toml::Table::new()),
     );
     settings.declare(colors.clone());
     settings.declare(state_spec("sample.session"));
     settings.declare(SettingSpec::data(
         "sample.unkept",
-        "nothing kept yet",
+        Words::as_written("nothing kept yet"),
         toml::Value::Table(toml::Table::new()),
     ));
     let read = |settings: &Settings, key: &str| settings.get::<toml::Value>(key).unwrap();
@@ -1555,7 +1648,7 @@ fn a_key_kept_apart_replaces_the_settings_file_s_copy_whole() {
     let again = Settings::load(&path).with_state(&state).with_data(&data);
     again.declare(SettingSpec::data(
         "sample.colors",
-        "colours",
+        Words::as_written("colours"),
         toml::Value::Table(toml::Table::new()),
     ));
     again.declare(state_spec("sample.session"));
@@ -1609,12 +1702,12 @@ fn settings_from_a_file_are_checked_as_the_dialog_checks_them() {
     app.settings.declare(
         SettingSpec::choice(
             "sample.theme",
-            "Theme",
+            Words::as_written("Theme"),
             "theme",
             "default",
             &[("default", "Default")],
         )
-        .more_choices("the themes you added"),
+        .more_choices(Words::as_written("the themes you added")),
     );
     let mut table = table;
     table["sample"]

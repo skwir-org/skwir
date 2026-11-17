@@ -490,7 +490,7 @@ impl skwir_core::suggest::SuggestSource for TagSuggestions {
             .enumerate()
             .map(|(i, (rank, tag))| {
                 let location = skwir_core::location::Location::parse(&sidebar_location(&tag));
-                let mut row = Suggestion::new(Section::Go, skwir_core::metadata::tag_leaf(&tag))
+                let mut row = Suggestion::new(Section::Go, Words::as_written(skwir_core::metadata::tag_leaf(&tag).to_owned()))
                     .detail(words!(
                         tags_suggestion_detail = "Tag · { $tag }",
                         tag = tag.as_str(),
@@ -2783,7 +2783,7 @@ mod tests {
         .unwrap();
         let (app, _) = app_in(tmp.path(), &stick, &["it's a.pdf"]);
         let run = |op: Box<dyn skwir_core::op::Operation>| {
-            let mut plan = Plan::new("op");
+            let mut plan = Plan::new(Words::as_written("op"));
             plan.steps.push(op);
             let r = app.executor.execute_blocking(&plan, app.lifetime());
             assert!(r.error.is_none(), "{:?}", r.error);
@@ -2843,7 +2843,7 @@ mod tests {
         );
         let (app, _) = app_in(tmp.path(), &home, &["it's tagged.txt"]);
         let run = |op: Box<dyn skwir_core::op::Operation>| {
-            let mut plan = Plan::new("op");
+            let mut plan = Plan::new(Words::as_written("op"));
             plan.steps.push(op);
             let r = app.executor.execute_blocking(&plan, app.lifetime());
             assert!(r.error.is_none(), "{:?}", r.error);
@@ -2916,7 +2916,7 @@ mod tests {
         assert!(!skwir_core::fs::xattr::kept_in(&dir));
         let (app, _) = app_in(tmp.path(), &dir, &["it's plain.txt"]);
         let run = |op: Box<dyn skwir_core::op::Operation>| {
-            let mut plan = Plan::new("op");
+            let mut plan = Plan::new(skwir_core::words::Words::as_written("op"));
             plan.steps.push(op);
             let r = app.executor.execute_blocking(&plan, app.lifetime());
             assert!(r.error.is_none(), "{:?}", r.error);

@@ -9,6 +9,7 @@
 use skwir_core::reference::{Group, Item, Reference, floor_boundary};
 use skwir_core::suggest::{Ask, Section, Suggestion};
 use skwir_core::words;
+use skwir_core::words::Words;
 
 use crate::{assist, lang};
 
@@ -335,7 +336,7 @@ pub fn rows(ask: &Ask) -> Vec<Suggestion> {
             let Some(part) = item.inserts.as_deref() else {
                 continue;
             };
-            let mut row = Suggestion::new(Section::Syntax, item.written.clone())
+            let mut row = Suggestion::new(Section::Syntax, Words::as_written(item.written.clone()))
                 .detail(item.says.clone())
                 .heading(group.title.clone())
                 .rank(rank(&rows));

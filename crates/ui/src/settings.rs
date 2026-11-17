@@ -5225,6 +5225,7 @@ mod tests {
         READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY, THEME_KEY, code_theme_spec,
         declare, font_spec, icon_theme_spec, page_order,
     };
+    use skwir_core::words::Words;
     use skwir_platform::icons::Theme;
 
     /// A grammar is named by its source; one combined from two by its
@@ -5339,7 +5340,7 @@ mod tests {
         assert_eq!(record["detail"], "heex", "{record}");
         // Not checked: why, and when it is asked again.
         let unchecked = Found {
-            unchecked: Some("the tree-sitter helper did not answer".into()),
+            unchecked: Some(Words::as_written("the tree-sitter helper did not answer")),
             ..waiting.clone()
         };
         let record = super::language_record(&language(&unchecked), &automatic, &table);
@@ -5396,7 +5397,7 @@ mod tests {
         assert!(crate::settings_view::narrows(&code));
         assert!(!crate::settings_view::narrows(&SettingSpec::choice(
             "a.look",
-            "Look",
+            Words::as_written("Look"),
             "Looks.",
             "one",
             &[("one", "One"), ("two", "Two")],
@@ -5718,7 +5719,13 @@ mod tests {
         use super::{Block, blocks};
         use skwir_core::settings::SettingKind;
         let spec = |key: &str, title: &str, section: &str| {
-            SettingSpec::toggle(key, title, "Does.", true).section_of(section, section)
+            SettingSpec::toggle(
+                key,
+                Words::as_written(title.to_owned()),
+                Words::as_written("Does."),
+                true,
+            )
+            .section_of(section, Words::as_written(section.to_owned()))
         };
         let specs = [
             spec("a.x", "Alone", ""),
@@ -5787,7 +5794,9 @@ mod tests {
             page::EXCLUSIONS,
             page::KEYBOARD,
         ] {
-            let spec = SettingSpec::toggle("plugin.option", "Option", "Does.", true).page(name);
+            let spec =
+                SettingSpec::toggle("plugin.option", Words::as_written("Option"), "Does.", true)
+                    .page(name);
             assert!(
                 Page::of_spec(&spec)
                     .builtin()
@@ -5796,9 +5805,9 @@ mod tests {
             );
         }
         // One that names none is on its owner's page.
-        let spec = SettingSpec::toggle("plugin.option", "Option", "Does.", true);
+        let spec = SettingSpec::toggle("plugin.option", Words::as_written("Option"), "Does.", true);
         assert_eq!(Page::of_spec(&spec), Page::Plugin("plugin".into()));
-        let spec = SettingSpec::toggle("core.option", "Option", "Does.", true);
+        let spec = SettingSpec::toggle("core.option", Words::as_written("Option"), "Does.", true);
         assert_eq!(Page::of_spec(&spec), Page::General);
     }
 
@@ -6037,9 +6046,15 @@ mod tests {
     #[test]
     fn a_slider_stands_at_its_steps() {
         use super::{slider_at, slider_page, slider_value};
-        let fives = SettingSpec::integer("ui.test_fives", "Fives", "", 100, (50, 100))
-            .step(5)
-            .slider();
+        let fives = SettingSpec::integer(
+            "ui.test_fives",
+            Words::as_written("Fives"),
+            "",
+            100,
+            (50, 100),
+        )
+        .step(5)
+        .slider();
         assert_eq!(slider_value(&fives, 0.), 50);
         assert_eq!(slider_value(&fives, 1.), 100);
         assert_eq!(slider_value(&fives, 0.5), 75);
@@ -6055,7 +6070,8 @@ mod tests {
         assert!((slider_at(&fives, 87) - 0.74).abs() < 1e-6);
         assert_eq!(slider_at(&fives, 20), 0.);
         assert_eq!(slider_page(&fives), 2, "ten steps: at least two");
-        let ones = SettingSpec::integer("ui.test_ones", "Ones", "", 10, (0, 50)).slider();
+        let ones = SettingSpec::integer("ui.test_ones", Words::as_written("Ones"), "", 10, (0, 50))
+            .slider();
         assert_eq!(slider_value(&ones, 0.5), 25);
         assert_eq!(slider_page(&ones), 5);
     }

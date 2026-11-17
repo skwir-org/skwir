@@ -401,6 +401,7 @@ mod tests {
     }
 
     mod fake {
+        use skwir_core::words::Words;
         use std::collections::HashMap;
         use std::path::PathBuf;
         use std::sync::Arc;
@@ -429,7 +430,7 @@ mod tests {
             }
 
             fn title(&self, _: &Location) -> Option<skwir_core::words::Words> {
-                Some("Bin of tests".into())
+                Some(Words::as_written("Bin of tests"))
             }
 
             fn verbs(&self, _: &Location) -> Verbs {

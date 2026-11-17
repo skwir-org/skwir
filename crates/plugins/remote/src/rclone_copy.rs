@@ -538,7 +538,7 @@ mod tests {
             }
             let into = root.join("destination");
             std::fs::create_dir(&into).unwrap();
-            let mut plan = Plan::new("copy album");
+            let mut plan = Plan::new(Words::as_written("copy album"));
             let id = plan.id;
             let executor = Executor::new(Scheduler::new(1));
             let (send_progress, progress) = crossbeam_channel::unbounded();

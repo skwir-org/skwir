@@ -476,7 +476,7 @@ mod tests {
     use super::*;
 
     fn row(section: Section, title: &str, rank: i32) -> Suggestion {
-        Suggestion::new(section, title).rank(rank)
+        Suggestion::new(section, Words::as_written(title.to_owned())).rank(rank)
     }
 
     #[test]

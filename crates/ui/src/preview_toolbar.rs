@@ -10,8 +10,9 @@ use crate::{
 use gpui::{AnyElement, Context, Div, div, prelude::*};
 use skwir_core::preview::PreviewInfo;
 use skwir_core::words;
+use skwir_core::words::{Decimal, Words};
 
-pub fn zoom_label(shell: &Shell) -> String {
+pub fn zoom_label(shell: &Shell) -> Words {
     shell.preview.zoom.map_or_else(
         || {
             if shell.preview.fit_width {
@@ -19,16 +20,23 @@ pub fn zoom_label(shell: &Shell) -> String {
                     preview_zoom_width = "Width",
                     note = "On a preview's zoom button, where a percentage would be: the picture or page fits the width."
                 )
-                .say()
             } else {
                 words!(
                     preview_zoom_fit = "Fit",
                     note = "On a preview's zoom button, where a percentage would be: the picture or page fits the room there is."
                 )
-                .say()
             }
         },
-        |zoom| format!("{:.0}%", zoom * 100.),
+        |zoom| zoom_percent(f64::from(zoom)),
+    )
+}
+
+/// A zoom, as a percentage of the picture's or page's own size.
+fn zoom_percent(zoom: f64) -> Words {
+    words!(
+        preview_zoom_percent = "{ $percent }%",
+        percent = Decimal::of(zoom * 100., 0),
+        note = "On a preview's zoom button and among its choices: the zoom, a percentage of the picture's or page's own size (150%)."
     )
 }
 
@@ -42,7 +50,6 @@ fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
     ];
     let film = shell.preview.shows_film();
     for (id, icon, label, value) in fits.into_iter().filter(|fit| !(film && fit.3 == "width")) {
-        let label = label.say();
         menu = menu.child(
             Button::new(id, icon, label.clone(), "ui.preview_zoom")
                 .label(label)
@@ -57,16 +64,17 @@ fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
         );
     }
     let mut presets = div().flex().flex_wrap().gap_1();
-    for (id, label, value) in [
-        ("zoom50", "50%", "0.5"),
-        ("zoom75", "75%", "0.75"),
-        ("zoom100", "100%", "1"),
-        ("zoom150", "150%", "1.5"),
-        ("zoom200", "200%", "2"),
-        ("zoom400", "400%", "4"),
+    for (id, zoom, value) in [
+        ("zoom50", 0.5, "0.5"),
+        ("zoom75", 0.75, "0.75"),
+        ("zoom100", 1., "1"),
+        ("zoom150", 1.5, "1.5"),
+        ("zoom200", 2., "2"),
+        ("zoom400", 4., "4"),
     ] {
+        let label = zoom_percent(zoom);
         presets = presets.child(
-            Button::new(id, "", label, "ui.preview_zoom")
+            Button::new(id, "", label.clone(), "ui.preview_zoom")
                 .label(label)
                 .args(serde_json::json!({"dir":value}))
                 .render(shell, cx),
@@ -342,8 +350,7 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
         let slideshow = words!(
             preview_slideshow = "Slideshow",
             note = "A picture preview's menu row: show the folder's pictures one after another, on the whole screen."
-        )
-        .say();
+        );
         bar.push(Item::menu_only(
             Button::new(
                 "preview-slideshow",
@@ -423,7 +430,11 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
                 "ui.preview_menu",
             )
             .args(serde_json::json!({"kind": crate::fullscreen::SLIDESHOW_POPUP}))
-            .label(format!("{seconds} s")),
+            .label(words!(
+                preview_slideshow_pace = "{ $seconds } s",
+                seconds = seconds,
+                note = "On the button choosing a slideshow's pace: how long it shows each picture, in seconds, short (5 s)."
+            )),
         )
         .opens(crate::fullscreen::SLIDESHOW_POPUP),
     );

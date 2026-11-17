@@ -3384,8 +3384,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         let wrap = words!(
             inspector_wrap_lines = "Wrap lines",
             note = "A text preview's menu row: break the lines too long for the panel."
-        )
-        .say();
+        );
         bar.push(Item::menu_only(
             Button::new("inspect-wrap", "width", wrap.clone(), "ui.wrap_lines")
                 .label(wrap)
@@ -3478,8 +3477,7 @@ fn text_size_panel(
     let default_size = words!(
         inspector_text_size_default = "As in Settings",
         note = "A choice of a preview's text size: the size Settings gives this kind of text."
-    )
-    .say();
+    );
     let default = Button::new("text-default", "revert", default_size.clone(), "ui.inspect")
         .label(default_size)
         .args(serde_json::json!({"action":"reset"}))
@@ -3518,10 +3516,10 @@ pub fn find_panel(
         matches(
             "inspect-previous-match",
             "left",
-            label::previous_match().say(),
+            label::previous_match(),
             -1,
         ),
-        matches("inspect-next-match", "right", label::next_match().say(), 1),
+        matches("inspect-next-match", "right", label::next_match(), 1),
         Button::new(
             "inspect-close-find",
             "close",

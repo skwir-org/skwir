@@ -3077,7 +3077,12 @@ mod tests {
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         let docs = Location::from_path(Path::new("/data/Documents"));
-        let place = skwir_core::registry::Place::new("places", "Documents", "folder", docs);
+        let place = skwir_core::registry::Place::new(
+            "places",
+            Words::as_written("Documents"),
+            "folder",
+            docs,
+        );
         app.registry.places.add("test", place.clone());
         let expr = "ext:pdf in:/data/Documents";
         let search = location_for(expr, None);

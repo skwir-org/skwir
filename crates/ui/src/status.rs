@@ -691,7 +691,7 @@ mod tests {
         let an_hour_before = std::time::SystemTime::UNIX_EPOCH
             + std::time::Duration::from_secs(1_800_000_007 - 3600);
         let as_of = AsOf {
-            by: "plocate's database".into(),
+            by: Words::as_written("plocate's database"),
             updated: Some(an_hour_before),
         };
         let (text, tip) = as_of_said(&as_of, &now);

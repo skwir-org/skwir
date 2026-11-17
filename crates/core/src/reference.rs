@@ -483,14 +483,14 @@ mod tests {
     /// whole, nothing without such a sign.
     #[test]
     fn a_part_begun_is_offered_what_goes_on_with_it() {
-        let reference = Reference::new("Template")
+        let reference = Reference::new(Words::as_written("Template"))
             .group(
-                Group::new("Parts")
-                    .item(Item::new("{name}", "The name"))
-                    .item(Item::new("{n}", "The counter"))
-                    .item(Item::new("{n:03}", "Three digits"))
-                    .item(Item::new("{{", "A brace"))
-                    .item(Item::new("recipe", "Fills").fills("regex", "x")),
+                Group::new(Words::as_written("Parts"))
+                    .item(Item::new("{name}", Words::as_written("The name")))
+                    .item(Item::new("{n}", Words::as_written("The counter")))
+                    .item(Item::new("{n:03}", Words::as_written("Three digits")))
+                    .item(Item::new("{{", Words::as_written("A brace")))
+                    .item(Item::new("recipe", Words::as_written("Fills")).fills("regex", "x")),
             )
             .starts(&["{"])
             .escapes(&["{{", "}}"]);
@@ -507,7 +507,10 @@ mod tests {
         assert_eq!(at("{n x", 2).unwrap().range, 0..2);
         // A caret inside a character is taken back to its start.
         assert_eq!(at("{é", 2).map(|o| o.range), Some(0..1));
-        assert_eq!(Reference::new("None").offered("{n", 2), None);
+        assert_eq!(
+            Reference::new(Words::as_written("None")).offered("{n", 2),
+            None
+        );
     }
 
     /// A caret put inside a part already whole (clicked, or moved by the
@@ -516,12 +519,12 @@ mod tests {
     /// follows the caret and goes on with it, which a row taken replaces.
     #[test]
     fn a_whole_part_offers_nothing_and_a_part_begun_runs_past_the_caret() {
-        let reference = Reference::new("Template")
+        let reference = Reference::new(Words::as_written("Template"))
             .group(
-                Group::new("Parts")
-                    .item(Item::new("{full}", "The whole name"))
-                    .item(Item::new("{n}", "The counter"))
-                    .item(Item::new("{n:03}", "Three digits")),
+                Group::new(Words::as_written("Parts"))
+                    .item(Item::new("{full}", Words::as_written("The whole name")))
+                    .item(Item::new("{n}", Words::as_written("The counter")))
+                    .item(Item::new("{n:03}", Words::as_written("Three digits"))),
             )
             .starts(&["{"]);
         let at = |text: &str, caret: usize| reference.offered(text, caret);
@@ -544,19 +547,22 @@ mod tests {
     /// twice is a brace, the third begins a placeholder.
     #[test]
     fn an_escape_begins_no_part() {
-        let pattern = Reference::new("Pattern")
+        let pattern = Reference::new(Words::as_written("Pattern"))
             .group(
-                Group::new("Signs")
-                    .item(Item::new(r"\d", "A digit"))
-                    .item(Item::new(r"\w", "A letter")),
+                Group::new(Words::as_written("Signs"))
+                    .item(Item::new(r"\d", Words::as_written("A digit")))
+                    .item(Item::new(r"\w", Words::as_written("A letter"))),
             )
             .starts(&["\\"])
             .escapes(&["\\\\"]);
         assert_eq!(pattern.offered(r"a\\", 3), None);
         assert_eq!(pattern.offered(r"\\d", 3), None);
         assert_eq!(pattern.offered(r"\\\", 3).map(|o| o.range), Some(2..3));
-        let template = Reference::new("Template")
-            .group(Group::new("Parts").item(Item::new("{name}", "The name")))
+        let template = Reference::new(Words::as_written("Template"))
+            .group(
+                Group::new(Words::as_written("Parts"))
+                    .item(Item::new("{name}", Words::as_written("The name"))),
+            )
             .starts(&["{"])
             .escapes(&["{{", "}}"]);
         assert_eq!(template.offered("a{{", 3), None);
@@ -567,11 +573,11 @@ mod tests {
 
     #[test]
     fn items_are_found_by_their_places_and_a_recipe_fills_in_place_of_inserting() {
-        let recipe = Item::new(r"\s+ → _", "Spaces to _")
+        let recipe = Item::new(r"\s+ → _", Words::as_written("Spaces to _"))
             .fills("regex", r"\s+")
             .fills("replacement", "_");
-        let reference = Reference::new("Regex")
-            .group(Group::new("Recipes").item(recipe.clone()))
+        let reference = Reference::new(Words::as_written("Regex"))
+            .group(Group::new(Words::as_written("Recipes")).item(recipe.clone()))
             .group(regex_pattern());
         assert_eq!(reference.item(0, 0), Some(&recipe));
         assert_eq!(recipe.inserts, None);
@@ -582,7 +588,7 @@ mod tests {
         );
         assert_eq!(reference.items().count(), 1 + regex_pattern().items.len());
         assert!(!reference.is_empty());
-        assert!(Reference::new("Nothing").is_empty());
+        assert!(Reference::new(Words::as_written("Nothing")).is_empty());
         // Said as data, as a question passes it: in English, which comes
         // back as written (words in JSON are English, ADR-139, 4).
         let json = serde_json::to_value(&reference).unwrap();
@@ -597,10 +603,13 @@ mod tests {
     fn an_item_as_data_puts_what_is_written() {
         let read = |json: serde_json::Value| serde_json::from_value::<Item>(json).unwrap();
         let plain = read(serde_json::json!({ "written": "{name}", "says": "The name" }));
-        assert_eq!(plain, Item::new("{name}", "The name"));
+        assert_eq!(plain, Item::new("{name}", Words::as_written("The name")));
         assert_eq!(plain.inserts.as_deref(), Some("{name}"));
         let only_read = read(serde_json::json!({ "written": "x", "says": "y", "read_only": true }));
-        assert_eq!(only_read, Item::new("x", "y").read_only());
+        assert_eq!(
+            only_read,
+            Item::new("x", Words::as_written("y")).read_only()
+        );
         assert_eq!(only_read.inserts, None);
         let put = read(serde_json::json!({ "written": "(…)", "says": "A group", "inserts": "()" }));
         assert_eq!(put.inserts.as_deref(), Some("()"));
@@ -608,12 +617,14 @@ mod tests {
             read(serde_json::json!({ "written": "a", "says": "b", "fills": { "regex": "a" } }));
         assert_eq!(recipe.inserts, None);
         // Written back, what goes without saying is left unsaid.
-        let json = serde_json::to_value(Item::new("{n}", "The counter")).unwrap();
+        let json =
+            serde_json::to_value(Item::new("{n}", Words::as_written("The counter"))).unwrap();
         assert_eq!(
             json,
             serde_json::json!({ "written": "{n}", "says": "The counter" })
         );
-        let json = serde_json::to_value(Item::new("x", "y").read_only()).unwrap();
+        let json =
+            serde_json::to_value(Item::new("x", Words::as_written("y")).read_only()).unwrap();
         assert_eq!(json["read_only"], true);
         for item in [plain, only_read, put, recipe] {
             let json = serde_json::to_value(&item).unwrap();

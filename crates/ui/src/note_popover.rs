@@ -350,12 +350,11 @@ pub(crate) fn popover(
 }
 
 /// The words of the popup's button that goes to the note where it is.
-fn go_to_note() -> String {
+fn go_to_note() -> skwir_core::words::Words {
     skwir_core::words!(
         note_popover_go = "Go to note",
         note = "The button of a footnote's popup in a document's preview: go to the note where the document has it."
     )
-    .say()
 }
 
 #[cfg(test)]

@@ -29,8 +29,8 @@ fn clients_one_after_another_reach_the_window_through_its_pipe() {
             "test",
             skwir_core::command::Topic::Files,
             "test.answer",
-            "Answer",
-            "Answers 42",
+            skwir_core::words::Words::as_written("Answer"),
+            skwir_core::words::Words::as_written("Answers 42"),
             |_, _| Ok(Outcome::Value(json!(42))),
         )
         .reads();
@@ -40,10 +40,10 @@ fn clients_one_after_another_reach_the_window_through_its_pipe() {
             "test",
             skwir_core::command::Topic::Files,
             "test.make",
-            "Make a folder",
-            "Makes a folder of this name",
+            skwir_core::words::Words::as_written("Make a folder"),
+            skwir_core::words::Words::as_written("Makes a folder of this name"),
             move |args, _| {
-                let mut plan = Plan::new("Make a folder");
+                let mut plan = Plan::new(skwir_core::words::Words::as_written("Make a folder"));
                 plan.push(Mkdir {
                     path: folders.join(args.name),
                 });

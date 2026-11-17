@@ -4759,6 +4759,9 @@ preview_shown_as_written = Shown as written: { $error }
 # A picture preview's menu row: show the folder's pictures one after another, on the whole screen.
 preview_slideshow = Slideshow
 
+# On the button choosing a slideshow's pace: how long it shows each picture, in seconds, short (5 s).
+preview_slideshow_pace = { $seconds } s
+
 # A button of a picture shown on the whole screen.
 preview_slideshow_pause = Pause the slideshow
 
@@ -4848,6 +4851,9 @@ preview_zoom_in = Zoom in
 
 # A preview's button: show the picture, page, map or model smaller.
 preview_zoom_out = Zoom out
+
+# On a preview's zoom button and among its choices: the zoom, a percentage of the picture's or page's own size (150%).
+preview_zoom_percent = { $percent }%
 
 # On a preview's zoom button, where a percentage would be: the picture or page fits the width.
 preview_zoom_width = Width

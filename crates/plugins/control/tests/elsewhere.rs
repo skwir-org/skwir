@@ -21,8 +21,8 @@ fn an_agent_naming_a_server_s_share_is_refused_unread() {
             "test",
             skwir_core::command::Topic::Files,
             "test.root",
-            "Root",
-            "Takes a root",
+            skwir_core::words::Words::as_written("Root"),
+            skwir_core::words::Words::as_written("Takes a root"),
             |_, _| Ok(Outcome::Value(json!("ran"))),
         )
         .reads();
@@ -31,8 +31,8 @@ fn an_agent_naming_a_server_s_share_is_refused_unread() {
             "test",
             skwir_core::command::Topic::Files,
             "test.answer",
-            "Answer",
-            "Answers 42",
+            skwir_core::words::Words::as_written("Answer"),
+            skwir_core::words::Words::as_written("Answers 42"),
             |_, _| Ok(Outcome::Value(json!(42))),
         )
         .reads();

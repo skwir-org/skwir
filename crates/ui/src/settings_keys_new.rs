@@ -1041,6 +1041,7 @@ impl SettingsView {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use skwir_core::words::Words;
 
     use super::{Kind, candidates, kind_of};
 
@@ -1061,8 +1062,8 @@ mod tests {
             "plug",
             skwir_core::command::Topic::Files,
             "plug.toggle",
-            "Toggle a tag",
-            "",
+            Words::as_written("Toggle a tag"),
+            Words::as_written(""),
             |_, _| Ok(skwir_core::command::Outcome::Done),
         );
         let titles = |app: &skwir_core::App| -> Vec<String> {
@@ -1078,7 +1079,7 @@ mod tests {
             "plug.toggle",
             vec![skwir_core::command::Form::new(
                 json!({ "tag": "print" }),
-                "Toggle tag “print”",
+                Words::as_written("Toggle tag “print”"),
             )],
         );
         assert_eq!(titles(&app), ["Toggle a tag…", "Toggle tag “print”"]);

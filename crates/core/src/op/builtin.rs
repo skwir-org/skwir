@@ -5744,7 +5744,7 @@ mod tests {
             anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
                 .context(OriginalStays {
                     whole: false,
-                    said: "its original could not all be removed".into(),
+                    said: Words::as_written("its original could not all be removed"),
                 });
         let said = super::super::said(&failed_across(in_part, &item, &info));
         assert!(item.join("notes.txt").is_file() && info.is_file(), "{said}");

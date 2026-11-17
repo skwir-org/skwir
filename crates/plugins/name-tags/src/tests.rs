@@ -283,7 +283,7 @@ fn edit_plan(app: &App, files: &[&Path], add: &[&str], remove: &[&str]) -> Plan 
         remove: remove.iter().map(|t| (*t).to_owned()).collect(),
         ..Default::default()
     };
-    let mut plan = Plan::new("change tags");
+    let mut plan = Plan::new(Words::as_written("change tags"));
     for f in files {
         plan.push(
             app.notes

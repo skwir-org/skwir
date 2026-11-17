@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use common::*;
 use skwir_core::op::{Copy, Delete, EntryRef, Move, Operation, Plan, Rename};
+use skwir_core::words::Words;
 
 fn set_mode(path: &Path, mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
@@ -85,7 +86,7 @@ fn a_copy_into_a_folder_that_refuses_writes_changes_nothing() {
     }
     let app = app(root);
     let plan = Plan::with_steps(
-        "copy",
+        Words::as_written("copy"),
         vec![copy(&root.join("a.txt"), &root.join("locked"))],
     );
     let r = app.executor.execute_blocking(&plan, app.lifetime());
@@ -117,7 +118,7 @@ fn a_plan_stopped_by_a_failure_keeps_what_it_did_undoable() {
     }
     let app = app(root);
     let plan = Plan::with_steps(
-        "copy three",
+        Words::as_written("copy three"),
         vec![
             copy(&root.join("a"), &root.join("dest")),
             copy(&root.join("b"), &root.join("locked")),
@@ -156,7 +157,10 @@ fn a_folder_copy_that_fails_partway_leaves_no_part_of_itself() {
     }
     std::fs::create_dir(root.join("dest")).unwrap();
     let app = app(root);
-    let plan = Plan::with_steps("copy", vec![copy(&src, &root.join("dest"))]);
+    let plan = Plan::with_steps(
+        Words::as_written("copy"),
+        vec![copy(&src, &root.join("dest"))],
+    );
     let r = app.executor.execute_blocking(&plan, app.lifetime());
     let error = r
         .error
@@ -221,7 +225,7 @@ fn move_with_unremovable_source(notes_first: bool) {
     let original = snapshot(&src);
     let app = app(root);
     let plan = Plan::with_steps(
-        "move",
+        Words::as_written("move"),
         vec![Box::new(Move {
             entry: EntryRef::from_path(&src).unwrap(),
             dest_dir: there.path().to_path_buf(),
@@ -290,7 +294,7 @@ fn a_folder_deleted_in_part_says_what_is_left() {
     }
     let app = app(root);
     let plan = Plan::with_steps(
-        "delete",
+        Words::as_written("delete"),
         vec![Box::new(Delete {
             entry: EntryRef::from_path(&src).unwrap(),
         })],
@@ -313,7 +317,7 @@ fn a_name_too_long_is_refused_before_anything_changes() {
     std::fs::write(root.join("a.txt"), b"a").unwrap();
     let long = format!("{}.txt", "é".repeat(200));
     let plan = Plan::with_steps(
-        "rename",
+        Words::as_written("rename"),
         vec![Box::new(Rename {
             entry: EntryRef::from_path(root.join("a.txt")).unwrap(),
             new_name: long.into(),
