@@ -8,6 +8,10 @@ note as a comment above it. Never edited by hand.
     tools/words/extract.py           write every crate's en.ftl
     tools/words/extract.py --check   fail where one is not what the code says
 
+It also writes the program's list of shipped catalogs,
+crates/skwir/src/catalogs.rs: every crate's `l10n/<language>.ftl` but
+English, compiled in (ADR-139, G).
+
 Refused, in either mode: an id with two Englishes in one crate. Messages
 of tests (in a tests.rs or a tests/ folder, or whose id begins with
 `test_`) are not a crate's.
@@ -165,9 +169,49 @@ def ftl(messages):
     return "".join(out)
 
 
+CATALOGS_RS = ROOT / "crates" / "skwir" / "src" / "catalogs.rs"
+
+
+def shipped():
+    """The program's list of shipped catalogs, as Rust."""
+    lines = [
+        "// Made from the crates' l10n folders by `just words` (tools/words/extract.py):",
+        "// never edit by hand. Every catalog but English, compiled in (ADR-139, G).",
+        "",
+        "#[rustfmt::skip]",
+        "pub static CATALOGS: &[skwir_core::words::Shipped] = &[",
+    ]
+    for path in sorted((ROOT / "crates").glob("**/l10n/*.ftl")):
+        if "target" in path.relative_to(ROOT).parts or path.stem == "en":
+            continue
+        _, domain = crate_of(path)
+        relative = path.relative_to(CATALOGS_RS.parent.parent.parent)
+        lines += [
+            "    skwir_core::words::Shipped {",
+            f'        domain: "{domain}",',
+            f'        language: "{path.stem}",',
+            f'        source: include_str!("../../{relative.as_posix()}"),',
+            "    },",
+        ]
+    lines.append("];")
+    return "\n".join(lines) + "\n"
+
+
 def main():
+    unknown = [arg for arg in sys.argv[1:] if arg != "--check"]
+    if unknown:
+        print(f"unknown argument {unknown[0]}: only --check", file=sys.stderr)
+        return 2
     check = "--check" in sys.argv[1:]
     found, problems = catalogs()
+    wanted_rs = shipped()
+    now_rs = CATALOGS_RS.read_text() if CATALOGS_RS.exists() else None
+    if now_rs != wanted_rs:
+        if check:
+            problems.append(f"{CATALOGS_RS.relative_to(ROOT)} is not what the catalogs are: run `just words`")
+        else:
+            CATALOGS_RS.write_text(wanted_rs)
+            print(f"{CATALOGS_RS.relative_to(ROOT)}: made again")
     for folder, messages in sorted(found.items()):
         path = folder / "l10n" / "en.ftl"
         wanted = ftl(messages)

@@ -15,7 +15,10 @@ use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
-pub use catalog::{Catalog, find, languages_of, register, withdraw};
+pub use catalog::{
+    Catalog, Shipped, find, languages_of, register, register_shipped, register_shipped_of_program,
+    ship, withdraw,
+};
 pub use pattern::{Element, Key, Variant, from_fluent};
 
 /// English, the language the code writes its words in.

@@ -207,6 +207,61 @@ pub fn register(owner: &str, domain: &str, catalog: Catalog) {
     catalogs.1 += 1;
 }
 
+/// A catalog Skwir ships: a crate's (domain's) messages in one language,
+/// its source compiled into the program (`crates/skwir/src/catalogs.rs`,
+/// made by `just words`).
+#[derive(Clone, Copy, Debug)]
+pub struct Shipped {
+    pub domain: &'static str,
+    pub language: &'static str,
+    pub source: &'static str,
+}
+
+/// The catalogs the program ships, handed in as it starts (`ship`).
+static SHIPPED: RwLock<&'static [Shipped]> = RwLock::new(&[]);
+
+/// The catalogs the program ships, each registered by its crate's owner:
+/// the program's own at once (`register_shipped_of_program`), a plugin's
+/// when it is enabled (`register_shipped`).
+pub fn ship(catalogs: &'static [Shipped]) {
+    *SHIPPED.write() = catalogs;
+}
+
+/// Whether two names are one crate's: its package name (`skwir-plugin-tags`)
+/// and Rust's (`skwir_plugin_tags`).
+fn same_crate(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .all(|(x, y)| x == y || (x == b'-' && y == b'_') || (x == b'_' && y == b'-'))
+}
+
+/// Register, as the plugin `owner`'s, the catalogs shipped for its crate
+/// `domain` (either spelling of its name); a crate that is no plugin's (a
+/// plugin from outside answers its host's) keeps the program's.
+pub fn register_shipped(owner: &str, domain: &str) {
+    let shipped = *SHIPPED.read();
+    for one in shipped
+        .iter()
+        .filter(|one| one.domain.starts_with("skwir-plugin-") && same_crate(one.domain, domain))
+    {
+        register(owner, one.domain, Catalog::new(one.language, one.source));
+    }
+}
+
+/// Register, as `owner`'s, the shipped catalogs of every crate that is no
+/// plugin's (core, the platform, the window, the host of plugins from
+/// outside): a plugin's come and go with it.
+pub fn register_shipped_of_program(owner: &str) {
+    let shipped = *SHIPPED.read();
+    for one in shipped
+        .iter()
+        .filter(|one| !one.domain.starts_with("skwir-plugin-"))
+    {
+        register(owner, one.domain, Catalog::new(one.language, one.source));
+    }
+}
+
 /// Take back every catalog `owner` registered.
 pub fn withdraw(owner: &str) {
     let mut catalogs = CATALOGS.write();

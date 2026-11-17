@@ -438,3 +438,35 @@ fn moments_are_written_as_the_locale_writes_dates() {
     assert_eq!(moved.english(), "Moved 12,345 files");
     crate::locale::set_formats(None, None);
 }
+
+/// Shipped catalogs are registered by their crate's owner: the program's
+/// at once, a plugin's by its crate's name either way it is spelt, and
+/// taken back with the plugin.
+#[test]
+fn shipped_catalogs_come_and_go_with_their_crate() {
+    static SHIPPED: [super::Shipped; 2] = [
+        super::Shipped {
+            domain: "skwir-plugin-sample",
+            language: "fr",
+            source: "sample_title = Échantillon\n",
+        },
+        super::Shipped {
+            domain: "skwir-sample-core",
+            language: "fr",
+            source: "core_title = Cœur\n",
+        },
+    ];
+    super::ship(&SHIPPED);
+    super::register_shipped_of_program("skwir");
+    assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
+    assert!(super::languages_of("skwir-plugin-sample").is_empty());
+    super::register_shipped("sample", "skwir_plugin_sample");
+    assert_eq!(super::languages_of("skwir-plugin-sample"), ["fr"]);
+    withdraw("sample");
+    assert!(super::languages_of("skwir-plugin-sample").is_empty());
+    assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
+    // A plugin from outside answers its host's crate: the program's stays.
+    super::register_shipped("outside", "skwir_sample_core");
+    withdraw("outside");
+    assert_eq!(super::languages_of("skwir-sample-core"), ["fr"]);
+}
