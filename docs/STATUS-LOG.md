@@ -19967,3 +19967,28 @@ Language setting's test now also asserts that no counted language's
 catalog was read to list it, and that one shipped uncounted was; clippy
 `-D warnings` on core, the window and the binary; their tests;
 `just words --check` and `--release`.
+
+## 2026-11-18: places in sentences read their grammar
+
+The night's grammar track (ADR-139, 5) left five sentences passing a place
+as a plain name, so French said « Dans « Corbeille » »: the address's
+"In …" and "Folders above …" chevrons, the sidebar's Rename, Hid and
+kept-by-owner. A place is now passed as Skwir's own words for it where
+they are (`message_of`: Home, Trash, Recent, the noun whose gender and
+forms a translation reads), anything else as a name, quoted and isolated
+(`address::in_sentence`, `sidebar::named`). The trail's roots
+(`sidebar::Root`, `address::crumbs`) keep the sidebar's words for a place
+rather than their text said, so a folder's trail starts at Home's noun;
+the trail's fallback root, `sidebar_root_home`, is a noun too. The French
+drafts read the grammar (« Dans le Dossier personnel », « Dossiers
+au-dessus du Dossier personnel », « Corbeille masquée dans la barre
+latérale », « Renommer le Dossier personnel dans la barre latérale »); a
+place the user named stays « Emplacement « Docs » masqué… ». The list of
+where a shortcut works is joined as the reader's language joins a list
+(`keymap_places`, `List::and`: 「、」 in Chinese), where code joined it with
+a comma. The keymap's places are labels, never in a sentence: they need
+no grammar.
+
+**Checked:** clippy `-D warnings` on the window, its tests (750), the
+catalogs' test, `just words --check` and `--release`; on Xvfb in French:
+the Hide toast, the Rename question, both chevrons' tooltips on Home.

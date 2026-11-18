@@ -362,11 +362,13 @@ impl Shell {
 }
 
 /// A folder the sidebar shows, where a trail starts (`address::crumbs`):
-/// its path, and the name the sidebar gives it.
+/// its path, and the name the sidebar gives it, as words: Skwir's own for
+/// a place (Home, the noun whose grammar a sentence naming it reads,
+/// ADR-139, 5), the user's as written.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Root {
     pub path: std::path::PathBuf,
-    pub name: String,
+    pub name: Words,
 }
 
 /// The folders the sidebar shows, in its order and under the names it
@@ -387,7 +389,7 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
         .filter_map(|a| {
             Some(Root {
                 path: a.place.location.path()?,
-                name: a.place.title.say(),
+                name: a.place.title.clone(),
             })
         })
         .collect();
@@ -396,9 +398,9 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
             path: home.to_path_buf(),
             name: words!(
                 sidebar_root_home = "Home",
+                noun,
                 note = "Where a folder's trail starts when the sidebar shows none of the folders above it: the home folder."
-            )
-            .say(),
+            ),
         });
     }
     roots
@@ -1363,8 +1365,16 @@ fn row_key(place: &Place) -> u64 {
 
 /// A place as a sentence names it: a tag's by the tag it stands for (data),
 /// any other by its title as the sidebar says it.
-fn named(place: &Place) -> words::Name {
-    words::Name(place.tag.clone().unwrap_or_else(|| place.title.say()))
+/// A place as a sentence names it: Skwir's own words for it (Home,
+/// Trash) as the noun they are, whose gender and forms a translation
+/// reads (« la Corbeille masquée », ADR-139, 5); anything else (a tag, a
+/// volume's label, a name the user gave) as a name, quoted and isolated.
+fn named(place: &Place) -> words::Arg {
+    match &place.tag {
+        Some(tag) => words::Name(tag.clone()).into(),
+        None if place.title.message_of().is_some() => place.title.clone().into(),
+        None => words::Name(place.title.say()).into(),
+    }
 }
 
 /// A tag's place as its chip (`tags::place_chip`), as the views draw tags:
@@ -1724,7 +1734,7 @@ impl Shell {
                     &serde_json::json!({
                         "title": words!(
                             sidebar_rename_title = "Rename { $place } in the sidebar",
-                            place = words::Name(said),
+                            place = named(place),
                             note = "The title of the question renaming a place the sidebar shows (Home, a volume) under a name of the user's, there only."
                         )
                         .to_data(),

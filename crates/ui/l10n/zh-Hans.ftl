@@ -3808,6 +3808,9 @@ keymap_place_volume = 音量
 keymap_place_with_conditions = { $place }（{ $conditions }）
 
 # draft
+keymap_places = { $places }
+
+# draft
 keymap_view = { $view }视图
 
 # draft

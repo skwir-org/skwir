@@ -2536,12 +2536,25 @@ fn on_frame(
     .into_any_element()
 }
 
-/// What a chevron of the trail before the folder `name` says: the folders
-/// above it.
-fn folders_above(name: String) -> Words {
+/// A crumb's label as a sentence names it: Skwir's own words for a place
+/// (Home, Trash, Recent, a folder's or not) as the noun they are, whose
+/// gender and forms a translation reads (« Dans le Dossier personnel »,
+/// ADR-139, 5); a name (a folder, a tag, a server, a search's words)
+/// isolated, as a folder is named.
+fn in_sentence(label: &Words) -> words::Arg {
+    if label.message_of().is_some() {
+        label.clone().into()
+    } else {
+        Folder(label.say_plain()).into()
+    }
+}
+
+/// What a chevron of the trail before `folder` says: the folders above it
+/// (`in_sentence`: a place of Skwir's, Home, as its noun).
+fn folders_above(folder: words::Arg) -> Words {
     words!(
         address_folders_above = "Folders above { $folder }",
-        folder = Folder(name),
+        folder = folder,
         note = "The tooltip of a chevron of the address's trail: the folders that hold this one; folder: its name."
     )
 }
@@ -2607,7 +2620,7 @@ fn tool_pane(
 /// Documents the user named Papers, `stick › Photos` on a drive. Of two
 /// on one folder, the first in the sidebar. With no roots (`ui.full_path`)
 /// it starts at `/`.
-pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(String, PathBuf)> {
+pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(Words, PathBuf)> {
     let root = roots
         .iter()
         .filter(|root| path.starts_with(&root.path))
@@ -2637,7 +2650,7 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(St
             }
             other => other.as_os_str().to_string_lossy().into_owned(),
         };
-        out.push((label, current.clone()));
+        out.push((Words::as_written(label), current.clone()));
     }
     out
 }
@@ -2788,11 +2801,11 @@ fn breadcrumbs(
                     // Its label plain: a name in these words, isolated
                     // there.
                     if crumb.location.is_path() {
-                        folders_above(crumb.label.say_plain())
+                        folders_above(in_sentence(&crumb.label))
                     } else {
                         words!(
                             address_above = "Above { $place }",
-                            place = Folder(crumb.label.say_plain()),
+                            place = in_sentence(&crumb.label),
                             note = "The tooltip of a chevron of the address's trail: the places above this one; place: its name."
                         )
                     }
@@ -2813,7 +2826,7 @@ fn breadcrumbs(
             // A folder's menu lists the places of it too (its tags).
             words!(
                 address_in = "In { $place }",
-                place = Folder(of.label.say_plain()),
+                place = in_sentence(&of.label),
                 note = "The tooltip of a chevron of the address's trail: the folders and places inside this one; place: its name."
             )
             .say()
@@ -2828,10 +2841,11 @@ fn breadcrumbs(
     let mut groups = Vec::with_capacity(crumbs.len());
     let above = crumbs.first().and_then(|first| {
         let path = first.location.path()?;
-        // Plain: a name in the words of its chevron (`folders_above`).
+        // As its chevron's words name it (`folders_above`): a place of
+        // Skwir's as its noun, a folder isolated.
         path.parent()
             .is_some()
-            .then(|| (first.label.say_plain(), path))
+            .then(|| (in_sentence(&first.label), path))
     });
     for (index, crumb) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;
@@ -3186,14 +3200,14 @@ mod tests {
     fn root(path: &str, name: &str) -> Root {
         Root {
             path: path.into(),
-            name: name.into(),
+            name: Words::as_written(name.to_owned()),
         }
     }
 
     fn labels(path: &str, roots: &[Root]) -> Vec<String> {
         crumbs(Path::new(path), roots)
             .into_iter()
-            .map(|(label, _)| label)
+            .map(|(label, _)| label.english())
             .collect()
     }
 

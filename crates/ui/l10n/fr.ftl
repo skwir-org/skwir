@@ -266,7 +266,11 @@ address_a_to_z_said = de A à Z
 address_about = À propos de Skwir
 
 # draft
-address_above = Au-dessus de { $place }
+address_above = Au-dessus { GENDER($place) ->
+        [masculine] { FORM($place, case: "de") }
+        [feminine] { FORM($place, case: "de") }
+       *[other] de { $place }
+    }
 
 # draft
 address_at_the_bottom = En bas
@@ -380,7 +384,11 @@ address_edit_search = Modifier cette recherche
 address_fewer_levels = Moins de niveaux (ou Ctrl et la molette)
 
 # draft
-address_folders_above = Dossiers au-dessus de { $folder }
+address_folders_above = Dossiers au-dessus { GENDER($folder) ->
+        [masculine] { FORM($folder, case: "de") }
+        [feminine] { FORM($folder, case: "de") }
+       *[other] de { $folder }
+    }
 
 # draft
 address_folders_first = Dossiers en premier
@@ -428,7 +436,7 @@ address_highest = mieux notés
 address_highest_first = Mieux notés d’abord
 
 # draft
-address_in = Dans { $place }
+address_in = Dans { FORM($place, case: "definite") }
 
 # draft
 address_larger = Plus grand (ou Ctrl et la molette)
@@ -3942,6 +3950,9 @@ keymap_place_volume = Volume
 
 # draft
 keymap_place_with_conditions = { $place } ({ $conditions })
+
+# draft
+keymap_places = { $places }
 
 # draft
 keymap_view = Vue { $view }
@@ -7885,7 +7896,11 @@ sidebar_eject = Éjecter { FORM($place, case: "definite") }
 sidebar_fold = Replier
 
 # draft
-sidebar_hid = Emplacement { $place } masqué dans la barre latérale
+sidebar_hid = { GENDER($place) ->
+        [masculine] { $place } masqué dans la barre latérale
+        [feminine] { $place } masquée dans la barre latérale
+       *[other] Emplacement { $place } masqué dans la barre latérale
+    }
 
 # draft
 sidebar_hid_undo = Annuler
@@ -7912,7 +7927,7 @@ sidebar_rename_accept = Renommer
 sidebar_rename_placeholder = Nom (vide : { $own })
 
 # draft
-sidebar_rename_title = Renommer { $place } dans la barre latérale
+sidebar_rename_title = Renommer { FORM($place, case: "definite") } dans la barre latérale
 
 # draft
 sidebar_reset_section = Réinitialiser { $section }
@@ -7922,6 +7937,9 @@ sidebar_reset_sections = Réinitialiser les sections
 
 # draft
 sidebar_root_home = Dossier personnel
+    .gender = masculine
+    .definite = le Dossier personnel
+    .de = du Dossier personnel
 
 # draft
 sidebar_space = { $free } libres sur { $total }

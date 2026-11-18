@@ -3393,6 +3393,9 @@ keymap_place_volume = Volume
 # Where keys work: a place, then the conditions that must hold there (File list (one item selected)).
 keymap_place_with_conditions = { $place } ({ $conditions })
 
+# Where a shortcut works, in the list of shortcuts: the places it works in, joined (File list, Sidebar and Address bar).
+keymap_places = { $places }
+
 # A command showing the folder in a view; view: the view's name (List, Grid, Columns).
 keymap_view = { $view } view
 
@@ -7112,6 +7115,7 @@ sidebar_reset_section = Reset { $section }
 sidebar_reset_sections = Reset Sections
 
 # Where a folder's trail starts when the sidebar shows none of the folders above it: the home folder.
+# noun
 sidebar_root_home = Home
 
 # A volume's tooltip in the sidebar: the room left on it, of its size (12.3 GB free of 500 GB).

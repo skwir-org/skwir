@@ -150,9 +150,7 @@ pub fn segments(trail: &Trail, roots: &[crate::sidebar::Root]) -> Vec<Crumb> {
             // The folders' names, the root's as the sidebar says it.
             crate::address::crumbs(base, roots)
                 .into_iter()
-                .map(|(label, path)| {
-                    Crumb::new(Words::as_written(label), Location::from_path(path))
-                })
+                .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
                 .collect()
         })
         .unwrap_or_default();
@@ -182,7 +180,7 @@ mod tests {
         };
         let home = crate::sidebar::Root {
             path: "/home/someone".into(),
-            name: "Home".into(),
+            name: Words::as_written("Home"),
         };
         let labels: Vec<String> = segments(&trail, &[home])
             .into_iter()

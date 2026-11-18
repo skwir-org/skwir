@@ -1812,13 +1812,18 @@ pub fn place_of(context: &str) -> Where {
                     groups.push(PLACES[i].group);
                 }
             }
-            // Transitional: a list argument (ADR-139).
-            found.place = groups
+            // Joined as the reader's language joins a list (「、」 in
+            // Chinese), each place its words.
+            let named = groups
                 .iter()
                 .filter_map(|&group| PLACES.iter().find(|place| place.group == group))
-                .map(|place| place.words().say())
-                .collect::<Vec<_>>()
-                .join(", ");
+                .map(Place::words);
+            found.place = words!(
+                keymap_places = "{ $places }",
+                places = words::List::and(named),
+                note = "Where a shortcut works, in the list of shortcuts: the places it works in, joined (File list, Sidebar and Address bar)."
+            )
+            .say();
             found.id = groups.join("|");
             found.rank = at.iter().min().map_or(0, |i| i + 1);
             found.inside = at.iter().all(|&i| PLACES[i].inside);
@@ -3582,7 +3587,8 @@ mod tests {
         assert_eq!(settings.place, "Settings");
         assert!(settings.inside);
         let lists = super::place_of(&context_of(Some("palette|form")));
-        assert_eq!(lists.place, "Command palette, Forms");
+        // Joined as a list is, in the reader's language.
+        assert_eq!(lists.place, "Command palette and Forms");
         assert!(lists.inside);
         let own = super::place_of("UsageMap && selection");
         assert_eq!(own.place, "UsageMap");
