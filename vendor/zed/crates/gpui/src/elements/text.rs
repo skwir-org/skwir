@@ -978,7 +978,12 @@ impl TextLayout {
                 line_origin.y = line_bottom;
                 line_start_ix += line.len() + 1;
             } else {
-                let position_within_line = position - line_origin;
+                // From the left of the row under it, as it was drawn
+                // aligned (centered, at the right).
+                let mut position_within_line = position - line_origin;
+                let row = line.rows(line_height).at(position_within_line.y);
+                position_within_line.x -=
+                    line.row_offset(row, element_state.text_align, Some(bounds));
                 match line.index_for_position(position_within_line, line_height) {
                     Ok(index_within_line) => return Ok(line_start_ix + index_within_line),
                     Err(index_within_line) => return Err(line_start_ix + index_within_line),
@@ -1013,7 +1018,14 @@ impl TextLayout {
                 continue;
             } else {
                 let ix_within_line = index - line_start_ix;
-                return Some(line_origin + line.position_for_index(ix_within_line, line_height)?);
+                let position = line.position_for_index(ix_within_line, line_height)?;
+                // In the row it is in, where `row_bounds_for_index` and the
+                // line place it, as that row was drawn aligned.
+                let row = line
+                    .row_starts()
+                    .partition_point(|start| *start < ix_within_line);
+                let aligned = line.row_offset(row, element_state.text_align, Some(bounds));
+                return Some(line_origin + position + Point::new(aligned, Pixels::ZERO));
             }
         }
 
@@ -1553,6 +1565,68 @@ mod tests {
             let laid = layout.0.borrow().as_ref().map(|inner| inner.text_align);
             assert_eq!(laid, Some(drawn), "{direction:?} {align:?}");
         }
+    }
+
+    /// A text aligned right or centered answers where its rows are drawn:
+    /// `position_for_index` and `index_for_position` count each row from
+    /// where it stands as it is painted, wrapped or read right to left.
+    /// Left aligned, as it did.
+    #[crate::test]
+    fn an_aligned_text_answers_where_its_rows_are_drawn(cx: &mut crate::TestAppContext) {
+        use crate::{AvailableSpace, ParentElement as _, Styled as _, TextAlign, div, point, px};
+
+        let cx = cx.add_empty_window();
+        let mut laid = |text: &'static str, align: TextAlign, width: f32| {
+            let text = StyledText::new(text);
+            let layout = text.layout().clone();
+            cx.draw(
+                point(px(0.), px(0.)),
+                AvailableSpace::max_size(),
+                move |_, _| div().w(px(width)).text_align(align).child(text),
+            );
+            layout
+        };
+        let x = |layout: &TextLayout, index: usize| {
+            let at = layout.position_for_index(index).unwrap();
+            (f32::from(at.x) * 10.).round() / 10.
+        };
+        let at = |x: f32, y: f32| point(px(x), px(y));
+
+        // 0.6 em a character at 16 px: "abcd" is 38.4 px, in 200.
+        let left = laid("abcd", TextAlign::Left, 200.);
+        assert_eq!((x(&left, 0), x(&left, 4)), (0., 38.4));
+        assert_eq!(left.index_for_position(at(20., 1.)), Ok(2));
+        assert_eq!(left.index_for_position(at(181., 1.)), Err(4));
+
+        let right = laid("abcd", TextAlign::Right, 200.);
+        assert_eq!((x(&right, 0), x(&right, 4)), (161.6, 200.));
+        assert_eq!(right.index_for_position(at(181., 1.)), Ok(2));
+        assert_eq!(right.index_for_position(at(20., 1.)), Err(0), "before it");
+
+        let centered = laid("abcd", TextAlign::Center, 200.);
+        assert_eq!((x(&centered, 0), x(&centered, 4)), (80.8, 119.2));
+        assert_eq!(centered.index_for_position(at(105., 1.)), Ok(2));
+
+        // Wrapped at 100: "aaaa bbbb " (96 px) then "cc" (19.2), each row
+        // at the right; the place where a row wraps ends the row before.
+        let wrapped = laid("aaaa bbbb cc", TextAlign::Right, 100.);
+        let line = f32::from(wrapped.line_height());
+        assert_eq!((x(&wrapped, 0), x(&wrapped, 10)), (4., 100.));
+        assert_eq!(x(&wrapped, 11), 90.4);
+        assert_eq!(
+            f32::from(wrapped.position_for_index(11).unwrap().y),
+            line,
+            "on the second row"
+        );
+        assert_eq!(wrapped.index_for_position(at(85., line + 1.)), Ok(10));
+        assert_eq!(wrapped.index_for_position(at(10., 1.)), Ok(0));
+
+        // Hebrew at the right, read from it: its first letter is the
+        // rightmost (each of two bytes).
+        let hebrew = laid("אבג", TextAlign::Right, 200.);
+        assert_eq!((x(&hebrew, 0), x(&hebrew, 6)), (200., 171.2));
+        assert_eq!(hebrew.index_for_position(at(195., 1.)), Ok(0));
+        assert_eq!(hebrew.index_for_position(at(175., 1.)), Ok(4));
     }
 
     #[test]

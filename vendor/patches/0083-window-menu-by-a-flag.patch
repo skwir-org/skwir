@@ -1,0 +1,143 @@
+0083 window-menu-by-a-flag: The menu macOS lists the windows in is the one whose caller says it is (Menu::window_menu, kept by OwnedMenu), never the one named "Window", so a translated menu keeps its windows
+
+diff --git a/crates/gpui/examples/image/image.rs b/crates/gpui/examples/image/image.rs
+index 30160c6..e22eed2 100644
+--- a/crates/gpui/examples/image/image.rs
++++ b/crates/gpui/examples/image/image.rs
+@@ -178,6 +178,7 @@ fn run_example() {
+             name: "Image".into(),
+             items: vec![MenuItem::action("Quit", Quit)],
+             disabled: false,
++            window_menu: false,
+         }]);
+ 
+         let window_options = WindowOptions {
+diff --git a/crates/gpui/examples/text.rs b/crates/gpui/examples/text.rs
+index 7fa2a15..036cb0c 100644
+--- a/crates/gpui/examples/text.rs
++++ b/crates/gpui/examples/text.rs
+@@ -375,6 +375,7 @@ fn run_example() {
+             name: "GPUI Typography".into(),
+             disabled: false,
+             items: vec![],
++            window_menu: false,
+         }]);
+ 
+         let fonts = [include_bytes!(
+diff --git a/crates/gpui/src/platform/app_menu.rs b/crates/gpui/src/platform/app_menu.rs
+index 27c20c0..ccfdc23 100644
+--- a/crates/gpui/src/platform/app_menu.rs
++++ b/crates/gpui/src/platform/app_menu.rs
+@@ -10,6 +10,12 @@ pub struct Menu {
+ 
+     /// Whether this menu is disabled
+     pub disabled: bool,
++
++    /// Whether this is the menu the system lists the application's windows
++    /// in, below its items: macOS's Window menu (`NSApplication`'s
++    /// `windowsMenu`). Said by the caller, never told by the menu's name,
++    /// which a translation changes.
++    pub window_menu: bool,
+ }
+ 
+ impl Menu {
+@@ -19,6 +25,7 @@ impl Menu {
+             name: name.into(),
+             items: vec![],
+             disabled: false,
++            window_menu: false,
+         }
+     }
+ 
+@@ -34,12 +41,20 @@ impl Menu {
+         self
+     }
+ 
++    /// Set whether this is the menu the system lists the application's
++    /// windows in (macOS's Window menu, whatever it is called)
++    pub fn window_menu(mut self, window_menu: bool) -> Self {
++        self.window_menu = window_menu;
++        self
++    }
++
+     /// Create an OwnedMenu from this Menu
+     pub fn owned(self) -> OwnedMenu {
+         OwnedMenu {
+             name: self.name.to_string().into(),
+             items: self.items.into_iter().map(|item| item.owned()).collect(),
+             disabled: self.disabled,
++            window_menu: self.window_menu,
+         }
+     }
+ }
+@@ -244,6 +259,10 @@ pub struct OwnedMenu {
+ 
+     /// Whether this menu is disabled
+     pub disabled: bool,
++
++    /// Whether this is the menu the system lists the application's windows
++    /// in (`Menu::window_menu`)
++    pub window_menu: bool,
+ }
+ 
+ /// The different kinds of items that can be in a menu
+@@ -376,6 +395,17 @@ mod tests {
+         assert!(menu.disabled);
+     }
+ 
++    /// The menu the system lists the windows in is the one that says it
++    /// is, whatever it is called, and its owned copy says so too.
++    #[test]
++    fn the_window_menu_is_the_one_that_says_it_is() {
++        let translated = Menu::new("Fenêtre").window_menu(true);
++        assert!(translated.window_menu);
++        assert!(translated.owned().window_menu);
++        assert!(!Menu::new("Window").window_menu, "never by its name");
++        assert!(!Menu::new("Window").owned().window_menu);
++    }
++
+     #[test]
+     fn test_menu_item_builder() {
+         use super::MenuItem;
+@@ -412,6 +442,7 @@ mod tests {
+             name: "Submenu".into(),
+             items: vec![],
+             disabled: true,
++            window_menu: false,
+         });
+         assert_eq!(
+             match &submenu {
+diff --git a/crates/gpui_macos/src/platform.rs b/crates/gpui_macos/src/platform.rs
+index 8f3ad17..1594a61 100644
+--- a/crates/gpui_macos/src/platform.rs
++++ b/crates/gpui_macos/src/platform.rs
+@@ -299,7 +299,9 @@ impl MacPlatform {
+                 menu_item.setSubmenu(Some(&menu));
+                 application_menu.addItem(&menu_item);
+ 
+-                if menu_config.name == "Window" {
++                // The menu AppKit lists the windows in, as the caller says:
++                // its name is in the application's language.
++                if menu_config.window_menu {
+                     let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
+                     let _: () = msg_send![app, setWindowsMenu: &*menu];
+                 }
+@@ -444,6 +446,7 @@ impl MacPlatform {
+                     name,
+                     items,
+                     disabled,
++                    window_menu,
+                 }) => {
+                     let item = NSMenuItem::new(self.1);
+                     let submenu = NSMenu::new(self.1);
+@@ -451,6 +454,10 @@ impl MacPlatform {
+                     for item in items {
+                         submenu.addItem(&self.create_menu_item(item, delegate, actions, keymap));
+                     }
++                    if *window_menu {
++                        let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
++                        let _: () = msg_send![app, setWindowsMenu: &*submenu];
++                    }
+                     item.setSubmenu(Some(&submenu));
+                     item.setEnabled(!disabled);
+                     item.setTitle(&NSString::from_str(name));

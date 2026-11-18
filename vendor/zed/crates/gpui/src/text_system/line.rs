@@ -495,6 +495,42 @@ impl WrappedLine {
         Ok(())
     }
 
+    /// How far right of the line's origin row `row` is drawn when the line
+    /// is painted aligned so (`paint`, `bounds` as it is given them): none
+    /// aligned left, the room the row leaves aligned right, half of it
+    /// centered. The rows past the last are the last's. What reads a place
+    /// in the line from its rows (`WrappedLineLayout::index_for_position`,
+    /// `position_for_index`), which count from a row's left as if it were
+    /// aligned left, moves by it.
+    pub fn row_offset(
+        &self,
+        row: usize,
+        align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
+    ) -> Pixels {
+        let layout = &self.layout.unwrapped_layout;
+        let wraps = &self.layout.wrap_boundaries;
+        let align_width = match bounds {
+            Some(bounds) => bounds.size.width,
+            None => self.layout.wrap_width.unwrap_or(layout.width),
+        };
+        let row = row.min(wraps.len());
+        let row_start = row.checked_sub(1).map_or(px(0.), |before| {
+            let boundary = wraps[before];
+            layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+                .position
+                .x
+        });
+        aligned_origin_x(
+            Point::default(),
+            align_width,
+            row_start,
+            &align,
+            layout,
+            wraps.get(row).as_ref(),
+        )
+    }
+
     /// Where each box the line holds (`RunPosition::Inline`) is drawn when
     /// the line is painted at `origin` as `paint` paints it: the index of
     /// its character in the line, and its bounds.

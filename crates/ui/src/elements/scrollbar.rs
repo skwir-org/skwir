@@ -223,13 +223,25 @@ impl IntoElement for Scrollbar {
 }
 
 /// The gutter along `axis`, less the corner a bar along the other edge
-/// takes while it shows.
-fn track_along(gutter: Bounds<Pixels>, axis: Axis, corner: bool) -> Bounds<Pixels> {
+/// takes while it shows: at the gutter's end, or at its start
+/// (`corner_at_start`: a window mirrored puts the upright bar at its left,
+/// so the corner a sideways bar leaves it is there).
+fn track_along(
+    gutter: Bounds<Pixels>,
+    axis: Axis,
+    corner: bool,
+    corner_at_start: bool,
+) -> Bounds<Pixels> {
     if !corner {
         return gutter;
     }
     let length = (gutter.size.along(axis) - px(GUTTER)).max(px(0.));
-    Bounds::new(gutter.origin, gutter.size.apply_along(axis, |_| length))
+    let origin = if corner_at_start {
+        gutter.origin.apply_along(axis, |start| start + px(GUTTER))
+    } else {
+        gutter.origin
+    };
+    Bounds::new(origin, gutter.size.apply_along(axis, |_| length))
 }
 
 /// The thumb inside `track`, along `axis`, or `None` when everything fits.
@@ -318,7 +330,10 @@ impl Element for Scrollbar {
             .unwrap_or(&self.scrolls)
             .metrics(self.axis.invert(), false)
             .scrolls();
-        let track = track_along(bounds, self.axis, corner);
+        // Mirrored, the upright bar stands at the left: the corner a
+        // sideways bar leaves it is at the track's start.
+        let corner_at_start = self.axis == Axis::Horizontal && window.layout_direction().is_rtl();
+        let track = track_along(bounds, self.axis, corner, corner_at_start);
         let thumb = thumb(track, metrics, self.axis).map(|thumb| {
             if from_end {
                 Bounds::new(
@@ -560,14 +575,18 @@ mod tests {
     #[test]
     fn a_bar_leaves_the_corner_to_the_other() {
         let gutter = Bounds::new(point(px(0.), px(300.)), size(px(400.), px(GUTTER)));
-        assert_eq!(track_along(gutter, Axis::Horizontal, false), gutter);
+        assert_eq!(track_along(gutter, Axis::Horizontal, false, false), gutter);
         // The vertical bar shows: the corner at the right end is its own.
-        let short = track_along(gutter, Axis::Horizontal, true);
+        let short = track_along(gutter, Axis::Horizontal, true, false);
         assert_eq!(short.origin, gutter.origin);
         assert_eq!(short.size, size(px(400. - GUTTER), px(GUTTER)));
+        // Mirrored, the vertical bar is at the left: its corner is there.
+        let mirrored = track_along(gutter, Axis::Horizontal, true, true);
+        assert_eq!(mirrored.origin, point(px(GUTTER), px(300.)));
+        assert_eq!(mirrored.size, short.size);
         let gutter = Bounds::new(point(px(388.), px(0.)), size(px(GUTTER), px(300.)));
         assert_eq!(
-            track_along(gutter, Axis::Vertical, true).size,
+            track_along(gutter, Axis::Vertical, true, false).size,
             size(px(GUTTER), px(300. - GUTTER))
         );
     }

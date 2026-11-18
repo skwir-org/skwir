@@ -492,12 +492,20 @@ impl Element for UniformList {
                         (self.render_items)(visible_range.clone(), window, cx)
                     };
 
+                    // Laid out right to left (`LayoutDirection`, the list's
+                    // own or inherited), an item is a root taffy places at
+                    // the right of the width it is given, its start: what is
+                    // narrower than the list stands at its right, what is
+                    // wider overflows to its left. Scrolled sideways, that
+                    // width grows by the offset (which runs from 0 up there,
+                    // `Interactivity::clamp_scroll_position`): given it from
+                    // the list's left, its start moves right by the offset,
+                    // as left to right it moves left by it.
+                    let right_to_left = window.layout_direction().is_rtl();
                     let content_mask = ContentMask::new(bounds);
                     window.with_content_mask(Some(content_mask), |window| {
                         for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
                             let item_top = item_height_f64 * ix as f64 - scroll_top;
-                            let item_origin = padded_bounds.origin
-                                + point(scroll_offset.x, Pixels::from(item_top));
 
                             let available_width = if can_scroll_horizontally {
                                 padded_bounds.size.width + scroll_offset.x.abs()
@@ -509,6 +517,13 @@ impl Element for UniformList {
                                 AvailableSpace::Definite(item_height),
                             );
                             item.layout_as_root(available_space, window, cx);
+                            let item_left = if right_to_left {
+                                padded_bounds.left()
+                            } else {
+                                padded_bounds.left() + scroll_offset.x
+                            };
+                            let item_origin =
+                                point(item_left, padded_bounds.top() + Pixels::from(item_top));
                             item.prepaint_at(item_origin, window, cx);
                             frame_state.items.push(item);
                         }
@@ -932,5 +947,180 @@ mod test {
             .map(|ix| (ix, px(-16.0 + 24.0 * (ix - 9_000_002) as f32)))
             .collect::<Vec<_>>();
         assert_eq!(item_tops, expected_tops);
+    }
+}
+
+#[cfg(test)]
+mod layout_direction_tests {
+    use crate::{
+        AnyElement, AppContext as _, Bounds, Context, IntoElement, LayoutDirection,
+        ListHorizontalSizingBehavior, ParentElement as _, Pixels, Render, Styled as _,
+        TestAppContext, UniformListScrollHandle, VisualTestContext, Window, canvas, div, point, px,
+        size, uniform_list,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    type Seen = Rc<RefCell<Vec<Bounds<Pixels>>>>;
+
+    /// A box 20 px high, `width` wide or the list's, that says where it was
+    /// prepainted.
+    fn item(width: Option<f32>, seen: Seen) -> impl IntoElement {
+        let item = div().flex_none().h(px(20.)).child(
+            canvas(
+                move |bounds, _, _| seen.borrow_mut().push(bounds),
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        );
+        match width {
+            Some(width) => item.w(px(width)),
+            None => item.w_full(),
+        }
+    }
+
+    /// What a view draws (a list asks for the view it is drawn in).
+    struct Drawn(Box<dyn Fn() -> AnyElement>);
+
+    impl Render for Drawn {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            (self.0)()
+        }
+    }
+
+    /// Where the three items of a list 300 px wide were drawn, laid out in
+    /// `direction`: the list's own where `own`, else its parent's.
+    fn lefts(
+        cx: &mut VisualTestContext,
+        direction: LayoutDirection,
+        own: bool,
+        width: Option<f32>,
+    ) -> Vec<f32> {
+        let seen: Seen = Rc::default();
+        let kept = seen.clone();
+        let draw = move || {
+            let kept = kept.clone();
+            let list = uniform_list("rows", 3, move |range, _, _| {
+                range.map(|_| item(width, kept.clone())).collect::<Vec<_>>()
+            })
+            .size_full();
+            let (list, parent) = if own {
+                (list.layout_direction(direction), div())
+            } else {
+                (list, div().layout_direction(direction))
+            };
+            parent.size_full().child(list).into_any_element()
+        };
+        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
+            cx.new(|_| Drawn(Box::new(draw))).into_any_element()
+        });
+        let lefts = seen
+            .borrow()
+            .iter()
+            .map(|bounds| f32::from(bounds.left()))
+            .collect();
+        lefts
+    }
+
+    /// Laid out right to left, an item narrower than the list starts at its
+    /// right, the direction the list's own or inherited; one as wide as the
+    /// list, and every item left to right, where it was.
+    #[crate::test]
+    fn an_item_starts_at_the_list_s_start(cx: &mut TestAppContext) {
+        use LayoutDirection::{LeftToRight, RightToLeft};
+        let cx = cx.add_empty_window();
+        assert_eq!(lefts(cx, LeftToRight, false, Some(100.)), [0.; 3]);
+        assert_eq!(lefts(cx, LeftToRight, true, Some(100.)), [0.; 3]);
+        assert_eq!(lefts(cx, RightToLeft, false, Some(100.)), [200.; 3]);
+        assert_eq!(lefts(cx, RightToLeft, true, Some(100.)), [200.; 3]);
+        assert_eq!(lefts(cx, RightToLeft, false, None), [0.; 3]);
+        assert_eq!(lefts(cx, RightToLeft, true, None), [0.; 3]);
+    }
+
+    /// A list of rows 500 px wide in 300 that scrolls sideways
+    /// (`ListHorizontalSizingBehavior::Unconstrained`), laid out in
+    /// `direction`.
+    struct Wide {
+        handle: UniformListScrollHandle,
+        direction: LayoutDirection,
+        seen: Seen,
+    }
+
+    impl Render for Wide {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let seen = self.seen.clone();
+            uniform_list("wide", 3, move |range, _, _| {
+                range
+                    .map(|_| div().flex().child(item(Some(500.), seen.clone())))
+                    .collect::<Vec<_>>()
+            })
+            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+            .track_scroll(&self.handle)
+            .layout_direction(self.direction)
+            .size_full()
+        }
+    }
+
+    /// Scrolled sideways to `x` and drawn: where its first row was drawn
+    /// (the offset it kept is the handle's).
+    fn scrolled(
+        cx: &mut VisualTestContext,
+        handle: &UniformListScrollHandle,
+        direction: LayoutDirection,
+        x: f32,
+    ) -> f32 {
+        handle
+            .0
+            .borrow()
+            .base_handle
+            .set_offset(point(px(x), px(0.)));
+        let seen: Seen = Rc::default();
+        let (handle, kept) = (handle.clone(), seen.clone());
+        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
+            cx.new(|_| Wide {
+                handle,
+                direction,
+                seen: kept,
+            })
+            .into_any_element()
+        });
+        f32::from(seen.borrow()[0].left())
+    }
+
+    /// Left to right, a row wider than the list starts at its left and
+    /// scrolls left by up to what overflows; right to left, it starts at its
+    /// right, what overflows to its left, and scrolls rightward from 0 by
+    /// up to as much (CSS's `scrollLeft`, its sign turned).
+    #[crate::test]
+    fn a_row_wider_than_the_list_scrolls_from_its_start(cx: &mut TestAppContext) {
+        use LayoutDirection::{LeftToRight, RightToLeft};
+        let cx = cx.add_empty_window();
+        let handle = UniformListScrollHandle::new();
+        let offset =
+            |handle: &UniformListScrollHandle| f32::from(handle.0.borrow().base_handle.offset().x);
+
+        let left = scrolled(cx, &handle, LeftToRight, 0.);
+        assert_eq!((offset(&handle), left), (0., 0.));
+        let left = scrolled(cx, &handle, LeftToRight, -200.);
+        assert_eq!((offset(&handle), left), (-200., -200.));
+        let left = scrolled(cx, &handle, LeftToRight, -400.);
+        assert_eq!((offset(&handle), left), (-200., -200.), "no further");
+
+        let handle = UniformListScrollHandle::new();
+        let left = scrolled(cx, &handle, RightToLeft, 0.);
+        assert_eq!((offset(&handle), left), (0., -200.), "its right in view");
+        assert_eq!(
+            f32::from(handle.0.borrow().base_handle.max_offset().x),
+            200.
+        );
+        let left = scrolled(cx, &handle, RightToLeft, 120.);
+        assert_eq!((offset(&handle), left), (120., -80.));
+        let left = scrolled(cx, &handle, RightToLeft, 400.);
+        assert_eq!((offset(&handle), left), (200., 0.), "its left in view");
+        let left = scrolled(cx, &handle, RightToLeft, -50.);
+        assert_eq!(
+            (offset(&handle), left),
+            (0., -200.),
+            "no further than its start"
+        );
     }
 }

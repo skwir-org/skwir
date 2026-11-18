@@ -299,7 +299,9 @@ impl MacPlatform {
                 menu_item.setSubmenu(Some(&menu));
                 application_menu.addItem(&menu_item);
 
-                if menu_config.name == "Window" {
+                // The menu AppKit lists the windows in, as the caller says:
+                // its name is in the application's language.
+                if menu_config.window_menu {
                     let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
                     let _: () = msg_send![app, setWindowsMenu: &*menu];
                 }
@@ -444,12 +446,17 @@ impl MacPlatform {
                     name,
                     items,
                     disabled,
+                    window_menu,
                 }) => {
                     let item = NSMenuItem::new(self.1);
                     let submenu = NSMenu::new(self.1);
                     let _: () = msg_send![&submenu, setDelegate: delegate];
                     for item in items {
                         submenu.addItem(&self.create_menu_item(item, delegate, actions, keymap));
+                    }
+                    if *window_menu {
+                        let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
+                        let _: () = msg_send![app, setWindowsMenu: &*submenu];
                     }
                     item.setSubmenu(Some(&submenu));
                     item.setEnabled(!disabled);

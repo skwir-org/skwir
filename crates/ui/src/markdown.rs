@@ -13,7 +13,8 @@
 //! return early and skip the frame, or code inside a quote loses its border.
 use crate::{inspector_text, theme::Theme};
 use gpui::{
-    AnyElement, FontWeight, Hsla, RenderImage, SharedString, WeakEntity, div, prelude::*, px,
+    AnyElement, DefiniteLength, FontWeight, Hsla, Pixels, RenderImage, SharedString, WeakEntity,
+    div, prelude::*, px,
 };
 use skwir_core::{
     inspection::{Align, Block, BlockKind, Flow},
@@ -320,6 +321,75 @@ impl Edges {
     }
 }
 
+/// The direction a block reads in, which lays it out, as a page marking each
+/// paragraph `dir="auto"` does (GitHub's Markdown): its text's first strong
+/// letter's (`gpui::LayoutDirection::of_text`, UAX #9's P2 and P3). A
+/// paragraph, a heading or a list item in Hebrew or Arabic starts at its
+/// right in any window, English included: its lines aligned there, its
+/// marker, its quotation's bar and its indent on that side. Code reads left
+/// to right, as editors keep it, and so does a table's row, whose columns
+/// are the document's (each cell reads in its own, `table_row`). A block
+/// with no such letter (digits, a picture alone) reads left to right, as
+/// `dir="auto"` has it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reads {
+    LeftToRight,
+    RightToLeft,
+}
+
+impl Reads {
+    fn of(block: &Block) -> Self {
+        if block.code || block.kind != BlockKind::Text {
+            return Self::LeftToRight;
+        }
+        Self::of_text(&block.text)
+    }
+
+    fn of_text(text: &str) -> Self {
+        match gpui::LayoutDirection::of_text(text) {
+            Some(gpui::LayoutDirection::RightToLeft) => Self::RightToLeft,
+            _ => Self::LeftToRight,
+        }
+    }
+
+    /// `element` laid out in this direction: right to left, a row from its
+    /// right and its texts at their start there (gpui's `TextAlign::Start`),
+    /// as the document's root lays a block out left to right.
+    fn lay_out<E: Styled>(self, element: E) -> E {
+        element
+            .layout_direction(match self {
+                Self::LeftToRight => gpui::LayoutDirection::LeftToRight,
+                Self::RightToLeft => gpui::LayoutDirection::RightToLeft,
+            })
+            .text_align(gpui::TextAlign::Start)
+    }
+
+    /// The padding on the block's start: the document's own margin, a
+    /// side of the block's, never the window's (`sides`).
+    fn pad_start<E: Styled>(self, element: E, length: impl Clone + Into<DefiniteLength>) -> E {
+        match self {
+            Self::LeftToRight => element.pl(length),
+            Self::RightToLeft => element.pr(length),
+        }
+    }
+
+    /// The padding on the block's end.
+    fn pad_end<E: Styled>(self, element: E, length: impl Clone + Into<DefiniteLength>) -> E {
+        match self {
+            Self::LeftToRight => element.pr(length),
+            Self::RightToLeft => element.pl(length),
+        }
+    }
+
+    /// A bar along the block's start (a quotation's).
+    fn bar_at_start<E: Styled>(self, element: E, width: Pixels) -> E {
+        match self {
+            Self::LeftToRight => element.border_l(width),
+            Self::RightToLeft => element.border_r(width),
+        }
+    }
+}
+
 pub fn block(
     block: &Block,
     index: usize,
@@ -332,6 +402,7 @@ pub fn block(
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
     let id = ("inspect-block", index);
+    let reads = Reads::of(block);
     // A block that flows is set apart as a paragraph is, but where it goes
     // on the block before it (`Edges`); in reading mode the space at the
     // edge of a list or a quotation is outside the quotation's bar.
@@ -347,8 +418,8 @@ pub fn block(
         .when(outside(edges.below), |row| row.pb(space))
         .when_some(style.font.clone(), gpui::Styled::font_family);
     // Inside the page's margins: the block's spacing, and a quotation's bar
-    // at the text's left edge, running through that spacing to the next
-    // block of the quotation.
+    // at the text's start (its left, its right read right to left), running
+    // through that spacing to the next block of the quotation.
     let mut frame = div().w_full().min_w_0();
     frame = if block.kind == BlockKind::Rule {
         frame.py(px(style.section_spacing))
@@ -362,7 +433,10 @@ pub fn block(
             .when(inside(edges.below), |frame| frame.pb(space))
     };
     if block.quote {
-        frame = frame.border_l_2().border_color(style.quote_border).pl_4();
+        frame = reads
+            .bar_at_start(frame, px(2.))
+            .border_color(style.quote_border);
+        frame = reads.pad_start(frame, gpui::rems(1.));
     }
     // A picture alone on its line sits on the line's baseline, as a browser
     // sets it: an item's marker beside it lines up with its foot.
@@ -397,32 +471,33 @@ pub fn block(
         },
     };
     // The document's own margins (a letter, a verse, a definition) indent
-    // the whole block, marker included.
+    // the whole block, marker included, from its start.
     let indent = block.indent.max(0.) * style.body_size;
-    let mut line = div()
-        .flex()
-        .flex_row()
-        .items_start()
-        .when(pictured, Styled::items_end)
-        .w_full()
-        .min_w_0()
-        .pl(px(indent));
+    let line = reads.lay_out(
+        div()
+            .flex()
+            .flex_row()
+            .items_start()
+            .when(pictured, Styled::items_end)
+            .w_full()
+            .min_w_0(),
+    );
+    let mut line = reads.pad_start(line, px(indent));
     if block.list_depth > 0 {
         // The marker column is reserved for every block of the item, not only
         // the one that shows the bullet, so an item's later paragraphs, its
         // code and its pictures line up under its first line.
-        line = line
-            .pl(px(
-                indent + style.list_indent * (block.list_depth - 1) as f32
-            ))
-            .child(
-                div()
-                    .flex_none()
-                    .min_w(px(style.list_indent))
-                    .pr(px(style.marker_gap))
-                    .text_color(style.marker_color)
-                    .child(block.marker.clone().unwrap_or_default()),
-            );
+        let marker = div()
+            .flex_none()
+            .min_w(px(style.list_indent))
+            .text_color(style.marker_color)
+            .child(block.marker.clone().unwrap_or_default());
+        line = reads
+            .pad_start(
+                line,
+                px(indent + style.list_indent * (block.list_depth - 1) as f32),
+            )
+            .child(reads.pad_end(marker, px(style.marker_gap)));
     }
     row.child(frame.child(line.child(content)))
         .into_any_element()
@@ -499,10 +574,12 @@ fn text_body(
             .text_size(px(size))
             .line_height(px(size * style.line_height));
     }
+    // At the line's start (its left, its right where the block reads right
+    // to left: `Reads`), its middle, or its end.
     body = match block.align {
         Align::Start => body,
         Align::Center => body.text_center(),
-        Align::End => body.text_right(),
+        Align::End => body.text_align(gpui::TextAlign::End),
     };
     if block.quote {
         body = body.text_color(style.quote_text);
@@ -556,8 +633,12 @@ fn table_row(
         let width = table.as_ref().and_then(|(columns, ..)| {
             Some((*columns.least.get(column)?, *columns.wanted.get(column)?))
         });
+        // The columns run as the document does; a cell's text reads in its
+        // own direction, from its right in Hebrew or Arabic (`Reads`).
+        let reads = Reads::of_text(block.text.get(cell.clone()).unwrap_or_default());
         row = row.child(
-            div()
+            reads
+                .lay_out(div())
                 // As wide as its content would have it, sharing what is
                 // left or short in that proportion, never narrower than its
                 // longest word.
@@ -794,5 +875,42 @@ mod reading_width_tests {
             MarkdownStyle::new(&theme, 16., false, measure("comfortable")).measure,
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod reads_tests {
+    use super::*;
+
+    /// A block reads in its text's first strong letter's direction, as a
+    /// paragraph marked `dir="auto"` does; code and a table's row left to
+    /// right whatever they hold.
+    #[test]
+    fn a_block_reads_in_its_text_s_direction() {
+        let text = |text: &str| Block {
+            text: text.into(),
+            ..Block::default()
+        };
+        assert_eq!(Reads::of(&text("שלום, עולם")), Reads::RightToLeft);
+        assert_eq!(Reads::of(&text("مرحبا بالعالم")), Reads::RightToLeft);
+        assert_eq!(Reads::of(&text("2026 — مرحبا")), Reads::RightToLeft);
+        assert_eq!(Reads::of(&text("Hello שלום")), Reads::LeftToRight);
+        assert_eq!(Reads::of(&text("Été")), Reads::LeftToRight);
+        assert_eq!(Reads::of(&text("2026")), Reads::LeftToRight, "no letter");
+        assert_eq!(Reads::of(&text("")), Reads::LeftToRight);
+        let code = Block {
+            code: true,
+            ..text("// שלום")
+        };
+        assert_eq!(Reads::of(&code), Reads::LeftToRight);
+        let row = Block {
+            kind: BlockKind::TableRow {
+                cells: vec![0..8, 9..10],
+                header: false,
+            },
+            ..text("שלום\tx")
+        };
+        assert_eq!(Reads::of(&row), Reads::LeftToRight);
+        assert_eq!(Reads::of_text(&row.text[0..8]), Reads::RightToLeft);
     }
 }

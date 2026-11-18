@@ -1,0 +1,76 @@
+0081 direction-of-a-text: LayoutDirection::of_text: the direction a text reads in where nothing else says one, its first strong character's (UAX #9's P2 and P3, isolates passed over, past paragraph separators as HTML's dir=auto reads), None where it has none, for laying out what holds it in that direction
+
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index b977324..19b1338 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -482,6 +482,36 @@ impl LayoutDirection {
+     pub fn is_rtl(self) -> bool {
+         self == LayoutDirection::RightToLeft
+     }
++
++    /// The direction `text` reads in where nothing else says one: its first
++    /// strong character's (UAX #9's rules P2 and P3, what an isolate holds
++    /// passed over), right to left for a Hebrew or Arabic letter, left to
++    /// right for a Latin, Greek or Chinese one; `None` where it has none
++    /// (digits, punctuation, nothing), for the caller to say (HTML's
++    /// `dir="auto"` reads left to right there). A paragraph separator does
++    /// not stop it: the first paragraph that has one says, as `dir="auto"`
++    /// reads an element's text. For laying out what holds a text in the
++    /// direction it reads (`Styled::layout_direction`: a document's
++    /// paragraph, its list item's marker, a table's cell), the way a page
++    /// marked `dir="auto"` lays out its paragraphs; the text's own letters
++    /// are ordered so whatever its box says (`text_system::bidi`). Answered
++    /// without a look-up while the text is ASCII.
++    pub fn of_text(text: &str) -> Option<LayoutDirection> {
++        for (index, c) in text.char_indices() {
++            if !c.is_ascii() {
++                // No isolate opens in ASCII: the rest starts at level 0.
++                return match unicode_bidi::get_base_direction_full(&text[index..]) {
++                    unicode_bidi::Direction::Ltr => Some(LayoutDirection::LeftToRight),
++                    unicode_bidi::Direction::Rtl => Some(LayoutDirection::RightToLeft),
++                    unicode_bidi::Direction::Mixed => None,
++                };
++            }
++            if c.is_ascii_alphabetic() {
++                return Some(LayoutDirection::LeftToRight);
++            }
++        }
++        None
++    }
+ }
+ 
+ /// The properties that can be used to style text in GPUI
+@@ -1874,4 +1904,32 @@ mod tests {
+         style.refine(&TextStyleRefinement::default());
+         assert_eq!(style.layout_direction, RightToLeft);
+     }
++
++    /// A text reads in its first strong character's direction (UAX #9's
++    /// P2 and P3), past digits, punctuation, spaces, paragraph separators
++    /// and what an isolate holds; none where it has no such character.
++    #[test]
++    fn a_text_reads_in_its_first_strong_character_s_direction() {
++        use LayoutDirection::{LeftToRight, RightToLeft};
++        for (text, direction) in [
++            ("Hello", Some(LeftToRight)),
++            ("12. Hello", Some(LeftToRight)),
++            ("Été", Some(LeftToRight)),
++            ("Ελλάδα", Some(LeftToRight)),
++            ("日本語", Some(LeftToRight)),
++            ("שלום עולם", Some(RightToLeft)),
++            ("مرحبا بالعالم", Some(RightToLeft)),
++            ("2026 — שלום", Some(RightToLeft)),
++            ("« مرحبا » hello", Some(RightToLeft)),
++            ("Hello שלום", Some(LeftToRight)),
++            ("\n\nمرحبا", Some(RightToLeft)),
++            // An isolated name tells nothing of the sentence around it.
++            ("“\u{2068}שלום\u{2069}” moved", Some(LeftToRight)),
++            ("\u{2067}abc\u{2069}", None),
++            ("12, 13 (-1)", None),
++            ("", None),
++        ] {
++            assert_eq!(LayoutDirection::of_text(text), direction, "{text:?}");
++        }
++    }
+ }

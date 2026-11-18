@@ -10,6 +10,12 @@ pub struct Menu {
 
     /// Whether this menu is disabled
     pub disabled: bool,
+
+    /// Whether this is the menu the system lists the application's windows
+    /// in, below its items: macOS's Window menu (`NSApplication`'s
+    /// `windowsMenu`). Said by the caller, never told by the menu's name,
+    /// which a translation changes.
+    pub window_menu: bool,
 }
 
 impl Menu {
@@ -19,6 +25,7 @@ impl Menu {
             name: name.into(),
             items: vec![],
             disabled: false,
+            window_menu: false,
         }
     }
 
@@ -34,12 +41,20 @@ impl Menu {
         self
     }
 
+    /// Set whether this is the menu the system lists the application's
+    /// windows in (macOS's Window menu, whatever it is called)
+    pub fn window_menu(mut self, window_menu: bool) -> Self {
+        self.window_menu = window_menu;
+        self
+    }
+
     /// Create an OwnedMenu from this Menu
     pub fn owned(self) -> OwnedMenu {
         OwnedMenu {
             name: self.name.to_string().into(),
             items: self.items.into_iter().map(|item| item.owned()).collect(),
             disabled: self.disabled,
+            window_menu: self.window_menu,
         }
     }
 }
@@ -244,6 +259,10 @@ pub struct OwnedMenu {
 
     /// Whether this menu is disabled
     pub disabled: bool,
+
+    /// Whether this is the menu the system lists the application's windows
+    /// in (`Menu::window_menu`)
+    pub window_menu: bool,
 }
 
 /// The different kinds of items that can be in a menu
@@ -376,6 +395,17 @@ mod tests {
         assert!(menu.disabled);
     }
 
+    /// The menu the system lists the windows in is the one that says it
+    /// is, whatever it is called, and its owned copy says so too.
+    #[test]
+    fn the_window_menu_is_the_one_that_says_it_is() {
+        let translated = Menu::new("Fenêtre").window_menu(true);
+        assert!(translated.window_menu);
+        assert!(translated.owned().window_menu);
+        assert!(!Menu::new("Window").window_menu, "never by its name");
+        assert!(!Menu::new("Window").owned().window_menu);
+    }
+
     #[test]
     fn test_menu_item_builder() {
         use super::MenuItem;
@@ -412,6 +442,7 @@ mod tests {
             name: "Submenu".into(),
             items: vec![],
             disabled: true,
+            window_menu: false,
         });
         assert_eq!(
             match &submenu {

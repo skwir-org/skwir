@@ -20023,3 +20023,66 @@ hex view still the built-in one page for page; core's words tests with
 the catalogs' test, which walks `crates/plugins-outside/*/l10n` (a planted
 bogus id failed it); `tools/words` tests and `--check`; `just plugins`.
 Not run in a window, nor cross-compiled.
+
+## 2026-11-18: right-to-left leftovers: paragraphs in their own direction, lists, the Window menu
+
+The last three right-to-left leftovers of ADR-139 (12).
+
+**A document's paragraph reads in its own direction** (shell.md "Start
+and end", gpui 0080 and 0081). Documents stay laid out left to right in
+every window, but a Hebrew or Arabic paragraph was drawn from its left.
+Each block of an inspection (Markdown, HTML's reading mode, a book, a
+mail, a plugin's text) is now laid out in its text's direction, its first
+strong letter's (`markdown::Reads`, gpui's `LayoutDirection::of_text`,
+UAX #9's P2 and P3), as a page marking its paragraphs `dir="auto"` does:
+from its right in Hebrew or Arabic, its list marker, quotation bar and
+indent on that side, its alignment its own. A table's columns run as the
+document's; each cell reads in its own. Code, a text file's line-numbered
+rows and bytes stay at their left, as editors keep them. A direction, not
+an alignment by each line's direction (AppKit's natural alignment): an
+alignment moves the lines but nothing beside them, and a bullet stayed at
+the left of an item drawn at the right. A text centered or aligned at its
+right now answers where its rows are drawn (0080): a click, a link's
+hover, a selection and a note opened under its reference had landed half
+or all of a row's free room away (a centered title page selected the
+wrong words, in English too).
+
+**Lists** (gpui 0082). Where a `list`'s or `uniform_list`'s item stands
+right to left was right already (taffy sets a root laid out right to left
+at the right of its width). A direction a `list` says itself never reached
+its items (they were laid out and painted outside its text style), and a
+uniform list scrolled sideways right to left moved its rows by twice its
+offset; both fixed. No list of Skwir's says its own direction or scrolls
+sideways: the mirrored window is unchanged.
+
+**A sideways scroll bar's corner.** Where an area scrolls both ways,
+the sideways bar leaves the corner to the upright one, at its end; in a
+mirrored window the upright bar stands at the left, so the corner is now
+left at the sideways track's start (`scrollbar::track_along`, found by
+reading the code; its test covers both directions).
+
+**macOS's Window menu** is found by a flag (gpui 0083,
+`Menu::window_menu`), not by the name "Window". Skwir makes no menu bar
+yet, so nothing sets it.
+
+**Checked:** gpui's tests on a copy (`tools/gpui/check.py gpui`: 194, six
+new, upstream's uniform list and menu tests now run beside them; gpui's
+whole library, 498; gpui_wgpu's 59, with font-kit 34, gpui_linux's 8),
+the patch series rebuilt from Zed's commit reproducing `vendor/zed`;
+clippy `-D warnings` and skwir-ui's tests (750); skwir-ui with gpui_windows
+by clippy for `x86_64-pc-windows-gnu`, and with gpui_macos type-checked for
+`aarch64-apple-darwin` (macos.sh's environment). On Xvfb, the debug build
+against one made from the same tree without these changes, pixel for
+pixel: an English Markdown document in an English and an `ar-XB` window,
+a text file with Arabic and Hebrew lines in both, and in `ar-XB` the file
+list, the columns view, Settings and the address field's suggestions:
+the same. A Markdown document in Arabic and Hebrew (a heading, paragraphs,
+lists, a quotation, a table, code) in both windows: its blocks from their
+right, its English ones and its code at their left. A drag over a
+centered paragraph selected the words under the pointer (the build before:
+about 90 px to their right); one from the right end of an Arabic paragraph,
+its first words.
+
+**Not checked:** the scroll bar's corner in a window (no area of the mirrored window seen scrolling both ways); macOS and Windows beyond compiling; printing; HTML's
+`dir` and CSS's `direction`, not read. A code line that starts with a
+right-to-left letter is still ordered right to left in its row (0069).

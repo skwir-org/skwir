@@ -24,8 +24,8 @@ Tests covering the patches run on a copy, so gpui's dev dependencies stay out
 of Skwir's workspace. `just gpui-check` runs, alongside upstream's tests of the
 same modules:
 
-- gpui's list, wheel-axis, line breaks, line wrapper, line layout, style and
-  key dispatch tests;
+- gpui's list and uniform list, wheel-axis, line breaks, line wrapper, line
+  layout, text, style, menu and key dispatch tests;
 - all of gpui_wgpu's library tests (the atlas, the context, the renderer,
   the text system), which need a wgpu adapter (lavapipe will do), and the
   text system's again with font-kit choosing the faces, as Skwir builds it;
@@ -112,6 +112,10 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0077-no-isolates-for-assistive-technology` | What a node says to assistive technology (its label, description, value, placeholder) has its bidirectional isolates (U+2066 to U+2069) taken out, but a text run's, whose offsets a caret counts | — |
 | `0078-kept-breaks-for-line-wrappers` | A text beyond ASCII that a line wrapper wraps (a name a grid counts the lines of) is segmented once: its breaks kept by its text in the text system, two generations of 4,096 texts, so counted again at another width it costs about what it did before 0072 | — |
 | `0079-fit-content-lengths` | A length may be CSS's `fit-content(<length-percentage>)` (`Length::FitContent`, `fit_content`): a measured element with such a flex basis or size is measured with the limit as its definite available space, so it chooses its width by the room it is given | — |
+| `0080-aligned-hit-tests` | A text centered or aligned at its right answers where its rows are drawn: `TextLayout::index_for_position` and `position_for_index` move by each row's offset as painted (`WrappedLine::row_offset`), so a click, a link's hover and a selection land on the characters under the pointer | — |
+| `0081-direction-of-a-text` | `LayoutDirection::of_text`: the direction a text reads in where nothing else says one, its first strong character's (UAX #9's P2 and P3, as HTML's `dir="auto"` reads it), to lay out what holds the text in it | — |
+| `0082-lists-follow-the-layout-direction` | A list's items are laid out, prepainted and painted in the list's own text style, its layout direction among it; a uniform list's rows scrolled sideways right to left move by its offset, not twice it | — |
+| `0083-window-menu-by-a-flag` | The menu macOS lists the windows in is the one that says it is (`Menu::window_menu`), never the one named "Window" | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1399,7 +1403,8 @@ answer is found; in short:
 
 Not done: a paragraph read right to left is still drawn from its
 element's left (`TextAlign`, its start being its right is a mirrored
-layout's, not this); cosmic-text's mark offsets, which gpui drops for
+layout's, not this; what lays a paragraph out in its own direction asks
+0081, as Skwir's documents do); cosmic-text's mark offsets, which gpui drops for
 every script, are not drawn (a vowel point may sit beside its letter:
 upstream's, unchecked in a window); a line whose runs sit off the
 baseline (0006) is shaped a stretch at a time, each its own paragraph;
@@ -1724,9 +1729,9 @@ could not be mirrored (docs/i18n.md, level 3). This gives gpui CSS's
 Left to right, nothing changes: gpui's 486 library tests and Skwir's UI
 tests (744) pass as before.
 
-Not done: `uniform_list` and `list`, which scroll vertically, know nothing
-of it; a scrollbar Skwir draws reads `ScrollHandle::offset` and must turn
-its sign right to left.
+A scrollbar drawn beside a box that scrolls sideways reads
+`ScrollHandle::offset` and turns its sign right to left (Skwir's does).
+`uniform_list` and `list`, which lay their items out as roots: 0082.
 
 The tests are `elements::div::layout_direction_tests` (a row left to right
 as before, right to left from its right and its end on the left, a
@@ -1881,3 +1886,117 @@ The tests are `taffy::fit_content_tests` (a measured box of basis
 and keeps the width it measured; `fit_content(px(100.))` under 100 px; an
 automatic basis never under the row's width; a row as wide as what it
 holds measures it as its content; the written form read back).
+
+### 0080: Aligned hit tests
+
+A text centered or aligned at its right (`TextAlign::Center` or `Right`,
+`Start` and `End` resolved to them) is painted with each row moved by the
+room it leaves (`aligned_origin_x`), but `TextLayout::index_for_position`
+and `position_for_index` counted every row from the text's left, as if it
+were aligned left: a click, a hover over a link, a drag selecting, a note
+opened under its reference and a match brought into view landed on the
+characters drawn half the row's free room (centered) or all of it (at the
+right) further along. A book's centered title page selected the wrong
+words. Each now finds the row it reads (`LineRows::at` for a point; for
+an index, the row `row_bounds_for_index` places it in, where a row wraps
+ending the row before) and moves by that row's offset,
+`WrappedLine::row_offset`: what `paint` adds to it, for the alignment the
+text was laid out with and its bounds' width. A text aligned left is
+answered as before, by an offset of 0.
+
+The test is `elements::text::tests::an_aligned_text_answers_where_its_rows_are_drawn`
+(left as before; at the right and centered, a point and an index both
+ways; wrapped at the right, each row from where it stands; Hebrew at the
+right, read from it).
+
+Checked in a window (Skwir's debug build on Xvfb, 2026-11-18): a drag over
+the middle of a centered paragraph (Markdown's `<p align="center">`)
+selects the words under the pointer, where the build before selected
+words some 90 px to their right; a drag from the right end of a
+right-aligned Arabic paragraph (0081) selects its first words.
+
+### 0081: The direction of a text
+
+`LayoutDirection::of_text(&str) -> Option<LayoutDirection>`: the direction
+a text reads in where nothing else says one, its first strong character's
+(UAX #9's P2 and P3: the first of class L, R or AL, what an isolate holds
+passed over, as `unicode_bidi::get_base_direction_full` finds it), not
+stopping at a paragraph separator, as HTML's `dir="auto"` reads an
+element's text; `None` where it has none (digits, punctuation, nothing),
+for the caller to say. Answered without a look-up while the text is
+ASCII.
+
+It is for laying out what holds a text in the direction the text reads
+(`Styled::layout_direction`), as a page whose paragraphs are marked
+`dir="auto"` does (GitHub's Markdown): Skwir's documents lay each block out
+so, its lines, its list marker, its quotation's bar and its indent on the
+side it starts at. The text's own letters already read in that direction
+whatever its box says (0069). An alignment by each line's own direction
+(AppKit's natural alignment, beside 0075's `Start` and `End`) was the
+other way: it moves a block's lines but nothing beside them, so a bullet
+stayed at the left of an Arabic item drawn at the right; a direction lays
+the whole block out, and the alignment follows (`TextAlign::Start`).
+
+The test is `style::tests::a_text_reads_in_its_first_strong_character_s_direction`
+(Latin, accented Latin, Greek, Chinese, Hebrew and Arabic; digits or
+punctuation first; a newline first; an isolated name in an English
+sentence; a text all isolated; none).
+
+### 0082: Lists follow the layout direction
+
+0075 made divs follow the layout direction. `list` and `uniform_list` lay
+their items out as roots and place them by hand; what that broke, right to
+left, and what it did not:
+
+- **Where an item stands** was already right: taffy sets a root laid out
+  right to left at the right of the width it is given
+  (`compute_in_flow_root_layout`), so an item narrower than its list stands
+  at the list's right, in both, the direction the list's own or inherited.
+  The tests say so now.
+- **A direction a `list` says itself** (`list(..).layout_direction(..)`)
+  never reached its items: they were laid out, prepainted and painted
+  outside the list's text style (an inferred list measured them inside it,
+  in `request_layout`), so in the direction around the list, and every text
+  style the list set (a color, a size) reached them while measured but not
+  while drawn. They are laid out, prepainted and painted in it now, as a
+  div's children are and `uniform_list`'s were (its `Interactivity` pushes
+  its own).
+- **A uniform list scrolled sideways** (`ListHorizontalSizingBehavior::Unconstrained`)
+  moved its rows by twice its offset: each row is given the list's width
+  grown by the offset, which taffy sets at that width's right, and was
+  placed at the offset too, so at its largest offset a row's left end
+  never came into view. Right to left, a row is given its width from the
+  list's left: its start moves right by the offset (which runs from 0 up
+  there, 0075) and its end stays at the list's left, as left to right its
+  start moves left by it and its end stays at the right.
+- **What scrolls vertically** (the wheel, `scroll_to_item`, the scrollbar
+  API of `ListState`) is the same either way. A scrollbar drawn beside a
+  sideways scroll reads `ScrollHandle::offset`, signed as 0075 says.
+
+Left to right, the rows' origins are worked out by the same arithmetic as
+before. In Skwir's mirrored window nothing changes either (no list of
+Skwir's says its own direction or scrolls sideways): its file list, its
+columns, Settings' rows and the address field's suggestions in `ar-XB`
+were compared pixel for pixel with the build before, the same.
+
+The tests are `elements::uniform_list::layout_direction_tests` (an item
+narrower than the list at its right, right to left, its own direction or
+its parent's; one as wide where it was; a row 500 px wide in 300 scrolled
+sideways both ways, its offset kept within its range, which failed
+before) and `elements::list::layout_direction_tests::an_item_starts_at_the_list_s_start`
+(a direction the list says itself reaching its items, which failed
+before).
+
+### 0083: The Window menu by a flag
+
+gpui_macos handed AppKit as its Window menu (`setWindowsMenu:`, where it
+lists the windows) the top-level menu named "Window": a menu bar in
+another language lost the list of its windows. `Menu::window_menu` (a
+field, set by `Menu::window_menu(bool)`, kept by `OwnedMenu`) says which
+menu it is, and gpui_macos asks it, of a top-level menu or a submenu,
+reading no name. Zed's menus would set it on their Window menu. Skwir
+makes no menu bar yet (`cx.set_menus` is called nowhere), so it sets none.
+
+The test is `platform::app_menu::tests::the_window_menu_is_the_one_that_says_it_is`.
+gpui_macos type-checked for `aarch64-apple-darwin` (Skwir's UI, in
+`tools/package/macos.sh`'s environment); not run on a Mac.

@@ -1625,15 +1625,22 @@ impl Element for List {
             .padding
             .to_pixels(bounds.size.into(), window.rem_size());
         let mut autoscroll = true;
+        // The items are laid out, prepainted and painted in the list's own
+        // text style, as a div's children are, and as an inferred list
+        // measures them in `request_layout`: its layout direction among
+        // what they inherit.
+        let text_style = style.text_style().cloned();
         let layout = loop {
-            match state.prepaint_items(
-                bounds,
-                padding,
-                autoscroll,
-                &mut self.render_item,
-                window,
-                cx,
-            ) {
+            match window.with_text_style(text_style.clone(), |window| {
+                state.prepaint_items(
+                    bounds,
+                    padding,
+                    autoscroll,
+                    &mut self.render_item,
+                    window,
+                    cx,
+                )
+            }) {
                 Ok(layout) => break layout,
                 Err(autoscroll_request) => {
                     state.set_scroll_anchor(Some(autoscroll_request));
@@ -1701,10 +1708,14 @@ impl Element for List {
             }
         });
 
-        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
-            for item in &mut prepaint.layout.item_layouts {
-                item.element.paint(window, cx);
-            }
+        let mut style = Style::default();
+        style.refine(&self.style);
+        window.with_text_style(style.text_style().cloned(), |window| {
+            window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
+                for item in &mut prepaint.layout.item_layouts {
+                    item.element.paint(window, cx);
+                }
+            });
         });
     }
 }
@@ -3927,5 +3938,101 @@ mod test {
             .w_full()
             .h_full()
         }
+    }
+}
+
+#[cfg(test)]
+mod layout_direction_tests {
+    use crate::{
+        AnyElement, AppContext as _, Bounds, Context, IntoElement, LayoutDirection, ListAlignment,
+        ListState, ParentElement as _, Pixels, Render, Styled as _, TestAppContext,
+        VisualTestContext, Window, canvas, div, list, point, px, size,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    type Seen = Rc<RefCell<Vec<(Bounds<Pixels>, LayoutDirection)>>>;
+
+    /// What a view draws (a list asks for the view it is drawn in).
+    struct Drawn(Box<dyn Fn() -> AnyElement>);
+
+    impl Render for Drawn {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            (self.0)()
+        }
+    }
+
+    /// Where the three items of a list 300 px wide were prepainted, each
+    /// 20 px high and `width` wide or the list's, and the direction each saw
+    /// there: laid out in `direction`, the list's own where `own`, else its
+    /// parent's.
+    fn laid(
+        cx: &mut VisualTestContext,
+        direction: LayoutDirection,
+        own: bool,
+        width: Option<f32>,
+    ) -> Vec<(f32, LayoutDirection)> {
+        let seen: Seen = Rc::default();
+        let kept = seen.clone();
+        let state = ListState::new(3, ListAlignment::Top, px(0.));
+        let draw = move || {
+            let kept = kept.clone();
+            let list = list(state.clone(), move |_, _, _| {
+                let seen = kept.clone();
+                let item = div().h(px(20.)).child(
+                    canvas(
+                        move |bounds, window, _| {
+                            seen.borrow_mut().push((bounds, window.layout_direction()))
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                );
+                match width {
+                    Some(width) => item.w(px(width)),
+                    None => item,
+                }
+                .into_any_element()
+            })
+            .size_full();
+            let (list, parent) = if own {
+                (list.layout_direction(direction), div())
+            } else {
+                (list, div().layout_direction(direction))
+            };
+            parent.size_full().child(list).into_any_element()
+        };
+        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
+            cx.new(|_| Drawn(Box::new(draw))).into_any_element()
+        });
+        let laid = seen
+            .borrow()
+            .iter()
+            .map(|(bounds, direction)| (f32::from(bounds.left()), *direction))
+            .collect();
+        laid
+    }
+
+    /// Laid out right to left, an item narrower than the list starts at its
+    /// right; one as wide as the list, and every item left to right, where
+    /// it was. A direction the list says itself reaches its items as one it
+    /// inherits does, as a div's reaches its children.
+    #[crate::test]
+    fn an_item_starts_at_the_list_s_start(cx: &mut TestAppContext) {
+        use LayoutDirection::{LeftToRight, RightToLeft};
+        let cx = cx.add_empty_window();
+        assert_eq!(
+            laid(cx, LeftToRight, false, Some(100.)),
+            [(0., LeftToRight); 3]
+        );
+        assert_eq!(
+            laid(cx, RightToLeft, false, Some(100.)),
+            [(200., RightToLeft); 3]
+        );
+        assert_eq!(
+            laid(cx, RightToLeft, true, Some(100.)),
+            [(200., RightToLeft); 3]
+        );
+        assert_eq!(laid(cx, RightToLeft, true, None), [(0., RightToLeft); 3]);
+        assert_eq!(laid(cx, LeftToRight, true, None), [(0., LeftToRight); 3]);
     }
 }

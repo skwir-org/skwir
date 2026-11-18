@@ -591,13 +591,28 @@ asks the direction.
   follows: a row lays itself out mirrored, so a row of the window never
   says its own order. What runs left to right in every language says so
   on its root (`Sides::left_to_right`): a document (the rows of a text,
-  code or bytes, `elements::rows`; a read inspection; the PDF reader's
-  pages), media's controls and time (the pinned player's previous, play
+  code or bytes, `elements::rows`; a read inspection, each paragraph in
+  its own direction, below; the PDF reader's pages), media's controls
+  and time (the pinned player's previous, play
   and next; the preview's player's steps, play, time and seek bar, its
   bar's `Bar::left_to_right` slot; the dock's transport), while the bar
   around them (its volume, More, close) is the window's, a shortcut (`sides::shortcut` beside a menu's row, the key
   caps' rows), the terminal. What Skwir lists of a file (an archive's
   members, a table's rows, a history and its graph) is the window's.
+- **A document's paragraph reads in its own direction**, in any window,
+  English included (`markdown::Reads`: its first strong letter's, gpui's
+  `LayoutDirection::of_text`, as a page marking its paragraphs
+  `dir="auto"` reads them, GitHub's Markdown among them). A paragraph, a
+  heading or a list item of Markdown, HTML's reading mode, a book or a
+  mail in Hebrew or Arabic is laid out right to left: its lines start at
+  its right, its marker, its quotation's bar and its indent are on that
+  side, and its alignment (`Align::Start`, `End`) is its own. A table's
+  columns run as the document's; each cell's text reads in its own. One
+  with no strong letter (digits, a picture alone) reads left to right.
+  Code (a code block, a code view's rows), a text file's line-numbered
+  rows and bytes stay left to right and at their left, as editors keep
+  them: each row is a line of a grid its gutter numbers, as wide as it
+  is where lines do not wrap, scrolled sideways with the others.
 - **What prepaint places by hand** asks the seam, never
   `bounds.left() + x`: `sides::from_start` (a column of the newspaper
   layout, a chip of a strip, a lane of a history's graph), `mirrored`;

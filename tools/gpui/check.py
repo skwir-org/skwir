@@ -46,6 +46,16 @@ RUNS = [
         # scroll_axis_tests', start and end alignment style::tests').
         "elements::div::layout_direction_tests",
         "elements::text::tests::a_text_aligned_to_its_start",
+        # A uniform list's rows right to left, scrolled sideways too, and a
+        # list's items in its own direction (0082; upstream's uniform list
+        # tests beside them; the list's are elements::list's).
+        "elements::uniform_list",
+        # A text aligned centered or at its right answers where its rows
+        # are drawn (0080); the direction a text reads in (0081) is
+        # style::tests'.
+        "elements::text::tests::an_aligned_text",
+        # The menu macOS lists the windows in, by a flag (0083).
+        "platform::app_menu",
         "text_system::line_wrapper", "text_system::line_layout", "style::tests",
         # Where a line may wrap, UAX #14 by ICU4X and ASCII by its classes
         # (0072).

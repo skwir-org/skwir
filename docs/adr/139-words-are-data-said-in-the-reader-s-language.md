@@ -316,7 +316,11 @@ says it is a draft (13).
     own. A name, isolated (5), is drawn right in any language.
     Right-to-left text itself (level 1: laid out, wrapped and edited
     right inside a left-to-right window) is built (amended 2026-11-17,
-    gpui patches 0069 to 0071); the mirrored window is still that track.
+    gpui patches 0069 to 0071), and the mirrored window (amended
+    2026-11-18, 0075: the window laid out from its right while it
+    speaks a right-to-left language, documents and media's controls left
+    to right, a document's paragraph in its own text's direction, 0081).
+    What waits is a real right-to-left catalog and its review.
 
 13. **Shipping.**
     - **Catalogs are compiled into the program**; a plugin from outside

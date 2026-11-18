@@ -3834,6 +3834,9 @@ them, with `core.folder_names` for the names on disk (16).
     search, the address field's terms: `skwir_core::segment`);
   - short counts in the language's own powers (万, lakh), CLDR's;
   - a key sequence in a sentence kept left to right (`Arg::Keys`).
+- **A macOS menu bar:** Skwir builds none yet (`cx.set_menus` is called
+  nowhere), so gpui 0083's `Menu::window_menu` flag waits for one; when
+  a menu bar is built, it sets the flag on its Window menu.
 - **User folders' shown names** on Windows and macOS (ADR-139, 16), and
   `core.folder_names`, unavailable on Linux.
 - **The screen reader's language:** built 2026-11-18 (gpui 0073, the
@@ -3848,17 +3851,26 @@ them, with `core.folder_names` for the names on disk (16).
   language (0074: Japanese forms on a `ja_JP` system), a layout direction
   and right-to-left scrolling (0075), shortcuts on non-Latin keyboard
   layouts and AZERTY's digits (0076), isolates left out for assistive
-  technology (0077). Left:
-  - macOS's Window menu found by a flag rather than by its English
-    title;
-  - `uniform_list` and `list` ignore the layout direction.
+  technology (0077), a centered or right-aligned text's hit tests where
+  its rows are drawn (0080), the direction a text reads in (0081), lists
+  in the direction they say and a uniform list scrolled sideways right
+  to left (0082), and macOS's Window menu found by a flag rather than by
+  its English title (0083, compiled only).
 - **Right-to-left windows** (level 3): the window mirrors since
   2026-11-18 when it speaks a right-to-left language (only the
   pseudo-language `ar-XB` does: `crates/ui/src/sides.rs`, shell.md
   "Start and end"); text fields start at their right; documents stay
   left to right, and media's controls and time (the preview's player and
-  the dock's since 2026-11-18). Left: a right-to-left paragraph's
-  alignment in documents, a real right-to-left catalog and its review.
+  the dock's since 2026-11-18). A document's paragraph reads in its own
+  direction since 2026-11-18, in any window (`markdown::Reads`, gpui
+  0081): a Hebrew or Arabic paragraph, heading, list item or table cell
+  starts at its right, its marker, quotation bar and indent on that
+  side; code, text files' line-numbered rows and bytes stay at their
+  left. Left: a real right-to-left catalog and its review; HTML's `dir`
+  and CSS's `direction` (a block's direction is its text's); a code line
+  that starts with a right-to-left letter is ordered right to left in
+  its row (0069); printing not looked at. A sideways scroll bar leaves its corner at its
+  start while the window is mirrored (`scrollbar::track_along`).
 - **Fonts for every script:** the CJK forms by language (0074), a
   warning when no installed font draws a script the reader reads, the
   guide's packages per system (`docs/guide.md`, docs only, the user's
