@@ -20252,3 +20252,25 @@ its markers at the right reading ".1".
 Print… and Reduce Size run from the preview in a window; a tagger's own
 CBR or CB7, a calibre-made AZW3; macOS and Windows running (compiled
 only).
+
+## 2026-11-18: a page that reads right to left, on screen
+
+ADR-139, 12. HTML's `dir` (and a book's page progression) is read since
+the printing work (`Inspection::direction`), but only printing used it.
+The window's reading view now runs a table's columns as the document
+says it reads: from the right where it says right to left
+(`MarkdownStyle::declared`), each cell still in its own direction and
+each block in its own, as printed. A page saying nothing keeps them left
+to right.
+
+**Checked:** skwir-ui's clippy `-D warnings` and its tests. On Xvfb: an
+English page with `<html dir="rtl">` shows its table's "First" column at
+the right and "Third" at the left, its English paragraph and cells left
+to right. On the same display, the two paths left unchecked by the
+printing work: Print… from the preview of a comic whose ComicInfo says
+`YesAndRightToLeft` opens with the booklet bound on the right (from its
+file's menu, which reads no comic, on the left), and Reduce Size… from a
+PDF shown in its reader opens its dialog.
+
+**Not checked:** a table wider than the panel, scrolled sideways from
+the right; `dir` on an element inside a page, still left to the text.

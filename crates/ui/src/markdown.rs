@@ -98,6 +98,12 @@ pub struct MarkdownStyle {
     pub lines: Option<crate::inspector_pages::Texts>,
     /// The document's tables (their columns, worked out on the worker) and
     /// the sideways scroll of each, shared by its rows.
+    /// The way the document says it reads (`Inspection::direction`: HTML's
+    /// `dir`, a book's page progression): its tables' columns run from the
+    /// right where it says right to left, as it is printed
+    /// (`print::Job::reads`). Its blocks read each in its own direction
+    /// whatever it says.
+    pub declared: Option<skwir_core::direction::Direction>,
     pub tables: Option<(
         std::sync::Arc<crate::inspector_rows::Tables>,
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, gpui::ScrollHandle>>>,
@@ -197,6 +203,7 @@ impl MarkdownStyle {
             find_current_text: theme.find_current_text,
             code_look: None,
             lines: None,
+            declared: None,
             tables: None,
             listener: Listener::Nobody,
         }
@@ -327,8 +334,9 @@ impl Edges {
 /// paragraph, a heading or a list item in Hebrew or Arabic starts at its
 /// right in any window, English included: its lines aligned there, its
 /// marker, its quotation's bar and its indent on that side. Code reads left
-/// to right, as editors keep it, and so does a table's row, whose columns
-/// are the document's (each cell reads in its own, `table_row`). A block
+/// to right, as editors keep it, and a table's row runs as the document
+/// says it reads (`MarkdownStyle::declared`, left to right where it says
+/// nothing; each cell reads in its own, `table_row`). A block
 /// with no such letter (digits, a picture alone) reads left to right, as
 /// `dir="auto"` has it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -626,7 +634,14 @@ fn table_row(
     let em = style.body_size;
     // A cell's padding (`px_2`) and its border.
     let room = 17.;
-    let mut row = div()
+    // The columns run as the document says it reads: from the right where
+    // it says right to left, else from the left.
+    let columns = match style.declared {
+        Some(skwir_core::direction::Direction::RightToLeft) => Reads::RightToLeft,
+        _ => Reads::LeftToRight,
+    };
+    let mut row = columns
+        .lay_out(div())
         .flex()
         .border_b_1()
         .border_color(style.border)

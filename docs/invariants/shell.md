@@ -607,7 +607,10 @@ asks the direction.
   mail in Hebrew or Arabic is laid out right to left: its lines start at
   its right, its marker, its quotation's bar and its indent are on that
   side, and its alignment (`Align::Start`, `End`) is its own. A table's
-  columns run as the document's; each cell's text reads in its own. One
+  columns run as the document says it reads (`Inspection::direction`:
+  HTML's `dir`, a book's page progression; from the right where it says
+  right to left, as printed), left to right where it says nothing; each
+  cell's text reads in its own. One
   with no strong letter (digits, a picture alone) reads left to right.
   Code (a code block, a code view's rows), a text file's line-numbered
   rows and bytes stay left to right and at their left, as editors keep

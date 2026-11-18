@@ -3886,9 +3886,12 @@ them, with `core.folder_names` for the names on disk (16).
   left; code and bytes read left to right on every line since
   2026-11-18, whatever letter starts it (gpui 0084,
   `code_preview::reads_as_code`), a plain text's rows each in their own
-  direction. Left: a real right-to-left catalog and its review; HTML's
-  `dir` and CSS's `direction` (a block's direction is its text's).
-  Printing follows since 2026-11-18 (ADR-111 revised): a block in its
+  direction. A document that says it reads right to left (HTML's `dir`
+  on its root or body, a book's page progression, since 2026-11-18) runs
+  its tables' columns from the right, on screen as printed. Left: a real
+  right-to-left catalog and its review; `dir` on an element inside a page
+  and CSS's `direction` (a block's direction is its text's). Printing
+  follows since 2026-11-18 (ADR-111 revised): a block in its
   own direction, code left to right, a plain text's lines each in their
   own, a listing in the window's, the PDF's reading direction said; a
   booklet bound on the right (P7). A sideways scroll bar leaves its corner at its

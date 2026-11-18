@@ -4166,6 +4166,7 @@ pub fn content(
     if !display.tables.is_empty() {
         list_style.tables = Some((display.tables.clone(), state.tables.clone()));
     }
+    list_style.declared = display.data.direction;
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
     // While the find is open, what it looks for is marked; a text read
     // where it is shown is told where the match it is on was drawn.
