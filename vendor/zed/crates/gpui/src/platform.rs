@@ -40,10 +40,10 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, Corners,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, Mesh, MeshPreparation, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
-    WindowControlArea, hash, point, px, size,
+    LayoutDirection, LineLayout, Mesh, MeshPreparation, MissingGlyphSink, Pixels, PlatformGestures,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, TextDirection, Window, WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1650,6 +1650,27 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Layout a line of text whose every paragraph reads in `direction`,
+    /// whatever its first strong character (UAX #9's rule HL1: a line of
+    /// code that starts with an Arabic comment reads left to right). The
+    /// glyphs as `layout_line` gives them, their indices the text's. By
+    /// default, for a shaper that takes a paragraph's direction from its
+    /// first strong character alone (cosmic-text), a mark of the direction
+    /// is set at the start of each paragraph that would read the other way
+    /// and its glyphs left out (`text_system::bidi::lay_out_marked`); a
+    /// platform that can be told the direction says it (DirectWrite's
+    /// reading direction, Core Text's base writing direction).
+    fn layout_line_in(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        direction: LayoutDirection,
+    ) -> LineLayout {
+        crate::text_system::lay_out_marked(text, runs, direction, |text, runs| {
+            self.layout_line(text, font_size, runs)
+        })
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
@@ -1733,7 +1754,44 @@ impl PlatformTextSystem for NoopTextSystem {
         Ok((raster_bounds.size, Vec::new()))
     }
 
-    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        self.lay_out(text, font_size, runs, TextDirection::Auto)
+    }
+
+    fn layout_line_in(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        direction: LayoutDirection,
+    ) -> LineLayout {
+        let direction = match direction {
+            LayoutDirection::LeftToRight => TextDirection::LeftToRight,
+            LayoutDirection::RightToLeft => TextDirection::RightToLeft,
+        };
+        self.lay_out(text, font_size, runs, direction)
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
+    }
+}
+
+impl NoopTextSystem {
+    /// Each character an em wide (an emoji two), a line holding
+    /// right-to-left text laid out as it reads, its paragraphs in
+    /// `direction`, as a platform lays it out.
+    fn lay_out(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        _runs: &[FontRun],
+        direction: TextDirection,
+    ) -> LineLayout {
         let mut position = px(0.);
         let metrics = self.font_metrics(FontId(0));
         let em_width = font_size
@@ -1782,18 +1840,10 @@ impl PlatformTextSystem for NoopTextSystem {
         };
         // Right-to-left text laid out as it reads, as a platform lays it
         // out, so tests of it see what a window shows.
-        match crate::BidiLevels::of(text) {
+        match crate::BidiLevels::of_in(text, direction) {
             Some(levels) => layout.laid_out_as_read(&levels, text),
             None => layout,
         }
-    }
-
-    fn recommended_rendering_mode(
-        &self,
-        _font_id: FontId,
-        _font_size: Pixels,
-    ) -> TextRenderingMode {
-        TextRenderingMode::Grayscale
     }
 }
 

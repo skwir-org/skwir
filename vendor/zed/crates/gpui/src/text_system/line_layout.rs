@@ -1,5 +1,6 @@
 use crate::{
-    FontId, GlyphId, Pixels, PlatformTextSystem, Point, RunPosition, SharedString, Size, point, px,
+    FontId, GlyphId, Pixels, PlatformTextSystem, Point, RunPosition, SharedString, Size,
+    TextDirection, point, px,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -1102,6 +1103,7 @@ impl LineLayoutCache {
         text: Text,
         font_size: Pixels,
         runs: &[FontRun],
+        direction: TextDirection,
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout>
@@ -1114,6 +1116,7 @@ impl LineLayoutCache {
             text: text.as_ref(),
             font_size,
             runs,
+            direction,
             wrap_width,
             force_width: None,
         } as &dyn AsCacheKeyRef;
@@ -1136,7 +1139,8 @@ impl LineLayoutCache {
         } else {
             drop(state);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+            let unwrapped_layout =
+                self.layout_line::<&SharedString>(&text, font_size, runs, direction, None);
             let (unwrapped_layout, wrap_boundaries) = if let Some(wrap_width) = wrap_width {
                 let breaks = self.breaks_of(&text);
                 unwrapped_layout.wrapped(text.as_ref(), &breaks, wrap_width, max_lines)
@@ -1153,6 +1157,7 @@ impl LineLayoutCache {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
+                direction,
                 wrap_width,
                 force_width: None,
             });
@@ -1173,6 +1178,7 @@ impl LineLayoutCache {
         text: Text,
         font_size: Pixels,
         runs: &[FontRun],
+        direction: TextDirection,
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout>
     where
@@ -1184,6 +1190,7 @@ impl LineLayoutCache {
             text: text.as_ref(),
             font_size,
             runs,
+            direction,
             wrap_width: None,
             force_width,
         } as &dyn AsCacheKeyRef;
@@ -1205,10 +1212,17 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
-            // Right-to-left text: its levels kept, its glyphs in the order
-            // they are drawn (`text_system::bidi`).
-            layout.bidi_levels = BidiLevels::of(&text).map(Arc::new);
+            let mut layout = shape(
+                &*self.platform_text_system,
+                &text,
+                font_size,
+                runs,
+                direction,
+            );
+            // Right-to-left text: its levels kept, its paragraphs read in
+            // the direction asked, as the platform was told to lay them out,
+            // its glyphs in the order they are drawn (`text_system::bidi`).
+            layout.bidi_levels = BidiLevels::of_in(&text, direction).map(Arc::new);
             if layout.bidi_levels.is_some() {
                 layout.put_in_drawn_order();
             }
@@ -1221,6 +1235,7 @@ impl LineLayoutCache {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
+                direction,
                 wrap_width: None,
                 force_width,
             });
@@ -1285,15 +1300,23 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
 /// kerning joins a superscript to its word), and the stretches follow each
 /// other: glyph positions and indices are offset to the whole line's, each
 /// run keeps its position for painting, and the line's ascent and descent are
-/// those of its text at full size.
+/// those of its text at full size. A line whose paragraphs read in a
+/// direction said (`TextDirection::LeftToRight`, `RightToLeft`) is laid out
+/// so by the platform (`PlatformTextSystem::layout_line_in`), each stretch
+/// too.
 fn shape(
     platform: &dyn PlatformTextSystem,
     text: &str,
     font_size: Pixels,
     runs: &[FontRun],
+    direction: TextDirection,
 ) -> LineLayout {
+    let lay_out = |text: &str, font_size: Pixels, runs: &[FontRun]| match direction.forced() {
+        None => platform.layout_line(text, font_size, runs),
+        Some(direction) => platform.layout_line_in(text, font_size, runs, direction),
+    };
     if runs.iter().all(|run| run.position == RunPosition::Baseline) {
-        return platform.layout_line(text, font_size, runs);
+        return lay_out(text, font_size, runs);
     }
     let mut layout = LineLayout {
         font_size,
@@ -1331,7 +1354,7 @@ fn shape(
             continue;
         }
         let scale = position.scale();
-        let part = platform.layout_line(&text[start..end], font_size * scale, stretch);
+        let part = lay_out(&text[start..end], font_size * scale, stretch);
         let x = layout.width;
         for mut run in part.runs {
             run.position = position;
@@ -1387,6 +1410,7 @@ struct CacheKey {
     text: SharedString,
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
+    direction: TextDirection,
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
 }
@@ -1396,6 +1420,7 @@ struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: Pixels,
     runs: &'a [FontRun],
+    direction: TextDirection,
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
 }
@@ -1420,6 +1445,7 @@ impl AsCacheKeyRef for CacheKey {
             text: &self.text,
             font_size: self.font_size,
             runs: self.runs.as_slice(),
+            direction: self.direction,
             wrap_width: self.wrap_width,
             force_width: self.force_width,
         }
@@ -1675,11 +1701,25 @@ mod breaks_kept_tests {
             position: RunPosition::Baseline,
         }];
         let shared = SharedString::from(text);
-        let wrapped = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(100.)), None);
+        let wrapped = cache.layout_wrapped_line(
+            text,
+            px(16.),
+            &runs,
+            TextDirection::Auto,
+            Some(px(100.)),
+            None,
+        );
         assert!(!wrapped.wrap_boundaries.is_empty());
         let found = cache.breaks_of(&shared);
         cache.finish_frame();
-        let wider = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(120.)), None);
+        let wider = cache.layout_wrapped_line(
+            text,
+            px(16.),
+            &runs,
+            TextDirection::Auto,
+            Some(px(120.)),
+            None,
+        );
         assert!(!wider.wrap_boundaries.is_empty());
         assert!(Arc::ptr_eq(&found, &cache.breaks_of(&shared)), "kept");
         cache.finish_frame();
@@ -1692,6 +1732,16 @@ mod breaks_kept_tests {
 mod run_position_tests {
     use super::*;
     use crate::platform::NoopTextSystem;
+
+    /// Shaped as a line is where nothing says its direction.
+    fn shape(
+        platform: &dyn PlatformTextSystem,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> LineLayout {
+        super::shape(platform, text, font_size, runs, TextDirection::Auto)
+    }
 
     fn run(len: usize, position: RunPosition) -> FontRun {
         FontRun {

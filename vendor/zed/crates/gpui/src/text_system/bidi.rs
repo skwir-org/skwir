@@ -8,7 +8,9 @@
 //! - each byte's embedding level ([`BidiLevels`]), worked out here from the
 //!   text by UAX #9, each paragraph's direction taken from its first strong
 //!   character, as cosmic-text, Core Text and DirectWrite (asked so) take
-//!   it;
+//!   it, or the direction the text says (`TextDirection`: code, left to
+//!   right whatever letter starts a line), which the platform is told
+//!   (`PlatformTextSystem::layout_line_in`);
 //! - the glyphs in the order they are drawn, left to right
 //!   (`LineLayout::put_in_drawn_order`), whatever order the platform handed
 //!   them in.
@@ -37,10 +39,13 @@
 //! of this: its glyphs follow its text, and every answer is worked out as
 //! before, as fast.
 
-use crate::{FontId, LineLayout, Pixels, RunPosition, ShapedGlyph, ShapedRun, WrapBoundary, px};
+use crate::{
+    FontId, FontRun, LayoutDirection, LineLayout, Pixels, RunPosition, ShapedGlyph, ShapedRun,
+    TextDirection, WrapBoundary, px,
+};
 use smallvec::SmallVec;
 use std::{ops::Range, sync::Arc};
-use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
+use unicode_bidi::{BidiClass, BidiInfo, Level, bidi_class};
 
 /// How a line reads in both directions: the embedding level (UAX #9) of
 /// each byte of its text, and of each paragraph (a line holds several where
@@ -59,10 +64,23 @@ impl BidiLevels {
     /// or `None` where nothing in it reads right to left: told by a scan of
     /// its characters, at once for ASCII.
     pub fn of(text: &str) -> Option<Self> {
-        if text.is_ascii() || !text.chars().any(turns_right_to_left) {
-            return None;
-        }
-        let info = BidiInfo::new(text, None);
+        Self::of_in(text, TextDirection::Auto)
+    }
+
+    /// The levels of `text` laid out as one line, its paragraphs read in
+    /// `direction` (each its first strong character's for `Auto`, UAX #9's
+    /// P2 and P3; the one said otherwise, its rule HL1), or `None` where
+    /// nothing in it reads right to left. Left to right, that is told by
+    /// the same scan as `Auto`'s: a line of code without a Hebrew or Arabic
+    /// letter costs nothing more. Right to left, every text has levels.
+    pub fn of_in(text: &str, direction: TextDirection) -> Option<Self> {
+        let forced = match direction {
+            TextDirection::RightToLeft => Some(Level::rtl()),
+            _ if text.is_ascii() || !text.chars().any(turns_right_to_left) => return None,
+            TextDirection::LeftToRight => Some(Level::ltr()),
+            TextDirection::Auto => None,
+        };
+        let info = BidiInfo::new(text, forced);
         let mut levels = Vec::with_capacity(text.len());
         let mut paragraphs = SmallVec::new();
         for paragraph in &info.paragraphs {
@@ -72,6 +90,10 @@ impl BidiLevels {
             let laid = info.reordered_levels(paragraph, range.clone());
             levels.extend(laid[range.clone()].iter().map(|level| level.number()));
             paragraphs.push((range.start, paragraph.level.number()));
+        }
+        if let (true, Some(level)) = (paragraphs.is_empty(), forced) {
+            // Nothing, read right to left: its place is at its right.
+            paragraphs.push((0, level.number()));
         }
         Some(Self { levels, paragraphs })
     }
@@ -163,6 +185,116 @@ fn rests_at_row_end(c: char) -> bool {
             | BidiClass::RLO
             | BidiClass::PDF
     )
+}
+
+/// The bytes a bidirectional mark takes in UTF-8 (U+200E, U+200F).
+const MARK_LEN: usize = 3;
+
+/// `text` laid out by `lay_out`, a platform's shaper that takes each
+/// paragraph's direction from its first strong character alone (UAX #9's P2
+/// and P3; cosmic-text, whose `ShapeLine` takes no other), its paragraphs
+/// read in `direction` all the same: a mark of that direction (LRM, U+200E,
+/// or RLM, U+200F) is set at the start of each paragraph that would read the
+/// other way, the first strong character there, which gives the paragraph
+/// the level the direction says and every character after it the level it
+/// has in a paragraph of that level (the mark is the level's own class, as
+/// the paragraph's start of sequence is). The mark is not the caller's: its
+/// glyphs are left out, the others' indices are the text's and its runs are
+/// the caller's. A shaper hides a mark (HarfBuzz's and harfrust's default
+/// ignorables: no advance, drawn as nothing), so nothing else moves. A line
+/// whose paragraphs read so already is laid out as it is.
+pub(crate) fn lay_out_marked(
+    text: &str,
+    runs: &[FontRun],
+    direction: LayoutDirection,
+    lay_out: impl FnOnce(&str, &[FontRun]) -> LineLayout,
+) -> LineLayout {
+    let marks = paragraphs_reading_otherwise(text, direction);
+    if marks.is_empty() {
+        return lay_out(text, runs);
+    }
+    let marked = with_marks(text, &marks, direction);
+    // Each mark in the run its paragraph starts in, the last run's past them.
+    let mut marked_runs: SmallVec<[FontRun; 4]> = SmallVec::from(runs);
+    let mut start = 0;
+    let last = marked_runs.len().saturating_sub(1);
+    for (ix, run) in marked_runs.iter_mut().enumerate() {
+        let end = if ix == last {
+            usize::MAX
+        } else {
+            start + run.len
+        };
+        run.len += MARK_LEN * marks.iter().filter(|&&at| at >= start && at < end).count();
+        start = end;
+    }
+    let mut layout = lay_out(&marked, &marked_runs);
+    // Where each mark is in the marked text.
+    let placed: SmallVec<[usize; 2]> = marks
+        .iter()
+        .enumerate()
+        .map(|(ix, at)| at + MARK_LEN * ix)
+        .collect();
+    for run in &mut layout.runs {
+        run.glyphs.retain_mut(|glyph| {
+            let before = placed.partition_point(|&at| at + MARK_LEN <= glyph.index);
+            if placed.get(before).is_some_and(|&at| at <= glyph.index) {
+                return false;
+            }
+            glyph.index -= MARK_LEN * before;
+            true
+        });
+    }
+    layout.runs.retain(|run| !run.glyphs.is_empty());
+    layout.len = text.len();
+    layout
+}
+
+/// `text` with a mark of `direction` (LRM, RLM) before each byte of `marks`.
+fn with_marks(text: &str, marks: &[usize], direction: LayoutDirection) -> String {
+    let mark = match direction {
+        LayoutDirection::LeftToRight => '\u{200E}',
+        LayoutDirection::RightToLeft => '\u{200F}',
+    };
+    let mut marked = String::with_capacity(text.len() + MARK_LEN * marks.len());
+    let mut from = 0;
+    for &at in marks {
+        marked.push_str(&text[from..at]);
+        marked.push(mark);
+        from = at;
+    }
+    marked.push_str(&text[from..]);
+    marked
+}
+
+/// Where each paragraph of `text` that would read the other way from
+/// `direction` (by its first strong character, left to right where it has
+/// none) starts: UAX #9's paragraphs, each ending after its separator. None
+/// for a text with no right-to-left character read left to right.
+fn paragraphs_reading_otherwise(text: &str, direction: LayoutDirection) -> SmallVec<[usize; 1]> {
+    let mut starts = SmallVec::new();
+    if text.is_empty()
+        || direction == LayoutDirection::LeftToRight
+            && (text.is_ascii() || !text.chars().any(turns_right_to_left))
+    {
+        return starts;
+    }
+    let mut start = 0;
+    let ends = text
+        .char_indices()
+        .filter(|(_, c)| bidi_class(*c) == BidiClass::B)
+        .map(|(at, c)| at + c.len_utf8())
+        .chain([text.len()]);
+    for end in ends {
+        if start >= end {
+            continue;
+        }
+        let reads = LayoutDirection::of_text(&text[start..end]).unwrap_or_default();
+        if reads != direction {
+            starts.push(start);
+        }
+        start = end;
+    }
+    starts
 }
 
 impl LineLayout {
@@ -679,6 +811,46 @@ mod tests {
         }
     }
 
+    /// `laid_out`, its paragraphs read in `direction`; a bidirectional mark
+    /// drawn as nothing, as a shaper hides it.
+    fn laid_out_in(text: &str, direction: TextDirection) -> LineLayout {
+        let levels = BidiLevels::of_in(text, direction);
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let char_levels: Vec<u8> = chars
+            .iter()
+            .map(|(i, _)| levels.as_ref().map_or(0, |levels| levels.level(*i)))
+            .collect();
+        let mut x = px(0.);
+        let glyphs = drawn_order(&char_levels)
+            .iter()
+            .map(|&k| {
+                let glyph = ShapedGlyph {
+                    id: GlyphId(k as u32),
+                    position: point(x, px(0.)),
+                    index: chars[k].0,
+                    is_emoji: false,
+                };
+                if !matches!(chars[k].1, '\u{200e}' | '\u{200f}') {
+                    x += px(10.);
+                }
+                glyph
+            })
+            .collect();
+        LineLayout {
+            font_size: px(16.),
+            width: x,
+            ascent: px(12.),
+            descent: px(4.),
+            runs: vec![ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+                position: Default::default(),
+            }],
+            len: text.len(),
+            bidi_levels: levels.map(Arc::new),
+        }
+    }
+
     /// The text drawn left to right, as the glyphs stand.
     fn drawn(layout: &LineLayout, text: &str) -> String {
         layout
@@ -990,6 +1162,154 @@ mod tests {
         let two = BidiLevels::of("\u{5d0}\u{1c}abc").unwrap();
         assert_eq!((two.paragraph_level(0), two.paragraph_level(3)), (1, 0));
         assert_eq!(two.slice(3..6).paragraph_level(0), 0);
+    }
+
+    /// Texts read in a direction said and their first strong character's
+    /// other way: a comment in Hebrew, Arabic with digits (W2: European
+    /// digits after an Arabic letter are Arabic ones), brackets, an isolate
+    /// passed over, a mark of the text's own, a point before its letter
+    /// (W1), several paragraphs, nothing strong at all.
+    const SAID: &[(&str, LayoutDirection)] = &[
+        ("// \u{5d0}\u{5d1}\u{5d2} x", LayoutDirection::LeftToRight),
+        ("\u{5d0}\u{5d1} (12) [x]", LayoutDirection::LeftToRight),
+        (
+            "\u{627}\u{644} 123 \u{5d0}, 4.5",
+            LayoutDirection::LeftToRight,
+        ),
+        (
+            "\u{2067}abc\u{2069} \u{5d0} d",
+            LayoutDirection::LeftToRight,
+        ),
+        ("\u{5b4}\u{5d0} \u{200f}b", LayoutDirection::LeftToRight),
+        (
+            "\u{5d0} a\u{2029}b \u{5d1}\u{1c}\u{5d2} c",
+            LayoutDirection::LeftToRight,
+        ),
+        ("abc \u{5d0}\u{5d1}", LayoutDirection::RightToLeft),
+        ("12 abc!", LayoutDirection::RightToLeft),
+        ("a\u{2029}\u{5d0} b\u{2029}c", LayoutDirection::RightToLeft),
+        ("(1)", LayoutDirection::RightToLeft),
+    ];
+
+    fn said(direction: LayoutDirection) -> TextDirection {
+        match direction {
+            LayoutDirection::LeftToRight => TextDirection::LeftToRight,
+            LayoutDirection::RightToLeft => TextDirection::RightToLeft,
+        }
+    }
+
+    /// A paragraph said to read left to right reads so whatever letter
+    /// starts it (UAX #9's HL1), each paragraph; right to left too. A text
+    /// with nothing right to left said left to right keeps no levels, as
+    /// where nothing is said.
+    #[test]
+    fn levels_are_those_of_the_direction_said() {
+        let code = BidiLevels::of_in("// \u{5d0}\u{5d1} x", TextDirection::LeftToRight).unwrap();
+        assert!(!code.is_right_to_left());
+        assert_eq!((code.level(0), code.level(3), code.level(8)), (0, 1, 0));
+        let auto = BidiLevels::of("// \u{5d0}\u{5d1} x").unwrap();
+        assert!(auto.is_right_to_left());
+        assert_eq!((auto.level(0), auto.level(8)), (1, 2));
+        let two = BidiLevels::of_in("\u{5d0}\u{1c}abc", TextDirection::LeftToRight).unwrap();
+        assert_eq!((two.paragraph_level(0), two.paragraph_level(3)), (0, 0));
+        assert_eq!(
+            BidiLevels::of_in("plain code", TextDirection::LeftToRight),
+            None
+        );
+        assert_eq!(
+            BidiLevels::of_in("Données", TextDirection::LeftToRight),
+            None
+        );
+        let rtl = BidiLevels::of_in("abc", TextDirection::RightToLeft).unwrap();
+        assert!(rtl.is_right_to_left());
+        assert_eq!(rtl.level(0), 2);
+        assert!(
+            BidiLevels::of_in("", TextDirection::RightToLeft)
+                .unwrap()
+                .is_right_to_left()
+        );
+        assert_eq!(BidiLevels::of_in("", TextDirection::LeftToRight), None);
+    }
+
+    /// A mark of the direction set before each paragraph that would read
+    /// the other way gives every character the level the direction said
+    /// gives it: what a shaper that knows only first strong characters is
+    /// handed (`lay_out_marked`). None where each already reads so.
+    #[test]
+    fn a_mark_reads_a_paragraph_as_its_direction_says() {
+        for &(text, direction) in SAID {
+            let marks = paragraphs_reading_otherwise(text, direction);
+            assert!(!marks.is_empty(), "{text:?}");
+            let marked = with_marks(text, &marks, direction);
+            let by_mark = BidiLevels::of(&marked).unwrap_or_default();
+            let said = BidiLevels::of_in(text, said(direction)).unwrap_or_default();
+            for (index, _) in text.char_indices() {
+                let at = index + MARK_LEN * marks.partition_point(|&mark| mark <= index);
+                assert_eq!(by_mark.level(at), said.level(index), "{text:?} at {index}");
+                assert_eq!(
+                    by_mark.paragraph_level(at),
+                    said.paragraph_level(index),
+                    "{text:?} at {index}"
+                );
+            }
+        }
+        for (text, direction) in [
+            ("plain code", LayoutDirection::LeftToRight),
+            ("abc \u{5d0}", LayoutDirection::LeftToRight),
+            ("\u{5d0} abc", LayoutDirection::RightToLeft),
+            ("", LayoutDirection::RightToLeft),
+        ] {
+            assert!(
+                paragraphs_reading_otherwise(text, direction).is_empty(),
+                "{text:?}"
+            );
+        }
+        let two = "\u{5d0} a\u{2029}b\u{2029}\u{5d1}";
+        let marks = paragraphs_reading_otherwise(two, LayoutDirection::LeftToRight);
+        assert_eq!(marks.as_slice(), [0, two.find('b').unwrap() + 4]);
+    }
+
+    /// Laid out with its marks by a shaper that knows only first strong
+    /// characters, a text said to read one way comes back as the direction
+    /// said lays it out: the same glyphs in the same places, the marks'
+    /// left out, indices and runs the text's.
+    #[test]
+    fn a_line_laid_out_with_marks_is_the_line_said() {
+        for &(text, direction) in SAID {
+            // Its first character in a run of its own.
+            let first = text.chars().next().map_or(0, char::len_utf8);
+            let runs = [
+                FontRun {
+                    len: first,
+                    font_id: FontId(0),
+                    position: RunPosition::Baseline,
+                },
+                FontRun {
+                    len: text.len() - first,
+                    font_id: FontId(1),
+                    position: RunPosition::Baseline,
+                },
+            ];
+            let laid = lay_out_marked(text, &runs, direction, |marked, marked_runs| {
+                assert_eq!(
+                    marked_runs.iter().map(|run| run.len).sum::<usize>(),
+                    marked.len()
+                );
+                // The first mark is in the first run.
+                assert_eq!(marked_runs[0].len, first + MARK_LEN);
+                laid_out_in(marked, TextDirection::Auto)
+            });
+            let expected = laid_out_in(text, said(direction));
+            let placed = |layout: &LineLayout| -> Vec<(usize, Pixels)> {
+                layout
+                    .runs
+                    .iter()
+                    .flat_map(|run| run.glyphs.iter().map(|g| (g.index, g.position.x)))
+                    .collect()
+            };
+            assert_eq!(placed(&laid), placed(&expected), "{text:?}");
+            assert_eq!((laid.len, laid.width), (text.len(), expected.width));
+        }
     }
 
     #[test]

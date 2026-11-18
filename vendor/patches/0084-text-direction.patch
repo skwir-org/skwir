@@ -1,0 +1,1477 @@
+0084 text-direction: A text's paragraphs read in the direction it says rather than each its first strong character's (TextDirection, inherited through the text style, Styled::text_direction; WindowTextSystem::shape_text_in, shape_line_in and layout_line_in): gpui's levels are worked out so (UAX #9's HL1) and the platform is told (PlatformTextSystem::layout_line_in: DirectWrite's reading direction, Core Text's base writing direction, and for cosmic-text a mark set where a paragraph would read the other way, its glyphs left out), so carets, hit tests, selections and wrapping agree with what is drawn; a line of code that starts with an Arabic comment keeps its // at its left
+
+diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
+index 6177608..a3da13b 100644
+--- a/crates/gpui/src/elements/text.rs
++++ b/crates/gpui/src/elements/text.rs
+@@ -2,8 +2,8 @@ use crate::{
+     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign,
+-    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+-    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
++    TextDirection, TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window,
++    WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+ };
+ use anyhow::Context as _;
+ use gpui_util::ResultExt;
+@@ -664,19 +664,20 @@ struct TextLayoutInner {
+ /// unwrapped, from the line layout cache: one entry a line whatever widths
+ /// the text is laid out at, so their narrowest is worked out once and kept
+ /// there across frames, a window being resized included. The text's own
+-/// layout is left as it was.
++/// layout is left as it was, its lines read in `direction`.
+ /// `None` where it cannot be shaped.
+ fn min_content_size(
+     text: &SharedString,
+     font_size: Pixels,
+     runs: &[TextRun],
++    direction: TextDirection,
+     line_height: Pixels,
+     max_lines: Option<usize>,
+     window: &mut Window,
+ ) -> Option<Size<Pixels>> {
+     let lines = window
+         .text_system()
+-        .shape_text(text.clone(), font_size, runs, None, None)
++        .shape_text_in(text.clone(), font_size, runs, None, None, direction)
+         .log_err()?;
+     let mut size: Size<Pixels> = Size::default();
+     let mut rows_left = max_lines;
+@@ -732,6 +733,7 @@ impl TextLayout {
+                         &text,
+                         font_size,
+                         &runs,
++                        text_style.text_direction,
+                         line_height,
+                         text_style.line_clamp,
+                         window,
+@@ -809,7 +811,14 @@ impl TextLayout {
+                         )
+                     } else if let Some(unclipped) = window
+                         .text_system()
+-                        .shape_text(text.clone(), font_size, &runs, None, None)
++                        .shape_text_in(
++                            text.clone(),
++                            font_size,
++                            &runs,
++                            None,
++                            None,
++                            text_style.text_direction,
++                        )
+                         .log_err()
+                         && unclipped
+                             .iter()
+@@ -836,14 +845,17 @@ impl TextLayout {
+                 };
+                 let len = text.len();
+ 
++                // Each line read in the direction the text says, its first
++                // strong character's where it says none (`TextDirection`).
+                 let Some(lines) = window
+                     .text_system()
+-                    .shape_text(
++                    .shape_text_in(
+                         text,
+                         font_size,
+                         &runs,
+                         wrap_width,            // Wrap if we know the width.
+                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
++                        text_style.text_direction,
+                     )
+                     .log_err()
+                 else {
+@@ -1567,6 +1579,39 @@ mod tests {
+         }
+     }
+ 
++    /// A text inherits the direction its paragraphs read in (0084): said
++    /// left to right, as code is, a line that starts with a comment in
++    /// Hebrew keeps its `//` at its left; where nothing is said, its first
++    /// strong letter reads it right to left, the `//` at its right end. The
++    /// same text in both, in one frame, is laid out once for each.
++    #[crate::test]
++    fn a_text_reads_in_the_direction_it_inherits(cx: &mut crate::TestAppContext) {
++        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px};
++        let cx = cx.add_empty_window();
++        let line = "// \u{5d0}\u{5d1}\u{5d2} x";
++        let auto = StyledText::new(line);
++        let code = StyledText::new(line);
++        let (auto_layout, code_layout) = (auto.layout().clone(), code.layout().clone());
++        cx.draw(
++            point(px(0.), px(0.)),
++            AvailableSpace::max_size(),
++            move |_, _| {
++                div().w(px(400.)).child(div().child(auto)).child(
++                    div()
++                        .text_direction(TextDirection::LeftToRight)
++                        .child(div().child(code)),
++                )
++            },
++        );
++        let start = |layout: &TextLayout| layout.position_for_index(0).map(|at| at.x);
++        let end = |layout: &TextLayout| layout.position_for_index(line.len()).map(|at| at.x);
++        let width = |layout: &TextLayout| layout.line_layout_for_index(0).map(|l| l.width());
++        assert_eq!(start(&code_layout), Some(px(0.)));
++        assert_eq!(end(&code_layout), width(&code_layout));
++        assert_eq!(start(&auto_layout), width(&auto_layout));
++        assert!(start(&auto_layout) > Some(px(0.)));
++    }
++
+     /// A text aligned right or centered answers where its rows are drawn:
+     /// `position_for_index` and `index_for_position` count each row from
+     /// where it stands as it is painted, wrapped or read right to left.
+@@ -1766,8 +1811,16 @@ mod tests {
+                 .text_system()
+                 .shape_text(text.clone(), font_size, &runs, Some(px(70.)), None)
+                 .unwrap();
+-            let size = super::min_content_size(&text, font_size, &runs, line_height, None, window)
+-                .unwrap();
++            let size = super::min_content_size(
++                &text,
++                font_size,
++                &runs,
++                TextDirection::Auto,
++                line_height,
++                None,
++                window,
++            )
++            .unwrap();
+             assert_eq!(size.height, line_height * 3., "aaaa, bbbb, cc: {size:?}");
+             assert!(
+                 size.width >= px(48.) && size.width <= px(49.),
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index da2313f..723c92a 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -40,10 +40,10 @@ use crate::{
+     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, Corners,
+     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
+     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+-    LineLayout, Mesh, MeshPreparation, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput,
+-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+-    WindowControlArea, hash, point, px, size,
++    LayoutDirection, LineLayout, Mesh, MeshPreparation, MissingGlyphSink, Pixels, PlatformGestures,
++    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
++    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
++    SystemWindowTab, Task, TextDirection, Window, WindowControlArea, hash, point, px, size,
+ };
+ #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+ use anyhow::bail;
+@@ -1650,6 +1650,27 @@ pub trait PlatformTextSystem: Send + Sync {
+     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+     /// Layout a line of text with the given font runs.
+     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
++    /// Layout a line of text whose every paragraph reads in `direction`,
++    /// whatever its first strong character (UAX #9's rule HL1: a line of
++    /// code that starts with an Arabic comment reads left to right). The
++    /// glyphs as `layout_line` gives them, their indices the text's. By
++    /// default, for a shaper that takes a paragraph's direction from its
++    /// first strong character alone (cosmic-text), a mark of the direction
++    /// is set at the start of each paragraph that would read the other way
++    /// and its glyphs left out (`text_system::bidi::lay_out_marked`); a
++    /// platform that can be told the direction says it (DirectWrite's
++    /// reading direction, Core Text's base writing direction).
++    fn layout_line_in(
++        &self,
++        text: &str,
++        font_size: Pixels,
++        runs: &[FontRun],
++        direction: LayoutDirection,
++    ) -> LineLayout {
++        crate::text_system::lay_out_marked(text, runs, direction, |text, runs| {
++            self.layout_line(text, font_size, runs)
++        })
++    }
+     /// Returns the recommended text rendering mode for the given font and size.
+     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
+     -> TextRenderingMode;
+@@ -1733,7 +1754,44 @@ impl PlatformTextSystem for NoopTextSystem {
+         Ok((raster_bounds.size, Vec::new()))
+     }
+ 
+-    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
++    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
++        self.lay_out(text, font_size, runs, TextDirection::Auto)
++    }
++
++    fn layout_line_in(
++        &self,
++        text: &str,
++        font_size: Pixels,
++        runs: &[FontRun],
++        direction: LayoutDirection,
++    ) -> LineLayout {
++        let direction = match direction {
++            LayoutDirection::LeftToRight => TextDirection::LeftToRight,
++            LayoutDirection::RightToLeft => TextDirection::RightToLeft,
++        };
++        self.lay_out(text, font_size, runs, direction)
++    }
++
++    fn recommended_rendering_mode(
++        &self,
++        _font_id: FontId,
++        _font_size: Pixels,
++    ) -> TextRenderingMode {
++        TextRenderingMode::Grayscale
++    }
++}
++
++impl NoopTextSystem {
++    /// Each character an em wide (an emoji two), a line holding
++    /// right-to-left text laid out as it reads, its paragraphs in
++    /// `direction`, as a platform lays it out.
++    fn lay_out(
++        &self,
++        text: &str,
++        font_size: Pixels,
++        _runs: &[FontRun],
++        direction: TextDirection,
++    ) -> LineLayout {
+         let mut position = px(0.);
+         let metrics = self.font_metrics(FontId(0));
+         let em_width = font_size
+@@ -1782,19 +1840,11 @@ impl PlatformTextSystem for NoopTextSystem {
+         };
+         // Right-to-left text laid out as it reads, as a platform lays it
+         // out, so tests of it see what a window shows.
+-        match crate::BidiLevels::of(text) {
++        match crate::BidiLevels::of_in(text, direction) {
+             Some(levels) => layout.laid_out_as_read(&levels, text),
+             None => layout,
+         }
+     }
+-
+-    fn recommended_rendering_mode(
+-        &self,
+-        _font_id: FontId,
+-        _font_size: Pixels,
+-    ) -> TextRenderingMode {
+-        TextRenderingMode::Grayscale
+-    }
+ }
+ 
+ // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 19b1338..192aba9 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -514,6 +514,40 @@ impl LayoutDirection {
+     }
+ }
+ 
++/// The direction a text's paragraphs read in, their base direction (UAX #9's
++/// paragraph embedding level): where its runs of letters going either way
++/// are set, and where its neutral characters (spaces, punctuation, brackets)
++/// go. Apart from the layout's (`LayoutDirection`): a text laid out right to
++/// left may read left to right and the other way round. Inherited through
++/// the text style (`Styled::text_direction`).
++#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
++pub enum TextDirection {
++    /// Each paragraph in the direction of its first strong character (UAX
++    /// #9's P2 and P3, as HTML's `dir="auto"` and CSS's `unicode-bidi:
++    /// plaintext` read it), left to right where it has none: a Hebrew name
++    /// reads right to left, an English one left to right, as every text
++    /// does where nothing says otherwise.
++    #[default]
++    Auto,
++    /// Every paragraph left to right, whatever letter starts it, as code
++    /// editors lay out code: `// تعليق` keeps its `//` at its left, the
++    /// Arabic words reading right to left after it.
++    LeftToRight,
++    /// Every paragraph right to left, whatever letter starts it.
++    RightToLeft,
++}
++
++impl TextDirection {
++    /// The direction it says every paragraph reads in, `None` for `Auto`.
++    pub fn forced(self) -> Option<LayoutDirection> {
++        match self {
++            TextDirection::Auto => None,
++            TextDirection::LeftToRight => Some(LayoutDirection::LeftToRight),
++            TextDirection::RightToLeft => Some(LayoutDirection::RightToLeft),
++        }
++    }
++}
++
+ /// The properties that can be used to style text in GPUI
+ #[derive(Refineable, Clone, Debug, PartialEq)]
+ #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+@@ -564,6 +598,10 @@ pub struct TextStyle {
+     /// CSS's `direction`).
+     pub layout_direction: LayoutDirection,
+ 
++    /// The direction the text's paragraphs read in (inherited): each its
++    /// first strong character's unless it says one (`TextDirection`).
++    pub text_direction: TextDirection,
++
+     /// The number of lines to display before truncating the text
+     pub line_clamp: Option<usize>,
+ 
+@@ -591,6 +629,7 @@ impl Default for TextStyle {
+             text_overflow: None,
+             text_align: TextAlign::default(),
+             layout_direction: LayoutDirection::default(),
++            text_direction: TextDirection::default(),
+             line_clamp: None,
+             position: RunPosition::Baseline,
+         }
+diff --git a/crates/gpui/src/styled.rs b/crates/gpui/src/styled.rs
+index 114b461..b47dfe9 100644
+--- a/crates/gpui/src/styled.rs
++++ b/crates/gpui/src/styled.rs
+@@ -3,7 +3,8 @@ use crate::{
+     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
+     FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent,
+     LayoutDirection, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
+-    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
++    TextDirection, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative,
++    rems,
+ };
+ pub use gpui_macros::{
+     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
+@@ -127,6 +128,16 @@ pub trait Styled: Sized {
+         self
+     }
+ 
++    /// Sets the direction the paragraphs of this element's texts read in,
++    /// inherited by the elements inside but those that set their own:
++    /// `TextDirection::LeftToRight` for code, whose lines read left to
++    /// right whatever letter starts them; each its first strong
++    /// character's where nothing says one (`TextDirection::Auto`).
++    fn text_direction(mut self, direction: TextDirection) -> Self {
++        self.text_style().text_direction = Some(direction);
++        self
++    }
++
+     /// Sets the text alignment to left
+     fn text_left(self) -> Self {
+         self.text_align(TextAlign::Left)
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index e5fa12c..b3560a8 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -7,6 +7,7 @@ mod line_layout;
+ mod line_wrapper;
+ 
+ pub use bidi::BidiLevels;
++pub(crate) use bidi::lay_out_marked;
+ pub use font_fallbacks::*;
+ pub use font_features::*;
+ pub use line::*;
+@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
+ 
+ use crate::{
+     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, RunPosition,
+-    SharedString, Size, StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
++    SharedString, Size, StrikethroughStyle, TextDirection, TextRenderingMode, UnderlineStyle, px,
+ };
+ use anyhow::Context as _;
+ use collections::{FxHashMap, FxHashSet};
+@@ -748,6 +749,20 @@ impl WindowTextSystem {
+         font_size: Pixels,
+         runs: &[TextRun],
+         force_width: Option<Pixels>,
++    ) -> ShapedLine {
++        self.shape_line_in(text, font_size, runs, force_width, TextDirection::Auto)
++    }
++
++    /// [`Self::shape_line`], its paragraph read in `direction` rather than
++    /// its first strong character's where it says one
++    /// (`TextDirection::LeftToRight` for a line of code).
++    pub fn shape_line_in(
++        &self,
++        text: SharedString,
++        font_size: Pixels,
++        runs: &[TextRun],
++        force_width: Option<Pixels>,
++        direction: TextDirection,
+     ) -> ShapedLine {
+         debug_assert!(
+             text.find('\n').is_none(),
+@@ -774,7 +789,7 @@ impl WindowTextSystem {
+             });
+         }
+ 
+-        let layout = self.layout_line(&text, font_size, runs, force_width);
++        let layout = self.layout_line_in(&text, font_size, runs, force_width, direction);
+ 
+         ShapedLine {
+             layout,
+@@ -793,6 +808,28 @@ impl WindowTextSystem {
+         runs: &[TextRun],
+         wrap_width: Option<Pixels>,
+         line_clamp: Option<usize>,
++    ) -> Result<SmallVec<[WrappedLine; 1]>> {
++        self.shape_text_in(
++            text,
++            font_size,
++            runs,
++            wrap_width,
++            line_clamp,
++            TextDirection::Auto,
++        )
++    }
++
++    /// [`Self::shape_text`], each of its lines read in `direction` rather
++    /// than its first strong character's where it says one
++    /// (`TextDirection::LeftToRight` for code, as editors lay it out).
++    pub fn shape_text_in(
++        &self,
++        text: SharedString,
++        font_size: Pixels,
++        runs: &[TextRun],
++        wrap_width: Option<Pixels>,
++        line_clamp: Option<usize>,
++        direction: TextDirection,
+     ) -> Result<SmallVec<[WrappedLine; 1]>> {
+         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
+         let mut font_runs = self.font_runs_buffer.take();
+@@ -860,6 +897,7 @@ impl WindowTextSystem {
+                 &line_text,
+                 font_size,
+                 &font_runs,
++                direction,
+                 wrap_width,
+                 max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
+             );
+@@ -930,6 +968,19 @@ impl WindowTextSystem {
+         font_size: Pixels,
+         runs: &[TextRun],
+         force_width: Option<Pixels>,
++    ) -> Arc<LineLayout> {
++        self.layout_line_in(text, font_size, runs, force_width, TextDirection::Auto)
++    }
++
++    /// [`Self::layout_line`], its paragraph read in `direction` rather than
++    /// its first strong character's where it says one.
++    pub fn layout_line_in(
++        &self,
++        text: &str,
++        font_size: Pixels,
++        runs: &[TextRun],
++        force_width: Option<Pixels>,
++        direction: TextDirection,
+     ) -> Arc<LineLayout> {
+         let mut last_run = None::<&TextRun>;
+         let mut font_runs = self.font_runs_buffer.take();
+@@ -969,6 +1020,7 @@ impl WindowTextSystem {
+             &SharedString::new(text),
+             font_size,
+             &font_runs,
++            direction,
+             force_width,
+         );
+ 
+@@ -990,6 +1042,7 @@ impl WindowTextSystem {
+                     font_id,
+                     position: RunPosition::Baseline,
+                 }],
++                TextDirection::Auto,
+                 None,
+             )
+             .width
+diff --git a/crates/gpui/src/text_system/bidi.rs b/crates/gpui/src/text_system/bidi.rs
+index 70395f4..e10f43e 100644
+--- a/crates/gpui/src/text_system/bidi.rs
++++ b/crates/gpui/src/text_system/bidi.rs
+@@ -8,7 +8,9 @@
+ //! - each byte's embedding level ([`BidiLevels`]), worked out here from the
+ //!   text by UAX #9, each paragraph's direction taken from its first strong
+ //!   character, as cosmic-text, Core Text and DirectWrite (asked so) take
+-//!   it;
++//!   it, or the direction the text says (`TextDirection`: code, left to
++//!   right whatever letter starts a line), which the platform is told
++//!   (`PlatformTextSystem::layout_line_in`);
+ //! - the glyphs in the order they are drawn, left to right
+ //!   (`LineLayout::put_in_drawn_order`), whatever order the platform handed
+ //!   them in.
+@@ -37,10 +39,13 @@
+ //! of this: its glyphs follow its text, and every answer is worked out as
+ //! before, as fast.
+ 
+-use crate::{FontId, LineLayout, Pixels, RunPosition, ShapedGlyph, ShapedRun, WrapBoundary, px};
++use crate::{
++    FontId, FontRun, LayoutDirection, LineLayout, Pixels, RunPosition, ShapedGlyph, ShapedRun,
++    TextDirection, WrapBoundary, px,
++};
+ use smallvec::SmallVec;
+ use std::{ops::Range, sync::Arc};
+-use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
++use unicode_bidi::{BidiClass, BidiInfo, Level, bidi_class};
+ 
+ /// How a line reads in both directions: the embedding level (UAX #9) of
+ /// each byte of its text, and of each paragraph (a line holds several where
+@@ -59,10 +64,23 @@ impl BidiLevels {
+     /// or `None` where nothing in it reads right to left: told by a scan of
+     /// its characters, at once for ASCII.
+     pub fn of(text: &str) -> Option<Self> {
+-        if text.is_ascii() || !text.chars().any(turns_right_to_left) {
+-            return None;
+-        }
+-        let info = BidiInfo::new(text, None);
++        Self::of_in(text, TextDirection::Auto)
++    }
++
++    /// The levels of `text` laid out as one line, its paragraphs read in
++    /// `direction` (each its first strong character's for `Auto`, UAX #9's
++    /// P2 and P3; the one said otherwise, its rule HL1), or `None` where
++    /// nothing in it reads right to left. Left to right, that is told by
++    /// the same scan as `Auto`'s: a line of code without a Hebrew or Arabic
++    /// letter costs nothing more. Right to left, every text has levels.
++    pub fn of_in(text: &str, direction: TextDirection) -> Option<Self> {
++        let forced = match direction {
++            TextDirection::RightToLeft => Some(Level::rtl()),
++            _ if text.is_ascii() || !text.chars().any(turns_right_to_left) => return None,
++            TextDirection::LeftToRight => Some(Level::ltr()),
++            TextDirection::Auto => None,
++        };
++        let info = BidiInfo::new(text, forced);
+         let mut levels = Vec::with_capacity(text.len());
+         let mut paragraphs = SmallVec::new();
+         for paragraph in &info.paragraphs {
+@@ -73,6 +91,10 @@ impl BidiLevels {
+             levels.extend(laid[range.clone()].iter().map(|level| level.number()));
+             paragraphs.push((range.start, paragraph.level.number()));
+         }
++        if let (true, Some(level)) = (paragraphs.is_empty(), forced) {
++            // Nothing, read right to left: its place is at its right.
++            paragraphs.push((0, level.number()));
++        }
+         Some(Self { levels, paragraphs })
+     }
+ 
+@@ -165,6 +187,116 @@ fn rests_at_row_end(c: char) -> bool {
+     )
+ }
+ 
++/// The bytes a bidirectional mark takes in UTF-8 (U+200E, U+200F).
++const MARK_LEN: usize = 3;
++
++/// `text` laid out by `lay_out`, a platform's shaper that takes each
++/// paragraph's direction from its first strong character alone (UAX #9's P2
++/// and P3; cosmic-text, whose `ShapeLine` takes no other), its paragraphs
++/// read in `direction` all the same: a mark of that direction (LRM, U+200E,
++/// or RLM, U+200F) is set at the start of each paragraph that would read the
++/// other way, the first strong character there, which gives the paragraph
++/// the level the direction says and every character after it the level it
++/// has in a paragraph of that level (the mark is the level's own class, as
++/// the paragraph's start of sequence is). The mark is not the caller's: its
++/// glyphs are left out, the others' indices are the text's and its runs are
++/// the caller's. A shaper hides a mark (HarfBuzz's and harfrust's default
++/// ignorables: no advance, drawn as nothing), so nothing else moves. A line
++/// whose paragraphs read so already is laid out as it is.
++pub(crate) fn lay_out_marked(
++    text: &str,
++    runs: &[FontRun],
++    direction: LayoutDirection,
++    lay_out: impl FnOnce(&str, &[FontRun]) -> LineLayout,
++) -> LineLayout {
++    let marks = paragraphs_reading_otherwise(text, direction);
++    if marks.is_empty() {
++        return lay_out(text, runs);
++    }
++    let marked = with_marks(text, &marks, direction);
++    // Each mark in the run its paragraph starts in, the last run's past them.
++    let mut marked_runs: SmallVec<[FontRun; 4]> = SmallVec::from(runs);
++    let mut start = 0;
++    let last = marked_runs.len().saturating_sub(1);
++    for (ix, run) in marked_runs.iter_mut().enumerate() {
++        let end = if ix == last {
++            usize::MAX
++        } else {
++            start + run.len
++        };
++        run.len += MARK_LEN * marks.iter().filter(|&&at| at >= start && at < end).count();
++        start = end;
++    }
++    let mut layout = lay_out(&marked, &marked_runs);
++    // Where each mark is in the marked text.
++    let placed: SmallVec<[usize; 2]> = marks
++        .iter()
++        .enumerate()
++        .map(|(ix, at)| at + MARK_LEN * ix)
++        .collect();
++    for run in &mut layout.runs {
++        run.glyphs.retain_mut(|glyph| {
++            let before = placed.partition_point(|&at| at + MARK_LEN <= glyph.index);
++            if placed.get(before).is_some_and(|&at| at <= glyph.index) {
++                return false;
++            }
++            glyph.index -= MARK_LEN * before;
++            true
++        });
++    }
++    layout.runs.retain(|run| !run.glyphs.is_empty());
++    layout.len = text.len();
++    layout
++}
++
++/// `text` with a mark of `direction` (LRM, RLM) before each byte of `marks`.
++fn with_marks(text: &str, marks: &[usize], direction: LayoutDirection) -> String {
++    let mark = match direction {
++        LayoutDirection::LeftToRight => '\u{200E}',
++        LayoutDirection::RightToLeft => '\u{200F}',
++    };
++    let mut marked = String::with_capacity(text.len() + MARK_LEN * marks.len());
++    let mut from = 0;
++    for &at in marks {
++        marked.push_str(&text[from..at]);
++        marked.push(mark);
++        from = at;
++    }
++    marked.push_str(&text[from..]);
++    marked
++}
++
++/// Where each paragraph of `text` that would read the other way from
++/// `direction` (by its first strong character, left to right where it has
++/// none) starts: UAX #9's paragraphs, each ending after its separator. None
++/// for a text with no right-to-left character read left to right.
++fn paragraphs_reading_otherwise(text: &str, direction: LayoutDirection) -> SmallVec<[usize; 1]> {
++    let mut starts = SmallVec::new();
++    if text.is_empty()
++        || direction == LayoutDirection::LeftToRight
++            && (text.is_ascii() || !text.chars().any(turns_right_to_left))
++    {
++        return starts;
++    }
++    let mut start = 0;
++    let ends = text
++        .char_indices()
++        .filter(|(_, c)| bidi_class(*c) == BidiClass::B)
++        .map(|(at, c)| at + c.len_utf8())
++        .chain([text.len()]);
++    for end in ends {
++        if start >= end {
++            continue;
++        }
++        let reads = LayoutDirection::of_text(&text[start..end]).unwrap_or_default();
++        if reads != direction {
++            starts.push(start);
++        }
++        start = end;
++    }
++    starts
++}
++
+ impl LineLayout {
+     /// Put the glyphs in the order they are drawn, left to right, as the
+     /// rest of gpui walks them. A platform may hand a run read right to left
+@@ -679,6 +811,46 @@ mod tests {
+         }
+     }
+ 
++    /// `laid_out`, its paragraphs read in `direction`; a bidirectional mark
++    /// drawn as nothing, as a shaper hides it.
++    fn laid_out_in(text: &str, direction: TextDirection) -> LineLayout {
++        let levels = BidiLevels::of_in(text, direction);
++        let chars: Vec<(usize, char)> = text.char_indices().collect();
++        let char_levels: Vec<u8> = chars
++            .iter()
++            .map(|(i, _)| levels.as_ref().map_or(0, |levels| levels.level(*i)))
++            .collect();
++        let mut x = px(0.);
++        let glyphs = drawn_order(&char_levels)
++            .iter()
++            .map(|&k| {
++                let glyph = ShapedGlyph {
++                    id: GlyphId(k as u32),
++                    position: point(x, px(0.)),
++                    index: chars[k].0,
++                    is_emoji: false,
++                };
++                if !matches!(chars[k].1, '\u{200e}' | '\u{200f}') {
++                    x += px(10.);
++                }
++                glyph
++            })
++            .collect();
++        LineLayout {
++            font_size: px(16.),
++            width: x,
++            ascent: px(12.),
++            descent: px(4.),
++            runs: vec![ShapedRun {
++                font_id: FontId(0),
++                glyphs,
++                position: Default::default(),
++            }],
++            len: text.len(),
++            bidi_levels: levels.map(Arc::new),
++        }
++    }
++
+     /// The text drawn left to right, as the glyphs stand.
+     fn drawn(layout: &LineLayout, text: &str) -> String {
+         layout
+@@ -992,6 +1164,154 @@ mod tests {
+         assert_eq!(two.slice(3..6).paragraph_level(0), 0);
+     }
+ 
++    /// Texts read in a direction said and their first strong character's
++    /// other way: a comment in Hebrew, Arabic with digits (W2: European
++    /// digits after an Arabic letter are Arabic ones), brackets, an isolate
++    /// passed over, a mark of the text's own, a point before its letter
++    /// (W1), several paragraphs, nothing strong at all.
++    const SAID: &[(&str, LayoutDirection)] = &[
++        ("// \u{5d0}\u{5d1}\u{5d2} x", LayoutDirection::LeftToRight),
++        ("\u{5d0}\u{5d1} (12) [x]", LayoutDirection::LeftToRight),
++        (
++            "\u{627}\u{644} 123 \u{5d0}, 4.5",
++            LayoutDirection::LeftToRight,
++        ),
++        (
++            "\u{2067}abc\u{2069} \u{5d0} d",
++            LayoutDirection::LeftToRight,
++        ),
++        ("\u{5b4}\u{5d0} \u{200f}b", LayoutDirection::LeftToRight),
++        (
++            "\u{5d0} a\u{2029}b \u{5d1}\u{1c}\u{5d2} c",
++            LayoutDirection::LeftToRight,
++        ),
++        ("abc \u{5d0}\u{5d1}", LayoutDirection::RightToLeft),
++        ("12 abc!", LayoutDirection::RightToLeft),
++        ("a\u{2029}\u{5d0} b\u{2029}c", LayoutDirection::RightToLeft),
++        ("(1)", LayoutDirection::RightToLeft),
++    ];
++
++    fn said(direction: LayoutDirection) -> TextDirection {
++        match direction {
++            LayoutDirection::LeftToRight => TextDirection::LeftToRight,
++            LayoutDirection::RightToLeft => TextDirection::RightToLeft,
++        }
++    }
++
++    /// A paragraph said to read left to right reads so whatever letter
++    /// starts it (UAX #9's HL1), each paragraph; right to left too. A text
++    /// with nothing right to left said left to right keeps no levels, as
++    /// where nothing is said.
++    #[test]
++    fn levels_are_those_of_the_direction_said() {
++        let code = BidiLevels::of_in("// \u{5d0}\u{5d1} x", TextDirection::LeftToRight).unwrap();
++        assert!(!code.is_right_to_left());
++        assert_eq!((code.level(0), code.level(3), code.level(8)), (0, 1, 0));
++        let auto = BidiLevels::of("// \u{5d0}\u{5d1} x").unwrap();
++        assert!(auto.is_right_to_left());
++        assert_eq!((auto.level(0), auto.level(8)), (1, 2));
++        let two = BidiLevels::of_in("\u{5d0}\u{1c}abc", TextDirection::LeftToRight).unwrap();
++        assert_eq!((two.paragraph_level(0), two.paragraph_level(3)), (0, 0));
++        assert_eq!(
++            BidiLevels::of_in("plain code", TextDirection::LeftToRight),
++            None
++        );
++        assert_eq!(
++            BidiLevels::of_in("Données", TextDirection::LeftToRight),
++            None
++        );
++        let rtl = BidiLevels::of_in("abc", TextDirection::RightToLeft).unwrap();
++        assert!(rtl.is_right_to_left());
++        assert_eq!(rtl.level(0), 2);
++        assert!(
++            BidiLevels::of_in("", TextDirection::RightToLeft)
++                .unwrap()
++                .is_right_to_left()
++        );
++        assert_eq!(BidiLevels::of_in("", TextDirection::LeftToRight), None);
++    }
++
++    /// A mark of the direction set before each paragraph that would read
++    /// the other way gives every character the level the direction said
++    /// gives it: what a shaper that knows only first strong characters is
++    /// handed (`lay_out_marked`). None where each already reads so.
++    #[test]
++    fn a_mark_reads_a_paragraph_as_its_direction_says() {
++        for &(text, direction) in SAID {
++            let marks = paragraphs_reading_otherwise(text, direction);
++            assert!(!marks.is_empty(), "{text:?}");
++            let marked = with_marks(text, &marks, direction);
++            let by_mark = BidiLevels::of(&marked).unwrap_or_default();
++            let said = BidiLevels::of_in(text, said(direction)).unwrap_or_default();
++            for (index, _) in text.char_indices() {
++                let at = index + MARK_LEN * marks.partition_point(|&mark| mark <= index);
++                assert_eq!(by_mark.level(at), said.level(index), "{text:?} at {index}");
++                assert_eq!(
++                    by_mark.paragraph_level(at),
++                    said.paragraph_level(index),
++                    "{text:?} at {index}"
++                );
++            }
++        }
++        for (text, direction) in [
++            ("plain code", LayoutDirection::LeftToRight),
++            ("abc \u{5d0}", LayoutDirection::LeftToRight),
++            ("\u{5d0} abc", LayoutDirection::RightToLeft),
++            ("", LayoutDirection::RightToLeft),
++        ] {
++            assert!(
++                paragraphs_reading_otherwise(text, direction).is_empty(),
++                "{text:?}"
++            );
++        }
++        let two = "\u{5d0} a\u{2029}b\u{2029}\u{5d1}";
++        let marks = paragraphs_reading_otherwise(two, LayoutDirection::LeftToRight);
++        assert_eq!(marks.as_slice(), [0, two.find('b').unwrap() + 4]);
++    }
++
++    /// Laid out with its marks by a shaper that knows only first strong
++    /// characters, a text said to read one way comes back as the direction
++    /// said lays it out: the same glyphs in the same places, the marks'
++    /// left out, indices and runs the text's.
++    #[test]
++    fn a_line_laid_out_with_marks_is_the_line_said() {
++        for &(text, direction) in SAID {
++            // Its first character in a run of its own.
++            let first = text.chars().next().map_or(0, char::len_utf8);
++            let runs = [
++                FontRun {
++                    len: first,
++                    font_id: FontId(0),
++                    position: RunPosition::Baseline,
++                },
++                FontRun {
++                    len: text.len() - first,
++                    font_id: FontId(1),
++                    position: RunPosition::Baseline,
++                },
++            ];
++            let laid = lay_out_marked(text, &runs, direction, |marked, marked_runs| {
++                assert_eq!(
++                    marked_runs.iter().map(|run| run.len).sum::<usize>(),
++                    marked.len()
++                );
++                // The first mark is in the first run.
++                assert_eq!(marked_runs[0].len, first + MARK_LEN);
++                laid_out_in(marked, TextDirection::Auto)
++            });
++            let expected = laid_out_in(text, said(direction));
++            let placed = |layout: &LineLayout| -> Vec<(usize, Pixels)> {
++                layout
++                    .runs
++                    .iter()
++                    .flat_map(|run| run.glyphs.iter().map(|g| (g.index, g.position.x)))
++                    .collect()
++            };
++            assert_eq!(placed(&laid), placed(&expected), "{text:?}");
++            assert_eq!((laid.len, laid.width), (text.len(), expected.width));
++        }
++    }
++
+     #[test]
+     fn a_row_is_drawn_in_the_order_it_reads() {
+         let order = drawn_order(&[0, 0, 1, 1, 1, 0]);
+diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
+index a5ee74e..50d94ee 100644
+--- a/crates/gpui/src/text_system/line_layout.rs
++++ b/crates/gpui/src/text_system/line_layout.rs
+@@ -1,5 +1,6 @@
+ use crate::{
+-    FontId, GlyphId, Pixels, PlatformTextSystem, Point, RunPosition, SharedString, Size, point, px,
++    FontId, GlyphId, Pixels, PlatformTextSystem, Point, RunPosition, SharedString, Size,
++    TextDirection, point, px,
+ };
+ use collections::FxHashMap;
+ use smallvec::SmallVec;
+@@ -1102,6 +1103,7 @@ impl LineLayoutCache {
+         text: Text,
+         font_size: Pixels,
+         runs: &[FontRun],
++        direction: TextDirection,
+         wrap_width: Option<Pixels>,
+         max_lines: Option<usize>,
+     ) -> Arc<WrappedLineLayout>
+@@ -1114,6 +1116,7 @@ impl LineLayoutCache {
+             text: text.as_ref(),
+             font_size,
+             runs,
++            direction,
+             wrap_width,
+             force_width: None,
+         } as &dyn AsCacheKeyRef;
+@@ -1136,7 +1139,8 @@ impl LineLayoutCache {
+         } else {
+             drop(state);
+             let text = SharedString::from(text);
+-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
++            let unwrapped_layout =
++                self.layout_line::<&SharedString>(&text, font_size, runs, direction, None);
+             let (unwrapped_layout, wrap_boundaries) = if let Some(wrap_width) = wrap_width {
+                 let breaks = self.breaks_of(&text);
+                 unwrapped_layout.wrapped(text.as_ref(), &breaks, wrap_width, max_lines)
+@@ -1153,6 +1157,7 @@ impl LineLayoutCache {
+                 text,
+                 font_size,
+                 runs: SmallVec::from(runs),
++                direction,
+                 wrap_width,
+                 force_width: None,
+             });
+@@ -1173,6 +1178,7 @@ impl LineLayoutCache {
+         text: Text,
+         font_size: Pixels,
+         runs: &[FontRun],
++        direction: TextDirection,
+         force_width: Option<Pixels>,
+     ) -> Arc<LineLayout>
+     where
+@@ -1184,6 +1190,7 @@ impl LineLayoutCache {
+             text: text.as_ref(),
+             font_size,
+             runs,
++            direction,
+             wrap_width: None,
+             force_width,
+         } as &dyn AsCacheKeyRef;
+@@ -1205,10 +1212,17 @@ impl LineLayoutCache {
+             layout
+         } else {
+             let text = SharedString::from(text);
+-            let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
+-            // Right-to-left text: its levels kept, its glyphs in the order
+-            // they are drawn (`text_system::bidi`).
+-            layout.bidi_levels = BidiLevels::of(&text).map(Arc::new);
++            let mut layout = shape(
++                &*self.platform_text_system,
++                &text,
++                font_size,
++                runs,
++                direction,
++            );
++            // Right-to-left text: its levels kept, its paragraphs read in
++            // the direction asked, as the platform was told to lay them out,
++            // its glyphs in the order they are drawn (`text_system::bidi`).
++            layout.bidi_levels = BidiLevels::of_in(&text, direction).map(Arc::new);
+             if layout.bidi_levels.is_some() {
+                 layout.put_in_drawn_order();
+             }
+@@ -1221,6 +1235,7 @@ impl LineLayoutCache {
+                 text,
+                 font_size,
+                 runs: SmallVec::from(runs),
++                direction,
+                 wrap_width: None,
+                 force_width,
+             });
+@@ -1285,15 +1300,23 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
+ /// kerning joins a superscript to its word), and the stretches follow each
+ /// other: glyph positions and indices are offset to the whole line's, each
+ /// run keeps its position for painting, and the line's ascent and descent are
+-/// those of its text at full size.
++/// those of its text at full size. A line whose paragraphs read in a
++/// direction said (`TextDirection::LeftToRight`, `RightToLeft`) is laid out
++/// so by the platform (`PlatformTextSystem::layout_line_in`), each stretch
++/// too.
+ fn shape(
+     platform: &dyn PlatformTextSystem,
+     text: &str,
+     font_size: Pixels,
+     runs: &[FontRun],
++    direction: TextDirection,
+ ) -> LineLayout {
++    let lay_out = |text: &str, font_size: Pixels, runs: &[FontRun]| match direction.forced() {
++        None => platform.layout_line(text, font_size, runs),
++        Some(direction) => platform.layout_line_in(text, font_size, runs, direction),
++    };
+     if runs.iter().all(|run| run.position == RunPosition::Baseline) {
+-        return platform.layout_line(text, font_size, runs);
++        return lay_out(text, font_size, runs);
+     }
+     let mut layout = LineLayout {
+         font_size,
+@@ -1331,7 +1354,7 @@ fn shape(
+             continue;
+         }
+         let scale = position.scale();
+-        let part = platform.layout_line(&text[start..end], font_size * scale, stretch);
++        let part = lay_out(&text[start..end], font_size * scale, stretch);
+         let x = layout.width;
+         for mut run in part.runs {
+             run.position = position;
+@@ -1387,6 +1410,7 @@ struct CacheKey {
+     text: SharedString,
+     font_size: Pixels,
+     runs: SmallVec<[FontRun; 1]>,
++    direction: TextDirection,
+     wrap_width: Option<Pixels>,
+     force_width: Option<Pixels>,
+ }
+@@ -1396,6 +1420,7 @@ struct CacheKeyRef<'a> {
+     text: &'a str,
+     font_size: Pixels,
+     runs: &'a [FontRun],
++    direction: TextDirection,
+     wrap_width: Option<Pixels>,
+     force_width: Option<Pixels>,
+ }
+@@ -1420,6 +1445,7 @@ impl AsCacheKeyRef for CacheKey {
+             text: &self.text,
+             font_size: self.font_size,
+             runs: self.runs.as_slice(),
++            direction: self.direction,
+             wrap_width: self.wrap_width,
+             force_width: self.force_width,
+         }
+@@ -1675,11 +1701,25 @@ mod breaks_kept_tests {
+             position: RunPosition::Baseline,
+         }];
+         let shared = SharedString::from(text);
+-        let wrapped = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(100.)), None);
++        let wrapped = cache.layout_wrapped_line(
++            text,
++            px(16.),
++            &runs,
++            TextDirection::Auto,
++            Some(px(100.)),
++            None,
++        );
+         assert!(!wrapped.wrap_boundaries.is_empty());
+         let found = cache.breaks_of(&shared);
+         cache.finish_frame();
+-        let wider = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(120.)), None);
++        let wider = cache.layout_wrapped_line(
++            text,
++            px(16.),
++            &runs,
++            TextDirection::Auto,
++            Some(px(120.)),
++            None,
++        );
+         assert!(!wider.wrap_boundaries.is_empty());
+         assert!(Arc::ptr_eq(&found, &cache.breaks_of(&shared)), "kept");
+         cache.finish_frame();
+@@ -1693,6 +1733,16 @@ mod run_position_tests {
+     use super::*;
+     use crate::platform::NoopTextSystem;
+ 
++    /// Shaped as a line is where nothing says its direction.
++    fn shape(
++        platform: &dyn PlatformTextSystem,
++        text: &str,
++        font_size: Pixels,
++        runs: &[FontRun],
++    ) -> LineLayout {
++        super::shape(platform, text, font_size, runs, TextDirection::Auto)
++    }
++
+     fn run(len: usize, position: RunPosition) -> FontRun {
+         FontRun {
+             len,
+diff --git a/crates/gpui_apple/src/text_system.rs b/crates/gpui_apple/src/text_system.rs
+index c31c4b1..18b1038 100644
+--- a/crates/gpui_apple/src/text_system.rs
++++ b/crates/gpui_apple/src/text_system.rs
+@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
+ use core_foundation::{
+     array::{CFArray, CFArrayRef},
+     attributed_string::CFMutableAttributedString,
+-    base::{CFRange, TCFType},
++    base::{CFRange, CFTypeRef, TCFType},
+     number::CFNumber,
+     string::CFString,
+ };
+@@ -21,7 +21,7 @@ use core_text::{
+         kCTFontWidthTrait,
+     },
+     line::CTLine,
+-    string_attributes::kCTFontAttributeName,
++    string_attributes::{kCTFontAttributeName, kCTParagraphStyleAttributeName},
+ };
+ use font_kit::{
+     font::Font as FontKitFont,
+@@ -34,9 +34,9 @@ use font_kit::{
+ };
+ use gpui::{
+     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
+-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams,
+-    Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
+-    point, px, size, swap_rgba_pa_to_bgra,
++    FontStyle, FontWeight, GlyphId, LayoutDirection, LineLayout, Pixels, PlatformTextSystem,
++    RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size,
++    TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
+ };
+ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+ use pathfinder_geometry::{
+@@ -210,7 +210,21 @@ impl PlatformTextSystem for AppleTextSystem {
+     }
+ 
+     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+-        self.0.write().layout_line(text, font_size, font_runs)
++        self.0.write().layout_line(text, font_size, font_runs, None)
++    }
++
++    /// Core Text reads a line's paragraphs in the base writing direction
++    /// its paragraph style says, where it says one: told so.
++    fn layout_line_in(
++        &self,
++        text: &str,
++        font_size: Pixels,
++        font_runs: &[FontRun],
++        direction: LayoutDirection,
++    ) -> LineLayout {
++        self.0
++            .write()
++            .layout_line(text, font_size, font_runs, Some(direction))
+     }
+ 
+     fn recommended_rendering_mode(
+@@ -537,7 +551,15 @@ impl AppleTextSystemState {
+         }
+     }
+ 
+-    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
++    /// `text` laid out on one line, its paragraphs read in `direction`, or
++    /// each in its first strong character's where it is `None`.
++    fn layout_line(
++        &mut self,
++        text: &str,
++        font_size: Pixels,
++        font_runs: &[FontRun],
++        direction: Option<LayoutDirection>,
++    ) -> LineLayout {
+         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
+         let mut string = CFMutableAttributedString::new();
+         let mut max_ascent = 0.0f32;
+@@ -579,6 +601,16 @@ impl AppleTextSystemState {
+                 break_ligature = !break_ligature;
+             }
+         }
++        if let Some(direction) = direction {
++            // Every paragraph in the direction said, whatever its first
++            // strong character (a line of code that starts in Arabic).
++            let whole = CFRange::init(0, string.char_len());
++            string.set_attribute(
++                whole,
++                unsafe { kCTParagraphStyleAttributeName },
++                &paragraph_style_reading(direction),
++            );
++        }
+         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
+         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
+         let glyph_runs = line.glyph_runs();
+@@ -638,6 +670,42 @@ impl AppleTextSystemState {
+     }
+ }
+ 
++/// A paragraph style whose lines read in `direction` (its base writing
++/// direction, `kCTParagraphStyleSpecifierBaseWritingDirection`), which Core
++/// Text's typesetter takes as each paragraph's level in place of its first
++/// strong character's.
++fn paragraph_style_reading(direction: LayoutDirection) -> core_foundation::base::CFType {
++    #[repr(C)]
++    struct CTParagraphStyleSetting {
++        spec: u32,
++        value_size: usize,
++        value: *const std::ffi::c_void,
++    }
++    unsafe extern "C" {
++        fn CTParagraphStyleCreate(
++            settings: *const CTParagraphStyleSetting,
++            setting_count: usize,
++        ) -> CFTypeRef;
++    }
++    /// `kCTParagraphStyleSpecifierBaseWritingDirection`.
++    const BASE_WRITING_DIRECTION: u32 = 13;
++    // A `CTWritingDirection`: `kCTWritingDirectionLeftToRight`,
++    // `kCTWritingDirectionRightToLeft`.
++    let writing: i8 = match direction {
++        LayoutDirection::LeftToRight => 0,
++        LayoutDirection::RightToLeft => 1,
++    };
++    let setting = CTParagraphStyleSetting {
++        spec: BASE_WRITING_DIRECTION,
++        value_size: std::mem::size_of::<i8>(),
++        value: (&raw const writing).cast(),
++    };
++    // Created, so owned here; Core Text copies the setting's value.
++    unsafe {
++        core_foundation::base::CFType::wrap_under_create_rule(CTParagraphStyleCreate(&setting, 1))
++    }
++}
++
+ #[derive(Debug, Clone)]
+ struct StringIndexConverter<'a> {
+     text: &'a str,
+diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
+index 02486eb..d895548 100644
+--- a/crates/gpui_wgpu/src/cosmic_text_system.rs
++++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
+@@ -1293,6 +1293,13 @@ fn pick_covering_slot(
+     if (ch as u32) <= 0x7F {
+         return None;
+     }
++    // A bidirectional mark is drawn by no font (harfrust hides it): it
++    // stays in the span it is in, so neither one of the text's nor the one
++    // set where a paragraph starts (`PlatformTextSystem::layout_line_in`)
++    // splits a word's span or moves the letters after it to another font.
++    if is_bidi_mark(ch) {
++        return current;
++    }
+     if covers(primary, ch) {
+         return None;
+     }
+@@ -1306,6 +1313,12 @@ fn pick_covering_slot(
+         .position(|(fb_id, _)| covers(*fb_id, ch))
+ }
+ 
++/// The marks that say a direction and nothing else: LRM, RLM and the
++/// Arabic letter mark.
++fn is_bidi_mark(ch: char) -> bool {
++    matches!(ch, '\u{200E}' | '\u{200F}' | '\u{061C}')
++}
++
+ fn charmap_covers(loaded_fonts: &[LoadedFont], id: FontId, ch: char) -> bool {
+     loaded_fonts
+         .get(id.0)
+@@ -2105,6 +2118,119 @@ mod tests {
+         Ok(())
+     }
+ 
++    /// A line said to read left to right (code, 0084) is laid out so whatever
++    /// its first strong character: cosmic-text, which takes a paragraph's
++    /// direction from that alone, is handed a mark of the direction before
++    /// it, whose glyph gpui leaves out; and one said to read right to left
++    /// is too.
++    #[test]
++    fn a_line_reads_in_the_direction_it_is_said_to() -> Result<()> {
++        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(text_system()?)));
++        let window_text_system = gpui::WindowTextSystem::new(text_system);
++        let shape = |direction, text: &str| {
++            let runs = [gpui::TextRun {
++                len: text.len(),
++                font: gpui::font("IBM Plex Sans"),
++                ..Default::default()
++            }];
++            window_text_system.shape_line_in(
++                text.to_string().into(),
++                gpui::px(14.),
++                &runs,
++                None,
++                direction,
++            )
++        };
++        let indices = |line: &gpui::ShapedLine| -> Vec<usize> {
++            line.runs
++                .iter()
++                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
++                .collect()
++        };
++        let drawn_in_order = |line: &gpui::ShapedLine| {
++            line.runs
++                .iter()
++                .flat_map(|run| run.glyphs.iter())
++                .collect::<Vec<_>>()
++                .windows(2)
++                .all(|pair| pair[0].position.x <= pair[1].position.x)
++        };
++        // "// אבג x": a comment in Hebrew. By its first strong letter it
++        // reads right to left, "//" at its right end.
++        let text = "// \u{5d0}\u{5d1}\u{5d2} x";
++        let auto = shape(gpui::TextDirection::Auto, text);
++        assert!(auto.is_right_to_left());
++        assert_eq!(indices(&auto), [10, 9, 7, 5, 3, 2, 1, 0]);
++        // Said left to right: "// " on the left, "גבא" drawn reversed after
++        // it, then " x"; nothing of the mark, the line starting at 0.
++        let code = shape(gpui::TextDirection::LeftToRight, text);
++        assert!(!code.is_right_to_left());
++        assert!(drawn_in_order(&code));
++        assert_eq!(indices(&code), [0, 1, 2, 7, 5, 3, 9, 10]);
++        assert_eq!(code.len(), text.len());
++        assert_eq!(
++            code.runs
++                .first()
++                .and_then(|run| run.glyphs.first())
++                .map(|glyph| glyph.position.x),
++            Some(gpui::px(0.))
++        );
++        assert!((code.width - auto.width).abs() < gpui::px(0.5));
++        assert_eq!(code.x_for_index(0), gpui::px(0.));
++        assert_eq!(code.x_for_index(text.len()), code.width);
++        assert_eq!(code.closest_index_for_x(gpui::px(0.)), 0);
++        // "abc אבג" said right to left: the Hebrew word at the right, read
++        // from there, "abc" at the left.
++        let text = "abc \u{5d0}\u{5d1}\u{5d2}";
++        let rtl = shape(gpui::TextDirection::RightToLeft, text);
++        assert!(rtl.is_right_to_left());
++        assert!(drawn_in_order(&rtl));
++        assert_eq!(indices(&rtl), [8, 6, 4, 3, 0, 1, 2]);
++        let first = |line: &gpui::ShapedLine, k: usize| {
++            line.runs
++                .iter()
++                .flat_map(|run| run.glyphs.iter())
++                .nth(k)
++                .map(|glyph| glyph.position.x)
++        };
++        // From its left (cosmic-text places a line read right to left from
++        // its right end, a few millionths of a pixel off).
++        assert!(first(&rtl, 0).is_some_and(|x| x.abs() < gpui::px(0.01)));
++        // Its start where "abc" starts, the turn to it from the Hebrew.
++        assert_eq!(Some(rtl.x_for_index(0)), first(&rtl, 4));
++        // A Latin line said left to right is the line it always was.
++        let latin = shape(gpui::TextDirection::LeftToRight, "abc");
++        let before = shape(gpui::TextDirection::Auto, "abc");
++        assert!(!latin.has_right_to_left());
++        assert_eq!(latin.width, before.width);
++        assert_eq!(indices(&latin), [0, 1, 2]);
++        Ok(())
++    }
++
++    /// A bidirectional mark keeps the span it is in: the one set where a
++    /// paragraph starts moves no letter after it to another font.
++    #[test]
++    fn a_bidi_mark_keeps_the_span_it_is_in() {
++        let primary = fid(0);
++        let fb = chain(&[1, 2]);
++        // The first fallback draws Hebrew, the second Hebrew and the marks.
++        let covers = |id: FontId, ch: char| match id.0 {
++            0 => ch.is_ascii(),
++            1 => ('\u{5d0}'..='\u{5ea}').contains(&ch),
++            _ => ('\u{5d0}'..='\u{5ea}').contains(&ch) || is_bidi_mark(ch),
++        };
++        let marked = "\u{200e}\u{5d0}\u{5d1}";
++        let spans = compute_run_spans(marked, 0, marked.len(), primary, &fb, &covers);
++        assert_eq!(
++            spans.as_slice(),
++            &[span(0, 3, None, primary), span(3, 7, Some(0), fid(1))]
++        );
++        // Between two Hebrew letters, it stays with them.
++        let text = "\u{5d0}\u{200f}\u{5d1}";
++        let spans = compute_run_spans(text, 0, text.len(), primary, &fb, &covers);
++        assert_eq!(spans.as_slice(), &[span(0, text.len(), Some(0), fid(1))]);
++    }
++
+     #[test]
+     fn paragraph_separator_detection() {
+         for separator in SEPARATORS {
+diff --git a/crates/gpui_windows/src/direct_write.rs b/crates/gpui_windows/src/direct_write.rs
+index 0dd7318..419fee4 100644
+--- a/crates/gpui_windows/src/direct_write.rs
++++ b/crates/gpui_windows/src/direct_write.rs
+@@ -290,7 +290,31 @@ impl PlatformTextSystem for DirectWriteTextSystem {
+     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+         self.state
+             .write()
+-            .layout_line(&self.components, text, font_size, runs)
++            .layout_line(&self.components, text, font_size, runs, TextDirection::Auto)
++            .log_err()
++            .unwrap_or(LineLayout {
++                font_size,
++                ..Default::default()
++            })
++    }
++
++    /// DirectWrite reads a paragraph in the direction its layout is given
++    /// (`SetReadingDirection`), never its first strong character's: told
++    /// so, as a line whose first strong character reads right to left is.
++    fn layout_line_in(
++        &self,
++        text: &str,
++        font_size: Pixels,
++        runs: &[FontRun],
++        direction: LayoutDirection,
++    ) -> LineLayout {
++        let direction = match direction {
++            LayoutDirection::LeftToRight => TextDirection::LeftToRight,
++            LayoutDirection::RightToLeft => TextDirection::RightToLeft,
++        };
++        self.state
++            .write()
++            .layout_line(&self.components, text, font_size, runs, direction)
+             .log_err()
+             .unwrap_or(LineLayout {
+                 font_size,
+@@ -528,9 +552,11 @@ impl DirectWriteState {
+         text: &str,
+         font_size: Pixels,
+         font_runs: &[FontRun],
++        direction: TextDirection,
+     ) -> Result<LineLayout> {
+         if !text.contains(is_line_separator) {
+-            return self.layout_line_without_separators(components, text, font_size, font_runs);
++            return self
++                .layout_line_without_separators(components, text, font_size, font_runs, direction);
+         }
+ 
+         // DirectWrite honors mandatory breaks even without wrapping. Keep each
+@@ -567,8 +593,13 @@ impl DirectWriteState {
+                 }
+             }
+ 
+-            let segment_layout =
+-                self.layout_line_without_separators(components, segment, font_size, &segment_runs)?;
++            let segment_layout = self.layout_line_without_separators(
++                components,
++                segment,
++                font_size,
++                &segment_runs,
++                direction,
++            )?;
+             for mut run in segment_layout.runs {
+                 for glyph in &mut run.glyphs {
+                     glyph.index += text_offset;
+@@ -596,6 +627,7 @@ impl DirectWriteState {
+         text: &str,
+         font_size: Pixels,
+         font_runs: &[FontRun],
++        direction: TextDirection,
+     ) -> Result<LineLayout> {
+         if font_runs.is_empty() {
+             return Ok(LineLayout {
+@@ -612,8 +644,9 @@ impl DirectWriteState {
+             let mut utf16_offset = 0u32;
+             // Right-to-left text is placed as each run reads, and a line
+             // that starts right to left reads so (its first strong
+-            // character's direction, as cosmic-text and Core Text take it).
+-            let bidi = BidiLevels::of(text);
++            // character's direction, as cosmic-text and Core Text take it),
++            // or one said to (`direction`).
++            let bidi = BidiLevels::of_in(text, direction);
+             let reads_right_to_left = bidi.as_ref().is_some_and(BidiLevels::is_right_to_left);
+             let text_layout = {
+                 let first_run = &font_runs[0];
+@@ -2102,8 +2135,8 @@ mod tests {
+     use crate::directx_devices::DirectXDevices;
+     use anyhow::Result;
+     use gpui::{
+-        DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextRun,
+-        TextSystem, WindowTextSystem, bounds, point, px, size,
++        DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextDirection,
++        TextRun, TextSystem, WindowTextSystem, bounds, point, px, size,
+     };
+     use std::{ffi::c_void, sync::Arc};
+     use windows::Win32::Graphics::Direct3D11::{
+@@ -2235,14 +2268,15 @@ mod tests {
+         };
+         platform_text_system.font_id(&font)?;
+         let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(platform_text_system)));
+-        let shape = |text: &str| {
++        let shape_in = |direction: TextDirection, text: &str| {
+             let runs = [TextRun {
+                 len: text.len(),
+                 font: font.clone(),
+                 ..Default::default()
+             }];
+-            text_system.shape_line(text.to_string().into(), px(14.0), &runs, None)
++            text_system.shape_line_in(text.to_string().into(), px(14.0), &runs, None, direction)
+         };
++        let shape = |text: &str| shape_in(TextDirection::Auto, text);
+         // "אבג abc": "abc" on the left, then the space, then "גבא".
+         let text = "\u{5d0}\u{5d1}\u{5d2} abc";
+         let line = shape(text);
+@@ -2268,6 +2302,15 @@ mod tests {
+             .collect();
+         assert_eq!(indices, [0, 1, 2, 3, 8, 6, 4]);
+         assert!(!line.is_right_to_left());
++        // "אבג abc" said to read left to right (a line of code, 0084): its
++        // Hebrew word on the left, drawn reversed, the space, then "abc".
++        let text = "\u{5d0}\u{5d1}\u{5d2} abc";
++        let line = shape_in(TextDirection::LeftToRight, text);
++        let glyphs: Vec<_> = line.runs.iter().flat_map(|run| &run.glyphs).collect();
++        let indices: Vec<usize> = glyphs.iter().map(|glyph| glyph.index).collect();
++        assert_eq!(indices, [4, 2, 0, 6, 7, 8, 9]);
++        assert!(glyphs[0].position.x.abs() < px(0.5));
++        assert!(!line.is_right_to_left());
+         // A line all left to right is placed as it always was.
+         let latin = shape("abc");
+         assert!(!latin.has_right_to_left());

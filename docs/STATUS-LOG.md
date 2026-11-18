@@ -20113,3 +20113,46 @@ start and one turned off. On Xvfb in French: Settings › Modules with
 Polices, Sommes de contrôle and the template from outside turned off,
 each described in French and found by its French words. Not checked:
 macOS, Windows.
+
+## 2026-11-18: code reads left to right on every line
+
+ADR-139, 12. A line of code whose first strong letter is Hebrew or
+Arabic (`// تعليق`, an indented Arabic comment, an array's `"שלום",`)
+took its paragraph direction from that letter. The whole line was
+ordered right to left, its `//`, quotes, brackets and indent moved to
+its other end. Code editors lay every code line out left to right. gpui
+now lets a text say the direction its paragraphs read in (0084,
+`TextDirection`, inherited through the text style). Its levels are
+worked out so (UAX #9's HL1), and the platform is told: DirectWrite by
+its reading direction, Core Text by a paragraph style's base writing
+direction. cosmic-text takes no direction, so it gets a mark (LRM or
+RLM) where a paragraph would read the other way, and the mark's glyphs
+are left out of what gpui gives back. Carets, hit tests, selections and
+wrapping agree with what is drawn. Skwir says it on the code view's rows
+where a grammar colors the text (`code_preview::is_code`: tree-sitter's
+or bat's, not Plain Text), on a document's code blocks and on the byte
+view's rows (`code_preview::reads_as_code`). A plain text's rows (a
+`.txt`, a language chosen Plain text) keep each line's own direction, as
+GTK's text views read them. A line said left to right with no
+right-to-left letter is laid out by the same code as before.
+
+**Checked:** gpui's tests on a copy (`tools/gpui/check.py`: gpui 198
+with four new; gpui_wgpu 61 with two new, shaped by cosmic-text; with
+font-kit 36; gpui_linux 8). Each new test fails with the levels, the
+platform's layout and the font span left as before. The series rebuilt
+from Zed's commit reproduces `vendor/zed`. skwir-ui passes clippy `-D
+warnings` and its tests (752, two new). skwir-ui with gpui_windows
+passes clippy for `x86_64-pc-windows-gnu`, and gpui_windows's tests
+build for it. skwir-ui with gpui_apple's text system type-checks for
+`aarch64-apple-darwin`. On Xvfb, the debug build was compared with one
+built from the same tree without these changes. A Python and a Rust file
+whose lines start with an Arabic comment, an indented one and a Hebrew
+string keep their `#`, `//`, quotes and indent at the left (before: at
+the right, the indent lost). A drag from a line's start over its Arabic
+comment selects from its `#`. A Markdown code block is fixed the same
+way. A `.txt` of Arabic and Hebrew lines and an English Rust file are
+the same, pixel for pixel.
+
+**Not checked:** DirectWrite's and Core Text's paths running (compiled
+only; gpui_windows's test cannot run under Wine, which selects no font
+for it); a selection inside a Markdown code block; printing.

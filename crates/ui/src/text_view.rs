@@ -115,6 +115,10 @@ pub(crate) struct Start {
     pub outlined: bool,
     /// Its language is chosen Plain text: no colors.
     pub plain: bool,
+    /// Whether it is code (`code_preview::is_code`): its lines read left
+    /// to right whatever letter starts them; a plain text's each in its own
+    /// direction.
+    pub code: bool,
 }
 
 /// A text parsed by its tree-sitter grammar, and the bytes it was parsed
@@ -345,6 +349,11 @@ pub(crate) fn start(
         _ => None,
     };
     let plain = engine == skwir_platform::highlight::Engine::Plain;
+    let reads_as_code = !plain
+        && crate::code_preview::is_code(
+            matches!(engine, skwir_platform::highlight::Engine::TreeSitter(_)),
+            file.language.as_deref(),
+        );
     let palette = Arc::new(crate::code_preview::Palette::of(code));
     // Chosen Plain text: bat's plain text, as the view colors it.
     let unnamed = plain.then(|| TextFile {
@@ -417,6 +426,7 @@ pub(crate) fn start(
         palette,
         grammar,
         plain,
+        code: reads_as_code,
     })
 }
 
@@ -517,6 +527,9 @@ pub struct TextView {
     seen: u64,
     /// Its parse, when a tree-sitter grammar colors it.
     parse: Parse,
+    /// Whether it is code, its lines read left to right whatever letter
+    /// starts them (`Start::code`).
+    code: bool,
 }
 
 /// Where a text a tree-sitter grammar colors is with its parse.
@@ -571,6 +584,7 @@ impl TextView {
             grammar,
             outlined: _,
             plain,
+            code,
         } = start;
         // Chosen Plain text: bat's plain text, the theme's own color.
         if plain {
@@ -624,6 +638,7 @@ impl TextView {
             room: Cell::new(0),
             seen: 0,
             parse: parsed.map_or(Parse::None, Parse::Done),
+            code,
         };
         // Room for the lines it has, counted or estimated, from its first
         // frame on.
@@ -1225,6 +1240,7 @@ pub(crate) fn element(view: &TextView, look: Look) -> gpui::AnyElement {
     } = look;
     let laid = entity.clone();
     let spot = Rc::clone(&view.spot);
+    let code = view.code;
     crate::elements::rows::rows(
         "text-rows",
         Rc::clone(&view.scroll),
@@ -1241,6 +1257,7 @@ pub(crate) fn element(view: &TextView, look: Look) -> gpui::AnyElement {
             };
             crate::code_preview::CodeRow {
                 block,
+                code,
                 index: row as usize,
                 number,
                 digits,
@@ -1517,6 +1534,30 @@ mod tests {
             .flat_map(|row| row.runs.iter().filter_map(|run| run.color))
             .collect();
         assert!(colors.len() > 2, "{colors:?}");
+    }
+
+    /// Code reads left to right on every line, a plain text's lines each in
+    /// their own direction: a grammar colors a Python file whose first line
+    /// is an Arabic comment, none a note in Hebrew; neither does one whose
+    /// language is chosen Plain text.
+    #[test]
+    fn code_is_told_from_a_plain_text_by_its_grammar() {
+        let code = crate::code_preview::CodeTheme::own(false);
+        let python =
+            "# \u{62a}\u{639}\u{644}\u{64a}\u{642}\nprint(\"\u{5e9}\u{5dc}\u{5d5}\u{5dd}\")\n";
+        let file = held_file(std::path::Path::new("/nowhere/a.py"), "py", python);
+        assert!(start(&file, &code).unwrap().code);
+        let note = "\u{5e9}\u{5dc}\u{5d5}\u{5dd} (1)\n";
+        let file = held_file(std::path::Path::new("/nowhere/a.txt"), "txt", note);
+        assert!(!start(&file, &code).unwrap().code);
+        let mut plain = code.clone();
+        plain.grammars.chosen = Arc::new(std::collections::BTreeMap::from([(
+            "python".to_owned(),
+            skwir_platform::highlight::Choice::Plain,
+        )]));
+        let file = held_file(std::path::Path::new("/nowhere/a.py"), "py", python);
+        let chosen = start(&file, &plain).unwrap();
+        assert!(chosen.plain && !chosen.code);
     }
 
     fn test_app(dir: &std::path::Path) -> Arc<skwir_core::App> {

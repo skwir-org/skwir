@@ -116,6 +116,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0081-direction-of-a-text` | `LayoutDirection::of_text`: the direction a text reads in where nothing else says one, its first strong character's (UAX #9's P2 and P3, as HTML's `dir="auto"` reads it), to lay out what holds the text in it | — |
 | `0082-lists-follow-the-layout-direction` | A list's items are laid out, prepainted and painted in the list's own text style, its layout direction among it; a uniform list's rows scrolled sideways right to left move by its offset, not twice it | — |
 | `0083-window-menu-by-a-flag` | The menu macOS lists the windows in is the one that says it is (`Menu::window_menu`), never the one named "Window" | — |
+| `0084-text-direction` | A text's paragraphs read in the direction it says (`TextDirection`, inherited, `Styled::text_direction`; `WindowTextSystem::shape_text_in`), not each its first strong character's: gpui's levels worked out so (UAX #9's HL1) and the platform told (`PlatformTextSystem::layout_line_in`: DirectWrite's reading direction, Core Text's base writing direction, for cosmic-text a mark left out of what it gives back); a line of code that starts with an Arabic comment keeps its `//` at its left | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1352,7 +1353,8 @@ answer is found; in short:
   (already in gpui's tree, by usvg) through rule L1, and each paragraph's
   (`LineLayout::bidi_levels`, a `BidiLevels`). A paragraph's direction is
   its first strong character's, as cosmic-text and Core Text take it (and
-  DirectWrite, asked so: 0070). Every other line keeps `None`, and every
+  DirectWrite, asked so: 0070), unless the text says one (0084). Every
+  other line keeps `None`, and every
   answer below is worked out as before, by the same code, behind one test
   of that `Option`: a line all left to right costs no more than it did,
   but the scan when it is shaped (not each frame it is drawn: the layout is
@@ -1714,7 +1716,7 @@ could not be mirrored (docs/i18n.md, level 3). This gives gpui CSS's
   (`TextAlign::resolve`; a line painted with one unresolved reads it as
   left to right). The default stays `Left`; a window right to left sets
   `Start` on its root. A text's own paragraph still reads in the
-  direction of its first strong letter (0069).
+  direction of its first strong letter (0069), or the one it says (0084).
 - **Scrolling sideways.** A box laid out right to left that scrolls
   sideways (`overflow_x_scroll`) starts at its right: what overflows lies
   to its left, and its offset runs from 0, the right end where its content
@@ -2000,3 +2002,92 @@ makes no menu bar yet (`cx.set_menus` is called nowhere), so it sets none.
 The test is `platform::app_menu::tests::the_window_menu_is_the_one_that_says_it_is`.
 gpui_macos type-checked for `aarch64-apple-darwin` (Skwir's UI, in
 `tools/package/macos.sh`'s environment); not run on a Mac.
+
+### 0084: A text's direction
+
+A paragraph read its direction from its first strong character (0069), as
+cosmic-text and Core Text take it: a line of code that starts with a
+Hebrew or Arabic letter (`// تعليق`, `"שלום",` a list's item, an Arabic
+comment indented) was ordered right to left, its `//`, quotes, brackets and
+indent moved to its other end. Code editors (VS Code, the JetBrains ones,
+Zed) lay every code line out left to right: an Arabic comment's words still
+read right to left inside it, the line's structure stays where it is. The
+direction a text's paragraphs read in can now be said:
+
+- **`TextDirection`**: `Auto`, each paragraph its first strong character's
+  (UAX #9's P2 and P3, HTML's `dir="auto"`), the default, so nothing that
+  says none changes; `LeftToRight` or `RightToLeft`, every paragraph so
+  whatever letter starts it (the standard's rule HL1). A field of
+  `TextStyle` (`text_direction`), inherited, apart from the layout's
+  direction (0075): `Styled::text_direction` on what holds code. A text
+  element shapes its lines in it; elsewhere `WindowTextSystem::shape_text_in`,
+  `shape_line_in` and `layout_line_in` take it last (`shape_text` and the
+  others are `Auto`, so Zed's callers are as they were). The line layout
+  cache keeps a line by its direction too.
+- **Levels** (`BidiLevels::of_in`): UAX #9 with the paragraph level said.
+  Left to right, a line without a right-to-left character keeps none, told
+  by the same scan as `Auto`'s: a line of code in English is the line it
+  was, by the same code, and costs nothing more. Right to left, every line
+  has levels, as it reads from its right.
+- **The platform is told** (`PlatformTextSystem::layout_line_in`, asked
+  only for a direction said), so what is drawn is what gpui's carets, hit
+  tests, selections and rows (0069's answers, from the levels) assume:
+  - DirectWrite reads a paragraph in its layout's reading direction, never
+    its first strong character's (0070 set it from that): told the one
+    said (`SetReadingDirection`).
+  - Core Text reads it in the base writing direction of its paragraph
+    style, where one says it: the line's string is given one
+    (`CTParagraphStyleCreate`, `kCTParagraphStyleSpecifierBaseWritingDirection`).
+  - cosmic-text's `ShapeLine` takes it from its first strong character
+    alone (`BidiInfo::new(line, None)`) and takes no other. The trait's
+    default (`text_system::bidi::lay_out_marked`) sets a mark of the
+    direction (LRM, U+200E, or RLM, U+200F) at the start of each paragraph
+    that would read the other way: the paragraph's first strong character,
+    of the level's own class, as its start of sequence is, so every
+    character after it has the level HL1 gives it (a test compares them on
+    texts with brackets, digits after Arabic letters, an isolate, a point
+    before its letter, several paragraphs). harfrust hides a mark (no
+    advance, drawn as nothing); its glyphs are left out, the others' indices
+    are the text's, and the caller's runs are its own: a mark is never the
+    caller's to see. A bidirectional mark (LRM, RLM, ALM) keeps the font
+    span it is in (`pick_covering_slot`): the one set at a paragraph's start
+    moves no letter after it to a fallback font found for the mark, and one
+    of the text's own no longer splits the span of the word it is in (an
+    Arabic word's joining across it included). gpui_web, whose shaping is
+    cosmic-text's, takes the default too.
+  - The tests' text system lays a line out with the levels said.
+
+Skwir says it on its code views' lines (`code_preview::reads_as_code`: the
+code view's rows where a grammar colors the text, a document's code blocks,
+the byte view's rows); a plain text's rows keep each line's own direction.
+
+Not done: what Zed's editor would say (its lines stay `Auto` here); a
+paragraph read right to left is still drawn from its element's left, as
+0069 has it; `ShapedLine::split_at`, which Skwir does not use, cuts a line
+by its text's order as before.
+
+The tests are `text_system::bidi::tests::levels_are_those_of_the_direction_said`,
+`a_mark_reads_a_paragraph_as_its_direction_says` (the levels a mark gives,
+against those said), `a_line_laid_out_with_marks_is_the_line_said` (the
+glyphs, their places and indices, the runs handed),
+`elements::text::tests::a_text_reads_in_the_direction_it_inherits`, gpui_wgpu's
+`cosmic_text_system::tests::a_line_reads_in_the_direction_it_is_said_to`
+(shaped by cosmic-text: a Hebrew comment after `//` left to right, Latin
+before Hebrew right to left, English as it was) and
+`a_bidi_mark_keeps_the_span_it_is_in`, and gpui_windows's
+`right_to_left_runs_are_placed_as_drawn`, a line said left to right added
+(built for Windows, not run: Wine selects no font for it, 0070). Each of
+gpui's and gpui_wgpu's fails with the levels, the platform's layout and
+the font span left as they were (the API kept).
+
+Checked in a window (Skwir's debug build on Xvfb, 2026-11-18, against a
+build of the same tree without 0084): a Python and a Rust file whose lines
+start with an Arabic comment, an indented one and a Hebrew string keep
+their `#`, `//`, quotes and indent at the left, the Arabic and Hebrew
+words read right to left inside the line; a drag from a line's start over
+its Arabic comment selects from its `#`; a Markdown code block the same; a
+`.txt` of Arabic and Hebrew lines and a Rust file in English drawn pixel
+for pixel as before. Compiled for Windows (Skwir's UI with clippy,
+gpui_windows's tests) and type-checked for macOS (Skwir's UI against the
+SDK, gpui_apple's text system with it); DirectWrite's and Core Text's
+paths not run.

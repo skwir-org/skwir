@@ -613,6 +613,17 @@ asks the direction.
   rows and bytes stay left to right and at their left, as editors keep
   them: each row is a line of a grid its gutter numbers, as wide as it
   is where lines do not wrap, scrolled sideways with the others.
+- **Code reads left to right on every line**, whatever letter starts it,
+  as code editors lay it out: the code view's rows where a grammar
+  colors the text (`code_preview::is_code`: tree-sitter's or bat's, not
+  Plain Text), a document's code block and the byte view's rows say so
+  (`code_preview::reads_as_code`, gpui's `TextDirection::LeftToRight`,
+  inherited), so a line that starts with an Arabic comment or a Hebrew
+  string keeps its `//`, its quotes and its indent where an English line
+  has them, the words reading right to left inside it. A plain text's
+  row (a note, a `.txt`, a language chosen Plain text) reads in its
+  line's own direction, its first strong letter's, as GTK's text views
+  read it, and stays at its left.
 - **What prepaint places by hand** asks the seam, never
   `bounds.left() + x`: `sides::from_start` (a column of the newspaper
   layout, a chip of a strip, a lane of a history's graph), `mirrored`;

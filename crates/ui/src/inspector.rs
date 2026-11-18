@@ -182,6 +182,7 @@ impl Display {
             let language =
                 language.filter(|_| engine != Some(skwir_platform::highlight::Engine::Plain));
             colorer = Some(Arc::new(crate::coloring::Colorer {
+                code: crate::code_preview::is_code(grammar.is_some(), language.as_deref()),
                 language,
                 palette: Arc::new(palette),
                 outlined: grammar.as_deref().is_some_and(outlines),
@@ -4187,6 +4188,9 @@ pub fn content(
     // (`reading.code_appearance`), on the background its theme is for:
     // the code view whole, its gutter too, and a document's code blocks.
     let code_view = display.data.kind == InspectionKind::Code;
+    // Its lines read left to right whatever letter starts them where it is
+    // code (`code_preview::is_code`), each in its own where it is text.
+    let code_lines = display.colors.as_ref().is_some_and(|colors| colors.code);
     let code_theme = theme.in_look(display.code_dark);
     let other_look = code_theme.is_dark != theme.is_dark;
     let mut code_style = if other_look {
@@ -4290,6 +4294,7 @@ pub fn content(
                 crate::coloring::CodeColors::row(&colored, line).unwrap_or(&data.blocks[line]);
             return crate::code_preview::CodeRow {
                 block,
+                code: code_lines,
                 index: line,
                 number: Some(line as u64 + 1),
                 digits: crate::code_preview::digits(data.blocks.len() as u64),
@@ -4931,7 +4936,9 @@ pub(crate) fn hex_row(
     pane: skwir_core::workspace::PaneId,
     entity: gpui::WeakEntity<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let mut line = div()
+    // Offsets, bytes and characters left to right on every row, as code is
+    // (`code_preview::reads_as_code`), whatever its characters read as.
+    let mut line = crate::code_preview::reads_as_code(div())
         .id(("inspect-row", index))
         .p_2()
         .pad_start(px(8.))
@@ -6361,6 +6368,7 @@ mod tests {
             )),
             grammar: Some("json".into()),
             outlined: false,
+            code: true,
         };
         display.colors = Some(Arc::new(with));
         let mut state = State::default();

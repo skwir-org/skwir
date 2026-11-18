@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
-    base::{CFRange, TCFType},
+    base::{CFRange, CFTypeRef, TCFType},
     number::CFNumber,
     string::CFString,
 };
@@ -21,7 +21,7 @@ use core_text::{
         kCTFontWidthTrait,
     },
     line::CTLine,
-    string_attributes::kCTFontAttributeName,
+    string_attributes::{kCTFontAttributeName, kCTParagraphStyleAttributeName},
 };
 use font_kit::{
     font::Font as FontKitFont,
@@ -34,9 +34,9 @@ use font_kit::{
 };
 use gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams,
-    Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
-    point, px, size, swap_rgba_pa_to_bgra,
+    FontStyle, FontWeight, GlyphId, LayoutDirection, LineLayout, Pixels, PlatformTextSystem,
+    RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size,
+    TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
 };
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
@@ -210,7 +210,21 @@ impl PlatformTextSystem for AppleTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, font_runs)
+        self.0.write().layout_line(text, font_size, font_runs, None)
+    }
+
+    /// Core Text reads a line's paragraphs in the base writing direction
+    /// its paragraph style says, where it says one: told so.
+    fn layout_line_in(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        direction: LayoutDirection,
+    ) -> LineLayout {
+        self.0
+            .write()
+            .layout_line(text, font_size, font_runs, Some(direction))
     }
 
     fn recommended_rendering_mode(
@@ -537,7 +551,15 @@ impl AppleTextSystemState {
         }
     }
 
-    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+    /// `text` laid out on one line, its paragraphs read in `direction`, or
+    /// each in its first strong character's where it is `None`.
+    fn layout_line(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        direction: Option<LayoutDirection>,
+    ) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         let mut max_ascent = 0.0f32;
@@ -578,6 +600,16 @@ impl AppleTextSystemState {
                 }
                 break_ligature = !break_ligature;
             }
+        }
+        if let Some(direction) = direction {
+            // Every paragraph in the direction said, whatever its first
+            // strong character (a line of code that starts in Arabic).
+            let whole = CFRange::init(0, string.char_len());
+            string.set_attribute(
+                whole,
+                unsafe { kCTParagraphStyleAttributeName },
+                &paragraph_style_reading(direction),
+            );
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
@@ -635,6 +667,42 @@ impl AppleTextSystemState {
             len: text.len(),
             bidi_levels: None,
         }
+    }
+}
+
+/// A paragraph style whose lines read in `direction` (its base writing
+/// direction, `kCTParagraphStyleSpecifierBaseWritingDirection`), which Core
+/// Text's typesetter takes as each paragraph's level in place of its first
+/// strong character's.
+fn paragraph_style_reading(direction: LayoutDirection) -> core_foundation::base::CFType {
+    #[repr(C)]
+    struct CTParagraphStyleSetting {
+        spec: u32,
+        value_size: usize,
+        value: *const std::ffi::c_void,
+    }
+    unsafe extern "C" {
+        fn CTParagraphStyleCreate(
+            settings: *const CTParagraphStyleSetting,
+            setting_count: usize,
+        ) -> CFTypeRef;
+    }
+    /// `kCTParagraphStyleSpecifierBaseWritingDirection`.
+    const BASE_WRITING_DIRECTION: u32 = 13;
+    // A `CTWritingDirection`: `kCTWritingDirectionLeftToRight`,
+    // `kCTWritingDirectionRightToLeft`.
+    let writing: i8 = match direction {
+        LayoutDirection::LeftToRight => 0,
+        LayoutDirection::RightToLeft => 1,
+    };
+    let setting = CTParagraphStyleSetting {
+        spec: BASE_WRITING_DIRECTION,
+        value_size: std::mem::size_of::<i8>(),
+        value: (&raw const writing).cast(),
+    };
+    // Created, so owned here; Core Text copies the setting's value.
+    unsafe {
+        core_foundation::base::CFType::wrap_under_create_rule(CTParagraphStyleCreate(&setting, 1))
     }
 }
 

@@ -496,6 +496,10 @@ pub(crate) struct Colorer {
     pub grammar: Option<String>,
     /// Whether that grammar says where definitions are (an outline query).
     pub outlined: bool,
+    /// Whether the text is code (`code_preview::is_code`): its lines read
+    /// left to right whatever letter starts them; a plain text's each in
+    /// its own direction.
+    pub code: bool,
 }
 
 /// The rows of a chunk of a code view, colored, and how.
@@ -1239,6 +1243,7 @@ pub(crate) mod tests {
             palette: Arc::new(Palette::of(&crate::code_preview::CodeTheme::own(false))),
             grammar: None,
             outlined: false,
+            code: true,
         };
         let first = first_colors(&data, &with).expect("colored well within its time");
         let mut colors = CodeColors::default();

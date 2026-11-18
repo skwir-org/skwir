@@ -7,6 +7,7 @@ mod line_layout;
 mod line_wrapper;
 
 pub use bidi::BidiLevels;
+pub(crate) use bidi::lay_out_marked;
 pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;
@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, RunPosition,
-    SharedString, Size, StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
+    SharedString, Size, StrikethroughStyle, TextDirection, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::Context as _;
 use collections::{FxHashMap, FxHashSet};
@@ -749,6 +750,20 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> ShapedLine {
+        self.shape_line_in(text, font_size, runs, force_width, TextDirection::Auto)
+    }
+
+    /// [`Self::shape_line`], its paragraph read in `direction` rather than
+    /// its first strong character's where it says one
+    /// (`TextDirection::LeftToRight` for a line of code).
+    pub fn shape_line_in(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+        direction: TextDirection,
+    ) -> ShapedLine {
         debug_assert!(
             text.find('\n').is_none(),
             "text argument should not contain newlines"
@@ -774,7 +789,7 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(&text, font_size, runs, force_width);
+        let layout = self.layout_line_in(&text, font_size, runs, force_width, direction);
 
         ShapedLine {
             layout,
@@ -793,6 +808,28 @@ impl WindowTextSystem {
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
+    ) -> Result<SmallVec<[WrappedLine; 1]>> {
+        self.shape_text_in(
+            text,
+            font_size,
+            runs,
+            wrap_width,
+            line_clamp,
+            TextDirection::Auto,
+        )
+    }
+
+    /// [`Self::shape_text`], each of its lines read in `direction` rather
+    /// than its first strong character's where it says one
+    /// (`TextDirection::LeftToRight` for code, as editors lay it out).
+    pub fn shape_text_in(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        wrap_width: Option<Pixels>,
+        line_clamp: Option<usize>,
+        direction: TextDirection,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_buffer.take();
@@ -860,6 +897,7 @@ impl WindowTextSystem {
                 &line_text,
                 font_size,
                 &font_runs,
+                direction,
                 wrap_width,
                 max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
             );
@@ -931,6 +969,19 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
+        self.layout_line_in(text, font_size, runs, force_width, TextDirection::Auto)
+    }
+
+    /// [`Self::layout_line`], its paragraph read in `direction` rather than
+    /// its first strong character's where it says one.
+    pub fn layout_line_in(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+        direction: TextDirection,
+    ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_buffer.take();
         font_runs.clear();
@@ -969,6 +1020,7 @@ impl WindowTextSystem {
             &SharedString::new(text),
             font_size,
             &font_runs,
+            direction,
             force_width,
         );
 
@@ -990,6 +1042,7 @@ impl WindowTextSystem {
                     font_id,
                     position: RunPosition::Baseline,
                 }],
+                TextDirection::Auto,
                 None,
             )
             .width

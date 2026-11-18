@@ -514,6 +514,40 @@ impl LayoutDirection {
     }
 }
 
+/// The direction a text's paragraphs read in, their base direction (UAX #9's
+/// paragraph embedding level): where its runs of letters going either way
+/// are set, and where its neutral characters (spaces, punctuation, brackets)
+/// go. Apart from the layout's (`LayoutDirection`): a text laid out right to
+/// left may read left to right and the other way round. Inherited through
+/// the text style (`Styled::text_direction`).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum TextDirection {
+    /// Each paragraph in the direction of its first strong character (UAX
+    /// #9's P2 and P3, as HTML's `dir="auto"` and CSS's `unicode-bidi:
+    /// plaintext` read it), left to right where it has none: a Hebrew name
+    /// reads right to left, an English one left to right, as every text
+    /// does where nothing says otherwise.
+    #[default]
+    Auto,
+    /// Every paragraph left to right, whatever letter starts it, as code
+    /// editors lay out code: `// تعليق` keeps its `//` at its left, the
+    /// Arabic words reading right to left after it.
+    LeftToRight,
+    /// Every paragraph right to left, whatever letter starts it.
+    RightToLeft,
+}
+
+impl TextDirection {
+    /// The direction it says every paragraph reads in, `None` for `Auto`.
+    pub fn forced(self) -> Option<LayoutDirection> {
+        match self {
+            TextDirection::Auto => None,
+            TextDirection::LeftToRight => Some(LayoutDirection::LeftToRight),
+            TextDirection::RightToLeft => Some(LayoutDirection::RightToLeft),
+        }
+    }
+}
+
 /// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -564,6 +598,10 @@ pub struct TextStyle {
     /// CSS's `direction`).
     pub layout_direction: LayoutDirection,
 
+    /// The direction the text's paragraphs read in (inherited): each its
+    /// first strong character's unless it says one (`TextDirection`).
+    pub text_direction: TextDirection,
+
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
 
@@ -591,6 +629,7 @@ impl Default for TextStyle {
             text_overflow: None,
             text_align: TextAlign::default(),
             layout_direction: LayoutDirection::default(),
+            text_direction: TextDirection::default(),
             line_clamp: None,
             position: RunPosition::Baseline,
         }

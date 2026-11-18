@@ -708,7 +708,9 @@ fn code_box(
 ) -> AnyElement {
     let style = style.code();
     let text = inspector_text::render(block, index, selection, style, pane, entity);
-    let mut container = div()
+    // Its lines left to right whatever letter starts them, as an editor
+    // lays code out: an Arabic comment keeps its `//` at its left.
+    let mut container = crate::code_preview::reads_as_code(div())
         .flex_1()
         .min_w_0()
         .bg(crate::color::overlay(style.page, style.code_bg))

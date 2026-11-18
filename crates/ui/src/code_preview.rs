@@ -48,10 +48,39 @@ pub fn visible(
         .collect()
 }
 
+/// Whether a text is code: a grammar colors it, a tree-sitter one
+/// (`tree_sitter`, as `highlight::engine` chose it) or bat's for
+/// `language`, which is no plain text's (`Plain Text`, a `.txt`). Code
+/// reads left to right on every line whatever letter starts it, as editors
+/// lay it out (`reads_as_code`); a plain text's lines (a note, a language
+/// chosen Plain text) each in their own direction, as GTK's text views read
+/// them. May read what bat's set holds: a worker's work.
+pub fn is_code(tree_sitter: bool, language: Option<&str>) -> bool {
+    tree_sitter
+        || language.is_some_and(|language| {
+            skwir_platform::highlight::added::table_now()
+                .colors(language)
+                .is_some()
+        })
+}
+
+/// `element`'s lines laid out as code editors lay code out: each left to
+/// right whatever letter starts it (gpui's `TextDirection`), so a line that
+/// starts with an Arabic comment or a Hebrew string keeps its `//`, its
+/// quotes and its indent where an English one has them, the words read
+/// right to left inside it. For code (`is_code`), a document's code block
+/// and bytes; never a plain text's lines, which each read in their own.
+pub fn reads_as_code<E: Styled>(element: E) -> E {
+    element.text_direction(gpui::TextDirection::LeftToRight)
+}
+
 /// A row of the code view: a line of code, or a row of a text read where
 /// it is shown (ADR-051), its number in the gutter.
 pub struct CodeRow<'a> {
     pub block: &'a Block,
+    /// Whether it is a line of code (`is_code`), laid out left to right
+    /// whatever letter starts it, or of a plain text, in its own direction.
+    pub code: bool,
     /// Its index among the rows: what selection, links and ids count.
     pub index: usize,
     /// The line number in the gutter (from 1), on a line's first row.
@@ -94,6 +123,7 @@ impl CodeRow<'_> {
     pub fn render(self) -> AnyElement {
         let Self {
             block,
+            code,
             index,
             number,
             digits,
@@ -161,7 +191,10 @@ impl CodeRow<'_> {
             .when(selected, |d| d.bg(theme.highlight))
             .child(gutter)
             .child(
+                // The line, not the words a fold says beside it, which are
+                // the window's.
                 div()
+                    .when(code, reads_as_code)
                     .flex_1()
                     .min_w_0()
                     .pr_2()
@@ -221,6 +254,19 @@ mod tests {
         assert_eq!(visible(BTreeSet::from([0, 2])), [0, 7, 8, 9]);
         assert_eq!(visible(BTreeSet::from([0, 2, 7])), [0, 7, 9]);
         assert_eq!(visible(BTreeSet::new()), (0..10).collect::<Vec<_>>());
+    }
+
+    /// A text is code where a grammar colors it, tree-sitter's or bat's:
+    /// not a plain text's, nor one of no language.
+    #[test]
+    fn code_is_what_a_grammar_colors() {
+        for language in ["rs", "py", "json", "Makefile"] {
+            assert!(is_code(false, Some(language)), "{language}");
+        }
+        assert!(is_code(true, None), "a tree-sitter grammar's");
+        for language in [Some("txt"), Some("unknown-extension"), None] {
+            assert!(!is_code(false, language), "{language:?}");
+        }
     }
 
     /// A code line is a whole number of pixels at any text size, so its

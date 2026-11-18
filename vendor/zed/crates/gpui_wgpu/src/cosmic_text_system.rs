@@ -1293,6 +1293,13 @@ fn pick_covering_slot(
     if (ch as u32) <= 0x7F {
         return None;
     }
+    // A bidirectional mark is drawn by no font (harfrust hides it): it
+    // stays in the span it is in, so neither one of the text's nor the one
+    // set where a paragraph starts (`PlatformTextSystem::layout_line_in`)
+    // splits a word's span or moves the letters after it to another font.
+    if is_bidi_mark(ch) {
+        return current;
+    }
     if covers(primary, ch) {
         return None;
     }
@@ -1304,6 +1311,12 @@ fn pick_covering_slot(
     fallback_chain
         .iter()
         .position(|(fb_id, _)| covers(*fb_id, ch))
+}
+
+/// The marks that say a direction and nothing else: LRM, RLM and the
+/// Arabic letter mark.
+fn is_bidi_mark(ch: char) -> bool {
+    matches!(ch, '\u{200E}' | '\u{200F}' | '\u{061C}')
 }
 
 fn charmap_covers(loaded_fonts: &[LoadedFont], id: FontId, ch: char) -> bool {
@@ -2103,6 +2116,119 @@ mod tests {
         let latin = window_text_system.shape_line("abc".into(), gpui::px(14.), &latin_runs, None);
         assert!(!latin.has_right_to_left());
         Ok(())
+    }
+
+    /// A line said to read left to right (code, 0084) is laid out so whatever
+    /// its first strong character: cosmic-text, which takes a paragraph's
+    /// direction from that alone, is handed a mark of the direction before
+    /// it, whose glyph gpui leaves out; and one said to read right to left
+    /// is too.
+    #[test]
+    fn a_line_reads_in_the_direction_it_is_said_to() -> Result<()> {
+        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(text_system()?)));
+        let window_text_system = gpui::WindowTextSystem::new(text_system);
+        let shape = |direction, text: &str| {
+            let runs = [gpui::TextRun {
+                len: text.len(),
+                font: gpui::font("IBM Plex Sans"),
+                ..Default::default()
+            }];
+            window_text_system.shape_line_in(
+                text.to_string().into(),
+                gpui::px(14.),
+                &runs,
+                None,
+                direction,
+            )
+        };
+        let indices = |line: &gpui::ShapedLine| -> Vec<usize> {
+            line.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+                .collect()
+        };
+        let drawn_in_order = |line: &gpui::ShapedLine| {
+            line.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter())
+                .collect::<Vec<_>>()
+                .windows(2)
+                .all(|pair| pair[0].position.x <= pair[1].position.x)
+        };
+        // "// אבג x": a comment in Hebrew. By its first strong letter it
+        // reads right to left, "//" at its right end.
+        let text = "// \u{5d0}\u{5d1}\u{5d2} x";
+        let auto = shape(gpui::TextDirection::Auto, text);
+        assert!(auto.is_right_to_left());
+        assert_eq!(indices(&auto), [10, 9, 7, 5, 3, 2, 1, 0]);
+        // Said left to right: "// " on the left, "גבא" drawn reversed after
+        // it, then " x"; nothing of the mark, the line starting at 0.
+        let code = shape(gpui::TextDirection::LeftToRight, text);
+        assert!(!code.is_right_to_left());
+        assert!(drawn_in_order(&code));
+        assert_eq!(indices(&code), [0, 1, 2, 7, 5, 3, 9, 10]);
+        assert_eq!(code.len(), text.len());
+        assert_eq!(
+            code.runs
+                .first()
+                .and_then(|run| run.glyphs.first())
+                .map(|glyph| glyph.position.x),
+            Some(gpui::px(0.))
+        );
+        assert!((code.width - auto.width).abs() < gpui::px(0.5));
+        assert_eq!(code.x_for_index(0), gpui::px(0.));
+        assert_eq!(code.x_for_index(text.len()), code.width);
+        assert_eq!(code.closest_index_for_x(gpui::px(0.)), 0);
+        // "abc אבג" said right to left: the Hebrew word at the right, read
+        // from there, "abc" at the left.
+        let text = "abc \u{5d0}\u{5d1}\u{5d2}";
+        let rtl = shape(gpui::TextDirection::RightToLeft, text);
+        assert!(rtl.is_right_to_left());
+        assert!(drawn_in_order(&rtl));
+        assert_eq!(indices(&rtl), [8, 6, 4, 3, 0, 1, 2]);
+        let first = |line: &gpui::ShapedLine, k: usize| {
+            line.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter())
+                .nth(k)
+                .map(|glyph| glyph.position.x)
+        };
+        // From its left (cosmic-text places a line read right to left from
+        // its right end, a few millionths of a pixel off).
+        assert!(first(&rtl, 0).is_some_and(|x| x.abs() < gpui::px(0.01)));
+        // Its start where "abc" starts, the turn to it from the Hebrew.
+        assert_eq!(Some(rtl.x_for_index(0)), first(&rtl, 4));
+        // A Latin line said left to right is the line it always was.
+        let latin = shape(gpui::TextDirection::LeftToRight, "abc");
+        let before = shape(gpui::TextDirection::Auto, "abc");
+        assert!(!latin.has_right_to_left());
+        assert_eq!(latin.width, before.width);
+        assert_eq!(indices(&latin), [0, 1, 2]);
+        Ok(())
+    }
+
+    /// A bidirectional mark keeps the span it is in: the one set where a
+    /// paragraph starts moves no letter after it to another font.
+    #[test]
+    fn a_bidi_mark_keeps_the_span_it_is_in() {
+        let primary = fid(0);
+        let fb = chain(&[1, 2]);
+        // The first fallback draws Hebrew, the second Hebrew and the marks.
+        let covers = |id: FontId, ch: char| match id.0 {
+            0 => ch.is_ascii(),
+            1 => ('\u{5d0}'..='\u{5ea}').contains(&ch),
+            _ => ('\u{5d0}'..='\u{5ea}').contains(&ch) || is_bidi_mark(ch),
+        };
+        let marked = "\u{200e}\u{5d0}\u{5d1}";
+        let spans = compute_run_spans(marked, 0, marked.len(), primary, &fb, &covers);
+        assert_eq!(
+            spans.as_slice(),
+            &[span(0, 3, None, primary), span(3, 7, Some(0), fid(1))]
+        );
+        // Between two Hebrew letters, it stays with them.
+        let text = "\u{5d0}\u{200f}\u{5d1}";
+        let spans = compute_run_spans(text, 0, text.len(), primary, &fb, &covers);
+        assert_eq!(spans.as_slice(), &[span(0, text.len(), Some(0), fid(1))]);
     }
 
     #[test]

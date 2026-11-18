@@ -61,8 +61,11 @@ RUNS = [
         # (0072).
         "text_system::line_breaks",
         # Right-to-left text: levels, carets and spans (0069), a run's colour
-        # and underline following its characters.
+        # and underline following its characters. A text's paragraphs read
+        # in the direction it says, code left to right (0084: its levels and
+        # marks are text_system::bidi's).
         "text_system::bidi", "text_system::line::tests::a_decoration_follows",
+        "elements::text::tests::a_text_reads_in_the_direction",
         # Upstream's, and what an action sees of a key held down (0032).
         "key_dispatch",
         # The accessibility tree (0030) and what an element writes into it

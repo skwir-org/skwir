@@ -290,7 +290,31 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.state
             .write()
-            .layout_line(&self.components, text, font_size, runs)
+            .layout_line(&self.components, text, font_size, runs, TextDirection::Auto)
+            .log_err()
+            .unwrap_or(LineLayout {
+                font_size,
+                ..Default::default()
+            })
+    }
+
+    /// DirectWrite reads a paragraph in the direction its layout is given
+    /// (`SetReadingDirection`), never its first strong character's: told
+    /// so, as a line whose first strong character reads right to left is.
+    fn layout_line_in(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        direction: LayoutDirection,
+    ) -> LineLayout {
+        let direction = match direction {
+            LayoutDirection::LeftToRight => TextDirection::LeftToRight,
+            LayoutDirection::RightToLeft => TextDirection::RightToLeft,
+        };
+        self.state
+            .write()
+            .layout_line(&self.components, text, font_size, runs, direction)
             .log_err()
             .unwrap_or(LineLayout {
                 font_size,
@@ -528,9 +552,11 @@ impl DirectWriteState {
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
+        direction: TextDirection,
     ) -> Result<LineLayout> {
         if !text.contains(is_line_separator) {
-            return self.layout_line_without_separators(components, text, font_size, font_runs);
+            return self
+                .layout_line_without_separators(components, text, font_size, font_runs, direction);
         }
 
         // DirectWrite honors mandatory breaks even without wrapping. Keep each
@@ -567,8 +593,13 @@ impl DirectWriteState {
                 }
             }
 
-            let segment_layout =
-                self.layout_line_without_separators(components, segment, font_size, &segment_runs)?;
+            let segment_layout = self.layout_line_without_separators(
+                components,
+                segment,
+                font_size,
+                &segment_runs,
+                direction,
+            )?;
             for mut run in segment_layout.runs {
                 for glyph in &mut run.glyphs {
                     glyph.index += text_offset;
@@ -596,6 +627,7 @@ impl DirectWriteState {
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
+        direction: TextDirection,
     ) -> Result<LineLayout> {
         if font_runs.is_empty() {
             return Ok(LineLayout {
@@ -612,8 +644,9 @@ impl DirectWriteState {
             let mut utf16_offset = 0u32;
             // Right-to-left text is placed as each run reads, and a line
             // that starts right to left reads so (its first strong
-            // character's direction, as cosmic-text and Core Text take it).
-            let bidi = BidiLevels::of(text);
+            // character's direction, as cosmic-text and Core Text take it),
+            // or one said to (`direction`).
+            let bidi = BidiLevels::of_in(text, direction);
             let reads_right_to_left = bidi.as_ref().is_some_and(BidiLevels::is_right_to_left);
             let text_layout = {
                 let first_run = &font_runs[0];
@@ -2102,8 +2135,8 @@ mod tests {
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
     use gpui::{
-        DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextRun,
-        TextSystem, WindowTextSystem, bounds, point, px, size,
+        DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextDirection,
+        TextRun, TextSystem, WindowTextSystem, bounds, point, px, size,
     };
     use std::{ffi::c_void, sync::Arc};
     use windows::Win32::Graphics::Direct3D11::{
@@ -2235,14 +2268,15 @@ mod tests {
         };
         platform_text_system.font_id(&font)?;
         let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(platform_text_system)));
-        let shape = |text: &str| {
+        let shape_in = |direction: TextDirection, text: &str| {
             let runs = [TextRun {
                 len: text.len(),
                 font: font.clone(),
                 ..Default::default()
             }];
-            text_system.shape_line(text.to_string().into(), px(14.0), &runs, None)
+            text_system.shape_line_in(text.to_string().into(), px(14.0), &runs, None, direction)
         };
+        let shape = |text: &str| shape_in(TextDirection::Auto, text);
         // "אבג abc": "abc" on the left, then the space, then "גבא".
         let text = "\u{5d0}\u{5d1}\u{5d2} abc";
         let line = shape(text);
@@ -2267,6 +2301,15 @@ mod tests {
             .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
             .collect();
         assert_eq!(indices, [0, 1, 2, 3, 8, 6, 4]);
+        assert!(!line.is_right_to_left());
+        // "אבג abc" said to read left to right (a line of code, 0084): its
+        // Hebrew word on the left, drawn reversed, the space, then "abc".
+        let text = "\u{5d0}\u{5d1}\u{5d2} abc";
+        let line = shape_in(TextDirection::LeftToRight, text);
+        let glyphs: Vec<_> = line.runs.iter().flat_map(|run| &run.glyphs).collect();
+        let indices: Vec<usize> = glyphs.iter().map(|glyph| glyph.index).collect();
+        assert_eq!(indices, [4, 2, 0, 6, 7, 8, 9]);
+        assert!(glyphs[0].position.x.abs() < px(0.5));
         assert!(!line.is_right_to_left());
         // A line all left to right is placed as it always was.
         let latin = shape("abc");

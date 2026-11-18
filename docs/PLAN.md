@@ -3860,7 +3860,10 @@ them, with `core.folder_names` for the names on disk (16).
   its rows are drawn (0080), the direction a text reads in (0081), lists
   in the direction they say and a uniform list scrolled sideways right
   to left (0082), and macOS's Window menu found by a flag rather than by
-  its English title (0083, compiled only).
+  its English title (0083, compiled only), and a text's paragraphs read
+  in the direction it says, code left to right whatever letter starts a
+  line (0084: cosmic-text by a mark; DirectWrite and Core Text told so,
+  compiled only).
 - **Right-to-left windows** (level 3): the window mirrors since
   2026-11-18 when it speaks a right-to-left language (only the
   pseudo-language `ar-XB` does: `crates/ui/src/sides.rs`, shell.md
@@ -3871,10 +3874,12 @@ them, with `core.folder_names` for the names on disk (16).
   0081): a Hebrew or Arabic paragraph, heading, list item or table cell
   starts at its right, its marker, quotation bar and indent on that
   side; code, text files' line-numbered rows and bytes stay at their
-  left. Left: a real right-to-left catalog and its review; HTML's `dir`
-  and CSS's `direction` (a block's direction is its text's); a code line
-  that starts with a right-to-left letter is ordered right to left in
-  its row (0069); printing not looked at. A sideways scroll bar leaves its corner at its
+  left; code and bytes read left to right on every line since
+  2026-11-18, whatever letter starts it (gpui 0084,
+  `code_preview::reads_as_code`), a plain text's rows each in their own
+  direction. Left: a real right-to-left catalog and its review; HTML's
+  `dir` and CSS's `direction` (a block's direction is its text's);
+  printing not looked at. A sideways scroll bar leaves its corner at its
   start while the window is mirrored (`scrollbar::track_along`).
 - **Fonts for every script:** the CJK forms by language (0074), a
   warning when no installed font draws a script the reader reads, the

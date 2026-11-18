@@ -3,7 +3,8 @@ use crate::{
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
     FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent,
     LayoutDirection, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
-    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+    TextDirection, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative,
+    rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -124,6 +125,16 @@ pub trait Styled: Sized {
     /// set their own (`LayoutDirection`).
     fn layout_direction(mut self, direction: LayoutDirection) -> Self {
         self.text_style().layout_direction = Some(direction);
+        self
+    }
+
+    /// Sets the direction the paragraphs of this element's texts read in,
+    /// inherited by the elements inside but those that set their own:
+    /// `TextDirection::LeftToRight` for code, whose lines read left to
+    /// right whatever letter starts them; each its first strong
+    /// character's where nothing says one (`TextDirection::Auto`).
+    fn text_direction(mut self, direction: TextDirection) -> Self {
+        self.text_style().text_direction = Some(direction);
         self
     }
 

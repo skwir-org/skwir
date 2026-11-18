@@ -2,8 +2,8 @@ use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign,
-    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    TextDirection, TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window,
+    WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -664,19 +664,20 @@ struct TextLayoutInner {
 /// unwrapped, from the line layout cache: one entry a line whatever widths
 /// the text is laid out at, so their narrowest is worked out once and kept
 /// there across frames, a window being resized included. The text's own
-/// layout is left as it was.
+/// layout is left as it was, its lines read in `direction`.
 /// `None` where it cannot be shaped.
 fn min_content_size(
     text: &SharedString,
     font_size: Pixels,
     runs: &[TextRun],
+    direction: TextDirection,
     line_height: Pixels,
     max_lines: Option<usize>,
     window: &mut Window,
 ) -> Option<Size<Pixels>> {
     let lines = window
         .text_system()
-        .shape_text(text.clone(), font_size, runs, None, None)
+        .shape_text_in(text.clone(), font_size, runs, None, None, direction)
         .log_err()?;
     let mut size: Size<Pixels> = Size::default();
     let mut rows_left = max_lines;
@@ -732,6 +733,7 @@ impl TextLayout {
                         &text,
                         font_size,
                         &runs,
+                        text_style.text_direction,
                         line_height,
                         text_style.line_clamp,
                         window,
@@ -809,7 +811,14 @@ impl TextLayout {
                         )
                     } else if let Some(unclipped) = window
                         .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .shape_text_in(
+                            text.clone(),
+                            font_size,
+                            &runs,
+                            None,
+                            None,
+                            text_style.text_direction,
+                        )
                         .log_err()
                         && unclipped
                             .iter()
@@ -836,14 +845,17 @@ impl TextLayout {
                 };
                 let len = text.len();
 
+                // Each line read in the direction the text says, its first
+                // strong character's where it says none (`TextDirection`).
                 let Some(lines) = window
                     .text_system()
-                    .shape_text(
+                    .shape_text_in(
                         text,
                         font_size,
                         &runs,
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+                        text_style.text_direction,
                     )
                     .log_err()
                 else {
@@ -1567,6 +1579,39 @@ mod tests {
         }
     }
 
+    /// A text inherits the direction its paragraphs read in (0084): said
+    /// left to right, as code is, a line that starts with a comment in
+    /// Hebrew keeps its `//` at its left; where nothing is said, its first
+    /// strong letter reads it right to left, the `//` at its right end. The
+    /// same text in both, in one frame, is laid out once for each.
+    #[crate::test]
+    fn a_text_reads_in_the_direction_it_inherits(cx: &mut crate::TestAppContext) {
+        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px};
+        let cx = cx.add_empty_window();
+        let line = "// \u{5d0}\u{5d1}\u{5d2} x";
+        let auto = StyledText::new(line);
+        let code = StyledText::new(line);
+        let (auto_layout, code_layout) = (auto.layout().clone(), code.layout().clone());
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                div().w(px(400.)).child(div().child(auto)).child(
+                    div()
+                        .text_direction(TextDirection::LeftToRight)
+                        .child(div().child(code)),
+                )
+            },
+        );
+        let start = |layout: &TextLayout| layout.position_for_index(0).map(|at| at.x);
+        let end = |layout: &TextLayout| layout.position_for_index(line.len()).map(|at| at.x);
+        let width = |layout: &TextLayout| layout.line_layout_for_index(0).map(|l| l.width());
+        assert_eq!(start(&code_layout), Some(px(0.)));
+        assert_eq!(end(&code_layout), width(&code_layout));
+        assert_eq!(start(&auto_layout), width(&auto_layout));
+        assert!(start(&auto_layout) > Some(px(0.)));
+    }
+
     /// A text aligned right or centered answers where its rows are drawn:
     /// `position_for_index` and `index_for_position` count each row from
     /// where it stands as it is painted, wrapped or read right to left.
@@ -1766,8 +1811,16 @@ mod tests {
                 .text_system()
                 .shape_text(text.clone(), font_size, &runs, Some(px(70.)), None)
                 .unwrap();
-            let size = super::min_content_size(&text, font_size, &runs, line_height, None, window)
-                .unwrap();
+            let size = super::min_content_size(
+                &text,
+                font_size,
+                &runs,
+                TextDirection::Auto,
+                line_height,
+                None,
+                window,
+            )
+            .unwrap();
             assert_eq!(size.height, line_height * 3., "aaaa, bbbb, cc: {size:?}");
             assert!(
                 size.width >= px(48.) && size.width <= px(49.),
