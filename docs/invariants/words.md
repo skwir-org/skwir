@@ -262,6 +262,18 @@ sentence, never a sentence assembled from pieces.
   counted in a language's share (`just words` leaves
   `crates/plugins-outside/` out), registered under `outside:<id>` while
   it is on and withdrawn when it is turned off (ADR-139, 14).
+- **What describes a plugin is data about it, said on or off**: its
+  title, what it does, what it needs a program for, on the Plugins page
+  where a reader decides to turn it on. Core makes these words
+  (`PluginHost::list`, `probe_requirements`: `Words::describing`, which
+  nothing else can call), said from the plugin's catalogs registered while
+  it is on, and while it is off from the catalogs Skwir ships for its
+  crate, or those its host keeps for a plugin from outside, read when it
+  is found (`words::describe_with`). Those are never registered: a plugin
+  that is off leaves no trace, and nothing else it would say (its
+  commands, its answers) is said from them. Read a message at a time, no
+  index made; as data, describing words are the words they wrap, and
+  come back describing nothing.
 - **A reader's language finds a catalog by its script, then its region**
   (`locale::matching`, ICU4X's likely subtags of both): a catalog of its
   language written in its script, a catalog named by its language alone

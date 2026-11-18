@@ -86,6 +86,9 @@ pub fn discover(folders: &[PathBuf], taken: &[&str]) -> Vec<Arc<External>> {
         for path in plugins {
             match External::load(&path) {
                 Ok(plugin) if ids.insert(plugin.manifest().id.clone()) => {
+                    // What describes it on the Plugins page is said in the
+                    // reader's language while it is off too.
+                    plugin.runner.catalogs.describe();
                     found.push(Arc::new(plugin));
                 }
                 Ok(plugin) => tracing::warn!(

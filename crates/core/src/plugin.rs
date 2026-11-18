@@ -207,7 +207,9 @@ pub struct RequirementStatus {
     pub plugin: &'static str,
     pub name: String,
     /// What stops working without it: said where the settings show it, in
-    /// English to agents and scripts (ADR-139, 7).
+    /// English to agents and scripts (ADR-139, 7); words describing the
+    /// plugin, said in the reader's language while it is off too
+    /// (`Words::describing`).
     pub purpose: Words,
     pub required: bool,
     pub found: bool,
@@ -301,6 +303,8 @@ fn not_saved(error: anyhow::Error) -> crate::words::Words {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct PluginInfo {
     pub id: &'static str,
+    /// Its title and what it does: words describing it, said in the
+    /// reader's language while it is off too (`Words::describing`).
     pub title: crate::words::Words,
     pub description: crate::words::Words,
     pub category: Category,
@@ -378,7 +382,8 @@ impl PluginHost {
                     RequirementStatus {
                         plugin: id,
                         name: r.name,
-                        purpose: r.purpose,
+                        // Shown on its row, on or off: it describes it.
+                        purpose: r.purpose.describing(),
                         required: r.required,
                         found,
                     }
@@ -466,14 +471,17 @@ impl PluginHost {
         self.plugins.read().iter().any(|(p, e)| p.id() == id && *e)
     }
 
+    /// Every plugin, on or off, as the Plugins page lists it: its words
+    /// describe it (`Words::describing`), said in the reader's language
+    /// whether its catalogs are registered or not.
     pub fn list(&self) -> Vec<PluginInfo> {
         self.plugins
             .read()
             .iter()
             .map(|(p, e)| PluginInfo {
                 id: p.id(),
-                title: p.title(),
-                description: p.description(),
+                title: p.title().describing(),
+                description: p.description().describing(),
                 category: p.category(),
                 enabled: *e,
                 enabled_by_default: p.enabled_by_default(),

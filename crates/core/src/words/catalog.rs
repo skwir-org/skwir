@@ -4,6 +4,11 @@
 //! text, as it lies there; any other is parsed with `fluent-syntax` when
 //! first said, and kept. Measured on 8,000 messages, the index is 190 KiB
 //! and 0.8 ms, a parsed message 1.1 KB (`docs/STATUS-LOG.md`, 2026-11-16).
+//!
+//! What describes a plugin that is off (its title, what it does) is said
+//! from catalogs kept apart from the registry, never registered: those
+//! shipped for its crate, or those its host keeps (`find_describing`), each
+//! read a message at a time, no index made.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -68,13 +73,34 @@ impl Catalog {
         let at = index
             .binary_search_by(|entry| self.source[entry.id.clone()].cmp(id))
             .ok()?;
-        let entry = &index[at];
-        let said: Option<Said> = match &entry.plain {
-            Some(plain) => Some(Arc::from([Element::Text(self.text(plain.clone()))])),
-            None => parse(&self.source[entry.whole.clone()]).map(Arc::from),
-        };
+        let said = self.said_of(&index[at]);
         self.said.lock().insert(id.into(), said.clone());
         said
+    }
+
+    /// The parts of message `id`, as [`Catalog::message`] says them, but
+    /// found by reading the source up to it, no index made where none is:
+    /// for a catalog asked for a message or two (what describes a plugin
+    /// that is off, `find_describing`), whose index would be kept for them.
+    fn message_alone(&self, id: &str) -> Option<Said> {
+        if let Some(said) = self.said.lock().get(id) {
+            return said.clone();
+        }
+        if self.index.get().is_some() {
+            return self.message(id);
+        }
+        let said = entry_of(&self.source, id).and_then(|entry| self.said_of(&entry));
+        self.said.lock().insert(id.into(), said.clone());
+        said
+    }
+
+    /// What the message at `entry` says: its own text where it is plain,
+    /// else its value parsed.
+    fn said_of(&self, entry: &Entry) -> Option<Said> {
+        match &entry.plain {
+            Some(plain) => Some(Arc::from([Element::Text(self.text(plain.clone()))])),
+            None => parse(&self.source[entry.whole.clone()]).map(Arc::from),
+        }
     }
 
     /// The parts of attribute `name` of message `id` (a noun's `.gender`,
@@ -106,12 +132,36 @@ impl Catalog {
     }
 }
 
-/// Where each message of `source` lies, sorted by id. A message begins at
-/// the start of a line with its id and `=`; it goes on over the indented
-/// and blank lines after it, and over every line while a placeable it
-/// opened is open (a selector's `}` may stand at a line's start).
+/// Where each message of `source` lies, sorted by id.
 fn index(source: &str) -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
+    walk(source, |entry| {
+        entries.push(entry);
+        false
+    });
+    entries.sort_by(|a, b| source[a.id.clone()].cmp(&source[b.id.clone()]));
+    entries
+}
+
+/// Where message `id` lies in `source`, read up to it.
+fn entry_of(source: &str, id: &str) -> Option<Entry> {
+    let mut found = None;
+    walk(source, |entry| {
+        let this = source[entry.id.clone()] == *id;
+        if this {
+            found = Some(entry);
+        }
+        this
+    });
+    found
+}
+
+/// Each message of `source` where it lies, in the order written, until
+/// `each` has what it wants (answers `true`). A message begins at the start
+/// of a line with its id and `=`; it goes on over the indented and blank
+/// lines after it, and over every line while a placeable it opened is open
+/// (a selector's `}` may stand at a line's start).
+fn walk(source: &str, mut each: impl FnMut(Entry) -> bool) {
     let mut at = 0;
     let mut open: Option<Entry> = None;
     let mut braces = Braces::default();
@@ -131,7 +181,11 @@ fn index(source: &str) -> Vec<Entry> {
             }
             continue;
         }
-        entries.extend(open.take());
+        if let Some(entry) = open.take()
+            && each(entry)
+        {
+            return;
+        }
         braces = Braces::default();
         let Some((id, rest)) = line.split_once('=') else {
             continue;
@@ -156,9 +210,9 @@ fn index(source: &str) -> Vec<Entry> {
             plain,
         });
     }
-    entries.extend(open);
-    entries.sort_by(|a, b| source[a.id.clone()].cmp(&source[b.id.clone()]));
-    entries
+    if let Some(entry) = open {
+        each(entry);
+    }
 }
 
 /// How deep in placeables a message's text stands, as its lines are read:
@@ -257,6 +311,10 @@ static SHIPPED: RwLock<&'static [Shipped]> = RwLock::new(&[]);
 /// when it is enabled (`register_shipped`).
 pub fn ship(catalogs: &'static [Shipped]) {
     *SHIPPED.write() = catalogs;
+    // What describes a plugin is read from the catalogs shipped now.
+    if let Some(described) = DESCRIBED.lock().as_mut() {
+        described.retain(|_, one| !one.shipped);
+    }
 }
 
 /// The languages the program ships catalogs in, once each, in the order
@@ -404,6 +462,138 @@ pub fn withdraw(owner: &str) {
     if catalogs.0.len() != before {
         catalogs.1 += 1;
     }
+}
+
+/// The catalogs that say what describes a plugin (its title, what it does,
+/// what it needs a program for) while none of its domain is registered, the
+/// plugin being off: data about the plugin, never a contribution of it, so
+/// nothing is registered for a plugin that is off (`plugins_toggle.rs`).
+/// Only words describing a plugin are said from them
+/// (`Words::describing`); its commands and answers never are.
+struct Described {
+    catalogs: Vec<Catalog>,
+    /// Whether they are the program's, shipped (`ship`), rather than kept
+    /// by a host (`describe_with`).
+    shipped: bool,
+    /// What each message was found as, and for which languages.
+    found: HashMap<Box<str>, (Vec<String>, Option<(Said, String)>)>,
+}
+
+impl Described {
+    /// Message `id` in the first of `languages` its catalogs have, as
+    /// `saying` finds one among those registered.
+    fn find(&self, id: &str, languages: &[String]) -> Option<(Said, String)> {
+        let mut tags: Vec<&str> = self.catalogs.iter().map(Catalog::language).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        for language in languages {
+            for candidate in crate::locale::matching(language, tags.iter().copied()) {
+                if candidate == super::ENGLISH {
+                    return None;
+                }
+                let said = self
+                    .catalogs
+                    .iter()
+                    .find(|catalog| catalog.language == candidate)
+                    .and_then(|catalog| catalog.message_alone(id));
+                if let Some(said) = said {
+                    return Some((said, candidate.to_owned()));
+                }
+            }
+        }
+        None
+    }
+}
+
+/// What describes each plugin while it is off, by its domain: made from the
+/// catalogs shipped for its crate the first time it is asked, or kept by its
+/// host (`describe_with`). A catalog there is read a message at a time, no
+/// index made (`Catalog::message_alone`): a plugin is described by two or
+/// three.
+static DESCRIBED: Mutex<Option<HashMap<Box<str>, Described>>> = Mutex::new(None);
+
+/// Keep `catalogs` as what says the words describing the plugin whose
+/// messages are `domain`'s (`outside:<id>`) while it is off: what the host
+/// of plugins from outside reads of one when it finds it, kept with its list
+/// of plugins for as long as it knows the plugin. Never registered: only
+/// words describing the plugin are said from them (`Words::describing`),
+/// never its commands or answers, which are said only while it is on, from
+/// the catalogs registered then (`register`). A plugin built into Skwir
+/// needs none: its own are the catalogs shipped for its crate.
+pub fn describe_with(domain: &str, catalogs: Vec<Catalog>) {
+    DESCRIBED.lock().get_or_insert_with(HashMap::new).insert(
+        domain.into(),
+        Described {
+            catalogs,
+            shipped: false,
+            found: HashMap::new(),
+        },
+    );
+}
+
+/// Message `id` of `domain` as words describing a plugin find it
+/// (`Words::describing`), in the first of `languages` that has it, and the
+/// tag of the catalog it is said from; `None` where English comes first.
+/// From the catalogs registered for `domain` while any is, the plugin on
+/// ([`find`]); else, the plugin off, from those the program ships for its
+/// crate, read only for this and registering nothing, else from those its
+/// host keeps for it (`describe_with`).
+pub(crate) fn find_describing(
+    domain: &str,
+    id: &str,
+    languages: &[String],
+) -> Option<(Said, String)> {
+    if languages.is_empty() {
+        return None;
+    }
+    {
+        let catalogs = CATALOGS.read();
+        if catalogs.0.iter().any(|kept| kept.domain == domain) {
+            let (_, said, tag) = saying(&catalogs, domain, id, languages)?;
+            return Some((said, tag));
+        }
+    }
+    let mut described = DESCRIBED.lock();
+    let described = described.get_or_insert_with(HashMap::new);
+    if !described.contains_key(domain) {
+        let catalogs = SHIPPED
+            .read()
+            .iter()
+            .filter(|one| one.domain == domain)
+            .map(|one| Catalog::new(one.language, one.source))
+            .collect();
+        described.insert(
+            domain.into(),
+            Described {
+                catalogs,
+                shipped: true,
+                found: HashMap::new(),
+            },
+        );
+    }
+    let one = described.get_mut(domain)?;
+    if let Some((asked, found)) = one.found.get(id)
+        && asked.as_slice() == languages
+    {
+        return found.clone();
+    }
+    let found = one.find(id, languages);
+    one.found
+        .insert(id.into(), (languages.to_vec(), found.clone()));
+    found
+}
+
+/// Whether a catalog kept to describe the plugins of `domain` while they are
+/// off was indexed: never, as each is read a message at a time.
+#[cfg(test)]
+pub(crate) fn described_indexed(domain: &str) -> Option<bool> {
+    let described = DESCRIBED.lock();
+    let one = described.as_ref()?.get(domain)?;
+    Some(
+        one.catalogs
+            .iter()
+            .any(|catalog| catalog.index.get().is_some()),
+    )
 }
 
 /// Whether the catalog of `language` registered for `domain` was read:
@@ -640,6 +830,21 @@ mod tests {
         assert_eq!(said("word", &["de", "fr"]), of("fr", "fr"));
         withdraw(DOMAIN);
         assert_eq!(said("word", &["fr"]), None, "withdrawn");
+    }
+
+    /// A message read alone, no index made, is what the index finds: on one
+    /// line or several, the last, none.
+    #[test]
+    fn a_message_read_alone_is_the_one_indexed() {
+        let source = "# A comment.\nplain = Déplacer\nmoved = { $count ->\n    [one] Un élément\n   *[other] { $count } éléments\n}\n\nbraced = Le { $name }\n  suite\nlast = Fin";
+        let indexed = Catalog::new("fr", source);
+        for id in ["plain", "moved", "braced", "last", "missing", "suite"] {
+            let alone = Catalog::new("fr", source);
+            assert_eq!(alone.message_alone(id), indexed.message(id), "{id}");
+            assert!(alone.index.get().is_none(), "{id}: no index made");
+            // Asked again, as it was kept.
+            assert_eq!(alone.message_alone(id), indexed.message(id), "{id}");
+        }
     }
 
     #[test]

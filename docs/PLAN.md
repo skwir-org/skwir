@@ -3807,9 +3807,12 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   The template (now two commands) and the hex view speak English, French
   and Simplified Chinese (drafts). `just words` leaves
   `crates/plugins-outside/` out; the catalogs' test holds them to their
-  `en.ftl`. Left: a disabled plugin's title is English on the Plugins
-  page (as a disabled built-in one's is); Skwir's refusals a plugin
-  echoes reach the window in English.
+  `en.ftl`. A plugin that is off is described on the Plugins page in the
+  reader's language: its title, what it does and what it needs a program
+  for, from the catalogs Skwir ships for its crate or those the host read
+  when it found a plugin from outside, none registered
+  (`Words::describing`, `words::describe_with`). Left: Skwir's refusals a
+  plugin echoes reach the window in English.
 
 **Settled with the user** (2026-11-16, ADR-139): a name's controls
 drawn as tags, never obeyed (5); French drafted by a model and reviewed

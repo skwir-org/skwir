@@ -1675,3 +1675,128 @@ fn the_catalogs_test_refuses_grammar_a_language_does_not_declare() {
     assert!(grammars("fr forms: de\nfr forms: a\n").is_err());
     assert!(grammars("fr definite\n").is_err());
 }
+
+// A plugin's title, what it needs a program for, and a command of it, as
+// `words!` writes them in its crate.
+static DESCRIBED_TITLE_ENGLISH: [Element; 1] = [Element::Text(B("Sample"))];
+static DESCRIBED_TITLE: Message = Message {
+    domain: "skwir-plugin-described",
+    id: "described_plugin_title",
+    english: &DESCRIBED_TITLE_ENGLISH,
+    note: "",
+};
+static DESCRIBED_NEEDS_ENGLISH: [Element; 2] =
+    [Element::Text(B("Pictures of ")), Element::Arg(B("what"))];
+static DESCRIBED_NEEDS: Message = Message {
+    domain: "skwir-plugin-described",
+    id: "described_plugin_needs",
+    english: &DESCRIBED_NEEDS_ENGLISH,
+    note: "",
+};
+static DESCRIBED_RUN_ENGLISH: [Element; 1] = [Element::Text(B("Run the sample"))];
+static DESCRIBED_RUN: Message = Message {
+    domain: "skwir-plugin-described",
+    id: "described_plugin_run",
+    english: &DESCRIBED_RUN_ENGLISH,
+    note: "",
+};
+
+/// A plugin that is off is described in the reader's language (its title,
+/// what it needs a program for), from the catalogs shipped for its crate:
+/// registering nothing, indexing none. Nothing else it says is said from
+/// them, nor are its words anywhere but where it is described. On, its
+/// catalogs registered say it, and the rest; a plugin from outside is
+/// described from what its host keeps.
+#[test]
+fn a_plugin_that_is_off_is_described_in_the_reader_s_language() {
+    const OUTSIDE: &str = "outside:described";
+    static SHIPPED: [super::Shipped; 1] = [super::Shipped {
+        domain: "skwir-plugin-described",
+        language: "fr",
+        source: "# Before it, a message on several lines.\n\
+            described_plugin_moved = { $count ->\n    [one] Un\n   *[other] { $count }\n}\n\
+            described_plugin_needs = Des images de { $what }\n\
+            described_plugin_run = Lancer l’échantillon\n\
+            described_plugin_title = Échantillon\n",
+    }];
+    super::ship(&SHIPPED);
+    let fr = langs(&["fr"]);
+    let title = Words::message(&DESCRIBED_TITLE, vec![]).describing();
+    let needs =
+        || Words::message(&DESCRIBED_NEEDS, vec![("what", Arg::Text(B("SVG")))]).describing();
+    let run = Words::message(&DESCRIBED_RUN, vec![]);
+    assert_eq!(title.say_in(&fr), "Échantillon", "off, described in French");
+    assert_eq!(needs().say_in(&fr), "Des images de SVG");
+    assert_eq!(title.english(), "Sample", "to agents, English");
+    assert_eq!(serde_json::to_value(&title).unwrap(), "Sample");
+    assert_eq!(title.heading().say_in(&fr), "Échantillon");
+    assert_eq!(run.say_in(&fr), "Run the sample", "nothing else it says");
+    assert_eq!(
+        Words::message(&DESCRIBED_TITLE, vec![]).say_in(&fr),
+        "Sample",
+        "only where it is described"
+    );
+    crate::locale::set_chosen(Some("fr".into()));
+    assert_eq!(
+        needs().say_around("what"),
+        Some(("Des images de ".into(), String::new())),
+        "cut for the window, in its language"
+    );
+    assert_eq!(title.say(), "Échantillon");
+    assert!(
+        super::languages_of("skwir-plugin-described").is_empty(),
+        "nothing registered"
+    );
+    assert_eq!(
+        super::described_indexed("skwir-plugin-described"),
+        Some(false),
+        "no catalog indexed"
+    );
+    // Come back from its data, it describes nothing.
+    let back: Words = serde_json::from_value(title.to_data()).unwrap();
+    assert_eq!(back.say_in(&fr), "Sample");
+    // A reader of English first, of a language none says, of a region.
+    assert_eq!(title.say_in(&langs(&["en", "fr"])), "Sample");
+    assert_eq!(title.say_in(&langs(&["de"])), "Sample");
+    assert_eq!(title.say_in(&langs(&["de", "fr-CA"])), "Échantillon");
+    assert!(Words::as_written("").describing().is_empty());
+    // On, its catalogs registered say it and all it says; those first.
+    super::register_shipped("described", "skwir_plugin_described");
+    assert_eq!(title.say_in(&fr), "Échantillon");
+    assert_eq!(run.say_in(&fr), "Lancer l’échantillon");
+    register(
+        "described",
+        "skwir-plugin-described",
+        Catalog::new("fr", "described_plugin_title = Enregistré\n"),
+    );
+    assert_eq!(title.say_in(&fr), "Enregistré", "registered first");
+    // Off again: as before.
+    withdraw("described");
+    assert_eq!(run.say_in(&fr), "Run the sample");
+    assert_eq!(title.say_in(&fr), "Échantillon");
+    // A plugin from outside: what its host keeps for it.
+    super::describe_with(
+        OUTSIDE,
+        vec![Catalog::new(
+            "fr",
+            "plugin-title = Compte (essai)\nrun = Lancer (essai)\n",
+        )],
+    );
+    let english = [Element::Text(B("Count"))];
+    let title = Words::of_catalog(OUTSIDE, "plugin-title", Some(&english[..]), vec![]).describing();
+    let english = [Element::Text(B("Run"))];
+    let run = Words::of_catalog(OUTSIDE, "run", Some(&english[..]), vec![]);
+    assert_eq!(title.say_in(&fr), "Compte (essai)");
+    assert_eq!(title.english(), "Count");
+    assert_eq!(run.say_in(&fr), "Run", "nothing else it says");
+    assert_eq!(super::described_indexed(OUTSIDE), Some(false));
+    // Shipped again, a plugin's are read anew; a host's stay.
+    super::ship(&[]);
+    assert_eq!(
+        Words::message(&DESCRIBED_TITLE, vec![])
+            .describing()
+            .say_in(&fr),
+        "Sample"
+    );
+    assert_eq!(title.say_in(&fr), "Compte (essai)");
+}

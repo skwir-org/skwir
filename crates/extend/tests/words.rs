@@ -159,9 +159,67 @@ fn a_plugin_on_protocol_2_speaks_the_window_s_language_and_english_to_agents() {
     );
     assert!(app.plugins.set_enabled("word-count", false, &app));
     assert!(skwir_core::words::languages_of("outside:word-count").is_empty());
-    assert_eq!(title.say_plain(), "Word count", "withdrawn: English");
+    assert_eq!(
+        count.title.say_plain(),
+        "Count words",
+        "withdrawn: what it says, in English"
+    );
+    assert!(app.commands.get("word-count.count").is_none());
+    // What describes it, on the Plugins page, still the reader's.
+    assert_eq!(title.say_plain(), "Compte de mots (essai)");
+    assert_eq!(
+        listed(&app, "word-count").1.say_plain(),
+        "Combien de mots (essai)"
+    );
+    assert!(app.plugins.set_enabled("word-count", true, &app));
+    assert_eq!(title.say_plain(), "Compte de mots (essai)");
+    assert_eq!(count.title.say_plain(), "Compter (essai)");
+}
+
+/// A plugin from outside is off until the user turns it on, having read on
+/// the Plugins page what it does: there it is described in the reader's
+/// language from the catalogs its host read when it found it, none of them
+/// registered, while nothing else it says is said from them. Turned on, it
+/// speaks as before.
+#[test]
+fn a_plugin_from_outside_that_is_off_is_described_in_the_reader_s_language() {
+    let tmp = common::home_tempdir();
+    let plugins = tmp.path().join("plugins");
+    plugin(
+        &plugins,
+        "word-count",
+        &template(),
+        &[
+            ("en", template_english().as_bytes()),
+            ("fr", FRENCH.as_bytes()),
+        ],
+    );
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    for plugin in skwir_extend::discover(&[plugins], &[]) {
+        app.plugins.add(plugin, &app);
+    }
+    skwir_core::locale::set_chosen(Some("fr".into()));
+    assert!(!app.plugins.is_enabled("word-count"), "off until turned on");
+    let (title, description) = listed(&app, "word-count");
+    assert_eq!(title.say_plain(), "Compte de mots (essai)");
+    assert_eq!(description.say_plain(), "Combien de mots (essai)");
+    assert_eq!(title.english(), "Word count", "an agent's");
+    let sent = serde_json::to_value(app.plugins.list()).unwrap();
+    assert_eq!(sent[0]["title"], "Word count", "what agents read");
+    assert!(
+        skwir_core::words::languages_of("outside:word-count").is_empty(),
+        "nothing registered"
+    );
     assert!(app.commands.get("word-count.count").is_none());
     assert!(app.plugins.set_enabled("word-count", true, &app));
+    let count = app.commands.get("word-count.count").unwrap();
+    assert_eq!(count.title.say_plain(), "Compter (essai)");
+    assert!(app.plugins.set_enabled("word-count", false, &app));
+    assert_eq!(
+        count.title.say_plain(),
+        "Count words",
+        "off: its commands' words are not"
+    );
     assert_eq!(title.say_plain(), "Compte de mots (essai)");
 }
 

@@ -4,7 +4,10 @@
 //! They are read when the plugin is found, as its manifest is, held to
 //! bounds and parsed defensively, since they are anyone's; registered while
 //! the plugin is on (`words::register`, its id the owner, withdrawn with its
-//! other contributions, `App::unregister_owner`). What the plugin says, a
+//! other contributions, `App::unregister_owner`); and kept, from when it is
+//! found, as what says the words describing it while it is off
+//! (`words::describe_with`): its title and what it does, on the Plugins
+//! page, nothing else. What the plugin says, a
 //! string or a message of them, becomes Skwir's [`Words`], said where it is
 //! drawn or sent: in the window's language, English for agents. A message
 //! the reader's language lacks is said in English, one its English lacks as
@@ -112,6 +115,20 @@ impl Catalogs {
         for (language, source) in &self.translations {
             words::register(owner, self.domain, Catalog::new(language, *source));
         }
+    }
+
+    /// Its catalogs kept as what says the words describing it (its title,
+    /// what it does) while it is off, on the Plugins page where a reader
+    /// decides to turn it on (`words::describe_with`): the host keeps them
+    /// with its list of plugins. Nothing else it says is said from them.
+    pub fn describe(&self) {
+        words::describe_with(
+            self.domain,
+            self.translations
+                .iter()
+                .map(|(language, source)| Catalog::new(language, *source))
+                .collect(),
+        );
     }
 
     /// What `said` says, as Skwir's words: text as written, or a message of

@@ -20086,3 +20086,30 @@ its first words.
 **Not checked:** the scroll bar's corner in a window (no area of the mirrored window seen scrolling both ways); macOS and Windows beyond compiling; printing; HTML's
 `dir` and CSS's `direction`, not read. A code line that starts with a
 right-to-left letter is still ordered right to left in its row (0069).
+
+## 2026-11-18: a plugin off, described in the reader's language
+
+ADR-139, 14. A plugin's catalogs are a contribution, registered only
+while it is on, so a disabled plugin's title and description were
+English on the Plugins page, where a reader decides to turn it on. What
+describes a plugin is now data about it. Core's `PluginHost::list` and
+`probe_requirements` hand out `Words::describing`, which only core can
+make. These words are said from the plugin's registered catalogs while
+it is on. While it is off, they are said from the catalogs shipped for
+its crate, or from those the host of plugins from outside keeps from
+when it found the plugin (`words::describe_with`, called by `discover`).
+Nothing is registered for a plugin that is off, and nothing else it says
+is said from them; as data, describing words are the words they wrap.
+Those catalogs are read a message at a time, with no index made.
+Measured in a release build under load, on the remote plugin's 48 KB
+French catalog: the first describing say takes 0.56 ms, and later says
+0.22–0.50 µs, against 0.16–0.42 µs for plain English.
+
+**Checked:** core's 950 tests with skwir-extend's; `plugins_toggle`,
+where every built-in plugin off has its title and description in a test
+French and its commands' words in English, and is the same when turned
+on again; extend's words tests, for a plugin from outside off from the
+start and one turned off. On Xvfb in French: Settings › Modules with
+Polices, Sommes de contrôle and the template from outside turned off,
+each described in French and found by its French words. Not checked:
+macOS, Windows.

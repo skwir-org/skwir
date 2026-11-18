@@ -386,7 +386,11 @@ says it is a draft (13).
     protocol 1 is shown as it writes. Built 2026-11-18 (ADR-045, 046,
     047 amended): a module asks its `languages` import; a plugin's
     catalogs are untrusted input, bounded, registered under
-    `outside:<id>`.
+    `outside:<id>` while it is on; what describes a plugin (its title,
+    what it does, what it needs a program for) is said in the reader's
+    language while it is off too: from the catalogs shipped for its
+    crate, or those its host keeps from when it found it, never
+    registered (amended 2026-11-18).
 
 15. **Names are ordered by the locale's collation** (the user's choice;
     a later track, measured).

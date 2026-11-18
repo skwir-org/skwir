@@ -27,10 +27,13 @@ use std::fmt;
 use std::sync::Arc;
 
 #[cfg(test)]
+pub(crate) use catalog::described_indexed;
+#[cfg(test)]
 pub(crate) use catalog::was_read;
 pub use catalog::{
-    Catalog, Offer, Share, Shipped, find, find_attribute, languages_of, register, register_shipped,
-    register_shipped_of_program, share_of, ship, ship_shares, shipped_languages, withdraw,
+    Catalog, Offer, Share, Shipped, describe_with, find, find_attribute, languages_of, register,
+    register_shipped, register_shipped_of_program, share_of, ship, ship_shares, shipped_languages,
+    withdraw,
 };
 pub use pattern::{Element, Key, Variant, from_fluent};
 
@@ -77,6 +80,9 @@ enum Inner {
     /// A message come back from its data (`Words::to_data`): said from the
     /// catalogs by its domain and id, else from its English as carried.
     Carried(Arc<Carried>),
+    /// Words describing a plugin, said from its catalogs whether they are
+    /// registered or not (`Words::describing`).
+    Describing(Box<Words>),
 }
 
 /// A message known by its domain and id, as its data carries it.
@@ -547,7 +553,11 @@ impl Words {
     /// empty), as a field that may say nothing holds then (a form's help,
     /// a choice's detail). A message or an error always says something.
     pub fn is_empty(&self) -> bool {
-        matches!(&self.0, Inner::Written(text) if text.is_empty())
+        match &self.0 {
+            Inner::Written(text) => text.is_empty(),
+            Inner::Describing(words) => words.is_empty(),
+            _ => false,
+        }
     }
 
     /// The message these words say, by its domain and id (a heading's, one
@@ -556,7 +566,7 @@ impl Words {
     fn said_message(&self) -> Option<(&str, &str)> {
         match &self.0 {
             Inner::Message(message, _) => Some((message.domain, message.id)),
-            Inner::Heading(words) => words.said_message(),
+            Inner::Heading(words) | Inner::Describing(words) => words.said_message(),
             Inner::Carried(carried) => Some((&carried.domain, &carried.id)),
             Inner::Written(_) | Inner::Error(_) => None,
         }
@@ -566,8 +576,45 @@ impl Words {
     pub fn message_of(&self) -> Option<&'static Message> {
         match &self.0 {
             Inner::Message(message, _) => Some(message),
-            Inner::Heading(words) => words.message_of(),
+            Inner::Heading(words) | Inner::Describing(words) => words.message_of(),
             Inner::Written(_) | Inner::Error(_) | Inner::Carried(_) => None,
+        }
+    }
+
+    /// These words where they describe a plugin (its title, what it does,
+    /// what it needs a program for: `PluginHost::list`, `probe_requirements`),
+    /// said whether it is on or off. A plugin's catalogs are registered only
+    /// while it is on (a contribution, `register_shipped`); words describing
+    /// it are said from them then, and while it is off from the catalogs
+    /// Skwir ships for its crate, or those its host keeps for a plugin from
+    /// outside (`describe_with`): read for these words alone, registering
+    /// nothing. Only core makes them, where a plugin is described: nothing
+    /// else a plugin that is off says (its commands, its answers) is said
+    /// from its catalogs. As data, they are the words they wrap.
+    #[must_use]
+    pub(crate) fn describing(self) -> Words {
+        match self.0 {
+            Inner::Describing(_) => self,
+            _ => Words(Inner::Describing(Box::new(self))),
+        }
+    }
+
+    /// These words, describing a plugin where `describing` says so.
+    fn describing_if(self, describing: bool) -> Words {
+        if describing { self.describing() } else { self }
+    }
+
+    /// Its message and arguments, where it is one written in the code, and
+    /// whether the words describe a plugin: what a sentence is cut from
+    /// (`say_apart`, `say_around`).
+    fn cut_from(&self) -> Option<(&'static Message, &Arc<[(&'static str, Arg)]>, bool)> {
+        match &self.0 {
+            Inner::Message(message, args) => Some((message, args, false)),
+            Inner::Describing(words) => match &words.0 {
+                Inner::Message(message, args) => Some((message, args, true)),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -596,9 +643,7 @@ impl Words {
     /// own that nothing beside it reorders); a name cut out leaves its
     /// quotes there, the sentence's (`cut_mark`).
     pub fn say_apart(&self, names: &[&str]) -> Option<(String, Vec<(usize, String)>)> {
-        let Inner::Message(message, args) = &self.0 else {
-            return None;
-        };
+        let (message, args, describing) = self.cut_from()?;
         // A private-use character a name for each argument cut out.
         let mark = |at: usize| char::from_u32(CUT + u32::try_from(at).ok()?);
         let marked: Arc<[(&'static str, Arg)]> = args
@@ -608,7 +653,9 @@ impl Words {
                 None => (*n, a.clone()),
             })
             .collect();
-        let said = Words(Inner::Message(message, marked)).said_for_window(Isolation::NotCut);
+        let said = Words(Inner::Message(message, marked))
+            .describing_if(describing)
+            .said_for_window(Isolation::NotCut);
         let mut before = String::new();
         let mut placed: Vec<(usize, String)> = Vec::with_capacity(names.len());
         for c in said.chars() {
@@ -631,9 +678,7 @@ impl Words {
     /// once. Said for the window, its other names isolated, the one cut out
     /// leaving only its quotes, as [`Words::say_apart`] says.
     pub fn say_around(&self, name: &str) -> Option<(String, String)> {
-        let Inner::Message(message, args) = &self.0 else {
-            return None;
-        };
+        let (message, args, describing) = self.cut_from()?;
         let marked: Arc<[(&'static str, Arg)]> = args
             .iter()
             .map(|(n, a)| {
@@ -644,7 +689,9 @@ impl Words {
                 }
             })
             .collect();
-        let said = Words(Inner::Message(message, marked)).said_for_window(Isolation::NotCut);
+        let said = Words(Inner::Message(message, marked))
+            .describing_if(describing)
+            .said_for_window(Isolation::NotCut);
         let mut parts = said.split(CUT_ONE);
         let (before, after) = (parts.next()?, parts.next()?);
         parts
@@ -703,12 +750,23 @@ impl Words {
     }
 
     fn say_into(&self, out: &mut String, languages: &[String]) {
+        self.say_found(out, languages, catalog::find);
+    }
+
+    /// Said as `say_into` says it, its message found in the catalogs by
+    /// `find`: those registered, or, for words describing a plugin, its own
+    /// whether registered or not (`catalog::find_describing`). The words it
+    /// places are said as they are, from the catalogs registered.
+    fn say_found(&self, out: &mut String, languages: &[String], find: Finder) {
         let (message, args) = match &self.0 {
             Inner::Written(text) => return out.push_str(text),
             Inner::Error(failure) => return say_error(failure, languages, out),
+            Inner::Describing(words) => {
+                return words.say_found(out, languages, catalog::find_describing);
+            }
             Inner::Heading(words) => {
                 let mut said = String::new();
-                words.say_into(&mut said, languages);
+                words.say_found(&mut said, languages, find);
                 let language = languages.first().map_or(ENGLISH, String::as_str);
                 return out.push_str(&casing::heading(language, &said));
             }
@@ -758,6 +816,11 @@ impl Words {
         }
     }
 }
+
+/// How a message is found in the catalogs, in the first of the reader's
+/// languages that has it: [`catalog::find`], among those registered, or
+/// [`catalog::find_describing`].
+type Finder = fn(&str, &str, &[String]) -> Option<(catalog::Said, String)>;
 
 /// Say `elements` with `args` in `language` (its plurals, its quotes);
 /// nested words in `languages`. In the pseudo-language each argument is
@@ -1619,6 +1682,10 @@ pub mod data {
                 carried.args.iter().map(|(n, a)| (n.as_str(), a)),
             ),
             Inner::Heading(inner) => json!({ "heading": of(inner) }),
+            // What a plugin is described by is the words it is, as data:
+            // nothing that comes back from data is said from the catalogs of
+            // a plugin that is off.
+            Inner::Describing(inner) => of(inner),
             Inner::Written(_) | Inner::Error(_) => Value::String(words.english()),
         }
     }

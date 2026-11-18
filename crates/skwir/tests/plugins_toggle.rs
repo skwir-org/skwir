@@ -188,6 +188,133 @@ fn every_plugin_disables_without_a_trace_and_re_enables() {
     }
 }
 
+/// What describes a plugin (its title, what it does) is said in the
+/// reader's language on the Plugins page while it is off, from the
+/// catalogs Skwir ships for its crate, none of them registered; nothing
+/// else it says (its commands) is, and turned on again it speaks as before.
+/// Every plugin built in, each with a catalog of this test's own: a plugin
+/// from outside is `crates/extend/tests/words.rs`'s.
+#[test]
+fn every_plugin_off_is_described_in_the_reader_s_language() {
+    use std::collections::BTreeMap;
+    use std::fmt::Write as _;
+
+    use skwir_core::words::{Message, Shipped, Words};
+    let tmp = tempfile::tempdir().unwrap();
+    let message = |words: &Words| words.message_of();
+    // Each plugin's crate, and its messages that describe it or name a
+    // command of it, read with every plugin on.
+    let on = App::new(AppConfig::ephemeral(tmp.path().join("all"))).unwrap();
+    for plugin in all_plugins() {
+        let id = plugin.id();
+        on.plugins.add(plugin, &on);
+        assert!(on.plugins.set_enabled(id, true, &on));
+    }
+    let commands = on.commands.list();
+    let mut ids: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
+    for plugin in all_plugins() {
+        let Some(title) = message(&plugin.title()) else {
+            continue;
+        };
+        let said = commands
+            .iter()
+            .filter(|command| &*command.owner == plugin.id())
+            .filter_map(|command| message(&command.title));
+        let described = message(&plugin.description()).into_iter();
+        ids.entry(title.domain).or_default().extend(
+            std::iter::once(title)
+                .chain(described)
+                .chain(said)
+                .filter(|said| said.domain == title.domain)
+                .map(|said| said.id),
+        );
+    }
+    drop(on);
+    let shipped: Vec<Shipped> = ids
+        .into_iter()
+        .map(|(domain, mut ids)| {
+            ids.sort_unstable();
+            ids.dedup();
+            let source = ids.iter().fold(String::new(), |mut source, id| {
+                let _ = writeln!(source, "{id} = essai {id}");
+                source
+            });
+            Shipped {
+                domain,
+                language: "fr",
+                source: Box::leak(source.into_boxed_str()),
+            }
+        })
+        .collect();
+    skwir_core::words::ship(Box::leak(shipped.into_boxed_slice()));
+    let essai = |message: &Message| format!("essai {}", message.id);
+    for plugin in all_plugins() {
+        let id = plugin.id();
+        let Some(title) = message(&plugin.title()) else {
+            continue;
+        };
+        let app = App::new(AppConfig::ephemeral(tmp.path().join(id))).unwrap();
+        // Chosen after the app is made, which speaks what its settings say.
+        skwir_core::locale::set_chosen(Some("fr".into()));
+        app.plugins.add(Arc::clone(&plugin), &app);
+        assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        let listed = |app: &App| {
+            app.plugins
+                .list()
+                .into_iter()
+                .find(|listed| listed.id == id)
+                .unwrap()
+        };
+        let commands: Vec<_> = app
+            .commands
+            .list()
+            .into_iter()
+            .filter(|command| &*command.owner == id)
+            .filter(|command| message(&command.title).is_some_and(|m| m.domain == title.domain))
+            .collect();
+        let speaks = |on: bool| {
+            for command in &commands {
+                let said = command.title.say_plain();
+                if on {
+                    assert_eq!(said, essai(message(&command.title).unwrap()), "{id} on");
+                } else {
+                    assert_eq!(
+                        said,
+                        command.title.english(),
+                        "{id} off: {} not said from its catalogs",
+                        command.name
+                    );
+                }
+            }
+        };
+        assert_eq!(listed(&app).title.say_plain(), essai(title), "{id} on");
+        speaks(true);
+        assert!(app.plugins.set_enabled(id, false, &app), "{id}: toggle off");
+        assert!(
+            skwir_core::words::languages_of(title.domain).is_empty(),
+            "{id} off: no catalog of it registered"
+        );
+        let off = listed(&app);
+        assert_eq!(off.title.say_plain(), essai(title), "{id} off: described");
+        assert_eq!(
+            off.title.english(),
+            plugin.title().english(),
+            "{id}: agents"
+        );
+        if let Some(description) = message(&plugin.description()) {
+            assert_eq!(off.description.say_plain(), essai(description), "{id} off");
+        }
+        speaks(false);
+        assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        assert_eq!(
+            listed(&app).title.say_plain(),
+            essai(title),
+            "{id} on again"
+        );
+        speaks(true);
+    }
+}
+
 /// What the Usage view lent a pane (ADR-116: the entries it draws inside
 /// the folder's own) goes when its plugin is turned off, with the rest of
 /// what it contributed: no pane keeps, selected or not, entries a view no
