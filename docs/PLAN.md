@@ -3833,9 +3833,6 @@ them, with `core.folder_names` for the names on disk (16).
   choice).
 - **A grid's names** balanced on two lines (`name_lines.rs`) may cut a
   long word in any script, Latin included.
-- **A row's segmented choice falling back to its dropdown** still keeps
-  the buttons' width beside it (`elements::beside` with a `Fit`), so the
-  description beside it wraps needlessly (seen 2026-11-18, older).
 ---
 
 ## Phase 8: Polish and release

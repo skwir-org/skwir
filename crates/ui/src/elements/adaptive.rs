@@ -120,6 +120,27 @@ impl Element for AdaptiveRow {
     }
 }
 
+thread_local! {
+    /// While a `Beside` measures what ends its row, the widths of the
+    /// versions of each `Fit` laid out there (`versions_laid_out`).
+    static LAID_OUT: std::cell::RefCell<Option<Vec<Vec<Pixels>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// What `measure` returns, and the widths of the versions of each [`Fit`]
+/// it laid out for the first time this frame, each in its own order (a
+/// `Fit` inside a version of another is the other's alone): what
+/// `elements::beside` asks of its end, so the end takes a version's width
+/// and no width between two.
+pub fn versions_laid_out<R>(measure: impl FnOnce() -> R) -> (R, Vec<Vec<Pixels>>) {
+    let outer = LAID_OUT.with(|laid| laid.replace(Some(Vec::new())));
+    let result = measure();
+    let found = LAID_OUT
+        .with(|laid| laid.replace(outer))
+        .unwrap_or_default();
+    (result, found)
+}
+
 /// The richest of several versions of one control that fits beside what
 /// shares its line: segmented buttons where there is room, a dropdown
 /// where there is not. Richest first.
@@ -133,7 +154,8 @@ impl Element for AdaptiveRow {
 /// version that fits the width it got, against its right edge (its left,
 /// `start`, where it follows what it goes with). Like
 /// `AdaptiveRow`, versions share element ids, so focus survives a change
-/// of version.
+/// of version. In what ends a `Beside`, it says its versions' widths to it
+/// (`versions_laid_out`), which gives it one of them.
 pub struct Fit {
     pub variants: Vec<AnyElement>,
     /// Where even the narrowest does not fit, it is drawn narrower still,
@@ -171,11 +193,20 @@ impl Element for Fit {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Measured) {
+        // What a version holds is its own: a `Fit` in it tells no `Beside`.
+        let outer = LAID_OUT.with(std::cell::RefCell::take);
         let sizes: Vec<gpui::Size<Pixels>> = self
             .variants
             .iter_mut()
             .map(|variant| variant.layout_as_root(AvailableSpace::max_size(), window, cx))
             .collect();
+        LAID_OUT.with(|laid| {
+            let mut laid = laid.borrow_mut();
+            *laid = outer;
+            if let Some(found) = laid.as_mut() {
+                found.push(sizes.iter().map(|size| size.width).collect());
+            }
+        });
         let widest = sizes.iter().map(|s| s.width).fold(px(0.), Pixels::max);
         let narrowest = if self.cuts {
             px(0.)
