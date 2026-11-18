@@ -3786,7 +3786,9 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   - Hosted Weblate (its Libre plan), opened once step E is done: the
     components, the GitHub app with one squashed pull request per
     language, model suggestions marked as needing edits. The account is
-    the user's.
+    the user's. On hold (2026-11-18): the Libre plan wants a project
+    three months old with contributors; meanwhile translations come as
+    pull requests.
   - *Done when:* a release speaks French.
 - **H. Plugins from outside: protocol 2** (ADR-139, 14), with the
   template and the hex view's module translated. *Built 2026-11-18*

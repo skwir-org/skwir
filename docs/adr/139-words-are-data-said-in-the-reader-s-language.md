@@ -377,7 +377,10 @@ says it is a draft (13).
     - **Translators work on Hosted Weblate** (its Libre plan; Skwir is
       Apache-2.0 and public), opened once every crate is converted
       (PLAN.md's step E). Before that, ids still move, and on Weblate a
-      renamed id loses its translations.
+      renamed id loses its translations. On hold since 2026-11-18: the
+      Libre plan is granted to a project three months after its first
+      commit and with contributors; until then a translation comes as a
+      pull request of `l10n/<language>.ftl` files (the user's choice).
 
 14. **Plugins from outside get protocol 2**, a track of its own.
     `InitializeParams` carries the languages; the manifest's titles
