@@ -613,47 +613,6 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
         )
         .field(
             Field::new(
-                BOUND,
-                words!(
-                    print_bound = "Binding",
-                    note = "A field of the Print dialog, for a booklet: the edge its folded sheets are bound on, its spine."
-                ),
-                Kind::Row {
-                    choices: Bound::ALL
-                        .into_iter()
-                        .map(|edge| match edge {
-                            Bound::Left => Choice::new(
-                                "left",
-                                words!(
-                                    print_bound_left = "Bound on the left",
-                                    note = "A card of the Binding field: the spine on the left, as a book read left to right."
-                                ),
-                            )
-                            .detail(words!(
-                                print_bound_left_detail = "Read from left to right",
-                                note = "Under the Bound on the left card: its pages are read and turned from left to right."
-                            )),
-                            Bound::Right => Choice::new(
-                                "right",
-                                words!(
-                                    print_bound_right = "Bound on the right",
-                                    note = "A card of the Binding field: the spine on the right, as a Hebrew or an Arabic book, or a manga."
-                                ),
-                            )
-                            .detail(words!(
-                                print_bound_right_detail = "Read from right to left",
-                                note = "Under the Bound on the right card: its pages are read and turned from right to left."
-                            )),
-                        }
-                        .picture(bound_picture(edge)))
-                        .collect(),
-                },
-            )
-            .value(bound_value(bound))
-            .when(LAYOUT, &["booklet"]),
-        )
-        .field(
-            Field::new(
                 FOLD,
                 words!(
                     print_folded_as = "Folded as",
@@ -706,6 +665,23 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
                 note = "Under the switch trimming a booklet's white margins: every page scaled alike, to fit what is printed on it."
             ))
             .value(last.trim.to_string())
+            .when(LAYOUT, &["booklet"]),
+        )
+        .field(
+            Field::new(
+                BOUND,
+                words!(
+                    print_bound_right = "Bound on the right",
+                    note = "A switch of the Print dialog, for a booklet: its spine on the right, as a Hebrew or an Arabic book, or a manga, is bound."
+                ),
+                Kind::Toggle,
+            )
+            .help(words!(
+                print_bound_right_help = "For a book read from right to left",
+                note = "Under the switch binding a booklet on the right: its pages are read and turned from right to left, as in Hebrew, Arabic or a manga."
+            ))
+            // The document's edge every time, never the last dialog's.
+            .value((bound == Bound::Right).to_string())
             .when(LAYOUT, &["booklet"]),
         );
     if offers.several() {
@@ -1064,10 +1040,14 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, Words> {
             .filter(|_| booklet)
             .unwrap_or_default(),
         // A booklet's; the edge the dialog opened on where none is held.
-        bound: match values.get(BOUND) {
-            "left" => Bound::Left,
-            "right" => Bound::Right,
-            _ => offers.bound,
+        bound: if values.0.contains_key(BOUND) {
+            if values.on(BOUND) {
+                Bound::Right
+            } else {
+                Bound::Left
+            }
+        } else {
+            offers.bound
         },
         paper: Some(values.get(PAPER))
             .filter(|name| skwir_core::print::Paper::named(name).is_some())
@@ -1170,35 +1150,6 @@ fn contact_sheet() -> Picture {
         width: 64,
         height: 36,
         marks,
-    }
-}
-
-/// What the Binding field holds for `bound`.
-fn bound_value(bound: Bound) -> &'static str {
-    match bound {
-        Bound::Left => "left",
-        Bound::Right => "right",
-    }
-}
-
-/// A booklet bound on `bound`, seen closed from its cover: page 1, its
-/// spine a bar along the edge it is bound on, the leaves behind it showing
-/// at the other.
-fn bound_picture(bound: Bound) -> Picture {
-    let left = Picture {
-        width: 64,
-        height: 36,
-        marks: vec![
-            boxed(29, 6, 20, 27, false),
-            boxed(26, 4, 20, 27, false),
-            boxed(23, 2, 20, 28, false),
-            text(23, 2, 20, 28, "1"),
-            boxed(17, 2, 7, 28, true),
-        ],
-    };
-    match bound {
-        Bound::Left => left,
-        Bound::Right => mirrored(&left),
     }
 }
 
@@ -1413,7 +1364,7 @@ mod tests {
         assert_eq!(
             keys,
             [
-                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, BOUND, FOLD, TRIM, PAPER, SMALLER
+                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, BOUND, PAPER, SMALLER
             ]
         );
         assert_eq!(form.title.english(), "Print “notes.md”");
@@ -1441,7 +1392,7 @@ mod tests {
         assert_eq!(
             keys,
             [
-                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, BOUND, FOLD, TRIM, TOGETHER, PAPER,
+                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, BOUND, TOGETHER, PAPER,
                 SMALLER
             ]
         );
@@ -1591,9 +1542,9 @@ mod tests {
         assert_eq!(stacks(&fold_picture(Some(12), None, right)), 3);
     }
 
-    /// The Binding row is a booklet's, shown only while Booklet is chosen,
-    /// as a file's or several's dialog offers it, never a listing's; its
-    /// cards draw the spine on the edge each names, mirrored.
+    /// Bound on the right is a booklet's switch, shown only while Booklet
+    /// is chosen, after Trim white margins, as a file's or several's dialog
+    /// offers it, never a listing's.
     #[test]
     fn the_binding_is_offered_for_a_booklet_alone() {
         let form = opened(&offers());
@@ -1601,33 +1552,9 @@ mod tests {
         assert!(field.shown_with(&values(&[(LAYOUT, "booklet")])));
         assert!(!field.shown_with(&values(&[(LAYOUT, "as_shown")])));
         assert!(!field.shown_with(&values(&[(LAYOUT, "contact_sheet")])));
-        assert_eq!(field.title.english(), "Binding");
-        let cards: Vec<(String, String, &str)> = field
-            .choices()
-            .iter()
-            .map(|c| (c.title.english(), c.detail.english(), c.value.as_str()))
-            .collect();
-        assert_eq!(
-            cards,
-            [
-                (
-                    "Bound on the left".to_owned(),
-                    "Read from left to right".to_owned(),
-                    "left"
-                ),
-                (
-                    "Bound on the right".to_owned(),
-                    "Read from right to left".to_owned(),
-                    "right"
-                ),
-            ]
-        );
-        let [left, right] = [Bound::Left, Bound::Right].map(bound_picture);
-        let spine = |picture: &Picture| match picture.marks.last() {
-            Some(Mark::Box { x, width, .. }) => (*x, *width),
-            _ => panic!("the spine is drawn last"),
-        };
-        assert!(spine(&left).0 < 32 && spine(&right).0 > 32);
+        assert_eq!(field.title.english(), "Bound on the right");
+        assert_eq!(field.help.english(), "For a book read from right to left");
+        assert!(matches!(field.kind, Kind::Toggle));
         let several = opened(&Offers {
             subject: Subject::Several { pictures: true },
             ..offers()
@@ -1640,7 +1567,7 @@ mod tests {
         assert!(listing.fields.iter().all(|f| f.key != BOUND));
     }
 
-    /// The Binding row opens on the edge the document reads by, every
+    /// The Bound on the right switch opens on the edge the document reads by, every
     /// time: never the last dialog's, whatever was chosen there; what is
     /// chosen is answered.
     #[test]
@@ -1657,8 +1584,8 @@ mod tests {
             bound: Bound::Right,
             ..offers()
         };
-        assert_eq!(value(&opened(&hebrew)), "right");
-        assert_eq!(value(&opened(&offers())), "left");
+        assert_eq!(value(&opened(&hebrew)), "true");
+        assert_eq!(value(&opened(&offers())), "false");
         // The Layout card's booklet drawn as it is bound: page 1 on the
         // left of the sheet's front bound on the right, else on its right.
         let page_one = |form: &Form| {
@@ -1684,17 +1611,17 @@ mod tests {
         assert!(right < 32 && left >= 32, "{right} {left}");
         // Chosen on the left for the Hebrew book, then a book read left to
         // right opens on the left, and the Hebrew one on the right again.
-        let answered = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "left")]);
+        let answered = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "false")]);
         let chosen = super::chosen(&answered, &hebrew).unwrap();
         assert_eq!(chosen.bound, Bound::Left);
         let last = remembered(&answered, &chosen, &Remembered::default());
-        assert_eq!(value(&super::form(&offers(), &last)), "left");
-        assert_eq!(value(&super::form(&hebrew, &last)), "right");
-        let answered = values(&[(TO, "pdf"), (LAYOUT, "booklet"), (BOUND, "right")]);
+        assert_eq!(value(&super::form(&offers(), &last)), "false");
+        assert_eq!(value(&super::form(&hebrew, &last)), "true");
+        let answered = values(&[(TO, "pdf"), (LAYOUT, "booklet"), (BOUND, "true")]);
         let chosen = super::chosen(&answered, &offers()).unwrap();
         assert_eq!(chosen.bound, Bound::Right);
         let last = remembered(&answered, &chosen, &last);
-        assert_eq!(value(&super::form(&offers(), &last)), "left");
+        assert_eq!(value(&super::form(&offers(), &last)), "false");
         // Held by no field (no booklet asked): the edge it opened on.
         let printed = values(&[(TO, "printer"), (LAYOUT, "as_shown")]);
         assert_eq!(

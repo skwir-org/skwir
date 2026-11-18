@@ -468,9 +468,11 @@ binds on the right.
   on the right, the sheets are those bound on the left seen in a mirror,
   each side's pages mirrored row by row in its grid, each turned as it
   was (`sheets_bound`, `Sheet::mirrored`); folded the mirrored way, they
-  read in order. The dialog's Binding row stands among the booklet's
-  options, shown whenever a booklet is chosen, whatever the window's
-  language: binding is the document's, not the reader's. Its preset is
+  read in order. The dialog's "Bound on the right" switch follows "Trim
+  white margins" among the booklet's options (a switch, as the edge is
+  seldom changed; the pictures of Pages a side show where page 1 lands),
+  shown whenever a booklet is chosen, whatever the window's language:
+  binding is the document's, not the reader's. Its preset is
   the document's every time, never remembered: `bound` asked, else what
   the caller knows of it (`reads`: the preview passes what the document
   shown declares), else what the file says (a PDF's direction read with

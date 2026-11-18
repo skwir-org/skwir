@@ -633,7 +633,7 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     assert_eq!(
         keys,
         [
-            "to", "save_as", "pages", "ranges", "layout", "per_side", "bound", "fold", "trim",
+            "to", "save_as", "pages", "ranges", "layout", "per_side", "fold", "trim", "bound",
             "paper", "smaller"
         ]
     );

@@ -1475,52 +1475,113 @@ fn choice_row(
 }
 
 /// A choice's picture, drawn as on paper whatever the card's color: its
-/// boxes on `bg` outlined in `text_muted`, those shaded (a sheet behind
-/// another) on `surface`, what is written in `text`.
+/// boxes (pages) on `bg` outlined in `text_muted`, those shaded (ink:
+/// lines, pictures, a spine) on `surface`, what is written in `text`. A
+/// page's number is written on its page, a child of the box it lies in
+/// (the last drawn before it that holds it): the page's paper is a ground
+/// of its own, opaque, so the number keeps `text` there on a chosen card
+/// too, whose ground draws in its own ink what is on it (`Chosen`), and
+/// never shows white on the white page.
 fn drawn(picture: &Picture, theme: &Theme) -> AnyElement {
-    let px = |n: u16| gpui::px(f32::from(n));
+    let px = gpui::px;
+    let marks = &picture.marks;
+    // What each page has written on it, by the page's place among the marks.
+    let mut on: Vec<Vec<usize>> = vec![Vec::new(); marks.len()];
+    let mut loose = vec![false; marks.len()];
+    for (at, mark) in marks.iter().enumerate() {
+        let Mark::Text {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } = mark
+        else {
+            continue;
+        };
+        let page = marks[..at].iter().rposition(|page| {
+            matches!(page, Mark::Box { x: bx, y: by, width: bw, height: bh, .. }
+                if bx <= x && by <= y && x + width <= bx + bw && y + height <= by + bh)
+        });
+        match page {
+            Some(page) => on[page].push(at),
+            None => loose[at] = true,
+        }
+    }
+    // Written at `x`, `y` (from the edge of what holds it), centred in its
+    // box.
+    let written = |x: f32, y: f32, width: u16, height: u16, text: &str| {
+        div()
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .w(px(f32::from(width)))
+            .h(px(f32::from(height)))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(gpui::px(10.))
+            .line_height(gpui::px(12.))
+            .text_color(theme.text)
+            .child(text.to_owned())
+    };
     let mut drawing = div()
         .relative()
         .flex_none()
-        .w(px(picture.width))
-        .h(px(picture.height));
-    for mark in &picture.marks {
-        drawing = drawing.child(match mark {
+        .w(px(f32::from(picture.width)))
+        .h(px(f32::from(picture.height)));
+    for (at, mark) in marks.iter().enumerate() {
+        match mark {
             Mark::Box {
                 x,
                 y,
                 width,
                 height,
                 shaded,
-            } => div()
-                .absolute()
-                .left(px(*x))
-                .top(px(*y))
-                .w(px(*width))
-                .h(px(*height))
-                .border_1()
-                .border_color(theme.text_muted)
-                .bg(if *shaded { theme.surface } else { theme.bg }),
+            } => {
+                let mut page = div()
+                    .absolute()
+                    .left(px(f32::from(*x)))
+                    .top(px(f32::from(*y)))
+                    .w(px(f32::from(*width)))
+                    .h(px(f32::from(*height)))
+                    .border_1()
+                    .border_color(theme.text_muted)
+                    .bg(if *shaded { theme.surface } else { theme.bg });
+                // Placed from inside its border, where they were on the
+                // picture.
+                for &number in &on[at] {
+                    if let Mark::Text {
+                        x: tx,
+                        y: ty,
+                        width,
+                        height,
+                        text,
+                    } = &marks[number]
+                    {
+                        page = page.child(written(
+                            f32::from(*tx) - f32::from(*x) - 1.,
+                            f32::from(*ty) - f32::from(*y) - 1.,
+                            *width,
+                            *height,
+                            text,
+                        ));
+                    }
+                }
+                drawing = drawing.child(page);
+            }
             Mark::Text {
                 x,
                 y,
                 width,
                 height,
                 text,
-            } => div()
-                .absolute()
-                .left(px(*x))
-                .top(px(*y))
-                .w(px(*width))
-                .h(px(*height))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(gpui::px(10.))
-                .line_height(gpui::px(12.))
-                .text_color(theme.text)
-                .child(text.clone()),
-        });
+            } if loose[at] => {
+                drawing =
+                    drawing.child(written(f32::from(*x), f32::from(*y), *width, *height, text));
+            }
+            Mark::Text { .. } => {}
+        }
     }
     drawing.into_any_element()
 }

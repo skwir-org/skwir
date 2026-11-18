@@ -20274,3 +20274,28 @@ PDF shown in its reader opens its dialog.
 
 **Not checked:** a table wider than the panel, scrolled sideways from
 the right; `dir` on an element inside a page, still left to the text.
+
+## 2026-11-18: the binding a switch, chosen pictures readable
+
+Asked by the user. The booklet's Binding row (two cards) is now a
+switch, "Bound on the right", after "Trim white margins" and drawn as it
+is: the edge is seldom changed, and the pictures of Pages a side already
+show where page 1 lands. It is preset from the document as the row was,
+never remembered (ADR-111's revision says so).
+
+In a look whose selection is dark on a light page (a desktop's), a
+chosen card's picture drew its page numbers white on its white pages.
+The chosen ground draws in its ink what is on it, and the numbers were
+laid over their pages, not on them. A page's number is now written on
+its page, a child of the box it lies in (`form::drawn`): the page's
+paper is an opaque ground of its own, so the number keeps the look's
+`text` there. The pictures stay white pages with dark numbers on a
+chosen card too, as the user preferred to a line drawing in the
+selection's ink, which was tried first.
+
+**Checked:** clippy `-D warnings` and the tests of skwir-ui and the
+print plugin (775), `skwir`'s print and plugin tests, the words checks.
+On Xvfb, with a user GTK sheet giving a dark blue selection on a light
+page: the chosen Booklet, 2 a side and One booklet cards draw white
+pages with dark numbers, centred as before; the switch off for an
+English file and on for a Hebrew one, in French.

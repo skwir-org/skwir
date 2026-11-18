@@ -46,19 +46,10 @@ print_booklet_needs_pdfium = Mettre en livret nécessite PDFium, introuvable ici
 print_booklet_one_side = Un livret s’imprime recto verso : en recto seul, imprimez les faces impaires, retournez les feuilles, puis imprimez les paires
 
 # draft
-print_bound = Reliure
-
-# draft
-print_bound_left = Reliure à gauche
-
-# draft
-print_bound_left_detail = Se lit de gauche à droite
-
-# draft
 print_bound_right = Reliure à droite
 
 # draft
-print_bound_right_detail = Se lit de droite à gauche
+print_bound_right_help = Pour un livre qui se lit de droite à gauche
 
 # draft
 print_cancelled = L’impression a été annulée

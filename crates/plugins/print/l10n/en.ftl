@@ -41,20 +41,11 @@ print_booklet_needs_pdfium = Folding a booklet needs PDFium, which is not there
 # Said after a booklet was sent to a printer printing on one side.
 print_booklet_one_side = A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even
 
-# A field of the Print dialog, for a booklet: the edge its folded sheets are bound on, its spine.
-print_bound = Binding
-
-# A card of the Binding field: the spine on the left, as a book read left to right.
-print_bound_left = Bound on the left
-
-# Under the Bound on the left card: its pages are read and turned from left to right.
-print_bound_left_detail = Read from left to right
-
-# A card of the Binding field: the spine on the right, as a Hebrew or an Arabic book, or a manga.
+# A switch of the Print dialog, for a booklet: its spine on the right, as a Hebrew or an Arabic book, or a manga, is bound.
 print_bound_right = Bound on the right
 
-# Under the Bound on the right card: its pages are read and turned from right to left.
-print_bound_right_detail = Read from right to left
+# Under the switch binding a booklet on the right: its pages are read and turned from right to left, as in Hebrew, Arabic or a manga.
+print_bound_right_help = For a book read from right to left
 
 print_cancelled = Printing was cancelled
 
