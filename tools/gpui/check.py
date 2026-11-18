@@ -83,6 +83,8 @@ RUNS = [
         # What is laid out on its own (a tooltip, what a drag shows) as wide
         # as its words, not its widest word (0061).
         "window::tests::what_is_laid_out_on_its_own",
+        # A length that fits its content within a limit (0079).
+        "taffy::fit_content_tests",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

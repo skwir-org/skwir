@@ -111,6 +111,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0076-shortcuts-on-layouts-without-latin-letters` | Linux: a shortcut (Control, Alt or Super held) on a layout whose letters are not Latin is named by the keymap's first Latin layout, or a US one where it has none, never by its own ASCII symbols; a shortcut on a digit row that types no digit names its digit; the US positions of the digit row, `-` and `=`, and `<` and `>` no longer swapped | — |
 | `0077-no-isolates-for-assistive-technology` | What a node says to assistive technology (its label, description, value, placeholder) has its bidirectional isolates (U+2066 to U+2069) taken out, but a text run's, whose offsets a caret counts | — |
 | `0078-kept-breaks-for-line-wrappers` | A text beyond ASCII that a line wrapper wraps (a name a grid counts the lines of) is segmented once: its breaks kept by its text in the text system, two generations of 4,096 texts, so counted again at another width it costs about what it did before 0072 | — |
+| `0079-fit-content-lengths` | A length may be CSS's `fit-content(<length-percentage>)` (`Length::FitContent`, `fit_content`): a measured element with such a flex basis or size is measured with the limit as its definite available space, so it chooses its width by the room it is given | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1852,3 +1853,31 @@ of steps and the bits it sets.
 
 The tests are `text_system::line_breaks::tests::breaks_are_kept_by_their_text_for_two_generations`
 and `text_system::line_wrapper::tests::a_text_beyond_ascii_is_segmented_once`.
+
+### 0079: Fit-content lengths
+
+A row's control that has several versions (segmented buttons, else a
+dropdown: Skwir's `elements::adaptive::Fit`) beside a text that wraps
+(`elements::beside`) must know the row's width to choose one before the
+line is laid out: a flex item's content-based basis is measured under a
+max-content constraint (CSS Flexbox 9.2.3 E), whatever room the row has,
+and a flex item only grows and shrinks continuously from it, so a row
+whose buttons did not fit gave the dropdown the buttons' room and the
+text none of it. Taffy 0.15 has CSS Sizing 4's `fit-content()` for a
+flex basis and a size, which measures the item with its limit as its
+definite available space, a percentage of the container's definite inner
+size; gpui's `Length` had no way to say it.
+
+`Length::FitContent(DefiniteLength)` (and `fit_content(limit)`) is one:
+written `fit-content(50%)` or `fit-content(12px)`, read back by
+`Length::try_from` and in JSON. A fraction is `Dimension::fit_content_percent`,
+a length `fit_content_px`, in device pixels as gpui's lengths are; a margin
+or an inset given one is automatic. Where a fraction has no definite size
+to resolve against (a row laid out as wide as what it holds), the item is
+measured as its content, as an automatic basis is.
+
+The tests are `taffy::fit_content_tests` (a measured box of basis
+`fit_content(relative(0.5))` in a row 300 px wide is measured under 150 px
+and keeps the width it measured; `fit_content(px(100.))` under 100 px; an
+automatic basis never under the row's width; a row as wide as what it
+holds measures it as its content; the written form read back).

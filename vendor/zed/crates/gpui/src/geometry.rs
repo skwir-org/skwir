@@ -3625,6 +3625,12 @@ pub enum Length {
     Definite(DefiniteLength),
     /// An automatic length that is determined by the context in which it is used.
     Auto,
+    /// As long as the content, but no longer than the limit: CSS's
+    /// `fit-content(<length-percentage>)`, a fraction being of the parent's
+    /// size. A measured element is measured with the limit as its definite
+    /// available space; where a fraction has no definite size to resolve
+    /// against, it is as long as its content.
+    FitContent(DefiniteLength),
 }
 
 impl Debug for Length {
@@ -3638,11 +3644,13 @@ impl Display for Length {
         match self {
             Length::Definite(definite_length) => write!(f, "{}", definite_length),
             Length::Auto => write!(f, "auto"),
+            Length::FitContent(limit) => write!(f, "fit-content({limit})"),
         }
     }
 }
 
-const EXPECTED_LENGTH: &str = "expected 'auto' or number with 'px', 'rem', or '%' suffix";
+const EXPECTED_LENGTH: &str =
+    "expected 'auto', a number with 'px', 'rem', or '%' suffix, or 'fit-content(' one ')'";
 
 impl TryFrom<&'_ str> for Length {
     type Error = anyhow::Error;
@@ -3650,6 +3658,12 @@ impl TryFrom<&'_ str> for Length {
     fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
         if value == "auto" {
             Ok(Length::Auto)
+        } else if let Some(limit) = value
+            .strip_prefix("fit-content(")
+            .and_then(|limit| limit.strip_suffix(')'))
+            && let Ok(limit) = limit.try_into()
+        {
+            Ok(Length::FitContent(limit))
         } else if let Ok(definite_length) = value.try_into() {
             Ok(Length::Definite(definite_length))
         } else {
@@ -3668,7 +3682,7 @@ impl JsonSchema for Length {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         json_schema!({
             "type": "string",
-            "pattern": r"^(auto|-?\d+(\.\d+)?(px|rem|%))$"
+            "pattern": r"^(auto|-?\d+(\.\d+)?(px|rem|%)|fit-content\(-?\d+(\.\d+)?(px|rem|%)\))$"
         })
     }
 }
@@ -3716,6 +3730,12 @@ impl Serialize for Length {
 /// A `DefiniteLength` representing the relative length as a fraction of the parent's size.
 pub const fn relative(fraction: f32) -> DefiniteLength {
     DefiniteLength::Fraction(fraction)
+}
+
+/// A `Length` as long as its content, but no longer than `limit`: CSS's
+/// `fit-content(<length-percentage>)`.
+pub fn fit_content(limit: impl Into<DefiniteLength>) -> Length {
+    Length::FitContent(limit.into())
 }
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
@@ -3942,7 +3962,7 @@ impl IsZero for Length {
     fn is_zero(&self) -> bool {
         match self {
             Length::Definite(length) => length.is_zero(),
-            Length::Auto => false,
+            Length::Auto | Length::FitContent(_) => false,
         }
     }
 }

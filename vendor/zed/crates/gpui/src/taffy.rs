@@ -558,7 +558,8 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
     ) -> taffy::prelude::LengthPercentageAuto {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size, scale_factor),
-            Length::Auto => taffy::prelude::LengthPercentageAuto::auto(),
+            // A margin or an inset has no content to fit.
+            Length::Auto | Length::FitContent(_) => taffy::prelude::LengthPercentageAuto::auto(),
         }
     }
 }
@@ -568,6 +569,12 @@ impl ToTaffy<taffy::style::Dimension> for Length {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size, scale_factor),
             Length::Auto => taffy::prelude::Dimension::auto(),
+            Length::FitContent(DefiniteLength::Absolute(limit)) => {
+                taffy::prelude::Dimension::fit_content_px(limit.to_taffy(rem_size, scale_factor))
+            }
+            Length::FitContent(DefiniteLength::Fraction(fraction)) => {
+                taffy::prelude::Dimension::fit_content_percent(*fraction)
+            }
         }
     }
 }
@@ -818,5 +825,168 @@ mod tests {
             taffy_border.left,
             taffy::style::LengthPercentage::length(2.0)
         );
+    }
+}
+
+#[cfg(test)]
+mod fit_content_tests {
+    use crate::{
+        App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, InspectorElementId,
+        IntoElement, LayoutId, Length, ParentElement as _, Pixels, Style, Styled as _,
+        TestAppContext, Window, div, fit_content, point, prelude::FluentBuilder as _, px, relative,
+        size,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    /// A box with a flex basis that measures itself: it says under what
+    /// width it was measured, and is `wide` whatever the room.
+    struct Measured {
+        basis: Length,
+        wide: Pixels,
+        seen: Rc<RefCell<Vec<AvailableSpace>>>,
+        bounds: Rc<RefCell<Bounds<Pixels>>>,
+    }
+
+    impl IntoElement for Measured {
+        type Element = Self;
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+
+    impl Element for Measured {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            _: &mut App,
+        ) -> (LayoutId, ()) {
+            let style = Style {
+                flex_basis: self.basis,
+                flex_grow: 0.,
+                flex_shrink: 0.,
+                ..Style::default()
+            };
+            let (seen, wide) = (self.seen.clone(), self.wide);
+            let layout = window.request_measured_layout(style, move |known, available, _, _| {
+                if known.width.is_none() {
+                    seen.borrow_mut().push(available.width);
+                }
+                size(known.width.unwrap_or(wide), px(10.))
+            });
+            (layout, ())
+        }
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            _: &mut (),
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            *self.bounds.borrow_mut() = bounds;
+        }
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut (),
+            _: &mut (),
+            _: &mut Window,
+            _: &mut App,
+        ) {
+        }
+    }
+
+    /// The widths a box of `basis` was measured under in a row `row` wide
+    /// (as wide as what it holds where `None`), and the width it was given.
+    fn measured(
+        cx: &mut TestAppContext,
+        row: Option<f32>,
+        basis: Length,
+    ) -> (Vec<AvailableSpace>, f32) {
+        let cx = cx.add_empty_window();
+        let seen: Rc<RefCell<Vec<AvailableSpace>>> = Rc::default();
+        let bounds: Rc<RefCell<Bounds<Pixels>>> = Rc::default();
+        let (kept, placed) = (seen.clone(), bounds.clone());
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .when_some(row, |d, row| d.w(px(row)))
+                    .child(Measured {
+                        basis,
+                        wide: px(80.),
+                        seen: kept.clone(),
+                        bounds: placed.clone(),
+                    })
+            },
+        );
+        let width = f32::from(bounds.borrow().size.width);
+        let seen = seen.borrow().clone();
+        (seen, width)
+    }
+
+    #[crate::test]
+    fn a_fit_content_basis_is_measured_within_its_limit(cx: &mut TestAppContext) {
+        // A fraction, of the row's width.
+        let (seen, width) = measured(cx, Some(300.), fit_content(relative(0.5)));
+        assert!(
+            seen.contains(&AvailableSpace::Definite(px(150.))),
+            "{seen:?}"
+        );
+        assert_eq!(width, 80.);
+        // A length.
+        let (seen, _) = measured(cx, Some(300.), fit_content(px(100.)));
+        assert!(
+            seen.contains(&AvailableSpace::Definite(px(100.))),
+            "{seen:?}"
+        );
+        // An automatic basis, as before: under its content's width, then
+        // the width it was given, never the row's.
+        let (seen, width) = measured(cx, Some(300.), Length::Auto);
+        assert!(beyond(&seen, 80.).is_empty(), "{seen:?}");
+        assert_eq!(width, 80.);
+    }
+
+    /// The definite widths in `seen` other than `own`.
+    fn beyond(seen: &[AvailableSpace], own: f32) -> Vec<AvailableSpace> {
+        seen.iter()
+            .copied()
+            .filter(|width| matches!(width, AvailableSpace::Definite(width) if *width != px(own)))
+            .collect()
+    }
+
+    #[crate::test]
+    fn a_fraction_with_nothing_to_resolve_against_fits_the_content(cx: &mut TestAppContext) {
+        let (seen, width) = measured(cx, None, fit_content(relative(0.5)));
+        assert!(beyond(&seen, 80.).is_empty(), "{seen:?}");
+        assert_eq!(width, 80.);
+    }
+
+    #[test]
+    fn a_fit_content_length_reads_as_it_is_written() {
+        let length = fit_content(relative(0.5));
+        assert_eq!(length.to_string(), "fit-content(50%)");
+        assert_eq!(Length::try_from("fit-content(50%)").unwrap(), length);
+        assert_eq!(
+            Length::try_from("fit-content(12px)").unwrap(),
+            fit_content(px(12.))
+        );
+        assert!(Length::try_from("fit-content(auto)").is_err());
     }
 }
