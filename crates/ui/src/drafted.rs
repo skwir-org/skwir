@@ -90,6 +90,7 @@ mod tests {
         translated: 100,
         reviewed: 3,
         offered: Offer::Draft,
+        name: "Français",
     }];
 
     /// Automatic speaking a draft says so once, with English a click

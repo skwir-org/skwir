@@ -164,6 +164,7 @@ class Crates(unittest.TestCase):
                     "reviewed": 3,
                     "default_whole": False,
                     "default_translated": True,
+                    "name": "de",
                 },
                 {
                     "language": "fr",
@@ -172,6 +173,7 @@ class Crates(unittest.TestCase):
                     "reviewed": 8,
                     "default_whole": True,
                     "default_translated": True,
+                    "name": "fr",
                 },
             ],
         )
@@ -194,6 +196,18 @@ class Crates(unittest.TestCase):
         shares, _ = extract.shares(found, names)
         self.assertTrue(extract.meets_draft_bar(shares[1]), "all translated, drafts")
         self.assertFalse(extract.meets_bar(shares[1]))
+
+    def test_a_language_is_named_as_its_catalog_of_core_says(self):
+        core = self.crate("skwir-core")
+        found = {core: {"settings_language_self": ("English", "")}}
+        names = {core: "skwir-core"}
+        self.catalog(core, "fr", "# draft\nsettings_language_self = Français\n")
+        self.catalog(core, "zh-Hans", "settings_language_self = 简体中文\n")
+        self.catalog(core, "de", "")
+        shares, _ = extract.shares(found, names)
+        # Said in itself, draft or not; its tag where core's catalog says none.
+        self.assertEqual([share["name"] for share in shares], ["de", "Français", "简体中文"])
+        self.assertEqual(extract.rust_string('a "b" \\c'), '"a \\"b\\" \\\\c"')
 
     def test_shares_round_down(self):
         share = {"messages": 1000, "translated": 999, "reviewed": 749}
@@ -257,6 +271,8 @@ class Offering(unittest.TestCase):
         catalogs = extract.CATALOGS_RS.read_text()
         self.assertIn('language: "fr",\n        messages: 10,\n        translated: 8,\n        reviewed: 8,', catalogs)
         self.assertIn("offered: skwir_core::words::Offer::Incomplete", catalogs)
+        # No catalog of core in this tree: named by its tag.
+        self.assertIn('name: "fr",', catalogs)
         self.assertEqual(self.run_tool("--check")[0], 0)
 
         # Translated, 80% reviewed: offered as a draft, written in the record.

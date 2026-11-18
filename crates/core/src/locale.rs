@@ -652,6 +652,7 @@ mod tests {
             translated: 100,
             reviewed: 0,
             offered: Offer::Incomplete,
+            name: "Français",
         },
         Share {
             language: "de",
@@ -659,6 +660,7 @@ mod tests {
             translated: 95,
             reviewed: 91,
             offered: Offer::Reviewed,
+            name: "Deutsch",
         },
         Share {
             language: "zh-Hant",
@@ -666,6 +668,7 @@ mod tests {
             translated: 100,
             reviewed: 100,
             offered: Offer::Reviewed,
+            name: "繁體中文",
         },
     ];
     /// French once translated: a draft; German as before.
@@ -676,6 +679,7 @@ mod tests {
             translated: 100,
             reviewed: 10,
             offered: Offer::Draft,
+            name: "Français",
         },
         Share {
             language: "de",
@@ -683,6 +687,7 @@ mod tests {
             translated: 95,
             reviewed: 91,
             offered: Offer::Reviewed,
+            name: "Deutsch",
         },
     ];
     /// French once reviewed.
@@ -692,6 +697,7 @@ mod tests {
         translated: 100,
         reviewed: 90,
         offered: Offer::Reviewed,
+        name: "Français",
     }];
 
     /// The languages, as each reader asks for them: the one chosen first,

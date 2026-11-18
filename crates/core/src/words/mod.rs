@@ -26,6 +26,8 @@ use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
+#[cfg(test)]
+pub(crate) use catalog::was_read;
 pub use catalog::{
     Catalog, Offer, Share, Shipped, find, find_attribute, languages_of, register, register_shipped,
     register_shipped_of_program, share_of, ship, ship_shares, shipped_languages, withdraw,

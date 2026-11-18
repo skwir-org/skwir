@@ -3734,10 +3734,10 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   and About's scale are messages; About's details name the languages
   and the locales. Idle memory with the data measured 2026-11-18
   (STATUS-LOG): +6 MiB for an English window once the startup list is
-  made again, +4.2 MiB to a download. Left: the languages' names read
-  from every catalog at each start (a cost that grows with each
-  language: written at build time instead), and a data export for the
-  languages shipped, the lighter way, if the data is what weighs.
+  made again, +4.2 MiB to a download. The languages' names, read from
+  every catalog at each start, are counted at build time since
+  (`words::Share::name`). Left: a data export for the languages shipped,
+  the lighter way, if the data is what weighs.
   - ICU4X's decimal, list and datetime, with data for English and the
     languages shipped. `Count`, `Size`, `Instant` and `Span` are
     formatted by them: `format.rs`'s dates, the timeline's months, the

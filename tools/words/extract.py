@@ -266,12 +266,37 @@ def on_by_default(folder, name):
     return all(answers)
 
 
+# The message saying a language's name in itself, in core's catalogs.
+SELF_NAME = "settings_language_self"
+CORE = "skwir-core"
+
+
+def own_name(found, names, language):
+    """A language's name in itself (Français), as its catalog of core says
+    it (`settings_language_self`): counted here, so that the program names
+    each language without reading its catalogs. Its tag where that catalog
+    says none."""
+    for folder in found:
+        if names.get(folder) != CORE:
+            continue
+        path = folder / "l10n" / f"{language}.ftl"
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            if line.startswith(f"{SELF_NAME} ="):
+                value = line.split("=", 1)[1].strip()
+                if value:
+                    return value
+    return language
+
+
 def shares(found, names):
     """Each language a catalog is in, by its tag, sorted: of all the
     crates' messages, how many it translates and how many of those are
-    reviewed, and whether every message of the crates on by default is
-    translated, and reviewed. `found` holds each crate's messages by its
-    folder, `names` its package name. Also the problems met."""
+    reviewed, whether every message of the crates on by default is
+    translated, and reviewed, and its name in itself. `found` holds each
+    crate's messages by its folder, `names` its package name. Also the
+    problems met."""
     problems, defaults = [], {}
     for folder in found:
         try:
@@ -292,6 +317,7 @@ def shares(found, names):
             "reviewed": 0,
             "default_whole": True,
             "default_translated": True,
+            "name": own_name(found, names, language),
         }
         for folder, messages in sorted(found.items()):
             path = folder / "l10n" / f"{language}.ftl"
@@ -442,6 +468,11 @@ CATALOGS_RS = ROOT / "crates" / "skwir" / "src" / "catalogs.rs"
 OFFERS = {None: "Incomplete", True: "Draft", False: "Reviewed"}
 
 
+def rust_string(text):
+    """`text` as a Rust string literal."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def shipped(language_shares, offered):
     """The program's list of shipped catalogs, and each language's share
     (`offered` the languages Automatic speaks, each with whether it is a
@@ -470,8 +501,8 @@ def shipped(language_shares, offered):
         "];",
         "",
         "/// Of all the messages, how many each language's catalogs translate and",
-        "/// how many of those are reviewed, and whether Skwir offers it, as a",
-        "/// draft or reviewed (`tools/words/offered`).",
+        "/// how many of those are reviewed, whether Skwir offers it, as a draft",
+        "/// or reviewed (`tools/words/offered`), and its name in itself.",
         "#[rustfmt::skip]",
         "pub static SHARES: &[skwir_core::words::Share] = &[",
     ]
@@ -483,6 +514,7 @@ def shipped(language_shares, offered):
             f"        translated: {share['translated']:_},",
             f"        reviewed: {share['reviewed']:_},",
             f"        offered: skwir_core::words::Offer::{OFFERS[offered.get(share['language'])]},",
+            f"        name: {rust_string(share['name'])},",
             "    },",
         ]
     lines.append("];")

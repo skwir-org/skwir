@@ -284,8 +284,9 @@ sentence, never a sentence assembled from pieces.
     machine's translation is a draft until a person who speaks the
     language removes that line.
   - `just words` counts each language's share into
-    `crates/skwir/src/catalogs.rs` (`words::Share`, its `Offer`), so the
-    program reads no catalog to know it; a catalog edited is followed by
+    `crates/skwir/src/catalogs.rs` (`words::Share`, its `Offer`, and its
+    name in itself, core's `settings_language_self`), so the program reads
+    no catalog to know it, nor to list the languages (Settings, About); a catalog edited is followed by
     `just words`. It writes a language into the record as a draft once
     90% of all messages are translated in it and every message of what
     is on by default is: the crates that are no plugin's, and each plugin

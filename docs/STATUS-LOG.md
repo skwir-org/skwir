@@ -19948,3 +19948,22 @@ shipped language, to say each language's name in itself for the Language
 setting (0.43 ms and 97 KiB read for French, 0.24 ms and 83 KiB for
 Chinese): a cost that grows with each language shipped, to be written at
 build time beside the shares.
+
+## 2026-11-18: the languages' names counted at build time
+
+The Language setting names each language in itself (Français, 简体中文),
+which it said from that language's catalog of core: every start, an
+English one included, indexed core's catalog of each language shipped
+(0.43 ms and 97 KiB read for French, 0.24 ms and 83 KiB for Chinese),
+a cost growing with each language. `just words` now writes each
+language's name beside its share (`words::Share::name`, read from core's
+`settings_language_self`, its tag where that catalog has none), and
+`settings::language_name` reads it there; English and a catalog shipped
+uncounted are said from their words, as before.
+
+**Checked:** the words tool's tests (the name read from core's catalog,
+draft or not, its tag where none; the Rust string's escapes); the
+Language setting's test now also asserts that no counted language's
+catalog was read to list it, and that one shipped uncounted was; clippy
+`-D warnings` on core, the window and the binary; their tests;
+`just words --check` and `--release`.

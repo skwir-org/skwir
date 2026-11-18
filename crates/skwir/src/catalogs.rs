@@ -477,8 +477,8 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
 ];
 
 /// Of all the messages, how many each language's catalogs translate and
-/// how many of those are reviewed, and whether Skwir offers it, as a
-/// draft or reviewed (`tools/words/offered`).
+/// how many of those are reviewed, whether Skwir offers it, as a draft
+/// or reviewed (`tools/words/offered`), and its name in itself.
 #[rustfmt::skip]
 pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
@@ -487,6 +487,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
         translated: 6_808,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
+        name: "Français",
     },
     skwir_core::words::Share {
         language: "zh-Hans",
@@ -494,5 +495,6 @@ pub static SHARES: &[skwir_core::words::Share] = &[
         translated: 6_808,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
+        name: "简体中文",
     },
 ];

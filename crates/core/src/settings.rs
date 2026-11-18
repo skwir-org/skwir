@@ -2235,8 +2235,13 @@ fn language_choices() -> Vec<(&'static str, Words)> {
 
 /// The name of the language a catalog is in (`fr`, `zh-Hans`), in itself
 /// whatever the window speaks (Français, 简体中文): as the Language setting
-/// and About name it.
+/// and About name it. Counted with its share by `just words`, so that
+/// listing the languages reads none of their catalogs; English, the code's
+/// own, and a catalog shipped uncounted are said from their words.
 pub fn language_name(language: &str) -> Words {
+    if let Some(share) = crate::words::share_of(language) {
+        return Words::as_written(share.name);
+    }
     Words::as_written(
         crate::words!(
             settings_language_self = "English",
@@ -3714,6 +3719,7 @@ mod language_tests {
                 translated: 999,
                 reviewed: 9,
                 offered: Offer::Incomplete,
+                name: "Français",
             },
             Share {
                 language: "de",
@@ -3721,6 +3727,7 @@ mod language_tests {
                 translated: 950,
                 reviewed: 920,
                 offered: Offer::Reviewed,
+                name: "Deutsch",
             },
             Share {
                 language: "it",
@@ -3728,6 +3735,7 @@ mod language_tests {
                 translated: 1000,
                 reviewed: 129,
                 offered: Offer::Draft,
+                name: "Italiano",
             },
         ];
         crate::words::ship(&SHIPPED);
@@ -3761,6 +3769,16 @@ mod language_tests {
             ));
         }
         assert_eq!(said, wanted);
+        // Named from the shares `just words` counted: no counted
+        // language's catalog read to list it; one shipped uncounted is
+        // said from its catalog.
+        for counted in ["fr", "de", "it"] {
+            assert!(
+                !crate::words::was_read("skwir-core", counted),
+                "{counted}'s catalog read to name it"
+            );
+        }
+        assert!(crate::words::was_read("skwir-core", "es"));
         crate::words::withdraw("skwir");
         crate::words::ship_shares(&[]);
         crate::words::ship(&[]);

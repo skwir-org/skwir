@@ -288,6 +288,11 @@ pub struct Share {
     pub reviewed: u32,
     /// Whether Automatic speaks it, and as what (`tools/words/offered`).
     pub offered: Offer,
+    /// Its name in itself (Français, 简体中文), as its catalog of core says
+    /// it (`settings_language_self`): what the Language setting and About
+    /// name it by, read from no catalog, as a start would read every
+    /// language's to list them.
+    pub name: &'static str,
 }
 
 /// Whether Automatic speaks a language (ADR-139, 13), as the record of
@@ -399,6 +404,17 @@ pub fn withdraw(owner: &str) {
     if catalogs.0.len() != before {
         catalogs.1 += 1;
     }
+}
+
+/// Whether the catalog of `language` registered for `domain` was read:
+/// indexed, as it is when its first message is asked.
+#[cfg(test)]
+pub(crate) fn was_read(domain: &str, language: &str) -> bool {
+    CATALOGS.read().0.iter().any(|kept| {
+        kept.domain == domain
+            && kept.catalog.language == language
+            && kept.catalog.index.get().is_some()
+    })
 }
 
 /// What moves as catalogs come and go.
