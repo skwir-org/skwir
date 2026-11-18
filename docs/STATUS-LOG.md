@@ -20299,3 +20299,29 @@ On Xvfb, with a user GTK sheet giving a dark blue selection on a light
 page: the chosen Booklet, 2 a side and One booklet cards draw white
 pages with dark numbers, centred as before; the switch off for an
 English file and on for a Hebrew one, in French.
+
+## 2026-11-18: the dialog asks a comic as it asks a PDF
+
+ADR-111. Before Print… opens, its 400 ms wait read a PDF's pages and
+declared direction from the reader its preview opens, and asked any
+other file only for its inspection. A comic or a `DjVu`, read as pages
+with no inspection, was told nothing there: from its own menu a manga
+opened bound on the left, from the preview (which passes what it shows)
+on the right, and the dialog said no page count. The wait now asks what
+printing asks when it makes the file, in that order (`make::looked_at`):
+the inspection, else, with none, the reader its preview opens, for any
+type, its pages and its direction read as a PDF's are. An office
+document is still told nothing, its reader converting it first
+(`preview::is_office`); a reader still starting when the wait ends is
+let go of, and the dialog opens as before.
+
+**Checked:** the print plugin's clippy `-D warnings` and its 23 tests: a
+stand-in comic is told its 24 pages and its right-to-left reading, a
+western one its pages alone, and an office document is never opened (the
+stand-in panics if it is); `skwir`'s print and plugin tests. On Xvfb,
+with the preview closed: Print… from a three-page manga's own menu says
+"3 pages", opens its booklet with "Bound on the right" on, and draws its
+folding for 3 pages.
+
+**Not checked:** a `DjVu` in a window (the same path, through the DjVu
+plugin's reader); a solid CBR or CB7 large enough to outlast the wait.

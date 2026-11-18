@@ -860,14 +860,17 @@ pub(crate) struct Told {
     pub reads: Option<Direction>,
 }
 
-/// What is known of `path` before it is printed, as it is made then: a
-/// PDF's pages and the way it says it reads, as [`counted`] reads them;
-/// another's way, as its provider's inspection says it, else as its text
-/// laid out tells ([`told`]). Nothing is made, converted or drawn, and no
-/// document reader started but a PDF's: an office document (converted
-/// first), a comic or a file a plugin converts is told nothing here, and
-/// is bound as it reads once made. On a worker, in its lane: the caller
-/// bounds the wait.
+/// What is known of `path` before it is printed, asked in the order it is
+/// made then (`source`): a PDF's pages and the way it says it reads, as
+/// [`counted`] reads them; another's way, as its provider's inspection
+/// says it, else as its text laid out tells ([`told`]); one with no
+/// inspection, read as pages (a comic, a `DjVu`, a book laid out in pages),
+/// its pages and its way from the reader its preview opens, as a PDF's.
+/// Nothing is made or drawn and nothing converted: an office document
+/// (which its reader converts first) or a file a plugin converts is told
+/// nothing here, and is bound as it reads once made. On a worker, in its
+/// lane: the caller bounds the wait, and a reader still starting when it
+/// ends is let go of.
 pub(crate) fn looked_at(app: &App, path: &Path, cancel: &CancelToken) -> anyhow::Result<Told> {
     let path: &Path =
         &skwir_core::fs::content_path(path).with_context(|| nothing_printable(path))?;
@@ -881,7 +884,20 @@ pub(crate) fn looked_at(app: &App, path: &Path, cancel: &CancelToken) -> anyhow:
     }
     let view = InspectRequest::default();
     let Some(inspection) = app.previews.inspect(&request, &view, cancel)? else {
-        return Ok(Told::default());
+        if skwir_platform::preview::is_office(path, request.mime.as_deref()) {
+            return Ok(Told::default());
+        }
+        let lifetime = cancel.child();
+        return Ok(match app.previews.open_document(&request, &lifetime)? {
+            Some(session) => {
+                let info = session.info();
+                Told {
+                    pages: Some(info.pages),
+                    reads: info.direction,
+                }
+            }
+            None => Told::default(),
+        });
     };
     if inspection.direction.is_some() {
         return Ok(Told {

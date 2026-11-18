@@ -805,13 +805,11 @@ fn offers(
             })
         });
     // What the first file says of itself, asked once, where the caller
-    // did not say it: a PDF's pages (of one file), and the way it reads,
-    // which a booklet is bound by.
-    let pdf =
-        |name: &Option<OsString>| mime(name).is_some_and(|mime| mime.as_str() == "application/pdf");
+    // did not say it: its pages (of one file read as pages: a PDF, a
+    // comic, a `DjVu`), and the way it reads, which a booklet is bound by.
     let told = match typed.as_slice() {
-        [(entry, name), rest @ ..] => {
-            let count = rest.is_empty() && args.count.is_none() && pdf(name);
+        [(entry, _), rest @ ..] => {
+            let count = rest.is_empty() && args.count.is_none();
             let reads = args.bound.is_none() && args.reads.is_none();
             if count || reads {
                 told(app, entry, cancel)
@@ -2200,7 +2198,7 @@ mod tests {
         fn accepts(&self, request: &skwir_core::preview::PreviewRequest) -> bool {
             matches!(
                 request.mime.as_deref(),
-                Some("application/pdf" | "text/markdown")
+                Some("application/pdf" | "text/markdown" | COMIC | WORD)
             )
         }
         fn inspect(
@@ -2232,12 +2230,22 @@ mod tests {
             request: &skwir_core::preview::PreviewRequest,
             _: &CancelToken,
         ) -> anyhow::Result<Option<Arc<dyn skwir_core::document::DocumentSession>>> {
-            if request.mime.as_deref() != Some("application/pdf") {
-                return Ok(None);
-            }
-            let manga = request.entry.path.file_name() == Some(std::ffi::OsStr::new("manga.pdf"));
+            let pages = match request.mime.as_deref() {
+                Some("application/pdf") => 3,
+                Some(COMIC) => 24,
+                // An office document's reader converts it first: never
+                // asked before the dialog.
+                Some(WORD) => panic!("an office document opened before the dialog"),
+                _ => return Ok(None),
+            };
+            let name = request
+                .entry
+                .path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str);
+            let manga = matches!(name, Some("manga.pdf" | "manga.cbz"));
             Ok(Some(Arc::new(Read(skwir_core::document::DocumentInfo {
-                pages: 3,
+                pages,
                 outlines: Vec::new(),
                 reflowable: false,
                 labels: Vec::new(),
@@ -2248,6 +2256,11 @@ mod tests {
 
     /// A document read, its pages never drawn.
     struct Read(skwir_core::document::DocumentInfo);
+
+    /// A comic's type and a word processor's, as the MIME database names
+    /// them by their names.
+    const COMIC: &str = "application/vnd.comicbook+zip";
+    const WORD: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     impl skwir_core::document::DocumentSession for Read {
         fn info(&self) -> &skwir_core::document::DocumentInfo {
@@ -2286,9 +2299,10 @@ mod tests {
     const PDF: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
 
     /// What the dialog is told of a file before it asks: a PDF's pages
-    /// and the way it says it reads, read together; a text's way, as its
-    /// first text block with a letter tells (code passed over); nothing
-    /// of what says nothing.
+    /// and the way it says it reads, read together, and a comic's alike
+    /// from its reader; a text's way, as its first text block with a
+    /// letter tells (code passed over); nothing of what says nothing, nor
+    /// of an office document, which its reader would convert first.
     #[test]
     fn a_file_is_told_before_the_dialog_asks() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2314,6 +2328,27 @@ mod tests {
         );
         let digits = file("digits.md", b"2026\n");
         assert_eq!(told(&digits).reads, None);
+        // Read as pages (a comic): its pages and its way from its reader,
+        // as a PDF's.
+        let comic = file("manga.cbz", b"PK\x03\x04");
+        assert_eq!(
+            told(&comic),
+            make::Told {
+                pages: Some(24),
+                reads: Some(Direction::RightToLeft)
+            }
+        );
+        let western = file("western.cbz", b"PK\x03\x04");
+        assert_eq!(
+            told(&western),
+            make::Told {
+                pages: Some(24),
+                reads: None
+            }
+        );
+        // An office document is converted to be read: told nothing.
+        let letter = file("letter.docx", b"PK\x03\x04");
+        assert_eq!(told(&letter), make::Told::default());
     }
 
     /// The edge a booklet's dialog opens on: the one asked, else the way

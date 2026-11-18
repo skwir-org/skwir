@@ -475,8 +475,10 @@ binds on the right.
   binding is the document's, not the reader's. Its preset is
   the document's every time, never remembered: `bound` asked, else what
   the caller knows of it (`reads`: the preview passes what the document
-  shown declares), else what the file says (a PDF's direction read with
-  its count, an inspection's), or for what Skwir lays out its text's
+  shown declares), else what the file says (its inspection's; with no
+  inspection, what the reader its preview opens says, a PDF's, a
+  comic's or a `DjVu`'s, read with its count; never an office document's,
+  which its reader converts first), or for what Skwir lays out its text's
   first letter with a direction (`direction::of_text`, UAX #9's P2 and
   P3), within the 400 ms the dialog already waits; else the left. Without
   the dialog (Save as PDF, `asked`, no window), a booklet is bound in the
