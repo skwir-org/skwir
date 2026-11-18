@@ -84,6 +84,13 @@ pub struct DocumentInfo {
     /// empty when it does not. A page without one has an empty label.
     #[serde(default)]
     pub labels: Vec<String>,
+    /// The way the document says it reads (its pages turned, its text):
+    /// a PDF's `/ViewerPreferences /Direction`, a comic's `ComicInfo`
+    /// manga read right to left, a book's page progression. `None` where
+    /// it says nothing: what is printed of it is told by its text, else
+    /// left to right (ADR-111).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<crate::direction::Direction>,
 }
 
 /// The most pages of one document that are read (`DocumentInfo::pages`):

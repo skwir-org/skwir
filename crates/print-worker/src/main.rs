@@ -9,6 +9,12 @@
 //! and a language. Pages are laid out first, so each knows how many there
 //! are, then drawn one at a time; only those asked are written.
 //!
+//! Directions (ADR-139, 12): a document's paragraph reads in its own
+//! direction, code left to right on every line; what Skwir lays out itself
+//! (a listing, a contact sheet, the name above the pages) runs in the
+//! window's (`Job::window`); and a document that reads right to left says
+//! so in the PDF, for a viewer to show its facing pages from the right.
+//!
 //! `skwir-print-worker <job.json>`: the PDF at the job's output, then a
 //! line of JSON on standard output (`Made`), exit 0; a one-line message on
 //! standard error and exit 1 when it cannot. It opens only what the job
@@ -197,6 +203,7 @@ pub fn make(job: &Job) -> Result<Made> {
                 &mut fonts,
                 frame,
                 language,
+                job.reads,
                 first,
                 &mut anchors,
                 &mut headings,
@@ -205,13 +212,16 @@ pub fn make(job: &Job) -> Result<Made> {
                 lines,
                 numbers,
                 first: from,
-            } => Box::new(code::Code::plan(lines, *numbers, *from, &mut fonts, frame)),
-            Part::Table { columns, rows } => Box::new(table::Data::plan(
-                columns, rows, &mut fonts, frame, language,
+                plain,
+            } => Box::new(code::Code::plan(
+                lines, *numbers, *from, *plain, &mut fonts, frame,
             )),
-            Part::Pictures { pictures, sheet } => {
-                Box::new(pictures::Pictures::plan(pictures, *sheet, frame))
-            }
+            Part::Table { columns, rows } => Box::new(table::Data::plan(
+                columns, rows, &mut fonts, frame, language, job.window,
+            )),
+            Part::Pictures { pictures, sheet } => Box::new(pictures::Pictures::plan(
+                pictures, *sheet, frame, job.window,
+            )),
             Part::Pages { pages } => Box::new(pictures::Pictures::pages(pages, frame)),
             Part::Drawing { svg, alt } => Box::new(pictures::Drawing::plan(
                 drawing.as_deref().unwrap_or_default(),

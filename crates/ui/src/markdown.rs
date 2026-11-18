@@ -364,6 +364,18 @@ impl Reads {
             .text_align(gpui::TextAlign::Start)
     }
 
+    /// A list's marker read in its item's direction, as a browser lays out
+    /// a marker (`::marker`, the item's own direction): "1." beside Hebrew
+    /// is drawn with its full stop on the left, the number read first from
+    /// the right, where a marker read alone (digits and a stop, no strong
+    /// letter) would read left to right. The print helper draws it so.
+    fn marker<E: Styled>(self, element: E) -> E {
+        element.text_direction(match self {
+            Self::LeftToRight => gpui::TextDirection::LeftToRight,
+            Self::RightToLeft => gpui::TextDirection::RightToLeft,
+        })
+    }
+
     /// The padding on the block's start: the document's own margin, a
     /// side of the block's, never the window's (`sides`).
     fn pad_start<E: Styled>(self, element: E, length: impl Clone + Into<DefiniteLength>) -> E {
@@ -487,11 +499,13 @@ pub fn block(
         // The marker column is reserved for every block of the item, not only
         // the one that shows the bullet, so an item's later paragraphs, its
         // code and its pictures line up under its first line.
-        let marker = div()
-            .flex_none()
-            .min_w(px(style.list_indent))
-            .text_color(style.marker_color)
-            .child(block.marker.clone().unwrap_or_default());
+        let marker = reads.marker(
+            div()
+                .flex_none()
+                .min_w(px(style.list_indent))
+                .text_color(style.marker_color)
+                .child(block.marker.clone().unwrap_or_default()),
+        );
         line = reads
             .pad_start(
                 line,

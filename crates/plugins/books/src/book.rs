@@ -12,6 +12,7 @@ use std::{
 
 use skwir_core::{
     CancelToken,
+    direction::Direction,
     inspection::{Inspection, InspectionKind, Picture, PrintedPage, Row},
     preview::Held,
     words,
@@ -77,6 +78,11 @@ pub(crate) trait Book {
     /// What it says about itself, for Properties, each fact by its label:
     /// the number of chapters is added after.
     fn details(&mut self) -> Vec<(Words, Option<String>)>;
+    /// The way it says it reads (its pages turned), where its format says
+    /// so; never told from its text.
+    fn direction(&self) -> Option<Direction> {
+        None
+    }
 }
 
 /// The chapter `view` asks for, read in reading mode: the one it names
@@ -209,6 +215,7 @@ pub(crate) fn inspect<B: Book>(
         position: index as u64,
         sections: chapters.len() as u64,
         printed_pages: book.printed_pages(&sections),
+        direction: book.direction(),
         source_available: true,
         ..Inspection::default()
     };
@@ -220,6 +227,8 @@ pub(crate) fn inspect<B: Book>(
             kind: code.kind,
             blocks: code.blocks,
             notices: decoded,
+            // Code reads left to right, whichever way the book's pages turn.
+            direction: None,
             ..frame
         });
     }

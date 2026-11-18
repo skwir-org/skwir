@@ -3,6 +3,7 @@
 //! covers as thumbnails.
 use skwir_core::{
     App, CancelToken,
+    direction::Direction,
     document::{DocumentInfo, DocumentPage, DocumentSession, PageContent, PixelOrder, SearchHit},
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
@@ -53,10 +54,9 @@ static COMICS: mime::Types = mime::Types::new(&[
     "application/x-cb7",
     "application/x-cbt",
 ]);
-/// A comic's pictures in reading order, as `session` lists them.
-fn pages(session: &archive::Session, cancel: &CancelToken) -> anyhow::Result<Vec<archive::Member>> {
-    let mut pages: Vec<_> = session
-        .list(inspection::limits::Bounds::QUICK, cancel)?
+/// A comic's pictures in reading order, of the archive's `listing`.
+fn pages(listing: &archive::Listing) -> anyhow::Result<Vec<archive::Member>> {
+    let mut pages: Vec<_> = listing
         .members
         .iter()
         .filter(|member| is_page(member))
@@ -91,7 +91,8 @@ impl ThumbnailProvider for Cover {
         // One run of the helper lists the pages and reads the first, and
         // ends with the session.
         let session = archive::Session::open(&path, cancel)?;
-        let first = pages(&session, cancel)?.swap_remove(0);
+        let listing = session.list(inspection::limits::Bounds::QUICK, cancel)?;
+        let first = pages(&listing)?.swap_remove(0);
         let bytes = session.read_one(&first, inspection::limits::Bounds::QUICK, cancel)?;
         let cover = inspection::picture(&bytes, req.size.pixels())?;
         Ok(Some(Image {
@@ -114,7 +115,10 @@ impl PreviewProvider for Provider {
     /// libarchive's helper reads it by its path: the one what is held gives
     /// a program (a copy of a remote's file held whole). One helper, kept
     /// for as long as the reader shows it (`lifetime`), lists the pages and
-    /// reads them (`archive::Session`).
+    /// reads them (`archive::Session`). What the book says of itself
+    /// (`ComicInfo.xml`: the way it reads) is read with the first pages
+    /// the reader asks for, in one pass over the archive, those pages
+    /// kept for it.
     fn open_document(
         &self,
         req: &PreviewRequest,
@@ -123,9 +127,10 @@ impl PreviewProvider for Provider {
         let held = req.held()?;
         let path = held.path_for_program(lifetime)?.into_owned();
         let session = archive::Session::open(&path, lifetime)?;
-        let pages = pages(&session, lifetime)?;
+        let listing = session.list(inspection::limits::Bounds::QUICK, lifetime)?;
+        let pages = pages(&listing)?;
         let count = u32::try_from(pages.len())?;
-        Ok(Some(Arc::new(Comic {
+        let mut comic = Comic {
             session,
             _held: held,
             pages,
@@ -135,8 +140,16 @@ impl PreviewProvider for Provider {
                 outlines: Vec::new(),
                 reflowable: false,
                 labels: Vec::new(),
+                direction: None,
             },
-        })))
+        };
+        if let Some(info) = comic_info(&listing.members) {
+            // A page that cannot be read is the reader's to say, when it
+            // asks for it.
+            let (_, said) = comic.bytes_with(req.page.clamp(1, count), Some(info), lifetime);
+            comic.info.direction = said.as_deref().and_then(declared);
+        }
+        Ok(Some(Arc::new(comic)))
     }
 }
 
@@ -169,27 +182,47 @@ impl Comic {
     /// the `AHEAD` pages after it not kept yet, in one pass over the
     /// archive in its own order (`archive::Session::read`).
     fn bytes(&self, number: u32, cancel: &CancelToken) -> anyhow::Result<Arc<Vec<u8>>> {
+        self.bytes_with(number, None, cancel).0
+    }
+
+    /// [`Comic::bytes`], and `beside`, a member that is no page (the
+    /// book's `ComicInfo.xml`), read in the same pass: its bytes, when
+    /// they were read before the pass ended.
+    fn bytes_with(
+        &self,
+        number: u32,
+        beside: Option<&archive::Member>,
+        cancel: &CancelToken,
+    ) -> (anyhow::Result<Arc<Vec<u8>>>, Option<Vec<u8>>) {
         let kept = || {
             self.read
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         };
-        if let Some((_, bytes)) = kept().iter().find(|(page, _)| *page == number) {
-            return Ok(Arc::clone(bytes));
+        if beside.is_none()
+            && let Some((_, bytes)) = kept().iter().find(|(page, _)| *page == number)
+        {
+            return (Ok(Arc::clone(bytes)), None);
         }
         let wanted: Vec<archive::Member> = {
             let read = kept();
             (number..=number.saturating_add(AHEAD).min(self.info.pages))
                 .filter(|&page| page == number || !read.iter().any(|(kept, _)| *kept == page))
                 .map(|page| self.pages[page as usize - 1].clone())
+                .chain(beside.cloned())
                 .collect()
         };
         let mut asked = None;
+        let mut told = None;
         let done = self.session.read(
             &wanted,
             inspection::limits::Bounds::QUICK,
             cancel,
             |member, bytes| {
+                if beside.is_some_and(|beside| beside.index == member.index) {
+                    told = Some(bytes);
+                    return;
+                }
                 let Some(page) = self.pages.iter().position(|p| p.index == member.index) else {
                     return;
                 };
@@ -207,15 +240,54 @@ impl Comic {
             },
         );
         // A page read is shown though one after it failed.
-        match (asked, done) {
+        let page = match (asked, done) {
             (Some(bytes), _) => Ok(bytes),
             (None, Err(error)) => Err(error),
-            (None, Ok(())) => anyhow::bail!(words!(
+            (None, Ok(())) => Err(anyhow::anyhow!(words!(
                 comics_page_not_read = "the page was not read",
                 note = "An error in place of a comic book's page: the archive was read to its end without finding it."
-            )),
-        }
+            ))),
+        };
+        (page, told)
     }
+}
+
+/// The most a book's `ComicInfo.xml` is read to: more than any tool
+/// writes.
+const INFO_BYTES: i64 = 1 << 20;
+
+/// What the book says of itself, as the tools that tag comics write it
+/// (`ComicRack`'s `ComicInfo.xml`): the one nearest the archive's root,
+/// never one a tool left beside the pages.
+fn comic_info(members: &[archive::Member]) -> Option<&archive::Member> {
+    members
+        .iter()
+        .filter(|member| {
+            member.regular
+                && !member.encrypted
+                && member.size <= INFO_BYTES
+                && !left_beside(&member.name)
+                && member.file_name().eq_ignore_ascii_case("ComicInfo.xml")
+        })
+        .min_by_key(|member| member.name.matches('/').count())
+}
+
+/// The way a comic says it reads, in its `ComicInfo.xml` (`info`): its
+/// `Manga` is `YesAndRightToLeft`. `Yes` (a manga, its direction unsaid),
+/// `No`, `Unknown`, nothing, and a text that is not one, say nothing.
+fn declared(info: &[u8]) -> Option<Direction> {
+    let text = inspection::decode(info).0;
+    let doc = inspection::xml_document(&text).ok()?;
+    let root = doc.root_element();
+    if !root.has_tag_name("ComicInfo") {
+        return None;
+    }
+    root.children()
+        .find(|node| node.has_tag_name("Manga"))?
+        .text()?
+        .trim()
+        .eq_ignore_ascii_case("YesAndRightToLeft")
+        .then_some(Direction::RightToLeft)
 }
 
 impl DocumentSession for Comic {
@@ -256,16 +328,21 @@ impl DocumentSession for Comic {
 fn is_page(member: &archive::Member) -> bool {
     member.regular
         && !member.encrypted
-        && !member
-            .name
-            .split('/')
-            .any(|part| part.starts_with('.') || part == "__MACOSX")
+        && !left_beside(&member.name)
         // A picture the decoder reads, as a thumbnail's is.
         && std::path::Path::new(&member.name)
             .file_name()
             .and_then(mime::by_name)
             .is_some_and(|mime| thumb_providers::decodes(mime.as_str()))
 }
+/// Whether the member `name` is what a tool left beside a book: in a
+/// Mac's `__MACOSX`, or hidden (an `AppleDouble` twin, a thumbnail, a
+/// cache).
+fn left_beside(name: &str) -> bool {
+    name.split('/')
+        .any(|part| part.starts_with('.') || part == "__MACOSX")
+}
+
 #[cfg(test)]
 // Helpers of the tests that run on Linux alone (ADR-035).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
@@ -402,7 +479,10 @@ mod tests {
         std::fs::write(&path, tar(&members)).unwrap();
         let cancel = CancelToken::new();
         let session = archive::Session::open(&path, &cancel).unwrap();
-        let pages = pages(&session, &cancel).unwrap();
+        let listing = session
+            .list(inspection::limits::Bounds::QUICK, &cancel)
+            .unwrap();
+        let pages = pages(&listing).unwrap();
         let comic = Comic {
             session,
             _held: Arc::new(Held::of_bytes(&path, Vec::new())),
@@ -411,6 +491,7 @@ mod tests {
                 outlines: Vec::new(),
                 reflowable: false,
                 labels: Vec::new(),
+                direction: None,
             },
             pages,
             read: std::sync::Mutex::default(),
@@ -482,5 +563,235 @@ mod tests {
         assert_eq!((page.content.width, page.content.height), (2., 3.));
         assert!(copy.is_file());
         assert!(!nowhere.parent().unwrap().exists(), "the path never was");
+    }
+
+    /// A book's `ComicInfo.xml` saying it reads as a manga does, right to
+    /// left.
+    const RIGHT_TO_LEFT: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Title>Synthetic Pages</Title>
+  <Manga>YesAndRightToLeft</Manga>
+</ComicInfo>"#;
+
+    /// `ComicInfo.xml`'s `Manga` read right to left only where it says so:
+    /// a manga whose direction is unsaid, or a comic that is none, says
+    /// nothing, and so does a text that is not a comic's information.
+    #[test]
+    fn a_comic_reads_right_to_left_only_where_it_says_so() {
+        assert_eq!(
+            declared(RIGHT_TO_LEFT.as_bytes()),
+            Some(Direction::RightToLeft)
+        );
+        // Written with a byte order mark, as some tools do.
+        let marked = [b"\xEF\xBB\xBF", RIGHT_TO_LEFT.as_bytes()].concat();
+        assert_eq!(declared(&marked), Some(Direction::RightToLeft));
+        for manga in ["Yes", "No", "Unknown", ""] {
+            let said = RIGHT_TO_LEFT.replace("YesAndRightToLeft", manga);
+            assert_eq!(declared(said.as_bytes()), None, "{manga:?}");
+        }
+        let unsaid = RIGHT_TO_LEFT.replace("<Manga>YesAndRightToLeft</Manga>", "");
+        assert_eq!(declared(unsaid.as_bytes()), None);
+        let other = RIGHT_TO_LEFT.replace("ComicInfo", "Other");
+        assert_eq!(declared(other.as_bytes()), None, "not a comic's");
+        assert_eq!(declared(b"<ComicInfo><Manga>"), None, "not well-formed");
+    }
+
+    /// The book's information is the `ComicInfo.xml` nearest its root,
+    /// whatever its case, never a twin a tool left beside it, nor one
+    /// larger than any tool writes.
+    #[test]
+    fn a_comic_s_information_is_the_one_nearest_its_root() {
+        let info = |index: u64, name: &str, size: i64| archive::Member {
+            size,
+            ..member(index, name, false)
+        };
+        let members = [
+            info(0, "__MACOSX/ComicInfo.xml", 10),
+            info(1, "Book/._ComicInfo.xml", 10),
+            info(2, "Book/Extras/ComicInfo.xml", 10),
+            info(3, "Book/comicinfo.XML", 10),
+            info(4, "Book/page1.png", 10),
+        ];
+        assert_eq!(comic_info(&members).map(|m| m.index), Some(3));
+        let larger = [info(0, "ComicInfo.xml", INFO_BYTES + 1)];
+        assert!(comic_info(&larger).is_none());
+        let none = [info(0, "Book/page1.png", 10)];
+        assert!(comic_info(&none).is_none());
+    }
+
+    /// CRC-32 (ISO 3309), as a zip stores it beside each member.
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// A zip of `members`, stored as they are, as a `.cbz` comic is: each
+    /// a local header and its bytes, then the central directory naming
+    /// them, then its end.
+    fn zip(members: &[(&str, &[u8])]) -> Vec<u8> {
+        let (mut out, mut directory) = (Vec::new(), Vec::new());
+        let u16_of = |n: usize| u16::try_from(n).unwrap().to_le_bytes();
+        let u32_of = |n: usize| u32::try_from(n).unwrap().to_le_bytes();
+        for (name, bytes) in members {
+            let offset = out.len();
+            // Version 2.0, no flags, stored, 1980-01-01 00:00.
+            let common = [
+                &20u16.to_le_bytes()[..],
+                &0u16.to_le_bytes(),
+                &0u16.to_le_bytes(),
+                &0u16.to_le_bytes(),
+                &0x21u16.to_le_bytes(),
+                &crc32(bytes).to_le_bytes(),
+                &u32_of(bytes.len()),
+                &u32_of(bytes.len()),
+                &u16_of(name.len()),
+                &0u16.to_le_bytes(),
+            ]
+            .concat();
+            out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            out.extend_from_slice(&common);
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(bytes);
+            directory.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            directory.extend_from_slice(&20u16.to_le_bytes());
+            directory.extend_from_slice(&common);
+            // No comment, disk 0, no attributes, where its header is.
+            directory.extend_from_slice(&[0; 10]);
+            directory.extend_from_slice(&u32_of(offset));
+            directory.extend_from_slice(name.as_bytes());
+        }
+        let at = out.len();
+        out.extend_from_slice(&directory);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&u16_of(members.len()));
+        out.extend_from_slice(&u16_of(members.len()));
+        out.extend_from_slice(&u32_of(directory.len()));
+        out.extend_from_slice(&u32_of(at));
+        out.extend_from_slice(&[0; 2]);
+        out
+    }
+
+    /// A comic says it reads right to left in its `ComicInfo.xml`, read
+    /// with the pages the reader asks for first, in one pass over the
+    /// archive (a tagger writes it last); a manga whose direction is
+    /// unsaid, and a comic with no information, say nothing. Needs the
+    /// archive helper (`with_worker`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_cbz_says_which_way_it_reads_in_its_comic_info() {
+        use skwir_core::preview::HeldSlot;
+        if !with_worker() {
+            return;
+        }
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("comic-")
+            .tempdir_in(base)
+            .unwrap();
+        let unsaid = RIGHT_TO_LEFT.replace("YesAndRightToLeft", "Yes");
+        let names: Vec<String> = (1..=5).map(|n| format!("Book/page{n}.png")).collect();
+        for (name, info, direction) in [
+            (
+                "l’été manga.cbz",
+                Some(RIGHT_TO_LEFT),
+                Some(Direction::RightToLeft),
+            ),
+            ("l’été manga unsaid.cbz", Some(unsaid.as_str()), None),
+            ("l’été comic.cbz", None, None),
+        ] {
+            let mut members: Vec<(&str, &[u8])> =
+                names.iter().map(|name| (name.as_str(), PNG)).collect();
+            members.extend(info.map(|info| ("ComicInfo.xml", info.as_bytes())));
+            let path = dir.path().join(name);
+            std::fs::write(&path, zip(&members)).unwrap();
+            let entry = skwir_core::op::EntryRef::from_path(&path).unwrap();
+            let request = PreviewRequest {
+                entry,
+                mime: Some("application/vnd.comicbook+zip".into()),
+                page: 2,
+                seconds: None,
+                max_side: 64,
+                text_size: None,
+                fit: None,
+                held: HeldSlot::default(),
+            };
+            assert!(Provider.accepts(&request), "{name}");
+            let cancel = CancelToken::new();
+            let comic = Provider
+                .open_document(&request, &cancel)
+                .unwrap()
+                .expect("a comic");
+            assert_eq!(comic.info().pages, 5, "{name}");
+            assert_eq!(comic.info().direction, direction, "{name}");
+            let page = comic.render(2, 64, &cancel).unwrap();
+            assert_eq!((page.content.width, page.content.height), (2., 3.));
+        }
+    }
+
+    /// What the book says of itself is read in the pass that reads the
+    /// first page and the two after it, wherever it lies: those pages are
+    /// kept, and turning to them reads nothing more.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn comic_info_is_read_in_the_pass_of_the_first_pages() {
+        if !with_worker() {
+            return;
+        }
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("comic-")
+            .tempdir_in(base)
+            .unwrap();
+        let path = dir.path().join("l’été manga #3.cbz");
+        let names: Vec<String> = (1..=5).map(|n| format!("Book/page{n}.png")).collect();
+        let mut members: Vec<(&str, &[u8])> =
+            names.iter().map(|name| (name.as_str(), PNG)).collect();
+        members.push(("ComicInfo.xml", RIGHT_TO_LEFT.as_bytes()));
+        std::fs::write(&path, zip(&members)).unwrap();
+        let cancel = CancelToken::new();
+        let session = archive::Session::open(&path, &cancel).unwrap();
+        let listing = session
+            .list(inspection::limits::Bounds::QUICK, &cancel)
+            .unwrap();
+        let pages = pages(&listing).unwrap();
+        let info = comic_info(&listing.members).unwrap().clone();
+        let comic = Comic {
+            session,
+            _held: Arc::new(Held::of_bytes(&path, Vec::new())),
+            info: DocumentInfo {
+                pages: u32::try_from(pages.len()).unwrap(),
+                outlines: Vec::new(),
+                reflowable: false,
+                labels: Vec::new(),
+                direction: None,
+            },
+            pages,
+            read: std::sync::Mutex::default(),
+        };
+        let (page, said) = comic.bytes_with(1, Some(&info), &cancel);
+        assert_eq!(page.unwrap().as_slice(), PNG);
+        assert_eq!(said.as_deref(), Some(RIGHT_TO_LEFT.as_bytes()));
+        let mut kept: Vec<u32> = comic
+            .read
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(page, _)| *page)
+            .collect();
+        kept.sort_unstable();
+        assert_eq!(kept, [1, 2, 3], "read with it, and kept");
     }
 }

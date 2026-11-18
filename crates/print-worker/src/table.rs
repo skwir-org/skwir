@@ -4,18 +4,24 @@
 //! down to 6 points, the widest then wrapped; a cell of at most three
 //! lines, cut with an ellipsis past them; light rules between rows. When
 //! even that does not fit, the columns go across pages, the first one on
-//! each.
+//! each. It is what Skwir lists (a folder's files, a table's rows, a
+//! history's commits), laid out in the window's direction (`Job::window`),
+//! as the window lays such rows out: in a right-to-left window the first
+//! column is at the right, each cell's text starts at its right, a name
+//! still reading in its own direction; in a left-to-right one a Hebrew
+//! name starts at its cell's left.
 
 use std::ops::Range;
 
 use anyhow::Result;
 use krilla::geom::Rect;
 use krilla::tagging::{ArtifactType, TableHeaderScope, Tag, TagKind};
-use parley::Language;
+use parley::{Alignment, Language};
+use skwir_core::direction::Direction;
 
 use crate::fonts::{Fonts, Role};
 use crate::geometry::{self, Columns, Frame};
-use crate::out::{PageCx, Part, Structure, key};
+use crate::out::{PageCx, Part, Structure, key, window_start};
 use crate::text::{self, RULE, Spec};
 
 pub const SIZE: f32 = 9.0;
@@ -47,6 +53,8 @@ pub struct Data<'a> {
     heights: Vec<Vec<f32>>,
     frame: Frame,
     language: Option<Language>,
+    /// The window's direction, which the columns run in.
+    window: Direction,
     tagged: bool,
     structure: Structure,
 }
@@ -57,6 +65,13 @@ fn spec(size: f32, bold: bool, width: f32, language: Option<Language>) -> Spec {
     spec.line_height = LINE_HEIGHT;
     spec.width = Some((width - 2.0 * PAD_X).max(size));
     spec.language = language;
+    spec
+}
+
+/// A cell's spec as it is drawn: at the window's start.
+fn drawn(size: f32, bold: bool, width: f32, language: Option<Language>, start: Alignment) -> Spec {
+    let mut spec = spec(size, bold, width, language);
+    spec.align = start;
     spec
 }
 
@@ -83,6 +98,7 @@ impl<'a> Data<'a> {
         fonts: &mut Fonts,
         frame: Frame,
         language: Option<Language>,
+        window: Direction,
     ) -> Data<'a> {
         let width = frame.text.width;
         let count = columns
@@ -184,9 +200,22 @@ impl<'a> Data<'a> {
             heights,
             frame,
             language,
+            window,
             tagged: cells <= TAGGED_CELLS,
             structure: Structure::default(),
         }
+    }
+
+    /// Where each of a page's columns starts: from the text's left, or
+    /// its right in a right-to-left window.
+    fn lefts(&self, columns: &[(usize, f32)]) -> Vec<f32> {
+        let widths: Vec<f32> = columns.iter().map(|(_, w)| *w).collect();
+        geometry::lefts(
+            &widths,
+            self.frame.text.x,
+            self.frame.text.width,
+            self.window.is_right_to_left(),
+        )
     }
 
     /// A cell's text in its column's width, cut past its lines, drawn
@@ -204,7 +233,8 @@ impl<'a> Data<'a> {
         if text.is_empty() {
             return;
         }
-        let spec = spec(self.fit.size, bold, width, self.language);
+        let start = window_start(self.window);
+        let spec = drawn(self.fit.size, bold, width, self.language, start);
         let (layout, text) = text::fitted(cx.fonts, text, &spec, LINES);
         let origin = (x + PAD_X, y + PAD_Y);
         if marked {
@@ -236,7 +266,13 @@ impl Part for Data<'_> {
             return Ok(());
         };
         let columns = self.fit.groups[group].clone();
-        let left = self.frame.text.x;
+        let lefts = self.lefts(&columns);
+        // The span the rules cross: the columns', from either side.
+        let left = lefts
+            .iter()
+            .copied()
+            .reduce(f32::min)
+            .unwrap_or(self.frame.text.x);
         let right = left + columns.iter().map(|(_, w)| w).sum::<f32>();
         let mut y = self.frame.text.y;
         let table: (u64, TagKind) = (key(1, 0), Tag::Table.into());
@@ -258,8 +294,7 @@ impl Part for Data<'_> {
             if first && self.tagged {
                 let head_group = (key(2, 0), Tag::THead.into());
                 let row = (key(3, 0), Tag::TR.into());
-                let mut x = left;
-                for (column, w, name) in &names {
+                for ((column, w, name), &x) in names.iter().zip(&lefts) {
                     let th: TagKind = Tag::TH(TableHeaderScope::Column).into();
                     self.structure.goto(
                         cx,
@@ -271,19 +306,16 @@ impl Part for Data<'_> {
                         ],
                     );
                     self.cell(cx, name, *w, true, (x, y), true);
-                    x += w;
                 }
             } else {
                 self.structure.goto(cx, std::slice::from_ref(&table));
-                let mut x = left;
-                for (_, w, name) in &names {
+                for ((_, w, name), &x) in names.iter().zip(&lefts) {
                     cx.surface
                         .start_tagged(krilla::tagging::ContentTag::Artifact(
                             krilla::tagging::Artifact::with_kind(ArtifactType::PaginationOther),
                         ));
                     self.cell(cx, name, *w, true, (x, y), false);
                     cx.surface.end_tagged();
-                    x += w;
                 }
             }
             y += head;
@@ -292,8 +324,7 @@ impl Part for Data<'_> {
         if self.tagged {
             for row in range {
                 let height = self.heights[group][row];
-                let mut x = left;
-                for &(column, w) in &columns {
+                for (&(column, w), &x) in columns.iter().zip(&lefts) {
                     let cell = self.rows[row].get(column).map_or("", String::as_str);
                     let repeated = group > 0 && column == 0;
                     if repeated {
@@ -316,7 +347,6 @@ impl Part for Data<'_> {
                         );
                         self.cell(cx, cell, w, false, (x, y), true);
                     }
-                    x += w;
                 }
                 y += height;
                 rules.push((y, 0.4));
@@ -333,13 +363,13 @@ impl Part for Data<'_> {
                 })
                 .collect();
             let this = &*self;
+            let start = window_start(self.window);
             cx.span(|surface, fonts| {
                 for (row, top) in rows {
-                    let mut x = left;
-                    for &(column, w) in &columns {
+                    for (&(column, w), &x) in columns.iter().zip(&lefts) {
                         let cell = this.rows[row].get(column).map_or("", String::as_str);
                         if !cell.is_empty() {
-                            let spec = spec(this.fit.size, false, w, this.language);
+                            let spec = drawn(this.fit.size, false, w, this.language, start);
                             let (layout, text) = text::fitted(fonts, cell, &spec, LINES);
                             for index in 0..layout.len() {
                                 text::draw_line(
@@ -354,7 +384,6 @@ impl Part for Data<'_> {
                                 );
                             }
                         }
-                        x += w;
                     }
                 }
             });
@@ -376,6 +405,11 @@ impl Part for Data<'_> {
 
     fn finish(&mut self, cx: &mut PageCx) {
         self.structure.close_all(cx);
+    }
+
+    /// What Skwir lists reads as the window it is laid out in.
+    fn reads(&self) -> Option<Direction> {
+        Some(self.window)
     }
 }
 

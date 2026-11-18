@@ -3,11 +3,20 @@
 //! print helper makes of what its preview shows: its provider's
 //! inspection, its pages drawn, a picture, a drawing, its text. Then the
 //! pages chosen, in the order and on the sides chosen.
+//!
+//! A booklet is bound on the edge asked (`Booklet::bound`), else as the
+//! document reads (`Whole::reads`): as it says it reads (a PDF's
+//! `/ViewerPreferences /Direction`, a book's page progression, HTML's
+//! `dir`), else, what Skwir lays out itself, as its text tells (`told`);
+//! else on the left. The window's language is never asked: a Hebrew book
+//! is bound on the right in an English window, an English one on the left
+//! in any.
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use skwir_core::App;
 use skwir_core::cancel::CancelToken;
+use skwir_core::direction::Direction;
 use skwir_core::document::Compose;
 use skwir_core::inspection::{InspectRequest, InspectionKind, Picture};
 use skwir_core::op::EntryRef;
@@ -74,7 +83,8 @@ fn unscaled(scale: f32) -> bool {
 /// (2, folded once, in signatures of `signature` pages, one for all
 /// without; 4 or 8, folded twice or three times, a gathering a sheet), its
 /// pages' white margins trimmed, its backs turned half a turn for a
-/// printer that turns the sheet over the other edge.
+/// printer that turns the sheet over the other edge, bound on the edge
+/// `bound` names.
 #[derive(
     Clone,
     Copy,
@@ -95,6 +105,11 @@ pub struct Booklet {
     pub trim: bool,
     #[serde(default)]
     pub turn_backs: bool,
+    /// The edge it is bound on, chosen or told by the caller (the dialog,
+    /// an agent's `bound`, a document's direction the preview knew); as
+    /// the document reads without, told as it is made (`picked`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound: Option<paper::booklet::Bound>,
 }
 
 /// What a page of a PDF keeps clear of a booklet sheet's edges, and of its
@@ -250,9 +265,12 @@ pub(crate) fn made(
         app,
         title,
         &page_paper(layout),
-        parts,
-        named,
-        None,
+        Laid {
+            parts,
+            named,
+            notice: None,
+            reads: None,
+        },
         work,
         cancel,
         follow,
@@ -260,21 +278,36 @@ pub(crate) fn made(
     picked(app, whole, &Shown::default(), layout, work, cancel)
 }
 
-/// The PDF the print helper makes of `parts`, titled `title`: of the pages
-/// `named` alone when given (from 0), what was asked past its end said.
-#[allow(clippy::too_many_arguments)] // What a job is made of, each its own.
+/// What the print helper is handed to lay out: `parts`, of the pages
+/// `named` alone when given (from 0), what was left out of them before
+/// (`notice`), and the way the document says it reads (`Job::reads`).
+struct Laid {
+    parts: Vec<Part>,
+    named: Option<Vec<u32>>,
+    notice: Option<Words>,
+    reads: Option<Direction>,
+}
+
+/// The PDF the print helper makes of what `laid` hands it, titled
+/// `title`, what was asked past its end said. Its `reads` is the one
+/// `laid` declares, else what its text tells (`told`).
 fn laid_out(
     app: &App,
     title: &str,
     paper: &Paper,
-    parts: Vec<Part>,
-    named: Option<Vec<u32>>,
-    notice: Option<Words>,
+    laid: Laid,
     work: &Path,
     cancel: &CancelToken,
     follow: &Follow<'_>,
 ) -> anyhow::Result<Whole> {
-    let mut job = job(app, title, paper, parts);
+    let Laid {
+        parts,
+        named,
+        notice,
+        reads,
+    } = laid;
+    let told = reads.or_else(|| told(&parts));
+    let mut job = job(app, title, paper, parts, reads);
     job.pages = named;
     let made = print_job::make(&mut job, work, cancel, follow)?;
     let clipped = job
@@ -288,6 +321,24 @@ fn laid_out(
         notice: notice.or_else(|| clipped.then(|| past(made.laid_out))),
         made: true,
         picked: job.pages.is_some(),
+        reads: told,
+    })
+}
+
+/// The way what Skwir lays out reads where it declares nothing, as its
+/// text tells: its first reading text's (a flow's text blocks, its code
+/// and its tables' rows aside), by the first of their letters that has a
+/// direction ([`skwir_core::direction::of_text`]), as the window lays out a block
+/// (`crates/ui/src/markdown.rs`'s `Reads`). A block of digits alone tells
+/// nothing, and the next is asked. `None` where nothing is read as text
+/// (code, a table, pictures) or no letter tells.
+fn told(parts: &[Part]) -> Option<Direction> {
+    parts.iter().find_map(|part| match part {
+        Part::Flow { blocks } => blocks
+            .iter()
+            .filter(|block| matches!(block.kind, paper::BlockKind::Text))
+            .find_map(|block| skwir_core::direction::of_text(&block.text)),
+        _ => None,
     })
 }
 
@@ -332,6 +383,7 @@ fn picked(
         notice,
         made,
         picked: made_picked,
+        reads,
     } = whole;
     // Every page in order at its size: the file as it is, uncounted.
     if layout.as_it_is() {
@@ -342,9 +394,12 @@ fn picked(
             folding: None,
         });
     }
-    let count = match pages {
-        Some(count) => count,
-        None => page_count(app, &pdf, cancel)?,
+    // A PDF counted here says the way it reads as it is counted.
+    let (count, reads) = if let Some(count) = pages {
+        (count, reads)
+    } else {
+        let counted = counted(app, &pdf, cancel)?;
+        (counted.pages, reads.or(counted.reads))
     };
     // A page of a PDF keeps clear of a booklet sheet's edges and fold; one
     // Skwir laid out at half a sheet has its own margins.
@@ -363,10 +418,19 @@ fn picked(
     anyhow::ensure!(!picked.pages.is_empty(), no_page_asked());
     let notice = notice.or_else(|| picked.clipped.then(|| past(count)));
     // A booklet: the pages picked folded in their order, then the sides
-    // and the order chosen applied to its sheets' sides.
+    // and the order chosen applied to its sheets' sides. Bound on the edge
+    // asked, else as the document reads, else on the left.
     let (pdf, count, picked) = match layout.booklet {
         Some(booklet) => {
-            let sheets = paper::booklet::sheets(&picked.pages, booklet.signature, booklet.per_side);
+            let bound = booklet
+                .bound
+                .unwrap_or_else(|| paper::booklet::Bound::reading(reads.unwrap_or_default()));
+            let sheets = paper::booklet::sheets_bound(
+                &picked.pages,
+                booklet.signature,
+                booklet.per_side,
+                bound,
+            );
             let sheet = layout.paper.sheet_of(booklet.per_side);
             let folded = work.join("booklet.pdf");
             let sides = skwir_platform::document::compose(
@@ -467,14 +531,17 @@ fn picked(
 
 /// A file as printed: its PDF and pages (when counted: a PDF is counted
 /// only when picking needs it), what was left out of it, whether Skwir
-/// made it (laid out at the size asked, with its margins), and whether it
-/// holds only the pages picked, picked as it was made.
+/// made it (laid out at the size asked, with its margins), whether it
+/// holds only the pages picked, picked as it was made, and the way it
+/// reads: as it says (`Source`), else as its text tells (`told`); a PDF's
+/// own read once it is counted.
 struct Whole {
     pdf: PathBuf,
     pages: Option<u32>,
     notice: Option<Words>,
     made: bool,
     picked: bool,
+    reads: Option<Direction>,
 }
 
 /// `path` as its preview shows it, made on `paper` in `work` when Skwir
@@ -495,17 +562,19 @@ fn whole(
     let (drawing, making) = (follow.part(0.0, 0.6), follow.part(0.6, 1.0));
     Ok(
         match source(app, path, shown, picking, work, cancel, &drawing)? {
-            Source::Pdf(pdf, pages) => Whole {
+            Source::Pdf { pdf, pages, reads } => Whole {
                 pdf,
                 pages,
                 notice: None,
                 made: false,
                 picked: false,
+                reads,
             },
             Source::Parts {
                 parts,
                 notice,
                 picked,
+                reads,
             } => {
                 // Pages drawn as pictures were picked as they were drawn; text
                 // is laid out whole, the pages named written alone.
@@ -516,9 +585,12 @@ fn whole(
                     app,
                     &display_name(path),
                     paper,
-                    parts,
-                    named,
-                    notice,
+                    Laid {
+                        parts,
+                        named,
+                        notice,
+                        reads,
+                    },
                     work,
                     cancel,
                     &making,
@@ -610,6 +682,8 @@ fn joined(
         let only = wholes.remove(0);
         return Ok(Whole { notice, ..only });
     }
+    // Several as one read as the first does, where it says or tells.
+    let reads = first.reads;
     let out = work.join("joined.pdf");
     let pages = skwir_platform::document::compose(
         &first.pdf,
@@ -631,29 +705,39 @@ fn joined(
         notice,
         made: wholes.iter().all(|whole| whole.made),
         picked: false,
+        reads,
     })
 }
 
-/// What is printed before its pages are picked.
+/// What is printed before its pages are picked, and the way it says it
+/// reads where it says so (`reads`): an inspection's or a document
+/// reader's (`DocumentInfo::direction`); a PDF's own is read once it is
+/// counted.
 enum Source {
     /// A PDF, and how many pages it has when known.
-    Pdf(PathBuf, Option<u32>),
+    Pdf {
+        pdf: PathBuf,
+        pages: Option<u32>,
+        reads: Option<Direction>,
+    },
     /// Parts the helper makes a PDF of, what was left out of them, and
     /// whether they hold only the pages picked (a reader's drawn).
     Parts {
         parts: Vec<Part>,
         notice: Option<Words>,
         picked: bool,
+        reads: Option<Direction>,
     },
 }
 
 impl Source {
-    /// Parts laid out whole.
+    /// Parts laid out whole, the way they read said by none.
     fn parts(parts: Vec<Part>, notice: Option<Words>) -> Source {
         Source::Parts {
             parts,
             notice,
             picked: false,
+            reads: None,
         }
     }
 }
@@ -674,21 +758,7 @@ fn source(
     // own name: the link's names where it goes and what it is called.
     let path: &Path =
         &skwir_core::fs::content_path(path).with_context(|| nothing_printable(path))?;
-    let mut request = request(
-        path,
-        skwir_platform::mime::of_request(path, None).map(|mime| mime.as_str().to_owned()),
-    )?;
-    // Typed as the preview worker types it, so it prints as it shows: the
-    // bytes are asked only where the name says nothing or several types
-    // claim it. One that cannot be held is told so further on.
-    let undecided = path
-        .file_name()
-        .filter(|name| request.mime.is_none() || skwir_platform::mime::ambiguous(name));
-    if let Some(name) = undecided
-        && let Ok(held) = request.held()
-    {
-        request.mime = skwir_platform::mime::identify(name, &held).map(|mime| mime.0);
-    }
+    let request = typed(path)?;
     let mime = request.mime.clone();
     if let Some(selection) = &shown.selection {
         return Ok(Source::parts(
@@ -696,9 +766,14 @@ fn source(
             None,
         ));
     }
-    // A PDF is counted only when its pages are picked (`picked`).
+    // A PDF is counted only when its pages are picked (`picked`), and
+    // says then the way it reads.
     if mime.as_deref() == Some("application/pdf") {
-        return Ok(Source::Pdf(path.to_owned(), None));
+        return Ok(Source::Pdf {
+            pdf: path.to_owned(),
+            pages: None,
+            reads: None,
+        });
     }
     if let Some(converted) = app.previews.converted(&request, cancel)? {
         // A plugin's own file in its place: printed as that file is.
@@ -727,7 +802,12 @@ fn source(
         };
         let parts = print_job::parts(&inspection, &palette, &mut pictures, cancel)?;
         if !parts.parts.is_empty() {
-            return Ok(Source::parts(parts.parts, parts.notice));
+            return Ok(Source::Parts {
+                parts: parts.parts,
+                notice: parts.notice,
+                picked: false,
+                reads: inspection.direction,
+            });
         }
     }
     if let Some(session) = app.previews.open_document(&request, cancel)? {
@@ -740,11 +820,88 @@ fn source(
                     note = "What could not be done, before why: a copy of the PDF a document's reader made, to print it."
                 )
             })?;
-            return Ok(Source::Pdf(copy, Some(session.info().pages)));
+            let info = session.info();
+            return Ok(Source::Pdf {
+                pdf: copy,
+                pages: Some(info.pages),
+                reads: info.direction,
+            });
         }
         return drawn(&*session, picking, work, cancel, follow);
     }
     builtin(path, mime.as_deref(), &request, work, cancel)
+}
+
+/// A request about `path` (what an entry opens), typed as the preview
+/// worker types it, so it prints as it shows: the bytes are asked only
+/// where the name says nothing or several types claim it. One that cannot
+/// be held is told so further on.
+fn typed(path: &Path) -> anyhow::Result<PreviewRequest> {
+    let mut request = request(
+        path,
+        skwir_platform::mime::of_request(path, None).map(|mime| mime.as_str().to_owned()),
+    )?;
+    let undecided = path
+        .file_name()
+        .filter(|name| request.mime.is_none() || skwir_platform::mime::ambiguous(name));
+    if let Some(name) = undecided
+        && let Ok(held) = request.held()
+    {
+        request.mime = skwir_platform::mime::identify(name, &held).map(|mime| mime.0);
+    }
+    Ok(request)
+}
+
+/// What the dialog is told of a file before it asks (`crate::told`): how
+/// many pages it has, a PDF's, and the way it reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Told {
+    pub pages: Option<u32>,
+    pub reads: Option<Direction>,
+}
+
+/// What is known of `path` before it is printed, as it is made then: a
+/// PDF's pages and the way it says it reads, as [`counted`] reads them;
+/// another's way, as its provider's inspection says it, else as its text
+/// laid out tells ([`told`]). Nothing is made, converted or drawn, and no
+/// document reader started but a PDF's: an office document (converted
+/// first), a comic or a file a plugin converts is told nothing here, and
+/// is bound as it reads once made. On a worker, in its lane: the caller
+/// bounds the wait.
+pub(crate) fn looked_at(app: &App, path: &Path, cancel: &CancelToken) -> anyhow::Result<Told> {
+    let path: &Path =
+        &skwir_core::fs::content_path(path).with_context(|| nothing_printable(path))?;
+    let request = typed(path)?;
+    if request.mime.as_deref() == Some("application/pdf") {
+        let counted = counted(app, path, cancel)?;
+        return Ok(Told {
+            pages: Some(counted.pages),
+            reads: counted.reads,
+        });
+    }
+    let view = InspectRequest::default();
+    let Some(inspection) = app.previews.inspect(&request, &view, cancel)? else {
+        return Ok(Told::default());
+    };
+    if inspection.direction.is_some() {
+        return Ok(Told {
+            pages: None,
+            reads: inspection.direction,
+        });
+    }
+    // Printed as code (`print_job::parts` reads its text again, whole)
+    // or as a specimen, it tells nothing: no flow.
+    let as_code = inspection.kind == InspectionKind::Code
+        || (inspection.kind == InspectionKind::Text && inspection.text.is_some());
+    if as_code || inspection.kind == InspectionKind::Font {
+        return Ok(Told::default());
+    }
+    let palette = print_job::light_palette(app);
+    let parts = print_job::parts(&inspection, &palette, &mut |_| None, cancel)?;
+    Ok(Told {
+        pages: None,
+        reads: told(&parts.parts),
+    })
 }
 
 /// What the window shows itself: a drawing, a picture, a text.
@@ -825,10 +982,19 @@ pub(crate) fn open_made(ready: &Ready, work: &Path) -> anyhow::Result<Option<std
     Ok(Some(file))
 }
 
-/// How many pages the PDF at `path` has, as the document reader the
-/// settings choose reads it (its engine, its `PDFium`), else `PDFium` where
-/// no reader is on.
-pub(crate) fn page_count(app: &App, path: &Path, cancel: &CancelToken) -> anyhow::Result<u32> {
+/// What a PDF says of itself as it is counted: its pages, and the way it
+/// reads where it says so (its `/ViewerPreferences /Direction`:
+/// `DocumentInfo::direction`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Counted {
+    pub pages: u32,
+    pub reads: Option<Direction>,
+}
+
+/// How many pages the PDF at `path` has and the way it says it reads, as
+/// the document reader the settings choose reads it (its engine, its
+/// `PDFium`), else `PDFium` where no reader is on.
+pub(crate) fn counted(app: &App, path: &Path, cancel: &CancelToken) -> anyhow::Result<Counted> {
     let lifetime = cancel.child();
     let request = request(path, Some("application/pdf".to_owned()))?;
     let session = match app.previews.open_document(&request, &lifetime)? {
@@ -845,7 +1011,11 @@ pub(crate) fn page_count(app: &App, path: &Path, cancel: &CancelToken) -> anyhow
             )
         })?,
     };
-    Ok(session.info().pages)
+    let info = session.info();
+    Ok(Counted {
+        pages: info.pages,
+        reads: info.direction,
+    })
 }
 
 /// What is selected, as its own document: lines in the code font, colored
@@ -877,10 +1047,20 @@ fn selected(path: &Path, mime: Option<&str>, selection: &str) -> Part {
             }
         })
         .collect();
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let plain = !skwir_platform::highlight::prints_as_code(
+        &name,
+        language.as_deref(),
+        selection.lines().next(),
+    );
     Part::Code {
         lines,
         numbers: false,
         first: 1,
+        plain,
     }
 }
 
@@ -1082,6 +1262,7 @@ fn drawn(
         parts: vec![Part::Pages { pages }],
         notice: chosen.clipped.then(|| past(count)),
         picked: picking.is_some(),
+        reads: session.info().direction,
     })
 }
 
@@ -1136,8 +1317,10 @@ fn roles(app: &App, style: &skwir_platform::desktop_style::DesktopStyle) -> Role
 /// The job of `parts`, titled `name`, laid out on `paper` in the fonts the
 /// Reading page chooses, as the window writes in them: where a font says
 /// Automatic, the desktop's as Fonts from reads them, else the
-/// interface's for reading; in the light look.
-fn job(app: &App, name: &str, paper: &Paper, parts: Vec<Part>) -> Job {
+/// interface's for reading; in the light look. `reads` is the way the
+/// document says it reads, the PDF's own reading direction then; the
+/// helper tells it by its text without.
+fn job(app: &App, name: &str, paper: &Paper, parts: Vec<Part>, reads: Option<Direction>) -> Job {
     let roles = roles(app, &skwir_platform::desktop_style::read_fonts());
     let (fonts, fallback) = print_job::faces(&roles);
     let name = name.to_owned();
@@ -1147,6 +1330,8 @@ fn job(app: &App, name: &str, paper: &Paper, parts: Vec<Part>) -> Job {
         title: name.clone(),
         author: None,
         language: None,
+        window: skwir_core::direction::window(),
+        reads,
         header: Some(name),
         numbers: true,
         fonts,
@@ -1252,7 +1437,7 @@ mod tests {
         let pdf = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n\x00\x01\x02";
         assert!(matches!(
             printed("rapport", pdf, None),
-            Source::Pdf(_, None)
+            Source::Pdf { pages: None, .. }
         ));
         let script = b"#!/bin/sh\nif true; then echo \"hi\"; fi\n";
         assert!(colors(printed("l'été", script, None)) > 1);

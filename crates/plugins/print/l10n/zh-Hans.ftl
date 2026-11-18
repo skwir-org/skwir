@@ -42,6 +42,21 @@ print_booklet_needs_pdfium = 排版小册子需要 PDFium，但找不到它
 print_booklet_one_side = 小册子需双面打印：单面打印时，请先打印奇数面，将纸张翻面，再打印偶数面
 
 # draft
+print_bound = 装订
+
+# draft
+print_bound_left = 左侧装订
+
+# draft
+print_bound_left_detail = 从左向右阅读
+
+# draft
+print_bound_right = 右侧装订
+
+# draft
+print_bound_right_detail = 从右向左阅读
+
+# draft
 print_cancelled = 打印已取消
 
 # draft

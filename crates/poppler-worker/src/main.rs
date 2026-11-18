@@ -69,6 +69,12 @@ fn run() -> anyhow::Result<()> {
                     .unwrap_or_default()
             }))
         },
+        // Never the way it says it reads (`/ViewerPreferences
+        // /Direction`): poppler-glib has a flag for it (`DIRECTION_RTL`)
+        // that it never sets, a catalog's `/R2L` read as no preference at
+        // all (poppler-glib 26.10), and no other way to the catalog.
+        // PDFium and MuPDF read it.
+        direction: None,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {

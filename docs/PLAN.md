@@ -3503,8 +3503,14 @@ screen reader reads, from the window or a script.
   top rows upside down, the folds marked; the "Pages a side" row with
   pictures, how to fold said in the plan's toast; A4, Letter, A5, A3 or
   Legal chosen when saving, the system's first (`per_side`, `paper`).
+- **P7. Right to left, and a booklet bound on the right** (2026-11-18,
+  ADR-111 revised): what is printed reads as the window shows it, the
+  documents' declared directions read (PDF, comic, EPUB, Mobipocket,
+  HTML), the sheets mirrored, the dialog's Binding row preset as the
+  document reads, never remembered; `bound` and `reads` for scripts and
+  agents.
 
-**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (G8): a grammar chosen for each language, the lists in Settings drawn as lists. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only. Built 2026-11-01 (P6): 4 and 8 a side, the paper of a PDF; checked on Linux by tests (the signatures, PDFium's placing, A5 upright) and in a window of its own (4 a side on A4, 8 a side on A3, saved, drawn and looked at; the folding toast); not printed on paper, nor folded; macOS and Windows compiled only. Left: a one-sheet zine (offered, not asked); a printer's own paper sizes beyond the five named when saving.
+**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (G8): a grammar chosen for each language, the lists in Settings drawn as lists. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only. Built 2026-11-01 (P6): 4 and 8 a side, the paper of a PDF; checked on Linux by tests (the signatures, PDFium's placing, A5 upright) and in a window of its own (4 a side on A4, 8 a side on A3, saved, drawn and looked at; the folding toast); not printed on paper, nor folded; macOS and Windows compiled only. Built 2026-11-18 (P7): checked by tests (the helper's PDFs read back for where words and marks land, core's folding simulation for both edges at 2, 4 and 8 a side, each format's declaration) and on Xvfb (a Hebrew Markdown and a Hebrew PDF preset and saved bound on the right, an English one on the left, by the dialog and by `skwir cmd`); not printed on paper; macOS and Windows compiled only. Left: a one-sheet zine (offered, not asked); a printer's own paper sizes beyond the five named when saving; a PDF that declares no direction is preset on the left; Poppler reads no declared direction.
 
 ---
 
@@ -3881,8 +3887,11 @@ them, with `core.folder_names` for the names on disk (16).
   2026-11-18, whatever letter starts it (gpui 0084,
   `code_preview::reads_as_code`), a plain text's rows each in their own
   direction. Left: a real right-to-left catalog and its review; HTML's
-  `dir` and CSS's `direction` (a block's direction is its text's);
-  printing not looked at. A sideways scroll bar leaves its corner at its
+  `dir` and CSS's `direction` (a block's direction is its text's).
+  Printing follows since 2026-11-18 (ADR-111 revised): a block in its
+  own direction, code left to right, a plain text's lines each in their
+  own, a listing in the window's, the PDF's reading direction said; a
+  booklet bound on the right (P7). A sideways scroll bar leaves its corner at its
   start while the window is mirrored (`scrollbar::track_along`).
 - **Fonts for every script:** the CJK forms by language (0074), a
   warning when no installed font draws a script the reader reads, the

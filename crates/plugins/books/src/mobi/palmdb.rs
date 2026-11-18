@@ -376,4 +376,8 @@ pub(crate) mod exth {
     pub const COVER: u32 = 201;
     pub const TITLE: u32 = 503;
     pub const LANGUAGE: u32 = 524;
+    /// The way its pages turn, `ltr` or `rtl`: its source's spine's
+    /// `page-progression-direction`, as calibre and Kindle's tools write
+    /// it.
+    pub const PAGE_DIRECTION: u32 = 527;
 }

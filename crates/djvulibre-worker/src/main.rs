@@ -68,6 +68,7 @@ fn run() -> anyhow::Result<()> {
         } else {
             document.labels.clone()
         },
+        direction: None,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {

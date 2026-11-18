@@ -5691,7 +5691,8 @@ impl Shell {
     /// entry shown, a link itself as the file menu names it: where things
     /// go beside it; a command follows it to what it reads), its pane, the
     /// page shown (`page`, from 1, for a document's pages) and how many it
-    /// has (`count`), and what is selected (`selection`). What a plugin's
+    /// has (`count`), the way it says it reads (`reads`, where it says
+    /// so), and what is selected (`selection`). What a plugin's
     /// items of the preview's menu run (`preview_items`), and its
     /// keys there: the shell names no plugin. The user's alone: an agent
     /// names what it means itself. Run as the window runs any command
@@ -5722,12 +5723,38 @@ impl Shell {
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         given["entries"] = serde_json::json!([skwir_core::op::EntryArg::from(entry)]);
-        given["pane"] = serde_json::json!(pane);
-        if let Some(session) = &self.preview.reader.session {
-            given["page"] = serde_json::json!(self.preview.page);
-            given["count"] = serde_json::json!(session.info().pages);
+        // What the preview knows goes only where the command takes it: an
+        // argument a command does not take is refused (`CommandSpec::
+        // accepts`), and Reduce Size takes no page.
+        let spec = self.app.commands.get(name);
+        let takes = |arg: &str| spec.as_ref().is_some_and(|spec| spec.accepts(arg));
+        if takes("pane") {
+            given["pane"] = serde_json::json!(pane);
         }
-        if let Some(text) = self.preview_selected_text() {
+        if let Some(session) = &self.preview.reader.session {
+            if takes("page") {
+                given["page"] = serde_json::json!(self.preview.page);
+            }
+            if takes("count") {
+                given["count"] = serde_json::json!(session.info().pages);
+            }
+        }
+        // The way the document shown says it reads (a PDF's, a manga's, a
+        // book's page progression, HTML's `dir`): its reader's, else its
+        // inspection's. What says nothing is told by whoever makes it.
+        let reads = match &self.preview.reader.session {
+            Some(session) => session.info().direction,
+            None => match &self.preview.content {
+                Some(PreviewContent::Inspection(display)) => display.data.direction,
+                _ => None,
+            },
+        };
+        if let Some(reads) = reads.filter(|_| takes("reads")) {
+            given["reads"] = serde_json::json!(reads);
+        }
+        if takes("selection")
+            && let Some(text) = self.preview_selected_text()
+        {
             given["selection"] = serde_json::json!(text);
         }
         let name = name.to_owned();

@@ -7,12 +7,18 @@
 //! A line longer than [`PIECE`] (a minified file, one whose lines end in
 //! a carriage return alone) is laid out a piece at a time, each from a
 //! new row, so no layout holds more than a piece of it.
+//!
+//! Code reads left to right on every line, whatever letter starts it, as
+//! editors lay it out and the window shows it (`docs/invariants/shell.md`,
+//! "Code reads left to right on every line"): a line that starts with an
+//! Arabic comment keeps its `#` at its left, the words reading right to
+//! left after it.
 
 use std::ops::Range;
 
 use anyhow::Result;
 use krilla::tagging::{ArtifactType, Tag};
-use parley::{Alignment, Layout};
+use parley::{Alignment, BaseDirection, Layout};
 use skwir_core::print::{Line, Run};
 
 use crate::fonts::{Fonts, Role};
@@ -48,10 +54,13 @@ pub struct Code<'a> {
 }
 
 impl<'a> Code<'a> {
+    /// `plain`: the lines of a plain text, each read in its own direction
+    /// at its left, as the window shows them; code's each left to right.
     pub fn plan(
         lines: &'a [Line],
         numbers: bool,
         first: u32,
+        plain: bool,
         fonts: &mut Fonts,
         frame: Frame,
     ) -> Code<'a> {
@@ -70,6 +79,12 @@ impl<'a> Code<'a> {
         let mut spec = Spec::new(Role::Code, SIZE);
         spec.line_height = LINE_HEIGHT;
         spec.wrap = Wrap::Anywhere;
+        if plain {
+            spec.direction = BaseDirection::Auto;
+            spec.align = Alignment::Left;
+        } else {
+            spec.direction = BaseDirection::Ltr;
+        }
         let width = (frame.text.width - gutter - GAP).max(SIZE * 4.0);
         spec.width = Some(width);
         let per_page = ((frame.text.height / row).floor() as u32).max(1);

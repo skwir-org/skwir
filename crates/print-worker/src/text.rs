@@ -11,8 +11,8 @@ use krilla::paint::{Fill, Stroke};
 use krilla::surface::Surface;
 use krilla::text::{GlyphId, KrillaGlyph};
 use parley::{
-    Alignment, AlignmentOptions, FontFeature, FontFeatures, Language, Layout, LineHeight,
-    OverflowWrap, StyleProperty,
+    Alignment, AlignmentOptions, BaseDirection, FontFeature, FontFeatures, Language, Layout,
+    LineHeight, OverflowWrap, StyleProperty,
 };
 use skwir_core::print::Run;
 
@@ -61,6 +61,11 @@ pub struct Spec {
     pub align: Alignment,
     pub width: Option<f32>,
     pub language: Option<Language>,
+    /// The direction its paragraph reads in: by its first strong letter
+    /// (UAX #9's P2 and P3) where `Auto`, left to right whatever starts it
+    /// for code, as editors lay it out (`Ltr`). Lines aligned at `Start`
+    /// start at its right where it reads right to left.
+    pub direction: BaseDirection,
 }
 
 impl Spec {
@@ -76,6 +81,7 @@ impl Spec {
             align: Alignment::Start,
             width: None,
             language: None,
+            direction: BaseDirection::Auto,
         }
     }
 }
@@ -186,6 +192,7 @@ pub fn lay_out(
     }
     let small_caps = [FontFeature::new(parley::setting::Tag::new(b"smcp"), 1)];
     let mut builder = lcx.ranged_builder(cx, text, 1.0, false);
+    builder.set_base_direction(spec.direction);
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::FontWeight(weight));
     builder.push_default(StyleProperty::FontStyle(style));
@@ -253,6 +260,24 @@ pub fn lay_out(
     };
     layout.break_all_lines(width);
     layout.align(spec.align, AlignmentOptions::default());
+}
+
+/// Whether `text` holds a letter: what says the way a text reads, UAX
+/// #9's strong characters being letters (but a few marks that draw
+/// nothing), while digits, punctuation, symbols and spaces leave it to
+/// what is around them.
+pub fn has_letter(text: &str) -> bool {
+    use unicode_general_category::{GeneralCategory as G, get_general_category};
+    text.chars().any(|c| {
+        matches!(
+            get_general_category(c),
+            G::UppercaseLetter
+                | G::LowercaseLetter
+                | G::TitlecaseLetter
+                | G::ModifierLetter
+                | G::OtherLetter
+        )
+    })
 }
 
 /// `text` without runs laid out as `spec` says.
@@ -613,6 +638,15 @@ mod tests {
         assert!((glyph.y_offset - 0.2).abs() < 1e-6, "{}", glyph.y_offset);
         assert!((glyph.x_offset - 0.1).abs() < 1e-6);
         assert_eq!(glyph.text_range, 0..2);
+    }
+
+    #[test]
+    fn a_text_says_its_way_by_a_letter_and_digits_say_none() {
+        assert!(has_letter("שלום"));
+        assert!(has_letter("مرحبا"));
+        assert!(has_letter("2026 — Été"));
+        assert!(!has_letter("2026 — 42 ١٢٣"));
+        assert!(!has_letter(""));
     }
 
     #[test]

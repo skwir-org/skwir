@@ -438,3 +438,46 @@ outside and whether choosing PDF should give Save as the keyboard.
   moving it would make Left, back to Printer, move the caret instead.
   The dialog opening on PDF keeps the keyboard on its first field.
 
+## Revision (2026-11-18): right to left
+
+Asked by the user (ADR-139, 12): what is printed reads as the window
+shows it, and a booklet of a Hebrew or an Arabic book, or of a manga,
+binds on the right.
+
+- **Laid out as shown.** The print helper lays out each block of a
+  document in its own direction, its first strong letter's: one that
+  reads right to left has its indent, its list's marker (read as its item
+  reads) and its quotation's bar at its right. Code reads left to right on
+  every line; a plain text's lines (`Part::Code::plain`, no grammar colors
+  them: `highlight::prints_as_code`, the window's question) each in its
+  own direction, at the left. A document's table runs as the document
+  says it reads (`Job::reads`), each cell in its own direction. What
+  Skwir lays out itself runs in the window's direction (`Job::window`): a
+  listing's columns and cells, a contact sheet's pictures, the name above
+  the pages; the page's number stays in the middle. A document that reads
+  right to left (`Job::reads`, else its first paragraph with a letter; a
+  listing or a sheet by the window) says so in the PDF,
+  `/ViewerPreferences /Direction /R2L`.
+- **A document says which way it reads**, never guessed from its text
+  (`DocumentInfo::direction`, `Inspection::direction`): a PDF's
+  `/ViewerPreferences /Direction` (PDFium and MuPDF; poppler-glib never
+  sets its flag), a comic's `ComicInfo.xml` manga read right to left, an
+  EPUB's spine `page-progression-direction`, a Mobipocket book's EXTH 527,
+  HTML's `dir` on its root, else its body.
+- **Bound on the left or on the right** (`print::booklet::Bound`): bound
+  on the right, the sheets are those bound on the left seen in a mirror,
+  each side's pages mirrored row by row in its grid, each turned as it
+  was (`sheets_bound`, `Sheet::mirrored`); folded the mirrored way, they
+  read in order. The dialog's Binding row stands among the booklet's
+  options, shown whenever a booklet is chosen, whatever the window's
+  language: binding is the document's, not the reader's. Its preset is
+  the document's every time, never remembered: `bound` asked, else what
+  the caller knows of it (`reads`: the preview passes what the document
+  shown declares), else what the file says (a PDF's direction read with
+  its count, an inspection's), or for what Skwir lays out its text's
+  first letter with a direction (`direction::of_text`, UAX #9's P2 and
+  P3), within the 400 ms the dialog already waits; else the left. Without
+  the dialog (Save as PDF, `asked`, no window), a booklet is bound in the
+  same order as it is made. A PDF that declares nothing is preset on the
+  left: telling it by its text would read its pages first.
+

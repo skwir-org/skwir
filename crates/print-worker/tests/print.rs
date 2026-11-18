@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lopdf::{Dictionary, Document, Object};
+use skwir_core::direction::Direction;
 use skwir_core::print::{
     Align, Block, BlockKind, Face, Family, Fonts, Job, Line, Made, Paper, Part, Picture, Run,
 };
@@ -52,6 +53,8 @@ fn job(dir: &Path, fonts: Fonts, parts: Vec<Part>) -> Job {
         title: "A made-up document".into(),
         author: Some("Someone".into()),
         language: Some("en".into()),
+        window: Direction::LeftToRight,
+        reads: None,
         header: Some("example.txt".into()),
         numbers: true,
         fonts,
@@ -327,6 +330,7 @@ fn a_thousand_lines_of_code_are_numbered_and_paged() {
             lines,
             numbers: true,
             first: 1,
+            plain: false,
         }],
     );
     let (made, document, pdf) = ok(dir.path(), &job);
@@ -366,6 +370,7 @@ fn only_the_pages_asked_are_written_numbered_as_laid_out() {
             lines,
             numbers: false,
             first: 1,
+            plain: false,
         }],
     );
     job.pages = Some(vec![3, 1, 99]);
@@ -397,6 +402,7 @@ fn a_booklet_s_half_page_holds_less_and_is_its_size() {
             lines,
             numbers: true,
             first: 1,
+            plain: false,
         }],
     );
     let (whole, _, _) = ok(dir.path(), &job);
@@ -1170,4 +1176,492 @@ fn a_job_too_large_or_unreadable_is_refused_in_a_line() {
     let (message, code) = run_file(&path, &dir.path().join("out.pdf")).unwrap_err();
     assert_eq!(code, 1);
     assert!(message.contains("more than"), "{message}");
+}
+
+/// A word `pdftotext -bbox` reads on a page: its text (a right-to-left
+/// word's letters as they are drawn, from the left) and its box, `y`
+/// downwards from the page's top.
+#[derive(Debug, Clone)]
+struct Word {
+    text: String,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+}
+
+/// The words of page `page` (from 1) and where they are, by Poppler's
+/// `pdftotext -bbox`; `None` where it is not there.
+fn drawn_words(pdf: &[u8], page: u32, dir: &Path) -> Option<Vec<Word>> {
+    let path = dir.join("words.pdf");
+    std::fs::write(&path, pdf).unwrap();
+    let output = Command::new("pdftotext")
+        .args(["-bbox", "-f", &page.to_string(), "-l", &page.to_string()])
+        .arg(&path)
+        .arg("-")
+        .output()
+        .ok()
+        .filter(|output| output.status.success());
+    let Some(output) = output else {
+        eprintln!("no pdftotext: where words are drawn not tried");
+        return None;
+    };
+    let html = String::from_utf8_lossy(&output.stdout);
+    let attribute = |tag: &str, name: &str| -> f32 {
+        let at = tag.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
+        tag[at..at + tag[at..].find('"').unwrap()].parse().unwrap()
+    };
+    let words = html
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line.strip_prefix("<word ")?;
+            let (tag, rest) = rest.split_once('>')?;
+            let text = rest.strip_suffix("</word>")?;
+            let text = text
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
+            Some(Word {
+                text,
+                x0: attribute(tag, "xMin"),
+                y0: attribute(tag, "yMin"),
+                x1: attribute(tag, "xMax"),
+            })
+        })
+        .collect();
+    Some(words)
+}
+
+/// The words of a page in lines, from the top: words whose tops are
+/// within two points of each other's.
+fn lines_of(mut words: Vec<Word>) -> Vec<Vec<Word>> {
+    words.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+    let mut lines: Vec<Vec<Word>> = Vec::new();
+    for word in words {
+        match lines.last_mut() {
+            Some(line) if (word.y0 - line[0].y0).abs() < 2.0 => line.push(word),
+            _ => lines.push(vec![word]),
+        }
+    }
+    for line in &mut lines {
+        line.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+    }
+    lines
+}
+
+fn word<'a>(words: &'a [Word], text: &str) -> &'a Word {
+    words
+        .iter()
+        .find(|word| word.text == text)
+        .unwrap_or_else(|| panic!("no word {text:?} in {words:?}"))
+}
+
+/// The leftmost start and rightmost end of `words`, those of `except` left
+/// out.
+fn extent(words: &[Word], except: &str) -> (f32, f32) {
+    words
+        .iter()
+        .filter(|word| word.text != except)
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(left, right), word| {
+            (left.min(word.x0), right.max(word.x1))
+        })
+}
+
+fn near(value: f32, expected: f32, what: &str) {
+    assert!(
+        (value - expected).abs() < 1.5,
+        "{what}: {value}, not {expected}"
+    );
+}
+
+/// The rectangles page `page` fills: each one's color and its left and
+/// right. krilla draws a rectangle as a path of four points.
+fn fills(document: &Document, page: u32) -> Vec<([f32; 3], f32, f32, f32)> {
+    let id = document.get_pages()[&page];
+    let content = document.get_and_decode_page_content(id).unwrap();
+    let number = |o: &Object| {
+        o.as_float()
+            .or_else(|_| o.as_i64().map(|i| i as f32))
+            .unwrap_or(0.0)
+    };
+    let mut color = [0.0; 3];
+    let mut points: Vec<(f32, f32)> = Vec::new();
+    let mut out = Vec::new();
+    for operation in &content.operations {
+        let operands: Vec<f32> = operation.operands.iter().map(number).collect();
+        match operation.operator.as_str() {
+            "rg" if operands.len() == 3 => color = [operands[0], operands[1], operands[2]],
+            "m" | "l" if operands.len() == 2 => points.push((operands[0], operands[1])),
+            "f" => {
+                let (left, right, top) = points.iter().fold(
+                    (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY),
+                    |(left, right, top), &(x, y)| (left.min(x), right.max(x), top.min(y)),
+                );
+                out.push((color, left, right, top));
+                points.clear();
+            }
+            "n" | "S" => points.clear(),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The way the PDF says it reads (`/ViewerPreferences /Direction`), if
+/// it says.
+fn direction(document: &Document) -> Option<String> {
+    let catalog = document.catalog().unwrap();
+    let preferences = dict(document, catalog.get(b"ViewerPreferences").ok()?)?;
+    let name = preferences.get(b"Direction").ok()?.as_name().ok()?;
+    Some(String::from_utf8_lossy(name).into_owned())
+}
+
+/// A job for directions: no name above, no numbers below, and the text
+/// font's folder to find the Hebrew and Arabic a face lacks.
+fn bare(dir: &Path, fonts: Fonts, parts: Vec<Part>) -> Job {
+    let folder = fonts
+        .text
+        .regular
+        .as_ref()
+        .and_then(|face| face.path.parent())
+        .map(Path::to_owned);
+    let mut job = job(dir, fonts, parts);
+    job.header = None;
+    job.numbers = false;
+    job.fallback = folder.into_iter().collect();
+    job
+}
+
+/// A4's text, between its 15 mm margins.
+const LEFT: f32 = 42.519_684;
+const RIGHT: f32 = 595.2756 - 42.519_684;
+
+#[test]
+fn code_reads_left_to_right_on_every_line() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    // A line that starts with an Arabic comment, one with a Hebrew one,
+    // and one in English: each starts at the code's left, its `#` or `//`
+    // first, as an editor lays them out.
+    let lines = ["# تعليق عربي", "// הערה בעברית", "let x = 1;"];
+    let job = bare(
+        dir.path(),
+        fonts.clone(),
+        vec![Part::Code {
+            lines: lines.iter().map(|text| line(text)).collect(),
+            numbers: false,
+            first: 1,
+            plain: false,
+        }],
+    );
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let Some(words) = drawn_words(&pdf, 1, dir.path()) else {
+        return;
+    };
+    let code = word(&words, "let").x0;
+    near(word(&words, "#").x0, code, "an Arabic comment's #");
+    near(word(&words, "//").x0, code, "a Hebrew comment's //");
+    assert!(code < LEFT + 30.0, "at the page's left: {code}");
+    assert_eq!(direction(&document), None, "code says no direction");
+    // A document's code block alike: its rows at its left, from the `#`.
+    let job = bare(
+        dir.path(),
+        fonts,
+        vec![Part::Flow {
+            blocks: vec![Block {
+                kind: BlockKind::Code,
+                ..block("# تعليق عربي في السطر الأول\nx = 1  # تعليق")
+            }],
+        }],
+    );
+    let (_, _, pdf) = ok(dir.path(), &job);
+    let words = drawn_words(&pdf, 1, dir.path()).unwrap();
+    let lines = lines_of(words);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    near(lines[0][0].x0, lines[1][0].x0, "the rows' starts");
+    assert_eq!(
+        lines[0][0].text, "#",
+        "the comment's # first: {:?}",
+        lines[0]
+    );
+    assert_eq!(lines[1][0].text, "x", "{:?}", lines[1]);
+}
+
+/// A plain text's lines (a `.txt`) each read in their own direction, at
+/// the page's left, as the window shows them: a Hebrew line's closing mark
+/// at its left end, where a line of code keeps it at its right.
+#[test]
+fn a_plain_text_s_lines_read_in_their_own_direction() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    let printed = |plain: bool| {
+        let job = bare(
+            dir.path(),
+            fonts.clone(),
+            vec![Part::Code {
+                lines: ["שלום, עולם!", "plain text"]
+                    .iter()
+                    .map(|text| line(text))
+                    .collect(),
+                numbers: false,
+                first: 1,
+                plain,
+            }],
+        );
+        let (_, _, pdf) = ok(dir.path(), &job);
+        drawn_words(&pdf, 1, dir.path()).map(lines_of)
+    };
+    let Some(plain) = printed(true) else { return };
+    let code = printed(false).unwrap();
+    for (lines, what) in [(&plain, "plain"), (&code, "code")] {
+        assert_eq!(lines.len(), 2, "{what}: {lines:?}");
+        near(lines[0][0].x0, lines[1][0].x0, what);
+        assert!(lines[0][0].x0 < LEFT + 30.0, "{what} at the left");
+    }
+    assert!(plain[0][0].text.contains('!'), "plain: {:?}", plain[0]);
+    let last = code[0].last().unwrap();
+    assert!(last.text.contains('!'), "code: {:?}", code[0]);
+}
+
+#[test]
+fn a_paragraph_in_hebrew_or_arabic_starts_at_its_right() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    let blocks = vec![
+        block("זוהי פסקה קצרה."),
+        Block {
+            list_depth: 1,
+            marker: Some("•".into()),
+            ..block("פריט ברשימה")
+        },
+        Block {
+            list_depth: 1,
+            marker: Some("-".into()),
+            ..block("An item")
+        },
+        Block {
+            quote: true,
+            ..block("ציטוט קצר.")
+        },
+        Block {
+            quote: true,
+            ..block("A short quote.")
+        },
+        Block {
+            indent: 2.0,
+            ..block("مقطع بإزاحة.")
+        },
+        block("2026 — 42"),
+        Block {
+            heading: 2,
+            ..block("כותרת")
+        },
+    ];
+    let job = bare(dir.path(), fonts, vec![Part::Flow { blocks }]);
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let Some(words) = drawn_words(&pdf, 1, dir.path()) else {
+        return;
+    };
+    let lines = lines_of(words);
+    assert_eq!(lines.len(), 8, "a line a block: {lines:?}");
+    // Hebrew from the text's right.
+    near(extent(&lines[0], "").1, RIGHT, "a Hebrew paragraph's end");
+    // An item's text is in from its start, its marker hung before it: at
+    // the right in Hebrew, at the left in English.
+    let (_, end) = extent(&lines[1], "•");
+    near(end, RIGHT - 18.0, "a Hebrew item's text");
+    near(word(&lines[1], "•").x0, RIGHT - 18.0 + 4.0, "its marker");
+    let (start, _) = extent(&lines[2], "-");
+    near(start, LEFT + 18.0, "an English item's text");
+    assert!(word(&lines[2], "-").x1 < start, "its marker before it");
+    // A quotation's text in from its start, its bar along it.
+    near(extent(&lines[3], "").1, RIGHT - 14.0, "a Hebrew quotation");
+    near(extent(&lines[4], "").0, LEFT + 14.0, "an English quotation");
+    let rule = [0xd0_u8, 0xd7, 0xde].map(|c| f32::from(c) / 255.0);
+    let mut bars: Vec<_> = fills(&document, 1)
+        .into_iter()
+        .filter(|(color, left, right, _)| {
+            color.iter().zip(rule).all(|(a, b)| (a - b).abs() < 0.01)
+                && (right - left - 2.5).abs() < 0.01
+        })
+        .collect();
+    bars.sort_by(|a, b| a.3.total_cmp(&b.3));
+    assert_eq!(bars.len(), 2, "{bars:?}");
+    near(bars[0].2, RIGHT, "the Hebrew quotation's bar at its right");
+    near(bars[1].1, LEFT, "the English one's at its left");
+    // The document's own margin, at an Arabic paragraph's right.
+    near(
+        extent(&lines[5], "").1,
+        RIGHT - 21.0,
+        "an indented Arabic paragraph",
+    );
+    // No letter: left to right.
+    near(extent(&lines[6], "").0, LEFT, "digits alone");
+    near(extent(&lines[7], "").1, RIGHT, "a Hebrew heading");
+    assert_eq!(direction(&document).as_deref(), Some("R2L"));
+}
+
+#[test]
+fn a_table_s_columns_run_as_the_document_reads() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    let blocks = vec![
+        row(&["first", "second"], true),
+        row(&["alpha", "beta"], false),
+    ];
+    let mut job = bare(dir.path(), fonts, vec![Part::Flow { blocks }]);
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let Some(words) = drawn_words(&pdf, 1, dir.path()) else {
+        return;
+    };
+    assert!(word(&words, "first").x0 < word(&words, "second").x0);
+    near(
+        word(&words, "first").x0,
+        LEFT + 4.0,
+        "the first column at the left",
+    );
+    assert_eq!(direction(&document), None);
+    // Said to read right to left, its first column is at the right, each
+    // cell's English from its left still.
+    job.reads = Some(Direction::RightToLeft);
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let words = drawn_words(&pdf, 1, dir.path()).unwrap();
+    let (first, second) = (word(&words, "first"), word(&words, "second"));
+    assert!(first.x0 > second.x1, "{first:?} {second:?}");
+    near(
+        word(&words, "alpha").x0,
+        first.x0,
+        "a cell's English from its left",
+    );
+    assert!(
+        second.x0 > LEFT + 200.0,
+        "the table at the right: {second:?}"
+    );
+    assert!(first.x1 < RIGHT, "{first:?}");
+    assert_eq!(direction(&document).as_deref(), Some("R2L"));
+}
+
+#[test]
+fn a_listing_and_a_contact_sheet_run_as_the_window() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    let listing = Part::Table {
+        columns: vec!["Name".into(), "Size".into()],
+        rows: vec![
+            vec!["alpha.txt".into(), "12".into()],
+            vec!["שלום.txt".into(), "3".into()],
+        ],
+    };
+    let mut job = bare(dir.path(), fonts.clone(), vec![listing]);
+    job.header = Some("Docs".into());
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let Some(words) = drawn_words(&pdf, 1, dir.path()) else {
+        return;
+    };
+    near(word(&words, "Docs").x0, LEFT, "the name above at the left");
+    near(
+        word(&words, "Name").x0,
+        LEFT + 3.0,
+        "the first column at the left",
+    );
+    assert!(word(&words, "Name").x1 < word(&words, "Size").x0);
+    // A Hebrew name from its cell's start, the window's, as the window
+    // draws it.
+    let lines = lines_of(words);
+    let hebrew = lines
+        .iter()
+        .find(|line| line.iter().any(|w| w.text == "3"))
+        .unwrap();
+    near(hebrew[0].x0, LEFT + 3.0, "a Hebrew name at its cell's left");
+    assert_eq!(direction(&document), None);
+    // In a window laid out right to left: the first column at the right,
+    // each cell's text at its right, the name above too.
+    job.window = Direction::RightToLeft;
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let words = drawn_words(&pdf, 1, dir.path()).unwrap();
+    near(
+        word(&words, "Docs").x1,
+        RIGHT,
+        "the name above at the right",
+    );
+    let (name, size) = (word(&words, "Name"), word(&words, "Size"));
+    assert!(name.x0 > size.x1, "{name:?} {size:?}");
+    near(name.x1, RIGHT - 3.0, "the first column at the right");
+    near(
+        word(&words, "alpha.txt").x1,
+        RIGHT - 3.0,
+        "a name at its cell's right",
+    );
+    assert_eq!(direction(&document).as_deref(), Some("R2L"));
+    // A contact sheet's pictures from the right.
+    let pictures: Vec<Picture> = (0..2)
+        .map(|i| {
+            let path = dir.path().join(format!("p{i}.png"));
+            write_png(&path, 64, 48, 0);
+            Picture {
+                path,
+                width: 64,
+                height: 48,
+                alt: format!("Picture {i}"),
+                caption: None,
+                orientation: 0,
+            }
+        })
+        .collect();
+    let sheet = Part::Pictures {
+        pictures,
+        sheet: true,
+    };
+    let mut job = bare(dir.path(), fonts, vec![sheet]);
+    let (_, document, _) = ok(dir.path(), &job);
+    let placed = picture_matrices(&document, 1);
+    assert!(placed[0][4] < placed[1][4], "from the left: {placed:?}");
+    assert_eq!(direction(&document), None);
+    job.window = Direction::RightToLeft;
+    let (_, document, _) = ok(dir.path(), &job);
+    let placed = picture_matrices(&document, 1);
+    assert!(placed[0][4] > placed[1][4], "from the right: {placed:?}");
+    assert_eq!(direction(&document).as_deref(), Some("R2L"));
+}
+
+#[test]
+fn the_pdf_says_the_way_its_document_reads() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    let hebrew = || block("זוהי פסקה.");
+    let english = || block("An English paragraph.");
+    let flow = |blocks: Vec<Block>| Part::Flow { blocks };
+    let code = || Part::Code {
+        lines: vec![line("// הערה")],
+        numbers: false,
+        first: 1,
+        plain: false,
+    };
+    let said = |parts: Vec<Part>, reads: Option<Direction>| {
+        let mut job = bare(dir.path(), fonts.clone(), parts);
+        job.reads = reads;
+        let (_, document, _) = ok(dir.path(), &job);
+        direction(&document)
+    };
+    let r2l = Some("R2L".to_owned());
+    // The first paragraph with a letter says it: digits alone say nothing.
+    assert_eq!(
+        said(vec![flow(vec![block("2026"), hebrew(), english()])], None),
+        r2l
+    );
+    assert_eq!(said(vec![flow(vec![english(), hebrew()])], None), None);
+    // Code says nothing, the document after it does.
+    assert_eq!(said(vec![code()], None), None);
+    assert_eq!(said(vec![code(), flow(vec![hebrew()])], None), r2l);
+    // What the job says comes first.
+    assert_eq!(
+        said(vec![flow(vec![english()])], Some(Direction::RightToLeft)),
+        r2l
+    );
+    assert_eq!(
+        said(vec![flow(vec![hebrew()])], Some(Direction::LeftToRight)),
+        None
+    );
 }

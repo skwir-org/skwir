@@ -89,6 +89,7 @@ fn measured(
         .chain(own)
         .collect();
     data.whole_available |= page.truncated && bounds.cut();
+    data.direction = page.direction;
     data.blocks = page.blocks;
     data
 }

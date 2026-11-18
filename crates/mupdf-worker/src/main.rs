@@ -17,6 +17,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
+use skwir_core::direction::Direction;
 use skwir_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
     Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
@@ -95,13 +96,16 @@ fn run() -> anyhow::Result<()> {
     } else {
         Opened::Other(document)
     };
-    let (document, labels): (&Document, _) = match &opened {
+    // So does the way it says it reads (its viewer preferences); a book
+    // MuPDF lays out says nothing here, its plugin reads its own.
+    let (document, labels, direction): (&Document, _, _) = match &opened {
         Opened::Pdf(pdf) if !first_page => (
             pdf,
             page_labels((0..pages as usize).map(|index| pdf.page_label(index).unwrap_or_default())),
+            self::direction(pdf),
         ),
-        Opened::Pdf(pdf) => (pdf, Vec::new()),
-        Opened::Other(document) => (document, Vec::new()),
+        Opened::Pdf(pdf) => (pdf, Vec::new(), None),
+        Opened::Other(document) => (document, Vec::new(), None),
     };
     worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
@@ -113,6 +117,7 @@ fn run() -> anyhow::Result<()> {
         },
         reflowable,
         labels,
+        direction,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
@@ -138,6 +143,25 @@ fn run() -> anyhow::Result<()> {
 enum Opened {
     Pdf(mupdf::pdf::PdfDocument),
     Other(Document),
+}
+
+/// The way a PDF says it reads: its catalog's `/ViewerPreferences
+/// /Direction`, `/L2R` or `/R2L`, from the catalog already parsed. Absent,
+/// unreadable, or any other value, it says nothing.
+fn direction(pdf: &mupdf::pdf::PdfDocument) -> Option<Direction> {
+    let name = pdf
+        .catalog()
+        .ok()?
+        .get_dict("ViewerPreferences")
+        .ok()??
+        .get_dict("Direction")
+        .ok()??;
+    // Anything but a name reads as an empty one.
+    match name.as_name().ok()?.as_slice() {
+        b"L2R" => Some(Direction::LeftToRight),
+        b"R2L" => Some(Direction::RightToLeft),
+        _ => None,
+    }
 }
 
 /// `--layout=width,height,em`: page size and body text size, in points,
@@ -410,4 +434,68 @@ fn search(
         }
     }
     Ok(hits)
+}
+
+#[cfg(test)]
+mod tests {
+    use skwir_core::direction::Direction;
+
+    /// A PDF of one page whose catalog adds `catalog`, its objects after
+    /// the page `more`: written whole, with the offsets its table gives.
+    fn one_page(catalog: &str, more: &[&str]) -> Vec<u8> {
+        let mut objects = vec![
+            format!("<< /Type /Catalog /Pages 2 0 R{catalog} >>"),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] >>".to_owned(),
+        ];
+        objects.extend(more.iter().map(|object| (*object).to_owned()));
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(data.len());
+            data.extend(format!("{} 0 obj\n{object}\nendobj\n", index + 1).bytes());
+        }
+        let xref = data.len();
+        let size = objects.len() + 1;
+        data.extend(format!("xref\n0 {size}\n0000000000 65535 f \n").bytes());
+        for offset in offsets {
+            data.extend(format!("{offset:010} 00000 n \n").bytes());
+        }
+        data.extend(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").bytes(),
+        );
+        data
+    }
+
+    /// A document says it reads right to left in its catalog's viewer
+    /// preferences, directly or through a reference; one that says
+    /// nothing, or names something else, says nothing.
+    #[test]
+    fn the_catalog_says_which_way_the_document_reads() {
+        for (catalog, more, direction) in [
+            (
+                " /ViewerPreferences << /Direction /R2L >>",
+                &[][..],
+                Some(Direction::RightToLeft),
+            ),
+            (
+                " /ViewerPreferences 4 0 R",
+                &["<< /HideToolbar true /Direction /R2L >>"][..],
+                Some(Direction::RightToLeft),
+            ),
+            (
+                " /ViewerPreferences << /Direction /L2R >>",
+                &[],
+                Some(Direction::LeftToRight),
+            ),
+            ("", &[], None),
+            (" /ViewerPreferences << /HideToolbar true >>", &[], None),
+            (" /ViewerPreferences << /Direction /Sideways >>", &[], None),
+            (" /ViewerPreferences << /Direction (R2L) >>", &[], None),
+        ] {
+            let pdf = mupdf::pdf::PdfDocument::from_bytes(&one_page(catalog, more)).unwrap();
+            assert_eq!(pdf.page_count().unwrap(), 1, "{catalog}");
+            assert_eq!(super::direction(&pdf), direction, "{catalog}");
+        }
+    }
 }

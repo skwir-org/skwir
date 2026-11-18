@@ -9,6 +9,7 @@ use std::{collections::HashMap, io::Write, sync::Arc};
 
 use skwir_core::{
     CancelToken,
+    direction::Direction,
     inspection::{Picture, PrintedPage, Row},
     preview::FileSource,
     words,
@@ -31,6 +32,8 @@ pub(crate) struct EpubBook {
     container: Container,
     book: rbook::Epub,
     chapters: Vec<ChapterRef>,
+    /// The way its pages turn, as its spine says.
+    direction: Option<Direction>,
     /// The size each picture is shown at, read once.
     sizes: Sizes,
 }
@@ -43,8 +46,8 @@ impl EpubBook {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Self>> {
         let mut container = Container::open(file, cancel)?;
-        let (book, fixed) = package(&mut container, cancel)?;
-        if fixed {
+        let (book, layout) = package(&mut container, cancel)?;
+        if layout.fixed {
             return Ok(None);
         }
         let chapters = book
@@ -64,6 +67,7 @@ impl EpubBook {
             container,
             book,
             chapters,
+            direction: layout.direction,
             sizes: Sizes::default(),
         }))
     }
@@ -103,6 +107,9 @@ impl Book for EpubBook {
     }
     fn printed_pages(&mut self, sections: &Sections) -> Vec<PrintedPage> {
         printed_pages(&self.book, sections)
+    }
+    fn direction(&self) -> Option<Direction> {
+        self.direction
     }
     /// What the package says about the book.
     fn details(&mut self) -> Vec<(Words, Option<String>)> {
@@ -612,27 +619,68 @@ fn unique_identifier(doc: &roxmltree::Document<'_>) -> Option<String> {
         .and_then(|n| n.text())
         .map(|identifier| identifier.trim().to_owned())
 }
-/// Build the in-memory package rbook parses: container.xml, the OPF and the
-/// contents documents (EPUB 3 nav, EPUB 2 NCX) it may read, all stored after
-/// passing through the bounded reader.
-/// Also says whether the book is laid out in fixed pages
-/// (`rendition:layout` is `pre-paginated`).
-pub(crate) fn package(
-    container: &mut Container,
-    cancel: &CancelToken,
-) -> anyhow::Result<(rbook::Epub, bool)> {
-    let (container_xml, opf_path, opf) = package_document(container, cancel)?;
-    let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
-    let mut contents = Vec::new();
-    let fixed;
-    {
-        let text = inspection::decode(&opf).0;
-        let doc = parse_xml(&text)?;
-        fixed = doc.descendants().any(|n| {
+/// How the package document says its book is laid out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Layout {
+    /// In fixed pages (`rendition:layout` is `pre-paginated`): a document
+    /// (`pages::FixedBook`), not reading mode's.
+    pub fixed: bool,
+    /// The way its pages turn: the spine's `page-progression-direction`,
+    /// `ltr` or `rtl`. `default`, or none, says nothing.
+    pub direction: Option<Direction>,
+}
+
+impl Layout {
+    /// What the package document `doc` says.
+    fn of(doc: &roxmltree::Document<'_>) -> Self {
+        let fixed = doc.descendants().any(|n| {
             n.has_tag_name("meta")
                 && n.attribute("property") == Some("rendition:layout")
                 && n.text().map(str::trim) == Some("pre-paginated")
         });
+        let direction = doc
+            .descendants()
+            .find(|n| n.has_tag_name("spine"))
+            .and_then(|spine| spine.attribute("page-progression-direction"))
+            .and_then(|direction| match direction.trim() {
+                "ltr" => Some(Direction::LeftToRight),
+                "rtl" => Some(Direction::RightToLeft),
+                _ => None,
+            });
+        Self { fixed, direction }
+    }
+}
+
+/// The way the book in `file` says its pages turn (`Layout::direction`),
+/// read from its package document alone: for a book another engine lays
+/// out (`MuPDF`), which never reads it.
+pub(crate) fn direction<S: FileSource + ?Sized>(
+    file: &S,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<Direction>> {
+    let mut container = Container::open(file, cancel)?;
+    let (_, _, opf) = package_document(&mut container, cancel)?;
+    let text = inspection::decode(&opf).0;
+    Ok(Layout::of(&parse_xml(&text)?).direction)
+}
+
+/// Build the in-memory package rbook parses: container.xml, the OPF and the
+/// contents documents (EPUB 3 nav, EPUB 2 NCX) it may read, all stored after
+/// passing through the bounded reader.
+/// Also says how the book is laid out (`Layout`), read from the same
+/// package document.
+pub(crate) fn package(
+    container: &mut Container,
+    cancel: &CancelToken,
+) -> anyhow::Result<(rbook::Epub, Layout)> {
+    let (container_xml, opf_path, opf) = package_document(container, cancel)?;
+    let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let mut contents = Vec::new();
+    let layout;
+    {
+        let text = inspection::decode(&opf).0;
+        let doc = parse_xml(&text)?;
+        layout = Layout::of(&doc);
         if let Some(identifier) = unique_identifier(&doc) {
             container.identifier = Some(identifier);
         }
@@ -683,7 +731,7 @@ pub(crate) fn package(
         }
     }
     let bytes = zip.finish()?.into_inner();
-    Ok((rbook::Epub::read(std::io::Cursor::new(bytes))?, fixed))
+    Ok((rbook::Epub::read(std::io::Cursor::new(bytes))?, layout))
 }
 
 /// The book's table of contents, and only it: the EPUB 3 `toc` nav, else

@@ -135,6 +135,9 @@ pub struct Grid {
     /// The height left for the picture in a cell.
     pub picture: f32,
     pub gap: f32,
+    /// The pictures run from the right, as a right-to-left window lays
+    /// its files out.
+    pub mirrored: bool,
 }
 
 /// The space under a picture of a contact sheet for its name.
@@ -142,8 +145,9 @@ pub const CAPTION: f32 = 12.0;
 
 impl Grid {
     /// Three across on a page taller than wide, four on one wider; as many
-    /// rows of square pictures as fit, one at least.
-    pub fn new(text: Area) -> Grid {
+    /// rows of square pictures as fit, one at least; from the right where
+    /// `mirrored`.
+    pub fn new(text: Area, mirrored: bool) -> Grid {
         let columns = if text.width > text.height { 4 } else { 3 };
         let gap = 8.0;
         let cell_width = (text.width - gap * (columns as f32 - 1.0)) / columns as f32;
@@ -158,6 +162,7 @@ impl Grid {
             cell_height,
             picture: (cell_height - CAPTION).max(1.0),
             gap,
+            mirrored,
         }
     }
 
@@ -165,11 +170,17 @@ impl Grid {
         self.columns * self.rows
     }
 
-    /// The cell of the `index`th picture of a page.
+    /// The cell of the `index`th picture of a page: the first at the
+    /// top's start, its left or, mirrored, its right.
     pub fn cell(&self, text: Area, index: usize) -> Area {
         let (row, column) = (index / self.columns, index % self.columns);
+        let from_start = column as f32 * (self.cell_width + self.gap);
         Area {
-            x: text.x + column as f32 * (self.cell_width + self.gap),
+            x: if self.mirrored {
+                text.x + text.width - from_start - self.cell_width
+            } else {
+                text.x + from_start
+            },
             y: text.y + row as f32 * (self.cell_height + self.gap),
             width: self.cell_width,
             height: self.cell_height,
@@ -339,6 +350,27 @@ fn share(natural: &[f32], columns: &[usize], width: f32, narrowest: f32) -> Vec<
         .collect()
 }
 
+/// Where each of the columns `widths` starts, side by side from the start
+/// of the span `left..left + width`: its left, or, `mirrored` (a listing
+/// in a right-to-left window, a document's table read right to left), its
+/// right, the first column the rightmost.
+pub fn lefts(widths: &[f32], left: f32, width: f32, mirrored: bool) -> Vec<f32> {
+    let mut at = if mirrored { left + width } else { left };
+    widths
+        .iter()
+        .map(|&w| {
+            if mirrored {
+                at -= w;
+                at
+            } else {
+                let x = at;
+                at += w;
+                x
+            }
+        })
+        .collect()
+}
+
 /// Which laid-out pages are written: those asked (from 0), in order, once
 /// each, past the end left out; all without.
 pub fn written(laid_out: u32, asked: Option<&[u32]>) -> Vec<u32> {
@@ -405,7 +437,7 @@ mod tests {
         assert!((frame.text.height - (595.276 - 2.0 * 42.52)).abs() < 0.01);
         // Fewer columns of a contact sheet do not follow: it stays taller
         // than wide, three across.
-        assert_eq!(Grid::new(frame.text).columns, 3);
+        assert_eq!(Grid::new(frame.text, false).columns, 3);
         // Code at 9 points, 11.7 to a row: 43 rows a page where A4 holds
         // 64.
         let rows = (frame.text.height / (9.0 * 1.3)).floor() as u32;
@@ -455,14 +487,48 @@ mod tests {
     #[test]
     fn a_contact_sheet_is_three_across_upright_four_on_its_side() {
         let a4 = Frame::new(&Paper::a4(), true, true);
-        let grid = Grid::new(a4.text);
+        let grid = Grid::new(a4.text, false);
         assert_eq!(grid.columns, 3);
         assert!(grid.rows >= 3);
         let last = grid.cell(a4.text, grid.per_page() - 1);
         assert!(last.bottom() <= a4.text.bottom() + 0.01);
         assert!(last.x + last.width <= a4.text.x + a4.text.width + 0.01);
         let landscape = Frame::new(&Paper::a4().landscape(), true, true);
-        assert_eq!(Grid::new(landscape.text).columns, 4);
+        assert_eq!(Grid::new(landscape.text, false).columns, 4);
+    }
+
+    #[test]
+    fn a_mirrored_contact_sheet_starts_at_the_right() {
+        let a4 = Frame::new(&Paper::a4(), true, true);
+        let (ltr, rtl) = (Grid::new(a4.text, false), Grid::new(a4.text, true));
+        let right = a4.text.x + a4.text.width;
+        for index in 0..ltr.per_page() {
+            let (from_left, from_right) = (ltr.cell(a4.text, index), rtl.cell(a4.text, index));
+            // The same row, its column counted from the other side.
+            assert_eq!(from_left.y, from_right.y);
+            assert!(
+                (right - (from_right.x + from_right.width) - (from_left.x - a4.text.x)).abs()
+                    < 0.01
+            );
+        }
+        assert!(
+            rtl.cell(a4.text, 0).x > rtl.cell(a4.text, 1).x,
+            "the first rightmost"
+        );
+    }
+
+    #[test]
+    fn columns_start_at_their_span_s_left_or_mirrored_its_right() {
+        assert_eq!(
+            lefts(&[10.0, 20.0, 30.0], 100.0, 200.0, false),
+            [100.0, 110.0, 130.0]
+        );
+        // Mirrored, the first ends at the span's right: 300.
+        assert_eq!(
+            lefts(&[10.0, 20.0, 30.0], 100.0, 200.0, true),
+            [290.0, 270.0, 240.0]
+        );
+        assert!(lefts(&[], 0.0, 10.0, true).is_empty());
     }
 
     #[test]

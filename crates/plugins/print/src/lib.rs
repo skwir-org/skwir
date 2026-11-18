@@ -12,7 +12,9 @@
 //! does. Nothing selected, Print Listing… prints what the pane lists,
 //! wherever it is: a folder, a search, a tag, the trash (`listing`).
 //! Saved, a PDF goes where the dialog says, beside what it is of unless
-//! another folder is chosen (`plan_of`, `dialog::Saved`).
+//! another folder is chosen (`plan_of`, `dialog::Saved`). A booklet is
+//! bound on the edge chosen (`bound`), else as the document reads
+//! (`make`): a Hebrew or an Arabic book, a manga, on the right.
 //!
 //! Printing waits for the user and for the helpers: it runs on a worker
 //! and says how it went in a notification. An agent's print asks first,
@@ -262,6 +264,21 @@ pub struct PrintArgs {
     /// (folded twice, 8 pages a sheet) or 8 (three times, 16 a sheet).
     #[serde(default)]
     pub per_side: Option<u32>,
+    /// The edge a booklet is bound on: `left`, or `right` (a Hebrew or an
+    /// Arabic book, a manga), its pages laid for folds made the other way.
+    /// Without, as the document reads: `reads`, else the way it says it
+    /// reads (a PDF's `/ViewerPreferences /Direction`, a book's page
+    /// progression, HTML's `dir`), else, a text Skwir lays out, its first
+    /// letter that has a direction; else `left`. Skwir's dialog (Print…
+    /// without `asked`, a window shown) opens on that edge, an agent's
+    /// call included; Save as PDF and `asked` ask no dialog.
+    #[serde(default)]
+    pub bound: Option<skwir_core::print::booklet::Bound>,
+    /// The way the document reads (`left_to_right`, `right_to_left`), a
+    /// fact its caller knows, as `count` is: the preview passes what the
+    /// document it shows says of itself. Binds a booklet without `bound`.
+    #[serde(default)]
+    pub reads: Option<skwir_core::direction::Direction>,
     /// Chosen already: Print… goes straight to the system's dialog
     /// instead of asking Skwir's first.
     #[serde(default)]
@@ -628,11 +645,16 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
                 )
             })?,
     };
+    // Bound on the edge asked, else as the caller says the document
+    // reads; else as it reads, told as it is made.
     let booklet = (args.layout == Arrange::Booklet).then_some(Booklet {
         per_side,
         signature: args.signature,
         trim: args.trim,
         turn_backs: false,
+        bound: args
+            .bound
+            .or_else(|| args.reads.map(skwir_core::print::booklet::Bound::reading)),
     });
     Ok(Request {
         what,
@@ -782,13 +804,36 @@ fn offers(
                 skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
             })
         });
-    let count = match typed.as_slice() {
-        [(entry, name)] => args.count.or_else(|| {
-            let pdf = mime(name).is_some_and(|mime| mime.as_str() == "application/pdf");
-            pdf.then(|| counted(app, entry, cancel)).flatten()
-        }),
-        _ => None,
+    // What the first file says of itself, asked once, where the caller
+    // did not say it: a PDF's pages (of one file), and the way it reads,
+    // which a booklet is bound by.
+    let pdf =
+        |name: &Option<OsString>| mime(name).is_some_and(|mime| mime.as_str() == "application/pdf");
+    let told = match typed.as_slice() {
+        [(entry, name), rest @ ..] => {
+            let count = rest.is_empty() && args.count.is_none() && pdf(name);
+            let reads = args.bound.is_none() && args.reads.is_none();
+            if count || reads {
+                told(app, entry, cancel)
+            } else {
+                make::Told::default()
+            }
+        }
+        [] => make::Told::default(),
     };
+    let count = if several {
+        None
+    } else {
+        args.count.or(told.pages)
+    };
+    let bound = args
+        .bound
+        .or_else(|| {
+            args.reads
+                .or(told.reads)
+                .map(skwir_core::print::booklet::Bound::reading)
+        })
+        .unwrap_or_default();
     Ok(dialog::Offers {
         what,
         saved,
@@ -799,6 +844,7 @@ fn offers(
                 .as_deref()
                 .is_some_and(|text| !text.is_empty()),
         count,
+        bound,
         subject: if several {
             dialog::Subject::Several { pictures: sheet }
         } else {
@@ -807,22 +853,25 @@ fn offers(
     })
 }
 
-/// How many pages the PDF `entry` has, if its reader says so within
-/// `COUNTING` (a file on a server that answers slowly is not waited for):
-/// found and counted in its remote's lane, which the wait bounds.
-fn counted(app: &App, entry: &EntryRef, cancel: &CancelToken) -> Option<u32> {
+/// What `entry` says of itself before the dialog asks (`make::looked_at`:
+/// a PDF's pages, the way it reads), what is told within `COUNTING` (a
+/// file on a server that answers slowly is not waited for, nor one whose
+/// provider is slow): found and read in its remote's lane, which the wait
+/// bounds. Nothing where it is not told in time.
+fn told(app: &App, entry: &EntryRef, cancel: &CancelToken) -> make::Told {
     let (entry, weak) = (entry.clone(), app.weak());
     soon(
         app,
         &entry.path.clone(),
-        "print-count",
+        "print-told",
         cancel,
         move |token| {
             let app = weak.upgrade()?;
             let path = entry.resolve().ok()?;
-            make::page_count(&app, &path, token).ok()
+            make::looked_at(&app, &path, token).ok()
         },
     )
+    .unwrap_or_default()
 }
 
 /// Whether `path` is a folder, if it is told within `COUNTING`: a folder
@@ -1052,6 +1101,7 @@ fn chosen_then(
         signature: chosen.signature,
         trim: chosen.trim,
         per_side: Some(chosen.per_side.count()),
+        bound: Some(chosen.bound),
         asked: true,
         ..args
     };
@@ -2132,6 +2182,248 @@ fn smaller_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use skwir_core::direction::Direction;
+    use skwir_core::print::booklet::Bound;
+
+    /// What stands in for the readers and the Markdown preview: a PDF
+    /// named `manga.pdf` says it reads right to left, another says
+    /// nothing; a Markdown file's one block is its text.
+    struct StandIn;
+
+    impl skwir_core::preview::PreviewProvider for StandIn {
+        fn id(&self) -> &'static str {
+            "stand-in"
+        }
+        fn priority(&self) -> i32 {
+            i32::MAX / 2
+        }
+        fn accepts(&self, request: &skwir_core::preview::PreviewRequest) -> bool {
+            matches!(
+                request.mime.as_deref(),
+                Some("application/pdf" | "text/markdown")
+            )
+        }
+        fn inspect(
+            &self,
+            request: &skwir_core::preview::PreviewRequest,
+            _: &skwir_core::inspection::InspectRequest,
+            _: &CancelToken,
+        ) -> anyhow::Result<Option<skwir_core::inspection::Inspection>> {
+            if request.mime.as_deref() != Some("text/markdown") {
+                return Ok(None);
+            }
+            let text = std::fs::read_to_string(&request.entry.path)?;
+            let blocks = text
+                .lines()
+                .map(|line| skwir_core::inspection::Block {
+                    text: line.to_owned(),
+                    code: line.starts_with("    "),
+                    ..skwir_core::inspection::Block::default()
+                })
+                .collect();
+            Ok(Some(skwir_core::inspection::Inspection {
+                kind: skwir_core::inspection::InspectionKind::Markdown,
+                blocks,
+                ..skwir_core::inspection::Inspection::default()
+            }))
+        }
+        fn open_document(
+            &self,
+            request: &skwir_core::preview::PreviewRequest,
+            _: &CancelToken,
+        ) -> anyhow::Result<Option<Arc<dyn skwir_core::document::DocumentSession>>> {
+            if request.mime.as_deref() != Some("application/pdf") {
+                return Ok(None);
+            }
+            let manga = request.entry.path.file_name() == Some(std::ffi::OsStr::new("manga.pdf"));
+            Ok(Some(Arc::new(Read(skwir_core::document::DocumentInfo {
+                pages: 3,
+                outlines: Vec::new(),
+                reflowable: false,
+                labels: Vec::new(),
+                direction: manga.then_some(Direction::RightToLeft),
+            }))))
+        }
+    }
+
+    /// A document read, its pages never drawn.
+    struct Read(skwir_core::document::DocumentInfo);
+
+    impl skwir_core::document::DocumentSession for Read {
+        fn info(&self) -> &skwir_core::document::DocumentInfo {
+            &self.0
+        }
+        fn render(
+            &self,
+            _: u32,
+            _: u32,
+            _: &CancelToken,
+        ) -> anyhow::Result<skwir_core::document::DocumentPage> {
+            anyhow::bail!("not drawn here")
+        }
+        fn search(
+            &self,
+            _: &str,
+            _: &CancelToken,
+        ) -> anyhow::Result<Vec<skwir_core::document::SearchHit>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// An app whose previews the stand-in answers, and files of `tmp`
+    /// written as named.
+    fn standing_in(tmp: &Path) -> (Arc<App>, impl Fn(&str, &[u8]) -> PathBuf + '_) {
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.join("state"))).unwrap();
+        app.previews.register("test", Arc::new(StandIn));
+        let file = move |name: &str, bytes: &[u8]| {
+            let path = tmp.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        (app, file)
+    }
+
+    const PDF: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
+
+    /// What the dialog is told of a file before it asks: a PDF's pages
+    /// and the way it says it reads, read together; a text's way, as its
+    /// first text block with a letter tells (code passed over); nothing
+    /// of what says nothing.
+    #[test]
+    fn a_file_is_told_before_the_dialog_asks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, file) = standing_in(tmp.path());
+        let told = |path: &Path| make::looked_at(&app, path, &CancelToken::new()).unwrap();
+        let manga = file("manga.pdf", PDF);
+        assert_eq!(
+            told(&manga),
+            make::Told {
+                pages: Some(3),
+                reads: Some(Direction::RightToLeft)
+            }
+        );
+        let report = file("report.pdf", PDF);
+        assert_eq!(told(&report).reads, None);
+        let hebrew = file("שלום.md", "2026\n    let code = 1;\nשלום עולם\n".as_bytes());
+        assert_eq!(told(&hebrew).reads, Some(Direction::RightToLeft));
+        let english = file("l'été.md", "    שלום\nNotes\n".as_bytes());
+        assert_eq!(
+            told(&english).reads,
+            Some(Direction::LeftToRight),
+            "its code passed over"
+        );
+        let digits = file("digits.md", b"2026\n");
+        assert_eq!(told(&digits).reads, None);
+    }
+
+    /// The edge a booklet's dialog opens on: the one asked, else the way
+    /// the caller says the document reads, else the way the file says it
+    /// reads (a PDF's, read with its count) or its text tells, else the
+    /// left; never the window's language.
+    #[test]
+    fn the_dialog_binds_a_booklet_as_the_document_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, file) = standing_in(tmp.path());
+        let manga = file("manga.pdf", PDF);
+        let report = file("report.pdf", PDF);
+        let hebrew = file("שלום.md", "שלום עולם\n".as_bytes());
+        let english = file("notes.md", b"Notes\n");
+        // Read once before, so that what the dialog tells within its
+        // wait is not the type database's first reading.
+        for path in [&manga, &hebrew] {
+            make::looked_at(&app, path, &CancelToken::new()).unwrap();
+        }
+        let offered = |path: &Path, args: PrintArgs| {
+            let args = PrintArgs {
+                entries: vec![EntryArg::from(EntryRef::from_path(path).unwrap())],
+                ..args
+            };
+            offers(&app, &args, &dialog::Last::default(), &CancelToken::new()).unwrap()
+        };
+        let none = PrintArgs::default;
+        let manga_offered = offered(&manga, none());
+        assert_eq!(manga_offered.bound, Bound::Right, "a PDF's own");
+        assert_eq!(manga_offered.count, Some(3), "read with its count");
+        assert_eq!(offered(&report, none()).bound, Bound::Left);
+        assert_eq!(offered(&hebrew, none()).bound, Bound::Right, "its text");
+        assert_eq!(offered(&english, none()).bound, Bound::Left);
+        // Asked, or told by the caller: over what the file says.
+        let asked = |bound| PrintArgs {
+            bound: Some(bound),
+            ..none()
+        };
+        let reads = |reads| PrintArgs {
+            reads: Some(reads),
+            ..none()
+        };
+        assert_eq!(offered(&manga, asked(Bound::Left)).bound, Bound::Left);
+        assert_eq!(offered(&english, asked(Bound::Right)).bound, Bound::Right);
+        assert_eq!(
+            offered(&manga, reads(Direction::LeftToRight)).bound,
+            Bound::Left
+        );
+        assert_eq!(
+            offered(&report, reads(Direction::RightToLeft)).bound,
+            Bound::Right
+        );
+        // Several files: as the first reads.
+        let several = PrintArgs {
+            entries: [&hebrew, &english]
+                .map(|path| EntryArg::from(EntryRef::from_path(path).unwrap()))
+                .to_vec(),
+            ..none()
+        };
+        let several = offers(
+            &app,
+            &several,
+            &dialog::Last::default(),
+            &CancelToken::new(),
+        )
+        .unwrap();
+        assert_eq!((several.bound, several.count), (Bound::Right, None));
+    }
+
+    /// Without a dialog (Save as PDF, `asked`), a booklet is bound on the
+    /// edge asked, else as the caller says the document reads, else as it
+    /// reads, told as it is made.
+    #[test]
+    fn a_booklet_asked_without_a_dialog_is_bound_as_asked_or_as_it_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, file) = standing_in(tmp.path());
+        let notes = file("notes.md", b"Notes\n");
+        let bound = |args: PrintArgs| {
+            let args = PrintArgs {
+                entries: vec![EntryArg::from(EntryRef::from_path(&notes).unwrap())],
+                layout: Arrange::Booklet,
+                ..args
+            };
+            request(&app, &args).unwrap().booklet.unwrap().bound
+        };
+        assert_eq!(bound(PrintArgs::default()), None, "told as it is made");
+        assert_eq!(
+            bound(PrintArgs {
+                bound: Some(Bound::Right),
+                reads: Some(Direction::LeftToRight),
+                ..PrintArgs::default()
+            }),
+            Some(Bound::Right)
+        );
+        assert_eq!(
+            bound(PrintArgs {
+                reads: Some(Direction::RightToLeft),
+                ..PrintArgs::default()
+            }),
+            Some(Bound::Right)
+        );
+        // An agent's or a script's arguments, as JSON.
+        let args: PrintArgs =
+            serde_json::from_value(serde_json::json!({"bound": "right", "reads": "right_to_left"}))
+                .unwrap();
+        assert_eq!(
+            (args.bound, args.reads),
+            (Some(Bound::Right), Some(Direction::RightToLeft))
+        );
+    }
 
     /// Remembered folders on a server that stopped answering cost the
     /// dialog one wait, however many they are; the others are told, each

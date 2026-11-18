@@ -6,6 +6,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use pdfium_render::prelude::*;
+use skwir_core::direction::Direction;
 use skwir_core::document::{
     COMPOSED_FILE, CSS_PER_POINT, Compose, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS,
     MAX_PAGE_CHARS, MAX_SIDE, Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit,
@@ -88,9 +89,10 @@ fn run() -> anyhow::Result<()> {
         }
     };
     // pdfium-render 0.9 keeps the bindings it is handed to itself (its
-    // issue 279) and reads no page labels: they are asked through a second
-    // binding to the same library, made before it takes the first.
-    let labelling = if first_page {
+    // issue 279) and reads neither page labels nor viewer preferences:
+    // they are asked through a second binding to the same library, made
+    // before it takes the first.
+    let raw = if first_page {
         None
     } else {
         self::bindings().ok()
@@ -99,7 +101,7 @@ fn run() -> anyhow::Result<()> {
     let document = pdfium
         .load_pdf_from_file(Path::new(&args[0]), None)
         .context("open PDF (encrypted files require an external reader)")?;
-    let info = document_info(&document, first_page, labelling.as_deref());
+    let info = document_info(&document, first_page, raw.as_deref());
     anyhow::ensure!(info.pages > 0, "document has no pages");
     worker::greet(&WorkerReply::Ready(info))?;
     let scratch = Path::new(&args[1]);
@@ -690,12 +692,12 @@ fn inked(pixels: &[u8], columns: usize, rows: usize) -> Option<(usize, usize, us
 }
 
 /// What the document is: its pages, and unless only its first page is
-/// drawn (`first_page`), its outline and its pages' labels, read through
-/// `labelling`.
+/// drawn (`first_page`), its outline, its pages' labels and the way it
+/// says it reads, the last two read through `raw`.
 fn document_info(
     document: &PdfDocument<'_>,
     first_page: bool,
-    labelling: Option<&dyn PdfiumLibraryBindings>,
+    raw: Option<&dyn PdfiumLibraryBindings>,
 ) -> DocumentInfo {
     let pages = u32::try_from(document.pages().len()).unwrap_or_default();
     if first_page {
@@ -704,13 +706,47 @@ fn document_info(
             outlines: Vec::new(),
             reflowable: false,
             labels: Vec::new(),
+            direction: None,
         };
     }
     DocumentInfo {
         pages,
         outlines: outlines(document),
         reflowable: false,
-        labels: labelling.map_or_else(Vec::new, |bindings| labels(document, bindings)),
+        labels: raw.map_or_else(Vec::new, |bindings| labels(document, bindings)),
+        direction: raw.and_then(|bindings| direction(document, bindings)),
+    }
+}
+
+/// The way the document says it reads: its catalog's
+/// `/ViewerPreferences /Direction`, `/L2R` or `/R2L`. Absent, or any
+/// other name, it says nothing. Read through `bindings` to the library
+/// that opened it, from the catalog already parsed.
+fn direction(
+    document: &PdfDocument<'_>,
+    bindings: &dyn PdfiumLibraryBindings,
+) -> Option<Direction> {
+    let handle = bindings.get_handle_from_document(document);
+    // Room for either name and its NUL: a longer one is measured, never
+    // written here, and is neither.
+    let mut name = [0u8; 8];
+    let room = std::ffi::c_ulong::try_from(name.len()).ok()?;
+    // SAFETY: the handle is of a document open in this library, and the
+    // buffer holds the `room` bytes the call writes at most.
+    #[allow(unsafe_code)]
+    let length = unsafe {
+        bindings.FPDF_VIEWERREF_GetName(handle, "Direction", name.as_mut_ptr().cast(), room)
+    };
+    let written = usize::try_from(length).ok().filter(|&n| n <= name.len())?;
+    pdf_direction(&name[..written.checked_sub(1)?])
+}
+
+/// The direction a PDF's `/Direction` name (without its slash) says.
+fn pdf_direction(name: &[u8]) -> Option<Direction> {
+    match name {
+        b"L2R" => Some(Direction::LeftToRight),
+        b"R2L" => Some(Direction::RightToLeft),
+        _ => None,
     }
 }
 
@@ -1069,5 +1105,88 @@ mod tests {
             at[1],
             Path::new("/Applications/skwir.app/Contents/Frameworks/libpdfium.dylib")
         );
+    }
+
+    /// A PDF of one page whose catalog adds `catalog`, its objects after
+    /// the page `more`: written whole, with the offsets its table gives.
+    fn one_page(catalog: &str, more: &[&str]) -> Vec<u8> {
+        let mut objects = vec![
+            format!("<< /Type /Catalog /Pages 2 0 R{catalog} >>"),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] >>".to_owned(),
+        ];
+        objects.extend(more.iter().map(|object| (*object).to_owned()));
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(data.len());
+            data.extend(format!("{} 0 obj\n{object}\nendobj\n", index + 1).bytes());
+        }
+        let xref = data.len();
+        let size = objects.len() + 1;
+        data.extend(format!("xref\n0 {size}\n0000000000 65535 f \n").bytes());
+        for offset in offsets {
+            data.extend(format!("{offset:010} 00000 n \n").bytes());
+        }
+        data.extend(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").bytes(),
+        );
+        data
+    }
+
+    #[test]
+    fn a_pdf_s_direction_is_its_name_l2r_or_r2l_alone() {
+        use skwir_core::direction::Direction;
+        assert_eq!(super::pdf_direction(b"R2L"), Some(Direction::RightToLeft));
+        assert_eq!(super::pdf_direction(b"L2R"), Some(Direction::LeftToRight));
+        for other in [&b""[..], b"r2l", b"R2L ", b"RTL", b"R2LX"] {
+            assert_eq!(super::pdf_direction(other), None, "{other:?}");
+        }
+    }
+
+    /// A document says it reads right to left in its catalog's viewer
+    /// preferences, directly or through a reference; one that says
+    /// nothing, or names something else, says nothing; and a first page
+    /// drawn alone (a thumbnail) reads none of it. Needs `PDFium`
+    /// (`SKWIR_PDFIUM_LIBRARY`, which the dev shell sets): skipped,
+    /// saying so, without.
+    #[test]
+    fn the_catalog_says_which_way_the_document_reads() {
+        use pdfium_render::prelude::Pdfium;
+        use skwir_core::direction::Direction;
+        let (Ok(bindings), Ok(raw)) = (super::bindings(), super::bindings()) else {
+            eprintln!("skipped: no PDFium (SKWIR_PDFIUM_LIBRARY)");
+            return;
+        };
+        let pdfium = Pdfium::new(bindings);
+        for (catalog, more, direction) in [
+            (
+                " /ViewerPreferences << /Direction /R2L >>",
+                &[][..],
+                Some(Direction::RightToLeft),
+            ),
+            (
+                " /ViewerPreferences 4 0 R",
+                &["<< /HideToolbar true /Direction /R2L >>"][..],
+                Some(Direction::RightToLeft),
+            ),
+            (
+                " /ViewerPreferences << /Direction /L2R >>",
+                &[],
+                Some(Direction::LeftToRight),
+            ),
+            ("", &[], None),
+            (" /ViewerPreferences << /HideToolbar true >>", &[], None),
+            (" /ViewerPreferences << /Direction /Sideways >>", &[], None),
+            (" /ViewerPreferences << /Direction (R2L) >>", &[], None),
+        ] {
+            let bytes = one_page(catalog, more);
+            let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
+            let info = super::document_info(&document, false, Some(&*raw));
+            assert_eq!(info.pages, 1, "{catalog}");
+            assert_eq!(info.direction, direction, "{catalog}");
+            let first = super::document_info(&document, true, None);
+            assert_eq!(first.direction, None, "{catalog}: a thumbnail reads none");
+        }
     }
 }

@@ -1,5 +1,6 @@
 //! Pictures and drawings: each picture on a page of its own, fitted to
-//! the text, or several to a page with their names, as a contact sheet;
+//! the text, or several to a page with their names, as a contact sheet
+//! (from the right in a right-to-left window, as it lays its files out);
 //! a document's pages drawn as pictures; an SVG drawing kept vector. A
 //! JPEG is embedded as it is, other pictures as krilla takes them in;
 //! each is a figure with its alternative text for a screen reader, turned
@@ -24,6 +25,7 @@ use krilla::surface::Surface;
 use krilla::tagging::Tag;
 use krilla_svg::{SurfaceExt, SvgSettings};
 use parley::Alignment;
+use skwir_core::direction::Direction;
 use skwir_core::print::Picture;
 
 use crate::fonts::{Fonts, Role};
@@ -45,17 +47,27 @@ pub struct Pictures<'a> {
     drawn: bool,
     frame: Frame,
     grid: Grid,
+    /// The window's direction, a contact sheet's.
+    window: Direction,
     structure: Structure,
 }
 
 impl<'a> Pictures<'a> {
-    pub fn plan(pictures: &'a [Picture], sheet: bool, frame: Frame) -> Pictures<'a> {
+    /// Pictures, a page each or as a contact sheet laid out in the
+    /// window's direction (`window`).
+    pub fn plan(
+        pictures: &'a [Picture],
+        sheet: bool,
+        frame: Frame,
+        window: Direction,
+    ) -> Pictures<'a> {
         Pictures {
             all: pictures,
             sheet,
             drawn: false,
             frame,
-            grid: Grid::new(frame.text),
+            grid: Grid::new(frame.text, window.is_right_to_left()),
+            window,
             structure: Structure::default(),
         }
     }
@@ -64,7 +76,7 @@ impl<'a> Pictures<'a> {
     pub fn pages(pages: &'a [Picture], frame: Frame) -> Pictures<'a> {
         Pictures {
             drawn: true,
-            ..Pictures::plan(pages, false, frame)
+            ..Pictures::plan(pages, false, frame, Direction::LeftToRight)
         }
     }
 }
@@ -131,6 +143,12 @@ impl Part for Pictures<'_> {
 
     fn finish(&mut self, cx: &mut PageCx) {
         self.structure.close_all(cx);
+    }
+
+    /// A contact sheet reads as the window it is laid out in, as a
+    /// listing does; a picture a page says nothing.
+    fn reads(&self) -> Option<Direction> {
+        self.sheet.then_some(self.window)
     }
 }
 

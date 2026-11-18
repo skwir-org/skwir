@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use skwir_core::{
     CancelToken,
+    direction::Direction,
     inspection::{Picture, Row},
     preview::FileSource,
     words,
@@ -58,6 +59,30 @@ pub(crate) fn mupdf_reads<S: FileSource + ?Sized>(file: &S, cancel: &CancelToken
             && header.mobi.as_ref().is_none_or(|mobi| mobi.version < 8))
     };
     read().unwrap_or(false)
+}
+
+/// The way the book in `file` says its pages turn, read from its first
+/// record alone (`declared`): for a book another engine lays out
+/// (`MuPDF`, a MOBI 6 book), which never reads it here.
+pub(crate) fn direction<S: FileSource + ?Sized>(
+    file: &S,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<Direction>> {
+    let database = Database::open(file, cancel)?;
+    Ok(declared(&Header::parse(
+        &database.record(file, 0, cancel)?,
+    )?))
+}
+
+/// The way a book's header says its pages turn (EXTH 527): `ltr` or
+/// `rtl`; anything else, or none, says nothing. A `PalmDOC` text has no
+/// EXTH, and says nothing.
+fn declared(header: &Header) -> Option<Direction> {
+    match header.text(exth::PAGE_DIRECTION)?.as_str() {
+        "ltr" => Some(Direction::LeftToRight),
+        "rtl" => Some(Direction::RightToLeft),
+        _ => None,
+    }
 }
 
 /// Whether `head`, a file's first bytes, is a Mobipocket book or a `PalmDOC`
@@ -112,6 +137,8 @@ pub(crate) struct Mobi {
     flows: Vec<String>,
     contents: Vec<Row>,
     details: Vec<(Words, Option<String>)>,
+    /// The way its pages turn, as it says (`declared`).
+    direction: Option<Direction>,
     /// The first picture's record: what `recindex` and `kindle:embed`
     /// count from (in a file holding both, the MOBI 6 part's).
     pictures: Option<usize>,
@@ -166,6 +193,8 @@ impl Mobi {
         };
         let (pictures, _) = pictures(&first, &database);
         let details = details(&first, &database);
+        // Said in the first header, else in the KF8 part's.
+        let direction = declared(&first).or_else(|| declared(&kf8.as_ref()?.1));
         let mut book = Self {
             text: Text::Mobi6,
             azw3: version(&first) >= 8,
@@ -175,6 +204,7 @@ impl Mobi {
             flows: Vec::new(),
             contents: Vec::new(),
             details,
+            direction,
             pictures,
             sizes: Sizes::default(),
         };
@@ -577,6 +607,9 @@ impl<S: FileSource + ?Sized> Book for Reading<'_, S> {
     }
     fn details(&mut self) -> Vec<(Words, Option<String>)> {
         self.book.details.clone()
+    }
+    fn direction(&self) -> Option<Direction> {
+        self.book.direction
     }
 }
 

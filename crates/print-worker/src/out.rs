@@ -3,7 +3,10 @@
 //! is marked for a screen reader as it is drawn and its structure put in
 //! the document's tag tree in reading order; headings become the
 //! outline. A page is finished (and compressed) before the next starts:
-//! the drawing of only one is held at a time.
+//! the drawing of only one is held at a time. The name above the pages is
+//! at the window's start (`Job::window`), and a document that reads right
+//! to left says so (`/ViewerPreferences /Direction /R2L`), so a viewer
+//! shows its facing pages from the right.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -13,7 +16,7 @@ use krilla::action::LinkAction;
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::destination::XyzDestination;
 use krilla::geom::{Point, Rect};
-use krilla::metadata::Metadata;
+use krilla::metadata::{Metadata, TextDirection};
 use krilla::outline::{Outline, OutlineNode};
 use krilla::page::PageSettings;
 use krilla::surface::Surface;
@@ -22,6 +25,7 @@ use krilla::tagging::{
 };
 use krilla::{Document, SerializeSettings};
 use parley::Layout;
+use skwir_core::direction::Direction;
 use skwir_core::print::{Job, Made};
 
 use crate::fonts::{Fonts, Role};
@@ -37,6 +41,32 @@ pub trait Part {
     /// What it left open in the tag tree closed, before another part
     /// draws.
     fn finish(&mut self, cx: &mut PageCx);
+    /// The way it says the document reads, where it says one: a document's
+    /// text by its first paragraph with a letter, a listing or a contact
+    /// sheet by the window it is laid out in. Code, a picture a page, a
+    /// drawing, a document's drawn pages and a font's specimen say none.
+    fn reads(&self) -> Option<Direction> {
+        None
+    }
+}
+
+/// The way the job's document reads: as the job says (`Job::reads`, the
+/// document's own `dir` or page progression), else as the first part that
+/// says one (`Part::reads`), else left to right.
+pub fn reads(job: &Job, parts: &[Box<dyn Part + '_>]) -> Direction {
+    job.reads
+        .or_else(|| parts.iter().find_map(|part| part.reads()))
+        .unwrap_or_default()
+}
+
+/// Where a line Skwir lays out itself starts (the name above the pages, a
+/// listing's cells) in a window laid out in `window`: its left, or its
+/// right in a right-to-left window, whatever the line's own words read.
+pub fn window_start(window: Direction) -> parley::Alignment {
+    match window {
+        Direction::LeftToRight => parley::Alignment::Left,
+        Direction::RightToLeft => parley::Alignment::Right,
+    }
 }
 
 /// A heading: its level, its text, the page it is on (of the whole job)
@@ -323,11 +353,13 @@ pub fn write(
         tree: TagTree::new().with_lang(job.language.clone()),
         stack: Vec::new(),
     };
+    let reads = reads(job, &parts);
     let header = job.header.as_deref().map(|header| {
         let mut spec = Spec::new(Role::Text, BAND_SIZE);
         spec.color = GREY;
         spec.width = Some(frame.text.width);
         spec.wrap = Wrap::Anywhere;
+        spec.align = window_start(job.window);
         text::fitted(fonts, header, &spec, 1)
     });
     let page_settings =
@@ -382,6 +414,10 @@ pub fn write(
     if let Some(language) = &job.language {
         metadata = metadata.language(language.clone());
     }
+    // A viewer shows facing pages from the right, and turns them leftwards.
+    if reads.is_right_to_left() {
+        metadata = metadata.text_direction(TextDirection::RightToLeft);
+    }
     document.set_metadata(metadata);
     let pdf = document
         .finish()
@@ -394,7 +430,8 @@ pub fn write(
     })
 }
 
-/// The name above the text and "n / N" below it.
+/// The name above the text, at the window's start, and "n / N" below it,
+/// in the middle in either direction.
 fn draw_bands(cx: &mut PageCx, header: Option<&(Layout<Ink>, String)>, page: usize, total: usize) {
     let frame = cx.frame;
     if let (Some(baseline), Some((layout, text))) = (frame.header, header) {

@@ -8,6 +8,17 @@
 //! rows are repeated above the rest. Drawing a page lays its blocks out
 //! again, the last kept for the page after; so what is held between the
 //! two passes is each block's rows' heights.
+//!
+//! Each block reads in its own direction, as the window's reading view
+//! lays it out (`docs/invariants/shell.md`, "A document's paragraph reads
+//! in its own direction"): a paragraph, a heading, a list's item or a note
+//! whose first strong letter is Hebrew or Arabic (parley's base direction,
+//! UAX #9's P2 and P3) starts at its right, its indent, its list's marker
+//! and its quotation's bar on that side, its alignment its own. One with
+//! no strong letter reads left to right. A code block reads left to right
+//! on every line, at its left, as editors keep code; a picture and a rule
+//! stay where they are. A table's columns run as the document reads
+//! (`Job::reads`), each cell's text in its own direction.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -19,7 +30,8 @@ use anyhow::Result;
 use krilla::geom::{PathBuilder, Rect};
 use krilla::paint::FillRule;
 use krilla::tagging::{ArtifactType, ListNumbering, TableHeaderScope, Tag, TagKind};
-use parley::{Alignment, BreakReason, Language, Layout};
+use parley::{Alignment, BaseDirection, BreakReason, Language, Layout};
+use skwir_core::direction::Direction;
 use skwir_core::print::{Align, Block, BlockKind, Picture, Run};
 
 use crate::fonts::{Fonts, Role};
@@ -33,6 +45,10 @@ const LINE_HEIGHT: f32 = 1.4;
 const HEADINGS: [f32; 6] = [1.8, 1.5, 1.25, 1.1, 1.0, 0.9];
 const LIST_INDENT: f32 = 18.0;
 const QUOTE_INDENT: f32 = 14.0;
+/// A quotation's bar, along its start.
+const BAR: f32 = 2.5;
+/// Between a list's marker and its item's text.
+const MARKER_GAP: f32 = 4.0;
 const CODE_SIZE: f32 = 9.0;
 const CODE_PAD: f32 = 6.0;
 const CELL_X: f32 = 4.0;
@@ -90,9 +106,13 @@ struct Look {
 struct Item {
     kind: Kind,
     block: usize,
-    /// Left of the text area, and the width it has.
+    /// Left of the text area, and the width it has: its indent at its
+    /// start, the left or, where it reads right to left, the right.
     x: f32,
     width: f32,
+    /// It reads right to left: from its right, its marker and its
+    /// quotation's bar there; a table's columns from the right.
+    rtl: bool,
     look: Look,
     /// Each row's top and bottom, in the block's own height.
     rows: Vec<(f32, f32)>,
@@ -106,7 +126,7 @@ struct Item {
     /// A list item's first block, whose marker is drawn in the groups up
     /// to its item: `groups` but the last list's body.
     marked: bool,
-    /// Where a quote's bar is drawn.
+    /// Where a quote's bar is drawn, its left from the text's.
     bar: Option<f32>,
     /// The height of the header repeated over the rows on a page after.
     head: f32,
@@ -152,6 +172,9 @@ struct Piece {
 
 pub struct Flow<'a> {
     blocks: Cow<'a, [Block]>,
+    /// A document's text, which says the way it reads (not a specimen's
+    /// lines, a font shown).
+    document: bool,
     /// Shared, so a page drawn borrows an item while it draws.
     items: Rc<[Item]>,
     pages: Vec<Vec<Piece>>,
@@ -216,26 +239,34 @@ fn align(align: Align) -> Alignment {
 }
 
 impl<'a> Flow<'a> {
+    /// A document's blocks, its tables' columns running as it says it
+    /// reads (`reads`, `Job::reads`): from the right only where it says
+    /// right to left.
+    #[allow(clippy::too_many_arguments)] // The blocks and what is learnt of them.
     pub fn plan(
         blocks: &'a [Block],
         fonts: &mut Fonts,
         frame: Frame,
         language: Option<Language>,
+        reads: Option<Direction>,
         first_page: usize,
         anchors: &mut HashMap<String, (usize, f32)>,
         headings: &mut Vec<Heading>,
     ) -> Flow<'a> {
         let looks = vec![None; blocks.len()];
-        Flow::build(
+        let mut flow = Flow::build(
             Cow::Borrowed(blocks),
             &looks,
             fonts,
             frame,
             language,
+            reads.is_some_and(Direction::is_right_to_left),
             first_page,
             anchors,
             headings,
-        )
+        );
+        flow.document = true;
+        flow
     }
 
     /// A font shown: its name in the text's face, then for each size the
@@ -289,6 +320,7 @@ impl<'a> Flow<'a> {
             fonts,
             frame,
             language,
+            false,
             first_page,
             &mut HashMap::new(),
             headings,
@@ -302,11 +334,12 @@ impl<'a> Flow<'a> {
         fonts: &mut Fonts,
         frame: Frame,
         language: Option<Language>,
+        tables_rtl: bool,
         first_page: usize,
         anchors: &mut HashMap<String, (usize, f32)>,
         headings: &mut Vec<Heading>,
     ) -> Flow<'a> {
-        let items = items(&blocks, looks, fonts, frame, language);
+        let items = items(&blocks, looks, fonts, frame, language, tables_rtl);
         let pages = paginate(&items, frame.text.height);
         // Where each block is: its first piece, or where it would be.
         let mut placed: Vec<Option<(usize, f32)>> = vec![None; items.len()];
@@ -344,6 +377,7 @@ impl<'a> Flow<'a> {
         }
         Flow {
             blocks,
+            document: false,
             items: Rc::from(items),
             pages,
             frame,
@@ -393,7 +427,7 @@ impl<'a> Flow<'a> {
         if let Some(bar) = item.bar {
             let x = self.frame.text.x + bar;
             cx.artifact(ArtifactType::Layout, |surface, _| {
-                if let Some(rect) = Rect::from_xywh(x, top, 2.5, (bottom - top).max(0.1)) {
+                if let Some(rect) = Rect::from_xywh(x, top, BAR, (bottom - top).max(0.1)) {
                     text::rect(surface, rect, RULE);
                 }
             });
@@ -489,10 +523,18 @@ impl<'a> Flow<'a> {
         if piece.rows.start == 0
             && let (Some(marker), Some(marker_path)) = (&block.marker, item.marker_path())
         {
-            // The marker hung left of the text, on its first baseline.
+            // The marker hung before the text, on its first baseline: left
+            // of it, or right of it where the item reads right to left, and
+            // read as its item reads ("1." from the right, its point after
+            // it at its left), as a browser lays a list's marker out.
             let mut spec = self.spec(item);
             spec.wrap = Wrap::None;
             spec.align = Alignment::Start;
+            spec.direction = if item.rtl {
+                BaseDirection::Rtl
+            } else {
+                BaseDirection::Ltr
+            };
             let layout = text::plain(cx.fonts, marker, &spec);
             let baseline = self
                 .cache
@@ -503,12 +545,17 @@ impl<'a> Flow<'a> {
             let mut path = marker_path.to_vec();
             path.push((key(group::LABEL, item.block), Tag::Lbl.into()));
             self.structure.goto(cx, &path);
+            let x = if item.rtl {
+                origin.0 + item.width + MARKER_GAP
+            } else {
+                origin.0 - MARKER_GAP - layout.width()
+            };
             cx.lines(
                 &layout,
                 marker,
                 &[],
                 0..layout.len(),
-                (origin.0 - 4.0 - layout.width(), origin.1 + baseline - own),
+                (x, origin.1 + baseline - own),
             );
         }
         self.structure.goto(cx, &item.path());
@@ -589,6 +636,10 @@ impl<'a> Flow<'a> {
         else {
             return;
         };
+        // The columns from the item's start: its left, or its right where
+        // the document reads right to left.
+        let lefts = geometry::lefts(columns, left, item.width, item.rtl);
+        let left = lefts.iter().copied().reduce(f32::min).unwrap_or(left);
         let right = left + columns.iter().sum::<f32>();
         let mut y = top;
         let mut rules = vec![];
@@ -602,7 +653,7 @@ impl<'a> Flow<'a> {
                     blocks.start + row,
                     columns,
                     *size,
-                    (left, y),
+                    (&lefts, y),
                     None,
                     None,
                 );
@@ -617,7 +668,7 @@ impl<'a> Flow<'a> {
             let block = blocks.start + row;
             let mut path = path.clone();
             path.push((key(group::ROW, block), Tag::TR.into()));
-            let height = self.cell_row(cx, block, columns, *size, (left, y), Some(&path), shown);
+            let height = self.cell_row(cx, block, columns, *size, (&lefts, y), Some(&path), shown);
             y += height;
             rules.push((y, if row + 1 == *head { 0.75 } else { 0.4 }));
         }
@@ -632,10 +683,11 @@ impl<'a> Flow<'a> {
         });
     }
 
-    /// A row of a table drawn at `(x, y)`, its cells marked under `path`
-    /// (a header repeated, not marked, without): its height. A row sliced
-    /// over pages (`shown`, what of the page its slice shows) is laid out
-    /// once for all its slices, and each draws the lines it shows alone.
+    /// A row of a table drawn at `y`, each cell at the left its column
+    /// starts at (`lefts`), its cells marked under `path` (a header
+    /// repeated, not marked, without): its height. A row sliced over pages
+    /// (`shown`, what of the page its slice shows) is laid out once for all
+    /// its slices, and each draws the lines it shows alone.
     #[allow(clippy::too_many_arguments)] // A row, where, and what of it shows.
     fn cell_row(
         &mut self,
@@ -643,7 +695,7 @@ impl<'a> Flow<'a> {
         block: usize,
         columns: &[f32],
         size: f32,
-        (left, y): (f32, f32),
+        (lefts, y): (&[f32], f32),
         path: Option<&[(u64, TagKind)]>,
         shown: Option<(f32, f32)>,
     ) -> f32 {
@@ -663,16 +715,14 @@ impl<'a> Flow<'a> {
             laid = lay_out_row(cx.fonts, row, columns, size, self.language);
             &laid
         };
-        let mut x = left;
         let mut height = 0.0f32;
-        for (column, (&width, cell)) in columns.iter().zip(cells).enumerate() {
+        for (column, ((_, cell), &x)) in columns.iter().zip(cells).zip(lefts).enumerate() {
             let Some(Cell {
                 layout,
                 text,
                 links,
             }) = cell
             else {
-                x += width;
                 continue;
             };
             let origin = (x + CELL_X, y + CELL_Y);
@@ -704,7 +754,6 @@ impl<'a> Flow<'a> {
                 });
             }
             height = height.max(layout.height() + 2.0 * CELL_Y);
-            x += width;
         }
         height
     }
@@ -803,6 +852,8 @@ fn spec_of(block: &Block, item: &Item, language: Option<Language>) -> Spec {
     spec.bold = item.look.bold;
     spec.language = language;
     if let Kind::Code = item.kind {
+        // Left to right on every line, whatever letter starts it.
+        spec.direction = BaseDirection::Ltr;
         spec.line_height = 1.3;
         spec.wrap = Wrap::Anywhere;
         spec.width = Some((item.width - 2.0 * CODE_PAD - arrow_room()).max(item.look.size * 4.0));
@@ -873,13 +924,15 @@ impl Lists {
     }
 }
 
-/// The items of a flow's blocks, each laid out to know its rows.
+/// The items of a flow's blocks, each laid out to know its rows and the
+/// way it reads; its tables' columns from the right where `tables_rtl`.
 fn items(
     blocks: &[Block],
     looks: &[Option<Look>],
     fonts: &mut Fonts,
     frame: Frame,
     language: Option<Language>,
+    tables_rtl: bool,
 ) -> Vec<Item> {
     let mut items = Vec::with_capacity(blocks.len());
     let mut lists = Lists {
@@ -912,6 +965,9 @@ fn items(
             shared = Some((quote, lists.open.clone(), Rc::from(path)));
         }
         let groups = Rc::clone(&shared.as_ref().expect("made above").2);
+        // How far in from its start the block is (its left, its right once
+        // `mirror`ed): the document's own margin, a quotation's bar and the
+        // room after it, the lists it stands in.
         let mut x = block.indent.clamp(0.0, 20.0) * BODY * scale;
         let bar = block.quote.then_some(x);
         if block.quote {
@@ -926,6 +982,7 @@ fn items(
             block: index,
             x,
             width,
+            rtl: false,
             look: Look {
                 role: Role::Text,
                 size: BODY * scale,
@@ -993,6 +1050,8 @@ fn items(
                         )
                     })
                     .collect();
+                // Its first strong letter's way, as parley found it.
+                item.rtl = layout.is_rtl();
             }
             BlockKind::Code => {
                 item.kind = Kind::Code;
@@ -1093,6 +1152,10 @@ fn items(
                     language,
                     frame.text.height,
                 );
+                item.rtl = tables_rtl;
+                if item.rtl {
+                    mirror(&mut item, frame.text.width);
+                }
                 items.push(item);
                 // The rows of a table are one item; the lists and quotes
                 // they stand in are the first's.
@@ -1100,10 +1163,21 @@ fn items(
                 continue;
             }
         }
+        if item.rtl {
+            mirror(&mut item, frame.text.width);
+        }
         items.push(item);
         index += 1;
     }
     items
+}
+
+/// An item that reads right to left laid out from the right of the text's
+/// width `room`: its area and its quotation's bar where a mirror puts
+/// them, its indent at its right.
+fn mirror(item: &mut Item, room: f32) {
+    item.x = room - item.x - item.width;
+    item.bar = item.bar.map(|bar| room - bar - BAR);
 }
 
 /// A code block's text (`text`, its runs `runs`) cut into the stretches
@@ -1437,6 +1511,26 @@ impl Part for Flow<'_> {
     fn finish(&mut self, cx: &mut PageCx) {
         self.structure.close_all(cx);
     }
+
+    /// A document reads as its first paragraph, heading, item or note
+    /// with a letter reads; a font's specimen, or a document of code,
+    /// tables and pictures alone, says nothing.
+    fn reads(&self) -> Option<Direction> {
+        if !self.document {
+            return None;
+        }
+        self.items
+            .iter()
+            .filter(|item| matches!(item.kind, Kind::Text))
+            .find(|item| text::has_letter(&self.blocks[item.block].text))
+            .map(|item| {
+                if item.rtl {
+                    Direction::RightToLeft
+                } else {
+                    Direction::LeftToRight
+                }
+            })
+    }
 }
 
 #[cfg(test)]
@@ -1449,6 +1543,7 @@ mod tests {
             block: 0,
             x: 0.0,
             width: 100.0,
+            rtl: false,
             look: Look {
                 role: Role::Text,
                 size: BODY,

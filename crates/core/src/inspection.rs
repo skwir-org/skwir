@@ -182,6 +182,11 @@ pub struct Inspection {
     /// The pages of the printed book, in order, when it lists them (an
     /// EPUB's `page-list`): where the toolbar counts by printed page.
     pub printed_pages: Vec<PrintedPage>,
+    /// The way the document says it reads (its pages turned, its text):
+    /// HTML's `dir` on its root, a book's page progression. `None` where
+    /// it says nothing: what is printed of it is told by its text
+    /// (ADR-111).
+    pub direction: Option<crate::direction::Direction>,
     pub source_available: bool,
     /// What the preview says of how it shows the file, each a whole
     /// sentence ("Read as Windows-1252", "First 200 blocks · Source shows

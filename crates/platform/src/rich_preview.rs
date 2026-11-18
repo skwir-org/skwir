@@ -25,6 +25,7 @@ use ego_tree::{NodeId, NodeRef, iter::Edge};
 use scraper::{ElementRef, Html, Node, node::Element};
 use skwir_core::{
     CancelToken,
+    direction::Direction,
     inspection::{Align, Block, BlockKind, Flow, Picture, Run, Script},
     thumbs::Image,
 };
@@ -43,6 +44,10 @@ pub struct Page {
     /// out: the caller says so in its notice (`inspection::blocks_notice`),
     /// and the page's source shows it whole.
     pub truncated: bool,
+    /// The way the page says it reads (`declared`): `dir` on its root,
+    /// else on its body. `None` where it says nothing, never told from its
+    /// text.
+    pub direction: Option<Direction>,
 }
 
 /// How a page's markup is written.
@@ -165,6 +170,7 @@ pub fn html_with(
 ) -> anyhow::Result<Page> {
     let most = bounds.blocks();
     let doc = document(source, markup);
+    let direction = declared(&doc);
     let mut sheets = stylesheets(&doc, &mut resources);
     check(cancel)?;
     let Pairs {
@@ -180,6 +186,7 @@ pub fn html_with(
             .map(std::mem::take)
             .unwrap_or_default(),
         maths,
+        direction,
         ..Walk::default()
     };
     let mut stack: Vec<Context> = vec![Context::default()];
@@ -290,6 +297,30 @@ pub fn html_with(
         }
     }
     Ok(walk.page(most, cancel, math.batch))
+}
+
+/// The way the page `doc` says it reads: `dir` on its root (`<html>`),
+/// else on its `<body>`, `ltr` or `rtl` in any case. `auto` (told by its
+/// text), another value, and none say nothing; nor does a `dir` deeper in,
+/// which says how that part reads, not the page.
+fn declared(doc: &Html) -> Option<Direction> {
+    let of = |element: ElementRef<'_>| {
+        let dir = element.value().attr("dir")?.trim();
+        if dir.eq_ignore_ascii_case("rtl") {
+            Some(Direction::RightToLeft)
+        } else if dir.eq_ignore_ascii_case("ltr") {
+            Some(Direction::LeftToRight)
+        } else {
+            None
+        }
+    };
+    let root = doc.root_element();
+    of(root).or_else(|| {
+        root.children()
+            .filter_map(ElementRef::wrap)
+            .find(|element| element.value().name() == "body")
+            .and_then(of)
+    })
 }
 
 /// The page's tree: XHTML read as XML when it is well-formed.
@@ -565,6 +596,8 @@ struct Walk {
     sizes: Vec<(f32, bool)>,
     note_sizes: Vec<(f32, bool)>,
     current_size: f32,
+    /// The way the page says it reads, for the `Page`.
+    direction: Option<Direction>,
 }
 impl Walk {
     /// Whether `current` has anything in it.
@@ -1023,6 +1056,7 @@ impl Walk {
         Page {
             blocks: self.blocks,
             truncated,
+            direction: self.direction,
         }
     }
 }
@@ -1387,6 +1421,72 @@ pub fn local_picture(base: &std::path::Path, href: &str, cancel: &CancelToken) -
 mod tests {
     use super::*;
     use skwir_core::inspection::Align;
+
+    /// A page says which way it reads by `dir` on its root, else on its
+    /// body, HTML or XHTML: `rtl` and `ltr` in any case are taken; `auto`,
+    /// another value, a part's own `dir`, and a page written in a script
+    /// read right to left that says nothing, say nothing.
+    #[test]
+    fn a_page_says_which_way_it_reads_on_its_root_else_its_body() {
+        let cancel = CancelToken::new();
+        let read = |source: &str, markup| {
+            html(
+                source,
+                markup,
+                limits::Bounds::QUICK,
+                &cancel,
+                pictures(|_| None),
+            )
+            .unwrap()
+            .direction
+        };
+        let (rtl, ltr) = (Some(Direction::RightToLeft), Some(Direction::LeftToRight));
+        for (source, direction) in [
+            (r#"<html dir="rtl"><body><p>Text</p></body></html>"#, rtl),
+            (r#"<html><body dir="rtl"><p>Text</p></body></html>"#, rtl),
+            (r#"<html dir="auto"><body><p>Text</p></body></html>"#, None),
+            (r#"<html dir="RTL"><p>Text</p></html>"#, rtl),
+            (
+                r#"<html dir="ltr"><body dir="rtl"><p>Text</p></body></html>"#,
+                ltr,
+            ),
+            (
+                r#"<html dir="auto"><body dir="rtl"><p>Text</p></body></html>"#,
+                rtl,
+            ),
+            (
+                r#"<html dir="sideways"><body><p>Text</p></body></html>"#,
+                None,
+            ),
+            (r#"<html><body><p dir="rtl">Text</p></body></html>"#, None),
+            ("<html><body><p>שלום עולם</p></body></html>", None),
+            ("<p>Text</p>", None),
+        ] {
+            assert_eq!(read(source, Markup::Html), direction, "{source}");
+        }
+        let xhtml = r#"<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" dir="rtl"><head><title/></head><body><p>Text</p></body></html>"#;
+        assert_eq!(read(xhtml, Markup::Xhtml), rtl);
+        let body = xhtml
+            .replace(r#" dir="rtl">"#, ">")
+            .replace("<body>", r#"<body dir="ltr">"#);
+        assert_eq!(read(&body, Markup::Xhtml), ltr);
+        // A page cut by its bounds says it all the same.
+        let long = format!(
+            r#"<html dir="rtl"><body>{}</body></html>"#,
+            "<p>Text</p>".repeat(limits::Bounds::QUICK.blocks() + 10)
+        );
+        let page = html(
+            &long,
+            Markup::Html,
+            limits::Bounds::QUICK,
+            &cancel,
+            pictures(|_| None),
+        )
+        .unwrap();
+        assert!(page.truncated);
+        assert_eq!(page.direction, rtl);
+    }
+
     #[test]
     fn semantic_text_does_not_include_active_content() {
         let blocks=html("<h1>Title</h1><p>A <strong>bold</strong> <a href='https://example.invalid'>link</a></p><script>secret()</script>", Markup::Html, limits::Bounds::QUICK, &CancelToken::new(), pictures(|_|None)).unwrap().blocks;

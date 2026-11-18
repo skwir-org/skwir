@@ -57,8 +57,8 @@ impl FixedBook {
     /// reflows, which reading mode shows. Called on a scheduler worker.
     pub(crate) fn open(held: Arc<Held>, cancel: &CancelToken) -> anyhow::Result<Option<Self>> {
         let mut container = Container::open(&held, cancel)?;
-        let (book, fixed) = package(&mut container, cancel)?;
-        if !fixed {
+        let (book, layout) = package(&mut container, cancel)?;
+        if !layout.fixed {
             return Ok(None);
         }
         let pages: Vec<Page> = book
@@ -137,6 +137,7 @@ impl FixedBook {
                 outlines,
                 reflowable: false,
                 labels,
+                direction: layout.direction,
             },
             held,
             pages,

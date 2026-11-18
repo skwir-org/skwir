@@ -23,8 +23,21 @@ pub const PSEUDO_RTL: &str = "ar-XB";
 /// draws nothing.
 const RLM: char = '\u{200F}';
 
-/// Which way a language is written, and a window laid out for it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+/// Which way a language is written, and a window laid out for it; which
+/// way a document reads (its pages turned, its text), where it says so.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Direction {
     /// Left to right: Latin, Cyrillic, Greek, CJK, Indic scripts…
     #[default]
@@ -137,9 +150,55 @@ pub fn pseudo_rtl(english: &str) -> String {
     out
 }
 
+/// The direction of `text`'s first letter that has one (UAX #9's P2 and
+/// P3): right to left for a Hebrew or an Arabic one (classes R and AL),
+/// left to right for a Latin, Greek or Chinese one (L), what an isolate
+/// holds (from LRI, RLI or FSI to its PDI) passed over, a paragraph's end
+/// not stopping it, as HTML's `dir="auto"` reads an element's text.
+/// `None` for none: digits, punctuation, nothing.
+pub fn of_text(text: &str) -> Option<Direction> {
+    use icu_properties::props::BidiClass;
+    let classes = icu_properties::CodePointMapData::<BidiClass>::new();
+    let mut isolated = 0usize;
+    for c in text.chars() {
+        match classes.get(c) {
+            BidiClass::LeftToRightIsolate
+            | BidiClass::RightToLeftIsolate
+            | BidiClass::FirstStrongIsolate => isolated += 1,
+            BidiClass::PopDirectionalIsolate => isolated = isolated.saturating_sub(1),
+            _ if isolated > 0 => {}
+            BidiClass::LeftToRight => return Some(Direction::LeftToRight),
+            BidiClass::RightToLeft | BidiClass::ArabicLetter => {
+                return Some(Direction::RightToLeft);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Direction, PSEUDO_RTL, of, pseudo_rtl};
+    /// A text's direction is its first letter's that has one: a Hebrew or
+    /// an Arabic letter's after digits and punctuation, what an isolate
+    /// holds passed over; none for digits alone.
+    #[test]
+    fn a_text_reads_as_its_first_letter_with_a_direction() {
+        assert_eq!(of_text("שלום, עולם"), Some(Direction::RightToLeft));
+        assert_eq!(of_text("2026 — مرحبا"), Some(Direction::RightToLeft));
+        assert_eq!(of_text("Hello שלום"), Some(Direction::LeftToRight));
+        assert_eq!(of_text("« Été »"), Some(Direction::LeftToRight));
+        assert_eq!(
+            of_text("\u{2068}Docs\u{2069} שלום"),
+            Some(Direction::RightToLeft),
+            "an isolate passed over"
+        );
+        assert_eq!(of_text("\u{200F}2026"), Some(Direction::RightToLeft));
+        assert_eq!(of_text("2026 (3)"), None);
+        assert_eq!(of_text(""), None);
+    }
+
+    use super::{Direction, PSEUDO_RTL, of, of_text, pseudo_rtl};
 
     #[test]
     fn a_language_is_written_as_its_script_is() {

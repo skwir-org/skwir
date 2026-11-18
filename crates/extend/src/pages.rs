@@ -103,6 +103,7 @@ impl Pages {
                 outlines: Vec::new(),
                 reflowable: false,
                 labels: Vec::new(),
+                direction: None,
             },
         };
         let key = pages.key(&json!(["contents"]))?;

@@ -613,6 +613,15 @@ asks the direction.
   rows and bytes stay left to right and at their left, as editors keep
   them: each row is a line of a grid its gutter numbers, as wide as it
   is where lines do not wrap, scrolled sideways with the others.
+- **Printed, the same** (ADR-111, revised 2026-11-18): the print helper
+  lays out a document's block in its own direction, code left to right
+  on every line and a plain text's lines each in their own (one question
+  for both, `highlight::is_code`), a table's columns as the document says
+  it reads (`print::Job::reads`), and what Skwir lays out itself (a
+  listing, a contact sheet, the name above the pages) in the window's
+  (`print::Job::window`). A list's marker reads in its item's direction,
+  on screen and on paper: "1." beside Hebrew ends at its left, as a
+  browser draws it.
 - **Code reads left to right on every line**, whatever letter starts it,
   as code editors lay it out: the code view's rows where a grammar
   colors the text (`code_preview::is_code`: tree-sitter's or bat's, not

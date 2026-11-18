@@ -27,6 +27,43 @@ pub mod tree;
 
 pub use tree::{CHOSEN_KEY, Choice, ENGINE_KEY, Engine, First, GrammarChoices, engine};
 
+/// Whether bat's grammars color `language` as code: one of theirs knows
+/// it and is not their Plain Text.
+pub fn colored_by_bat(language: Option<&str>) -> bool {
+    language.is_some_and(|language| added::table_now().colors(language).is_some())
+}
+
+/// Whether a text `engine` colors, as `language`, is code: a tree-sitter
+/// grammar colors it, or bat's do ([`colored_by_bat`]); not a text chosen
+/// Plain text. Its lines read left to right whatever letter starts them,
+/// as editors lay code out; a plain text's each in its own direction
+/// (shell.md, "Code reads left to right on every line"). The window's code
+/// view and printing ask it alike.
+pub fn is_code(engine: &Engine, language: Option<&str>) -> bool {
+    match engine {
+        Engine::TreeSitter(_) => true,
+        Engine::Plain => false,
+        Engine::Bat => colored_by_bat(language),
+    }
+}
+
+/// Whether a text named `name` (its language where it has none), colored
+/// as `language`, its first line `first_line`, is code as printing colors
+/// it: [`is_code`] under the grammars chosen by default, as printing,
+/// which colors by bat's grammars alone, takes none of the Reading page's
+/// choices.
+pub fn prints_as_code(name: &str, language: Option<&str>, first_line: Option<&str>) -> bool {
+    let name = if name.is_empty() {
+        language.unwrap_or_default()
+    } else {
+        name
+    };
+    is_code(
+        &engine(name, language, first_line, &GrammarChoices::default()),
+        language,
+    )
+}
+
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`CodeTheme::chosen`).
 pub const APPEARANCE_KEY: &str = "reading.code_appearance";
@@ -755,6 +792,25 @@ mod tests {
     use super::*;
     use skwir_core::inspection::Block;
     use std::collections::BTreeSet;
+
+    /// Printing tells code from a plain text as the window does: a grammar
+    /// colors a script and a document's code, nothing colors a `.txt`, and
+    /// a text chosen Plain text is none.
+    #[test]
+    fn printing_tells_code_from_a_plain_text() {
+        assert!(prints_as_code("main.py", Some("py"), Some("# تعليق")));
+        assert!(prints_as_code("lib.rs", Some("rs"), None));
+        assert!(prints_as_code("", Some("rust"), None), "a code block's");
+        assert!(!prints_as_code(
+            "notes.txt",
+            Some("txt"),
+            Some("שלום, עולם!")
+        ));
+        assert!(!prints_as_code("notes", None, Some("שלום")));
+        assert!(!is_code(&Engine::Plain, Some("py")), "chosen Plain text");
+        assert!(is_code(&Engine::TreeSitter("x".into()), None));
+        assert!(colored_by_bat(Some("py")) && !colored_by_bat(Some("txt")));
+    }
 
     /// [`choices_words`], each label in English.
     fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec<(String, String)> {

@@ -581,7 +581,11 @@ impl Document {
         let truncated = self.truncated || self.blocks.len() > self.bounds.blocks();
         let mut blocks = cut(self.blocks, self.bounds);
         self.formulas.typeset(&mut blocks, cancel);
-        rich_preview::Page { blocks, truncated }
+        rich_preview::Page {
+            blocks,
+            truncated,
+            direction: None,
+        }
     }
 }
 

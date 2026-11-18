@@ -378,6 +378,17 @@ fn code(
         texts.truncate(print::MAX_CODE_LINES);
         (texts, cut)
     };
+    let name = inspection
+        .text
+        .as_ref()
+        .and_then(|file| file.path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let plain = !crate::highlight::prints_as_code(
+        &name,
+        language.as_deref(),
+        texts.first().map(String::as_str),
+    );
     let mut highlighter = Highlighter::new(language.as_deref(), palette);
     let mut lines = Vec::with_capacity(texts.len());
     for (at, text) in texts.into_iter().enumerate() {
@@ -402,6 +413,7 @@ fn code(
             lines,
             numbers: true,
             first: 1,
+            plain,
         },
         notice,
     ))
@@ -882,6 +894,7 @@ mod tests {
                 lines,
                 numbers,
                 first,
+                ..
             },
         ] = parts.parts.as_slice()
         else {
@@ -1133,6 +1146,8 @@ mod tests {
             title: String::new(),
             author: None,
             language: None,
+            window: skwir_core::direction::Direction::default(),
+            reads: None,
             header: None,
             numbers: false,
             fonts: Fonts::default(),
@@ -1145,6 +1160,7 @@ mod tests {
                 }],
                 numbers: false,
                 first: 1,
+                plain: false,
             }],
         };
         let short = timeout(&code("let x = 1;".into()));
@@ -1191,6 +1207,8 @@ mod tests {
             title: "Printed".into(),
             author: None,
             language: Some("en".into()),
+            window: skwir_core::direction::Direction::default(),
+            reads: None,
             header: Some("example.md".into()),
             numbers: true,
             fonts,
@@ -1293,6 +1311,8 @@ mod tests {
             title: String::new(),
             author: None,
             language: None,
+            window: skwir_core::direction::Direction::default(),
+            reads: None,
             header: None,
             numbers: false,
             fonts: Fonts::default(),
@@ -1326,6 +1346,8 @@ mod tests {
             title: String::new(),
             author: None,
             language: None,
+            window: skwir_core::direction::Direction::default(),
+            reads: None,
             header: None,
             numbers: false,
             fonts: Fonts::default(),
@@ -1367,6 +1389,7 @@ mod tests {
             lines,
             numbers: true,
             first: 1,
+            plain: false,
         }]) else {
             return;
         };

@@ -613,3 +613,66 @@ fn mupdf_leaves_kf8_to_the_built_in_engine() {
     assert!(azw3.title.english().starts_with("AZW3"));
     assert!(read("synthetic.fb2.zip").is_some());
 }
+
+/// An EXTH header holding `records`, each a kind and its value.
+fn exth_header(records: &[(u32, &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (kind, value) in records {
+        body.extend_from_slice(&kind.to_be_bytes());
+        body.extend_from_slice(&u32::try_from(value.len() + 8).unwrap().to_be_bytes());
+        body.extend_from_slice(value);
+    }
+    let mut out = b"EXTH".to_vec();
+    out.extend_from_slice(&u32::try_from(body.len() + 12).unwrap().to_be_bytes());
+    out.extend_from_slice(&u32::try_from(records.len()).unwrap().to_be_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+/// A book says which way its pages turn in its EXTH header (527, which
+/// calibre writes from its source's spine): `rtl` and `ltr` are taken,
+/// anything else and nothing say nothing. Read as chapters, or from its
+/// first record alone (for `MuPDF`), it says the same.
+#[test]
+fn the_header_says_which_way_the_pages_turn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let html = "<p>A synthetic page.</p>";
+    for (index, (said, direction)) in [
+        (Some("rtl"), Some(Direction::RightToLeft)),
+        (Some("ltr"), Some(Direction::LeftToRight)),
+        (Some("default"), None),
+        (None, None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // Flag 0x40: an EXTH header follows the MOBI header.
+        let mut first = first_record(1, html.len(), 1, &[(128, 0x40)]);
+        let mut records = vec![(exth::TITLE, &b"Synthetic Turned Book"[..])];
+        records.extend(said.map(|said| (exth::PAGE_DIRECTION, said.as_bytes())));
+        first.extend(exth_header(&records));
+        let path = tmp
+            .path()
+            .join(format!("Synthetic turned book {index}.mobi"));
+        std::fs::write(
+            &path,
+            database(*b"BOOKMOBI", &[first, html.as_bytes().to_vec()]),
+        )
+        .unwrap();
+        let shown = inspect(&path, &InspectRequest::default()).unwrap();
+        assert!(text(&shown).contains("A synthetic page."), "{said:?}");
+        assert!(
+            shown
+                .details
+                .iter()
+                .any(|d| d.label.english() == "Title" && d.value == "Synthetic Turned Book"),
+            "the header was read: {said:?}"
+        );
+        assert_eq!(shown.direction, direction, "{said:?}");
+        assert_eq!(
+            super::direction(&path, &CancelToken::new()).unwrap(),
+            direction,
+            "{said:?}"
+        );
+    }
+}

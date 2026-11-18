@@ -81,6 +81,7 @@ fn run() -> anyhow::Result<()> {
         reflowable: false,
         // djvu-rs does not say what the document names its pages.
         labels: Vec::new(),
+        direction: None,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {

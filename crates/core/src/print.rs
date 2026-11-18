@@ -431,6 +431,33 @@ pub enum Duplex {
 /// The order a booklet folds in.
 pub mod booklet {
     use super::{Deserialize, JsonSchema, Serialize};
+    use crate::direction::Direction;
+
+    /// Which edge a booklet is bound on, its spine once folded: the left,
+    /// as a book read left to right is; the right, as a Hebrew or an
+    /// Arabic book, or a manga, is, its pages turned the other way.
+    #[derive(
+        Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum Bound {
+        #[default]
+        Left,
+        Right,
+    }
+
+    impl Bound {
+        pub const ALL: [Bound; 2] = [Bound::Left, Bound::Right];
+
+        /// The edge a document that reads `direction` is bound on: its
+        /// pages turned the way its lines read.
+        pub fn reading(direction: Direction) -> Bound {
+            match direction {
+                Direction::LeftToRight => Bound::Left,
+                Direction::RightToLeft => Bound::Right,
+            }
+        }
+    }
 
     /// How many pages a side of a sheet holds: 2, the sheet folded once (4
     /// pages a sheet, a booklet's); 4, folded twice (8, the top fold cut
@@ -516,8 +543,51 @@ pub mod booklet {
         pub back: Vec<Cell>,
     }
 
+    impl Sheet {
+        /// The sheet laid for the other edge: each side's pages mirrored
+        /// row by row in its grid ([`PerSide::grid`]), each turned as it
+        /// was. A booklet bound on the right is one bound on the left seen
+        /// in a mirror, its folds made the other way: what is upside down
+        /// stays so, and the back, laid for the sheet turned over its
+        /// vertical edge, stays the back of the same front, the mirror
+        /// turning that edge into itself.
+        #[must_use]
+        pub fn mirrored(mut self, per_side: PerSide) -> Sheet {
+            let columns = per_side.grid().0 as usize;
+            for side in [&mut self.front, &mut self.back] {
+                for row in side.chunks_mut(columns) {
+                    row.reverse();
+                }
+            }
+            self
+        }
+    }
+
+    /// The sheets of a booklet bound on `bound`: as [`sheets`] lays them
+    /// on the left, each mirrored on the right ([`Sheet::mirrored`]), page
+    /// 1 then at the left end of its front's bottom row, where the left's
+    /// is at its right end. Laid in this order and folded the mirrored way
+    /// (each fold right over left where the left's is left over right, and
+    /// the other way round), they read in order, from right to left.
+    pub fn sheets_bound(
+        pages: &[u32],
+        signature: Option<u32>,
+        per_side: PerSide,
+        bound: Bound,
+    ) -> Vec<Sheet> {
+        let sheets = sheets(pages, signature, per_side);
+        match bound {
+            Bound::Left => sheets,
+            Bound::Right => sheets
+                .into_iter()
+                .map(|sheet| sheet.mirrored(per_side))
+                .collect(),
+        }
+    }
+
     /// The sheets of `pages` pages (from 0, in the order they read) folded
-    /// as `per_side` says, blanks at the end. Two a side: in signatures of
+    /// as `per_side` says, blanks at the end, for a booklet bound on the
+    /// left ([`sheets_bound`] for either edge). Two a side: in signatures of
     /// `signature` pages (a multiple of 4; all of them in one without),
     /// sheets put one inside another. Four or eight a side: each sheet its
     /// own gathering, folded, its closed folds cut, put after the one
@@ -778,6 +848,15 @@ pub struct Job {
     pub author: Option<String>,
     /// The text's language (`fr`, `en-GB`), if known.
     pub language: Option<String>,
+    /// The window's direction: a listing's columns, the header and the
+    /// numbers under the pages are laid out in it.
+    #[serde(default)]
+    pub window: crate::direction::Direction,
+    /// The way the document says it reads (HTML's `dir`, a book's page
+    /// progression): the PDF's own reading direction then. Told by its
+    /// text without (ADR-111).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reads: Option<crate::direction::Direction>,
     /// Above every page (a file's name); nothing without.
     pub header: Option<String>,
     /// "n / N" below every page.
@@ -823,10 +902,16 @@ pub enum Part {
     Flow { blocks: Vec<Block> },
     /// Lines of code in the code font, numbered from `first` when
     /// `numbers`, a long line wrapped and its rows after the first marked.
+    /// Each reads left to right whatever letter starts it, as editors lay
+    /// code out; `plain`, the lines of a plain text (no grammar colors it,
+    /// `highlight::is_code`), each reads in its own direction, at its left,
+    /// as the window shows it.
     Code {
         lines: Vec<Line>,
         numbers: bool,
         first: u32,
+        #[serde(default, skip_serializing_if = "is_false")]
+        plain: bool,
     },
     /// Rows under their columns' names, repeated on each page.
     Table {
@@ -1002,7 +1087,7 @@ pub struct Made {
 
 #[cfg(test)]
 mod tests {
-    use super::booklet::{Cell, PerSide, Sheet, sheets};
+    use super::booklet::{Bound, Cell, PerSide, Sheet, sheets, sheets_bound};
 
     fn upright(pages: &[Option<u32>]) -> Vec<Cell> {
         pages
@@ -1191,6 +1276,274 @@ mod tests {
                 }
                 let read: Vec<u32> = read.into_iter().flatten().collect();
                 assert_eq!(read, pages, "{count} {signature:?}");
+            }
+        }
+    }
+
+    /// Bound on the right, a booklet's sheets are those bound on the left
+    /// mirrored, each side row by row, each page turned as it was: page 1
+    /// on the left of its front, a printer's signatures seen in a mirror;
+    /// for every count, two, four or eight a side, in signatures.
+    #[test]
+    fn a_booklet_bound_on_the_right_is_the_left_s_mirrored() {
+        let four: Vec<u32> = (0..4).collect();
+        let [sheet] = sheets_bound(&four, None, PerSide::Two, Bound::Right)
+            .try_into()
+            .unwrap();
+        assert_eq!(said(&sheet.front), ["1", "4"]);
+        assert_eq!(said(&sheet.back), ["3", "2"]);
+        let eight: Vec<u32> = (0..8).collect();
+        let [sheet] = sheets_bound(&eight, None, PerSide::Four, Bound::Right)
+            .try_into()
+            .unwrap();
+        assert_eq!(said(&sheet.front), ["4T", "5T", "1", "8"]);
+        assert_eq!(said(&sheet.back), ["6T", "3T", "7", "2"]);
+        let sixteen: Vec<u32> = (0..16).collect();
+        let [sheet] = sheets_bound(&sixteen, None, PerSide::Eight, Bound::Right)
+            .try_into()
+            .unwrap();
+        assert_eq!(
+            said(&sheet.front),
+            ["8T", "9T", "12T", "5T", "1", "16", "13", "4"]
+        );
+        assert_eq!(
+            said(&sheet.back),
+            ["6T", "11T", "10T", "7T", "3", "14", "15", "2"]
+        );
+        for per_side in PerSide::ALL {
+            let columns = per_side.grid().0 as usize;
+            for signature in [None, Some(4), Some(8), Some(10), Some(16)] {
+                for count in 0..40u32 {
+                    let pages: Vec<u32> = (100..100 + count).collect();
+                    let left = sheets_bound(&pages, signature, per_side, Bound::Left);
+                    assert_eq!(left, sheets(&pages, signature, per_side));
+                    let right = sheets_bound(&pages, signature, per_side, Bound::Right);
+                    assert_eq!(left.len(), right.len());
+                    let case = format!("{per_side:?} {signature:?} {count}");
+                    for (left, right) in left.iter().zip(&right) {
+                        for (left, right) in
+                            [(&left.front, &right.front), (&left.back, &right.back)]
+                        {
+                            assert_eq!(left.len(), right.len(), "{case}");
+                            for (at, cell) in right.iter().enumerate() {
+                                let (row, column) = (at / columns, at % columns);
+                                let mirror = row * columns + columns - 1 - column;
+                                assert_eq!(*cell, left[mirror], "{case}, place {at}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A fold a person makes: the half that moves goes over the other,
+    /// turned over.
+    #[derive(Clone, Copy, Debug)]
+    enum Fold {
+        LeftOverRight,
+        RightOverLeft,
+        TopOverBottom,
+    }
+
+    /// The folds of a sheet of `per_side` pages a side bound on `bound`:
+    /// on the left those a printer makes (ADR-111: the last left over
+    /// right, its fold the spine; before it top over bottom; before that
+    /// right over left), on the right each across made the other way, the
+    /// spine on the right.
+    fn folds(per_side: PerSide, bound: Bound) -> Vec<Fold> {
+        let left: &[Fold] = match per_side {
+            PerSide::Two => &[Fold::LeftOverRight],
+            PerSide::Four => &[Fold::TopOverBottom, Fold::LeftOverRight],
+            PerSide::Eight => &[
+                Fold::RightOverLeft,
+                Fold::TopOverBottom,
+                Fold::LeftOverRight,
+            ],
+        };
+        left.iter()
+            .map(|&fold| match (bound, fold) {
+                (Bound::Right, Fold::LeftOverRight) => Fold::RightOverLeft,
+                (Bound::Right, Fold::RightOverLeft) => Fold::LeftOverRight,
+                _ => fold,
+            })
+            .collect()
+    }
+
+    /// A face of a part of a sheet as it lies: the page printed on it, and
+    /// how that page is turned seen from above, [x, y], each 1 or -1 (a
+    /// mirror along that axis): [1, 1] reads upright, [-1, -1] upside down.
+    #[derive(Clone, Copy, Debug)]
+    struct Face {
+        page: Option<u32>,
+        axes: [i8; 2],
+    }
+
+    /// A part of a sheet (one page's place, a leaf once its folds are
+    /// cut): its face up and its face down.
+    #[derive(Clone, Copy, Debug)]
+    struct Leaf {
+        up: Face,
+        down: Face,
+    }
+
+    /// The pages of a gathering of `sheets` (each inside the one before,
+    /// the first outside) folded together by `folds` and its closed folds
+    /// cut, as a reader turns them: the leaves from the top of the folded
+    /// stack, each its upper face, then its lower once turned over the
+    /// spine; each with whether it reads upright then. Worked out from the
+    /// sheets as laid, by folding them: nothing of how `sheets` lays them.
+    fn read_folded(
+        gathering: &[Sheet],
+        per_side: PerSide,
+        folds: &[Fold],
+    ) -> Vec<(Option<u32>, bool)> {
+        let (columns, rows) = per_side.grid();
+        let (columns, rows) = (columns as usize, rows as usize);
+        let face = |cell: Cell, upright: [i8; 2], turned: [i8; 2]| Face {
+            page: cell.page,
+            axes: if cell.turned { turned } else { upright },
+        };
+        // The sheets on the table back up, the first at the bottom: each
+        // back seen from above as `Sheet` lays it, each front below it seen
+        // from above mirrored along x (the sheet turned over its vertical
+        // edge), its column mirrored too.
+        let mut stacks: Vec<Vec<Leaf>> = vec![Vec::new(); columns * rows];
+        for sheet in gathering.iter().rev() {
+            for row in 0..rows {
+                for column in 0..columns {
+                    let back = sheet.back[row * columns + column];
+                    let front = sheet.front[row * columns + columns - 1 - column];
+                    stacks[row * columns + column].push(Leaf {
+                        up: face(back, [1, 1], [-1, -1]),
+                        down: face(front, [-1, 1], [1, -1]),
+                    });
+                }
+            }
+        }
+        // Where the folded sheets lie: [x0, x1) across, [y0, y1) down.
+        let (mut x0, mut x1, mut y0, y1) = (0_usize, columns, 0_usize, rows);
+        for &fold in folds {
+            let (middle_x, middle_y) = (x0.midpoint(x1), y0.midpoint(y1));
+            let mut next: Vec<Vec<Leaf>> = vec![Vec::new(); columns * rows];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let stack = std::mem::take(&mut stacks[y * columns + x]);
+                    let (moves, to) = match fold {
+                        Fold::LeftOverRight => (x < middle_x, (x0 + x1 - 1 - x, y)),
+                        Fold::RightOverLeft => (x >= middle_x, (x0 + x1 - 1 - x, y)),
+                        Fold::TopOverBottom => (y < middle_y, (x, y0 + y1 - 1 - y)),
+                    };
+                    if !moves {
+                        // Below whatever lands on it.
+                        next[y * columns + x].extend(stack);
+                        continue;
+                    }
+                    // Turned over onto the other half: its stack upside
+                    // down, each leaf's faces swapped and mirrored along
+                    // the axis across the fold.
+                    let axis = usize::from(matches!(fold, Fold::TopOverBottom));
+                    let turned = stack.into_iter().rev().map(|leaf| {
+                        let mirrored = |mut face: Face| {
+                            face.axes[axis] = -face.axes[axis];
+                            face
+                        };
+                        Leaf {
+                            up: mirrored(leaf.down),
+                            down: mirrored(leaf.up),
+                        }
+                    });
+                    let landed = &mut next[to.1 * columns + to.0];
+                    let below = std::mem::take(landed);
+                    landed.extend(turned);
+                    landed.extend(below);
+                }
+            }
+            stacks = next;
+            match fold {
+                Fold::LeftOverRight => x0 = middle_x,
+                Fold::RightOverLeft => x1 = middle_x,
+                Fold::TopOverBottom => y0 = middle_y,
+            }
+        }
+        assert_eq!((x1 - x0, y1 - y0), (1, 1), "folded to one page's size");
+        // A leaf turned over the spine (an edge down the page) shows its
+        // lower face mirrored along x: upright where it lay [-1, 1].
+        std::mem::take(&mut stacks[y0 * columns + x0])
+            .into_iter()
+            .flat_map(|leaf| {
+                [
+                    (leaf.up.page, leaf.up.axes == [1, 1]),
+                    (leaf.down.page, leaf.down.axes == [-1, 1]),
+                ]
+            })
+            .collect()
+    }
+
+    /// Laid as `sheets_bound` lays them and folded as a person folds them
+    /// (the right's folds made the other way), a booklet's sheets read in
+    /// order, every page upright, blanks only at the end: bound on either
+    /// edge, two, four or eight a side, two a side in signatures.
+    #[test]
+    fn a_booklet_bound_on_either_edge_reads_in_order_once_folded() {
+        for bound in Bound::ALL {
+            for per_side in PerSide::ALL {
+                let signatures: &[Option<u32>] = match per_side {
+                    PerSide::Two => &[None, Some(4), Some(8), Some(10), Some(16)],
+                    _ => &[None],
+                };
+                for &signature in signatures {
+                    for count in 0..50u32 {
+                        let pages: Vec<u32> = (100..100 + count).collect();
+                        let laid = sheets_bound(&pages, signature, per_side, bound);
+                        // Folded together: a signature's sheets, two a side;
+                        // else each sheet alone.
+                        let together = match per_side {
+                            PerSide::Two => signature
+                                .map_or(laid.len(), |size| (size as usize).div_ceil(4))
+                                .max(1),
+                            _ => 1,
+                        };
+                        let folds = folds(per_side, bound);
+                        let read: Vec<(Option<u32>, bool)> = laid
+                            .chunks(together)
+                            .flat_map(|gathering| read_folded(gathering, per_side, &folds))
+                            .collect();
+                        let case = format!("{bound:?} {per_side:?} {signature:?} {count}");
+                        assert_eq!(
+                            read.len(),
+                            laid.len() * per_side.per_sheet() as usize,
+                            "{case}"
+                        );
+                        assert!(read.iter().all(|&(_, upright)| upright), "{case}: {read:?}");
+                        let printed: Vec<u32> = read.iter().filter_map(|&(page, _)| page).collect();
+                        assert_eq!(printed, pages, "{case}: {read:?}");
+                        assert!(
+                            read.iter()
+                                .skip_while(|(page, _)| page.is_some())
+                                .all(|(page, _)| page.is_none()),
+                            "{case}: blanks only at the end, {read:?}"
+                        );
+                    }
+                }
+            }
+        }
+        // Folded the other edge's way, a sheet reads out of order: the
+        // folding tells the edges apart.
+        for per_side in PerSide::ALL {
+            let pages: Vec<u32> = (0..per_side.per_sheet()).collect();
+            for bound in Bound::ALL {
+                let other = match bound {
+                    Bound::Left => Bound::Right,
+                    Bound::Right => Bound::Left,
+                };
+                let laid = sheets_bound(&pages, None, per_side, bound);
+                let read = read_folded(&laid, per_side, &folds(per_side, other));
+                let in_order = read
+                    .iter()
+                    .zip(&pages)
+                    .all(|(&(page, upright), &want)| upright && page == Some(want));
+                assert!(!in_order, "{bound:?} {per_side:?} folded as {other:?}");
             }
         }
     }

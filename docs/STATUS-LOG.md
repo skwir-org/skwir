@@ -20175,3 +20175,80 @@ its schema and table).
 extend; their tests (34): the JSON of each kind read and written back, a
 decimal's digits as written, what no kind reads kept as text, and a
 message with a decimal, a folder and a date said by the host.
+
+## 2026-11-18: printing right to left, and booklets bound on the right
+
+ADR-111 revised, ADR-139, 12; asked by the user (all four parts). The
+print helper laid everything out from the left. A Hebrew list's markers
+hung at the page's left while its words were at the right, a quotation's
+bar and an indent too. A code line starting with an Arabic comment was
+ordered right to left whole, and a listing printed from a right-to-left
+window ran from the left. A booklet was always bound on the left.
+
+**Laid out as shown** (`crates/print-worker`). Each block of a document
+reads in its own direction, its first strong letter's; one that reads
+right to left has its indent, its marker (read as its item reads) and
+its quotation's bar at its right. Code is laid out left to right on
+every line, as the window shows it since gpui 0084, and a plain text's
+lines each in their own direction at the left: `Part::Code::plain`, set
+by the same question the window asks (`highlight::is_code`,
+`prints_as_code` under the default grammars, as printing colors by bat's
+alone). A document's table runs as the document says it reads
+(`Job::reads`); a listing, a contact sheet and the name above the pages
+run as the window does (`Job::window`). A document that reads right to
+left writes `/ViewerPreferences /Direction /R2L`. On screen, a list's
+marker now reads in its item's direction too ("1." beside Hebrew ends at
+its left, as browsers draw it), as print does.
+
+**Documents say which way they read** (`DocumentInfo::direction`,
+`Inspection::direction`), never guessed from their text: a PDF's
+`/ViewerPreferences /Direction`, read when PDFium or MuPDF opens it
+whole (poppler-glib has a flag it never sets, 26.10); a comic's
+`ComicInfo.xml`, `Manga` `YesAndRightToLeft`, read in the reader's first
+pass over the archive so a solid one is decompressed once; an EPUB's
+spine `page-progression-direction`, in reading mode, as pages and laid
+out by MuPDF; a Mobipocket book's EXTH 527; HTML's `dir` on its root,
+else its body.
+
+**Bound on the right** (`print::booklet::Bound`, `sheets_bound`). The
+sheets are those bound on the left seen in a mirror, each side row by
+row in its grid, each page turned as it was. The Print dialog's Binding
+row stands among the booklet's options whenever a booklet is chosen,
+whatever the window's language: the binding is the document's. Its
+preset is the document's every time, never remembered: `bound` asked,
+else `reads` (what the preview knows the document shown declares), else
+what the file says (a PDF's direction read with its count, an
+inspection's), else the first letter with a direction of a text Skwir
+lays out (`direction::of_text`, now core's), within the 400 ms the
+dialog already waits; else the left. Save as PDF, `asked` and a print
+with no window bind in the same order as the booklet is made.
+
+**Met on the way.** `ui.preview_invoke` gave every command the preview's
+page and count, which Reduce Size takes none of. A command refuses an
+argument it does not take (core's `commands` test), so Reduce Size from
+a PDF shown in its reader was refused, as the code reads (not tried in a
+window), and the declared direction would have spread it to books and
+pages. What the preview knows now goes only where the command accepts it
+(`CommandSpec::accepts`), as a drop's arguments do.
+
+**Checked:** `just lint-all` (clippy `-D warnings` on every crate, the
+helpers included, and the Windows and macOS builds); every test, 3,875:
+the helper's PDFs read back with `pdftotext -bbox` for where words,
+markers and bars land and the direction written, each failing with the
+helper built before; a plain text's lines and code's; core's folding
+simulation for both edges at 2, 4 and 8 a side and in signatures; each
+format's declaration from synthetic files; the dialog's row and its
+presets. `just poppler-check`, `just mupdf-check`, the release tools'
+tests and the words checks. Ten synthetic jobs drawn before and after:
+the English document, code, listing and contact sheet are byte-identical
+PDFs. On Xvfb, in English and in French: a Hebrew Markdown preset "Bound
+on the right" and saved with page 1 on the left half of its first side,
+an English one on the left with page 1 on the right; a Hebrew PDF
+declaring `/R2L` preset on the right; the three saved by `skwir cmd`
+with no `bound` bound the same; the preview of a Hebrew numbered list,
+its markers at the right reading ".1".
+
+**Not checked:** paper; 4 and 8 a side bound on the right in a window;
+Print… and Reduce Size run from the preview in a window; a tagger's own
+CBR or CB7, a calibre-made AZW3; macOS and Windows running (compiled
+only).

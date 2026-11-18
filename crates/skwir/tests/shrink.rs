@@ -247,6 +247,7 @@ impl skwir_core::preview::PreviewProvider for StandIn {
                 outlines: Vec::new(),
                 reflowable: false,
                 labels: Vec::new(),
+                direction: None,
             },
         })))
     }

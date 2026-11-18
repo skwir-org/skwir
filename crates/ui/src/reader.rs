@@ -1211,6 +1211,7 @@ mod tests {
                 outlines: Vec::new(),
                 reflowable: false,
                 labels: Vec::new(),
+                direction: None,
             })
         };
         let most = skwir_core::document::MAX_PAGES;

@@ -1034,3 +1034,131 @@ fn an_encrypted_cover_is_not_shown() {
     );
     assert_eq!(cover_of(&path), None);
 }
+
+/// A book's spine says which way its pages turn: `rtl` and `ltr` are
+/// taken, `default` and nothing say nothing. Read as chapters, as pages
+/// (a fixed layout), or from its package alone (for `MuPDF`), it says the
+/// same; its chapters' source, code, reads left to right whatever it says.
+#[test]
+fn the_spine_says_which_way_the_pages_turn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let chapter: &[u8] = br"<html><body><h1>First</h1><p>A page.</p></body></html>";
+    for (index, (spine, direction)) in [
+        (
+            r#"<spine page-progression-direction="rtl">"#,
+            Some(Direction::RightToLeft),
+        ),
+        (
+            r#"<spine page-progression-direction="ltr">"#,
+            Some(Direction::LeftToRight),
+        ),
+        (r#"<spine page-progression-direction="default">"#, None),
+        ("<spine>", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let opf = OPF.replace("<spine>", spine);
+        let fixed = opf.replace(
+            "<dc:language>en</dc:language>",
+            r#"<dc:language>en</dc:language><meta property="rendition:layout">pre-paginated</meta>"#,
+        );
+        let [reflowing, paged] = ["reflowing", "paged"].map(|kind| {
+            tmp.path()
+                .join(format!("Synthetic {kind} book {index}.epub"))
+        });
+        for (path, opf) in [(&reflowing, &opf), (&paged, &fixed)] {
+            write(
+                path,
+                &[
+                    ("mimetype", b"application/epub+zip"),
+                    ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                    ("EPUB/book.opf", opf.as_bytes()),
+                    ("EPUB/nav.xhtml", NAV.as_bytes()),
+                    ("EPUB/one.xhtml", chapter),
+                    ("EPUB/two.xhtml", chapter),
+                    ("EPUB/sub/café three.xhtml", chapter),
+                ],
+            );
+        }
+        let shown = inspect(&reflowing, &InspectRequest::default()).unwrap();
+        assert_eq!(shown.direction, direction, "{spine}");
+        let source = InspectRequest {
+            source: true,
+            ..InspectRequest::default()
+        };
+        assert_eq!(inspect(&reflowing, &source).unwrap().direction, None);
+        assert_eq!(session(&paged).info().direction, direction, "{spine}");
+        let cancel = CancelToken::new();
+        for path in [&reflowing, &paged] {
+            assert_eq!(super::direction(path, &cancel).unwrap(), direction);
+        }
+    }
+}
+
+/// Laid out by `MuPDF`, whose helper says nothing of it, a book still says
+/// which way its pages turn, read from its package. Needs the helper
+/// built in the target folder the test runs from; without it the test
+/// says so and passes, unless `SKWIR_REQUIRE_WORKERS` is set.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_book_mupdf_lays_out_says_which_way_its_pages_turn() {
+    const VARIABLE: &str = "SKWIR_MUPDF_WORKER";
+    let built = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-mupdf-worker")))
+        .filter(|path| path.is_file());
+    let Some(worker) = std::env::var_os(VARIABLE)
+        .map(std::path::PathBuf::from)
+        .or(built)
+    else {
+        assert!(
+            std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+            "skwir-mupdf-worker is not built"
+        );
+        eprintln!("skipped: skwir-mupdf-worker is not built");
+        return;
+    };
+    // SAFETY: nextest runs each test in a process of its own, and nothing
+    // else reads the environment before this.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var(VARIABLE, &worker);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("Synthetic book read by MuPDF.epub");
+    let opf = OPF.replace("<spine>", r#"<spine page-progression-direction="rtl">"#);
+    let chapter: &[u8] = br#"<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>One</title></head><body><p>A page.</p></body></html>"#;
+    write(
+        &path,
+        &[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("EPUB/book.opf", opf.as_bytes()),
+            ("EPUB/nav.xhtml", NAV.as_bytes()),
+            ("EPUB/one.xhtml", chapter),
+            ("EPUB/two.xhtml", chapter),
+            ("EPUB/sub/café three.xhtml", chapter),
+        ],
+    );
+    let request = PreviewRequest {
+        entry: EntryRef::from_path(&path).unwrap(),
+        mime: None,
+        page: 1,
+        seconds: None,
+        max_side: 64,
+        text_size: Some(20.),
+        fit: None,
+        held: HeldSlot::default(),
+    };
+    let mupdf = Provider {
+        engine: Engine::Mupdf,
+        ..Provider::default()
+    };
+    let book = mupdf
+        .open_document(&request, &CancelToken::new())
+        .unwrap()
+        .expect("a book MuPDF lays out");
+    assert!(book.info().reflowable, "laid out by MuPDF");
+    assert_eq!(book.info().direction, Some(Direction::RightToLeft));
+}

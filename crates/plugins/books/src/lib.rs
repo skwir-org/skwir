@@ -372,8 +372,21 @@ impl PreviewProvider for Provider {
                 note = "skwir-mupdf-worker is the name of a program, as it is installed."
             ));
         };
+        // The way its pages turn, as the book says: MuPDF says nothing of
+        // it. A book whose package says nothing readable still opens.
+        let declared = match format {
+            Format::Epub => epub::direction(&held, lifetime).ok().flatten(),
+            Format::Palm => mobi::direction(&held, lifetime).ok().flatten(),
+            // FB2 has no way to say it.
+            Format::Fb2 | Format::Fb2Zip => None,
+        };
+        let info = skwir_core::document::DocumentInfo {
+            direction: session.info().direction.or(declared),
+            ..session.info().clone()
+        };
         Ok(Some(Arc::new(Holding {
             session,
+            info,
             _held: held,
         })))
     }
@@ -418,12 +431,14 @@ impl PreviewProvider for Provider {
 /// lives as long as the session, which may start its helper again.
 struct Holding {
     session: Arc<dyn skwir_core::document::DocumentSession>,
+    /// The session's, with the way the book says it reads.
+    info: skwir_core::document::DocumentInfo,
     _held: Arc<Held>,
 }
 
 impl skwir_core::document::DocumentSession for Holding {
     fn info(&self) -> &skwir_core::document::DocumentInfo {
-        self.session.info()
+        &self.info
     }
     fn render(
         &self,

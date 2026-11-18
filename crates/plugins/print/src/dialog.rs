@@ -15,7 +15,9 @@
 //! turned off, never a setting. A folder chosen for PDFs is kept so too,
 //! with the few chosen before it; the one beside what is printed is no
 //! choice kept, but where each PDF goes by itself. A name is a document's
-//! own, never kept.
+//! own, never kept, and so is the edge a booklet is bound on: preset every
+//! time as the document reads (`Offers::bound`), never as the last
+//! dialog's, nor as the window's language reads.
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -24,7 +26,7 @@ use skwir_core::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::path::{save_folder, save_split};
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Mark, Picture, Values};
-use skwir_core::print::booklet::{self, PerSide};
+use skwir_core::print::booklet::{self, Bound, PerSide};
 use skwir_core::words;
 use skwir_core::words::Words;
 
@@ -43,6 +45,12 @@ pub(crate) struct Offers {
     /// How many pages it has, when known before asking (a PDF's, a
     /// document's the preview reads): said, and drawn on the booklets.
     pub count: Option<u32>,
+    /// The edge a booklet is bound on as the dialog opens: the one asked
+    /// (`PrintArgs::bound`), else as the document reads (the caller's
+    /// `reads`, else what the file says of itself or its text tells, as
+    /// it is told before the dialog asks: `crate::told`), else the left.
+    /// Drawn so on the booklets' pictures.
+    pub bound: Bound,
     pub subject: Subject,
     /// Where a PDF of it goes, and what else is offered.
     pub saved: Saved,
@@ -161,6 +169,8 @@ pub(crate) struct Chosen {
     pub smaller: bool,
     /// A booklet's pages to a side of a sheet.
     pub per_side: PerSide,
+    /// The edge a booklet is bound on.
+    pub bound: Bound,
     /// The paper a PDF is laid out on, by name (`Paper::NAMED`).
     pub paper: String,
     /// The folder a PDF is saved in, typed or chosen; where it goes by
@@ -275,6 +285,7 @@ const TRIM: &str = "trim";
 const TOGETHER: &str = "together";
 const SMALLER: &str = "smaller";
 const PER_SIDE: &str = "per_side";
+const BOUND: &str = "bound";
 const PAPER: &str = "paper";
 
 /// Ask the dialog until it is answered with choices that hold: `None`
@@ -523,7 +534,7 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
             ),
         )
         .detail(words!(print_booklet_detail = "Pages on both sides, folded"))
-        .picture(folded()),
+        .picture(folded(offers.bound)),
     ];
     if offers.sheet() {
         layouts.push(
@@ -550,6 +561,8 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
     };
     let count = offers.count;
     let per_side = last.per_side.count().to_string();
+    // The document's own, as the pages are: never the last dialog's.
+    let bound = offers.bound;
     form = form
         .field(
             Field::new(
@@ -590,12 +603,53 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
                                     words!(print_folded_three_times = "Folded three times, cut")
                                 }
                             })
-                            .picture(per_side_picture(side))
+                            .picture(per_side_picture(side, bound))
                         })
                         .collect(),
                 },
             )
             .value(per_side)
+            .when(LAYOUT, &["booklet"]),
+        )
+        .field(
+            Field::new(
+                BOUND,
+                words!(
+                    print_bound = "Binding",
+                    note = "A field of the Print dialog, for a booklet: the edge its folded sheets are bound on, its spine."
+                ),
+                Kind::Row {
+                    choices: Bound::ALL
+                        .into_iter()
+                        .map(|edge| match edge {
+                            Bound::Left => Choice::new(
+                                "left",
+                                words!(
+                                    print_bound_left = "Bound on the left",
+                                    note = "A card of the Binding field: the spine on the left, as a book read left to right."
+                                ),
+                            )
+                            .detail(words!(
+                                print_bound_left_detail = "Read from left to right",
+                                note = "Under the Bound on the left card: its pages are read and turned from left to right."
+                            )),
+                            Bound::Right => Choice::new(
+                                "right",
+                                words!(
+                                    print_bound_right = "Bound on the right",
+                                    note = "A card of the Binding field: the spine on the right, as a Hebrew or an Arabic book, or a manga."
+                                ),
+                            )
+                            .detail(words!(
+                                print_bound_right_detail = "Read from right to left",
+                                note = "Under the Bound on the right card: its pages are read and turned from right to left."
+                            )),
+                        }
+                        .picture(bound_picture(edge)))
+                        .collect(),
+                },
+            )
+            .value(bound_value(bound))
             .when(LAYOUT, &["booklet"]),
         )
         .field(
@@ -618,19 +672,19 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
                             || words!(print_every_sheet = "Every sheet in one fold"),
                             |count| sheets_said(count.div_ceil(4)),
                         ))
-                        .picture(fold_picture(count, None)),
+                        .picture(fold_picture(count, None, bound)),
                         Choice::new(
                             "16",
                             words!(print_sets_of_16 = "Sets of 16 pages"),
                         )
                         .detail(words!(print_four_sheets = "4 sheets to a fold"))
-                        .picture(fold_picture(count, Some(16))),
+                        .picture(fold_picture(count, Some(16), bound)),
                         Choice::new(
                             "32",
                             words!(print_sets_of_32 = "Sets of 32 pages"),
                         )
                         .detail(words!(print_eight_sheets = "8 sheets to a fold"))
-                        .picture(fold_picture(count, Some(32))),
+                        .picture(fold_picture(count, Some(32), bound)),
                     ],
                 },
             )
@@ -1009,6 +1063,12 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, Words> {
             .and_then(PerSide::of_count)
             .filter(|_| booklet)
             .unwrap_or_default(),
+        // A booklet's; the edge the dialog opened on where none is held.
+        bound: match values.get(BOUND) {
+            "left" => Bound::Left,
+            "right" => Bound::Right,
+            _ => offers.bound,
+        },
         paper: Some(values.get(PAPER))
             .filter(|name| skwir_core::print::Paper::named(name).is_some())
             .map_or_else(
@@ -1078,9 +1138,11 @@ fn as_shown() -> Picture {
     }
 }
 
-/// A booklet's sheet: two pages side by side, the fold between.
-fn folded() -> Picture {
-    Picture {
+/// A booklet's sheet bound on `bound`: two pages side by side, the fold
+/// between, page 1 where it prints (on the right of the sheet's front
+/// bound on the left, on its left bound on the right).
+fn folded(bound: Bound) -> Picture {
+    let left = Picture {
         width: 64,
         height: 36,
         marks: vec![
@@ -1089,6 +1151,10 @@ fn folded() -> Picture {
             text(8, 5, 24, 26, "4"),
             text(32, 5, 24, 26, "1"),
         ],
+    };
+    match bound {
+        Bound::Left => left,
+        Bound::Right => mirrored(&left),
     }
 }
 
@@ -1107,12 +1173,72 @@ fn contact_sheet() -> Picture {
     }
 }
 
+/// What the Binding field holds for `bound`.
+fn bound_value(bound: Bound) -> &'static str {
+    match bound {
+        Bound::Left => "left",
+        Bound::Right => "right",
+    }
+}
+
+/// A booklet bound on `bound`, seen closed from its cover: page 1, its
+/// spine a bar along the edge it is bound on, the leaves behind it showing
+/// at the other.
+fn bound_picture(bound: Bound) -> Picture {
+    let left = Picture {
+        width: 64,
+        height: 36,
+        marks: vec![
+            boxed(29, 6, 20, 27, false),
+            boxed(26, 4, 20, 27, false),
+            boxed(23, 2, 20, 28, false),
+            text(23, 2, 20, 28, "1"),
+            boxed(17, 2, 7, 28, true),
+        ],
+    };
+    match bound {
+        Bound::Left => left,
+        Bound::Right => mirrored(&left),
+    }
+}
+
+/// `picture` seen in a mirror, left for right.
+fn mirrored(picture: &Picture) -> Picture {
+    let across = |x: u16, width: u16| picture.width.saturating_sub(x + width);
+    let marks = picture
+        .marks
+        .iter()
+        .map(|mark| match mark {
+            Mark::Box {
+                x,
+                y,
+                width,
+                height,
+                shaded,
+            } => boxed(across(*x, *width), *y, *width, *height, *shaded),
+            Mark::Text {
+                x,
+                y,
+                width,
+                height,
+                text: written,
+            } => text(across(*x, *width), *y, *width, *height, written.clone()),
+        })
+        .collect();
+    Picture {
+        width: picture.width,
+        height: picture.height,
+        marks,
+    }
+}
+
 /// The most sheets a fold's stack is drawn with, and folds drawn.
-/// A sheet of `per_side` pages a side: its front, the first sheet's
-/// pages where they print, those printed upside down shaded.
-fn per_side_picture(per_side: PerSide) -> Picture {
+/// A sheet of `per_side` pages a side bound on `bound`: its front, the
+/// first sheet's pages where they print, those printed upside down
+/// shaded.
+fn per_side_picture(per_side: PerSide, bound: Bound) -> Picture {
     let pages: Vec<u32> = (0..per_side.per_sheet()).collect();
-    let first = booklet::sheets(&pages, None, per_side)
+    let first = booklet::sheets_bound(&pages, None, per_side, bound)
         .into_iter()
         .next()
         .map(|sheet| sheet.front)
@@ -1149,19 +1275,19 @@ fn per_side_picture(per_side: PerSide) -> Picture {
 const STACK: u16 = 6;
 const FOLDS: usize = 3;
 
-/// How a booklet of `count` pages (unknown: none) folds in signatures of
-/// `signature` pages (one booklet without): its first sheet's front over
-/// its back, each page's number where it lands (`n` the last page where
-/// the count is unknown), and beside them the folds, each a stack of its
-/// sheets.
-fn fold_picture(count: Option<u32>, signature: Option<u32>) -> Picture {
+/// How a booklet of `count` pages (unknown: none) bound on `bound` folds
+/// in signatures of `signature` pages (one booklet without): its first
+/// sheet's front over its back, each page's number where it lands (`n`
+/// the last page where the count is unknown), and beside them the folds,
+/// each a stack of its sheets.
+fn fold_picture(count: Option<u32>, signature: Option<u32>, bound: Bound) -> Picture {
     let mut marks = Vec::new();
     // The first sheet: front above, back below, as the order lays them.
     let named = |page: Option<u32>| page.map_or_else(String::new, |page| (page + 1).to_string());
-    let (front, back, folds): ([String; 2], [String; 2], Vec<u16>) = match count {
+    let (mut front, mut back, folds): ([String; 2], [String; 2], Vec<u16>) = match count {
         Some(count) => {
             let order: Vec<u32> = (0..count.max(1)).collect();
-            let sheets = booklet::sheets(&order, signature, PerSide::Two);
+            let sheets = booklet::sheets_bound(&order, signature, PerSide::Two, bound);
             let pages = |cells: Option<&Vec<booklet::Cell>>| -> [Option<u32>; 2] {
                 let page = |at: usize| {
                     cells
@@ -1199,6 +1325,12 @@ fn fold_picture(count: Option<u32>, signature: Option<u32>) -> Picture {
             ),
         },
     };
+    // Unknown, its pages said bound on the left: on the right, each side
+    // mirrored, as the sheets are.
+    if count.is_none() && bound == Bound::Right {
+        front.reverse();
+        back.reverse();
+    }
     for (y, sides) in [(1u16, &front), (29, &back)] {
         for (at, page) in sides.iter().enumerate() {
             let x = 2 + 24 * u16::try_from(at).unwrap_or(0);
@@ -1251,6 +1383,7 @@ mod tests {
             page: Some(4),
             selection: true,
             count: Some(12),
+            bound: Bound::Left,
             subject: Subject::One,
             saved: Saved {
                 folder: Some(PathBuf::from("/example/notes")),
@@ -1280,7 +1413,7 @@ mod tests {
         assert_eq!(
             keys,
             [
-                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, PAPER, SMALLER
+                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, BOUND, FOLD, TRIM, PAPER, SMALLER
             ]
         );
         assert_eq!(form.title.english(), "Print “notes.md”");
@@ -1308,7 +1441,8 @@ mod tests {
         assert_eq!(
             keys,
             [
-                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, TOGETHER, PAPER, SMALLER
+                TO, SAVE_AS, PAGES, RANGES, LAYOUT, PER_SIDE, BOUND, FOLD, TRIM, TOGETHER, PAPER,
+                SMALLER
             ]
         );
         let field = |form: &Form, key: &str| form.fields.iter().find(|f| f.key == key).cloned();
@@ -1358,6 +1492,7 @@ mod tests {
                 together: false,
                 smaller: false,
                 per_side: PerSide::Two,
+                bound: Bound::Left,
                 paper: skwir_platform::print::paper_name().to_owned(),
                 dest: None,
                 name: None,
@@ -1406,17 +1541,43 @@ mod tests {
                 })
                 .collect()
         };
+        let left = Bound::Left;
         // 10 pages: 12 sides, the last two blank.
-        assert_eq!(written(&fold_picture(Some(10), None)), ["", "1", "2", ""]);
         assert_eq!(
-            written(&fold_picture(Some(12), None)),
+            written(&fold_picture(Some(10), None, left)),
+            ["", "1", "2", ""]
+        );
+        assert_eq!(
+            written(&fold_picture(Some(12), None, left)),
             ["12", "1", "2", "11"]
         );
         assert_eq!(
-            written(&fold_picture(Some(40), Some(16))),
+            written(&fold_picture(Some(40), Some(16), left)),
             ["16", "1", "2", "15"]
         );
-        assert_eq!(written(&fold_picture(None, None)), ["n", "1", "2", "n−1"]);
+        assert_eq!(
+            written(&fold_picture(None, None, left)),
+            ["n", "1", "2", "n−1"]
+        );
+        // Bound on the right, each side mirrored: page 1 on the left.
+        let right = Bound::Right;
+        assert_eq!(
+            written(&fold_picture(Some(12), None, right)),
+            ["1", "12", "11", "2"]
+        );
+        assert_eq!(
+            written(&fold_picture(None, Some(16), right)),
+            ["1", "16", "15", "2", "…"],
+            "more folds than drawn"
+        );
+        assert_eq!(
+            written(&fold_picture(None, None, right)),
+            ["1", "n", "n−1", "2"]
+        );
+        assert_eq!(
+            written(&per_side_picture(PerSide::Four, right)),
+            ["4", "5", "1", "8"]
+        );
         // Sets of 16 of 40 pages: three folds, the last of 2 sheets.
         let stacks = |picture: &Picture| {
             picture
@@ -1425,8 +1586,121 @@ mod tests {
                 .filter(|mark| matches!(mark, Mark::Box { x, .. } if *x >= 60))
                 .count()
         };
-        assert_eq!(stacks(&fold_picture(Some(40), Some(16))), 4 + 4 + 2);
-        assert_eq!(stacks(&fold_picture(Some(12), None)), 3);
+        assert_eq!(stacks(&fold_picture(Some(40), Some(16), left)), 4 + 4 + 2);
+        assert_eq!(stacks(&fold_picture(Some(12), None, left)), 3);
+        assert_eq!(stacks(&fold_picture(Some(12), None, right)), 3);
+    }
+
+    /// The Binding row is a booklet's, shown only while Booklet is chosen,
+    /// as a file's or several's dialog offers it, never a listing's; its
+    /// cards draw the spine on the edge each names, mirrored.
+    #[test]
+    fn the_binding_is_offered_for_a_booklet_alone() {
+        let form = opened(&offers());
+        let field = form.fields.iter().find(|f| f.key == BOUND).unwrap();
+        assert!(field.shown_with(&values(&[(LAYOUT, "booklet")])));
+        assert!(!field.shown_with(&values(&[(LAYOUT, "as_shown")])));
+        assert!(!field.shown_with(&values(&[(LAYOUT, "contact_sheet")])));
+        assert_eq!(field.title.english(), "Binding");
+        let cards: Vec<(String, String, &str)> = field
+            .choices()
+            .iter()
+            .map(|c| (c.title.english(), c.detail.english(), c.value.as_str()))
+            .collect();
+        assert_eq!(
+            cards,
+            [
+                (
+                    "Bound on the left".to_owned(),
+                    "Read from left to right".to_owned(),
+                    "left"
+                ),
+                (
+                    "Bound on the right".to_owned(),
+                    "Read from right to left".to_owned(),
+                    "right"
+                ),
+            ]
+        );
+        let [left, right] = [Bound::Left, Bound::Right].map(bound_picture);
+        let spine = |picture: &Picture| match picture.marks.last() {
+            Some(Mark::Box { x, width, .. }) => (*x, *width),
+            _ => panic!("the spine is drawn last"),
+        };
+        assert!(spine(&left).0 < 32 && spine(&right).0 > 32);
+        let several = opened(&Offers {
+            subject: Subject::Several { pictures: true },
+            ..offers()
+        });
+        assert!(several.fields.iter().any(|f| f.key == BOUND));
+        let listing = opened(&Offers {
+            subject: Subject::Listing,
+            ..offers()
+        });
+        assert!(listing.fields.iter().all(|f| f.key != BOUND));
+    }
+
+    /// The Binding row opens on the edge the document reads by, every
+    /// time: never the last dialog's, whatever was chosen there; what is
+    /// chosen is answered.
+    #[test]
+    fn the_binding_opens_as_the_document_reads_never_as_the_last() {
+        let value = |form: &Form| {
+            form.fields
+                .iter()
+                .find(|f| f.key == BOUND)
+                .unwrap()
+                .value
+                .clone()
+        };
+        let hebrew = Offers {
+            bound: Bound::Right,
+            ..offers()
+        };
+        assert_eq!(value(&opened(&hebrew)), "right");
+        assert_eq!(value(&opened(&offers())), "left");
+        // The Layout card's booklet drawn as it is bound: page 1 on the
+        // left of the sheet's front bound on the right, else on its right.
+        let page_one = |form: &Form| {
+            let layout = form.fields.iter().find(|f| f.key == LAYOUT).unwrap();
+            let booklet = layout
+                .choices()
+                .iter()
+                .find(|c| c.value == "booklet")
+                .unwrap();
+            booklet
+                .picture
+                .as_ref()
+                .unwrap()
+                .marks
+                .iter()
+                .find_map(|mark| match mark {
+                    Mark::Text { x, text, .. } if text == "1" => Some(*x),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let (right, left) = (page_one(&opened(&hebrew)), page_one(&opened(&offers())));
+        assert!(right < 32 && left >= 32, "{right} {left}");
+        // Chosen on the left for the Hebrew book, then a book read left to
+        // right opens on the left, and the Hebrew one on the right again.
+        let answered = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "left")]);
+        let chosen = super::chosen(&answered, &hebrew).unwrap();
+        assert_eq!(chosen.bound, Bound::Left);
+        let last = remembered(&answered, &chosen, &Remembered::default());
+        assert_eq!(value(&super::form(&offers(), &last)), "left");
+        assert_eq!(value(&super::form(&hebrew, &last)), "right");
+        let answered = values(&[(TO, "pdf"), (LAYOUT, "booklet"), (BOUND, "right")]);
+        let chosen = super::chosen(&answered, &offers()).unwrap();
+        assert_eq!(chosen.bound, Bound::Right);
+        let last = remembered(&answered, &chosen, &last);
+        assert_eq!(value(&super::form(&offers(), &last)), "left");
+        // Held by no field (no booklet asked): the edge it opened on.
+        let printed = values(&[(TO, "printer"), (LAYOUT, "as_shown")]);
+        assert_eq!(
+            super::chosen(&printed, &hebrew).unwrap().bound,
+            Bound::Right
+        );
     }
 
     /// The next dialog opens on the last choices, but its pages.

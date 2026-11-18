@@ -56,12 +56,7 @@ pub fn visible(
 /// chosen Plain text) each in their own direction, as GTK's text views read
 /// them. May read what bat's set holds: a worker's work.
 pub fn is_code(tree_sitter: bool, language: Option<&str>) -> bool {
-    tree_sitter
-        || language.is_some_and(|language| {
-            skwir_platform::highlight::added::table_now()
-                .colors(language)
-                .is_some()
-        })
+    tree_sitter || skwir_platform::highlight::colored_by_bat(language)
 }
 
 /// `element`'s lines laid out as code editors lay code out: each left to
