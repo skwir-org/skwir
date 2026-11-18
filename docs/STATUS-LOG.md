@@ -19903,3 +19903,48 @@ relu à 0 %) ».
 **Not checked:** a speaker of Chinese reading the drafts (the glossary's
 "For the reviewer" lists where to start); macOS's bundle with the drafts
 declared (`package-macos` not run); Windows in a window.
+
+## 2026-11-18: what Skwir's words cost the binary and idle memory
+
+Measured the `dist` binary of 09c6a28f (the commit before ADR-139) against
+f427dfca (French and Simplified Chinese drafted), on the user's question
+whether languages should ship apart from the program.
+
+**The binary:** 124.6 to 141.3 MiB (+16.7); compressed as packages are
+(`zstd -19`), 31.7 to 35.9 MiB (+4.2). Of the sections loaded, `.rodata`
++6.3 MiB (ICU4X's data, the dictionaries, the catalogs), `.text` +3.4,
+`.data.rel.ro` +1.7 (data tables with pointers, written by the loader at
+every start: +1.6 MiB private dirty), unwinding +0.6. The catalogs are
+606 KiB (French) and 518 KiB (Chinese) of text, about 110 KiB each once
+compressed in a package: some 0.5 MiB installed and 0.1 MiB downloaded
+a language, where 0.5.1's packages are 55 to 91 MiB.
+
+**Idle memory** (`tools/measure/idle-pss.py`, three runs, medians, on
+Xvfb with lavapipe: the absolute figures are this display's, over the
+budget for both builds; only the differences count): before ADR-139
+117.3 to 118.6 MiB own share in English; f427dfca 140.3 in English, 141.0
+in French, 145.1 in Chinese (3.9 MiB of it the CJK fonts). All the
+growth was the binary's pages (31 to 54 MiB; code 21.5 to 38.5 MiB
+resident), more than the code grew: the startup list (ADR-128) was
+0.5.1's, 61 commits old, and the code a start now runs lay scattered.
+With a list made again for f427dfca (25,077 functions in order against
+21,008), 123.3 MiB in English (+6.0 over the build before) and 127.4 in
+Chinese; the binary's pages 36.5 and 37.5 MiB. The first frame is
+unchanged (98 to 116 ms warm, both builds). `just startup-order` before
+tagging (RELEASING.md, step 4) is what takes the 17 MiB back.
+
+**Catalogs compressed** (a design weighed, not built): each crate's
+catalog with zstd at 19 is 143 KiB for French and 139 KiB for Chinese
+against 606 and 518. Unpacked with `ruzstd` (already linked, by the
+models plugin) and indexed, a whole language costs 7.2 ms (French) and
+5.0 ms (Chinese) against 3.2 and 2.1 ms indexed as it lies (release,
+medians of 41, the machine building meanwhile: upper bounds), and its
+text becomes the heap's. Not worth it: it saves installed bytes, not a
+download (packages compress already), and costs the start of every
+window that speaks a translation.
+
+**Found on the way:** an English start indexes core's catalog of every
+shipped language, to say each language's name in itself for the Language
+setting (0.43 ms and 97 KiB read for French, 0.24 ms and 83 KiB for
+Chinese): a cost that grows with each language shipped, to be written at
+build time beside the shares.

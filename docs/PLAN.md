@@ -3658,8 +3658,9 @@ their budgets in every language.
   and the window's first messages (the placeholder, `format::items`,
   `files` and `folders`, the toast), the registries (commands, menus,
   settings, places; agents in English), the trash plugin, and the
-  pseudo-language seen in a window. Owed: idle memory and the first frame
-  with a full catalog, with the first real one (step G).
+  pseudo-language seen in a window. Idle memory and the first frame
+  measured 2026-11-18 with French and Chinese (STATUS-LOG): a language
+  costs 0.6 to 1 MiB, the first frame unchanged.
   - The engine:
     - `skwir_core::words`: `Words`, its arguments, the resolver, and the
       catalogs' registry, tagged by owner;
@@ -3731,9 +3732,12 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   and Windows' own; `locale::set_hours`, BCP 47's `-u-hc-`). A photo's
   facts read from its EXIF, the timeline's short counts, a film's time
   and About's scale are messages; About's details name the languages
-  and the locales. Left: idle memory with the data (ICU4X's compiled
-  data holds every locale: a data export for the languages shipped is
-  the lighter way).
+  and the locales. Idle memory with the data measured 2026-11-18
+  (STATUS-LOG): +6 MiB for an English window once the startup list is
+  made again, +4.2 MiB to a download. Left: the languages' names read
+  from every catalog at each start (a cost that grows with each
+  language: written at build time instead), and a data export for the
+  languages shipped, the lighter way, if the data is what weighs.
   - ICU4X's decimal, list and datetime, with data for English and the
     languages shipped. `Count`, `Size`, `Instant` and `Span` are
     formatted by them: `format.rs`'s dates, the timeline's months, the
