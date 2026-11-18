@@ -2974,8 +2974,9 @@ pub fn blocks(specs: &[&SettingSpec]) -> Vec<Block> {
         rows.iter()
             .map(|&at| {
                 let spec = specs[at];
-                (spec.kind != SettingKind::Records && spec.under.is_empty())
-                    .then_some((&spec.title, spec.kind))
+                (!matches!(spec.kind, SettingKind::Records | SettingKind::KeptChoice)
+                    && spec.under.is_empty())
+                .then_some((&spec.title, spec.kind))
             })
             .collect()
     };
@@ -3441,6 +3442,10 @@ impl Row {
     /// it alone; one Skwir starts filled is changed by its records, never
     /// by their ids (`SettingSpec::records_changed`).
     pub fn modified(&self) -> bool {
+        // Its owner's, not a preference of Skwir's: never changed by you.
+        if self.spec.kind == SettingKind::KeptChoice {
+            return false;
+        }
         if self.spec.kind != SettingKind::Records {
             return self.value != self.default_text();
         }
@@ -3986,11 +3991,17 @@ impl SettingsView {
     // ------------------------------------------------------------ live state
 
     fn live(&self, spec: &SettingSpec) -> String {
-        if spec.constraints.record_source.is_some() {
+        if spec.kept_source().is_some() {
+            // Not listed yet: no records, no choice.
+            let none = if spec.kind == SettingKind::KeptChoice {
+                "{}"
+            } else {
+                "[]"
+            };
             return self
                 .sourced
                 .get(&spec.key)
-                .map_or_else(|| "[]".to_owned(), |(_, records)| records.clone());
+                .map_or_else(|| none.to_owned(), |(_, answer)| answer.clone());
         }
         self.app
             .settings
@@ -3998,20 +4009,21 @@ impl SettingsView {
             .unwrap_or_else(|| SettingSpec::format_value(&spec.default))
     }
 
-    /// List again the records whose owner keeps them elsewhere and says
-    /// they changed since (`RecordSource`), its command answering from
+    /// List again what owners keep elsewhere and say changed since
+    /// (`RecordSource`, `ChoiceSource`), their commands answering from
     /// memory: whether any did.
     fn list_sourced(&mut self) -> bool {
         let mut changed = false;
-        let sources: Vec<(String, String, u64)> = self
+        let sources: Vec<(String, String, u64, bool)> = self
             .rows
             .iter()
             .filter_map(|row| {
-                let source = row.spec.constraints.record_source.as_ref()?;
-                Some((row.spec.key.clone(), source.list.clone(), source.revision()))
+                let (list, revision) = row.spec.kept_source()?;
+                let choice = row.spec.kind == SettingKind::KeptChoice;
+                Some((row.spec.key.clone(), list.to_owned(), revision, choice))
             })
             .collect();
-        for (key, list, revision) in sources {
+        for (key, list, revision, choice) in sources {
             if self
                 .sourced
                 .get(&key)
@@ -4019,15 +4031,24 @@ impl SettingsView {
             {
                 continue;
             }
+            let none = if choice { "{}" } else { "[]" };
             let records = match self.app.dispatch(&Invocation::new(list.as_str())) {
+                // A choice is the whole answer, records its list.
+                Ok(Outcome::Value(value)) if choice => {
+                    if value.is_object() {
+                        value.to_string()
+                    } else {
+                        none.to_owned()
+                    }
+                }
                 Ok(Outcome::Value(value)) => value
                     .get("records")
                     .filter(|records| records.is_array())
-                    .map_or_else(|| "[]".to_owned(), ToString::to_string),
-                Ok(_) => "[]".to_owned(),
+                    .map_or_else(|| none.to_owned(), ToString::to_string),
+                Ok(_) => none.to_owned(),
                 Err(error) => {
-                    tracing::debug!(key, "records not listed: {error:#}");
-                    "[]".to_owned()
+                    tracing::debug!(key, "what its owner keeps is not listed: {error:#}");
+                    none.to_owned()
                 }
             };
             if let Some(row) = self.rows.iter_mut().find(|row| row.spec.key == key) {
@@ -4260,14 +4281,15 @@ impl SettingsView {
         .detach();
     }
 
-    /// Whether `spec` can be changed: it is under no switch that is off.
+    /// Whether `spec` can be changed: it is under no setting it does not
+    /// apply with (a switch off, a choice of another value).
     pub(crate) fn available(&self, spec: &SettingSpec) -> bool {
         spec.under.is_empty()
             || self
                 .rows
                 .iter()
                 .find(|row| row.spec.key == spec.under)
-                .is_none_or(|row| row.value == "true")
+                .is_none_or(|row| spec.applies_with(&row.value))
     }
 
     pub(crate) fn saving(&self) -> bool {
@@ -4281,7 +4303,8 @@ impl SettingsView {
     pub(crate) fn change(&mut self, key: &str, text: String, cx: &mut Context<Self>) {
         self.highlight = None;
         self.reset_armed = false;
-        // A setting under a switch that is off waits for the switch.
+        // A setting under a switch off, or a choice of another value,
+        // waits for it.
         if !self
             .rows
             .iter()

@@ -36,7 +36,13 @@ the reasoning.
   its `value` and `label`, its `choices` (each a `value`, `label`,
   `detail`, and whether `disabled`, greyed with why) and the `command`
   choosing runs, with `args` and the value in its `field`: a language's
-  grammar); `data` for what the user makes
+  grammar); `choice_kept_by` for one choice its owner keeps elsewhere
+  (the desktop's default file manager, a `ChoiceSource`: its command
+  answers from memory with that `choice`'s fields and a `detail`, what
+  the value means for the user, said under the description), drawn as a
+  choice's row, never saved, reverted or counted as changed by the user,
+  refused by `settings.apply` (its owner's command changes it): never a
+  list of one record for it; `data` for what the user makes
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).
@@ -101,11 +107,14 @@ the reasoning.
   one held sends nothing, so nothing waits. An owner that reads such a
   setting asks `previewed` first (`ColorSource::chosen`).
 - A setting that applies only while a switch is on says so with
-  `SettingSpec::under(switch)` and is declared right after it, in its
-  section: the dialog draws it
-  indented beneath the switch and unavailable (dimmed, announced as
-  disabled, its changes refused) while the switch is off. Its owner
-  still reads both: `under` is how it is shown, not what it means.
+  `SettingSpec::under(switch)`, one that applies only with some values
+  of a choice with `SettingSpec::under_choice(choice, values)` (the
+  startup folder under Open at startup's A chosen folder), and is
+  declared right after it, in its section: the dialog draws it indented
+  beneath and unavailable (dimmed, announced as disabled, its changes
+  refused) while the switch is off or the choice has another value
+  (`SettingSpec::applies_with`). Its owner still reads both: `under` is
+  how it is shown, not what it means.
 - The owner states the order too, by declaring in it: a section shows
   its settings as they were first declared (`SettingSpec::order`).
   Declared again, or by a plugin turned on again, a setting keeps its

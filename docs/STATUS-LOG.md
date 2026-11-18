@@ -20402,3 +20402,109 @@ systemd: whether status 3 fails the request at once there); a real
 asker (Firefox, Chromium, the portal's `OpenDirectory`, Zed); Dolphin's
 own daemon as the holder; the startup id on Wayland; `just
 release-check`.
+
+## 2026-11-19: the default file manager in Settings (ADR-140, 8)
+
+Asked by the user after ADR-140: a row in Settings for it. General ›
+Startup now holds "Default file manager", between the startup folder
+and "Open folders from other programs in": a list of one line kept by
+the open-with plugin, which already reads the desktop's applications
+and makes a default with Undo (`open_with.set_default`). The line,
+"Folders", chooses among the applications that open folders, the
+default first ("Not chosen (…)" when the lists name none), and says
+what the choice means for other programs' Show in Folder: what choosing
+Skwir gives; that Skwir shows them; that another program does until it
+ends, named as its desktop entry names it
+(`skwir_platform::file_manager::shower`: who holds the name, asked of
+the bus); that Skwir cannot be chosen where its entry is missing.
+Listed from memory, as the dialog asks; the catalog read again on a
+worker when it moved, and the holder asked on a worker each time the
+line is listed, each answer that changes the line listing it again.
+Linux alone (the catalog is read there only). Folded under More
+settings: the page has its four essentials, and which would give way is
+the user's to say.
+
+**Checked:** rustfmt; clippy `-D warnings` on the plugin and the
+platform for Linux, Windows and macOS; the words check (French and
+Simplified Chinese drafts of the 16 messages, 100% of messages
+translated); the plugin's 21 tests, two new (what the line says as the
+choice and the bus stand: another chosen, Skwir chosen, a holder named
+by its entry, one unread, Skwir's entry missing, none named; listed
+before and after the catalog is read, Skwir chosen from the line with
+its notice and Undo, the list written, the setting withdrawn with the
+plugin), `skwir`'s settings and plugin toggle tests. In a window on
+Xvfb with a private dbus-daemon, Files the default: the row between
+Startup folder and Open folders from other programs in, "Chosen, Skwir
+also shows…"; Skwir chosen from its dropdown: "skwir now opens folders"
+with Undo, the list written, the name taken, the service file written,
+the line "Skwir also shows…"; Files chosen back, the name let go; a
+holder that does not let go (`dbus-test-tool black-hole`), Skwir
+chosen: "dbus-test-tool still shows the files other programs show in
+their folder, until it ends"; the holder stopped: Skwir took the name
+at once, and Settings opened again said "Skwir also shows…".
+
+**Not checked:** the line following a holder that ends while the dialog
+stays open (it says so at the next listing); Dolphin's daemon itself as
+the holder, named "Dolphin" by its entry (a test's catalog only); the
+reworded description in a window (the window ran the build before it).
+
+## 2026-11-19: General's essentials, and the startup folder under its choice
+
+Asked by the user: "Ask what dropped files do" folded under More
+settings and the default file manager shown in its place, General's
+four essentials now the language, Open at startup, the startup folder
+and the default file manager (ADR-072 amended); and the startup folder
+disabled unless Open at startup is A chosen folder. A setting could be
+shown under a switch only (`SettingSpec::under`, applying while it is
+`true`): it may now be under a choice, applying with the values it
+names (`SettingSpec::under_choice`, `SettingSpec::applies_with`, which
+the dialog asks for whether a row is available). The startup folder is
+under Open at startup's `folder`; the rule is in
+`docs/invariants/settings.md`.
+
+**Checked:** rustfmt; clippy `-D warnings` on core, the window and the
+open-with plugin; two new core tests (a setting under a switch and
+under a choice's values, the startup folder under a chosen folder);
+the window's 64 settings tests, `skwir`'s settings tests (the budget of
+essentials among them) and the plugin toggle test. In a window on Xvfb:
+the folded General page shows the language, Open at startup, the
+startup folder indented beneath it, and the default file manager, More
+settings holding Ask what dropped files do; with The windows and tabs
+left open, the startup folder's field and Browse are dimmed; A chosen
+folder again, both available.
+
+## 2026-11-19: the default file manager is a choice its owner keeps
+
+The user asked why "Default file manager" drew a card inside its card:
+it was a list of records kept by its owner (`records_kept_by`), the one
+kind for a value kept elsewhere, holding one line, "Folders", which
+nothing would ever join. Asked to make it a plain choice's row, a new
+kind: `SettingKind::KeptChoice` (`SettingSpec::choice_kept_by`, a
+`ChoiceSource`), a choice its owner keeps elsewhere. Its command answers
+from memory with the fields of a record's `choice` (value, label,
+choices, the command, its args and field) and a `detail`, what the
+value means for the user; the dialog draws it as any choice's row, the
+dropdown a record's (`record_choice`, named by the row for a screen
+reader, its description and detail its description), the detail under
+the description; listed again when the owner's revision moves, as kept
+records are; never saved (`settings.apply` refuses it as managed by its
+owner's commands), never reverted nor counted as changed by the user,
+never a column of a table. The open-with plugin answers it; the line's
+name and its two column titles went with the list (and their drafts).
+The rule is in `docs/invariants/settings.md`.
+
+**Checked:** rustfmt; clippy `-D warnings` on core, the window and the
+plugin; the words check; a core test (listed by the owner's command,
+asked again when it moves, refused by `settings.apply`), the plugin's
+21 tests (what the row answers as the choice and the bus stand, chosen
+from the row with its notice and Undo, refused as a preference), the
+window's 64 settings tests, `skwir`'s settings and plugin toggle tests;
+clippy for Windows (core, the window, the plugin) and macOS (core, the
+plugin). In a window on Xvfb with a private dbus-daemon: General shows
+"Default file manager" as a choice's row, its description, then
+"Chosen, Skwir also shows…" under it, Files in its dropdown, no card
+inside; skwir chosen there: the list written, the name taken, "skwir
+now opens folders" with Undo, the row saying "Skwir also shows…", no
+revert button, Changed by you not counting it, nothing written to
+skwir's settings. Undo clicked from the notice was not reached in time
+(the notice had gone); the plugin's test runs it.

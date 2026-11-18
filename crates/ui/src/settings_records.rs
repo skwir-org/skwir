@@ -1190,7 +1190,7 @@ impl SettingsView {
         }
         // A choice of its own (a language's grammar), last of its actions.
         if let Some(choice) = record.get("choice").and_then(serde_json::Value::as_object) {
-            actions = actions.child(self.record_choice(key, id, choice, item, theme, cx));
+            actions = actions.child(self.record_choice(key, id, choice, item, None, theme, cx));
         }
         // What else the line does, as the owner says, after Edit and
         // Remove for the keys: they stand above.
@@ -1283,12 +1283,17 @@ impl SettingsView {
     /// choices in a popup under it, one that cannot be chosen greyed with
     /// why; choosing runs the owner's command. Left and Right step through
     /// them while it has the keyboard (`Pick`).
-    fn record_choice(
+    /// `named`: what a screen reader hears it called and described as,
+    /// for a choice that is a setting's own (`SettingKind::KeptChoice`);
+    /// a record's is the record line's.
+    #[allow(clippy::too_many_arguments)] // a choice, its place and its name
+    pub(crate) fn record_choice(
         &mut self,
         key: &str,
         id: &str,
         choice: &serde_json::Map<String, serde_json::Value>,
         item: usize,
+        named: Option<(gpui::SharedString, String)>,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1351,6 +1356,9 @@ impl SettingsView {
             controls::dropdown(format!("pick-{key}-{id}"), label, &focus, theme)
                 .min_w(sized(180.))
                 .aria_expanded(open)
+                .when_some(named, |d, (label, description)| {
+                    d.aria_label(label).aria_description(description)
+                })
                 // Left and Right step through it, as through a choice's.
                 .key_context("SettingControl")
                 .child(anchor.marker())

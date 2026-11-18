@@ -80,6 +80,38 @@ fn local(uri: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+/// Who shows the files other programs show in their folder, as the bus
+/// says now ([`shower`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Shower {
+    /// This program.
+    Here,
+    /// Another program, by the path it was started as
+    /// (`/usr/bin/dolphin`), or none where it cannot be read: skwir waits
+    /// behind it while chosen.
+    Program(Option<PathBuf>),
+    /// No one: the bus starts what its files name, or the asker opens
+    /// the folder itself.
+    Nobody,
+    /// Not known: another system, or no session bus.
+    Unknown,
+}
+
+/// Who holds `org.freedesktop.FileManager1` now: asked of the bus, which
+/// answers at once (it is the bus's own question, not another program's).
+/// On a worker.
+#[must_use]
+pub fn shower() -> Shower {
+    #[cfg(target_os = "linux")]
+    {
+        linux::shower()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Shower::Unknown
+    }
+}
+
 /// What follows the user's choice ([`follow`]): dropped, it stops.
 pub struct Following {
     #[cfg(target_os = "linux")]
@@ -125,6 +157,37 @@ mod linux {
         "# Written by skwir while it is the default for folders (ADR-140); removed when it is not.";
     /// How long a burst of changes to the lists is let settle.
     const SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
+
+    pub(super) fn shower() -> super::Shower {
+        use super::Shower;
+        let Ok(bus) = crate::bus::session() else {
+            return Shower::Unknown;
+        };
+        let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&bus) else {
+            return Shower::Unknown;
+        };
+        let Ok(name) = zbus::names::BusName::try_from(NAME) else {
+            return Shower::Unknown;
+        };
+        match dbus.get_connection_unix_process_id(name) {
+            Ok(pid) if pid == std::process::id() => Shower::Here,
+            Ok(pid) => Shower::Program(started_as(pid)),
+            Err(zbus::fdo::Error::NameHasNoOwner(_)) => Shower::Nobody,
+            Err(error) => {
+                tracing::debug!("who shows files is not known: {error}");
+                Shower::Unknown
+            }
+        }
+    }
+
+    /// The path the process `pid` was started as: its first argument.
+    fn started_as(pid: u32) -> Option<PathBuf> {
+        let line = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        let first = line.split(|b| *b == 0).next().filter(|f| !f.is_empty())?;
+        Some(PathBuf::from(skwir_core::os_path::from_bytes(
+            first.to_vec(),
+        )))
+    }
 
     /// Skwir's desktop entry, when it is the default the desktop names
     /// for folders. Reads the lists: on a worker.

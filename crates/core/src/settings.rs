@@ -326,6 +326,11 @@ pub enum SettingKind {
     /// filled (`SettingSpec::starting_with`) is a preference, which Revert
     /// and Reset all give back.
     Records,
+    /// A choice its owner keeps elsewhere (the desktop's default file
+    /// manager, ADR-140): what it holds and offers is the owner's answer,
+    /// and choosing runs the owner's command (see [`ChoiceSource`]). Never
+    /// saved, never reverted: it is no preference of Skwir's.
+    KeptChoice,
 }
 
 /// One field of a record in a [`SettingKind::Records`] setting.
@@ -471,6 +476,43 @@ impl RecordSource {
     }
 }
 
+/// A choice its owner keeps elsewhere ([`SettingKind::KeptChoice`]): the
+/// dialog draws what `list` answers, dispatched on the window's thread
+/// and so answered from the owner's memory, `{ "value", "label",
+/// "choices": [{ "value", "label", "detail"?, "disabled"? }], "command",
+/// "args"?, "field", "detail"? }` (a record's `choice`, with what the
+/// value means for the user in `detail`, said under the description), and
+/// choosing runs `command` with `args` and the value chosen in `field`.
+/// The setting's own value is never read nor saved: `settings.apply`
+/// refuses it, as the owner's command changes it. The dialog lists it
+/// again when `revision` moves ([`ChoiceSource::changed`]).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ChoiceSource {
+    pub list: String,
+    #[serde(skip)]
+    pub revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ChoiceSource {
+    pub fn new(list: &str) -> Self {
+        ChoiceSource {
+            list: list.into(),
+            revision: std::sync::Arc::default(),
+        }
+    }
+
+    /// Say that what `list` answers changed: the dialog asks again.
+    pub fn changed(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// What `changed` has moved it to.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 /// The owner's own check of a value, after the kind's: what only it knows
 /// (a tile address needs `{z}`, `{x}` and `{y}`). Runs wherever a value is
 /// validated, in the dialog and in `settings.apply`, given the value
@@ -578,10 +620,16 @@ pub struct SettingSpec {
     /// come to the page for (ADR-072). The others wait under the page's
     /// More settings.
     pub essential: bool,
-    /// The switch this setting is shown under (its key), which it applies
-    /// only while that is on; empty for none. The dialog draws it indented
-    /// beneath the switch, unavailable while the switch is off.
+    /// The setting this one is shown under (its key), which it applies
+    /// only with: a switch while it is on, a choice while it has one of
+    /// `under_values`; empty for none. The dialog draws it indented
+    /// beneath, unavailable otherwise ([`SettingSpec::applies_with`]).
     pub under: String,
+    /// The values of the choice `under` names that it applies with
+    /// ([`SettingSpec::under_choice`]); none under a switch, which it
+    /// applies with on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub under_values: Vec<String>,
     /// The unit a number is written in ("64 MB", "1 line"): its owner's
     /// words placing the number (`SettingSpec::unit`).
     pub unit: Option<Unit>,
@@ -722,6 +770,9 @@ pub struct SettingConstraints {
     /// Records their owner keeps elsewhere, changed by its commands (see
     /// [`RecordSource`]).
     pub record_source: Option<RecordSource>,
+    /// The choice of a [`SettingKind::KeptChoice`] setting, kept by its
+    /// owner (see [`ChoiceSource`]).
+    pub choice_source: Option<ChoiceSource>,
     /// The choices are what is known here and now: others may be found
     /// where skwir runs (the themes a user added to bat). A file's value
     /// outside them is noted by `Settings::check`, not refused. No words:
@@ -817,6 +868,7 @@ impl SettingSpec {
             section_title: Words::as_written(""),
             essential: false,
             under: String::new(),
+            under_values: Vec::new(),
             unit: None,
             default,
             kind,
@@ -1030,6 +1082,39 @@ impl SettingSpec {
         spec.constraints.fields = fields;
         spec.constraints.record_add = add.into();
         spec
+    }
+
+    /// A choice its owner keeps elsewhere, as `source` lists it (see
+    /// [`ChoiceSource`]): drawn as a choice's row, chosen through the
+    /// owner's command, never saved here.
+    pub fn choice_kept_by(
+        key: &str,
+        title: impl Into<Words>,
+        description: impl Description,
+        source: ChoiceSource,
+    ) -> Self {
+        let mut spec = Self::new(
+            key,
+            title.into(),
+            description,
+            toml::Value::String(String::new()),
+        );
+        spec.kind = SettingKind::KeptChoice;
+        spec.constraints.choice_source = Some(source);
+        spec
+    }
+
+    /// What lists a setting its owner keeps elsewhere, a list of records
+    /// or a choice, and where it stands: the command the dialog asks
+    /// (from the owner's memory) and the revision it asks again at.
+    pub fn kept_source(&self) -> Option<(&str, u64)> {
+        if let Some(source) = &self.constraints.record_source {
+            return Some((source.list.as_str(), source.revision()));
+        }
+        self.constraints
+            .choice_source
+            .as_ref()
+            .map(|source| (source.list.as_str(), source.revision()))
     }
 
     /// The records the list starts with, Skwir's, in their order: each
@@ -1289,7 +1374,29 @@ impl SettingSpec {
     #[must_use]
     pub fn under(mut self, parent: &str) -> Self {
         parent.clone_into(&mut self.under);
+        self.under_values.clear();
         self
+    }
+
+    /// Shown under the choice `parent`, applying only while it has one of
+    /// `values` (the startup folder under Open at startup's A chosen
+    /// folder). Declare it right after the choice, in the same section.
+    #[must_use]
+    pub fn under_choice(mut self, parent: &str, values: &[&str]) -> Self {
+        parent.clone_into(&mut self.under);
+        self.under_values = values.iter().map(|&value| value.to_owned()).collect();
+        self
+    }
+
+    /// Whether it applies while the setting it is under has `value`, as
+    /// the dialog writes values (`true` for a switch on, a choice's
+    /// value): a switch's on, else one of its choice's values.
+    pub fn applies_with(&self, value: &str) -> bool {
+        if self.under_values.is_empty() {
+            value == "true"
+        } else {
+            self.under_values.iter().any(|v| v == value)
+        }
     }
 
     /// Written in `unit`, words placing the number `n`, a selector on it
@@ -1691,6 +1798,11 @@ impl SettingSpec {
 
     fn parse_beside(&self, text: &str, beside: Beside<'_>) -> anyhow::Result<toml::Value> {
         anyhow::ensure!(self.editable() || self.page_drawn, Self::managed(&self.key));
+        // Kept by its owner: chosen through its command, never saved here.
+        anyhow::ensure!(
+            self.kind != SettingKind::KeptChoice,
+            Self::managed(&self.key)
+        );
         let value = match self.default {
             _ if self.kind == SettingKind::Records => self.parse_records(text, beside)?,
             // A table or a list its page draws, as JSON (`format_value`).
@@ -1848,6 +1960,8 @@ pub(crate) fn register(app: &crate::App) {
             ),
             "",
         )
+        // A folder chosen is read only when the startup opens one.
+        .under_choice(STARTUP, &["folder"])
         .section(section::STARTUP)
         .essential(),
     );
@@ -1885,8 +1999,9 @@ pub(crate) fn register(app: &crate::App) {
             ),
             true,
         )
-        .section(section::DRAG_AND_DROP)
-        .essential(),
+        // Folded: General's fourth essential is the default file manager
+        // (ADR-072, amended 2026-11-19).
+        .section(section::DRAG_AND_DROP),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -3678,6 +3793,87 @@ pub(crate) fn keep_attributes_title() -> Words {
         settings_keep_attributes = "Keep tags and attributes when copying",
         note = "A setting on the Tags and notes page; a copy that cannot keep them names it too."
     )
+}
+
+#[cfg(test)]
+mod under_tests {
+    use super::{SettingSpec, register};
+    use crate::words::Words;
+
+    /// Under a switch, a setting applies while it is on; under a choice,
+    /// with the values it names alone; declared again under a switch, it
+    /// names none.
+    #[test]
+    fn a_setting_applies_with_what_it_is_under() {
+        let switch =
+            SettingSpec::toggle("a.more", Words::as_written("More"), "Does.", true).under("a.on");
+        assert!(switch.applies_with("true"));
+        assert!(!switch.applies_with("false"));
+        let chosen = SettingSpec::text("a.folder", Words::as_written("Folder"), "Does.", "")
+            .under_choice("a.start", &["folder", "here"]);
+        assert_eq!(chosen.under, "a.start");
+        assert!(chosen.applies_with("folder"));
+        assert!(chosen.applies_with("here"));
+        assert!(!chosen.applies_with("last"));
+        assert!(!chosen.applies_with("true"));
+        let again = chosen.under("a.on");
+        assert!(again.under_values.is_empty());
+        assert!(again.applies_with("true"));
+    }
+
+    /// The startup folder is read only when a chosen folder opens at
+    /// startup, and is shown so.
+    #[test]
+    fn the_startup_folder_is_under_a_chosen_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        register(&app);
+        let folder = app
+            .settings
+            .schema()
+            .into_iter()
+            .find(|spec| spec.key == super::STARTUP_FOLDER)
+            .unwrap();
+        assert_eq!(folder.under, super::STARTUP);
+        assert!(folder.applies_with("folder"));
+        assert!(!folder.applies_with("last"));
+    }
+}
+
+#[cfg(test)]
+mod kept_tests {
+    use super::{ChoiceSource, SettingKind, SettingSpec};
+    use crate::words::Words;
+
+    /// A choice its owner keeps is listed by the owner's command, asked
+    /// again as the owner says it moved, and never applied as a
+    /// preference.
+    #[test]
+    fn a_kept_choice_is_its_owners() {
+        let source = ChoiceSource::new("owner.choice");
+        let spec = SettingSpec::choice_kept_by(
+            "owner.kept",
+            Words::as_written("Kept"),
+            "Chosen elsewhere.",
+            source.clone(),
+        );
+        assert_eq!(spec.kind, SettingKind::KeptChoice);
+        let before = spec.kept_source().unwrap().1;
+        assert_eq!(spec.kept_source().unwrap().0, "owner.choice");
+        source.changed();
+        assert_ne!(
+            spec.kept_source().unwrap().1,
+            before,
+            "the dialog lists it again"
+        );
+        assert!(spec.parse_over("anything", None).is_err());
+
+        let tmp = tempfile::tempdir().unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.settings.declare(spec);
+        let changes = std::collections::BTreeMap::from([("owner.kept".to_owned(), "x".to_owned())]);
+        assert!(app.settings.validate(&changes).is_err());
+    }
 }
 
 #[cfg(test)]

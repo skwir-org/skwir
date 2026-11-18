@@ -5,7 +5,8 @@ should take the desktop's "open in folder" requests and be the default
 file manager, they chose to start there, before a file chooser for
 other programs). Built on Linux; elsewhere refused (decision 7). Amends
 ADR-115 and ADR-122: a launch may say what to select, and the program
-may start without a window.
+may start without a window. Amended 2026-11-19, the user asking for the
+row in Settings: decision 8.
 
 ## Context
 
@@ -112,6 +113,23 @@ may start without a window.
    not for the shell's own "Open file location", and a handler that
    fails breaks opening folders everywhere. Neither is attempted, and
    `--file-manager` there says so (`system::not_yet`).
+8. **Settings says it** (amended 2026-11-19): General › Startup holds
+   "Default file manager", beside "Open folders from other programs in",
+   a choice its owner keeps (`SettingSpec::choice_kept_by`, drawn as any
+   choice's row), the open-with plugin, whose catalog and
+   `open_with.set_default` (its notice offering Undo) it is: the
+   applications that open folders to choose from, the default first
+   (none named: "Not chosen", with what opens them meanwhile), and, under
+   its description, what the choice means for Show in Folder: what choosing skwir gives; that
+   skwir shows them; that another program does until it ends
+   (`file_manager::shower`, the holder named as its desktop entry names
+   it); that skwir cannot be chosen where its entry is not installed.
+   Still the desktop's choice, kept nowhere else. Listed from memory,
+   the holder asked again on a worker each time the row is listed, so
+   a holder that ends while the dialog is open shows at the next
+   listing. On Linux alone, where the catalog is read. An essential, as
+   it decides what other programs see: in place of Ask what dropped
+   files do, by the user's choice (ADR-072, amended 2026-11-19).
 
 ## Consequences
 

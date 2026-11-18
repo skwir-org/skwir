@@ -1119,11 +1119,17 @@ takes launches over answers `org.freedesktop.FileManager1` (`ShowFolders`,
 `ShowItems`, `ShowItemProperties`), each folder a launch that selects
 its items (`Opening::select`, `Pane::reveal_names`), and keeps the bus's
 service file so the bus starts skwir (`--file-manager`, no window until
-asked) when none runs; followed as the user's lists change. Not built
-(no ADR closes them): a row in Settings saying who opens folders, with
-the button that makes skwir the default (today Open With on a folder);
-following the system's lists (read at start only). Checks in
-`docs/STATUS-LOG.md` (2026-11-18).
+asked) when none runs; followed as the user's lists change. On
+2026-11-19, asked by the user, General › Startup's "Default file
+manager" (ADR-140, 8), a choice its owner keeps
+(`SettingSpec::choice_kept_by`): the applications that open folders to
+choose from, and what the choice means for Show in Folder, the holder
+that does not let go named; an essential of General in place of Ask
+what dropped files do, by the user's choice (ADR-072 amended). With it,
+the startup folder is dimmed unless Open at startup is A chosen folder
+(`SettingSpec::under_choice`). Not built (no ADR closes it): following
+the system's lists (read at start only). Checks in `docs/STATUS-LOG.md`
+(2026-11-18, 2026-11-19).
 
 ## What is left
 
@@ -1139,9 +1145,9 @@ program it starts that ends with 3 fails the request at once, as
 dbus-daemon does); a real asker (Firefox's downloads, Chromium, the
 portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
-Dolphin); the startup id on Wayland; a row in Settings for discovery;
-the system's lists followed; the portal's FileChooser (the user's step
-2).
+Dolphin); the startup id on Wayland; the system's lists followed; the
+Settings row following a holder that ends while the dialog is open;
+the portal's FileChooser (the user's step 2).
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as

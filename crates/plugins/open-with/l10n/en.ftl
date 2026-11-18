@@ -44,6 +44,43 @@ open_with_edit_associations = Rewrite a type's default application lines
 
 open_with_edit_associations_description = Set the lines a MIME type has in one mimeapps.list (default, added and removed associations); what Undo and Redo of a default run
 
+# A setting's title on the General page: the application that opens folders for every program.
+open_with_file_manager = Default file manager
+
+# Said in place of a program's name, under the Default file manager setting, when it cannot be read.
+open_with_file_manager_another = Another program
+
+# Open With and Always use are what a menu and its check box are called.
+open_with_file_manager_description = Which application opens folders for every program: the same choice as Open With's Always use on a folder, and as the desktop's own settings.
+
+# What a setting's description says after its first sentence, in its tooltip. Show in Folder is what browsers call the command.
+open_with_file_manager_description_more = With Skwir chosen, another program's Show in Folder opens the folder in Skwir with its files selected, even when Skwir is not running.
+
+# Said under the Default file manager setting with Skwir chosen, while another program (Dolphin's daemon) answers other programs and does not let go: program is its name.
+open_with_file_manager_held = { $program } still shows the files other programs show in their folder, until it ends
+
+open_with_file_manager_list = The default file manager
+
+open_with_file_manager_list_description = The application that opens folders for every program, as Settings lists it: the applications that open folders to choose from, each with the `open_with.set_default` that makes it the default, and whether Skwir shows the files other programs show in their folder. Answers from memory
+
+# Said under the Default file manager setting where Skwir's package did not install its entry (a build run from its folder).
+open_with_file_manager_not_installed = Skwir cannot be chosen here: its desktop entry is not installed
+
+# Said under the Default file manager setting while another application is chosen: what choosing Skwir gives.
+open_with_file_manager_offer = Chosen, Skwir also shows the files other programs show in their folder
+
+# Said under the Default file manager setting while the desktop's applications are read.
+open_with_file_manager_reading = Reading the applications that open folders…
+
+# Said under the Default file manager setting with Skwir chosen.
+open_with_file_manager_shows = Skwir also shows the files other programs show in their folder
+
+# The Default file manager setting's choice when the desktop names none, and nothing opens folders.
+open_with_file_manager_unchosen = Not chosen
+
+# The Default file manager setting's choice when the desktop names none: app is what opens folders meanwhile, as its desktop entry names it.
+open_with_file_manager_unchosen_opens = Not chosen ({ $app })
+
 open_with_menu = Name the default application in a menu
 
 open_with_menu_description = A menu's Open for the selection, or for the files named (the preview's: `entries`, as the pane lists them), naming the default application they share, and the other applications for their types in its Open With submenu; no items when their types or the applications are not known yet. Answers from memory

@@ -49,6 +49,45 @@ open_with_edit_associations = 改写某个类型的默认应用条目
 open_with_edit_associations_description = 设置某个 MIME 类型在一个 mimeapps.list 中的条目（默认、已添加和已移除的关联）；默认应用的撤销和重做即执行此命令
 
 # draft
+open_with_file_manager = 默认文件管理器
+
+# draft
+open_with_file_manager_another = 另一个程序
+
+# draft
+open_with_file_manager_description = 由哪个应用为所有程序打开文件夹：与在文件夹上通过“打开方式”的“始终使用”所做的选择相同，也与桌面自身的设置相同。
+
+# draft
+open_with_file_manager_description_more = 选择 Skwir 后，其他程序的“在文件夹中显示”会在 Skwir 中打开该文件夹并选中其中的文件，即使 Skwir 未在运行。
+
+# draft
+open_with_file_manager_held = { $program } 在退出前仍会显示其他程序要在文件夹中显示的文件
+
+# draft
+open_with_file_manager_list = 默认文件管理器
+
+# draft
+open_with_file_manager_list_description = 为所有程序打开文件夹的应用，如设置中所列：可供选择的、能打开文件夹的应用，每个都附有使其成为默认的 `open_with.set_default`，以及 Skwir 是否显示其他程序要在文件夹中显示的文件。从内存中回答
+
+# draft
+open_with_file_manager_not_installed = 此处无法选择 Skwir：其桌面条目未安装
+
+# draft
+open_with_file_manager_offer = 选择后，Skwir 还会显示其他程序要在文件夹中显示的文件
+
+# draft
+open_with_file_manager_reading = 正在读取能打开文件夹的应用…
+
+# draft
+open_with_file_manager_shows = Skwir 还会显示其他程序要在文件夹中显示的文件
+
+# draft
+open_with_file_manager_unchosen = 未选择
+
+# draft
+open_with_file_manager_unchosen_opens = 未选择（{ $app }）
+
+# draft
 open_with_menu = 在菜单中显示默认应用
 
 # draft

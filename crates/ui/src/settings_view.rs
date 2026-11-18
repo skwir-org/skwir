@@ -371,6 +371,29 @@ fn plugin_found(plugin: &PluginInfo, words: &collate::Words) -> bool {
 /// A setting's whole description, said: its first sentence, then what
 /// follows as a paragraph of its own (the two messages placed apart, never
 /// joined into one sentence).
+/// A kept choice's answer (`ChoiceSource`), once its owner gave one.
+fn kept_answer(value: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    match serde_json::from_str::<serde_json::Value>(value) {
+        Ok(serde_json::Value::Object(answer)) => Some(answer),
+        _ => None,
+    }
+}
+
+/// A kept choice's answer with something to choose (not while its owner
+/// still reads what to offer).
+fn kept_choice(value: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    kept_answer(value).filter(|answer| answer.contains_key("choices"))
+}
+
+/// What a kept choice's value means for the user, as its owner says it.
+fn kept_detail(choice: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    choice
+        .get("detail")
+        .and_then(serde_json::Value::as_str)
+        .filter(|detail| !detail.is_empty())
+        .map(str::to_owned)
+}
+
 fn whole_description(spec: &SettingSpec) -> String {
     let first = spec.description.say();
     match &spec.more {
@@ -805,6 +828,21 @@ impl SettingsView {
                     start: false,
                 }
                 .into_any_element()
+            }
+            // Its owner's choice, as it answered (`ChoiceSource`), chosen
+            // through its command; nothing until it answered.
+            SettingKind::KeptChoice => {
+                let Some(choice) = kept_choice(&row.value) else {
+                    return div().into_any_element();
+                };
+                let named = self.a11y.then(|| {
+                    let mut description = whole_description(&row.spec);
+                    if let Some(detail) = kept_detail(&choice) {
+                        description = format!("{description}\n\n{detail}");
+                    }
+                    (row.label.clone(), description)
+                });
+                self.record_choice(&key, "", &choice, item, named, theme, cx)
             }
             SettingKind::Records => {
                 // Kept by their owner, who adds none: only listed.
@@ -1555,6 +1593,12 @@ impl SettingsView {
                     theme,
                 )),
             );
+        }
+        // What a choice its owner keeps means for the user, as it says.
+        if row.spec.kind == SettingKind::KeptChoice
+            && let Some(detail) = kept_answer(&row.value).as_ref().and_then(kept_detail)
+        {
+            texts = texts.child(div().text_body().text_color(theme.text_muted).child(detail));
         }
         if let Some(error) = error {
             texts = texts.child(Self::error_line(error, theme));

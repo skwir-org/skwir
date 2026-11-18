@@ -37,6 +37,8 @@ use skwir_core::workspace::PaneId;
 use skwir_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
 use skwir_platform::mime::{self, Mime};
 
+mod file_manager;
+
 const ID: &str = "open-with";
 
 /// Where the applications are read from, and the catalog last read with
@@ -55,6 +57,8 @@ struct CatalogCache {
     properties: Arc<std::sync::atomic::AtomicU64>,
     /// What that worker lives for: until the plugin is disabled.
     work: Mutex<Option<CancelToken>>,
+    /// The default file manager's line in Settings (ADR-140).
+    file_manager: file_manager::Row,
 }
 
 type Cached = Arc<CatalogCache>;
@@ -393,19 +397,25 @@ fn refresh(cache: &Cached, app: &App) {
         .lock()
         .get_or_insert_with(|| app.lifetime().child())
         .clone();
-    let cache = Arc::clone(cache);
+    let (cache, wake) = (Arc::clone(cache), app.waker_handle());
     let job = token.clone();
     app.scheduler.spawn(
         Priority::Background,
         "open-with.catalog",
         token,
         move || {
-            catalog(&cache);
+            let before = cache.remembered();
+            let now = catalog(&cache);
             if job.is_cancelled() {
                 // Disabled while it read: keep nothing.
                 cache.last.lock().take();
             }
             cache.refreshing.store(false, Ordering::Release);
+            // Read anew: what Settings lists of it is listed again.
+            if !job.is_cancelled() && !before.is_some_and(|before| Arc::ptr_eq(&before, &now)) {
+                cache.file_manager.source.changed();
+                wake();
+            }
         },
     );
 }
@@ -1374,8 +1384,10 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
     match skwir_platform::apps::edit_associations(edit) {
         Ok(changed) => {
             let catalog = catalog(cache);
-            // Properties says the application again.
+            // Properties says the application again, and Settings its
+            // default file manager.
             cache.properties.fetch_add(1, Ordering::Release);
+            cache.file_manager.source.changed();
             app.wake();
             // What opens the type now, named or not: an undo may leave
             // the desktop's own choice.
@@ -1475,6 +1487,9 @@ impl Plugin for OpenWithPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
+        // The default file manager in Settings, beside the shell's
+        // "Open folders from other programs in" (ADR-140).
+        file_manager::register(app, &self.catalog);
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<OpenArgs, _>(
             ID, Topic::Go,
@@ -1691,6 +1706,7 @@ impl Plugin for OpenWithPlugin {
         // A job cancelled before it started never says it ended.
         self.catalog.refreshing.store(false, Ordering::Release);
         self.catalog.last.lock().take();
+        self.catalog.file_manager.forget();
     }
 }
 
@@ -2049,6 +2065,7 @@ mod tests {
             refreshing: AtomicBool::default(),
             properties: Arc::default(),
             work: Mutex::default(),
+            file_manager: file_manager::Row::default(),
         })
     }
 

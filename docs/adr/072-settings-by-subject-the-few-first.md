@@ -114,3 +114,12 @@ The user asked whether they deserved a page of their own.
   Folders and views: a page is its subject's, and thumbnails were one
   of the subjects this decision gathered.
 - Twelve entries in the sidebar; none is a page of a single setting.
+
+### 2026-11-19: the default file manager essential on General
+
+The default file manager (ADR-140, 8) decides what other programs see,
+and General had its four essentials. The user chose it over Ask what
+dropped files do, which is folded under More settings, still found by
+the search and shown while it differs from its default. General's
+essentials: the language, Open at startup and its startup folder, the
+default file manager.
