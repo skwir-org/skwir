@@ -3800,7 +3800,8 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   manifest's titles, an inspection's, a command's `said`, a plan's, an
   error) may be a message `{ id, args }` of its own catalogs,
   `l10n/<language>.ftl` beside its manifest, `en.ftl` its author's
-  English, arguments a count, a size, a name or text. The host reads them
+  English, arguments a count, a size, a name, a folder, a decimal, a
+  date, a time or text. The host reads them
   with the manifest, bounded (256 KiB, 64 languages, 16 deep, read whole
   by Fluent's parser), registers them under `outside:<id>` while the
   plugin is on, and says them through Skwir's resolver

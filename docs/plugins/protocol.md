@@ -354,7 +354,13 @@ id. Its JSON Schema:
             { "type": "integer" },
             { "type": "string" },
             { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
-            { "type": "object", "required": ["size"], "properties": { "size": { "type": "integer", "minimum": 0 } } } ] } } } } ] }
+            { "type": "object", "required": ["folder"], "properties": { "folder": { "type": "string" } } },
+            { "type": "object", "required": ["size"], "properties": { "size": { "type": "integer", "minimum": 0 } } },
+            { "type": "object", "required": ["decimal"], "properties": { "decimal": {
+              "oneOf": [ { "type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$" }, { "type": "number" } ] } } },
+            { "type": "object", "required": ["date"], "properties": { "date": { "type": "integer" } } },
+            { "type": "object", "required": ["time"], "properties": { "time": { "type": "integer" } } },
+            { "type": "object", "required": ["datetime"], "properties": { "datetime": { "type": "integer" } } } ] } } } } ] }
 ```
 
 An argument is said as its kind is in the reader's language (ADR-139, 5):
@@ -364,7 +370,11 @@ An argument is said as its kind is in the reader's language (ADR-139, 5):
 | an integer | a count | Chooses the plural (`[one]`, `*[other]`, an exact `[0]`), written with the reader's digits and groups: "1,234", « 1 234 ». |
 | a string | text | As written: a path, a hexadecimal offset, a word a selector chooses by. |
 | `{ "name": "…" }` | a name | A file's or a place's: quoted as the reader's language quotes (“a.txt”, « a.txt »), its bidirectional controls shown, never obeyed. |
+| `{ "folder": "…" }` | a folder | A folder's name where it is a destination ("to Docs"): unquoted, its bidirectional controls shown, never obeyed. |
 | `{ "size": 9800 }` | a size | Bytes, as the reader's size setting writes them: "9.8 kB", "9.6 KiB". |
+| `{ "decimal": "1.50" }` | a decimal | A number with digits after its point, as many as written (at most nine; a JSON number keeps its own), with the reader's decimal sign and groups: "1.50", « 1,50 ». It chooses no plural. |
+| `{ "date": 1700000000 }` | a date | Seconds since 1970 (UTC), written as the reader's dates are, in their time zone: "14 Nov 2023", « 14 nov. 2023 », or ISO 8601 where the window's dates setting says so. |
+| `{ "time": … }`, `{ "datetime": … }` | a time, a date and time | The same, the time of day ("22:13"), or the date and the time. |
 
 Anything else is said as its JSON text. In a manifest, a message is an
 inline table: `title = { id = "plugin-title" }`.

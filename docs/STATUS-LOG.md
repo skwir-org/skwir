@@ -20156,3 +20156,22 @@ the same, pixel for pixel.
 **Not checked:** DirectWrite's and Core Text's paths running (compiled
 only; gpui_windows's test cannot run under Wine, which selects no font
 for it); a selection inside a Markdown code block; printing.
+
+## 2026-11-18: plugins from outside pass folders, decimals and moments
+
+Protocol 2's arguments were a count, text, a name and a size: a plugin
+could not say "1.5× smaller" with the reader's decimal sign, nor a date
+in their format. Three kinds join them, each an object of one key as the
+others are (`protocol::Arg::Folder`, `Decimal`, `Moment` with its
+`Shape`): `{ "folder": … }`, unquoted and isolated as a destination is;
+`{ "decimal": "1.50" }`, its digits as written (a JSON number keeps its
+own; at most nine); `{ "date": … }`, `{ "time": … }`, `{ "datetime": … }`
+in seconds since 1970, written as the reader's dates and times are. The
+host says them as Skwir's own arguments of those kinds. What no kind
+reads is still its JSON text, never refused (`docs/plugins/protocol.md`,
+its schema and table).
+
+**Checked:** clippy `-D warnings` on plugin-api (also for wasm32) and
+extend; their tests (34): the JSON of each kind read and written back, a
+decimal's digits as written, what no kind reads kept as text, and a
+message with a decimal, a folder and a date said by the host.

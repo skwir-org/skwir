@@ -167,6 +167,16 @@ fn arg_of(arg: &protocol::Arg) -> Arg {
         protocol::Arg::Text(text) => Arg::Text(text.clone().into()),
         protocol::Arg::Name(name) => Arg::Name(name.clone()),
         protocol::Arg::Size(bytes) => Arg::Size(*bytes),
+        protocol::Arg::Folder(name) => Arg::Folder(name.clone()),
+        protocol::Arg::Decimal { value, digits } => Arg::Decimal(*value, *digits),
+        protocol::Arg::Moment { at, shape } => Arg::Moment(skwir_core::words::Moment {
+            at: *at,
+            shape: match shape {
+                protocol::Shape::Date => skwir_core::words::Shape::Date,
+                protocol::Shape::Time => skwir_core::words::Shape::Time,
+                protocol::Shape::DateTime => skwir_core::words::Shape::DateTime,
+            },
+        }),
     }
 }
 
@@ -278,6 +288,36 @@ fn depth(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plugin's folder, decimal and moment reach Skwir as arguments of
+    /// their kind: said as the reader's language writes each.
+    #[test]
+    fn folders_decimals_and_moments_are_said_as_their_kind() {
+        let english = skwir_core::words::Catalog::new(
+            "en",
+            "made = { $ratio }× smaller in { $folder } on { $when }\n".to_owned(),
+        );
+        let said = english.message("made").expect("the English says it");
+        let args = [
+            ("ratio", protocol::Arg::decimal(1.5, 1)),
+            ("folder", protocol::Arg::folder("Docs")),
+            // Noon: the same day in every time zone a test runs in.
+            ("when", protocol::Arg::moment(43_200, protocol::Shape::Date)),
+        ]
+        .into_iter()
+        .map(|(name, arg)| (name.to_owned(), arg_of(&arg)))
+        .collect();
+        let words = Words::of_catalog("outside:test", "made", Some(&said), args);
+        // As an agent reads it: English's own date, whatever the window's.
+        assert_eq!(words.english(), "1.5× smaller in Docs on Jan 1, 1970");
+        assert_eq!(
+            arg_of(&protocol::Arg::moment(5, protocol::Shape::DateTime)),
+            Arg::Moment(skwir_core::words::Moment {
+                at: 5,
+                shape: skwir_core::words::Shape::DateTime,
+            })
+        );
+    }
 
     #[test]
     fn a_catalog_is_named_by_its_language() {

@@ -185,9 +185,11 @@ impl From<Words> for String {
 }
 
 /// An argument of a message, said as its kind is in the reader's language
-/// (ADR-139, 5). JSON: a number is a count, a string text, and
-/// `{ "name": … }` or `{ "size": … }` a name or a size; anything else is
-/// said as its JSON text.
+/// (ADR-139, 5). JSON: a number is a count, a string text, and an object
+/// of one key the kind it names: `{ "name": … }`, `{ "folder": … }`,
+/// `{ "size": … }`, `{ "decimal": "1.50" }`, `{ "date": … }`,
+/// `{ "time": … }`, `{ "datetime": … }`; anything else is said as its JSON
+/// text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arg {
     /// A count: chooses the plural (`[one]`, `*[other]`, an exact `[0]`)
@@ -203,6 +205,100 @@ pub enum Arg {
     /// A size in bytes, written as the reader's size setting says ("1.5
     /// kB", "1.5 KiB").
     Size(u64),
+    /// A folder's name where it is a destination ("to Docs"): unquoted, its
+    /// bidirectional controls shown, never obeyed.
+    Folder(String),
+    /// A number with digits after its point, written with the reader's
+    /// decimal sign and groups ("1.5", « 1,5 »): `value` scaled by ten to
+    /// the power of `digits` (15 and 1 for 1.5). It chooses no plural.
+    Decimal { value: i64, digits: u8 },
+    /// A moment, in seconds since 1970 (UTC), written as the reader's
+    /// dates and times are, in their time zone.
+    Moment { at: i64, shape: Shape },
+}
+
+/// What of a moment is written ([`Arg::Moment`]), each as the reader's
+/// locale writes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    /// The date: "12 Mar 2024" (`{ "date": … }`).
+    Date,
+    /// The time of day: "14:02" (`{ "time": … }`).
+    Time,
+    /// The date and the time: "12 Mar 2024, 14:02" (`{ "datetime": … }`).
+    DateTime,
+}
+
+impl Shape {
+    /// Its JSON key.
+    fn key(self) -> &'static str {
+        match self {
+            Shape::Date => "date",
+            Shape::Time => "time",
+            Shape::DateTime => "datetime",
+        }
+    }
+}
+
+/// The most digits a decimal keeps after its point.
+const DECIMAL_DIGITS: u8 = 9;
+
+impl Arg {
+    /// A folder's name, where it is a destination.
+    pub fn folder(name: impl Into<String>) -> Self {
+        Arg::Folder(name.into())
+    }
+
+    /// `number` with `digits` after its point (at most nine).
+    pub fn decimal(number: f64, digits: u8) -> Self {
+        let digits = digits.min(DECIMAL_DIGITS);
+        let scaled = (number * 10f64.powi(i32::from(digits))).round();
+        // A number past what is held is said as the most held.
+        #[allow(clippy::cast_possible_truncation)]
+        let value = if scaled.is_finite() { scaled as i64 } else { 0 };
+        Arg::Decimal { value, digits }
+    }
+
+    /// A moment, `at` seconds since 1970 (UTC), written as `shape` says.
+    pub fn moment(at: i64, shape: Shape) -> Self {
+        Arg::Moment { at, shape }
+    }
+
+    /// A decimal written as JSON writes it: its digits as written,
+    /// `"1.50"` two after its point. `None` for what is no decimal.
+    fn decimal_of(text: &str) -> Option<Arg> {
+        let (negative, unsigned) = match text.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, text),
+        };
+        let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+        if whole.is_empty()
+            || !whole.bytes().all(|b| b.is_ascii_digit())
+            || !fraction.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let fraction = &fraction[..fraction.len().min(usize::from(DECIMAL_DIGITS))];
+        let digits = u8::try_from(fraction.len()).ok()?;
+        let value: i64 = format!("{whole}{fraction}").parse().ok()?;
+        Some(Arg::Decimal {
+            value: if negative { -value } else { value },
+            digits,
+        })
+    }
+
+    /// A decimal written `value` scaled by `digits`, as JSON's text.
+    fn decimal_text(value: i64, digits: u8) -> String {
+        let sign = if value < 0 { "-" } else { "" };
+        let magnitude = value.unsigned_abs().to_string();
+        let digits = usize::from(digits);
+        if digits == 0 {
+            return format!("{sign}{magnitude}");
+        }
+        let padded = format!("{magnitude:0>width$}", width = digits + 1);
+        let (whole, fraction) = padded.split_at(padded.len() - digits);
+        format!("{sign}{whole}.{fraction}")
+    }
 }
 
 macro_rules! count_from {
@@ -244,12 +340,27 @@ impl Serialize for Arg {
                 map.serialize_entry("size", bytes)?;
                 map.end()
             }
+            Arg::Folder(name) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("folder", name)?;
+                map.end()
+            }
+            Arg::Decimal { value, digits } => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("decimal", &Arg::decimal_text(*value, *digits))?;
+                map.end()
+            }
+            Arg::Moment { at, shape } => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry(shape.key(), at)?;
+                map.end()
+            }
         }
     }
 }
 
 impl<'de> Deserialize<'de> for Arg {
-    /// Never refused: what is no count, text, name or size is said as its
+    /// Never refused: what is no argument of a kind it names is said as its
     /// JSON text, so one odd argument never costs a whole answer.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(Arg::of(&Value::deserialize(deserializer)?))
@@ -274,9 +385,28 @@ impl Arg {
             };
             Some(match kind.as_str() {
                 "name" => Arg::Name(inner.as_str()?.to_owned()),
+                "folder" => Arg::Folder(inner.as_str()?.to_owned()),
                 "size" => Arg::Size(inner.as_u64()?),
                 "count" => Arg::Count(count(inner)?),
                 "text" => Arg::Text(inner.as_str()?.to_owned()),
+                // Its digits as written ("1.50"), or a JSON number's.
+                "decimal" => match inner {
+                    Value::String(text) => Arg::decimal_of(text)?,
+                    Value::Number(number) => Arg::decimal_of(&number.to_string())?,
+                    _ => return None,
+                },
+                "date" => Arg::Moment {
+                    at: inner.as_i64()?,
+                    shape: Shape::Date,
+                },
+                "time" => Arg::Moment {
+                    at: inner.as_i64()?,
+                    shape: Shape::Time,
+                },
+                "datetime" => Arg::Moment {
+                    at: inner.as_i64()?,
+                    shape: Shape::DateTime,
+                },
                 _ => return None,
             })
         };
@@ -833,6 +963,86 @@ mod tests {
         // An object that is no message is no words.
         assert!(serde_json::from_value::<Words>(json!({ "text": "x" })).is_err());
         assert!(Words::default().is_empty());
+    }
+
+    /// A folder, a decimal and a moment travel as objects of one key; a
+    /// decimal keeps its digits as written, and what no kind reads is
+    /// said as its JSON.
+    #[test]
+    fn folders_decimals_and_moments_are_arguments_of_their_kind() {
+        let args = |value: serde_json::Value| -> Arg { serde_json::from_value(value).unwrap() };
+        assert_eq!(args(json!({ "folder": "Docs" })), Arg::folder("Docs"));
+        assert_eq!(
+            args(json!({ "decimal": "1.50" })),
+            Arg::Decimal {
+                value: 150,
+                digits: 2
+            }
+        );
+        assert_eq!(
+            args(json!({ "decimal": 1.5 })),
+            Arg::Decimal {
+                value: 15,
+                digits: 1
+            }
+        );
+        assert_eq!(
+            args(json!({ "decimal": "-0.25" })),
+            Arg::Decimal {
+                value: -25,
+                digits: 2
+            }
+        );
+        assert_eq!(
+            args(json!({ "decimal": "12" })),
+            Arg::Decimal {
+                value: 12,
+                digits: 0
+            }
+        );
+        assert_eq!(
+            args(json!({ "date": 1_700_000_000 })),
+            Arg::moment(1_700_000_000, Shape::Date)
+        );
+        assert_eq!(args(json!({ "time": 60 })), Arg::moment(60, Shape::Time));
+        assert_eq!(
+            args(json!({ "datetime": -1 })),
+            Arg::moment(-1, Shape::DateTime)
+        );
+        // What no kind reads is its JSON text, never refused.
+        assert_eq!(
+            args(json!({ "decimal": "1,5" })),
+            Arg::Text(r#"{"decimal":"1,5"}"#.into())
+        );
+        assert_eq!(
+            args(json!({ "date": "today" })),
+            Arg::Text(r#"{"date":"today"}"#.into())
+        );
+        // Written back as read.
+        for value in [
+            json!({ "folder": "Docs" }),
+            json!({ "decimal": "1.50" }),
+            json!({ "decimal": "-0.05" }),
+            json!({ "decimal": "7" }),
+            json!({ "date": 1_700_000_000 }),
+            json!({ "datetime": 5 }),
+        ] {
+            assert_eq!(serde_json::to_value(args(value.clone())).unwrap(), value);
+        }
+        assert_eq!(
+            Arg::decimal(1.005, 2),
+            Arg::Decimal {
+                value: 100,
+                digits: 2
+            }
+        );
+        assert_eq!(
+            Arg::decimal(2.5, 20),
+            Arg::Decimal {
+                value: 2_500_000_000,
+                digits: 9
+            }
+        );
     }
 
     /// An error's words travel as its `data` from a program, as its
