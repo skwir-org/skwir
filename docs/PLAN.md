@@ -2805,7 +2805,8 @@ rename-and-move task over MCP that ends in a reviewable plan.
   and are reviewed. Level 2 runs it as a program under bubblewrap (no
   network unless declared; not on Windows). Checked by
   `crates/extend/tests/programs.rs`; the first thumbnailer from outside
-  is `crates/plugins-outside/netpbm`.
+  is `crates/plugins-outside/netpbm` (it stays on protocol 1, the proof
+  that a plugin written for it still runs, 2026-11-18).
 - **Level 1** (ADR-046): Wasmtime (50.0.0 since 2026-10-28, minimum
   Rust 1.97; release step 8 says why), no WASI, Skwir's two imports,
   bounded work and memory, in `skwir-module-worker`, so Wasmtime never
@@ -3786,7 +3787,27 @@ agents' English, data or what leaves the window (`Words::say_plain`).
     the user's.
   - *Done when:* a release speaks French.
 - **H. Plugins from outside: protocol 2** (ADR-139, 14), with the
-  template and the hex view's module translated.
+  template and the hex view's module translated. *Built 2026-11-18*
+  (ADR-045, 046, 047 amended): `VERSION` 2, `OLDEST` 1, a manifest naming
+  no version on 1, shown as it writes (Netpbm stays there as the proof).
+  `initialize` tells a plugin on 2 the languages the window speaks (a
+  module asks its `languages` import, answered by its helper), a program
+  started again once they change; what it says to a person (its
+  manifest's titles, an inspection's, a command's `said`, a plan's, an
+  error) may be a message `{ id, args }` of its own catalogs,
+  `l10n/<language>.ftl` beside its manifest, `en.ftl` its author's
+  English, arguments a count, a size, a name or text. The host reads them
+  with the manifest, bounded (256 KiB, 64 languages, 16 deep, read whole
+  by Fluent's parser), registers them under `outside:<id>` while the
+  plugin is on, and says them through Skwir's resolver
+  (`Words::of_catalog`): the window's language, English to agents;
+  English where a catalog lacks a message, its id where `en.ftl` does.
+  The template (now two commands) and the hex view speak English, French
+  and Simplified Chinese (drafts). `just words` leaves
+  `crates/plugins-outside/` out; the catalogs' test holds them to their
+  `en.ftl`. Left: a disabled plugin's title is English on the Plugins
+  page (as a disabled built-in one's is); Skwir's refusals a plugin
+  echoes reach the window in English.
 
 **Settled with the user** (2026-11-16, ADR-139): a name's controls
 drawn as tags, never obeyed (5); French drafted by a model and reviewed

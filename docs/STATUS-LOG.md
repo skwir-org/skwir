@@ -19992,3 +19992,34 @@ no grammar.
 **Checked:** clippy `-D warnings` on the window, its tests (750), the
 catalogs' test, `just words --check` and `--release`; on Xvfb in French:
 the Hide toast, the Rename question, both chevrons' tooltips on Home.
+
+## 2026-11-18: plugins from outside speak the reader's language (protocol 2)
+
+ADR-139's step H. Protocol 2 tells a plugin the languages the window
+speaks (`initialize`; a module's new `languages` import, answered by its
+helper and kept across a trap) and lets what it says to a person be a
+message of its own catalogs, `l10n/<language>.ftl` beside its manifest,
+said by Skwir's resolver in the window's language and in English to
+agents (`Words::of_catalog`, the data-carried path `to_data` already
+had). Catalogs are untrusted: refused past 256 KiB, 64 languages, 16
+levels of placeables or calls (Fluent's parser recurses), as a non-regular
+file (a pipe named `pt.ftl` is never opened), not UTF-8, or where Fluent's
+parser gives up; registered under `outside:<id>` so no plugin's catalog
+stands in for Skwir's own. Protocol 1 runs unchanged: a module built on
+2026-11-09 (importing only `read` and `log`) converts on the new helper,
+and the Netpbm plugin stays on 1. `skwir` became a reserved id (it owns
+the program's catalogs). The hex view's module now writes sizes as the
+size setting says.
+
+**Checked:** clippy `-D warnings` on plugin-api, extend, the outside
+crates (also for wasm32), core and module-worker; tests of plugin-api and
+the outside crates, and extend's and module-worker's (24/24): a protocol-1
+and a protocol-2 program side by side (a shell probe: languages passed,
+restarted when they change, its error said in French and in English),
+modules on 1 and 2 side by side in French (the template's answer, the hex
+view's title and error, Netpbm drawn), fallbacks to English and to an id,
+catalogs past their bounds left out, catalogs withdrawn on disable, the
+hex view still the built-in one page for page; core's words tests with
+the catalogs' test, which walks `crates/plugins-outside/*/l10n` (a planted
+bogus id failed it); `tools/words` tests and `--check`; `just plugins`.
+Not run in a window, nor cross-compiled.

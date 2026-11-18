@@ -13,11 +13,20 @@ interface host {
     read: func(file: u32, offset: u64, length: u32) -> result<list<u8>, string>;
     /// A line for skwir's log, at `level`: error, warn, info or debug.
     log: func(level: string, message: string);
+    /// The languages the window speaks, most wanted first, English last
+    /// (BCP 47 tags: fr, zh-Hans, en), as `initialize` tells a program
+    /// (protocol 2; none on protocol 1). A message the plugin answers
+    /// skwir says itself, in each reader's language. A module built before
+    /// protocol 2 imports none, and runs unchanged.
+    languages: func() -> list<string>;
 }
 
 /// What a plugin answers.
 interface guest {
     /// One method of the protocol, its parameters and its answer as JSON.
+    /// Its error is text as written or, on protocol 2, the JSON of a
+    /// message of the plugin's catalogs (`{"id": …, "args": …}`), which
+    /// skwir says in the reader's language.
     call: func(method: string, params: string) -> result<string, string>;
 }
 

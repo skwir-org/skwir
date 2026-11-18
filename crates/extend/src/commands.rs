@@ -44,17 +44,21 @@ pub(crate) fn register(app: &App, plugin: &External) {
         });
         schema["properties"]["pane"] = json!({ "type": "integer" });
         let runner = Arc::clone(&plugin.runner);
-        let (name, title) = (declared.name.clone(), declared.title.clone());
+        // Its own words: as written, or messages of its catalogs, said in
+        // the window's language and to agents in English (protocol 2).
+        let title = runner.catalogs.said(&declared.title);
+        let description = runner.catalogs.said(&declared.description);
+        let name = declared.name.clone();
+        let said = title.clone();
         app.commands
             .register_dynamic(
                 runner.id,
                 topic_of(plugin, declared.topic),
                 &declared.name,
-                // A plugin from outside says its own words (protocol 1).
-                skwir_core::words::Words::as_written(declared.title.clone()),
-                skwir_core::words::Words::as_written(declared.description.clone()),
+                title,
+                description,
                 schema,
-                move |args, app| run(app, &runner, &name, &title, args),
+                move |args, app| run(app, &runner, &name, &said, args),
             )
             .effect(match declared.effect {
                 Declared::Reads => Effect::Reads,
@@ -97,7 +101,7 @@ fn run(
     app: &App,
     runner: &Arc<Runner>,
     name: &str,
-    title: &str,
+    title: &Words,
     mut args: Value,
 ) -> anyhow::Result<Outcome> {
     let object = args
@@ -129,7 +133,7 @@ fn run(
         app.weak(),
         Arc::clone(runner),
         name.to_owned(),
-        title.to_owned(),
+        title.clone(),
     );
     let cancel = app.lifetime().child();
     // What it asks reads the files it is handed (their types, privacy):
@@ -157,7 +161,7 @@ fn run(
                             extend_answered = "{ $command }: { $value }",
                             command = title,
                             value = said(&value),
-                            note = "A notification: what a command of a plugin from outside Skwir answered. Its title, then its answer, as the plugin wrote them."
+                            note = "A notification: what a command of a plugin from outside Skwir answered. Its title (the plugin's words), then its answer, as the plugin wrote it."
                         ),
                     );
                 }
@@ -178,7 +182,7 @@ fn run(
                         extend_command_failed = "{ $command }: { $error }",
                         command = title,
                         error = error,
-                        note = "A notification: a command of a plugin from outside Skwir failed. Its title, as the plugin wrote it, then why."
+                        note = "A notification: a command of a plugin from outside Skwir failed. Its title (the plugin's words), then why."
                     ),
                 ),
             }
@@ -239,10 +243,11 @@ fn ask(
     Ok(match serde_json::from_value(answer)? {
         CommandAnswer::Done => Outcome::Done,
         CommandAnswer::Value { value } => Outcome::Value(value),
-        // What a plugin from outside says, as it wrote it.
+        // What a plugin from outside says: as it wrote it, or a message of
+        // its catalogs.
         CommandAnswer::Text { text, said } => Outcome::Clipboard {
             text,
-            said: skwir_core::words::Words::as_written(said),
+            said: runner.catalogs.said(&said),
         },
         CommandAnswer::Plan { title, note, steps } => {
             anyhow::ensure!(
@@ -252,12 +257,12 @@ fn ask(
                     note = "An error: a plugin from outside Skwir answered a plan, but did not declare it changes files. In lower case."
                 )
             );
-            // Its own words, as it wrote them.
+            // Its own words: as it wrote them, or messages of its catalogs.
             let mut plan =
-                Plan::with_steps(Words::as_written(title), plan_steps(app, &steps, refs)?)
-                    .proposed_by(Words::as_written(runner.title.clone()));
+                Plan::with_steps(runner.catalogs.said(&title), plan_steps(app, &steps, refs)?)
+                    .proposed_by(runner.title.clone());
             if let Some(note) = note {
-                plan = plan.with_note(Words::as_written(note));
+                plan = plan.with_note(runner.catalogs.said(&note));
             }
             Outcome::Plan(plan)
         }

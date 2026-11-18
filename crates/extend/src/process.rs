@@ -26,7 +26,7 @@ use skwir_plugin_api::protocol::{
     ReadParams, VERSION, method,
 };
 
-use crate::call::{Call, Transport};
+use crate::call::{Answered, Call, Transport};
 
 /// How long a program waits unasked before it is ended.
 const IDLE: Duration = Duration::from_secs(30);
@@ -95,6 +95,9 @@ pub(crate) struct Program {
     stopped: Arc<AtomicBool>,
     /// How long an answer is waited for: `ANSWER`, shorter in tests.
     patience: Duration,
+    /// Whether it is told the reader's languages (protocol 2), and started
+    /// again once they change: what it was told is what it writes in.
+    tells_languages: bool,
 }
 
 /// A program started, its pipes and its working folder. Dropped however
@@ -110,6 +113,8 @@ struct Running {
     used: Sender<()>,
     /// Its plugin's (`Program::stopped`).
     stopped: Arc<AtomicBool>,
+    /// The languages `initialize` told it.
+    told: Vec<String>,
     _work: Work,
 }
 
@@ -162,7 +167,16 @@ impl Program {
             failed: Mutex::new(None),
             stopped: Arc::default(),
             patience: ANSWER,
+            tells_languages: false,
         }
+    }
+
+    /// Told the reader's languages as it starts, and started again at the
+    /// next call once they changed, where `tells` (a plugin on protocol 2).
+    #[must_use]
+    pub fn telling_languages(mut self, tells: bool) -> Program {
+        self.tells_languages = tells;
+        self
     }
 
     fn start(&self) -> anyhow::Result<Running> {
@@ -252,6 +266,11 @@ impl Program {
         }
         let (used, asked) = crossbeam_channel::unbounded();
         watch_idle(Arc::downgrade(&self.running), asked);
+        let told = if self.tells_languages {
+            crate::languages()
+        } else {
+            Vec::new()
+        };
         let mut running = Running {
             child,
             stdin,
@@ -259,6 +278,7 @@ impl Program {
             next: 1,
             used,
             stopped: Arc::clone(&self.stopped),
+            told: told.clone(),
             _work: work,
         };
         let capabilities = self
@@ -274,6 +294,7 @@ impl Program {
         let hello = InitializeParams {
             api: VERSION,
             capabilities,
+            languages: told,
         };
         let answer = running.exchange(
             method::INITIALIZE,
@@ -396,7 +417,9 @@ impl Running {
                 Ok(message) if message.is_response() => {
                     // An answer to a call given up before is no answer.
                     if message.id == Some(id) {
-                        return message.outcome().map_err(anyhow::Error::msg);
+                        return message
+                            .result()
+                            .map_err(|error| anyhow::Error::new(Answered(error)));
                     }
                 }
                 Ok(message) => self.asked(message, call)?,
@@ -493,6 +516,16 @@ impl Transport for Program {
         }
         if call.cancelled() {
             anyhow::bail!("cancelled");
+        }
+        // Told other languages than the window speaks now: started again,
+        // so that what it writes is in the reader's.
+        if self.tells_languages
+            && held
+                .as_ref()
+                .is_some_and(|running| running.told != crate::languages())
+            && let Some(told) = held.take()
+        {
+            told.end();
         }
         if held.is_none() {
             if self.failed.lock().is_some_and(|at| at.elapsed() < AGAIN) {

@@ -33,6 +33,13 @@ one offered as a draft short of the draft's bar (`--release`: its new
 messages are drafted before a release), while between releases each stays
 offered, its missing messages said in English.
 
+A plugin from outside Skwir that this workspace holds
+(`crates/plugins-outside/*`, ADR-045, ADR-046) brings its own catalogs
+beside its manifest, its English written by its author, said by the host
+while it is on (protocol 2, ADR-139, 14): this tool leaves them alone. They
+are never compiled into the program, nor counted in a language's share,
+nor made from code; the catalogs' test still holds each to its `en.ftl`.
+
 Refused, in either mode: an id with two Englishes in one crate, and an
 English that parts a number from its unit, or a dimension's numbers from
 their `×`, by a plain space, where a line may break: a no-break space
@@ -175,6 +182,15 @@ def calls(text):
                 continue
             at += 1
         yield ident.group(0), english, note, noun
+
+
+def outside(path):
+    """Whether `path` is in a plugin from outside Skwir
+    (`crates/plugins-outside/`): its catalogs are its own, not Skwir's."""
+    try:
+        return path.relative_to(ROOT).parts[:2] == ("crates", "plugins-outside")
+    except ValueError:
+        return False
 
 
 def crate_of(path):
@@ -407,6 +423,8 @@ def catalogs():
         relative = path.relative_to(ROOT)
         if "target" in relative.parts or path.name == "tests.rs" or "tests" in relative.parts:
             continue
+        if outside(path):
+            continue
         text = path.read_text()
         if "words!" not in text:
             continue
@@ -486,7 +504,7 @@ def shipped(language_shares, offered):
         "pub static CATALOGS: &[skwir_core::words::Shipped] = &[",
     ]
     for path in sorted((ROOT / "crates").glob("**/l10n/*.ftl")):
-        if "target" in path.relative_to(ROOT).parts or path.stem == "en":
+        if "target" in path.relative_to(ROOT).parts or path.stem == "en" or outside(path):
             continue
         _, domain = crate_of(path)
         relative = path.relative_to(CATALOGS_RS.parent.parent.parent)
@@ -615,9 +633,10 @@ def main():
             path.parent.mkdir(exist_ok=True)
             path.write_text(wanted)
             print(f"{path.relative_to(ROOT)}: {len(messages)} messages")
-    # A catalog whose crate says no message any more.
+    # A catalog whose crate says no message any more; a plugin's from
+    # outside is written by its author, never made from code.
     for path in sorted((ROOT / "crates").glob("**/l10n/en.ftl")):
-        if path.parents[1] not in found:
+        if path.parents[1] not in found and not outside(path):
             problems.append(f"{path.relative_to(ROOT)}: its crate says no message")
     for problem in problems:
         print(problem, file=sys.stderr)

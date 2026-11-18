@@ -21,6 +21,9 @@ tracing.workspace = true
 tempfile.workspace = true
 # Names a converted file by what it was made from.
 blake3.workspace = true
+# Reads a plugin's catalogs once, whole, before they are said (protocol 2):
+# one it cannot read is left out.
+fluent-syntax.workspace = true
 
 [dev-dependencies]
 skwir-plugin-hex = { path = "../plugins/hex" }

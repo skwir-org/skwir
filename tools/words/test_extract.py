@@ -345,6 +345,36 @@ class Offering(unittest.TestCase):
         self.assertEqual(self.run_tool()[0], 0)
         self.assertEqual(self.run_tool("--release")[0], 0)
 
+    def test_a_plugin_from_outside_keeps_its_catalogs_its_own(self):
+        # Its catalogs, written by its author beside its manifest, are said
+        # by the host while it is on: never compiled in, never counted,
+        # never made from code, its English never "a crate saying nothing".
+        self.say(10)
+        self.translate(10, reviewed=10)
+        plugin = self.root / "crates" / "plugins-outside" / "sample"
+        (plugin / "src").mkdir(parents=True)
+        (plugin / "Cargo.toml").write_text('[package]\nname = "skwir-outside-sample"\n')
+        (plugin / "src" / "lib.rs").write_text('// Its messages: Words::message("hello").\n')
+        (plugin / "l10n").mkdir()
+        (plugin / "l10n" / "en.ftl").write_text("# Its author's English.\nhello = Hello\nbye = Bye\n")
+        (plugin / "l10n" / "fr.ftl").write_text("# draft\nhello = Bonjour\n")
+        (plugin / "l10n" / "de.ftl").write_text("hello = Hallo\n")
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        catalogs = extract.CATALOGS_RS.read_text()
+        self.assertNotIn("plugins-outside", catalogs)
+        self.assertNotIn("skwir-outside-sample", catalogs)
+        self.assertNotIn('language: "de"', catalogs, "no language of its own counted")
+        self.assertIn('language: "fr",\n        messages: 10,\n        translated: 10,\n        reviewed: 10,', catalogs)
+        self.assertEqual(
+            (plugin / "l10n" / "en.ftl").read_text(),
+            "# Its author's English.\nhello = Hello\nbye = Bye\n",
+            "its English is its author's",
+        )
+        self.assertEqual(self.run_tool("--check"), (0, ""))
+        self.assertTrue(extract.outside(plugin / "l10n" / "en.ftl"))
+        self.assertFalse(extract.outside(self.core / "l10n" / "fr.ftl"))
+
     def test_a_record_line_is_a_tag_then_draft_or_nothing(self):
         self.say(2)
         self.translate(2, reviewed=0)

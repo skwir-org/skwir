@@ -86,8 +86,8 @@ extend_thumbnail_not_base64 = une vignette qui n’est pas en base64
 
 # draft
 extend_turned_off = { $count ->
-        [one] Le module { $plugin } a été désactivé : il ne répondait plus
-       *[other] Le module { $plugin } a été désactivé : il n’a pas répondu { $count } fois de suite
+        [one] Le module « { $plugin } » a été désactivé : il ne répondait plus
+       *[other] Le module « { $plugin } » a été désactivé : il n’a pas répondu { $count } fois de suite
     }
 
 # draft

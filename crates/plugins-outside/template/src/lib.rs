@@ -1,12 +1,17 @@
 //! A plugin from outside skwir, to start one from (`docs/plugins/README.md`):
-//! a field Properties shows (how many words a text holds) and a command
-//! (how many words the files given hold). The same code is a WebAssembly
-//! module (`export!`, built by `just plugins`) and a program that speaks
-//! the protocol (`main.rs`).
+//! a field Properties shows (how many words a text holds) and two commands
+//! (how many words the files given hold: a value for scripts and agents,
+//! and a number for the clipboard). The same code is a WebAssembly module
+//! (`export!`, built by `just plugins`) and a program that speaks the
+//! protocol (`main.rs`).
+//!
+//! It speaks protocol 2: what it says to a person is a message of its
+//! catalogs (`l10n/`, `en.ftl` its English), which skwir says in the
+//! reader's language, `Words::message("count-said").with("count", n)`.
 
 use serde_json::{Value, json};
 use skwir_plugin_api::guest::{Host, Plugin};
-use skwir_plugin_api::protocol::{CommandAnswer, CommandParams, FieldParams, File};
+use skwir_plugin_api::protocol::{CommandAnswer, CommandParams, FieldParams, File, Words};
 
 /// How much of a file is read, a page at a time: a field is cheap.
 const LIMIT: u64 = 2 * 1024 * 1024;
@@ -24,9 +29,16 @@ impl Plugin for WordCount {
     }
 
     fn command(&self, host: &dyn Host, params: CommandParams) -> Result<CommandAnswer, String> {
-        if params.command != "word-count.count" {
-            return Err(format!("no command `{}`", params.command));
-        }
+        let copy = match params.command.as_str() {
+            "word-count.count" => false,
+            "word-count.copy" => true,
+            // Said in the reader's language, as every error may be.
+            _ => {
+                return Err(Words::message("no-command")
+                    .with("command", params.command)
+                    .into());
+            }
+        };
         let mut files = Vec::new();
         let mut total = 0;
         for file in &params.entries {
@@ -34,8 +46,16 @@ impl Plugin for WordCount {
             total += count;
             files.push(json!({ "name": file.name, "words": count }));
         }
-        Ok(CommandAnswer::Value {
-            value: json!({ "files": files, "total": total }),
+        Ok(if copy {
+            // The number for the clipboard, and what is said of it.
+            CommandAnswer::Text {
+                text: total.to_string(),
+                said: Words::message("count-said").with("count", total),
+            }
+        } else {
+            CommandAnswer::Value {
+                value: json!({ "files": files, "total": total }),
+            }
         })
     }
 }
@@ -96,5 +116,33 @@ mod tests {
         assert_eq!(words(&Text("one two  three\nfour"), &file()), Ok(4));
         assert_eq!(words(&Text("  "), &file()), Ok(0));
         assert_eq!(words(&Text("élan vital"), &file()), Ok(2));
+    }
+
+    /// What it answers for the clipboard is a message of its catalogs,
+    /// counted; a command it has not fails as one.
+    #[test]
+    fn it_says_its_words_as_messages() {
+        let asked = |command: &str| {
+            WordCount.command(
+                &Text("one two three"),
+                CommandParams {
+                    command: command.into(),
+                    args: Value::Null,
+                    entries: vec![file()],
+                },
+            )
+        };
+        assert_eq!(
+            asked("word-count.copy"),
+            Ok(CommandAnswer::Text {
+                text: "3".into(),
+                said: Words::message("count-said").with("count", 3),
+            })
+        );
+        let failed = asked("word-count.other").unwrap_err();
+        assert_eq!(
+            Words::in_error(&failed),
+            Some(Words::message("no-command").with("command", "word-count.other"))
+        );
     }
 }

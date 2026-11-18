@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-10-07 (Phase 6, "Level 1, WASM plugins");
 compiled modules cached the same day; Wasmtime 49 since 2026-10-08.
-Built.
+Built. Amended 2026-11-18: the reader's languages (protocol 2).
 
 ## Context
 
@@ -81,3 +81,18 @@ the sandbox on x86-64. Now 49.0.2, raising the minimum Rust to 1.96.
 (Amended 2026-10-28: Wasmtime 50.0.0, the minimum Rust 1.97.)
 Instantiating now takes fuel, so each new store gets its own budget
 before instantiation, then the call's.
+
+### 2026-11-18: the reader's languages (protocol 2, ADR-139, 14)
+
+A module never sees `initialize`, which its helper answers. The world
+gains an import, `languages: func() -> list<string>`, which the helper
+answers with what `initialize` told it (ADR-045's amendment), kept in
+`skwir:plugin@0.1.0`: a module built before it imports none, and the
+helper's linker, a superset of what it imports, runs it unchanged. A
+module's error, a string, may be the JSON of a message of its catalogs
+(`{"id": "pairs"}`), which the host reads as the message it is
+(`RpcError::words`) where the manifest says `api = 2`. The hex view's
+module speaks protocol 2: the built-in preview's words in English, French
+and Simplified Chinese, its sizes now written as the reader's size
+setting says (`{ "size": … }`), where it said them in decimal units of its
+own.

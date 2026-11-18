@@ -113,6 +113,72 @@ fn a_language_says_its_plurals_and_kinds_and_lacks_nothing_by_halves() {
     );
 }
 
+/// A message known as the program runs (a plugin from outside's, protocol
+/// 2): said from the catalogs registered for its domain, else from the
+/// English it was given, else as its id; agents read the English, its
+/// arguments said as their types say, and it comes back from its data as
+/// the words it is.
+#[test]
+fn a_message_known_as_the_program_runs_is_said_from_its_domain() {
+    const DOMAIN: &str = "outside:words-test";
+    let english = Catalog::new(
+        "en",
+        "copied = { $count ->\n    [one] Copied one word of { $name }\n   *[other] Copied { $count } words of { $name }\n}\nonly-english = Only in English\n",
+    );
+    let said = |id: &str, args: Vec<(String, Arg)>| {
+        Words::of_catalog(DOMAIN, id, english.message(id).as_deref(), args)
+    };
+    let three = || {
+        vec![
+            ("count".to_owned(), Arg::Count(3)),
+            ("name".to_owned(), Arg::Name("it's.txt".into())),
+        ]
+    };
+    assert_eq!(
+        said("copied", three()).english(),
+        "Copied 3 words of “it's.txt”"
+    );
+    register(
+        "outside-words-test",
+        DOMAIN,
+        Catalog::new(
+            "fr",
+            "copied = { $count ->\n    [one] Un mot de { $name } copié\n   *[other] { $count } mots de { $name } copiés\n}\n",
+        ),
+    );
+    let fr = langs(&["fr", "en"]);
+    assert_eq!(
+        said("copied", three()).say_in(&fr),
+        "3 mots de “it's.txt” copiés"
+    );
+    assert_eq!(
+        said("copied", three()).english(),
+        "Copied 3 words of “it's.txt”",
+        "agents read the English"
+    );
+    assert_eq!(
+        said("only-english", Vec::new()).say_in(&fr),
+        "Only in English"
+    );
+    assert_eq!(said("nowhere", Vec::new()).say_in(&fr), "nowhere", "its id");
+    assert_eq!(said("nowhere", Vec::new()).english(), "nowhere");
+    // As data and back (what the window sends itself), still the message.
+    let data = said("copied", three()).to_data();
+    let back: Words = serde_json::from_value(data).unwrap();
+    assert_eq!(back.say_in(&fr), "3 mots de “it's.txt” copiés");
+    assert!(
+        said("copied", three())
+            .say_in(&langs(&[PSEUDO]))
+            .starts_with('[')
+    );
+    withdraw("outside-words-test");
+    assert_eq!(
+        said("copied", three()).say_in(&fr),
+        "Copied 3 words of “it's.txt”",
+        "withdrawn: English"
+    );
+}
+
 #[test]
 fn a_name_is_quoted_as_its_language_quotes_and_its_controls_shown() {
     let made = |name: &str| Words::message(&MADE, vec![("name", Name(name.into()).into())]);

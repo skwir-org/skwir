@@ -3,9 +3,13 @@
 //! and match for match, its bytes read through skwir. A page is 4 KiB in
 //! rows of 16 bytes; a search goes on from `offset` and puts the row of
 //! its match on top.
+//!
+//! What it says (its title, a column's header, its notes, its errors) is a
+//! message of its catalogs (`l10n/`, protocol 2), which skwir says in the
+//! reader's language, its sizes as the reader's size setting writes them.
 
 use skwir_plugin_api::guest::{Host, Plugin};
-use skwir_plugin_api::protocol::{InspectParams, Inspection, InspectionKind, Row};
+use skwir_plugin_api::protocol::{Arg, InspectParams, Inspection, InspectionKind, Row, Words};
 
 const ROW: u64 = 16;
 const GROUP: usize = 8;
@@ -23,23 +27,23 @@ impl Plugin for HexView {
         params: InspectParams,
     ) -> Result<Option<Inspection>, String> {
         let file = &params.file;
-        let len = file.size.ok_or("the file's size is not known")?;
+        let len = file.size.ok_or(Words::message("size-unknown"))?;
         let mut position = params.offset.min(len.saturating_sub(1)) / ROW * ROW;
-        let mut notice = String::new();
+        let mut notice = Words::default();
         if let Some(query) = &params.query {
             let needle = needle(query)?;
             if let Some(found) = find(host, file.handle, &needle, params.offset)? {
                 position = found;
-                notice = format!("Match at 0x{found:X}");
+                notice = Words::message("match-at").with("offset", format!("0x{found:X}"));
             } else {
-                notice = "No further match".into();
+                notice = Words::message("no-further-match");
             }
         }
         let offset = position / ROW * ROW;
         let bytes = read(host, file.handle, offset, PAGE)?;
         Ok(Some(Inspection {
             kind: InspectionKind::Hex,
-            title: format!("Hex · {}", size(len)),
+            title: Words::message("title").with("size", Arg::Size(len)),
             rows: rows(&bytes, offset),
             columns: columns(),
             position,
@@ -70,7 +74,7 @@ pub fn needle(query: &str) -> Result<Vec<u8>, String> {
     let needle = if let Some(hex) = query.strip_prefix("hex:") {
         let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
         if !hex.is_ascii() || !hex.len().is_multiple_of(2) {
-            return Err("Use pairs of hexadecimal digits".into());
+            return Err(Words::message("pairs").into());
         }
         (0..hex.len())
             .step_by(2)
@@ -81,7 +85,7 @@ pub fn needle(query: &str) -> Result<Vec<u8>, String> {
         query.as_bytes().to_vec()
     };
     if needle.is_empty() || needle.len() > NEEDLE {
-        return Err(format!("Search must contain 1–{NEEDLE} bytes"));
+        return Err(Words::message("needle-length").with("max", NEEDLE).into());
     }
     Ok(needle)
 }
@@ -124,10 +128,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
     out
 }
 
-fn columns() -> Vec<String> {
+/// Its columns' headers: a message, then the bytes' and the character
+/// set's names, as written.
+fn columns() -> Vec<Words> {
     vec![
-        "Offset".into(),
-        hex_bytes(&(0..ROW as u8).collect::<Vec<_>>()),
+        Words::message("offset"),
+        hex_bytes(&(0..ROW as u8).collect::<Vec<_>>()).into(),
         "ASCII".into(),
     ]
 }
@@ -156,25 +162,6 @@ fn rows(bytes: &[u8], base: u64) -> Vec<Row> {
         .collect()
 }
 
-/// `512 B`, `1.5 kB`: a size as the preview's title says it, as the
-/// host says it by default (ADR-139, 9), a thousand to the next, a
-/// no-break space before its unit. A module
-/// is told no setting, so it does not follow Binary.
-#[allow(clippy::cast_precision_loss)] // A size shown to one decimal.
-fn size(bytes: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "kB", "MB", "GB", "TB", "PB"];
-    if bytes < 1000 {
-        return format!("{bytes}\u{a0}B");
-    }
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    format!("{value:.1}\u{a0}{}", UNITS[unit])
-}
-
 skwir_plugin_api::export!(HexView);
 
 #[cfg(test)]
@@ -185,16 +172,19 @@ mod tests {
     fn needles_parse_hex_pairs_and_reject_empty_or_odd_input() {
         assert_eq!(needle("hex: 6e 65 ").unwrap(), b"ne");
         assert_eq!(needle("né").unwrap(), "né".as_bytes());
-        assert!(needle("hex:6").is_err());
+        // Refused in words of its catalogs, said by skwir.
+        let refused = |query: &str| Words::in_error(&needle(query).unwrap_err());
+        assert_eq!(refused("hex:6"), Some(Words::message("pairs")));
         assert!(needle("hex:zz").is_err());
-        assert!(needle("").is_err());
+        assert_eq!(
+            refused(""),
+            Some(Words::message("needle-length").with("max", NEEDLE))
+        );
         assert!(needle(&"a".repeat(NEEDLE + 1)).is_err());
     }
 
     #[test]
-    fn sizes_and_rows_read_as_the_preview_says_them() {
-        assert_eq!(size(512), "512\u{a0}B");
-        assert_eq!(size(1536), "1.5\u{a0}kB");
+    fn rows_read_as_the_preview_says_them() {
         let rows = rows(b"Hello, bytes!\x00\x01\x02more", 32);
         assert_eq!(rows[0].cells[0], "0000000000000020");
         assert_eq!(rows[0].cells[2], "Hello, bytes!...");

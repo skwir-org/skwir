@@ -10,6 +10,13 @@
 //! answers: `read` (a file of the call, by its handle), `log`. skwir
 //! sends a program `$/cancel` when it stops waiting for an answer, and
 //! closes its standard input when it is no longer needed.
+//!
+//! Protocol 2 (ADR-139, 14): skwir tells the plugin the reader's languages
+//! (`InitializeParams::languages`; a module asks its `languages` import),
+//! and what a plugin says to a person may be a message of its own
+//! catalogs ([`Words`]), which skwir says in each reader's language.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,12 +24,17 @@ use serde_json::Value;
 /// The version of the protocol this crate speaks (`api` in a manifest).
 /// The protocol is experimental (ADR-047, its sixth point): until it is
 /// declared stable, a new version may change what an older one said,
-/// and [`OLDEST`] then follows it.
-pub const VERSION: u32 = 1;
+/// and [`OLDEST`] then follows it. Version 2 adds the reader's languages
+/// and [`Words`] (ADR-139, 14).
+pub const VERSION: u32 = 2;
 
 /// The oldest version skwir still speaks: a plugin written for it runs
-/// unchanged.
+/// unchanged, and is shown as it writes.
 pub const OLDEST: u32 = 1;
+
+/// The version a manifest that names none speaks: the first, so that a
+/// plugin written before the second runs as it did.
+pub const UNNAMED: u32 = 1;
 
 /// The longest message, in bytes with its newline: a thumbnail's PNG or a
 /// page of bytes read, in base64.
@@ -77,12 +89,221 @@ pub struct File {
     pub size: Option<u64>,
 }
 
+/// What a plugin says to a person: text as it writes it, shown as written
+/// in every language; or, on protocol 2 (ADR-139, 14), a message of its own
+/// catalogs (`l10n/<language>.ftl` beside its manifest, `en.ftl` its
+/// English), which skwir says in each reader's language: the window's for
+/// what the window shows, English for agents. A message missing in the
+/// reader's language is said in English, one missing in English too as its
+/// id.
+///
+/// JSON: a string, or `{ "id": "count-copied", "args": { "count": 3 } }`
+/// (`args` may be left out).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Words {
+    /// Text as the plugin wrote it.
+    Written(String),
+    /// Message `id` of the plugin's catalogs, its arguments by name.
+    Message {
+        id: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        args: BTreeMap<String, Arg>,
+    },
+}
+
+impl Default for Words {
+    /// No words: an empty text, what a notice says when there is none.
+    fn default() -> Self {
+        Words::Written(String::new())
+    }
+}
+
+impl From<&str> for Words {
+    fn from(text: &str) -> Self {
+        Words::Written(text.to_owned())
+    }
+}
+
+impl From<String> for Words {
+    fn from(text: String) -> Self {
+        Words::Written(text)
+    }
+}
+
+impl Words {
+    /// Message `id` of the plugin's catalogs, with no arguments yet
+    /// ([`Words::with`]).
+    pub fn message(id: impl Into<String>) -> Self {
+        Words::Message {
+            id: id.into(),
+            args: BTreeMap::new(),
+        }
+    }
+
+    /// These words with the argument `name` given `value`: a message's
+    /// argument (text as written stays as it is).
+    #[must_use]
+    pub fn with(mut self, name: impl Into<String>, value: impl Into<Arg>) -> Self {
+        if let Words::Message { args, .. } = &mut self {
+            args.insert(name.into(), value.into());
+        }
+        self
+    }
+
+    /// Whether they say nothing: an empty text.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Words::Written(text) if text.is_empty())
+    }
+
+    /// The words an answer's error `text` carries: the message it is the
+    /// JSON of (what a module, whose error is a string, answers to say its
+    /// error as a message, and what `String::from(words)` makes), else
+    /// none: the text is the error, as written.
+    pub fn in_error(text: &str) -> Option<Words> {
+        if !text.starts_with('{') {
+            return None;
+        }
+        match serde_json::from_str::<Words>(text).ok()? {
+            message @ Words::Message { .. } => Some(message),
+            Words::Written(_) => None,
+        }
+    }
+}
+
+impl From<Words> for String {
+    /// Words as an answer's error, for a method that fails with a `String`
+    /// (`Err(Words::message("no-pairs").into())`): text as written is
+    /// itself; a message is its JSON, which skwir reads back as the message
+    /// it is (protocol 2: [`RpcError::of`], [`Words::in_error`]).
+    fn from(words: Words) -> Self {
+        match words {
+            Words::Written(text) => text,
+            message @ Words::Message { .. } => serde_json::to_string(&message).unwrap_or_default(),
+        }
+    }
+}
+
+/// An argument of a message, said as its kind is in the reader's language
+/// (ADR-139, 5). JSON: a number is a count, a string text, and
+/// `{ "name": … }` or `{ "size": … }` a name or a size; anything else is
+/// said as its JSON text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Arg {
+    /// A count: chooses the plural (`[one]`, `*[other]`, an exact `[0]`)
+    /// and is written with the reader's digits and groups ("1,234",
+    /// « 1 234 »).
+    Count(i64),
+    /// Text as written (a path, a number that counts nothing, a word a
+    /// selector chooses a variant by).
+    Text(String),
+    /// A file's or a place's name: quoted as the reader's language quotes,
+    /// its bidirectional controls shown, never obeyed.
+    Name(String),
+    /// A size in bytes, written as the reader's size setting says ("1.5
+    /// kB", "1.5 KiB").
+    Size(u64),
+}
+
+macro_rules! count_from {
+    ($($t:ty),*) => {$(
+        impl From<$t> for Arg {
+            fn from(n: $t) -> Self {
+                Arg::Count(i64::try_from(n).unwrap_or(i64::MAX))
+            }
+        }
+    )*};
+}
+count_from!(u8, u16, u32, u64, usize, i8, i16, i32, i64);
+
+impl From<&str> for Arg {
+    fn from(text: &str) -> Self {
+        Arg::Text(text.to_owned())
+    }
+}
+
+impl From<String> for Arg {
+    fn from(text: String) -> Self {
+        Arg::Text(text)
+    }
+}
+
+impl Serialize for Arg {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            Arg::Count(n) => serializer.serialize_i64(*n),
+            Arg::Text(text) => serializer.serialize_str(text),
+            Arg::Name(name) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("name", name)?;
+                map.end()
+            }
+            Arg::Size(bytes) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("size", bytes)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Arg {
+    /// Never refused: what is no count, text, name or size is said as its
+    /// JSON text, so one odd argument never costs a whole answer.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Arg::of(&Value::deserialize(deserializer)?))
+    }
+}
+
+impl Arg {
+    /// The argument `value` says (`Arg`'s JSON).
+    fn of(value: &Value) -> Arg {
+        /// A whole number, one past what a count holds counted as the
+        /// most it holds.
+        fn count(value: &Value) -> Option<i64> {
+            value.as_i64().or_else(|| value.as_u64().map(|_| i64::MAX))
+        }
+        let typed = |value: &Value| -> Option<Arg> {
+            let Value::Object(object) = value else {
+                return None;
+            };
+            let mut entries = object.iter();
+            let (Some((kind, inner)), None) = (entries.next(), entries.next()) else {
+                return None;
+            };
+            Some(match kind.as_str() {
+                "name" => Arg::Name(inner.as_str()?.to_owned()),
+                "size" => Arg::Size(inner.as_u64()?),
+                "count" => Arg::Count(count(inner)?),
+                "text" => Arg::Text(inner.as_str()?.to_owned()),
+                _ => return None,
+            })
+        };
+        match value {
+            Value::String(text) => Arg::Text(text.clone()),
+            Value::Number(_) if count(value).is_some() => {
+                Arg::Count(count(value).unwrap_or_default())
+            }
+            _ => typed(value).unwrap_or_else(|| Arg::Text(value.to_string())),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitializeParams {
     /// The protocol's version skwir speaks.
     pub api: u32,
     /// What the plugin may do, as granted.
     pub capabilities: Vec<crate::manifest::Capability>,
+    /// The languages the window speaks, most wanted first, English last
+    /// (BCP 47 tags: `fr`, `zh-Hans`, `en`): what a plugin writes in a
+    /// language of its own is written in the first of them it can. Told a
+    /// plugin on protocol 2, none on protocol 1. A message ([`Words`]) is
+    /// said by skwir in each reader's language whatever these are: the
+    /// window's, English for agents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,17 +480,19 @@ pub enum InspectionKind {
 }
 
 /// What a preview shows of a file: text, or rows under columns, a page at
-/// a time.
+/// a time. What it says to a person (its title, its columns' headers, its
+/// notice, its details' labels) is [`Words`]; what it shows of the file
+/// (paragraphs, cells, values) is the file's, as it is.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inspection {
     #[serde(default)]
     pub kind: InspectionKind,
-    pub title: String,
+    pub title: Words,
     /// Paragraphs, or lines of code.
     #[serde(default)]
     pub text: Vec<String>,
     #[serde(default)]
-    pub columns: Vec<String>,
+    pub columns: Vec<Words>,
     #[serde(default)]
     pub rows: Vec<Row>,
     /// Where the page before starts, if any.
@@ -283,7 +506,7 @@ pub struct Inspection {
     pub position: u64,
     /// A line over the page: what a search found, what was left out.
     #[serde(default)]
-    pub notice: String,
+    pub notice: Words,
     /// Facts the format knows, for Properties.
     #[serde(default)]
     pub details: Vec<Detail>,
@@ -304,9 +527,11 @@ pub struct Row {
     pub target: Option<String>,
 }
 
+/// A fact the format knows: what it is (words), and its value (the
+/// file's, as it is).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Detail {
-    pub label: String,
+    pub label: Words,
     pub value: String,
 }
 
@@ -335,13 +560,13 @@ pub enum CommandAnswer {
     /// A text for the clipboard, and what to say once it is there.
     Text {
         text: String,
-        said: String,
+        said: Words,
     },
     /// A plan its caller applies or proposes: needs `write`.
     Plan {
-        title: String,
+        title: Words,
         #[serde(default)]
-        note: Option<String>,
+        note: Option<Words>,
         steps: Vec<Step>,
     },
 }
@@ -406,6 +631,49 @@ pub struct Message {
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    /// What the error says to a person as a message of the plugin's
+    /// catalogs, `{ "id", "args" }` (protocol 2): `message` is then for
+    /// logs (the Rust guest writes the message's id there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+impl RpcError {
+    /// The error an answer's error `text` makes, as the protocol carries
+    /// it: where `text` is the JSON of a message ([`Words::in_error`]: a
+    /// module's error, `String::from(words)`), the message's id as its
+    /// `message` and the message as its `data`; else `text` as its
+    /// `message`.
+    pub fn of(text: String) -> RpcError {
+        match Words::in_error(&text) {
+            Some(words @ Words::Message { .. }) => RpcError {
+                code: -32000,
+                message: match &words {
+                    Words::Message { id, .. } => id.clone(),
+                    Words::Written(text) => text.clone(),
+                },
+                data: serde_json::to_value(&words).ok(),
+            },
+            _ => RpcError {
+                code: -32000,
+                message: text,
+                data: None,
+            },
+        }
+    }
+
+    /// What it says to a person (protocol 2): its `data` where that is a
+    /// message, else its `message` where that is the JSON of one (what a
+    /// module's helper sends of the module's error), else its `message`
+    /// as written.
+    pub fn words(&self) -> Words {
+        self.data
+            .as_ref()
+            .and_then(|data| serde_json::from_value::<Words>(data.clone()).ok())
+            .filter(|words| matches!(words, Words::Message { .. }))
+            .or_else(|| Words::in_error(&self.message))
+            .unwrap_or_else(|| Words::Written(self.message.clone()))
+    }
 }
 
 impl Message {
@@ -436,6 +704,7 @@ impl Message {
                 Some(RpcError {
                     code: -32000,
                     message,
+                    data: None,
                 }),
             ),
         };
@@ -453,13 +722,32 @@ impl Message {
         self.id.is_some() && self.method.is_none()
     }
 
+    /// The response to request `id` that is `error`.
+    pub fn failed(id: u64, error: RpcError) -> Message {
+        Message {
+            jsonrpc: "2.0".into(),
+            id: Some(id),
+            error: Some(error),
+            ..Message::default()
+        }
+    }
+
     /// What a response says: its result, or its error's message.
     ///
     /// # Errors
     /// The error the response carries.
     pub fn outcome(self) -> Result<Value, String> {
+        self.result().map_err(|error| error.message)
+    }
+
+    /// What a response says: its result, or its error whole (its words
+    /// with it, protocol 2).
+    ///
+    /// # Errors
+    /// The error the response carries.
+    pub fn result(self) -> Result<Value, RpcError> {
         match (self.result, self.error) {
-            (_, Some(error)) => Err(error.message),
+            (_, Some(error)) => Err(error),
             (Some(result), None) => Ok(result),
             (None, None) => Ok(Value::Null),
         }
@@ -493,6 +781,93 @@ mod tests {
             serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 7, "result": { "value": 3 } }))
                 .unwrap();
         assert_eq!(answer.outcome(), Ok(json!({ "value": 3 })));
+    }
+
+    /// What a plugin says to a person is text, or a message of its
+    /// catalogs with typed arguments; an odd argument is said as its JSON,
+    /// never refusing the answer.
+    #[test]
+    fn words_are_text_or_a_message_of_the_plugin_s_catalogs() {
+        let text: Words = serde_json::from_value(json!("Hex")).unwrap();
+        assert_eq!(text, Words::Written("Hex".into()));
+        let message: Words = serde_json::from_value(json!({
+            "id": "title",
+            "args": {
+                "size": { "size": 9800 },
+                "count": 3,
+                "offset": "0x64",
+                "file": { "name": "it's a café.bin" },
+                "odd": 1.5,
+                "flag": true,
+                "huge": u64::MAX,
+            },
+        }))
+        .unwrap();
+        assert_eq!(
+            message,
+            Words::message("title")
+                .with("size", Arg::Size(9800))
+                .with("count", 3)
+                .with("offset", "0x64")
+                .with("file", Arg::Name("it's a café.bin".into()))
+                .with("odd", Arg::Text("1.5".into()))
+                .with("flag", Arg::Text("true".into()))
+                .with("huge", i64::MAX)
+        );
+        assert_eq!(
+            serde_json::to_value(
+                Words::message("t")
+                    .with("n", 2)
+                    .with("f", Arg::Name("a".into()))
+                    .with("s", Arg::Size(5))
+            )
+            .unwrap(),
+            json!({ "id": "t", "args": { "n": 2, "f": { "name": "a" }, "s": { "size": 5 } } })
+        );
+        assert_eq!(
+            serde_json::to_value(Words::message("t")).unwrap(),
+            json!({ "id": "t" })
+        );
+        // Text as written takes no arguments.
+        assert_eq!(Words::from("as is").with("n", 1), Words::from("as is"));
+        // An object that is no message is no words.
+        assert!(serde_json::from_value::<Words>(json!({ "text": "x" })).is_err());
+        assert!(Words::default().is_empty());
+    }
+
+    /// An error's words travel as its `data` from a program, as its
+    /// message's JSON from a module (whose error is a string); text that
+    /// is no message stays as written.
+    #[test]
+    fn an_error_says_its_words_as_a_message() {
+        let failed = String::from(Words::message("no-pairs").with("max", 4096));
+        let error = RpcError::of(failed);
+        assert_eq!(error.message, "no-pairs");
+        assert_eq!(error.words(), Words::message("no-pairs").with("max", 4096));
+        let helper = RpcError {
+            code: -32000,
+            message: r#"{"id":"no-pairs"}"#.into(),
+            data: None,
+        };
+        assert_eq!(helper.words(), Words::message("no-pairs"));
+        let plain = RpcError::of("no such file".into());
+        assert_eq!(plain.data, None);
+        assert_eq!(plain.words(), Words::from("no such file"));
+        assert_eq!(
+            RpcError::of("{ not json".into()).words(),
+            Words::from("{ not json")
+        );
+        assert_eq!(
+            RpcError::of(r#"{"said":"x"}"#.into()).words(),
+            Words::from(r#"{"said":"x"}"#)
+        );
+        assert_eq!(String::from(Words::from("as written")), "as written");
+        let line = Message::failed(3, RpcError::of(String::from(Words::message("gone")))).line();
+        let back: Message = serde_json::from_slice(&line).unwrap();
+        assert_eq!(back.result().unwrap_err().words(), Words::message("gone"));
+        // Read as protocol 1 reads it: the message alone.
+        let back: Message = serde_json::from_slice(&line).unwrap();
+        assert_eq!(back.outcome(), Err("gone".into()));
     }
 
     #[test]

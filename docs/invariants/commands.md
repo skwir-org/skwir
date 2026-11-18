@@ -242,6 +242,14 @@ control plugin's `run`:
 
 ## Plugins from outside (ADR-045, ADR-046, ADR-047)
 
+- On protocol 2 a plugin's words are data like Skwir's (ADR-139, 14): its
+  catalogs (`l10n/` beside its manifest) are read with it, bounded
+  (`catalogs::CATALOG_LIMIT`, `LANGUAGES`, `DEPTH`), and registered under
+  `outside:<id>` while it is on. What it says is `protocol::Words`, said
+  by the host (`Catalogs::said`, `Words::of_catalog`), never said into a
+  string by the host before it is drawn or sent. A new kind of words a
+  plugin says is a field of type `Words`, never a `String`. A version-1
+  plugin is shown as it writes.
 - A plugin from outside never takes one of skwir's own namespaces as its
   id (`manifest::RESERVED`, kept whole by `crates/skwir/tests/outside_ids.rs`),
   nor a command another owner registered (`register_dynamic`).

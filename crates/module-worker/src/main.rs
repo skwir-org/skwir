@@ -24,7 +24,8 @@ use std::io::{BufRead, BufReader, Write};
 
 use serde_json::json;
 use skwir_plugin_api::protocol::{
-    InitializeAnswer, LogParams, MESSAGE_LIMIT, Message, ReadAnswer, ReadParams, VERSION, method,
+    InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, ReadAnswer, ReadParams,
+    VERSION, method,
 };
 use wasmtime::component::{Component, Linker, TypedFunc};
 use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder};
@@ -139,6 +140,9 @@ impl Wire {
 struct State {
     wire: Wire,
     limits: StoreLimits,
+    /// The reader's languages, most wanted first, as `initialize` said
+    /// them: what the module's `languages` import answers (protocol 2).
+    languages: Vec<String>,
 }
 
 type Answer = TypedFunc<(String, String), (Result<String, String>,)>;
@@ -164,6 +168,9 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
             Ok(())
         },
     )?;
+    host.func_wrap("languages", |store: StoreContextMut<'_, State>, (): ()| {
+        Ok((store.data().languages.clone(),))
+    })?;
     let mut store = Store::new(
         &engine,
         State {
@@ -173,6 +180,7 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
                 cancelled: false,
             },
             limits: limits(),
+            languages: Vec::new(),
         },
     );
     store.limiter(|state| &mut state.limits);
@@ -189,6 +197,10 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
         let params = message.params.unwrap_or(serde_json::Value::Null);
         store.data_mut().wire.cancelled = false;
         let reply = if name == method::INITIALIZE {
+            // What the module asks with `languages` (protocol 2).
+            store.data_mut().languages = serde_json::from_value::<InitializeParams>(params)
+                .map(|hello| hello.languages)
+                .unwrap_or_default();
             Ok(json!(InitializeAnswer { api: VERSION }))
         } else {
             if answer.is_none() {
@@ -205,6 +217,7 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
                             },
                         ),
                         limits: limits(),
+                        languages: std::mem::take(&mut store.data_mut().languages),
                     },
                 );
                 store.limiter(|state| &mut state.limits);

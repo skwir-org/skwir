@@ -20,6 +20,10 @@ it may do, and runs it once the user turns it on. It can provide:
 
 Skwir draws everything: a plugin provides data, never a view.
 
+What it says to a person can be in the reader's language (protocol 2): a
+message of its own catalogs, which Skwir says in the window's language and
+in English to agents ([Its words](#its-words-in-every-language)).
+
 The protocol is experimental (ADR-047): until declared stable, a new
 version may change what an older one said. The spec is
 [`protocol.md`](protocol.md).
@@ -27,12 +31,14 @@ version may change what an older one said. The spec is
 ## Start from the template
 
 `crates/plugins-outside/template` is a working plugin (a word count, as a
-field and a command) that builds both as a module and as a program.
+field and two commands) that builds both as a module and as a program, and
+speaks English, French and Simplified Chinese (protocol 2).
 
 1. Copy it to `crates/plugins-outside/<name>`. `skwir-plugin-api` is not
    on crates.io, so build inside the Skwir workspace, which includes every
    folder there.
-2. Rename the package in `Cargo.toml` and the `id` in `plugin.toml`.
+2. Rename the package in `Cargo.toml` and the `id` in `plugin.toml`, and
+   write your messages in `l10n/en.ftl` (and a file a language).
 3. Write `src/lib.rs`:
 
    ```rust
@@ -56,7 +62,8 @@ field and a command) that builds both as a module and as a program.
 4. Build with `just plugins` (needs the `wasm32-unknown-unknown` target:
    the Nix dev shell has it; with rustup,
    `rustup target add wasm32-unknown-unknown`). Each plugin lands in
-   `target/plugins/<id>`, laid out as an installed one.
+   `target/plugins/<id>`, laid out as an installed one: its manifest, its
+   module and its `l10n/`.
 5. Run Skwir with it, then turn it on in Settings › Plugins:
 
    ```
@@ -80,30 +87,34 @@ A file arrives as a `protocol::File`: its `name`, its `path` (for display
 only), its `mime` type and `size` when known, and a `handle`. Read its bytes
 with `host.read(handle, offset, length)`, at most 4 MiB per read; the
 handle is valid only while the call is being answered.
+`host.languages()` says the languages the window speaks, most wanted first
+(protocol 2), for text the plugin writes in a language of its own.
 
 More examples:
 
 - `crates/plugins-outside/netpbm`: thumbnails, and previews converted to
-  PNG (a file of several pictures shown one picture a page).
+  PNG (a file of several pictures shown one picture a page). It stays on
+  protocol 1 (`api = 1`), the proof that a plugin written for it still runs
+  as it did: its words are shown as it writes them.
 - `crates/plugins-outside/hex-view`: the built-in hexadecimal preview,
-  again as a module.
+  again as a module, in every language the built-in one speaks.
 
 ## The manifest
 
 ```toml
 id = "word-count"            # lowercase, digits, dashes: names its commands and fields
-title = "Word count"
+title = { id = "plugin-title" }  # a message of l10n/ (protocol 2), or text: "Word count"
 description = "How many words a text holds, in Properties"
 category = "files"           # browsing, files (default), previews or desktop
 capabilities = ["read"]      # read, write, network, programs
-api = 1                      # the protocol version it speaks (default 1)
+api = 2                      # the protocol version it speaks (1 when left out)
 
 [run]
 module = "word_count.wasm"   # or: program = "bin/word-count", args = [...]
 
 [[fields]]
 key = "word-count.words"     # under the id
-label = "Words"              # what Properties calls it; none keeps it out of Properties
+label = "Words"              # what Properties calls it (text or a message); none keeps it out of Properties
 types = ["text/plain"]       # MIME types, matched with their aliases
 
 [[thumbnails]]
@@ -118,7 +129,7 @@ pages = false                # true: answers `page`, a picture and its text a pa
 
 [[commands]]
 name = "word-count.count"    # under the id
-title = "Count words"
+title = "Count words"        # text or a message, as its description
 description = "How many words the files hold"
 effect = "reads"             # reads, shows, plans or acts (default): what an agent may run
 topic = "files"              # where F1 lists its keys: go, select, files, find, notes, tabs, view,
@@ -136,7 +147,9 @@ Skwir refuses a manifest (and logs why) unless:
 - every field `key` and command `name` is `<id>.<something>`;
 - `[run]` names exactly one of `module` and `program` (paths relative to
   the plugin's folder);
-- `api` is a version Skwir speaks (1 today);
+- `api` is a version Skwir speaks (1 or 2 today), and a message stands in
+  it only on 2; a message's id is a letter, then letters, digits, `_` and
+  `-`;
 - a module does not ask for `network`;
 - a command with `effect = "plans"` comes with the `write` capability;
 - `arguments`, when given, is a JSON schema of type `object`;
@@ -147,6 +160,48 @@ Skwir refuses a manifest (and logs why) unless:
 A command also takes `entries` (absolute paths) and `pane`. Skwir resolves
 the files and hands them to the plugin as `File`s: the ones named, else the
 pane's selection.
+
+## Its words, in every language
+
+On protocol 2 (`api = 2`), what a plugin says to a person can be a message
+of its own catalogs instead of text: its title and description, a field's
+label, a command's title and description, and in what it answers, an
+inspection's title, columns, notice and labels, a command's `said`, a
+plan's title and note, and its errors. Skwir says each in the window's
+language, and in English to agents, MCP and scripts. Text it writes as a
+string is shown as written to everyone.
+
+```rust
+use skwir_plugin_api::protocol::{Arg, CommandAnswer, Words};
+
+// A message, its arguments typed: a count chooses the plural, a size is
+// written as the reader's size setting says, a name is quoted.
+let said = Words::message("count-said").with("count", total);
+let title = Words::message("title").with("size", Arg::Size(len));
+// An error as a message: a `String` that Skwir reads back as one.
+return Err(Words::message("no-command").with("command", name).into());
+```
+
+Its catalogs lie beside the manifest, in `l10n/`: `en.ftl` its English,
+written by you, and a file a language, named by its tag (`fr.ftl`,
+`zh-Hans.ftl`), Fluent as Skwir's own catalogs are:
+
+```ftl
+# Said with the number the command gives for the clipboard.
+count-said = { $count ->
+        [one] One word in all
+       *[other] { $count } words in all
+    }
+```
+
+What a language's catalog lacks is said in English; what `en.ftl` lacks, as
+its id. Skwir reads the catalogs as it finds the plugin, and leaves out one
+over 256 KiB, not UTF-8, or nesting deeper than 16 (the log says why).
+Skwir's own catalogs are made from its code and compiled in (`just words`);
+a plugin's are its own, never compiled into Skwir. The catalogs' test
+(`crates/core/src/words/tests.rs`) still holds those of the plugins here to
+their `en.ftl`. The full rules: [`protocol.md`](protocol.md), "Words" and
+"Catalogs".
 
 ## What a plugin may do
 
@@ -220,11 +275,11 @@ started as a program):
   and send it one JSON-RPC message per line:
 
   ```
-  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"api":1,"capabilities":["read"]}}' \
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"api":2,"capabilities":["read"],"languages":["fr","en"]}}' \
     | target/debug/skwir-outside-template
   ```
 
-  It answers `{"jsonrpc":"2.0","id":1,"result":{"api":1}}`.
+  It answers `{"jsonrpc":"2.0","id":1,"result":{"api":2}}`.
 - **End to end.** `crates/extend/tests/` (`modules.rs`, `programs.rs`)
   installs workspace plugins in a plugin folder, as a user would, and drives
   them through Skwir.
@@ -245,7 +300,8 @@ Put the plugin's folder in one of these, searched in order:
 3. the absolute folders in `SKWIR_PLUGIN_PATH` (separated as in `PATH`;
    relative ones are ignored).
 
-Every subfolder holding a `plugin.toml` is a plugin. Then restart Skwir
+Every subfolder holding a `plugin.toml` is a plugin (its `l10n/` beside
+it). Then restart Skwir
 (plugins are found at startup) and turn the plugin on in Settings ›
 Plugins, where its line says what it may do and where it is. A plugin whose
 id is taken (by a built-in plugin, or one found earlier) or whose manifest

@@ -86,8 +86,8 @@ extend_thumbnail_not_base64 = 缩略图不是 base64 编码
 
 # draft
 extend_turned_off = { $count ->
-        [1] 已停用插件{ $plugin }：它停止了响应
-       *[other] 已停用插件{ $plugin }：它连续 { $count } 次停止响应
+        [1] 已停用插件“{ $plugin }”：它停止了响应
+       *[other] 已停用插件“{ $plugin }”：它连续 { $count } 次停止响应
     }
 
 # draft

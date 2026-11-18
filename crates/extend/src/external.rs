@@ -9,17 +9,17 @@ use skwir_core::App;
 use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin};
 use skwir_core::words;
-use skwir_core::words::Name;
 use skwir_plugin_api::Manifest;
 use skwir_plugin_api::manifest::{self, Category as Declared};
 
-use crate::call::{Call, Transport};
+use crate::call::{Answered, Call, Transport};
+use crate::catalogs::Catalogs;
 
-/// A plugin a folder holds: its manifest, read and checked, and what runs
-/// it, started when first asked.
+/// A plugin a folder holds: its manifest, read and checked, its catalogs
+/// (protocol 2), and what runs it, started when first asked.
 pub struct External {
     id: &'static str,
-    description: &'static str,
+    description: skwir_core::words::Words,
     manifest: Manifest,
     folder: PathBuf,
     capabilities: Capabilities,
@@ -74,12 +74,26 @@ impl External {
             })
             .collect();
         let id = crate::intern(&manifest.id);
+        let catalogs = Catalogs::load(&folder, id, manifest.api);
+        // Said as its id: what its author would want to know.
+        for words in manifest.words() {
+            if let skwir_plugin_api::protocol::Words::Message { id: message, .. } = words
+                && !catalogs.says(message)
+            {
+                tracing::warn!(
+                    plugin = id,
+                    "its manifest names `{message}`, which its l10n/en.ftl does not say: said as its id"
+                );
+            }
+        }
         Ok(External {
             id,
-            description: crate::intern(&manifest.description),
+            description: catalogs.said(&manifest.description),
             runner: Arc::new(Runner {
                 id,
-                title: manifest.title.clone(),
+                title: catalogs.said(&manifest.title),
+                api: manifest.api,
+                catalogs,
                 kind,
                 folder: folder.clone(),
                 granted: capabilities,
@@ -107,12 +121,13 @@ impl Plugin for External {
     fn id(&self) -> &'static str {
         self.id
     }
+    /// Its own words: as its manifest writes them, or a message of its
+    /// catalogs (protocol 2).
     fn title(&self) -> skwir_core::words::Words {
-        // Its own words, as its manifest writes them.
-        skwir_core::words::Words::as_written(self.manifest.title.clone())
+        self.runner.title.clone()
     }
     fn description(&self) -> skwir_core::words::Words {
-        skwir_core::words::Words::as_written(self.description)
+        self.description.clone()
     }
     fn category(&self) -> Category {
         match self.manifest.category {
@@ -139,6 +154,8 @@ impl Plugin for External {
             off: false,
             broken: 0,
         };
+        // Its words first: what it registers next says them.
+        self.runner.catalogs.register(self.id);
         crate::providers::register(app, self);
         crate::commands::register(app, self);
     }
@@ -171,7 +188,12 @@ pub(crate) enum Kind {
 pub(crate) struct Runner {
     pub id: &'static str,
     /// What the user knows it as: what a review says proposed a plan.
-    pub title: String,
+    pub title: skwir_core::words::Words,
+    /// The protocol's version its manifest says it speaks: from 2, it is
+    /// told the reader's languages and may say messages of its catalogs.
+    pub api: u32,
+    /// Its catalogs, which say its messages (protocol 2).
+    pub catalogs: Catalogs,
     pub kind: Kind,
     folder: PathBuf,
     pub granted: Capabilities,
@@ -208,7 +230,9 @@ impl Runner {
     pub(crate) fn answered_by(module: &Path, transport: Arc<dyn Transport>) -> Runner {
         Runner {
             id: "test",
-            title: "Test".into(),
+            title: skwir_core::words::Words::as_written("Test"),
+            api: 1,
+            catalogs: Catalogs::load(module, "test", 1),
             kind: Kind::Module(module.to_owned()),
             folder: module.parent().unwrap_or(module).to_owned(),
             granted: [Capability::Read].into_iter().collect(),
@@ -267,6 +291,7 @@ impl Runner {
         let broken = answer
             .as_ref()
             .is_err_and(anyhow::Error::is::<crate::process::Broken>);
+        let answer = answer.map_err(|error| self.said_error(error));
         let (turn_off, stopped) = {
             let mut watch = self.watch.lock();
             // Turned off while it was asked, before this call could.
@@ -297,6 +322,20 @@ impl Runner {
         }
     }
 
+    /// An error as the user reads it: one the plugin answered, its words
+    /// (a message of its catalogs on protocol 2, its text as written on
+    /// protocol 1); any other, Skwir's, as it is.
+    fn said_error(&self, error: anyhow::Error) -> anyhow::Error {
+        // Skwir's words around the plugin's (it did not start): as they are.
+        if error.chain().nth(1).is_some() {
+            return error;
+        }
+        match error.downcast::<Answered>() {
+            Ok(Answered(answered)) => anyhow::Error::new(self.catalogs.error(self.api, &answered)),
+            Err(error) => error,
+        }
+    }
+
     /// Turn the plugin off, its program having broken again and again,
     /// and say so with the way to its page.
     fn turned_off(&self, app: &App) {
@@ -312,12 +351,12 @@ impl Runner {
             skwir_core::app::NotifyLevel::Warning,
             words!(
                 extend_turned_off = "{ $count ->
-                    [one] The plugin { $plugin } was turned off: it stopped answering
-                   *[other] The plugin { $plugin } was turned off: it stopped answering { $count } times in a row
+                    [one] The plugin “{ $plugin }” was turned off: it stopped answering
+                   *[other] The plugin “{ $plugin }” was turned off: it stopped answering { $count } times in a row
                 }",
-                plugin = Name(self.title.clone()),
+                plugin = self.title.clone(),
                 count = BROKEN_AT_MOST,
-                note = "A notification: a plugin from outside Skwir (its title, as its author wrote it) failed again and again, and Skwir turned it off."
+                note = "A notification: a plugin from outside Skwir (its title, its author's words) failed again and again, and Skwir turned it off."
             ),
             words!(
                 extend_turned_off_action = "Plugins",
@@ -357,17 +396,21 @@ impl Runner {
                     self.granted,
                     Isolation::WhereAvailable,
                     compiled,
-                ))
+                )
+                .telling_languages(self.api >= 2))
             }
-            Kind::Program { program, args } => Arc::new(Program::new(
-                self.id,
-                program.clone(),
-                args.clone(),
-                self.folder.clone(),
-                self.granted,
-                Isolation::Required,
-                None,
-            )),
+            Kind::Program { program, args } => Arc::new(
+                Program::new(
+                    self.id,
+                    program.clone(),
+                    args.clone(),
+                    self.folder.clone(),
+                    self.granted,
+                    Isolation::Required,
+                    None,
+                )
+                .telling_languages(self.api >= 2),
+            ),
         })
     }
 

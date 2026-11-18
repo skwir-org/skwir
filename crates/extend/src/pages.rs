@@ -88,7 +88,7 @@ impl Pages {
             skwir_core::words!(
                 extend_pages_links_closed = "Links are not followed in pages “{ $plugin }” drew: it may not use the network",
                 plugin = runner.title.clone(),
-                note = "Under pages a plugin from outside Skwir (its title, as its author wrote it) drew, which may not use the network: their links are not followed."
+                note = "Under pages a plugin from outside Skwir (its title, its author's words) drew, which may not use the network: their links are not followed."
             )
         });
         let mut pages = Pages {

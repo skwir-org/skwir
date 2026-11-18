@@ -257,6 +257,11 @@ sentence, never a sentence assembled from pieces.
 - **A plugin's catalogs are a contribution** like its commands:
   registered with its id, withdrawn on disable
   (`crates/skwir/tests/plugins_toggle.rs`).
+- **A plugin from outside brings its own** (`l10n/` beside its manifest,
+  its `en.ftl` written by its author): never compiled into Skwir nor
+  counted in a language's share (`just words` leaves
+  `crates/plugins-outside/` out), registered under `outside:<id>` while
+  it is on and withdrawn when it is turned off (ADR-139, 14).
 - **A reader's language finds a catalog by its script, then its region**
   (`locale::matching`, ICU4X's likely subtags of both): a catalog of its
   language written in its script, a catalog named by its language alone

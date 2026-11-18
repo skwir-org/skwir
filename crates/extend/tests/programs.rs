@@ -37,13 +37,14 @@ fn a_program_answers_a_field_and_a_command_reading_through_skwir() {
     let program = common::program("skwir-outside-template");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
-    common::install(
+    let installed = common::install(
         &plugins,
         "word-count",
         &manifest("capabilities = [\"read\"]"),
         &program,
         "word-count",
     );
+    common::catalogs(&installed, "crates/plugins-outside/template");
     let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
     let note = tmp.path().join("it's a note.txt");
     std::fs::write(&note, "one two three").unwrap();
@@ -63,6 +64,21 @@ fn a_program_answers_a_field_and_a_command_reading_through_skwir() {
     };
     assert_eq!(value["total"], 3);
     assert_eq!(value["files"][0]["name"], "it's a note.txt");
+    // What it says of the number for the clipboard, from its catalogs: in
+    // English to an agent, in the window's language there.
+    let outcome = app
+        .dispatch(&Invocation::with_args(
+            "word-count.copy",
+            &serde_json::json!({ "entries": [note] }),
+        ))
+        .unwrap();
+    let Outcome::Clipboard { text, said } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(
+        (text.as_str(), said.english()),
+        ("3", "3 words in all".to_owned())
+    );
     // Even a plugin granted reads cannot receive private content through
     // a public name. Exercise the command path with both forms of alias.
     let keys = tmp.path().join("keys");
@@ -124,6 +140,121 @@ fn a_program_that_may_not_read_is_refused_its_reads() {
         ))
         .unwrap_err();
     assert!(format!("{error:#}").contains("private"), "{error:#}");
+}
+
+/// A program that says back what skwir told it as it started
+/// (`<id>.told`), or fails with the words of its catalogs (`<id>.fails`):
+/// a probe of the protocol itself, in a shell's builtins.
+const PROBE: &str = r#"#!/bin/sh
+read -r hello
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"api":2}}'
+while read -r line; do
+    id=${line#*\"id\":}
+    id=${id%%,*}
+    case "$line" in
+    *.fails*)
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"gone","data":{"id":"gone","args":{"name":{"name":"café [1].txt"}}}}}\n' "$id" ;;
+    *)
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"answer":"value","value":%s}}\n' "$id" "$hello" ;;
+    esac
+done
+"#;
+
+/// The probe installed as `id`, speaking protocol `api`, with an English
+/// and a French of this test's own.
+fn probe(plugins: &std::path::Path, id: &str, api: u32) {
+    let folder = plugins.join(id);
+    std::fs::create_dir_all(folder.join("l10n")).unwrap();
+    std::fs::write(
+        folder.join("plugin.toml"),
+        format!(
+            "id = \"{id}\"\ntitle = \"Probe\"\napi = {api}\n[run]\nprogram = \"probe\"\n\
+             [[commands]]\nname = \"{id}.told\"\ntitle = \"Told\"\neffect = \"reads\"\n\
+             [[commands]]\nname = \"{id}.fails\"\ntitle = \"Fails\"\neffect = \"reads\"\n"
+        ),
+    )
+    .unwrap();
+    let program = folder.join("probe");
+    std::fs::write(&program, PROBE).unwrap();
+    std::fs::set_permissions(
+        &program,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::write(folder.join("l10n/en.ftl"), "gone = { $name } is gone\n").unwrap();
+    std::fs::write(
+        folder.join("l10n/fr.ftl"),
+        "gone = { $name } a disparu (essai)\n",
+    )
+    .unwrap();
+}
+
+/// Protocol 2 tells a program the window's languages as it starts, and
+/// starts it again once they change; its error is said from its catalogs,
+/// in French for the window and in English for an agent. Protocol 1, side
+/// by side, is told none and shown as it writes.
+#[test]
+fn a_program_on_protocol_2_is_told_the_languages_and_fails_in_its_words() {
+    if !isolates() {
+        return;
+    }
+    let tmp = common::home_tempdir();
+    let plugins = tmp.path().join("plugins");
+    probe(&plugins, "probe", 2);
+    probe(&plugins, "older-probe", 1);
+    let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
+    let told = |id: &str| -> serde_json::Value {
+        let outcome = app
+            .dispatch(&Invocation::with_args(
+                format!("{id}.told"),
+                &serde_json::json!({}),
+            ))
+            .unwrap();
+        let Outcome::Value(hello) = outcome else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(hello["method"], "initialize", "{hello}");
+        hello["params"].clone()
+    };
+    skwir_core::locale::set_chosen(Some("fr".into()));
+    assert_eq!(told("probe")["languages"], serde_json::json!(["fr", "en"]));
+    assert_eq!(told("probe")["api"], 2);
+    assert!(
+        told("older-probe").get("languages").is_none(),
+        "protocol 1 is told none"
+    );
+    // The window's language changed: started again, told the new ones.
+    skwir_core::locale::set_chosen(Some("zh-Hans".into()));
+    assert_eq!(
+        told("probe")["languages"],
+        serde_json::json!(["zh-Hans", "en"])
+    );
+    // The pseudo-language's words are English's: none told of it.
+    skwir_core::locale::set_chosen(Some(skwir_core::words::PSEUDO.into()));
+    assert_eq!(told("probe")["languages"], serde_json::json!(["en"]));
+    skwir_core::locale::set_chosen(Some("fr".into()));
+    let failed = |id: &str| {
+        skwir_core::words::Words::of_error(
+            app.dispatch(&Invocation::with_args(
+                format!("{id}.fails"),
+                &serde_json::json!({}),
+            ))
+            .unwrap_err(),
+        )
+    };
+    let error = failed("probe");
+    assert_eq!(error.english(), "“café [1].txt” is gone", "an agent's");
+    assert_eq!(
+        error.say_plain(),
+        "“café [1].txt” a disparu (essai)",
+        "the window's"
+    );
+    // Protocol 1: its message, as written.
+    let error = failed("older-probe");
+    assert_eq!(
+        (error.english(), error.say_plain()),
+        ("gone".into(), "gone".into())
+    );
 }
 
 #[test]

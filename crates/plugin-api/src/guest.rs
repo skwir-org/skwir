@@ -23,10 +23,23 @@ pub trait Host {
     fn read(&self, file: u32, offset: u64, length: u32) -> Result<Vec<u8>, String>;
     /// A line for skwir's log.
     fn log(&self, level: &str, message: &str);
+    /// The languages the window speaks, most wanted first, English last
+    /// (BCP 47 tags: `fr`, `zh-Hans`, `en`), for what the plugin writes in a
+    /// language of its own (protocol 2; none on protocol 1). A message it
+    /// answers ([`crate::protocol::Words`]) skwir says itself, in each
+    /// reader's language: these need not be asked for that.
+    fn languages(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// What a plugin answers. Each method has a default that has nothing to
 /// say, so a plugin implements those its manifest declares.
+///
+/// A method fails with a `String`: text as written, or, on protocol 2, a
+/// message of the plugin's catalogs made one
+/// (`Err(Words::message("no-pairs").into())`), which skwir says in the
+/// reader's language.
 pub trait Plugin {
     /// A field of a file: `None` when it says nothing.
     ///
@@ -178,8 +191,8 @@ pub mod stdio {
 
     use super::{Host, Plugin};
     use crate::protocol::{
-        InitializeAnswer, LogParams, MESSAGE_LIMIT, Message, ReadAnswer, ReadParams, VERSION,
-        method,
+        InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, ReadAnswer,
+        ReadParams, RpcError, VERSION, method,
     };
 
     /// Serve `plugin` until skwir closes standard input.
@@ -192,6 +205,7 @@ pub mod stdio {
             input: RefCell::new(stdin.lock()),
             next: Cell::new(1),
             cancelled: Cell::new(None),
+            languages: RefCell::new(Vec::new()),
         };
         while let Some(message) = host.next_message()? {
             // A notification between calls (a late cancel), or the answer
@@ -205,12 +219,20 @@ pub mod stdio {
             let params = message.params.unwrap_or(Value::Null);
             host.cancelled.set(None);
             let answer = if name == method::INITIALIZE {
+                // What the plugin asks with `Host::languages` (protocol 2).
+                *host.languages.borrow_mut() = serde_json::from_value::<InitializeParams>(params)
+                    .map(|hello| hello.languages)
+                    .unwrap_or_default();
                 Ok(json!(InitializeAnswer { api: VERSION }))
             } else {
                 super::answer(plugin, &host, &name, &params.to_string())
                     .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
             };
-            write(&Message::answer(id, answer))?;
+            // An error that is a message goes as its `data` (protocol 2).
+            write(&match answer {
+                Ok(value) => Message::answer(id, Ok(value)),
+                Err(text) => Message::failed(id, RpcError::of(text)),
+            })?;
         }
         Ok(())
     }
@@ -226,6 +248,8 @@ pub mod stdio {
         next: Cell<u64>,
         /// A call skwir stopped waiting for: reads fail from then on.
         cancelled: Cell<Option<u64>>,
+        /// The reader's languages, as `initialize` said them.
+        languages: RefCell<Vec<String>>,
     }
 
     impl<R: BufRead> Stdio<R> {
@@ -282,6 +306,10 @@ pub mod stdio {
             };
             let _ = write(&Message::notification(method::LOG, json!(params)));
         }
+
+        fn languages(&self) -> Vec<String> {
+            self.languages.borrow().clone()
+        }
     }
 }
 
@@ -312,6 +340,10 @@ pub mod wasm {
 
         fn log(&self, level: &str, message: &str) {
             bindings::skwir::plugin::host::log(level, message);
+        }
+
+        fn languages(&self) -> Vec<String> {
+            bindings::skwir::plugin::host::languages()
         }
     }
 }
@@ -490,5 +522,60 @@ mod tests {
 
     fn answer_of(method: &str) -> Result<String, String> {
         answer(&Words, &Bytes(b""), method, "{}")
+    }
+
+    /// Says its title as a message of its catalogs, and fails a search as
+    /// one.
+    struct Said;
+
+    impl Plugin for Said {
+        fn inspect(
+            &self,
+            _: &dyn Host,
+            params: InspectParams,
+        ) -> Result<Option<Inspection>, String> {
+            use crate::protocol::{Arg, Words};
+            if let Some(query) = params.query {
+                return Err(Words::message("no-search").with("query", query).into());
+            }
+            Ok(Some(Inspection {
+                title: Words::message("title").with("size", Arg::Size(3)),
+                notice: "as written".into(),
+                ..Inspection::default()
+            }))
+        }
+    }
+
+    /// A message answered is its JSON, which skwir says; an error that is a
+    /// message comes back as one ([`crate::protocol::RpcError::of`]).
+    #[test]
+    fn a_plugin_says_messages_and_fails_with_one() {
+        use crate::protocol::{Arg, RpcError, Words};
+        let file = json!({ "handle": 1, "name": "a.bin", "path": "/a.bin" });
+        let said = answer(
+            &Said,
+            &Bytes(b""),
+            method::INSPECT,
+            &json!({ "file": file }).to_string(),
+        )
+        .unwrap();
+        let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+        assert_eq!(
+            said["title"],
+            json!({ "id": "title", "args": { "size": { "size": 3 } } })
+        );
+        assert_eq!(said["notice"], json!("as written"));
+        let failed = answer(
+            &Said,
+            &Bytes(b""),
+            method::INSPECT,
+            &json!({ "file": file, "query": "it's" }).to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            RpcError::of(failed).words(),
+            Words::message("no-search").with("query", Arg::Text("it's".into()))
+        );
+        assert!(Bytes(b"").languages().is_empty(), "none unless told");
     }
 }

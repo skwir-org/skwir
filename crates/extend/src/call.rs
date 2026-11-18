@@ -13,6 +13,21 @@ use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::preview::{FileSource, Held};
 use skwir_plugin_api::protocol::{File, READ_LIMIT};
 
+/// An error the plugin answered, as the protocol carries it: its text, and
+/// on protocol 2 its words, which its runner says from the plugin's
+/// catalogs (`Runner::call_in`).
+#[derive(Debug)]
+pub(crate) struct Answered(pub skwir_plugin_api::protocol::RpcError);
+
+impl std::fmt::Display for Answered {
+    /// Its text, for the log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.message)
+    }
+}
+
+impl std::error::Error for Answered {}
+
 /// How a plugin's answers reach skwir: a program's pipe, a module's call.
 pub(crate) trait Transport: Send + Sync {
     /// Ask `method` with `params`, the plugin reading through `call`.

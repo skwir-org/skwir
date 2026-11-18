@@ -9305,6 +9305,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "crossbeam-channel",
+ "fluent-syntax",
  "parking_lot",
  "serde",
  "serde_json",

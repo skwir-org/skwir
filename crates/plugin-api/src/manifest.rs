@@ -16,10 +16,15 @@
 //! label = "Words"
 //! types = ["text/plain"]
 //! ```
+//!
+//! On protocol 2 (`api = 2`, ADR-139, 14), what it says to a person (its
+//! title and description, a field's label, a command's title and
+//! description) may be a message of its catalogs instead, `l10n/` beside
+//! the manifest: `title = { id = "title" }`.
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{OLDEST, VERSION};
+use crate::protocol::{OLDEST, UNNAMED, VERSION, Words};
 
 /// What a plugin may do (skwir's `permissions::Capability`). A plugin
 /// gets what it declares once the user turns it on, and nothing more.
@@ -92,13 +97,14 @@ pub struct Manifest {
     /// Its name among plugins and the prefix of its commands and fields:
     /// lowercase letters, digits and dashes.
     pub id: String,
-    pub title: String,
+    pub title: Words,
     #[serde(default)]
-    pub description: String,
+    pub description: Words,
     #[serde(default)]
     pub category: Category,
-    /// The protocol's version it speaks ([`VERSION`]).
-    #[serde(default = "version")]
+    /// The protocol's version it speaks, [`OLDEST`] to [`VERSION`]; the
+    /// first ([`UNNAMED`]) where it names none.
+    #[serde(default = "unnamed")]
     pub api: u32,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
@@ -113,9 +119,13 @@ pub struct Manifest {
     pub commands: Vec<CommandDecl>,
 }
 
-fn version() -> u32 {
-    VERSION
+fn unnamed() -> u32 {
+    UNNAMED
 }
+
+/// The folder beside a manifest that holds a plugin's catalogs (protocol
+/// 2): `<language>.ftl`, `en.ftl` its English.
+pub const CATALOGS: &str = "l10n";
 
 /// How it runs: one of a module or a program, relative to its folder.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -140,7 +150,7 @@ pub struct FieldDecl {
     pub key: String,
     /// What Properties calls it; none keeps it out of Properties.
     #[serde(default)]
-    pub label: Option<String>,
+    pub label: Option<Words>,
     /// The MIME types of the files it reads it from.
     pub types: Vec<String>,
 }
@@ -183,9 +193,9 @@ pub struct PreviewDecl {
 pub struct CommandDecl {
     /// `<id>.name`.
     pub name: String,
-    pub title: String,
+    pub title: Words,
     #[serde(default)]
-    pub description: String,
+    pub description: Words,
     #[serde(default)]
     pub effect: Effect,
     /// What it is about; its plugin's category's when it names none (see
@@ -200,9 +210,23 @@ pub struct CommandDecl {
 }
 
 impl Manifest {
+    /// What it says to a person: its title and description, its fields'
+    /// labels, its commands' titles and descriptions.
+    pub fn words(&self) -> impl Iterator<Item = &Words> {
+        [&self.title, &self.description]
+            .into_iter()
+            .chain(self.fields.iter().filter_map(|field| field.label.as_ref()))
+            .chain(
+                self.commands
+                    .iter()
+                    .flat_map(|command| [&command.title, &command.description]),
+            )
+    }
+
     /// Whether it holds together: an id of the allowed letters, names and
     /// keys under it, one way to run, types for what it provides, the
-    /// protocol's version, and a plan only from a plugin that may write.
+    /// protocol's version, messages only on protocol 2, and a plan only
+    /// from a plugin that may write.
     ///
     /// # Errors
     /// What does not hold, in words.
@@ -213,6 +237,17 @@ impl Manifest {
                 "it speaks version {} of the protocol; skwir speaks {OLDEST} to {VERSION}",
                 self.api
             ));
+        }
+        for words in self.words() {
+            let Words::Message { id, .. } = words else {
+                continue;
+            };
+            if self.api < 2 {
+                return Err(format!(
+                    "`{id}` is a message of its catalogs, which protocol 2 says: `api = 2`"
+                ));
+            }
+            check_message_id(id)?;
         }
         if self
             .previews
@@ -291,10 +326,34 @@ pub const RESERVED: &[&str] = &[
     "privacy",
     "reading",
     "settings",
+    // What owns the program's own catalogs (`words::register_shipped_of_program`):
+    // a plugin of that id turned off would withdraw them with its own.
+    "skwir",
     "tab",
     "ui",
     "window",
 ];
+
+/// Whether `id` can name a message of a plugin's catalogs: a Fluent
+/// identifier (a letter, then letters, digits, `_` and `-`), at most 128
+/// characters.
+///
+/// # Errors
+/// Why it cannot, in words.
+pub fn check_message_id(id: &str) -> Result<(), String> {
+    let ok = id.len() <= 128
+        && id.starts_with(|c: char| c.is_ascii_alphabetic())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "message `{id}`: a letter, then letters, digits, `_` and `-`"
+        ))
+    }
+}
 
 /// Whether `id` can be a plugin's: lowercase letters, digits and dashes,
 /// starting with a letter, and none of skwir's own namespaces
@@ -330,7 +389,7 @@ mod tests {
         Manifest {
             id: id.into(),
             title: "Test".into(),
-            description: String::new(),
+            description: Words::default(),
             category: Category::Files,
             api: VERSION,
             capabilities: vec![Capability::Read],
@@ -365,7 +424,7 @@ mod tests {
         outside.commands.push(CommandDecl {
             name: "other.count".into(),
             title: "Count".into(),
-            description: String::new(),
+            description: Words::default(),
             effect: Effect::Reads,
             topic: None,
             arguments: None,
@@ -375,7 +434,7 @@ mod tests {
         plans.commands.push(CommandDecl {
             name: "rename.all".into(),
             title: "Rename".into(),
-            description: String::new(),
+            description: Words::default(),
             effect: Effect::Plans,
             topic: Some(Topic::Files),
             arguments: None,
@@ -418,6 +477,44 @@ mod tests {
         .unwrap();
         assert!(said.previews[0].converts);
         assert_eq!(said.check(), Ok(()));
+    }
+
+    /// On protocol 2, what it says to a person may be a message of its
+    /// catalogs; on protocol 1 it is text, and a manifest naming no
+    /// version speaks protocol 1.
+    #[test]
+    fn its_words_are_messages_only_on_protocol_2() {
+        let toml = |api: &str| {
+            format!(
+                "id = \"said\"\n{api}title = {{ id = \"title\" }}\ndescription = \"As written\"\n\
+                 [run]\nmodule = \"s.wasm\"\n\
+                 [[fields]]\nkey = \"said.words\"\nlabel = {{ id = \"words-label\" }}\ntypes = [\"text/plain\"]\n\
+                 [[commands]]\nname = \"said.count\"\ntitle = {{ id = \"count\", args = {{ n = 2 }} }}\n"
+            )
+        };
+        let said: Manifest = toml::from_str(&toml("api = 2\n")).unwrap();
+        assert_eq!(said.check(), Ok(()));
+        assert_eq!(said.title, Words::message("title"));
+        assert_eq!(said.description, Words::from("As written"));
+        assert_eq!(said.commands[0].title, Words::message("count").with("n", 2));
+        assert_eq!(
+            said.words()
+                .filter(|w| matches!(w, Words::Message { .. }))
+                .count(),
+            3
+        );
+        let first: Manifest = toml::from_str(&toml("")).unwrap();
+        assert_eq!(first.api, 1, "no version named: the first");
+        assert!(first.check().unwrap_err().contains("api = 2"));
+        let mut odd = said.clone();
+        odd.title = Words::message("not an id");
+        assert!(odd.check().unwrap_err().contains("not an id"));
+        assert!(
+            manifest("skwir")
+                .check()
+                .unwrap_err()
+                .contains("skwir's own")
+        );
     }
 
     /// A command says what it is about, or leaves it to its category.

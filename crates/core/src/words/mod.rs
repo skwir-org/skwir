@@ -497,6 +497,36 @@ impl Words {
         Words(Inner::Written(text.into()))
     }
 
+    /// Message `id` of `domain`, known as the program runs rather than
+    /// written in its code: what a plugin from outside says (protocol 2,
+    /// ADR-139, 14), whose catalogs it brings. Said in the reader's
+    /// languages from the catalogs registered for `domain` (`register`),
+    /// else from `english`, its English (the plugin's `en.ftl`), else as its
+    /// id: always whole, never nothing. Agents read the English.
+    pub fn of_catalog(
+        domain: impl Into<String>,
+        id: impl Into<String>,
+        english: Option<&[Element]>,
+        args: Vec<(String, Arg)>,
+    ) -> Self {
+        let id = id.into();
+        let said = match english {
+            Some(pattern) => formats::within(formats::Formats::english(), || {
+                let mut said = String::new();
+                say(pattern, &args, ENGLISH, &[], &mut said, false);
+                said
+            }),
+            None => id.clone(),
+        };
+        Words(Inner::Carried(Arc::new(Carried {
+            domain: domain.into(),
+            id,
+            english: said,
+            pattern: english.map(<[Element]>::to_vec),
+            args,
+        })))
+    }
+
     /// An error as words: its chain, outermost first, joined by `: `, each
     /// link in the reader's language where it is words (a context written
     /// with `words!`, a system's error by its kind, `op::io_words`), else

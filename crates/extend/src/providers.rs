@@ -22,6 +22,7 @@ use skwir_plugin_api::protocol::{
 };
 
 use crate::call::Call;
+use crate::catalogs::Catalogs;
 use crate::external::{External, Runner};
 use crate::pages::Pages;
 
@@ -30,13 +31,16 @@ pub(crate) fn register(app: &App, plugin: &External) {
     let manifest = plugin.manifest();
     let owner = plugin.runner.id;
     if !manifest.fields.is_empty() {
-        let fields: Vec<(&'static str, Option<&'static str>, Types)> = manifest
+        let fields: Vec<(&'static str, Option<Words>, Types)> = manifest
             .fields
             .iter()
             .map(|field| {
                 (
                     crate::intern(&field.key),
-                    field.label.as_deref().map(crate::intern),
+                    field
+                        .label
+                        .as_ref()
+                        .map(|label| plugin.runner.catalogs.said(label)),
                     types(&field.types),
                 )
             })
@@ -105,11 +109,11 @@ fn private_file() -> Words {
 
 /// What a plugin's preview says when it shows nothing of the file: its
 /// title is its own words.
-pub(crate) fn shows_nothing(plugin: &str) -> Words {
+pub(crate) fn shows_nothing(plugin: &Words) -> Words {
     words!(
         extend_shows_nothing = "“{ $plugin }” shows nothing of this file",
-        plugin = plugin.to_owned(),
-        note = "In place of a file's preview: the plugin from outside Skwir (its title, as its author wrote it) made nothing of it."
+        plugin = plugin.clone(),
+        note = "In place of a file's preview: the plugin from outside Skwir (its title, its author's words) made nothing of it."
     )
 }
 
@@ -117,7 +121,7 @@ struct Fields {
     runner: Arc<Runner>,
     app: Weak<App>,
     keys: &'static [&'static str],
-    declared: Vec<(&'static str, Option<&'static str>, Types)>,
+    declared: Vec<(&'static str, Option<Words>, Types)>,
 }
 
 impl FieldProvider for Fields {
@@ -127,13 +131,12 @@ impl FieldProvider for Fields {
     fn keys(&self) -> &'static [&'static str] {
         self.keys
     }
-    /// As its author wrote it: a plugin from outside says its own words.
+    /// Its author's words: as written, or a message of its catalogs.
     fn label(&self, key: &str) -> Option<Words> {
         self.declared
             .iter()
             .find(|(k, _, _)| *k == key)
-            .and_then(|(_, label, _)| *label)
-            .map(Words::as_written)
+            .and_then(|(_, label, _)| label.clone())
     }
     fn accepts(&self, key: &str, name: &OsStr) -> bool {
         let Some(mime) = mime::by_name(name) else {
@@ -327,7 +330,7 @@ impl PreviewProvider for Previews {
             .runner
             .call(method::INSPECT, serde_json::to_value(params)?, &call)?;
         let answer: Option<protocol::Inspection> = serde_json::from_value(answer)?;
-        Ok(answer.map(inspection_of))
+        Ok(answer.map(|answer| inspection_of(answer, &self.runner.catalogs)))
     }
     /// The file it converts this one to (ADR-047): kept in the plugin's
     /// folder of the cache under the file's version and the plugin's, so
@@ -406,7 +409,7 @@ impl Previews {
             words!(
                 extend_preview_links_closed = "Links are not followed in a preview “{ $plugin }” made: it may not use the network",
                 plugin = self.runner.title.clone(),
-                note = "Under a preview a plugin from outside Skwir (its title, as its author wrote it) made, which may not use the network: its links are not followed."
+                note = "Under a preview a plugin from outside Skwir (its title, its author's words) made, which may not use the network: its links are not followed."
             )
         });
         Converted {
@@ -484,8 +487,12 @@ fn trim(folder: &Path, kept: &Path) {
     }
 }
 
-/// What a plugin's preview shows, as the core draws it.
-pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspection {
+/// What a plugin's preview shows, as the core draws it: what it says to a
+/// person in its words (`catalogs`), what it shows of the file as it is.
+pub(crate) fn inspection_of(
+    answer: protocol::Inspection,
+    catalogs: &Catalogs,
+) -> inspection::Inspection {
     use skwir_plugin_api::protocol::InspectionKind as Kind;
     let code = answer.kind == Kind::Code;
     inspection::Inspection {
@@ -495,8 +502,7 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
             Kind::Hex => inspection::InspectionKind::Hex,
             Kind::Table => inspection::InspectionKind::Table,
         },
-        // What a plugin from outside says is as it wrote it.
-        title: Words::as_written(answer.title),
+        title: catalogs.said(&answer.title),
         blocks: inspection::split_blocks(
             answer
                 .text
@@ -508,7 +514,11 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
                 })
                 .collect(),
         ),
-        columns: answer.columns.into_iter().map(Words::as_written).collect(),
+        columns: answer
+            .columns
+            .iter()
+            .map(|column| catalogs.said(column))
+            .collect(),
         rows: answer
             .rows
             .into_iter()
@@ -526,14 +536,14 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
         next: answer.next,
         position: answer.position,
         notices: (!answer.notice.is_empty())
-            .then(|| Words::as_written(answer.notice))
+            .then(|| catalogs.said(&answer.notice))
             .into_iter()
             .collect(),
         details: answer
             .details
             .into_iter()
             .map(|detail| inspection::Detail {
-                label: Words::as_written(detail.label),
+                label: catalogs.said(&detail.label),
                 value: detail.value,
                 action: None,
             })

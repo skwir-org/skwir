@@ -379,7 +379,10 @@ says it is a draft (13).
     `InitializeParams` carries the languages; the manifest's titles
     become ids into the plugin's own `l10n/`; an answer may carry
     `{ id, args }`, which the host says from that catalog. A plugin on
-    protocol 1 is shown as it writes.
+    protocol 1 is shown as it writes. Built 2026-11-18 (ADR-045, 046,
+    047 amended): a module asks its `languages` import; a plugin's
+    catalogs are untrusted input, bounded, registered under
+    `outside:<id>`.
 
 15. **Names are ordered by the locale's collation** (the user's choice;
     a later track, measured).

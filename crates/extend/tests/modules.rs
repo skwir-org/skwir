@@ -82,13 +82,15 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
     let module = common::module("skwir-outside-hex-view");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
-    common::install(
+    let installed = common::install(
         &plugins,
         "hex-view",
         &manifest("crates/plugins-outside/hex-view"),
         &module,
         "hex_view.wasm",
     );
+    // Its English, which its messages are said in here.
+    common::catalogs(&installed, "crates/plugins-outside/hex-view");
     // Built in first, then from outside, as the binary lists them.
     common::module_worker();
     let app = App::new(skwir_core::app::AppConfig::ephemeral(
@@ -153,6 +155,10 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
         },
         InspectRequest {
             query: Some("hex:6".into()),
+            ..InspectRequest::default()
+        },
+        InspectRequest {
+            query: Some("a".repeat(5000)),
             ..InspectRequest::default()
         },
     ];
@@ -233,13 +239,14 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
     let module = common::module("skwir-outside-template");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
-    common::install(
+    let installed = common::install(
         &plugins,
         "word-count",
         &manifest("crates/plugins-outside/template"),
         &module,
         "word_count.wasm",
     );
+    common::catalogs(&installed, "crates/plugins-outside/template");
     let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
     let note = tmp.path().join("a note.txt");
     std::fs::write(&note, "four words in here\nand three more").unwrap();
@@ -270,6 +277,20 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
         panic!("{outcome:?}")
     };
     assert_eq!(value["total"], 9);
+    // For the clipboard: the number, and what is said of it, counted.
+    let outcome = app
+        .dispatch(&skwir_core::command::Invocation::with_args(
+            "word-count.copy",
+            &serde_json::json!({ "entries": [note, other] }),
+        ))
+        .unwrap();
+    let skwir_core::command::Outcome::Clipboard { text, said } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(
+        (text.as_str(), said.english()),
+        ("9", "9 words in all".to_owned())
+    );
     // What the plugin says it does, an agent reads.
     assert_eq!(
         app.commands.get("word-count.count").unwrap().effect,
@@ -575,4 +596,137 @@ fn a_file_of_several_pictures_is_previewed_a_page_at_a_time() {
     assert_eq!((again.width, again.height), (20, 20));
     #[cfg(target_os = "linux")]
     assert_eq!(children(), 0, "nothing was started");
+}
+
+/// Modules on protocol 1 and 2 side by side, the window in French: the
+/// template's answer and the hexadecimal view's title and error said from
+/// their catalogs (French of this test's own: the shipped drafts change as
+/// they are reviewed), in English to an agent; the Netpbm pictures, on
+/// protocol 1, shown as they write and drawn as before.
+#[test]
+fn modules_on_protocol_1_and_2_side_by_side_in_the_reader_s_language() {
+    let tmp = common::home_tempdir();
+    let plugins = tmp.path().join("plugins");
+    let template = common::install(
+        &plugins,
+        "word-count",
+        &manifest("crates/plugins-outside/template"),
+        &common::module("skwir-outside-template"),
+        "word_count.wasm",
+    );
+    common::catalogs(&template, "crates/plugins-outside/template");
+    std::fs::write(
+        template.join("l10n/fr.ftl"),
+        "count-said = { $count ->\n    [one] { $count } mot (essai)\n   *[other] { $count } mots (essai)\n}\n",
+    )
+    .unwrap();
+    let hex = common::install(
+        &plugins,
+        "hex-view",
+        &manifest("crates/plugins-outside/hex-view"),
+        &common::module("skwir-outside-hex-view"),
+        "hex_view.wasm",
+    );
+    common::catalogs(&hex, "crates/plugins-outside/hex-view");
+    std::fs::write(
+        hex.join("l10n/fr.ftl"),
+        "title = Octets (essai) · { $size }\npairs = Des paires (essai)\n",
+    )
+    .unwrap();
+    common::install(
+        &plugins,
+        "netpbm",
+        &manifest("crates/plugins-outside/netpbm"),
+        &common::module("skwir-outside-netpbm"),
+        "netpbm.wasm",
+    );
+    let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
+    skwir_core::locale::set_chosen(Some("fr".into()));
+
+    let note = tmp.path().join("une note.txt");
+    std::fs::write(&note, "un deux trois").unwrap();
+    let outcome = app
+        .dispatch(&skwir_core::command::Invocation::with_args(
+            "word-count.copy",
+            &serde_json::json!({ "entries": [note] }),
+        ))
+        .unwrap();
+    let skwir_core::command::Outcome::Clipboard { text, said } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(text, "3");
+    assert_eq!(said.say_plain(), "3 mots (essai)", "the window's");
+    assert_eq!(said.english(), "3 words in all", "an agent's");
+
+    let bytes = tmp.path().join("bytes.bin");
+    std::fs::write(&bytes, b"0123456789").unwrap();
+    let page = app
+        .previews
+        .inspect(
+            &request(&bytes),
+            &InspectRequest {
+                provider: Some("hex-view".into()),
+                ..InspectRequest::default()
+            },
+            &CancelToken::new(),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        page.title.say_plain().starts_with("Octets (essai) · "),
+        "{}",
+        page.title.say_plain()
+    );
+    assert_eq!(page.title.english(), "Hex · 10\u{a0}B");
+    // A message the French lacks: in English, whole.
+    assert_eq!(page.columns[0].say_plain(), "Offset");
+    let refused = app
+        .previews
+        .inspect(
+            &request(&bytes),
+            &InspectRequest {
+                provider: Some("hex-view".into()),
+                query: Some("hex:6".into()),
+                ..InspectRequest::default()
+            },
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+    let refused = skwir_core::words::Words::of_error(refused);
+    assert_eq!(refused.say_plain(), "Des paires (essai)");
+    assert_eq!(refused.english(), "Use pairs of hexadecimal digits");
+
+    // Protocol 1: as it writes, and drawn as before.
+    let netpbm = app
+        .plugins
+        .list()
+        .into_iter()
+        .find(|info| info.id == "netpbm")
+        .unwrap();
+    assert_eq!(netpbm.title.say_plain(), "Netpbm pictures");
+    let picture = tmp.path().join("pixel.ppm");
+    std::fs::write(&picture, b"P5\n1 1\n255\n\x00").unwrap();
+    let made = app
+        .previews
+        .converted(
+            &PreviewRequest {
+                mime: Some("image/x-portable-pixmap".into()),
+                ..request(&picture)
+            },
+            &CancelToken::new(),
+        )
+        .unwrap()
+        .expect("shown as the PNG it makes");
+    assert_eq!(made.mime.as_deref(), Some("image/png"));
+    // Turned off, the catalogs of each go with it.
+    for id in ["word-count", "hex-view"] {
+        let domain = format!("outside:{id}");
+        assert!(
+            skwir_core::words::languages_of(&domain).contains(&"fr".to_owned()),
+            "{id}'s French registered"
+        );
+        assert!(app.plugins.set_enabled(id, false, &app));
+        assert!(skwir_core::words::languages_of(&domain).is_empty());
+    }
+    assert_eq!(said.say_plain(), "3 words in all", "withdrawn: English");
 }

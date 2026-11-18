@@ -1,10 +1,12 @@
 # The hexadecimal preview as a WebAssembly module: what the built-in
-# hex plugin shows, the same (Phase 6's gate, ADR-046).
+# hex plugin shows, the same (Phase 6's gate, ADR-046), in the reader's
+# language (protocol 2: its catalogs are l10n/ beside this file).
 id = "hex-view"
-title = "Hexadecimal (WebAssembly)"
-description = "Inspect any file as hexadecimal bytes, from a WebAssembly module"
+title = { id = "plugin-title" }
+description = { id = "plugin-description" }
 category = "previews"
 capabilities = ["read"]
+api = 2
 
 [run]
 module = "hex_view.wasm"

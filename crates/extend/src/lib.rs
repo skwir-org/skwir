@@ -15,8 +15,14 @@
 //! ([`call::Call`]), and only with the `read` capability; a private file
 //! is never handed to it; a plan it answers needs `write`, and is proposed
 //! for review.
+//!
+//! On protocol 2 (ADR-139, 14) it is told the languages the window speaks,
+//! and what it says to a person may be a message of its own catalogs
+//! ([`catalogs`]), registered while it is on and said in each reader's
+//! language: the window's, English for agents.
 
 mod call;
+mod catalogs;
 mod commands;
 mod external;
 mod pages;
@@ -100,6 +106,17 @@ pub fn discover(folders: &[PathBuf], taken: &[&str]) -> Vec<Arc<External>> {
 pub(crate) fn type_of(path: &std::path::Path) -> Option<String> {
     let content = skwir_core::fs::content_path(path)?;
     skwir_platform::mime::identify(content.file_name()?, &content).map(|mime| mime.0)
+}
+
+/// The languages a plugin on protocol 2 is told (`InitializeParams`, a
+/// module's `languages` import): those the window speaks, most wanted
+/// first, English last. A pseudo-language's words are English's, so none is
+/// told.
+pub(crate) fn languages() -> Vec<String> {
+    skwir_core::locale::languages()
+        .into_iter()
+        .filter(|language| !skwir_core::locale::is_pseudo(language))
+        .collect()
 }
 
 /// `text`, kept for as long as skwir runs: a plugin's id and names, which

@@ -92,6 +92,19 @@ pub fn install(plugins: &Path, id: &str, manifest: &str, built: &Path, as_name: 
     folder
 }
 
+/// The catalogs of the workspace's plugin in `crate_folder` (`l10n/`),
+/// copied beside the manifest of the plugin installed in `installed`, as
+/// `just plugins` lays them out (protocol 2).
+pub fn catalogs(installed: &Path, crate_folder: &str) {
+    let from = root().join(crate_folder).join("l10n");
+    let to = installed.join("l10n");
+    std::fs::create_dir_all(&to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, to.join(path.file_name().unwrap())).unwrap();
+    }
+}
+
 /// A temporary folder on the home filesystem.
 pub fn home_tempdir() -> tempfile::TempDir {
     let base = std::env::var_os("HOME")

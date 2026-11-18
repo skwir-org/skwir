@@ -1,10 +1,10 @@
-# The plugin protocol, version 1
+# The plugin protocol, versions 1 and 2
 
 What Skwir and a plugin from outside say to each other (ADR-045, ADR-046,
-ADR-047). The types are in `skwir_plugin_api::protocol`
-(`crates/plugin-api/src/protocol.rs`); a Rust plugin uses them, a plugin in
-another language writes the same JSON. How to write a plugin:
-[`README.md`](README.md).
+ADR-047; version 2: ADR-139, 14). The types are in
+`skwir_plugin_api::protocol` (`crates/plugin-api/src/protocol.rs`); a Rust
+plugin uses them, a plugin in another language writes the same JSON. How to
+write a plugin: [`README.md`](README.md).
 
 ## Versions
 
@@ -14,8 +14,25 @@ stops speaking the older one; the release notes say so. Once stable, a
 plugin written for an older version runs unchanged and is never asked what
 its version did not have.
 
-A manifest states the version its plugin speaks (`api`, default 1). Skwir
-speaks versions `OLDEST` to `VERSION`, both 1 today.
+A manifest states the version its plugin speaks (`api`). One that states
+none speaks version 1. Skwir speaks versions `OLDEST` to `VERSION`, 1 to 2
+today; it reads what a plugin says by the version its manifest states.
+
+**Version 2** (2026-11-18) lets a plugin speak the reader's language:
+
+- Skwir tells it the languages the window speaks (`initialize`'s
+  `languages`; a module asks its `languages` import).
+- What it says to a person may be a message of its own catalogs instead of
+  a string ([Words](#words-version-2)): in its manifest, in what it answers,
+  in its errors. Skwir says each message in the reader's language: the
+  window's for what the window shows, English for agents.
+- Its catalogs lie beside its manifest, `l10n/<language>.ftl`
+  ([Catalogs](#catalogs-version-2)).
+
+A plugin on version 1 is shown as it writes: its strings as written, in
+every language. It is told no languages, its catalogs (if any) are not read,
+and a message in its manifest is refused. Nothing else differs: the
+methods, their parameters and the transports are the same.
 
 ## Transports
 
@@ -27,7 +44,10 @@ speaks versions `OLDEST` to `VERSION`, both 1 today.
   (`crates/plugin-api/wit/plugin.wit`). Skwir calls the export
   `call(method, params)` with the method's name and its parameters as JSON
   text, and reads the answer as JSON text, or an error message. The plugin
-  calls the imports `read(file, offset, length)` and `log(level, message)`.
+  calls the imports `read(file, offset, length)`, `log(level, message)` and
+  `languages()` (version 2: the languages `initialize` tells a program,
+  none on version 1; a module built before it imports none, and runs
+  unchanged).
 
 One call at a time per plugin: Skwir sends the next once one is answered.
 While answering, the plugin may send `read` requests and `log`
@@ -55,12 +75,21 @@ A call about files names each as a `File`:
 ### `initialize` (program only, first)
 
 ```json
-{ "api": 1, "capabilities": ["read"] }
+{ "api": 2, "capabilities": ["read"], "languages": ["fr", "en"] }
 ```
 
 `api` is the newest version Skwir speaks; `capabilities` what the plugin
-was granted. Answer `{ "api": 1 }` with the version the plugin speaks; a
+was granted. Answer `{ "api": 2 }` with the version the plugin speaks; a
 version Skwir does not speak is refused.
+
+`languages` (version 2; none on version 1) are the languages the window
+speaks, most wanted first, English last, as BCP 47 tags (`fr`, `zh-Hans`,
+`pt-BR`, `en`): what the plugin writes in a language of its own (text that is
+not a message of its catalogs) is written in the first of them it can. Once
+they change, Skwir ends the program and starts it again at its next call,
+told the new ones. A message ([Words](#words-version-2)) is said by Skwir in
+each reader's language whatever they are: an agent reads it in English while
+the window reads it in French.
 
 ### `field`
 
@@ -111,14 +140,18 @@ Answer `null` (nothing to show), or an inspection:
 | Field | Default | |
 | --- | --- | --- |
 | `kind` | `text` | `text` (paragraphs), `code` (lines, monospaced), `hex` (offset, bytes, characters), `table` (rows and columns). |
-| `title` | required | |
-| `text` | `[]` | Paragraphs, or lines of code. |
-| `columns` | `[]` | |
-| `rows` | `[]` | Each: `cells`; `bytes` (a container member's size, optional); `depth` (0); `branch` (false); `target` (what `target` asks for this row, optional). |
+| `title` | required | Words. |
+| `text` | `[]` | Paragraphs, or lines of code: the file's, as they are. |
+| `columns` | `[]` | Each column's header: words. |
+| `rows` | `[]` | Each: `cells` (the file's, as they are); `bytes` (a container member's size, optional); `depth` (0); `branch` (false); `target` (what `target` asks for this row, optional). |
 | `previous`, `next` | null | Where the page before and after starts, if any. |
 | `position` | 0 | Where what was asked (found) is. |
-| `notice` | `""` | A line over the page: what a search found, what was left out. |
-| `details` | `[]` | `{ label, value }` facts the format knows, for Properties. |
+| `notice` | `""` | A line over the page, words: what a search found, what was left out. |
+| `details` | `[]` | `{ label, value }` facts the format knows, for Properties: the label words, the value the file's. |
+
+Words are a string, or on version 2 a message of the plugin's catalogs
+([Words](#words-version-2)): `"title": { "id": "title", "args": { "size":
+{ "size": 9800 } } }`.
 
 A preview that converts or shows pages is not asked `inspect`.
 
@@ -229,9 +262,9 @@ named, else a pane's selection (default `[]`). Answer one of:
 | Answer | Meaning |
 | --- | --- |
 | `done` | Nothing to report. |
-| `value` | A value for the caller (a script, an agent). |
-| `text` | Text for the clipboard; `said` is what Skwir says once it is there. |
-| `plan` | A plan the caller applies or proposes. Needs the `write` capability. `note` is optional. |
+| `value` | A value for the caller (a script, an agent): data, never translated. |
+| `text` | Text for the clipboard; `said` (words) is what Skwir says of it. |
+| `plan` | A plan the caller applies or proposes. Needs the `write` capability. `title` and the optional `note` are words. |
 
 A step's `file` is a handle of the call's files: `rename` gives it `name`
 in its folder, `trash` trashes it, `move` and `copy` put it into the folder
@@ -274,3 +307,95 @@ what Skwir reports: a preview shows it where the page would be; a command's
 caller receives it. Skwir does not read the `code`; its own errors and the
 Rust guest's use `-32000`. A request to Skwir for a method other than
 `read` is answered with an error.
+
+On version 2 an error may say a message of the plugin's catalogs, said in
+the reader's language:
+
+- a program puts it in the error's `data`, the `message` being for logs
+  (the Rust guest writes the message's id there):
+
+  ```json
+  { "jsonrpc": "2.0", "id": 4, "error": { "code": -32000, "message": "pairs",
+    "data": { "id": "pairs" } } }
+  ```
+- a module, whose error is a string, returns the message's JSON as its
+  error: `{"id":"pairs"}`.
+
+Any other error is its text, as written. On version 1 the `message` is what
+Skwir reports, whatever `data` holds.
+
+## Words (version 2)
+
+What a plugin says to a person (its title, description, a field's label and
+a command's title and description in its manifest; an inspection's title,
+headers, notice and labels; a command's `said`, a plan's title and note; an
+error) is **words**: a string, shown as written in every language, or a
+**message** of its catalogs:
+
+```json
+{ "id": "count-said", "args": { "count": 3 } }
+```
+
+`args` may be left out. Skwir says the message in each reader's language:
+the window's for what it shows, English for agents, MCP and scripts (a
+command's title and description included: an agent's tool list stays the
+same whatever the window speaks). A message the reader's language lacks is
+said in English, whole; one the plugin's English lacks too is said as its
+id. Its JSON Schema:
+
+```json
+{ "oneOf": [
+    { "type": "string" },
+    { "type": "object", "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
+        "args": { "type": "object", "additionalProperties": {
+          "oneOf": [
+            { "type": "integer" },
+            { "type": "string" },
+            { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
+            { "type": "object", "required": ["size"], "properties": { "size": { "type": "integer", "minimum": 0 } } } ] } } } } ] }
+```
+
+An argument is said as its kind is in the reader's language (ADR-139, 5):
+
+| JSON | Kind | Said |
+| --- | --- | --- |
+| an integer | a count | Chooses the plural (`[one]`, `*[other]`, an exact `[0]`), written with the reader's digits and groups: "1,234", « 1 234 ». |
+| a string | text | As written: a path, a hexadecimal offset, a word a selector chooses by. |
+| `{ "name": "…" }` | a name | A file's or a place's: quoted as the reader's language quotes (“a.txt”, « a.txt »), its bidirectional controls shown, never obeyed. |
+| `{ "size": 9800 }` | a size | Bytes, as the reader's size setting writes them: "9.8 kB", "9.6 KiB". |
+
+Anything else is said as its JSON text. In a manifest, a message is an
+inline table: `title = { id = "plugin-title" }`.
+
+## Catalogs (version 2)
+
+A plugin's catalogs are `l10n/<language>.ftl` beside its manifest, one a
+language, its English `en.ftl`, written by its author (Skwir's own English
+is made from its code; a plugin's is a file it brings). They are Fluent, in
+the part Skwir speaks (`docs/invariants/words.md`): text, arguments, and
+selectors on a count or on a text argument's word. No terms, no message
+referring to another, no functions; Skwir formats the arguments.
+
+```ftl
+# Said with the number the command gives for the clipboard.
+count-said = { $count ->
+        [one] One word in all
+       *[other] { $count } words in all
+    }
+```
+
+- A message's id is a letter, then letters, digits, `_` and `-`.
+- A catalog is named by its language's BCP 47 tag (`fr.ftl`, `zh-Hans.ftl`,
+  `pt-BR.ftl`); a reader finds the closest one as Skwir's own catalogs are
+  found (`zh-TW` finds `zh-Hant`, `fr-CA` finds `fr`), among the languages
+  the window speaks.
+- Skwir reads them when it finds the plugin, as it reads its manifest, and
+  says them while the plugin is on; turned off, they go with its other
+  contributions.
+- What is left out, and the log says why: a catalog over 256 KiB, more than
+  64 languages, one that is not UTF-8 (a byte-order mark is dropped), whose
+  placeables or calls nest more than 16 deep, that is no regular file, or
+  that Fluent's parser cannot read. A message Skwir cannot read is said in
+  English.

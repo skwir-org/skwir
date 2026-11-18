@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-10-07 (Phase 6, after its three steps). Point 7
 (pages) added and point 6 revised the same day, before the first
-release: the protocol is experimental, with one version. Built.
+release: the protocol is experimental, with one version. Built. Amended
+2026-11-18: version 2.
 
 ## Context
 
@@ -88,3 +89,18 @@ Rejected: **Skwir's preview model on the wire.**
   itself: hex, logs, tables.
 - Thumbnails are never drawn from a converted file; plugins draw their
   own (`thumbnail`).
+
+## Amendments
+
+### 2026-11-18: version 2 (ADR-139, 14)
+
+Version 2 adds the reader's languages and a plugin's own words (ADR-045's
+amendment). It changes nothing version 1 said, so, where point 6 let a new
+version change an older one's meaning, `OLDEST` stays 1: a plugin of
+version 1 runs unchanged and is shown as it writes. In a preview, an
+inspection's title, columns' headers, notice and details' labels are words
+(a string, or on version 2 a message of the plugin's catalogs); what it
+shows of the file (paragraphs, cells, a detail's value), a converted file
+and a page's text and outline stay the file's, as they are. A preview's
+error may say a message too, said where the page would be in the reader's
+language.
