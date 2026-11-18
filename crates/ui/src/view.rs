@@ -35,6 +35,21 @@ pub enum Nav {
     End,
 }
 
+impl Nav {
+    /// The key as it goes along a line drawn in the reading's direction:
+    /// in a window laid out right to left (`sides`), Left goes toward the
+    /// line's end (the next tile, a folder opened, a group unfolded) and
+    /// Right toward its start, as they are drawn there.
+    #[must_use]
+    pub fn along_line(self) -> Self {
+        match self {
+            Nav::Left if crate::sides::rtl() => Nav::Right,
+            Nav::Right if crate::sides::rtl() => Nav::Left,
+            other => other,
+        }
+    }
+}
+
 /// What a view's zoom sizes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Zooms {
@@ -179,6 +194,14 @@ pub trait PaneView {
     /// handles it in `nav` or ignores it, and Home and End go to the
     /// order's ends).
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize>;
+    /// Whether the view draws its line in the reading's direction, mirrored
+    /// where the window is (`sides`): its keys reach `nav` and
+    /// `nav_delta` as they go along that line (`Nav::along_line`), Left
+    /// and Right swapped right to left. A map or a treemap, drawn as the
+    /// screen is, says no and is given the keys as pressed.
+    fn drawn_as_read(&self) -> bool {
+        true
+    }
     /// A chance to handle navigation the view's own way, with the key's
     /// step (Shift extends, Ctrl moves the cursor alone). Returns true if
     /// handled.
@@ -336,6 +359,20 @@ pub(crate) fn reconcile(
 mod tests {
     use super::*;
     use skwir_core::words::Words;
+
+    /// Left and Right go along a line as it is drawn: swapped where the
+    /// window is mirrored, the other keys as they are.
+    #[test]
+    fn an_arrow_goes_along_the_line_as_drawn() {
+        assert_eq!(Nav::Left.along_line(), Nav::Left);
+        skwir_core::locale::set_chosen(Some(skwir_core::direction::PSEUDO_RTL.into()));
+        assert_eq!(Nav::Left.along_line(), Nav::Right);
+        assert_eq!(Nav::Right.along_line(), Nav::Left);
+        assert_eq!(Nav::Up.along_line(), Nav::Up);
+        assert_eq!(Nav::Home.along_line(), Nav::Home);
+        skwir_core::locale::set_chosen(None);
+        assert_eq!(Nav::Right.along_line(), Nav::Right);
+    }
 
     #[test]
     fn plugin_views_follow_registration_lifetime() {

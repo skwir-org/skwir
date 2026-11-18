@@ -42,4 +42,5 @@ trash_restore_description = Put files of the trash back where they came from (pl
 trash_restore_title = restore from the trash
 
 # The place that holds what was moved to the trash.
+# noun
 trash_title = Trash

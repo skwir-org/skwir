@@ -30,12 +30,13 @@
 //! reorder, and closes with its × (on the tab shown and the one under the
 //! pointer), a middle click or Ctrl+W.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::collections::HashMap;
 
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, SharedString, Window, div, prelude::*, px, svg,
+    AnyElement, Context, IntoElement, MouseButton, SharedString, Window, div, prelude::*, px,
 };
 use skwir_core::Location;
 use skwir_core::command::Invocation;
@@ -798,8 +799,8 @@ fn tab(
         .flex()
         .items_center()
         .gap(sized(6.))
-        .pl(sized(10.))
-        .pr(sized(4.))
+        .pad_start(sized(10.))
+        .pad_end(sized(4.))
         .rounded_md()
         .border_1()
         // A tab names a folder, as a place in the sidebar does (ADR-117).
@@ -917,8 +918,7 @@ fn icon(
         .and_then(|name| shell.icons.named(name, 16));
     match themed {
         Some(path) => crate::icons::themed(&path, size, crate::icons::Ink::of(theme, color)),
-        None => svg()
-            .path(format!("toolbar/{glyph}.svg"))
+        None => crate::sides::symbol(glyph)
             .size(px(size))
             .flex_none()
             .text_color(color)
@@ -1145,9 +1145,9 @@ pub fn sidebar_new_tab(shell: &Shell, at_cursor: bool, cx: &mut Context<Shell>) 
 }
 
 /// Half of a tab, over it: where a tab dragged along the tabs goes, before
-/// the tab at `before`, drawn as a line on that edge: the tab's left or
-/// right half in the strip (`Axis::Horizontal`), its upper or lower half
-/// in the sidebar.
+/// the tab at `before`, drawn as a line on that edge: the tab's half at
+/// the strip's start or end (`Axis::Horizontal`: its left or right, its
+/// right or left mirrored), its upper or lower half in the sidebar.
 fn gap(
     before: usize,
     count: usize,
@@ -1158,8 +1158,16 @@ fn gap(
     let edge = cx.global::<Theme>().accent;
     let zone = div().absolute();
     let zone = match (axis, first) {
-        (gpui::Axis::Horizontal, true) => zone.top_0().bottom_0().w(gpui::relative(0.5)).left_0(),
-        (gpui::Axis::Horizontal, false) => zone.top_0().bottom_0().w(gpui::relative(0.5)).right_0(),
+        (gpui::Axis::Horizontal, true) => zone
+            .top_0()
+            .bottom_0()
+            .w(gpui::relative(0.5))
+            .inset_start(px(0.)),
+        (gpui::Axis::Horizontal, false) => zone
+            .top_0()
+            .bottom_0()
+            .w(gpui::relative(0.5))
+            .inset_end(px(0.)),
         (gpui::Axis::Vertical, true) => zone.left_0().right_0().h(gpui::relative(0.5)).top_0(),
         (gpui::Axis::Vertical, false) => zone.left_0().right_0().h(gpui::relative(0.5)).bottom_0(),
     };
@@ -1168,8 +1176,8 @@ fn gap(
             return s;
         }
         match (axis, first) {
-            (gpui::Axis::Horizontal, true) => s.border_l_2(),
-            (gpui::Axis::Horizontal, false) => s.border_r_2(),
+            (gpui::Axis::Horizontal, true) => s.border_start(px(2.)),
+            (gpui::Axis::Horizontal, false) => s.border_end(px(2.)),
             (gpui::Axis::Vertical, true) => s.border_t_2(),
             (gpui::Axis::Vertical, false) => s.border_b_2(),
         }

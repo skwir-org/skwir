@@ -8,6 +8,7 @@
 //! The only animation is a short entrance that ends by itself; nothing here
 //! keeps the UI awake.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::path::{Path, PathBuf};
@@ -1583,8 +1584,8 @@ pub fn render_answer(
         .id(("toast-card", generation))
         .max_w(sized(480.))
         .min_w(sized(220.))
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .py_1()
         .flex()
         .items_center()

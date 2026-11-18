@@ -39,6 +39,7 @@ const ID: &str = "jump";
 fn recent_title() -> Words {
     words!(
         jump_recent = "Recent",
+        noun,
         note = "The place listing the files recently used in any application, in the sidebar and the address."
     )
 }
@@ -88,8 +89,10 @@ pub fn rank(
 /// Rank for the address field (ADR-098), where words are mostly a search:
 /// each word is found unbroken in the path as a row shows it (from `~`
 /// under `home`, so the home folder's own path matches nothing), in the
-/// name before its folders, at a word's start before within one. Among
-/// equals the most used come first, as with nothing typed.
+/// name before its folders, at a word's start before within one. Words
+/// are parted at spaces, and in a script written without them at its
+/// words (`segment::terms`: "设置文件" is two). Among equals the most used
+/// come first, as with nothing typed.
 pub fn rank_by_words(
     words: &str,
     home: Option<&Path>,
@@ -97,8 +100,8 @@ pub fn rank_by_words(
     files: &[xbel::Recent],
     limit: usize,
 ) -> Vec<Candidate> {
-    let atoms: Vec<Atom> = words
-        .split_whitespace()
+    let atoms: Vec<Atom> = skwir_core::segment::terms(words)
+        .into_iter()
         .map(|w| {
             Atom::new(
                 w,
@@ -957,26 +960,26 @@ mod tests {
             path: path.into(),
         };
         let dirs = vec![
-            z(80.0, "/home/kim/Drafts"),
-            z(3.0, "/home/kim/Drafts/Field Guide"),
-            z(1.0, "/home/kim/wip/fieldwork"),
-            z(5.0, "/home/kim/a/notes"),
-            z(50.0, "/home/kim/b/notes"),
+            z(80.0, "/home/x/Drafts"),
+            z(3.0, "/home/x/Drafts/Field Guide"),
+            z(1.0, "/home/x/wip/fieldwork"),
+            z(5.0, "/home/x/a/notes"),
+            z(50.0, "/home/x/b/notes"),
         ];
         let files = vec![xbel::Recent {
-            path: "/home/kim/Drafts/Field Guide/packing-list.txt".into(),
+            path: "/home/x/Drafts/Field Guide/packing-list.txt".into(),
             mime: None,
             visited: SystemTime::now(),
         }];
-        let home = Some(Path::new("/home/kim"));
+        let home = Some(Path::new("/home/x"));
         let paths = |words| -> Vec<PathBuf> {
             rank_by_words(words, home, &dirs, &files, 10)
                 .into_iter()
                 .map(|c| c.path)
                 .collect()
         };
-        let guide = "/home/kim/Drafts/Field Guide";
-        let list = "/home/kim/Drafts/Field Guide/packing-list.txt";
+        let guide = "/home/x/Drafts/Field Guide";
+        let list = "/home/x/Drafts/Field Guide/packing-list.txt";
         assert!(
             paths("pdf last week").is_empty(),
             "letters strewn over a path are no match"
@@ -987,13 +990,13 @@ mod tests {
         );
         assert_eq!(
             paths("field"),
-            [guide, "/home/kim/wip/fieldwork", list].map(PathBuf::from),
+            [guide, "/home/x/wip/fieldwork", list].map(PathBuf::from),
             "in the name before the folders, then the most used"
         );
         assert_eq!(paths("drafts guide"), [guide, list].map(PathBuf::from));
         assert_eq!(
             paths("notes"),
-            ["/home/kim/b/notes", "/home/kim/a/notes"].map(PathBuf::from),
+            ["/home/x/b/notes", "/home/x/a/notes"].map(PathBuf::from),
             "among equals, the most used"
         );
         assert_eq!(
@@ -1001,6 +1004,29 @@ mod tests {
             [guide, list].map(PathBuf::from),
             "within a word too"
         );
+    }
+
+    /// Words typed without spaces, in a script written without them, are
+    /// found apart as words typed with spaces are: "项目文档" (project,
+    /// documents) finds a project kept in documents.
+    #[test]
+    fn the_field_finds_words_typed_without_spaces_apart() {
+        let dirs = vec![
+            zoxide::ZEntry {
+                score: 1.0,
+                path: "/home/x/文档/项目".into(),
+            },
+            zoxide::ZEntry {
+                score: 1.0,
+                path: "/home/x/文件".into(),
+            },
+        ];
+        let found: Vec<PathBuf> =
+            rank_by_words("项目文档", Some(Path::new("/home/x")), &dirs, &[], 10)
+                .into_iter()
+                .map(|c| c.path)
+                .collect();
+        assert_eq!(found, [PathBuf::from("/home/x/文档/项目")]);
     }
 
     #[cfg(unix)]

@@ -7,12 +7,11 @@
 //! words of its name (a switch, a choice, a dropdown) is named by its caller
 //! (`aria_label`), from the label drawn beside it.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
-use gpui::{
-    AnyElement, Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px, svg,
-};
+use gpui::{AnyElement, Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px};
 
 use crate::input::TextInput;
 use crate::theme::Theme;
@@ -21,8 +20,7 @@ use crate::theme::Theme;
 pub const HEIGHT: f32 = 28.;
 
 fn icon(name: &str, color: gpui::Hsla, size: f32) -> gpui::Svg {
-    svg()
-        .path(format!("toolbar/{name}.svg"))
+    crate::sides::symbol(name)
         .text_color(color)
         .size(px(size))
         .flex_none()
@@ -122,7 +120,7 @@ pub fn pill(on: bool, theme: &Theme) -> Div {
             )
             .absolute()
             .top(px(3.))
-            .left(px(if on { 19. } else { 3. }))
+            .inset_start(px(if on { 19. } else { 3. }))
             .size(px(14.)),
         )
 }
@@ -455,8 +453,8 @@ pub fn dropdown_with(
         .flex_none()
         .h(sized(HEIGHT))
         .min_w(sized(150.))
-        .pl_3()
-        .pr_2()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(2.))
         .flex()
         .items_center()
         .justify_between()
@@ -595,8 +593,12 @@ pub(crate) fn up(bounds: gpui::Bounds<gpui::Pixels>, y: gpui::Pixels) -> f32 {
 /// Which way a slider's track runs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Axis {
-    /// Left to right, as wide as its owner makes it.
+    /// From its start, as wide as its owner makes it: from the left, from
+    /// the right where the window is mirrored (`sides`), for a value.
     Across,
+    /// Left to right whatever the window's direction: time, as media's
+    /// progress is drawn in every language.
+    Time,
     /// Foot to top, as tall as its owner makes it: a volume's.
     Upright,
 }
@@ -618,6 +620,18 @@ pub fn slider(
     on_slide: OnSlide,
 ) -> Stateful<Div> {
     slider_on(Axis::Across, id, at, held, theme, on_slide)
+}
+
+/// [`slider`] for a time (a film's, a track's), left to right in a
+/// mirrored window too, as media's progress is drawn in every language.
+pub fn time_slider(
+    id: impl Into<SharedString>,
+    at: f32,
+    held: bool,
+    theme: &Theme,
+    on_slide: OnSlide,
+) -> Stateful<Div> {
+    slider_on(Axis::Time, id, at, held, theme, on_slide)
 }
 
 /// [`slider`] standing up, filled from its foot: as tall as its owner
@@ -646,7 +660,8 @@ fn slider_on(
         let (bounds, on_slide) = (bounds.clone(), on_slide.clone());
         move |position: gpui::Point<gpui::Pixels>, window: &mut gpui::Window, cx: &mut gpui::App| {
             let at = match axis {
-                Axis::Across => along(bounds.get(), position.x),
+                Axis::Across if crate::sides::rtl() => 1. - along(bounds.get(), position.x),
+                Axis::Across | Axis::Time => along(bounds.get(), position.x),
                 Axis::Upright => up(bounds.get(), position.y),
             };
             on_slide(&Slid { slide, at }, window, cx);
@@ -668,8 +683,25 @@ fn slider_on(
         .size(px(KNOB))
         .rounded_full()
         .bg(theme.accent);
+    // A value's slider runs from the right where the window is mirrored.
+    let mirrored = axis == Axis::Across && crate::sides::rtl();
     let (holder, track, fill, knob) = match axis {
-        Axis::Across => (
+        Axis::Across if mirrored => (
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(KNOB / 2.))
+                .right(px(KNOB / 2.))
+                .flex()
+                .items_center(),
+            track.w_full().h(px(TRACK)),
+            fill.top_0().right_0().h_full().w(gpui::relative(at)),
+            knob.top(px((TRACK - KNOB) / 2.))
+                .right(gpui::relative(at))
+                .mr(px(-KNOB / 2.)),
+        ),
+        Axis::Across | Axis::Time => (
             div()
                 .absolute()
                 .top_0()
@@ -705,7 +737,7 @@ fn slider_on(
         .role(gpui::Role::Slider)
         .relative()
         .map(|d| match axis {
-            Axis::Across => d.h(sized(HEIGHT)).min_w(px(KNOB * 3.)),
+            Axis::Across | Axis::Time => d.h(sized(HEIGHT)).min_w(px(KNOB * 3.)),
             Axis::Upright => d.w(sized(HEIGHT)).min_h(px(KNOB * 3.)),
         })
         .rounded_md()

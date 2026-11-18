@@ -32,11 +32,18 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
+use icu_casemap::CaseMapper;
 use icu_collator::options::{AlternateHandling, CollatorOptions, Strength};
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{CollationKeySink, Collator, CollatorBorrowed, CollatorPreferences};
+use icu_locale::exemplar_chars::ExemplarCharacters;
+use icu_locale_core::LanguageIdentifier;
+use icu_properties::props::{
+    GeneralCategory, GeneralCategoryGroup, Ideographic, LogicalOrderException, Script,
+};
+use icu_properties::{CodePointMapData, CodePointSetData};
 use parking_lot::RwLock;
 
 /// Base letters of U+00C0..=U+017F; `.` keeps the lowercase character.
@@ -124,45 +131,65 @@ pub fn compare(a: &OsStr, b: &OsStr) -> Ordering {
     current().compare(a, b)
 }
 
-/// The letter a name is under where names are grouped by their first, as
-/// [`current`] orders them ([`Collation::initial`]).
+/// The heading a name is under where names are grouped by their first
+/// letter, as [`current`] orders them ([`Collation::initial`]).
 pub fn initial(name: &OsStr) -> Initial {
     current().initial(name)
 }
 
-/// Where a name is grouped by its first character (`Group by › Name`):
-/// before the digits what begins with neither a digit nor a letter, then
-/// the digits, then each letter, the letters as the order puts them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Where a name is grouped by its beginning (`Group by › Name`): before
+/// the digits what begins with neither a digit nor a letter, then the
+/// digits, then the headings of letters, as the order puts them, then the
+/// letters no heading is for.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Initial {
     /// Punctuation, a symbol, a space, a mark: what begins with neither.
     Other,
     /// A digit.
     Digit,
-    /// A letter, uppercase as a heading says it: the one the order puts it
-    /// under ("E" for "é"; "Ä" in Swedish, a letter after "Z", "A" in
-    /// German). Groups of letters are ordered by the letter's
-    /// [`sort_key`].
-    Letter(char),
+    /// The heading of the letters the order puts a name under, as CLDR's
+    /// index for the locale says it: "E" for "é", "Ä" in Swedish (a letter
+    /// after "Z") but "A" in German, "CS" in Hungarian, "İ" for a Turkish
+    /// "i", "か" for "ガ" in Japanese, "ㄱ" for "가" in Korean, the pinyin's
+    /// letter for a Han character in Chinese ("A" for "阿", with the Latin
+    /// "A"). Groups of letters are ordered by their heading's [`sort_key`].
+    Letter(Arc<str>),
+    /// Han characters of `strokes` strokes, as Traditional Chinese's order
+    /// (by strokes, then radicals) heads them: a count, which its words
+    /// say, standing where `key` stands (a [`sort_key`]: among the other
+    /// headings, as the order puts that count).
+    Strokes { strokes: u8, key: Arc<[u8]> },
+    /// A letter no heading is for: an ideograph outside Chinese's order (a
+    /// Japanese name's kanji, a Han character in an English one), which
+    /// CLDR heads by no letter, and thousands of which would be thousands
+    /// of groups; after the letters, as ICU's alphabetic index has them.
+    Unheaded,
 }
 
 /// The ICU4X collators of a locale: its order, and its first strength for
 /// what is typed.
 struct Collators {
     locale: Box<str>,
+    /// The locale, as ICU4X reads it: what its index and its case
+    /// mapping are looked up by.
+    id: LanguageIdentifier,
     /// Names' order: numbers by value, third strength.
     order: CollatorBorrowed<'static>,
     /// What a typed beginning is matched by: the base letters alone,
     /// numbers as they are written ("f2" begins "f20", not "f02").
     primary: CollatorBorrowed<'static>,
-    /// The letter a name beginning with each character is under, as read
-    /// ([`Collation::initial`]): a few searches the first time, a look-up
-    /// then.
-    initials: RwLock<HashMap<char, Initial>>,
-    /// "A" to "Z" in the locale's order ("Y" after "I" in Lithuanian, "Z"
-    /// after "S" in Estonian), one of each base letter: what a Latin
-    /// letter is grouped under is the last of them at or before it.
-    latin: Vec<char>,
+    /// How a name beginning with each character is placed, as read
+    /// ([`Collation::initial`]): a few comparisons the first time, a
+    /// look-up then.
+    initials: RwLock<crate::hashing::Map<char, Placed>>,
+    /// The headings of beginnings of more than a character (one with the
+    /// marks written on it: a vowel sign, an accent apart), as read: at
+    /// most [`BEGINNINGS_KEPT`], what a folder of Hindi or Thai names
+    /// holds.
+    beginnings: RwLock<crate::hashing::Map<Box<str>, Initial>>,
+    /// Each script's headings, read the first time a name in it is placed
+    /// ([`Collators::headings`]).
+    headings: RwLock<HashMap<Script, Arc<Headings>>>,
     /// Printable ASCII's weights at the first strength, for the walk that
     /// turns a name away before ICU4X reads it ([`Prefix::begins`]):
     /// made the first time a beginning is sought.
@@ -237,9 +264,17 @@ impl Collation {
     /// `locale`'s order (a BCP 47 tag); folded for `None`. A tag ICU4X
     /// cannot read, or a language it has no order of its own for, orders
     /// as its root does (CLDR's, which English uses).
+    ///
+    /// A pseudo-language orders as English, whose words it says
+    /// (`locale::is_pseudo`: `ar-XB` would put Arabic first).
     pub fn of(locale: Option<&str>) -> Self {
         let Some(tag) = locale else {
             return Collation::folded();
+        };
+        let tag = if crate::locale::is_pseudo(tag) {
+            crate::locale::ENGLISH
+        } else {
+            tag
         };
         let parsed: icu_locale_core::Locale = tag.parse().unwrap_or_else(|_| {
             tracing::warn!(tag, "a locale ICU4X cannot read: names in its root's order");
@@ -261,23 +296,16 @@ impl Collation {
             made(true, Strength::Tertiary),
             made(false, Strength::Primary),
         ) {
-            (Ok(order), Ok(primary)) => {
-                let mut latin: Vec<char> = ('A'..='Z').collect();
-                let mut buf = ([0; 4], [0; 4]);
-                let mut by_base = |a: &char, b: &char| {
-                    primary.compare(a.encode_utf8(&mut buf.0), b.encode_utf8(&mut buf.1))
-                };
-                latin.sort_by(&mut by_base);
-                latin.dedup_by(|b, a| by_base(a, b).is_eq());
-                Collation(Some(Arc::new(Collators {
-                    locale: tag.into(),
-                    order,
-                    primary,
-                    initials: RwLock::default(),
-                    latin,
-                    ascii: OnceLock::new(),
-                })))
-            }
+            (Ok(order), Ok(primary)) => Collation(Some(Arc::new(Collators {
+                locale: tag.into(),
+                id: parsed.id.clone(),
+                order,
+                primary,
+                initials: RwLock::default(),
+                beginnings: RwLock::default(),
+                headings: RwLock::default(),
+                ascii: OnceLock::new(),
+            }))),
             (Err(error), _) | (_, Err(error)) => {
                 tracing::warn!(tag, %error, "no collation: names folded");
                 Collation::folded()
@@ -351,45 +379,94 @@ impl Collation {
         }
     }
 
-    /// The letter `name` is grouped under, by its first character alone.
+    /// The heading `name` is grouped under, by its beginning.
     ///
-    /// Folded: the first character folded ("é" under "E", "æ" under "A"),
-    /// a digit, or neither. By a locale: a letter the order puts among "A"
-    /// to "Z" under the last of them at or before it ("é" and "ß" under
-    /// "E" and "S"; "Ä" under "A" in German, while Swedish orders it after
-    /// "Z", a letter of its own), as Dolphin groups them; a letter of
-    /// another script under itself, uppercase.
+    /// Folded: its first character folded ("é" under "E", "æ" under "A"),
+    /// a digit, or neither.
+    ///
+    /// By a locale, the headings of CLDR's index for it, as ICU's
+    /// alphabetic index reads them: a name is under the last heading of its
+    /// script the order puts at or before its beginning (its first
+    /// character with the marks written on it; as many characters as a
+    /// heading of more holds, Czech's "CH"): "é" and "ß" under "E" and "S",
+    /// "Ä" under "A" in German but under "Ä" in Swedish, which orders it
+    /// after "Z". A script the locale's index has no headings in takes
+    /// those of the language CLDR says most likely writes it (Russian's for
+    /// a Cyrillic name in an English order, English's for a Latin one in a
+    /// Japanese order). Han characters take the headings the order itself
+    /// holds (pinyin's letters in Chinese, stroke counts in Traditional
+    /// Chinese), else none ([`Initial::Unheaded`]); a letter of a script no
+    /// index has headings in is under itself, in its uppercase as the
+    /// locale writes it.
     pub fn initial(&self, name: &OsStr) -> Initial {
         let Some(c) = first_char(name) else {
             return Initial::Other;
         };
         let Some(collators) = &self.0 else {
-            if c.is_ascii_digit() {
-                return Initial::Digit;
-            }
-            let mut first = None;
-            fold(c, &mut |part| {
-                if first.is_none() {
-                    first = String::from_utf8_lossy(part).chars().next();
-                }
-            });
-            return match first {
-                Some(f) if f.is_alphabetic() => Initial::Letter(upper(f)),
-                _ => Initial::Other,
-            };
+            return folded_initial(c);
         };
-        if let Some(&known) = collators.initials.read().get(&c) {
-            return known;
+        let text = name
+            .as_encoded_bytes()
+            .utf8_chunks()
+            .next()
+            .map_or("", |chunk| chunk.valid());
+        // What follows the first character places the name too where it is
+        // a mark written on it, or where the first is a vowel written
+        // before the letter it follows.
+        let alone = !is_written_before(c) && !text.chars().nth(1).is_some_and(is_mark);
+        if !alone {
+            let longest = collators.headings(script_of(c)).longest;
+            return collators.place_kept(beginning(text, longest));
         }
-        let initial = collators.initial_of(c);
-        collators.initials.write().insert(c, initial);
-        initial
+        let known = collators.initials.read().get(&c).cloned();
+        let placed = known.unwrap_or_else(|| {
+            let placed = collators.placed(c);
+            collators.initials.write().insert(c, placed.clone());
+            placed
+        });
+        match placed {
+            Placed::Under(initial) => initial,
+            Placed::ByMore {
+                under,
+                longer,
+                longest,
+            } => {
+                let begins = beginning(text, longest);
+                longer
+                    .iter()
+                    .rev()
+                    .find(|(at, _)| collators.primary.compare(at, begins).is_le())
+                    .map_or(under, |(_, heading)| heading.clone())
+            }
+        }
     }
 }
 
-/// `c` uppercase, as one character: its first where it has several.
-fn upper(c: char) -> char {
-    c.to_uppercase().next().unwrap_or(c)
+/// The heading a name beginning with `c` is under, folded: read once a
+/// character, as a group by name asks it of every entry.
+fn folded_initial(c: char) -> Initial {
+    static KNOWN: LazyLock<RwLock<crate::hashing::Map<char, Initial>>> =
+        LazyLock::new(RwLock::default);
+    if c.is_ascii_digit() {
+        return Initial::Digit;
+    }
+    if let Some(known) = KNOWN.read().get(&c) {
+        return known.clone();
+    }
+    let mut first = None;
+    fold(c, &mut |part| {
+        if first.is_none() {
+            first = String::from_utf8_lossy(part).chars().next();
+        }
+    });
+    let initial = match first {
+        Some(f) if f.is_alphabetic() => {
+            Initial::Letter(f.to_uppercase().collect::<String>().into())
+        }
+        _ => Initial::Other,
+    };
+    KNOWN.write().insert(c, initial.clone());
+    initial
 }
 
 /// The first character of `name`, U+FFFD where it begins with bytes that
@@ -405,32 +482,283 @@ fn first_char(name: &OsStr) -> Option<char> {
     )
 }
 
-impl Collators {
-    fn initial_of(&self, c: char) -> Initial {
-        if c.is_alphabetic() {
-            let mut buf = [0; 4];
-            let text: &str = c.encode_utf8(&mut buf);
-            let primary = |letter: char| {
-                let mut buf = [0; 4];
-                self.primary.compare(letter.encode_utf8(&mut buf), text)
-            };
-            // Among "A" to "Z" when the first of them is at or before it
-            // and the last at or after: then under the last letter at or
-            // before it.
-            let (Some(&first), Some(&last)) = (self.latin.first(), self.latin.last()) else {
-                return Initial::Letter(upper(c));
-            };
-            if primary(first).is_le() && primary(last).is_ge() {
-                let under = self.latin.partition_point(|&l| primary(l).is_le());
-                return Initial::Letter(self.latin[under.saturating_sub(1)]);
-            }
-            return Initial::Letter(upper(c));
-        }
-        if c.is_numeric() {
-            return Initial::Digit;
-        }
-        Initial::Other
+/// The script `c` is written in, as a group by name heads it: Katakana
+/// with Hiragana, as Japanese heads both by its kana rows (あ か さ…).
+fn script_of(c: char) -> Script {
+    match CodePointMapData::<Script>::new().get(c) {
+        Script::Katakana | Script::KatakanaOrHiragana => Script::Hiragana,
+        script => script,
     }
+}
+
+/// Whether `c` is a mark written on the character before it (an accent
+/// apart, a vowel sign).
+fn is_mark(c: char) -> bool {
+    GeneralCategoryGroup::Mark.contains(CodePointMapData::<GeneralCategory>::new().get(c))
+}
+
+/// Whether `c` is a vowel written before the letter it follows (Thai's
+/// and Lao's: Unicode's logical order exceptions), which the order reads
+/// after it.
+fn is_written_before(c: char) -> bool {
+    CodePointSetData::new::<LogicalOrderException>().contains(c)
+}
+
+/// The beginning of `text` that places it under a heading: its first `n`
+/// characters (at least one), each with the marks written on it, and the
+/// letter after the first where the first is written before it.
+fn beginning(text: &str, n: usize) -> &str {
+    let mut wanted = n.max(1);
+    let (mut count, mut end) = (0, 0);
+    for (at, c) in text.char_indices() {
+        if !is_mark(c) {
+            if count == wanted {
+                break;
+            }
+            if count == 0 && is_written_before(c) {
+                wanted = wanted.max(2);
+            }
+            count += 1;
+        }
+        end = at + c.len_utf8();
+    }
+    &text[..end]
+}
+
+/// How many beginnings of more than a character a locale's order keeps the
+/// headings of ([`Collators::place_kept`]): a consonant with each of its
+/// vowel signs is some hundreds.
+const BEGINNINGS_KEPT: usize = 4096;
+
+/// How a name beginning with a character is placed, as read once.
+#[derive(Clone)]
+enum Placed {
+    /// Under this, whatever follows.
+    Under(Initial),
+    /// By its first characters, as many as `longest`: under the last of
+    /// `longer` (the headings of more than one character beginning with it,
+    /// Czech's "CH" for "c", in the order) at or before them, else `under`
+    /// (its own). No other heading stands between.
+    ByMore {
+        under: Initial,
+        longer: Arc<[(Box<str>, Initial)]>,
+        longest: usize,
+    },
+}
+
+/// One script's headings, in the order.
+struct Headings {
+    /// What the order compares a name's beginning with, at its first
+    /// strength, and the heading of what it puts at or after it, until the
+    /// next.
+    list: Vec<(Box<str>, Initial)>,
+    /// How many characters the longest heading holds, marks aside (1, or 2
+    /// for Czech's "CH" and Bengali's "ক্ষ", 3 for Hungarian's "DZS"),
+    /// boundaries of the order's aside.
+    longest: usize,
+}
+
+impl Collators {
+    /// How a name beginning with `c`, and nothing written on it, is placed.
+    fn placed(&self, c: char) -> Placed {
+        let mut buf = [0; 4];
+        let own: &str = c.encode_utf8(&mut buf);
+        let under = self.place(own);
+        if !c.is_alphabetic() {
+            return Placed::Under(under);
+        }
+        let headings = self.headings(script_of(c));
+        // Read once a character: a few headings of more than one.
+        let begins_with_c = |at: &str| {
+            at.chars().nth(1).is_some()
+                && at.chars().next().is_some_and(|first| {
+                    let mut buf = [0; 4];
+                    self.primary
+                        .compare(first.encode_utf8(&mut buf), own)
+                        .is_eq()
+                })
+        };
+        let longer: Vec<(Box<str>, Initial)> = if headings.longest == 1 {
+            Vec::new()
+        } else {
+            headings
+                .list
+                .iter()
+                .filter(|(at, _)| !at.starts_with('\u{FDD0}') && begins_with_c(at))
+                .cloned()
+                .collect()
+        };
+        if longer.is_empty() {
+            Placed::Under(under)
+        } else {
+            Placed::ByMore {
+                under,
+                longer: Arc::from(longer),
+                longest: headings.longest,
+            }
+        }
+    }
+
+    /// [`Collators::place`], kept for the next name beginning so.
+    fn place_kept(&self, begins: &str) -> Initial {
+        if let Some(known) = self.beginnings.read().get(begins) {
+            return known.clone();
+        }
+        let initial = self.place(begins);
+        let mut kept = self.beginnings.write();
+        if kept.len() < BEGINNINGS_KEPT {
+            kept.insert(begins.into(), initial.clone());
+        }
+        initial
+    }
+
+    /// The heading a name beginning with `begins` is under.
+    fn place(&self, begins: &str) -> Initial {
+        let Some(c) = begins.chars().next() else {
+            return Initial::Other;
+        };
+        if !c.is_alphabetic() {
+            return if c.is_numeric() {
+                Initial::Digit
+            } else {
+                Initial::Other
+            };
+        }
+        let headings = self.headings(script_of(c));
+        let under = headings
+            .list
+            .partition_point(|(at, _)| self.primary.compare(at, begins).is_le());
+        match under.checked_sub(1) {
+            Some(at) => headings.list[at].1.clone(),
+            None if CodePointSetData::new::<Ideographic>().contains(c) => Initial::Unheaded,
+            None => {
+                let mut buf = [0; 4];
+                let upper =
+                    CaseMapper::new().uppercase_to_string(c.encode_utf8(&mut buf), &self.id);
+                Initial::Letter(upper.as_ref().into())
+            }
+        }
+    }
+
+    /// The headings of `script`, read the first time they are asked.
+    fn headings(&self, script: Script) -> Arc<Headings> {
+        if let Some(found) = self.headings.read().get(&script) {
+            return Arc::clone(found);
+        }
+        let read = Arc::new(self.read_headings(script));
+        Arc::clone(self.headings.write().entry(script).or_insert(read))
+    }
+
+    /// The headings of `script`: for Han characters, those the order holds
+    /// ([`Collators::han_headings`]); for another, the locale's index's in
+    /// it, else the index of the language CLDR says most likely writes it.
+    fn read_headings(&self, script: Script) -> Headings {
+        let labels: Vec<(String, Initial)> = if script == Script::Han {
+            self.han_headings()
+        } else {
+            let own = index_of(&self.id, script);
+            let labels = match crate::locale::writer_of(script.into()) {
+                Some(writer) if own.is_empty() => {
+                    let labels = index_of(&writer, script);
+                    if labels.is_empty() {
+                        // Its index is the language's, whatever script it
+                        // names (Korean's Hangul is Kore's).
+                        let mut language = writer;
+                        language.script = None;
+                        index_of(&language, script)
+                    } else {
+                        labels
+                    }
+                }
+                _ => own,
+            };
+            labels
+                .into_iter()
+                .map(|label| {
+                    let heading = Initial::Letter(label.as_str().into());
+                    (label, heading)
+                })
+                .collect()
+        };
+        self.ordered(labels)
+    }
+
+    /// The headings the order holds for Han characters, where it orders
+    /// them as CLDR's Chinese does (by pinyin, by strokes): the boundaries
+    /// it holds among them, U+FDD0 then a Latin letter (pinyin's initials,
+    /// headed by that letter, with the Latin names it begins) or U+2800
+    /// and a count (strokes), as ICU's alphabetic index reads them. None in
+    /// an order that holds none (Japanese's, Korean's, the root's).
+    fn han_headings(&self) -> Vec<(String, Initial)> {
+        // A boundary the order holds stands among the Han characters,
+        // before U+FDD0 alone, which is unassigned, after every script.
+        let held = |boundary: &str| self.primary.compare(boundary, "\u{FDD0}").is_lt();
+        let mut found = Vec::new();
+        for letter in 'A'..='Z' {
+            let boundary = format!("\u{FDD0}{letter}");
+            if held(&boundary) {
+                found.push((boundary, Initial::Letter(letter.to_string().into())));
+            }
+        }
+        for strokes in 1..=u8::MAX {
+            let Some(count) = char::from_u32(0x2800 + u32::from(strokes)) else {
+                continue;
+            };
+            let boundary = format!("\u{FDD0}{count}");
+            if held(&boundary) {
+                let key = Arc::from(self.key(&boundary));
+                found.push((boundary, Initial::Strokes { strokes, key }));
+            }
+        }
+        found
+    }
+
+    /// `labels` in the order, one of those it reads as one letter (the
+    /// first: "Е" before "Ё", which Russian's index both holds), with what
+    /// a name is read by to place it.
+    fn ordered(&self, mut labels: Vec<(String, Initial)>) -> Headings {
+        labels.sort_by(|(a, _), (b, _)| self.order.compare(a, b));
+        labels.dedup_by(|(later, _), (kept, _)| self.primary.compare(kept, later).is_eq());
+        // A boundary of the order's (U+FDD0) begins no name.
+        let longest = labels
+            .iter()
+            .filter(|(label, _)| !label.starts_with('\u{FDD0}'))
+            .map(|(label, _)| label.chars().filter(|&c| !is_mark(c)).count())
+            .max()
+            .unwrap_or(1);
+        Headings {
+            list: labels
+                .into_iter()
+                .map(|(label, heading)| (label.into_boxed_str(), heading))
+                .collect(),
+            longest,
+        }
+    }
+
+    /// `text`'s key, as [`Collation::sort_key`] makes it.
+    fn key(&self, text: &str) -> Vec<u8> {
+        let mut key = Vec::with_capacity(text.len() * 3 + 2);
+        let Ok(()) = self.order.write_sort_key_to(text, &mut key);
+        key.push(0);
+        key.extend_from_slice(text.as_bytes());
+        key
+    }
+}
+
+/// CLDR's index characters for `locale` in `script` (Kana's with
+/// Hiragana's): the headings of its alphabetic index, none where it holds
+/// none there.
+fn index_of(locale: &LanguageIdentifier, script: Script) -> Vec<String> {
+    let Ok(index) = ExemplarCharacters::try_new_index(&locale.into()) else {
+        return Vec::new();
+    };
+    index
+        .code_points()
+        .iter_chars()
+        .map(String::from)
+        .chain(index.strings().iter().map(str::to_owned))
+        .filter(|label| label.chars().next().is_some_and(|c| script_of(c) == script))
+        .collect()
 }
 
 /// The folded key ([`Collation::folded`]).
@@ -660,16 +988,19 @@ pub fn folded(text: &str) -> String {
 
 /// Words typed to find something among texts (the settings' search and
 /// each of its pages' filters): each found in one of a thing's texts,
-/// folded as names are ([`folded`]), so "ecole" finds "École", which the
-/// order puts beside "ecole". Folded once.
+/// anywhere in it, folded as names are ([`folded`]), so "ecole" finds
+/// "École", which the order puts beside "ecole". What was typed is parted
+/// into words at its spaces, and in a script written without them at its
+/// words (`segment::terms`): "设置文件" finds "文件的设置" as "settings
+/// file" finds "file settings". Folded once.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Words(Vec<String>);
 
 impl Words {
     pub fn new(typed: &str) -> Self {
         Words(
-            folded(typed)
-                .split_whitespace()
+            crate::segment::terms(&folded(typed))
+                .into_iter()
                 .map(str::to_owned)
                 .collect(),
         )
@@ -712,6 +1043,23 @@ mod tests {
             "case beyond Latin"
         );
         assert_eq!(folded("Æsir 10"), "aesir 10");
+    }
+
+    /// In a script written without spaces, what was typed is several words,
+    /// each found anywhere in a text, as words typed apart are.
+    #[test]
+    fn words_typed_without_spaces_are_found_apart() {
+        // Chinese: "settings" and "file", typed together, in either order.
+        assert!(Words::new("设置文件").found_in(&["文件的设置"]));
+        assert!(!Words::new("设置文件").found_in(&["文件"]), "every word");
+        // Japanese: "settings", "o", "open" inside a longer sentence.
+        assert!(Words::new("設定を開く").found_in(&["設定画面を開く"]));
+        // Thai: "open" and "file" apart in the text.
+        assert!(Words::new("เปิดไฟล์").found_in(&["ไฟล์ที่จะเปิด"]));
+        // Hebrew and French are typed with spaces, and found as before.
+        assert!(Words::new("עולם שלום").found_in(&["שלום עולם"]));
+        assert!(Words::new("L'ÉCOLE été").found_in(&["à l'école cet été"]));
+        assert!(!Words::new("l'école").found_in(&["l école"]), "kept whole");
     }
 
     fn sorted_by(collation: &Collation, names: &[&str]) -> Vec<String> {
@@ -1058,40 +1406,227 @@ mod tests {
         }
     }
 
+    fn letter(heading: &str) -> Initial {
+        Initial::Letter(heading.into())
+    }
+
+    fn of(collation: &Collation, name: &str) -> Initial {
+        collation.initial(OsStr::new(name))
+    }
+
     /// The letter a name is grouped under: its first, its accent aside
     /// where the order sees the same letter, a letter of its own where the
     /// order puts it after "z".
     #[test]
     fn names_are_grouped_under_the_letter_the_order_puts_them_under() {
-        let of = |collation: &Collation, name: &str| collation.initial(OsStr::new(name));
         let folded = Collation::folded();
-        assert_eq!(of(&folded, "École"), Initial::Letter('E'));
-        assert_eq!(of(&folded, "Æble"), Initial::Letter('A'));
-        assert_eq!(of(&folded, "ßa"), Initial::Letter('S'));
+        assert_eq!(of(&folded, "École"), letter("E"));
+        assert_eq!(of(&folded, "Æble"), letter("A"));
+        assert_eq!(of(&folded, "ßa"), letter("S"));
         assert_eq!(of(&folded, "10 things"), Initial::Digit);
         assert_eq!(of(&folded, "_x"), Initial::Other);
         assert_eq!(of(&folded, ""), Initial::Other);
         let en = Collation::of(Some("en-US"));
-        assert_eq!(of(&en, "école"), Initial::Letter('E'));
-        assert_eq!(of(&en, "e\u{301}cole"), Initial::Letter('E'));
-        assert_eq!(of(&en, "Æble"), Initial::Letter('A'));
-        assert_eq!(of(&en, "ßa"), Initial::Letter('S'));
-        assert_eq!(of(&en, "zoë"), Initial::Letter('Z'));
-        assert_eq!(of(&en, "Привет"), Initial::Letter('П'));
-        assert_eq!(of(&en, "привет"), Initial::Letter('П'));
+        assert_eq!(of(&en, "école"), letter("E"));
+        assert_eq!(of(&en, "e\u{301}cole"), letter("E"));
+        assert_eq!(of(&en, "Æble"), letter("A"));
+        assert_eq!(of(&en, "ßa"), letter("S"));
+        assert_eq!(of(&en, "zoë"), letter("Z"));
         assert_eq!(of(&en, "10 things"), Initial::Digit);
         assert_eq!(of(&en, "١٠"), Initial::Digit, "a digit of another script");
         assert_eq!(of(&en, "_x"), Initial::Other);
         assert_eq!(of(&en, " x"), Initial::Other);
         let sv = Collation::of(Some("sv-SE"));
-        assert_eq!(of(&sv, "ärlig"), Initial::Letter('Ä'));
-        assert_eq!(of(&sv, "Öl"), Initial::Letter('Ö'));
-        assert_eq!(of(&sv, "zebra"), Initial::Letter('Z'));
+        assert_eq!(of(&sv, "ärlig"), letter("Ä"));
+        assert_eq!(of(&sv, "Öl"), letter("Ö"));
+        assert_eq!(of(&sv, "Ørsted"), letter("Ö"), "Swedish reads Ø as Ö");
+        assert_eq!(of(&sv, "zebra"), letter("Z"));
         let de = Collation::of(Some("de-DE"));
-        assert_eq!(of(&de, "Ärger"), Initial::Letter('A'));
+        assert_eq!(of(&de, "Ärger"), letter("A"));
         // Groups of letters stand in the order's: Swedish's after "Z".
         let key = |c: &str| sv.sort_key(OsStr::new(c));
         assert!(key("Z") < key("Å") && key("Å") < key("Ä") && key("Ä") < key("Ö"));
+    }
+
+    /// Latin's headings as each language's index says them: Turkish's
+    /// dotted and dotless I apart, Hungarian's and Czech's letters of two
+    /// or three characters, a letter written apart from its accent read
+    /// with it.
+    #[test]
+    fn latin_names_take_their_language_s_headings() {
+        let tr = Collation::of(Some("tr-TR"));
+        assert_eq!(of(&tr, "istanbul"), letter("İ"));
+        assert_eq!(of(&tr, "İzmir"), letter("İ"));
+        assert_eq!(of(&tr, "ılık"), letter("I"));
+        assert_eq!(of(&tr, "Irmak"), letter("I"));
+        assert_eq!(of(&tr, "çay"), letter("Ç"));
+        assert_eq!(of(&tr, "şeker"), letter("Ş"));
+        assert_eq!(
+            of(&tr, "ğ"),
+            letter("G"),
+            "no word begins with ğ: no heading"
+        );
+        let hu = Collation::of(Some("hu-HU"));
+        assert_eq!(of(&hu, "Csaba"), letter("CS"));
+        assert_eq!(of(&hu, "cukor"), letter("C"));
+        assert_eq!(of(&hu, "dzsungel"), letter("DZS"));
+        assert_eq!(of(&hu, "dzéta"), letter("DZ"));
+        assert_eq!(of(&hu, "dob"), letter("D"));
+        assert_eq!(of(&hu, "gyár"), letter("GY"));
+        assert_eq!(of(&hu, "Ádám"), letter("A"));
+        assert_eq!(of(&hu, "ősz"), letter("Ö"));
+        assert_eq!(of(&hu, "C"), letter("C"));
+        let cs = Collation::of(Some("cs-CZ"));
+        assert_eq!(of(&cs, "chata"), letter("CH"));
+        assert_eq!(of(&cs, "cesta"), letter("C"));
+        assert_eq!(of(&cs, "čaj"), letter("Č"));
+        assert_eq!(of(&cs, "c\u{30c}aj"), letter("Č"), "written apart");
+        assert_eq!(of(&cs, "hora"), letter("H"));
+        // Hungarian's letters stand where its order puts them.
+        let key = |c: &str| hu.sort_key(OsStr::new(c));
+        assert!(key("C") < key("CS") && key("CS") < key("D"));
+    }
+
+    /// The headings of scripts without A to Z, as CLDR's index for the
+    /// locale says them, else for the language most likely writing the
+    /// script.
+    #[test]
+    fn names_of_every_script_take_their_index_s_headings() {
+        let en = Collation::of(Some("en-US"));
+        let ru = Collation::of(Some("ru-RU"));
+        for cyrillic in [&en, &ru] {
+            assert_eq!(of(cyrillic, "Привет"), letter("П"));
+            assert_eq!(of(cyrillic, "привет"), letter("П"));
+            assert_eq!(of(cyrillic, "ёлка"), letter("Е"), "Ё read as Е, Russian's");
+            assert_eq!(of(cyrillic, "яблоко"), letter("Я"));
+        }
+        assert_eq!(of(&ru, "apple"), letter("A"), "Latin, English's");
+        assert_eq!(of(&en, "Ωmega"), letter("Ω"));
+        assert_eq!(of(&en, "άλφα"), letter("Α"));
+        assert_eq!(of(&en, "بيت"), letter("ب"));
+        assert_eq!(of(&Collation::of(Some("ar-EG")), "بيت"), letter("ب"));
+        assert_eq!(of(&en, "שלום"), letter("ש"));
+        let hi = Collation::of(Some("hi-IN"));
+        assert_eq!(of(&hi, "किताब"), letter("क"), "with its vowel sign");
+        assert_eq!(of(&hi, "आम"), letter("आ"));
+        assert_eq!(of(&hi, "क्षमा"), letter("क"));
+        let bn = Collation::of(Some("bn-BD"));
+        assert_eq!(of(&bn, "ক্ষমা"), letter("ক্ষ"), "a heading of three");
+        assert_eq!(of(&bn, "কলম"), letter("ক"));
+        let th = Collation::of(Some("th-TH"));
+        assert_eq!(of(&th, "ขนม"), letter("ข"));
+        assert_eq!(
+            of(&th, "เกม"),
+            letter("ก"),
+            "a vowel written before its letter"
+        );
+        assert_eq!(of(&th, "ไข่"), letter("ข"));
+        assert_eq!(of(&en, "เกม"), letter("ก"));
+        // A script with no index: under itself, uppercase.
+        assert_eq!(of(&en, "\u{10428}x"), letter("\u{10400}"), "Deseret");
+    }
+
+    /// Japanese heads kana by its rows (あ か さ…), Katakana with
+    /// Hiragana, sounds voiced or written apart with their row; Korean
+    /// heads Hangul by its first consonant; kanji and hanja take none.
+    #[test]
+    fn kana_and_hangul_take_their_rows() {
+        let ja = Collation::of(Some("ja-JP"));
+        assert_eq!(of(&ja, "かな"), letter("か"));
+        assert_eq!(of(&ja, "きもの"), letter("か"));
+        assert_eq!(of(&ja, "ガイド"), letter("か"));
+        assert_eq!(of(&ja, "か\u{3099}"), letter("か"));
+        assert_eq!(of(&ja, "ｶﾞｲﾄﾞ"), letter("か"), "half-width");
+        assert_eq!(of(&ja, "さくら"), letter("さ"));
+        assert_eq!(of(&ja, "あめ"), letter("あ"));
+        assert_eq!(of(&ja, "ん"), letter("わ"));
+        assert_eq!(of(&ja, "Apple"), letter("A"));
+        assert_eq!(of(&ja, "漢字"), Initial::Unheaded);
+        assert_eq!(of(&ja, "１０"), Initial::Digit);
+        let ko = Collation::of(Some("ko-KR"));
+        assert_eq!(of(&ko, "가방"), letter("ㄱ"));
+        assert_eq!(of(&ko, "까치"), letter("ㄱ"));
+        assert_eq!(of(&ko, "나무"), letter("ㄴ"));
+        assert_eq!(of(&ko, "힘"), letter("ㅎ"));
+        assert_eq!(of(&ko, "\u{1100}\u{1161}"), letter("ㄱ"), "written apart");
+        assert_eq!(of(&ko, "漢"), Initial::Unheaded);
+        let en = Collation::of(Some("en-US"));
+        assert_eq!(of(&en, "かな"), letter("か"), "Japanese's rows");
+        assert_eq!(of(&en, "가방"), letter("ㄱ"), "Korean's");
+        assert_eq!(of(&en, "漢字"), Initial::Unheaded);
+    }
+
+    /// Chinese heads Han characters as its order holds them: by pinyin's
+    /// letter (with the Latin names it begins), or by strokes in
+    /// Traditional Chinese.
+    #[test]
+    fn han_takes_the_headings_its_order_holds() {
+        for simplified in ["zh-CN", "zh-SG", "zh"] {
+            let zh = Collation::of(Some(simplified));
+            assert_eq!(of(&zh, "阿里"), letter("A"), "{simplified}");
+            assert_eq!(of(&zh, "巴黎"), letter("B"));
+            assert_eq!(of(&zh, "一个"), letter("Y"));
+            assert_eq!(of(&zh, "中国"), letter("Z"));
+            assert_eq!(of(&zh, "Apple"), letter("A"), "one group with 阿");
+        }
+        for traditional in ["zh-TW", "zh-HK"] {
+            let zh = Collation::of(Some(traditional));
+            let strokes = |name: &str| match of(&zh, name) {
+                Initial::Strokes { strokes, key } => Some((strokes, key)),
+                _ => None,
+            };
+            let (one, two, three) = (
+                strokes("一").unwrap(),
+                strokes("二").unwrap(),
+                strokes("三").unwrap(),
+            );
+            assert_eq!((one.0, two.0, three.0), (1, 2, 3), "{traditional}");
+            assert!(
+                one.1 < two.1 && two.1 < three.1,
+                "in the order of their counts"
+            );
+            assert_eq!(strokes("龍").map(|(n, _)| n), Some(16));
+            assert_eq!(of(&zh, "Apple"), letter("A"), "Latin, English's");
+            assert!(of(&zh, "人").ne(&of(&zh, "一")));
+        }
+    }
+
+    /// A pseudo-language orders and groups names as English, whose words
+    /// it says: `ar-XB` is no Arabic order.
+    #[test]
+    fn a_pseudo_language_orders_as_english() {
+        let en = Collation::of(Some("en"));
+        let names = ["بيت", "apple", "Zebra", "10", "ёлка"];
+        for pseudo in [crate::direction::PSEUDO_RTL, crate::words::PSEUDO] {
+            let collation = Collation::of(Some(pseudo));
+            assert_eq!(sorted_by(&collation, &names), sorted_by(&en, &names));
+            for name in names {
+                assert_eq!(of(&collation, name), of(&en, name), "{pseudo}: {name}");
+            }
+        }
+    }
+
+    /// A letter no heading is for is under itself, in the locale's
+    /// uppercase: a Turkish i under İ.
+    #[test]
+    fn a_letter_no_heading_is_for_is_under_its_locale_s_uppercase() {
+        let tr = Collation::of(Some("tr-TR"));
+        let Some(collators) = &tr.0 else {
+            panic!("a locale's order");
+        };
+        // As if Turkish's index held no Latin headings.
+        collators.headings.write().insert(
+            Script::Latin,
+            Arc::new(Headings {
+                list: Vec::new(),
+                longest: 1,
+            }),
+        );
+        assert_eq!(of(&tr, "istanbul"), letter("İ"));
+        assert_eq!(
+            of(&Collation::of(Some("en-US")), "\u{10428}"),
+            letter("\u{10400}")
+        );
     }
 
     #[cfg(unix)]
@@ -1102,9 +1637,6 @@ mod tests {
         assert_eq!(Collation::folded().initial(name), Initial::Other);
         assert_eq!(Collation::of(Some("en-US")).initial(name), Initial::Other);
         let name = OsStr::from_bytes(b"caf\xe9");
-        assert_eq!(
-            Collation::of(Some("en-US")).initial(name),
-            Initial::Letter('C')
-        );
+        assert_eq!(Collation::of(Some("en-US")).initial(name), letter("C"));
     }
 }

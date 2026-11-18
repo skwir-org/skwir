@@ -65,10 +65,18 @@ sentence, never a sentence assembled from pieces.
   `[1]`.
 - **Agreement is a selector on a kind**: a message about "the item"
   takes its `Kind`, and English ignores it where its words agree
-  already.
-- **The part of Fluent Skwir uses:** text, arguments, selectors,
-  attributes. No terms, no message referring to another, no functions:
-  arguments arrive formatted.
+  already. A message naming one of Skwir's places agrees with the
+  place's own gender (below, "Nouns").
+- **A noun of Skwir's is marked `noun`**: a title that sentences name as
+  an argument (a place's: Home, Trash, Recent, Shelf, Nearby, Root),
+  `words!(trash_title = "Trash", noun, note = "…")`. It takes no
+  argument. `just words` writes `# noun` above it in `en.ftl`, which lets
+  its translations give it their grammar (below).
+- **The part of Fluent Skwir uses:** text, arguments, selectors; a
+  noun's attributes in a translation, and two functions a translation
+  calls on an argument, `GENDER` and `FORM` (below). No terms, no message
+  referring to another, no other function: arguments arrive formatted.
+  English writes no attribute and calls no function.
 
 ## Arguments
 
@@ -76,7 +84,15 @@ sentence, never a sentence assembled from pieces.
   unquoted, its controls shown as a `Name`'s are.
 - **A file's, a folder's, a place's or a tag's name is a `Name`**,
   never a string placed in the message: it carries the quotes and the
-  isolation from the sentence (ADR-139, 5).
+  isolation from the sentence (ADR-139, 5). The quotes are its
+  language's data, core's `name_quote_open` and `name_quote_close` said
+  in the sentence's language (English's where its catalog has none):
+  never a table of languages in code, never quotes written around a
+  name's argument in a message.
+- **A place named in a sentence is given as `Words`**, its title as the
+  place has it (`App::location_title`, `Place::title`), never said into a
+  string first: `Folder(title.say_plain())` loses the noun, and with it
+  the gender and forms a language takes it in.
 - **A name's bidirectional controls are drawn as tags, never obeyed**,
   wherever a name is drawn, in a sentence or alone (a row, a tile, the
   trail, a title, the rename field). The overrides, embeddings and
@@ -98,6 +114,12 @@ sentence, never a sentence assembled from pieces.
     leaves it as text: the clipboard, a file's name, a name kept as data
     (a saved search's), a command's argument, a measure of what is read.
     Those say `Words::say_plain()`: the window's language, no mark.
+  - **What assistive technology reads is said plainly too**: an
+    accessible name, description, value or announcement carries no mark
+    (speech needs no isolation, and a braille display shows a mark as a
+    stray cell). gpui leaves the isolates out of every node it hands
+    AccessKit (patch 0077), a text's runs apart, whose characters the
+    caret counts (`accessibility.md`).
   - **Words said for the window never become a `Name` or a `Folder`**
     (a place's title in "Could not read “…”"), nor text as written (a
     search's title made of words, `Words::as_written`, which agents read
@@ -111,12 +133,27 @@ sentence, never a sentence assembled from pieces.
     hands back parts holding whole isolates only: the argument cut out
     leaves no mark (the caller draws it, an element of its own that
     nothing beside it reorders), and a name its quotes.
+- **Keys a shortcut is pressed with are a `Keys`** (`Ctrl+Shift+C`, as
+  the window names them: `keymap::display_keys`, `Shell::keys_for`),
+  never a string placed in the message: where the window draws them, they
+  are isolated left to right (LRI U+2066 before them, PDI U+2069 after),
+  so a sentence written right to left never reorders their strokes, and
+  the sentence's punctuation around them stays its own. Plain everywhere
+  the marks never go (above: English, `say_in`, `say_plain`, data, which
+  brings them back as keys). Keys drawn alone, beside what they run (a
+  menu's row, the palette's), are made left to right where they are drawn
+  (`sides::shortcut`).
 - **A count is a count, a size a `Size`, a number with digits after the
   point a `Decimal`, a moment a `Moment`** (its `Shape`: a time, a date,
   a month…): each formatted for the system's number or date locale and
   the user's settings, never with `format!`, `{:.1}`, `strftime` or
   `to_string` in the code. A length of time is counts in a message.
-  Which settings: core's `locale` holds them for every owner alike, the
+  A count said short (in the room of a bar: 1.2k, 1.2万) is in the powers
+  of ten the language its words are said in counts in, as CLDR's
+  compact decimals say them (`locale::compact_power` of
+  `locale::said_in`: thousands in English, myriads in Japanese, lakhs in
+  Hindi, none below millions in German); each power's unit is a variant
+  of its message, never CLDR's text. Which settings: core's `locale` holds them for every owner alike, the
   dates setting's ISO 8601 choice (`set_iso_dates`) and the desktop's own
   12- or 24-hour switch (`set_hours`), so a plugin's dates follow them
   as the window's do.
@@ -137,6 +174,41 @@ sentence, never a sentence assembled from pieces.
   regular expression, a query, an identifier, what the system or an
   agent wrote) is `Words::as_written`, or an argument of that kind:
   shown as it is in every language.
+
+## Nouns
+
+- **A noun's translation gives it its grammar**, as attributes, in a
+  language that declares one (`tools/words/grammar`): its gender,
+  `.gender = feminine`, and each form the language declares, written
+  whole (`.dative = dem Papierkorb`; French `.definite = la Corbeille`,
+  `.de = de la Corbeille`). Every noun of the language is given every
+  one: a sentence may ask for any.
+- **A sentence chooses by an argument's gender** with
+  `{ GENDER($place) -> [feminine] … *[other] … }`, and **places an
+  argument in a form** with `{ FORM($place, case: "dative") }`: exactly
+  these two, valid Fluent, read by the resolver (`pattern::from_fluent`)
+  in the language the sentence is said in.
+  - A noun's attribute is read from the catalog that says the noun, while
+    that is the sentence's language: one language written one way
+    (`locale::same_writing`: `fr-CA` and `fr`, `zh-Hant` and `zh-HK`). A noun
+    said in English, or in another of the reader's languages, has none
+    there.
+  - What is no noun (a file's name, a path, text as written, a folder
+    the user named) has no gender, `other`, and is its own form, as it is
+    said (a name quoted). So every `GENDER` defaults to `*[other]`, which
+    says what such an argument takes.
+  - A form a name has not (one fusing a preposition with the noun's
+    article, French « du »: `de+` in the declaration) is taken only in a
+    `GENDER` variant other than `*[other]`, where the argument is a noun;
+    `*[other]` says what a name takes (« de Docs »).
+- **A language declares its grammar once**, a line of
+  `tools/words/grammar`: its genders and its forms, named as CLDR's
+  grammatical features name them (masculine, feminine, neuter, common;
+  nominative, accusative, genitive, dative, locative, instrumental…;
+  definite, the noun with its article), and nothing else. The program
+  reads nothing of it: it is what the catalogs' test holds a catalog to.
+- **A language that declares none** gives its nouns nothing, and its
+  sentences choose by no gender: they say a place as it is.
 
 ## Who reads it
 
@@ -185,6 +257,18 @@ sentence, never a sentence assembled from pieces.
 - **A plugin's catalogs are a contribution** like its commands:
   registered with its id, withdrawn on disable
   (`crates/skwir/tests/plugins_toggle.rs`).
+- **A reader's language finds a catalog by its script, then its region**
+  (`locale::matching`, ICU4X's likely subtags of both): a catalog of its
+  language written in its script, a catalog named by its language alone
+  being in the script that language is most likely written in (`zh` is
+  Simplified Chinese, `sr` Cyrillic Serbian). So `zh-TW`, `zh-HK` and
+  `zh-MO` find `zh-Hant`, `zh-CN` and `zh-SG` find `zh-Hans` or `zh`, and
+  `sr-Latn` never `sr`. Among those, its region's first, then one naming
+  none (`fr-CA` finds `fr`), then another region's (`pt-BR` finds
+  `pt-PT` only after `pt-BR` and `pt`). The code's English is the catalog
+  `en`, so an `en-GB` one comes first for a British reader. What the
+  system translates (a desktop entry's `Name[zh_TW]`, the type database's
+  `xml:lang`) is chosen the same way (`locale::Ranker`).
 - **When a language is offered** (ADR-139, 13): Automatic speaks a
   language only once `tools/words/offered` names it, and Skwir's own
   words are said in a system language only then (`locale::languages`).
@@ -193,7 +277,7 @@ sentence, never a sentence assembled from pieces.
   reviewed"), and said only to whoever chooses it. What the system
   translates itself (desktop entries' names, the type database's
   comments) is read in the user's languages whatever Skwir offers
-  (`locale::preferred`).
+  (`locale::preferred`), a pseudo-language none of them.
   - A message is translated once its language's catalog has its id, and
     reviewed once the `# draft` comment above it is gone: a model's or a
     machine's translation is a draft until a person who speaks the
@@ -211,8 +295,17 @@ sentence, never a sentence assembled from pieces.
     under 75% reviewed (`just words --release`, run by `lint-all`).
 - **The checks:**
   - `en.ftl` is current with the code;
-  - each catalog has the English's ids, arguments and attributes;
+  - each catalog has the English's ids and arguments;
   - every selector has its default;
+  - attributes only on a noun, each its language's (`tools/words/grammar`:
+    a gender it declares, a form it declares, text alone), every noun of
+    a language that declares a grammar given each; English gives none;
+  - `GENDER` and `FORM` only by the language's genders and forms, on an
+    argument the English gives that is no count or kind it chooses by;
+    every `GENDER` defaulting to `*[other]`; a form a name has not only in
+    a `GENDER` variant on the same argument other than `*[other]`. The
+    checks cannot see an argument's type: a `GENDER` on a name is not
+    refused, and says `*[other]`;
   - no id has two Englishes in one crate;
   - no catalog keeps an id the code no longer says;
   - the languages' shares counted and the record current; for a
@@ -222,11 +315,20 @@ sentence, never a sentence assembled from pieces.
 
 - **A test of what Skwir says checks it in English**, or checks the
   message's id and arguments; never a translation.
-- **A screen reader's names and agents' texts are tested like the
-  window's.**
+- **A screen reader's names are tested as it reads them**: in the
+  window's language with no isolation mark (`say_plain`'s text);
+  **agents' texts** in English.
 - **The pseudo-language** (accented, longer, every argument marked) runs
   in the real-window checks: English left on a surface, cut text and an
-  argument placed wrong show there.
+  argument placed wrong show there. Its right-to-left twin (CLDR's
+  `ar-XB`, `direction::pseudo_rtl`) is said the same way, the English
+  with its arguments marked, drawn right to left: one hook says both
+  (`pseudo_of`). To what a locale decides, both are English
+  (`locale::is_pseudo`): no catalog but English's, no system translation
+  (`ar-XB` never Arabic), English's numbers, dates, order and script.
+- **A language's grammar is tested on a catalog of the test's own**
+  (German's cases, French's articles), never on a shipped translation,
+  which its reviewers change.
 
 ## What stays English
 

@@ -24,6 +24,7 @@
 //! end centered in it as a plain row centers it. The texts are an ordinary
 //! child, as tall as they wrap.
 
+use crate::sides::Sides;
 use gpui::{
     AlignItems, AlignSelf, AnyElement, App, AvailableSpace, Bounds, Display, Div, Element,
     ElementId, FlexWrap, GlobalElementId, InspectorElementId, IntoElement, JustifyContent,
@@ -65,7 +66,13 @@ pub fn beside(texts: impl IntoElement, end: Div, share: f32) -> Beside {
             .items_center()
             // Narrower than its narrowest where the line is, what it
             // holds giving way as it can (an empty revert slot).
-            .child(div().ml_auto().min_w_0().flex().child(end.min_w_0()))
+            .child(
+                div()
+                    .margin_start_auto()
+                    .min_w_0()
+                    .flex()
+                    .child(end.min_w_0()),
+            )
             .into_any_element(),
         share,
     }

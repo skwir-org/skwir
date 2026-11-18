@@ -1,6 +1,13 @@
 //! A single-line text input entity: cursor, selection, IME-safe editing,
 //! clipboard, word moves. Reused by the address bar, the palette, and prompts.
 //! Modeled on gpui's `examples/input.rs`.
+//!
+//! Its words are a person's in any script (`skwir_core::segment`, ICU4X's):
+//! Ctrl and the arrows, Ctrl+Backspace and Ctrl+Delete go by them, a double
+//! click selects one and a drag after it goes on a word at a time, a triple
+//! click selects the whole text, and a screen reader is told where each
+//! begins. Chinese, Japanese and Thai, written without spaces, are words
+//! as English is. A secret is one word: nothing tells where its words are.
 
 use std::ops::Range;
 
@@ -15,6 +22,7 @@ use gpui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::theme::Theme;
+use skwir_core::segment;
 use skwir_core::words::Words;
 
 actions!(
@@ -311,6 +319,9 @@ pub struct TextInput {
     /// keeps the cursor in view (`scrolled`, in prepaint).
     scroll_x: Pixels,
     is_selecting: bool,
+    /// The word a double click selected, while the drag it starts goes on
+    /// a word at a time (`drag_select`).
+    selecting_words: Option<Range<usize>>,
     /// Where the pointer is while a drag selects, followed wherever it goes
     /// in the window (`TextElement::paint`).
     dragged_at: Option<Point<Pixels>>,
@@ -350,6 +361,7 @@ impl TextInput {
             last_bounds: None,
             scroll_x: px(0.),
             is_selecting: false,
+            selecting_words: None,
             dragged_at: None,
             autoscroll: None,
             history: History::default(),
@@ -781,11 +793,20 @@ impl TextInput {
 
     // ------------------------------------------------------------ mouse
 
+    /// A press: one places the caret (Shift: takes the selection there), a
+    /// double one selects the word under it (or the spaces, or the
+    /// punctuation), and a drag from it goes on a word at a time; a triple
+    /// one selects the whole text.
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.is_selecting = true;
-        if ev.click_count >= 2 {
-            self.selected_range = 0..self.content.len();
+        self.selecting_words = None;
+        if ev.click_count >= 3 {
+            self.select_all_now(cx);
+        } else if ev.click_count == 2 {
+            let word = self.word_under(ev.position);
+            self.selected_range = word.clone();
             self.selection_reversed = false;
+            self.selecting_words = Some(word);
             cx.notify();
         } else if ev.modifiers.shift {
             self.select_to(self.index_for_mouse_position(ev.position), cx);
@@ -800,8 +821,42 @@ impl TextInput {
 
     fn stop_selecting(&mut self) {
         self.is_selecting = false;
+        self.selecting_words = None;
         self.dragged_at = None;
         self.autoscroll = None;
+    }
+
+    /// The segment of the text drawn under `position` (`segment::segment_at`):
+    /// the character under it, as the line is drawn in either direction, or,
+    /// past an end, the one nearest. A secret's whole text: its words are not
+    /// told.
+    fn word_under(&self, position: Point<Pixels>) -> Range<usize> {
+        let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        else {
+            return 0..0;
+        };
+        if self.masked || self.content.is_empty() {
+            return 0..self.content.len();
+        }
+        let x = position.x - bounds.left() + self.scroll_x;
+        let at = line
+            .index_for_x(x)
+            .unwrap_or_else(|| line.closest_index_for_x(x));
+        segment::segment_at(&self.content, self.text_offset(at))
+    }
+
+    /// The selection a drag takes to `offset`: there, or, from a double
+    /// click, a word at a time, the word clicked always in it (`words`).
+    fn drag_select(&mut self, offset: usize, cx: &mut Context<Self>) {
+        match &self.selecting_words {
+            Some(word) => {
+                let (range, reversed) = by_words(&self.content, word, offset);
+                self.selected_range = range;
+                self.selection_reversed = reversed;
+                cx.notify();
+            }
+            None => self.select_to(offset, cx),
+        }
     }
 
     /// The pointer moved to `position` while a drag selects, inside the
@@ -813,7 +868,7 @@ impl TextInput {
             return;
         }
         self.dragged_at = Some(position);
-        self.select_to(self.index_for_mouse_position(position), cx);
+        self.drag_select(self.index_for_mouse_position(position), cx);
         let outside = self
             .last_bounds
             .is_some_and(|bounds| position.x < bounds.left() || position.x > bounds.right());
@@ -851,7 +906,7 @@ impl TextInput {
             return false;
         };
         let before = self.selected_range.clone();
-        self.select_to(offset, cx);
+        self.drag_select(offset, cx);
         // At an end of the text: nothing more to show.
         if self.selected_range == before {
             self.autoscroll = None;
@@ -995,17 +1050,16 @@ impl TextInput {
 
     /// Where Ctrl and an arrow move the caret from `offset`: the previous
     /// or next word in the text's order, the other way round where the line
-    /// reads right to left, whose next word is on its left.
+    /// reads right to left, whose next word is on its left (`word_toward`).
     fn word_from(&self, offset: usize, toward_left: bool) -> usize {
-        let backward = toward_left
-            != self
-                .drawn_bidi()
-                .is_some_and(|line| line.is_right_to_left());
-        if backward {
-            self.previous_word(offset)
-        } else {
-            self.next_word(offset)
+        // A secret's bullets read left to right.
+        if self.masked {
+            return if toward_left { 0 } else { self.content.len() };
         }
+        let right_to_left = self
+            .drawn_bidi()
+            .is_some_and(|line| line.is_right_to_left());
+        word_toward(&self.content, offset, toward_left, right_to_left)
     }
 
     /// The end of the selection drawn on the left (or the right): its
@@ -1038,18 +1092,49 @@ impl TextInput {
             .unwrap_or(self.content.len())
     }
 
+    /// The start of the word `offset` is in or after, in the text's order
+    /// (Ctrl+Backspace); a secret's start.
     fn previous_word(&self, offset: usize) -> usize {
-        self.content[..offset]
-            .unicode_word_indices()
-            .next_back()
-            .map_or(0, |(i, _)| i)
+        if self.masked {
+            return 0;
+        }
+        segment::word_start_before(&self.content, offset)
     }
 
+    /// The end of the word `offset` is in or before (Ctrl+Delete); a
+    /// secret's end.
     fn next_word(&self, offset: usize) -> usize {
-        self.content[offset..]
-            .unicode_word_indices()
-            .next()
-            .map_or(self.content.len(), |(i, w)| offset + i + w.len())
+        if self.masked {
+            return self.content.len();
+        }
+        segment::word_end_after(&self.content, offset)
+    }
+}
+
+/// Where Ctrl and the arrow toward the left (or the right) move the caret
+/// from `offset` in `text`: the start of the word it is in or after, or the
+/// end of the word it is in or before, in the text's order; the other way
+/// round where the line reads right to left, its next word on its left.
+fn word_toward(text: &str, offset: usize, toward_left: bool, right_to_left: bool) -> usize {
+    if toward_left == right_to_left {
+        segment::word_end_after(text, offset)
+    } else {
+        segment::word_start_before(text, offset)
+    }
+}
+
+/// The selection a drag from a double click on `word` takes to the caret
+/// place `offset` in `text`: the word, and each segment from it to the one
+/// `offset` is in, whole; and whether it is reversed (the drag went back,
+/// its moving end the start).
+fn by_words(text: &str, word: &Range<usize>, offset: usize) -> (Range<usize>, bool) {
+    if offset < word.start {
+        (segment::segment_at(text, offset).start..word.end, true)
+    } else if offset > word.end {
+        // The segment of the character before the place.
+        (word.start..segment::segment_at(text, offset - 1).end, false)
+    } else {
+        (word.clone(), false)
     }
 }
 
@@ -1241,11 +1326,26 @@ fn autoscroll_x(pointer: Pixels, left: Pixels, right: Pixels, scroll: Pixels) ->
 
 /// How far to scroll a line `width` wide in a field `field` wide, from
 /// `scroll`, so the cursor at `cursor` (and its 2 px bar) stays in view:
-/// no more than needed, never past either end, and none when it fits.
-fn scrolled(scroll: Pixels, width: Pixels, field: Pixels, cursor: Pixels) -> Pixels {
+/// no more than needed, never past either end, and none when it fits. The
+/// scroll is the line's x drawn at the field's left edge. A line that fits
+/// stands at the field's start: its left, or its right where the field is
+/// laid out right to left (`from_right`, the window mirrored: `sides`), the
+/// line then drawn from a negative scroll, its end and the cursor's bar
+/// against the right edge.
+fn scrolled(
+    scroll: Pixels,
+    width: Pixels,
+    field: Pixels,
+    cursor: Pixels,
+    from_right: bool,
+) -> Pixels {
     let bar = px(2.);
     if width + bar <= field {
-        return px(0.);
+        return if from_right {
+            width + bar - field
+        } else {
+            px(0.)
+        };
     }
     let scroll = if cursor < scroll {
         cursor
@@ -1399,9 +1499,29 @@ impl Element for TextElement {
             .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
-        // Unfocused, a long text shows its start, as a label would.
+        // Laid out right to left (the window mirrored, `sides`), the line
+        // stands at the field's right, its start, the placeholder too.
+        let from_right = window.layout_direction().is_rtl();
+        // Unfocused, a long text shows its start, as a label would: where
+        // its first character is drawn (its right end for a text read right
+        // to left), from the field's start.
         let scroll_x = if input.focus_handle.is_focused(window) {
-            scrolled(input.scroll_x, line.width, bounds.size.width, cursor_pos)
+            scrolled(
+                input.scroll_x,
+                line.width,
+                bounds.size.width,
+                cursor_pos,
+                from_right,
+            )
+        } else if from_right {
+            let start = line.width + px(2.) - bounds.size.width;
+            scrolled(
+                start,
+                line.width,
+                bounds.size.width,
+                line.x_for_index(0),
+                from_right,
+            )
         } else {
             px(0.)
         };
@@ -1520,6 +1640,10 @@ impl TextInput {
             self.content.to_string()
         };
         let lengths = units(&shown);
+        // A secret's words are not told: its run is one.
+        let word_starts = (!self.masked)
+            .then(|| word_starts(&shown, &lengths))
+            .flatten();
         let (anchor, focus) = if self.selection_reversed {
             (self.selected_range.end, self.selected_range.start)
         } else {
@@ -1540,6 +1664,9 @@ impl TextInput {
             let mut run = gpui::accesskit::Node::new(gpui::Role::TextRun);
             run.set_value(shown);
             run.set_character_lengths(lengths);
+            if let Some(starts) = word_starts {
+                run.set_word_starts(starts);
+            }
             builder.push_child(run_id, run);
             let at = |character_index| gpui::accesskit::TextPosition {
                 node: run_id,
@@ -1571,6 +1698,24 @@ fn units(text: &str) -> Vec<u8> {
         }
     }
     out
+}
+
+/// The unit each word of `text` starts at (`units`' `lengths`), as AccessKit
+/// reads a run's words: a screen reader moving by words in the field stops
+/// where Ctrl and the arrows do, in any script (`segment::words`). `None`
+/// where a word starts past what AccessKit counts (255 units): the run is
+/// then read as one word rather than with its words wrong.
+fn word_starts(text: &str, lengths: &[u8]) -> Option<Vec<u8>> {
+    let (mut unit, mut at) = (0, 0);
+    let mut starts = Vec::new();
+    for (start, _) in segment::words(text) {
+        while at < start && unit < lengths.len() {
+            at += usize::from(lengths[unit]);
+            unit += 1;
+        }
+        starts.push(u8::try_from(unit).ok()?);
+    }
+    Some(starts)
 }
 
 /// The unit that byte `offset` starts, or the end.
@@ -1736,9 +1881,85 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 #[cfg(test)]
 mod tests {
     use super::{
-        History, MOST_CHARS, Snapshot, Together, autoscroll_x, changes_nothing, fitted, held,
-        scrolled, selected_runs, snapped, typed_at, unit_at, units, utf16_to_utf8,
+        History, MOST_CHARS, Snapshot, Together, autoscroll_x, by_words, changes_nothing, fitted,
+        held, scrolled, selected_runs, snapped, typed_at, unit_at, units, utf16_to_utf8,
+        word_starts, word_toward,
     };
+
+    /// Ctrl and the arrows go by a script's words, spaces or none: the next
+    /// word's end toward the right, the previous one's start toward the
+    /// left, as the text reads.
+    #[test]
+    fn ctrl_and_the_arrows_go_by_words_in_every_script() {
+        let walk = |text: &str, toward_left: bool| {
+            let mut at = if toward_left { text.len() } else { 0 };
+            let mut stops = Vec::new();
+            loop {
+                let next = word_toward(text, at, toward_left, false);
+                if next == at {
+                    return stops;
+                }
+                stops.push(next);
+                at = next;
+            }
+        };
+        // Chinese: 我们|在|北京, each three bytes a character.
+        assert_eq!(walk("我们在北京", false), [6, 9, 15]);
+        assert_eq!(walk("我们在北京", true), [9, 6, 0]);
+        // Japanese: 設定|を|開く.
+        assert_eq!(walk("設定を開く", false), [6, 9, 15]);
+        // Thai: เปิด|ไฟล์ (open, file), marks kept with their letters.
+        assert_eq!(walk("เปิดไฟล์", false), ["เปิด".len(), "เปิดไฟล์".len()]);
+        // French: an apostrophe joins, a space and guillemets part; past
+        // the last word, the text's end.
+        assert_eq!(walk("l'école « été »", false), [8, 17, 20]);
+        assert_eq!(walk("l'école « été »", true), [12, 0]);
+    }
+
+    /// In a line read right to left, the next word is on the left: Ctrl
+    /// and Left go on through the text, Ctrl and Right back.
+    #[test]
+    fn ctrl_and_the_arrows_are_swapped_where_the_line_reads_right_to_left() {
+        let hebrew = "שלום עולם";
+        let (shalom, olam) = ("שלום".len(), hebrew.find('ע').unwrap());
+        assert_eq!(word_toward(hebrew, 0, true, true), shalom);
+        assert_eq!(word_toward(hebrew, shalom, true, true), hebrew.len());
+        assert_eq!(word_toward(hebrew, hebrew.len(), false, true), olam);
+        assert_eq!(word_toward(hebrew, olam, false, true), 0);
+        // Read left to right, the same line goes the other way.
+        assert_eq!(word_toward(hebrew, 0, false, false), shalom);
+    }
+
+    /// A drag from a double click takes whole words, the one clicked kept.
+    #[test]
+    fn a_drag_from_a_double_click_goes_a_word_at_a_time() {
+        let text = "copy 日本語の設定 now";
+        let word = text.find('日').unwrap()..text.find('の').unwrap();
+        assert_eq!(by_words(text, &word, word.start + 3), (word.clone(), false));
+        // On into 設定: to its end; back into "copy": from its start.
+        let settings = text.find('設').unwrap();
+        assert_eq!(
+            by_words(text, &word, settings + 3),
+            (word.start..settings + 6, false)
+        );
+        assert_eq!(by_words(text, &word, 2), (0..word.end, true));
+        // Past the end: to it.
+        assert_eq!(
+            by_words(text, &word, text.len()),
+            (word.start..text.len(), false)
+        );
+    }
+
+    /// A screen reader is told where each word starts, in units, in any
+    /// script; nothing where a start is past what AccessKit counts.
+    #[test]
+    fn a_screen_reader_is_told_where_words_start() {
+        let text = "Open 設定を開く now";
+        assert_eq!(word_starts(text, &units(text)), Some(vec![0, 5, 7, 8, 11]));
+        let long = "word ".repeat(60);
+        assert_eq!(word_starts(&long, &units(&long)), None);
+        assert_eq!(word_starts("", &[]), Some(vec![]));
+    }
 
     /// A field takes what fits of a paste, whole characters, and all of
     /// what fits; text replaced makes room.
@@ -1999,16 +2220,55 @@ mod tests {
     #[test]
     fn a_long_line_scrolls_just_enough_to_show_the_cursor() {
         // Fits: never scrolled, wherever the cursor is.
-        assert_eq!(scrolled(px(40.), px(90.), px(100.), px(90.)), px(0.));
+        assert_eq!(scrolled(px(40.), px(90.), px(100.), px(90.), false), px(0.));
         // The cursor at the end of a 300 px line in a 100 px field: its bar
         // ends at the field's right edge.
-        assert_eq!(scrolled(px(0.), px(300.), px(100.), px(300.)), px(202.));
+        assert_eq!(
+            scrolled(px(0.), px(300.), px(100.), px(300.), false),
+            px(202.)
+        );
         // Moving within what is shown scrolls nothing.
-        assert_eq!(scrolled(px(202.), px(300.), px(100.), px(250.)), px(202.));
+        assert_eq!(
+            scrolled(px(202.), px(300.), px(100.), px(250.), false),
+            px(202.)
+        );
         // Past the left edge: the cursor becomes the first thing shown.
-        assert_eq!(scrolled(px(202.), px(300.), px(100.), px(50.)), px(50.));
+        assert_eq!(
+            scrolled(px(202.), px(300.), px(100.), px(50.), false),
+            px(50.)
+        );
         // A line that got shorter (a deletion) is not left scrolled past its end.
-        assert_eq!(scrolled(px(202.), px(150.), px(100.), px(150.)), px(52.));
+        assert_eq!(
+            scrolled(px(202.), px(150.), px(100.), px(150.), false),
+            px(52.)
+        );
+    }
+
+    /// Laid out right to left, a line that fits stands at the field's
+    /// right, the cursor's bar inside it; one that does not scrolls as it
+    /// does left to right.
+    #[test]
+    fn a_field_laid_out_right_to_left_starts_at_its_right() {
+        // 90 px in 100: the line's x at the field's left edge is -8, so its
+        // right end and the cursor's 2 px bar meet the right edge.
+        assert_eq!(scrolled(px(0.), px(90.), px(100.), px(0.), true), px(-8.));
+        assert_eq!(scrolled(px(40.), px(90.), px(100.), px(90.), true), px(-8.));
+        // Longer than the field: the same scrolling as left to right.
+        assert_eq!(
+            scrolled(px(202.), px(300.), px(100.), px(250.), true),
+            px(202.)
+        );
+        assert_eq!(
+            scrolled(px(202.), px(300.), px(100.), px(50.), true),
+            px(50.)
+        );
+        // Unfocused, from its start: a Hebrew line's first character is at
+        // its right end, shown as it is; a Latin one's at its left.
+        assert_eq!(
+            scrolled(px(202.), px(300.), px(100.), px(298.), true),
+            px(202.)
+        );
+        assert_eq!(scrolled(px(202.), px(300.), px(100.), px(0.), true), px(0.));
     }
 
     #[test]

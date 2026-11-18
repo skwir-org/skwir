@@ -26,6 +26,7 @@
 //! which change it in place; "+ Filter" adds to them. A pill of the lens
 //! says in its tooltip that it stays as the pane goes elsewhere.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
@@ -671,7 +672,7 @@ fn pill_row(
             .h(sized(22.))
             .rounded_full()
             .when(chip.is_scope(), |d| d.border_color(theme.border))
-            .when(crossed, |d| d.pr(sized(2.)))
+            .when(crossed, |d| d.pad_end(sized(2.)))
             // The last fit: cut short rather than gone, its label keeping
             // both ends; the later a pill, the sooner it gives way, so the
             // first facet (the words typed, usually) stays readable.
@@ -761,7 +762,7 @@ fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> Words {
         () if folder => match keys("ui.search") {
             Some(keys) => words!(
                 search_bar_depth_folder_keys = "The words filter this folder only · its subfolders too are searched ({ $keys })",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "The tooltip of the pill saying how deep the words typed look: before the dot, what they do; after it, what its other choice does, and the shortcut that chooses it."
             ),
             None => words!(
@@ -774,7 +775,7 @@ fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> Words {
             Some(keys) => words!(
                 search_bar_depth_here_keys =
                     "The search looks in this folder only · its subfolders too ({ $keys })",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice, and the shortcut that chooses it."
             ),
             None => words!(
@@ -786,7 +787,7 @@ fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> Words {
             Some(keys) => words!(
                 search_bar_depth_below_keys =
                     "The search looks in the subfolders too · this folder only ({ $keys })",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "The tooltip of the pill saying how deep a search looks: before the dot, where it looks; after it, its other choice, and the shortcut that chooses it."
             ),
             None => words!(
@@ -810,7 +811,12 @@ fn tag_segments(
 ) -> gpui::Stateful<gpui::Div> {
     for (j, segment) in segments.iter().enumerate() {
         if j > 0 {
-            pill = pill.child(div().flex_none().text_color(muted).child("›"));
+            pill = pill.child(
+                div()
+                    .flex_none()
+                    .text_color(muted)
+                    .child(crate::sides::onward()),
+            );
         }
         pill = match segment.command.clone() {
             Some(up) => {

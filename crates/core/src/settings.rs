@@ -2159,7 +2159,9 @@ pub(crate) fn register(app: &crate::App) {
 
 /// The languages the setting offers: Automatic, English, each language the
 /// program ships catalogs in by its own name, and, in a debug build, the
-/// pseudo-language that shows what is not yet a message (`words::PSEUDO`).
+/// two pseudo-languages: the accented one that shows what is not yet a
+/// message (`words::PSEUDO`), and the right-to-left one that mirrors the
+/// window (`direction::PSEUDO_RTL`).
 /// A language Skwir does not offer yet (ADR-139, 13) says so, with how
 /// much of it there is: Automatic never picks it, and it is for whoever
 /// chooses it.
@@ -2209,6 +2211,13 @@ fn language_choices() -> Vec<(&'static str, Words)> {
             crate::words!(
                 settings_language_pseudo = "Pseudo (for testing)",
                 note = "The pseudo-language, English accented and longer, offered in builds for testing."
+            ),
+        ));
+        choices.push((
+            crate::direction::PSEUDO_RTL,
+            crate::words!(
+                settings_language_pseudo_rtl = "Pseudo, right to left (for testing)",
+                note = "The right-to-left pseudo-language, English drawn as a right-to-left language is, the window mirrored, offered in builds for testing."
             ),
         ));
     }
@@ -3709,6 +3718,10 @@ mod language_tests {
         ];
         if cfg!(debug_assertions) {
             wanted.push((crate::words::PSEUDO, "Pseudo (for testing)".to_owned()));
+            wanted.push((
+                crate::direction::PSEUDO_RTL,
+                "Pseudo, right to left (for testing)".to_owned(),
+            ));
         }
         assert_eq!(said, wanted);
         crate::words::withdraw("skwir");

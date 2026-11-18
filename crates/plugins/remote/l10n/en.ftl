@@ -624,6 +624,7 @@ remote_nearby_not_yet = Finding servers nearby is not available on { $system } y
 remote_nearby_server_kind = { $protocol } server
 
 # The place that lists the servers found on this network.
+# noun
 remote_nearby_title = Nearby
 
 # status: how the program ended, as the system says it (exit status: 2).

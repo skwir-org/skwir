@@ -15,6 +15,7 @@
 //! End) and across to the card at the same height (Left, Right), each a
 //! move in the pane's order, so Shift extends the selection as anywhere.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -601,7 +602,7 @@ fn column(
         .flex_none()
         .flex()
         .flex_col()
-        .border_r_1()
+        .border_end(px(1.))
         .border_color(theme.border)
         .child(header)
         .child(

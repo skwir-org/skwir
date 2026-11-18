@@ -152,6 +152,10 @@ pub(crate) struct A11y {
     /// The window's title, used to label the root node so assistive
     /// technology can tell windows apart.
     window_title: Option<SharedString>,
+    /// The language the window's words are in, a BCP 47 tag, said by the
+    /// root node: assistive technology reads every node in it, but those
+    /// that say their own (`aria_language`), in that language.
+    language: Option<SharedString>,
     /// The focus id we most recently reported as having no accessibility node,
     /// used to log at most once per focus change rather than every frame.
     last_focus_without_node: Option<FocusId>,
@@ -178,6 +182,7 @@ impl A11y {
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
             window_title,
+            language: None,
             last_focus_without_node: None,
             debug: debug::A11yDebug::default(),
             #[cfg(debug_assertions)]
@@ -203,6 +208,10 @@ impl A11y {
 
     pub(crate) fn set_window_title(&mut self, title: impl Into<SharedString>) {
         self.window_title = Some(title.into());
+    }
+
+    pub(crate) fn set_language(&mut self, language: Option<SharedString>) {
+        self.language = language;
     }
 
     /// Ensures that [`Self::is_active`] returns up to date information.
@@ -285,7 +294,8 @@ impl A11y {
         self.focus_ids.clear();
         self.node_bounds.clear();
         self.action_listeners.clear();
-        self.nodes.begin_frame(self.window_title.as_ref());
+        self.nodes
+            .begin_frame(self.window_title.as_ref(), self.language.as_ref());
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
@@ -479,8 +489,13 @@ impl A11yNodeBuilder {
         }
     }
 
-    /// Push the root node to start a new frame.
-    fn begin_frame(&mut self, window_title: Option<&SharedString>) {
+    /// Push the root node to start a new frame: labelled with the window's
+    /// title, in the window's language.
+    fn begin_frame(
+        &mut self,
+        window_title: Option<&SharedString>,
+        language: Option<&SharedString>,
+    ) {
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
@@ -490,6 +505,9 @@ impl A11yNodeBuilder {
         let mut root_node = accesskit::Node::new(accesskit::Role::Window);
         if let Some(title) = window_title {
             root_node.set_label(title.to_string());
+        }
+        if let Some(language) = language {
+            root_node.set_language(language.to_string());
         }
 
         self.ids_stack.push(ROOT_NODE_ID);
@@ -585,14 +603,50 @@ impl A11yNodeBuilder {
         };
 
         let nodes = std::mem::take(&mut self.all_nodes);
-        let update = TreeUpdate {
+        let mut update = TreeUpdate {
             nodes,
             tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
             tree_id: accesskit::TreeId::ROOT,
             focus,
         };
+        Self::leave_out_isolates(&mut update);
 
         Self::repair_tree_update(update)
+    }
+
+    /// Takes the bidirectional isolates (LRI, RLI, FSI, PDI: U+2066 to
+    /// U+2069) out of what each node says, its label, description, value and
+    /// placeholder: an application isolates a name inside a sentence for its
+    /// letters to be drawn in their order, which speech needs no mark for and
+    /// braille would show as cells of their own. A string is written again
+    /// only where it holds one. A text run (a node whose characters a caret
+    /// counts, `character_lengths`) keeps them, its offsets counting them.
+    fn leave_out_isolates(update: &mut TreeUpdate) {
+        fn is_isolate(c: char) -> bool {
+            matches!(c, '\u{2066}'..='\u{2069}')
+        }
+        fn without(text: Option<&str>) -> Option<String> {
+            let text = text?;
+            text.contains(is_isolate)
+                .then(|| text.chars().filter(|c| !is_isolate(*c)).collect())
+        }
+        for (_, node) in &mut update.nodes {
+            if node.role() == accesskit::Role::TextRun || !node.character_lengths().is_empty() {
+                continue;
+            }
+            if let Some(label) = without(node.label()) {
+                node.set_label(label);
+            }
+            if let Some(description) = without(node.description()) {
+                node.set_description(description);
+            }
+            if let Some(value) = without(node.value()) {
+                node.set_value(value);
+            }
+            if let Some(placeholder) = without(node.placeholder()) {
+                node.set_placeholder(placeholder);
+            }
+        }
     }
 
     /// Accesskit panics on invalid [`TreeUpdate`]s. This function defensively
@@ -657,7 +711,7 @@ mod tests {
 
     fn new_builder() -> A11yNodeBuilder {
         let mut builder = A11yNodeBuilder::new();
-        builder.begin_frame(None);
+        builder.begin_frame(None, None);
         builder
     }
 
@@ -952,5 +1006,80 @@ mod tests {
 
         let update = a11y.end_frame(Default::default());
         assert_eq!(update.focus, a);
+    }
+
+    // What a node says reaches assistive technology without the isolates
+    // that keep a name's letters in their order where it is drawn; a text
+    // run, whose offsets a caret counts, keeps them.
+    #[test]
+    fn isolates_are_left_out_of_what_a_node_says() {
+        let mut a11y = new_a11y();
+        let mut said = test_node();
+        said.set_label("Moved “\u{2068}a\u{2069}” to Trash");
+        said.set_description("\u{2066}x\u{2069} and \u{2067}y\u{2069}");
+        said.set_value("\u{2068}name\u{2069}");
+        said.set_placeholder("plain");
+        assert!(a11y.nodes.push(NodeId(1), said));
+        a11y.nodes.pop();
+        let mut run = accesskit::Node::new(Role::TextRun);
+        run.set_value("\u{2068}ab\u{2069}");
+        run.set_character_lengths([3, 1, 1, 3]);
+        assert!(a11y.nodes.push(NodeId(2), run));
+        a11y.nodes.pop();
+
+        let update = a11y.end_frame(Default::default());
+        let node = |id| {
+            update
+                .nodes
+                .iter()
+                .find(|(found, _)| *found == id)
+                .map(|(_, node)| node.clone())
+                .unwrap()
+        };
+        let said = node(NodeId(1));
+        assert_eq!(said.label(), Some("Moved “a” to Trash"));
+        assert_eq!(said.description(), Some("x and y"));
+        assert_eq!(said.value(), Some("name"));
+        assert_eq!(said.placeholder(), Some("plain"));
+        assert_eq!(node(NodeId(2)).value(), Some("\u{2068}ab\u{2069}"));
+    }
+
+    // The window's language is said by the root of its tree, every frame
+    // until it is unset; a node keeps its own.
+    #[test]
+    fn the_window_s_language_is_said_by_its_root() {
+        let root = |update: &accesskit::TreeUpdate| {
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == ROOT_NODE_ID)
+                .map(|(_, node)| node.clone())
+                .expect("the root is in the update")
+        };
+        let mut a11y = new_a11y();
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(root(&update).language(), None, "none until set");
+
+        a11y.set_language(Some("fr".into()));
+        for _ in 0..2 {
+            a11y.begin_frame();
+            let mut quoted = test_node();
+            quoted.set_language("de");
+            assert!(a11y.nodes.push(NodeId(1), quoted));
+            a11y.nodes.pop();
+            let update = a11y.end_frame(Default::default());
+            assert_eq!(root(&update).language(), Some("fr"));
+            let (_, node) = update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == NodeId(1))
+                .unwrap();
+            assert_eq!(node.language(), Some("de"));
+        }
+
+        a11y.set_language(None);
+        a11y.begin_frame();
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(root(&update).language(), None, "unset");
     }
 }

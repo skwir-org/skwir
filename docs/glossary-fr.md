@@ -45,6 +45,42 @@ decide by the English of the same id and its note for translators.
   keep `[1]` for the named one and add `[one]` for 0: « 0 élément ».
   `[many]` (a round million: « 1 000 000 de fichiers ») is optional.
 
+## Places in sentences
+
+Skwir's places are nouns (`# noun` above them in `en.ftl`): each French
+one is given its gender and two forms (`tools/words/grammar`'s `fr`
+line, drafted 2026-11-18), which a sentence naming a place reads.
+
+- **`.definite`**, the place with its article: « dans { FORM($place,
+  case: "definite") } » is « dans la Corbeille », and « dans Docs » for
+  a folder the user named, which has no article.
+- **`.de`**, the place after « de », its article fused (« du », « de
+  la », « de l’ »), which a name has not: write it inside a `GENDER`
+  selector, the name's « de » in `*[other]`:
+
+  ```
+  loading_opening = Ouverture { GENDER($place) ->
+          [masculine] { FORM($place, case: "de") }
+          [feminine] { FORM($place, case: "de") }
+         *[other] de { $place }
+      }…
+  ```
+- **`.gender`**, `masculine` or `feminine`, for what agrees with the
+  place (« la Corbeille est vide », « le Dossier personnel est vide »);
+  a name is `other`, whose words agree with neither (« Docs est vide »).
+- A place keeps its capital inside a sentence, as in a title (« dans la
+  Corbeille »). One that takes no article in prose (Récents, À
+  proximité) is its own `.definite`.
+
+| Place | `.gender` | `.definite` | `.de` |
+| --- | --- | --- | --- |
+| Home | masculine | le Dossier personnel | du Dossier personnel |
+| Trash | feminine | la Corbeille | de la Corbeille |
+| Recent | masculine | Récents | de Récents |
+| Shelf | feminine | l’Étagère | de l’Étagère |
+| Nearby | masculine | À proximité | d’À proximité |
+| Root (the system's volume) | feminine | la Racine | de la Racine |
+
 ## Terms
 
 | English | French | Note |

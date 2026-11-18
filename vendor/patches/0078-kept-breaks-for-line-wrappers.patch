@@ -1,0 +1,220 @@
+0078 kept-breaks-for-line-wrappers: A text beyond ASCII that a line wrapper wraps is segmented once, its breaks kept by its text in the text system for two generations of 4096 texts, so a name counted again at another width costs about what it did before 0072
+
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index dc9dd8b..e5fa12c 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -237,6 +237,8 @@ pub struct TextSystem {
+     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
+     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
+     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<CharWidthCache>>>,
++    /// Where texts the line wrappers wrapped may wrap (`line_breaks`).
++    kept_breaks: Mutex<line_breaks::KeptBreaks>,
+     fallback_font_stack: SmallVec<[Font; 2]>,
+     font_generation: Arc<AtomicUsize>,
+     missing_glyph_reporter: Arc<MissingGlyphReporter>,
+@@ -261,6 +263,7 @@ impl TextSystem {
+             raster_bounds: RwLock::default(),
+             font_ids_by_font: RwLock::default(),
+             wrapper_pool: Mutex::default(),
++            kept_breaks: Mutex::default(),
+             fallback_font_stack: smallvec![
+                 // TODO: Remove this when Linux have implemented setting fallbacks.
+                 font(".ZedMono"),
+@@ -571,6 +574,28 @@ impl TextSystem {
+         }
+     }
+ 
++    /// Where `text` may wrap, for a line wrapper: kept by the text beyond
++    /// ASCII, so a text wrapped again at another width is not segmented
++    /// again (`line_breaks::KeptBreaks`); ASCII found anew.
++    pub(crate) fn line_breaks(&self, text: &str) -> line_breaks::LineBreaks {
++        if text.is_ascii() {
++            return line_breaks::LineBreaks::of(text);
++        }
++        let mut kept = self.kept_breaks.lock();
++        if let Some(breaks) = kept.get(text) {
++            return breaks;
++        }
++        let found = line_breaks::LineBreaks::of(text);
++        kept.insert(text, found.clone());
++        found
++    }
++
++    /// How many texts' breaks are kept (`line_breaks`).
++    #[cfg(test)]
++    pub(crate) fn kept_breaks_len(&self) -> usize {
++        self.kept_breaks.lock().len()
++    }
++
+     /// Get the rasterized size and location of a specific, rendered glyph:
+     /// public, so that a caller can draw text into an image of its own (a
+     /// drag's image handed to the platform).
+diff --git a/crates/gpui/src/text_system/line_breaks.rs b/crates/gpui/src/text_system/line_breaks.rs
+index f53597a..fbeedbc 100644
+--- a/crates/gpui/src/text_system/line_breaks.rs
++++ b/crates/gpui/src/text_system/line_breaks.rs
+@@ -25,6 +25,7 @@
+ //! in, behind one seam (`segmenter`), where a data pack read at run time
+ //! could take its place.
+ 
++use collections::FxHashMap;
+ use icu_segmenter::{LineSegmenter, LineSegmenterBorrowed, options::LineBreakOptions};
+ use smallvec::{SmallVec, smallvec};
+ use std::sync::LazyLock;
+@@ -94,6 +95,58 @@ impl LineBreaks {
+     }
+ }
+ 
++/// Where texts beyond ASCII that the line wrappers wrapped may wrap, kept
++/// by their text (`TextSystem::line_breaks`): a text wrapped again at
++/// another width (a grid's names counted again as it is zoomed) is not
++/// segmented again. In two generations of `GENERATION` texts each: a text
++/// asked for is kept in the current one, and once it is full, it becomes
++/// the previous one and what was there goes, so what goes on being asked
++/// stays and the rest goes, at most twice `GENERATION` kept. ASCII is not
++/// kept: its table of steps is about as quick as a look-up.
++#[derive(Default)]
++pub(crate) struct KeptBreaks {
++    current: FxHashMap<Box<str>, LineBreaks>,
++    previous: FxHashMap<Box<str>, LineBreaks>,
++}
++
++impl KeptBreaks {
++    /// The texts a generation holds.
++    pub(crate) const GENERATION: usize = 4096;
++
++    /// `text`'s breaks, if kept (a copy: a name's are a few words, held
++    /// inline): moved into the current generation.
++    pub(crate) fn get(&mut self, text: &str) -> Option<LineBreaks> {
++        if let Some(breaks) = self.current.get(text) {
++            return Some(breaks.clone());
++        }
++        let (text, breaks) = self.previous.remove_entry(text)?;
++        self.keep(text, breaks.clone());
++        Some(breaks)
++    }
++
++    /// Keeps `breaks`, found for `text`, in the current generation.
++    pub(crate) fn insert(&mut self, text: &str, breaks: LineBreaks) {
++        self.keep(text.into(), breaks);
++    }
++
++    fn keep(&mut self, text: Box<str>, breaks: LineBreaks) {
++        if self.current.len() >= Self::GENERATION {
++            self.previous = std::mem::take(&mut self.current);
++        }
++        if self.current.capacity() == 0 {
++            // A generation's room at once, not grown a text at a time.
++            self.current.reserve(Self::GENERATION);
++        }
++        self.current.insert(text, breaks);
++    }
++
++    /// How many texts are kept.
++    #[cfg(test)]
++    pub(crate) fn len(&self) -> usize {
++        self.current.len() + self.previous.len()
++    }
++}
++
+ /// The segmenter that finds where text other than ASCII may wrap: ICU4X's,
+ /// the rules of UAX #14 and the dictionaries of Thai, Lao, Khmer and
+ /// Burmese compiled in (`compiled_data`), the standard's strict breaks
+@@ -604,6 +657,32 @@ mod tests {
+         assert_eq!(pieces("བོད་ཀྱི་སྐད་ཡིག"), ["བོད་", "ཀྱི་", "སྐད་", "ཡིག"]);
+     }
+ 
++    /// Breaks kept by their text stay while they go on being asked for, two
++    /// generations at most: one asked for in the previous generation comes
++    /// back to the current one; one not asked for in two goes.
++    #[test]
++    fn breaks_are_kept_by_their_text_for_two_generations() {
++        let mut kept = KeptBreaks::default();
++        let first = LineBreaks::of("été là");
++        kept.insert("été là", first.clone());
++        assert_eq!(kept.get("été là"), Some(first.clone()));
++        let others = |kept: &mut KeptBreaks, mark: char| {
++            for n in 0..KeptBreaks::GENERATION {
++                kept.insert(&format!("{mark}{n}"), LineBreaks::default());
++            }
++        };
++        others(&mut kept, 'é');
++        assert_eq!(
++            kept.get("été là"),
++            Some(first),
++            "from the previous generation"
++        );
++        others(&mut kept, 'à');
++        others(&mut kept, 'ü');
++        assert!(kept.get("été là").is_none(), "two generations without it");
++        assert!(kept.len() <= 2 * KeptBreaks::GENERATION);
++    }
++
+     #[test]
+     fn breaks_lie_between_characters() {
+         for text in [
+diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
+index 8e0916b..db67598 100644
+--- a/crates/gpui/src/text_system/line_wrapper.rs
++++ b/crates/gpui/src/text_system/line_wrapper.rs
+@@ -84,7 +84,11 @@ impl LineWrapper {
+         wrap_width: Pixels,
+         indent_adjustment: IndentAdjustment,
+     ) -> impl Iterator<Item = Boundary> + 'a {
+-        let breaks = LineFragment::breaks(fragments);
++        let breaks = match fragments {
++            // A text alone, as a name is counted: kept by its text.
++            [LineFragment::Text { text }] => self.text_system.line_breaks(text),
++            _ => LineFragment::breaks(fragments),
++        };
+         let mut width = px(0.);
+         let mut first_non_whitespace_ix = None;
+         let mut base_indent = None;
+@@ -423,7 +427,7 @@ impl LineWrapper {
+         // Where it may wrap, as `wrap_line` wraps it: each line after a
+         // newline with its own indent, no row before its first character
+         // other than a space.
+-        let breaks = LineBreaks::of(&text);
++        let breaks = self.text_system.line_breaks(&text);
+         let mut width = px(0.);
+         let mut line = 0usize;
+         let mut first_non_whitespace_ix = None;
+@@ -1339,6 +1343,37 @@ mod tests {
+         perform_test("abcdefgh…", &[4, 4, 4], &[4, 4, 3]);
+     }
+ 
++    /// A text beyond ASCII that a wrapper wraps is segmented once: wrapped
++    /// again (at another width, by another wrapper), its breaks are those
++    /// kept. ASCII is found anew.
++    #[test]
++    fn a_text_beyond_ascii_is_segmented_once() {
++        let wrapper = build_wrapper();
++        let text_system = wrapper.text_system.clone();
++        let thai = "ข้าวมันไก่.jpg";
++        assert_eq!(text_system.kept_breaks_len(), 0);
++        let first = text_system.line_breaks(thai);
++        assert_eq!(text_system.kept_breaks_len(), 1);
++        assert_eq!(text_system.line_breaks(thai), first);
++        text_system.line_breaks("photo.jpg");
++        assert_eq!(text_system.kept_breaks_len(), 1, "ASCII is not kept");
++        let mut wrapper = wrapper;
++        let wrapped = |wrapper: &mut LineWrapper, columns: f32| {
++            wrapper
++                .wrap_line(
++                    &[LineFragment::text("ข้าวมันไก่.jpg")],
++                    px(9.6 * columns),
++                    IndentAdjustment::NoIndent,
++                )
++                .count()
++        };
++        // Rows "ข้าว", "มัน" and the word with its extension cut where it
++        // overflows, from the breaks kept; on one line where it fits.
++        assert_eq!(wrapped(&mut wrapper, 6.), 3);
++        assert_eq!(wrapped(&mut wrapper, 20.), 0);
++        assert_eq!(wrapped(&mut wrapper, 6.), 3);
++    }
++
+     /// The wrapper wraps where UAX #14 lets a line wrap (`LineBreaks`), as
+     /// the shaped layout does: after a hyphen or a slash, between Chinese
+     /// or Japanese characters but never before their closing punctuation,

@@ -60,8 +60,14 @@ class Window:
 
     def env(self):
         drop = {"WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS", "PS1"}
-        env = {k: v for k, v in os.environ.items() if k not in drop}
+        # The window speaks English with British English's formats ("18
+        # November 2026", what the steps read), whatever the session's
+        # locale: its dates, numbers and order follow LC_TIME and the rest
+        # (ADR-139), and a French LC_TIME named the timeline's bar in French.
+        env = {k: v for k, v in os.environ.items()
+               if k not in drop and k != "LANGUAGE" and not k.startswith("LC_")}
         env.update(
+            LANG="en_GB.UTF-8",
             # The terminal's shell: a plain one, with nothing of the user's.
             SHELL="/bin/sh",
             DISPLAY=self.display,
@@ -481,6 +487,17 @@ def run(w):
     shown = str(w.files)
     check("it holds the folder's path, all of it selected",
           reads(w, (shown, len(shown))) and selected_in(w.focused()) == (0, len(shown)))
+
+    # The window's language, which every node inherits from its root
+    # (`a11y_language`): AT-SPI gives it as a text's "language" attribute;
+    # its Locale property stays empty (accesskit_unix 0.22 answers none).
+    def language():
+        node = w.focused()
+        return (Atspi.Text.get_default_attributes(node) or {}).get("language"), node.get_object_locale()
+
+    check("its text says the language the window speaks (English, as en-GB)",
+          until(lambda: language()[0] == "en-GB") or print("  read (language, Locale):", language()))
+    print(f"  AT-SPI's Locale of it: {language()[1]!r}")
     w.keys("End", "BackSpace", "Left")
     check("what is typed and where the caret goes are read back",
           reads(w, (shown[:-1], len(shown) - 2)))

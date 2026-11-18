@@ -383,10 +383,16 @@ fn period_words(bucket: usize, day: (i64, u32, u32)) -> String {
 }
 
 /// `999`, `1.2k`, `12k`, `1.2M`: a count said in the room of a bar, in
-/// thousands or millions, a tenth shown below ten of them unless nought.
+/// the powers of ten its language counts in short (CLDR's compact
+/// decimals, `locale::compact_power`: thousands and millions in English,
+/// 万 and 億 in Japanese, none below millions in German), a tenth shown
+/// below ten of them unless nought, never rounded up. The powers are those
+/// of the language the words are said in (`locale::said_in`), so a count
+/// is said whole in one language, its unit included.
 fn short_count(n: u64) -> String {
-    let short = |unit: u64| {
-        let tenths = n / (unit / 10);
+    let short = |power: u8| {
+        let unit = 10_u64.saturating_pow(u32::from(power));
+        let tenths = n / (unit / 10).max(1);
         let (value, digits) = if n < 10 * unit && !tenths.is_multiple_of(10) {
             (tenths, 1)
         } else {
@@ -397,20 +403,24 @@ fn short_count(n: u64) -> String {
             digits,
         }
     };
-    match n {
-        0..1_000 => crate::format::number(usize::try_from(n).unwrap_or(usize::MAX)),
-        1_000..1_000_000 => words!(
-            timeline_thousands = "{ $n }k",
-            n = short(1_000),
-            note = "A count in the room of a timeline's bar, in thousands (1.2k, 12k): n has at most one digit after the decimal sign."
+    let said = |power: u8| {
+        words!(
+            timeline_short_count = "{ $power ->
+                [3] { $n }k
+                [6] { $n }M
+                [9] { $n }B
+                [12] { $n }T
+               *[other] { $n }×10^{ $power }
+            }",
+            n = short(power),
+            power = power,
+            note = "A count in the room of a timeline's bar, shortened in a power of ten (power) as CLDR's short compact numbers for the catalog's language count: 3, 6, 9 and 12 in English and French (1.2k, 12k, 1.5M), 4, 8 and 12 in Chinese and Japanese (1.2万, 3億), 3, 5, 7… in Hindi (lakhs, crores). n is the count in that power, with at most one digit after the decimal sign. Give a variant for each power your language counts in."
         )
-        .say(),
-        _ => words!(
-            timeline_millions = "{ $n }M",
-            n = short(1_000_000),
-            note = "A count in the room of a timeline's bar, in millions (1.5M, 25M): n has at most one digit after the decimal sign."
-        )
-        .say(),
+    };
+    let language = skwir_core::locale::said_in(&said(3));
+    match skwir_core::locale::compact_power(&language, n) {
+        0 => crate::format::number(usize::try_from(n).unwrap_or(usize::MAX)),
+        power => said(power).say(),
     }
 }
 
@@ -1667,6 +1677,35 @@ mod tests {
         assert_eq!(short_count(12_345), "12k");
         assert_eq!(short_count(1_500_000), "1.5M");
         assert_eq!(short_count(25_000_000), "25M");
+        assert_eq!(short_count(2_345_678_901), "2.3B");
+    }
+
+    /// A short count is in the powers of the language its words are said
+    /// in: a catalog of a language that counts in myriads (a fixture,
+    /// Japanese's powers) says 12,345 in 10⁴, and a language whose catalog
+    /// lacks the message says it in English's powers.
+    #[test]
+    fn a_short_count_is_in_the_powers_of_the_words_language() {
+        const OWNER: &str = "test-short-count";
+        skwir_core::words::register(
+            OWNER,
+            "skwir-ui",
+            skwir_core::words::Catalog::new(
+                "ja",
+                "timeline_short_count = { $power ->\n    [4] { $n }M4\n    [8] { $n }M8\n   *[other] { $n }?\n}\n",
+            ),
+        );
+        skwir_core::locale::set_chosen(Some("ja".into()));
+        let said = [1_234, 12_345, 123_456_789].map(short_count);
+        skwir_core::locale::set_chosen(Some("de".into()));
+        let in_english = short_count(12_345);
+        skwir_core::locale::set_chosen(None);
+        skwir_core::words::withdraw(OWNER);
+        assert_eq!(said, ["1,234", "1.2M4", "1.2M8"]);
+        assert_eq!(
+            in_english, "12k",
+            "German's catalog lacks it: English's powers"
+        );
     }
 
     #[test]

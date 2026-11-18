@@ -3775,6 +3775,7 @@ dependencies = [
  "gpui_util",
  "heapless 0.9.3",
  "http_client",
+ "icu_segmenter",
  "image",
  "inventory",
  "itertools 0.14.0",
@@ -3808,8 +3809,6 @@ dependencies = [
  "thiserror 2.0.21",
  "ttf-parser",
  "unicode-bidi",
- "unicode-properties",
- "unicode-script",
  "url",
  "usvg 0.46.0",
  "uuid",
@@ -4038,6 +4037,7 @@ dependencies = [
  "etagere",
  "gpui",
  "gpui_util",
+ "icu_locale",
  "itertools 0.14.0",
  "log",
  "parking_lot",
@@ -4764,6 +4764,7 @@ dependencies = [
  "icu_decimal_data",
  "icu_locale_core",
  "icu_locale_fallback",
+ "icu_pattern",
  "icu_plurals",
  "icu_provider",
  "serde",
@@ -4799,6 +4800,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22b55746bcc43fb7397bc6590980c78a4981d62c04bd7a0db1e3cbc1d2d63457"
 
 [[package]]
+name = "icu_locale"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe8fa57bcddc15cb921582ee5259c5b77da39f946f188ca5213fad24d9241236"
+dependencies = [
+ "icu_collections",
+ "icu_locale_core",
+ "icu_locale_data",
+ "icu_locale_fallback",
+ "icu_provider",
+ "tinystr",
+ "zerovec",
+]
+
+[[package]]
 name = "icu_locale_core"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4811,6 +4827,12 @@ dependencies = [
  "writeable",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_locale_data"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a64014dac577a11d8d2cee48517c73c1984bd72ab11031e934269bd3cefb2ad9"
 
 [[package]]
 name = "icu_locale_fallback"
@@ -9227,8 +9249,11 @@ dependencies = [
  "icu_datetime",
  "icu_decimal",
  "icu_list",
+ "icu_locale",
  "icu_locale_core",
  "icu_plurals",
+ "icu_properties",
+ "icu_segmenter",
  "icu_time",
  "indexmap",
  "inotify",

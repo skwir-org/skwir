@@ -92,6 +92,9 @@ shelf_remove_verb = Retirer de l’Étagère
 
 # draft
 shelf_title = Étagère
+    .gender = feminine
+    .definite = l’Étagère
+    .de = de l’Étagère
 
 # draft
 shelf_trash = Mettre l’Étagère à la corbeille

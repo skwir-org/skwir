@@ -525,6 +525,9 @@ places_passphrase_refused = La phrase secrète n’a pas été acceptée
 
 # draft
 places_root = Racine
+    .gender = feminine
+    .definite = la Racine
+    .de = de la Racine
 
 # draft
 places_system_asks_not = Ce système ne demande pas lui-même la phrase secrète d’un volume

@@ -19678,3 +19678,103 @@ crates' authors whose dependency it is replace it in theirs.
 **Checked:** `cargo deny check` (advisories, bans, licences and sources
 ok), clippy `-D warnings` and the tests of core, the query and jump
 plugins (the new two by name), `just notices`.
+
+## 2026-11-18 (night): Every language's text, grammar and direction (ADR-139)
+
+The user chose seven follow-ups before sleeping (item 3 built, not only
+designed; the segmenter's data compiled in and measured; fonts in the
+docs only; right-to-left windows started). Six agents built them; the
+integrator relayed each one's gpui needs to the one that owned gpui,
+built, checked and wired.
+
+- **Line breaks by UAX #14** (gpui 0072, ICU4X's `LineSegmenter`,
+  dictionaries compiled in): kinsoku for Chinese and Japanese, Thai,
+  Lao, Khmer and Burmese by dictionary, Tibetan, the bidirectional
+  controls glue; ASCII by a table built from the standard, checked
+  against ICU4X on every pair, every string of up to four classes and
+  3,000 random ones. Where the standard differs from 0071's rule it is
+  followed (a line may wrap after a hyphen, after `/` and `?`; `C++` may
+  split). First wrap against 0071: ASCII 1.0–1.6×, French 2.3–3×,
+  Japanese 3–4.5×, Thai 6–9.5×; re-wrapped while resizing, breaks kept,
+  0.7–1.2×. Size: +1.09 MB in gpui's example, the four dictionaries
+  shared with the word segmenter.
+- **Word boundaries by ICU4X** (`skwir_core::segment`): Ctrl+arrows,
+  Ctrl+Backspace/Delete and a double-click in text fields by words in
+  every script (a double-click now selects the word, a triple-click
+  all); the settings search splits what is typed without spaces;
+  dictionaries kept over the models (Thai 73 ns a character against
+  8.4 µs). ASCII by Skwir's own rules, equal to ICU4X on 51,765,965
+  texts. Words add 1.95 MiB (the CJK dictionary), the four South-East
+  Asian dictionaries 2.99 MiB shared with gpui's.
+- **Per-language tables made data:** catalogs found by script and
+  region (`locale::matching`, likely subtags: `zh-HK` finds `zh-Hant`,
+  `sr-Latn` never the Cyrillic `sr`), the system's own translations
+  ranked the same way (`locale::Ranker`, which also found the type
+  database's `zh-Hant-TW` comments the old matching never reached);
+  Group by Name by CLDR's index headings in every script (ADR-130
+  amended); short counts in the language's own powers (CLDR's compact
+  decimals: 万 and 億, lakhs and crores); the pseudo-languages English
+  to everything a locale decides.
+- **Skwir's places carry their grammar** (ADR-139 amended, built as the
+  user chose): a noun (`words!(…, noun)`) may carry `.gender` and forms
+  in a translation, read by `GENDER($x)` and `FORM($x, case: "…")`
+  (valid Fluent), declared per language in `tools/words/grammar`,
+  checked by the catalogs' test; French first (« dans la Corbeille »,
+  « du Dossier personnel »). Quotes around a name are each catalog's
+  (`name_quote_open`/`close`), the code's table gone.
+- **A right-to-left pseudo-language** (`ar-XB`, debug builds) and **the
+  mirrored window** when the window speaks a right-to-left language
+  (gpui 0075's layout direction and right-to-left scrolling,
+  `crates/ui/src/sides.rs`): the sidebar on the right, the trail from
+  the right, list columns reversed, the grid from the top right, menus
+  hung by their top right, scroll bars at the left, arrows mirrored,
+  text fields from their right, documents left to right; a key sequence
+  in a sentence kept in its order (`Arg::Keys`, LRI…PDI). English
+  compared pixel for pixel with HEAD's: the same (one debug-only
+  Settings row differs: a fifth language choice makes it a plain
+  dropdown).
+- **Keyboards** (gpui 0076): a shortcut on a non-Latin layout is named
+  by the keymap's Latin layout or the US position, AZERTY's and
+  Persian's digit rows give their digits, the shifted comma and period
+  no longer swap. Seen on X11 and headless Wayland: Russian, Greek,
+  Arabic, Hebrew, Persian, Devanagari, AZERTY, German and pairs with
+  Russian act as US; the user's French Ergo-L names what it named.
+- **Fonts:** the Han fallback by language (gpui 0074: Japanese forms on
+  a `ja_JP` system, checked against reference renders); a toast once a
+  run when no installed font draws a script the reader reads, naming
+  the font; the guide's packages per system.
+- **The screen reader:** the window says its language (gpui 0073);
+  isolation marks left out of what assistive technology reads (0077);
+  submenus and the toolbar's fly-outs named by their words, not their
+  ids. `just a11y-check` passes, 87 steps (it now pins British English:
+  the session's French dates had reached it). AT-SPI's `Locale` stays
+  empty (accesskit_unix), so Orca on Linux cannot use the language yet.
+
+**Incident:** at 02:53 an agent ran the release binary from its own
+shell (`skwir --build`); it opened a window on the user's session for
+about two minutes and rewrote `~/.local/state/skwir/state.toml`. The
+user's own running window still held their windows and tabs. The rule
+(only Xvfb with scratch XDG folders) is in the agents' briefs and memory.
+The disk also filled once (~02:25): `target/debug/incremental` deleted
+twice (88 GB), no file found truncated.
+
+**Checked:** `just words --check` and `--release`; clippy `-D warnings`
+on every default crate and target; the default members' tests (3,553
+passed) and the binary's (234 of 235: `remote_folders
+a_mount_let_go_of_elsewhere_is_disconnected_all_the_same` timed out
+under the night's load at 5.2 s and passes alone in 0.27 s, three runs;
+a mid-night run had `scheduler::tests::a_held_lane_holds_only_its_own_jobs`
+fail once the same way, 5 of 5 alone); `just check-cross`; `cargo deny
+check`; `just notices`; gpui's tests on a copy (181, 486 for its whole
+library before 0077–0078), the patch series reproducing `vendor/zed`;
+`just a11y-check` (87 steps); window checks on Xvfb (the mirrored
+window and English against HEAD pixel for pixel, Hebrew and Arabic in
+fields, CJK forms against reference renders, the font warning) and
+headless Wayland (keyboards).
+
+**Not checked:** macOS and Windows beyond compiling (Windows' 0070 and
+0076 tests need a real Windows: Wine's DirectWrite selects no font);
+Orca by ear; full package builds; the binary's size and idle memory
+with every dictionary (`just idle-pss` is the user's display: an
+English window reads none of the data); Weblate's editing of attributes
+the English lacks.

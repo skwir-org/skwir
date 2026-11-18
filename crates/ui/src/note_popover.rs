@@ -12,6 +12,7 @@
 //! says. The popover is a popup like the toolbar's (`toolbar::popup_panel`):
 //! it takes the keyboard and gives it back, Escape or a click outside closes
 //! it, and so do scrolling the text and replacing it.
+use crate::sides::Sides;
 use crate::{
     inspector_text, latest::Latest, markdown::MarkdownStyle, preview::PreviewContent, shell::Shell,
     theme::Theme, toolbar,
@@ -299,7 +300,7 @@ pub(crate) fn popover(
         let pane = shell.pane;
         text = text.child(
             div()
-                .pl(px(
+                .pad_start(px(
                     style.list_indent * block.list_depth.saturating_sub(1) as f32
                 ))
                 .child(

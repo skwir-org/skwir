@@ -1,6 +1,7 @@
 //! Each pane's row (navigation, the address, how the pane shows its
 //! folder), the sidebar's header, and where the window's own tools go
 //! among them (see `corner`).
+use crate::sides::Sides;
 use crate::sizes::sized;
 use crate::{
     elements::{adaptive::AdaptiveRow, popover::PopoverAnchor},
@@ -1741,7 +1742,7 @@ pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         // On the frame as cards (`Theme::cards`), which paints it.
         .when_some(theme.chrome_ground(), gpui::Styled::bg)
         .when(theme.lines(), |d| {
-            d.border_b_1().border_r_1().border_color(theme.border)
+            d.border_b_1().border_end(px(1.)).border_color(theme.border)
         })
         .children(buttons)
         .child(toggle)
@@ -1981,7 +1982,14 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         // Sort by's or Group by's criteria, or what is said under the
         // names, beside their row.
         if let Some(name) = popup.sub.open.clone() {
-            let fly = toolbar::fly_out(popup, &name, view_submenu(shell, &name), shell, &theme, cx);
+            let fly = toolbar::fly_out(
+                popup,
+                submenu_label(&name),
+                view_submenu(shell, &name),
+                shell,
+                &theme,
+                cx,
+            );
             bar = bar.child(popup.sub.row.popup_beside(4, crate::menu::SUB_INSET, fly));
         }
     }
@@ -2222,7 +2230,11 @@ fn pane_row(
                         .line_height(sized(ADDRESS_LINE))
                         .child(shell.ui().address.clone()),
                 )
-                .child(div().pr(px(crate::omnibox::QUESTION_INSET)).child(help));
+                .child(
+                    div()
+                        .pad_end(px(crate::omnibox::QUESTION_INSET))
+                        .child(help),
+                );
             if shell.omnibox_card() {
                 gpui::deferred(typed)
                     .with_priority(crate::omnibox::CARD_PRIORITY + 1)
@@ -2280,7 +2292,7 @@ fn pane_row(
                 .h(sized(24.))
                 .min_w(px(24.))
                 .px(sized(4.))
-                .mr(px(2.)),
+                .margin_end(px(2.)),
         );
     }
     // Keep what the pane shows in the sidebar as it shows it (ADR-109), a
@@ -2329,7 +2341,7 @@ fn pane_row(
                     .h(sized(24.))
                     .min_w(px(24.))
                     .px(sized(4.))
-                    .mr(px(2.)),
+                    .margin_end(px(2.)),
             );
         }
     }
@@ -2358,7 +2370,7 @@ fn pane_row(
                     .h(sized(24.))
                     .min_w(px(24.))
                     .px(sized(4.))
-                    .mr(px(2.)),
+                    .margin_end(px(2.)),
             );
         }
     }
@@ -2631,10 +2643,11 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(St
 }
 
 /// The trail, laid out by flexbox alone: the segments are given last first to
-/// a right-to-left wrapping line one row tall, so the ones nearest the current
+/// a reversed wrapping line one row tall (its first child at the line's
+/// end, the right, the left mirrored), so the ones nearest the current
 /// place stay and the outermost wrap out of sight in a narrow pane, with
 /// nothing measured. Every segment but the outermost carries its chevron:
-/// a trail that starts with one visibly continues to the left.
+/// a trail that starts with one visibly continues toward its start.
 ///
 /// A chevron lists the places inside the segment before it (a folder's
 /// folders, a tag's tags), the one the trail goes on into marked; one more
@@ -2691,8 +2704,9 @@ fn breadcrumbs(
         .flex()
         .flex_row_reverse()
         .flex_wrap()
-        // `Start` is the left edge whatever the row's direction (taffy's
-        // `Start`/`End` follow the writing mode, not the flex direction).
+        // `Start` is the window's start edge (the left, the right
+        // mirrored) whatever the row's flex direction: taffy's `Start` and
+        // `End` follow the layout direction, not the flex direction.
         .justify_start()
         .line_height(sized(ADDRESS_LINE));
     // `index` names it among the row's: the segment it stands before, and
@@ -2753,12 +2767,7 @@ fn breadcrumbs(
                 }
             }))
             .child(
-                gpui::svg()
-                    .path(if shown {
-                        "toolbar/chevron.svg"
-                    } else {
-                        "toolbar/chevron-right.svg"
-                    })
+                crate::sides::symbol(if shown { "chevron" } else { "chevron-right" })
                     .size(px(12.))
                     .flex_none()
                     .text_color(theme.text_muted),
@@ -2878,8 +2887,7 @@ fn breadcrumbs(
                 None => d.h(sized(24.)).hover(move |s| s.bg(hover)),
             })
             .children(icon.map(|icon| {
-                gpui::svg()
-                    .path(format!("toolbar/{icon}.svg"))
+                crate::sides::symbol(icon)
                     .size(px(14.))
                     .flex_none()
                     .text_color(ink)

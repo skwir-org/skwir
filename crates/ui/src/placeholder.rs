@@ -68,7 +68,7 @@ pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
         detail: match new_folder_keys {
             Some(keys) => words!(
                 placeholder_drop_or_make = "Drop files here, or press { $keys } for a new folder.",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys.to_owned()),
                 note = "keys: the keys that make a folder, as the keymap says them (Ctrl+Shift+N)."
             ),
             None => words!(placeholder_drop = "Drop files here."),
@@ -87,7 +87,7 @@ pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
         detail: match show_keys {
             Some(keys) => words!(
                 placeholder_hidden_show_keys = "Show hidden files to see them ({ $keys }).",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys.to_owned()),
                 note = "keys: the keys that show hidden files (Ctrl+H)."
             ),
             None => words!(placeholder_hidden_show = "Show hidden files to see them."),

@@ -1760,6 +1760,11 @@ impl Shell {
         let Some(mut view) = self.take_view() else {
             return;
         };
+        let nav = if view.drawn_as_read() {
+            nav.along_line()
+        } else {
+            nav
+        };
         let handled = view.nav(nav, step, self, window, cx);
         let delta = view.nav_delta(nav, self);
         self.put_view(view);

@@ -1,6 +1,7 @@
 //! Context menu from the registry's `context` menu contributions, filtered by
 //! `when` tokens evaluated against the selection.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -1955,7 +1956,8 @@ fn sub_panel(
     div()
         .id("context-submenu")
         .role(gpui::Role::Menu)
-        .aria_label(name.to_owned())
+        // Named as its row says it: `name` is the submenu's id (ADR-139, 8).
+        .aria_label(submenu_title(&menu.items, name))
         .relative()
         .min_w(sized(180.))
         .p_1()
@@ -2143,12 +2145,11 @@ fn row_element(
             this.menu_activate(&row, window, cx);
         }))
         // An icon column, empty where an item has none, keeps titles aligned.
-        .child(div().size(px(16.)).flex_none().children(icon.map(|name| {
-            gpui::svg()
-                .path(format!("toolbar/{name}.svg"))
-                .size(px(16.))
-                .text_color(muted)
-        })))
+        .child(
+            div().size(px(16.)).flex_none().children(
+                icon.map(|name| crate::sides::symbol(&name).size(px(16.)).text_color(muted)),
+            ),
+        )
         .child(match chip {
             Some(color) => div()
                 .flex_1()
@@ -2159,16 +2160,21 @@ fn row_element(
         .children(keys.map(|keys| {
             div()
                 .flex_none()
-                .pl_6()
+                .pad_start(crate::sides::step(6.))
                 .text_small()
                 .text_color(muted)
-                .child(keys)
+                .child(crate::sides::shortcut(keys))
         }))
-        .children(chosen.map(|value| div().flex_none().pl_6().text_color(muted).child(value)))
+        .children(chosen.map(|value| {
+            div()
+                .flex_none()
+                .pad_start(crate::sides::step(6.))
+                .text_color(muted)
+                .child(value)
+        }))
         .when(is_parent, |d| {
             d.child(
-                gpui::svg()
-                    .path("toolbar/chevron-right.svg")
+                crate::sides::symbol("chevron-right")
                     .size(px(13.))
                     .text_color(muted),
             )
@@ -2275,16 +2281,11 @@ fn choice_element(
                     })
                     .when(on, |d| d.bg(theme.term))
                     .when(!on, |d| d.hover(|s| s.bg(theme.hover)))
-                    .child(
-                        gpui::svg()
-                            .path(format!("toolbar/{icon}.svg"))
-                            .size(px(15.))
-                            .text_color(if on {
-                                theme.accent_text
-                            } else {
-                                theme.text_muted
-                            }),
-                    )
+                    .child(crate::sides::symbol(&icon).size(px(15.)).text_color(if on {
+                        theme.accent_text
+                    } else {
+                        theme.text_muted
+                    }))
             }))
             .into_any_element(),
         ChoiceLook::Colors => div()
@@ -2412,7 +2413,12 @@ fn choice_element(
         }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(div().size(px(16.)).flex_none())
-        .child(div().flex_1().pr_4().child(choice.name.say()))
+        .child(
+            div()
+                .flex_1()
+                .pad_end(crate::sides::step(4.))
+                .child(choice.name.say()),
+        )
         .child(shown)
         .into_any_element()
 }

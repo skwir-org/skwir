@@ -3,7 +3,10 @@ r"""Each crate's English catalog, made from its code (ADR-139, 2).
 
 Every `words!(id = "English", …, note = "…")` of a crate's sources is a
 message of that crate: written to `<crate>/l10n/en.ftl`, sorted by id, its
-note as a comment above it. Never edited by hand.
+note as a comment above it. Never edited by hand. A noun of Skwir's
+(`words!(trash_title = "Trash", noun)`) says so on a comment line of its own,
+`noun`, after its note: a translation may give it its gender and forms
+(ADR-139, 5).
 
     tools/words/extract.py             write every crate's en.ftl
     tools/words/extract.py --check     fail where one is not what the code says
@@ -57,6 +60,10 @@ DEFAULT_SAID = re.compile(r"\bfn\s+enabled_by_default\b")
 DEFAULT_ANSWER = re.compile(r"fn\s+enabled_by_default\s*\(\s*&\s*self\s*\)\s*->\s*bool\s*\{\s*(true|false)\s*\}")
 # A message's first line in a catalog: its id at the line's start, then `=`.
 MESSAGE = re.compile(r"([a-zA-Z][a-zA-Z0-9_-]*) *=")
+# The flag that marks a noun, alone among a call's arguments, and the comment
+# line that says so in the English catalog.
+NOUN = re.compile(r",\s*noun\s*(?=[,)])")
+NOUN_LINE = "noun"
 
 # A number (an argument, or digits) and a unit's symbol after it, or a
 # dimension's `×`, parted by a plain space. Units written as words (pixels,
@@ -126,7 +133,8 @@ def skip_blank(text, at):
 
 
 def calls(text):
-    """Each `words!` call of `text`: its id, English and note."""
+    """Each `words!` call of `text`: its id, English, note, and whether it
+    is a noun."""
     for match in CALL.finditer(text):
         # One in a comment (a doc's example) is no call.
         line_start = text.rfind("\n", 0, match.start()) + 1
@@ -141,10 +149,14 @@ def calls(text):
             continue
         at = skip_blank(text, at + 1)
         english, at = string_literal(text, at)
-        # The rest, to the call's end, at its own depth: a note.
-        note, depth = "", 1
+        # The rest, to the call's end, at its own depth: a note, a noun.
+        note, depth, noun = "", 1, False
         while depth:
             c = text[at]
+            if c == "," and depth == 1 and NOUN.match(text, at):
+                noun = True
+                at = NOUN.match(text, at).end()
+                continue
             if c in "([{":
                 depth += 1
             elif c in ")]}":
@@ -157,7 +169,7 @@ def calls(text):
                 note, at = string_literal(text, at)
                 continue
             at += 1
-        yield ident.group(0), english, note
+        yield ident.group(0), english, note, noun
 
 
 def crate_of(path):
@@ -307,7 +319,8 @@ def read_offered(path):
 
 
 def catalogs():
-    """Each crate's messages, by its folder: id to (English, note)."""
+    """Each crate's messages, by its folder: id to (English, note,
+    whether it is a noun)."""
     found, problems = {}, []
     for path in sorted((ROOT / "crates").rglob("*.rs")):
         relative = path.relative_to(ROOT)
@@ -318,14 +331,14 @@ def catalogs():
             continue
         folder, _ = crate_of(path)
         messages = found.setdefault(folder, {})
-        for id_, english, note in calls(text):
+        for id_, english, note, noun in calls(text):
             if id_.startswith("test_"):
                 continue
             kept = messages.get(id_)
             if kept and kept[0] != english:
                 problems.append(f"{relative}: `{id_}` has two Englishes in its crate")
                 continue
-            messages[id_] = (english, note or (kept[1] if kept else ""))
+            messages[id_] = (english, note or (kept[1] if kept else ""), noun or bool(kept and kept[2]))
             parted = PARTED.search(english)
             if parted:
                 problems.append(
@@ -357,11 +370,13 @@ def indented(english):
 def ftl(messages):
     out = [HEADER]
     for id_ in sorted(messages):
-        english, note = messages[id_]
+        english, note, noun = messages[id_]
         english = indented(english)
         out.append("\n")
         for line in note.splitlines():
             out.append(f"# {line}\n")
+        if noun:
+            out.append(f"# {NOUN_LINE}\n")
         out.append(f"{id_} = {english}\n")
     return "".join(out)
 

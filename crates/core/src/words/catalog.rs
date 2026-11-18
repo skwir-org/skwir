@@ -77,6 +77,25 @@ impl Catalog {
         said
     }
 
+    /// The parts of attribute `name` of message `id` (a noun's `.gender`,
+    /// one of its forms), `None` where the message has none, or is not in
+    /// this catalog. Parsed when first asked, and kept as a message is.
+    pub fn attribute(&self, id: &str, name: &str) -> Option<Said> {
+        // An id holds no dot: "id.name" is no message's.
+        let key = format!("{id}.{name}");
+        if let Some(said) = self.said.lock().get(key.as_str()) {
+            return said.clone();
+        }
+        let index = self.index.get_or_init(|| index(&self.source));
+        let at = index
+            .binary_search_by(|entry| self.source[entry.id.clone()].cmp(id))
+            .ok()?;
+        let said: Option<Said> =
+            parse_attribute(&self.source[index[at].whole.clone()], name).map(Arc::from);
+        self.said.lock().insert(key.into(), said.clone());
+        said
+    }
+
     /// A slice of the source: borrowed where the source is the program's
     /// own (embedded), else copied.
     fn text(&self, range: Range<usize>) -> Cow<'static, str> {
@@ -182,6 +201,19 @@ fn parse(ftl: &str) -> Option<Vec<Element>> {
     from_fluent(message.value.as_ref()?).ok()
 }
 
+/// The value of attribute `name` of the one message `ftl` holds.
+fn parse_attribute(ftl: &str, name: &str) -> Option<Vec<Element>> {
+    let resource = fluent_syntax::parser::parse_runtime(ftl).ok()?;
+    let fluent_syntax::ast::Entry::Message(message) = resource.body.into_iter().next()? else {
+        return None;
+    };
+    let attribute = message
+        .attributes
+        .into_iter()
+        .find(|attribute| attribute.id.name == name)?;
+    from_fluent(&attribute.value).ok()
+}
+
 /// A catalog, as a plugin or the core registered it.
 struct Registered {
     owner: String,
@@ -190,7 +222,7 @@ struct Registered {
 }
 
 /// Every crate's catalogs, and what moves as they come and go.
-static CATALOGS: RwLock<(Vec<Registered>, u64)> = RwLock::new((Vec::new(), 0));
+static CATALOGS: RwLock<Registry> = RwLock::new((Vec::new(), 0));
 
 /// Say `domain`'s messages in `catalog`'s language, as `owner`'s: a
 /// contribution like its commands, withdrawn on disable (`withdraw`).
@@ -364,41 +396,103 @@ pub fn languages_of(domain: &str) -> Vec<String> {
 }
 
 /// Message `id` of `domain` in the first of `languages` that has it, and
-/// that language; `None` where English, the code's, comes first. A
-/// language is looked for as it is, then by fewer subtags (`fr-CA`, then
-/// `fr`).
+/// the tag of the catalog it is said from; `None` where English, the
+/// code's, comes first. A reader's language finds the catalogs closest to
+/// it (`locale::matching`: `fr-CA` finds `fr`, `zh-TW` finds `zh-Hant`,
+/// `sr-Latn` never `sr`), the closest first.
 pub fn find(domain: &str, id: &str, languages: &[String]) -> Option<(Said, String)> {
     let catalogs = CATALOGS.read();
+    let (_, said, tag) = saying(&catalogs, domain, id, languages)?;
+    Some((said, tag))
+}
+
+/// Attribute `attribute` of message `id` of `domain` (a noun's `.gender`),
+/// as the catalog [`find`] says the message from has it, and that
+/// catalog's tag: `Some((None, tag))` where that message has no such
+/// attribute, `None` where English says the message.
+pub fn find_attribute(
+    domain: &str,
+    id: &str,
+    attribute: &str,
+    languages: &[String],
+) -> Option<(Option<Said>, String)> {
+    let catalogs = CATALOGS.read();
+    let (kept, _, tag) = saying(&catalogs, domain, id, languages)?;
+    Some((kept.catalog.attribute(id, attribute), tag))
+}
+
+/// The catalog message `id` of `domain` is said from in the first of
+/// `languages` that has it, the message's parts, and the catalog's tag;
+/// `None` where English comes first.
+fn saying<'a>(
+    catalogs: &'a Registry,
+    domain: &str,
+    id: &str,
+    languages: &[String],
+) -> Option<(&'a Registered, Said, String)> {
     for language in languages {
-        for candidate in fallbacks(language) {
-            if candidate == super::ENGLISH {
+        for candidate in matched(catalogs, language).iter() {
+            if candidate.as_ref() == super::ENGLISH {
                 return None;
             }
             let found = catalogs
                 .0
                 .iter()
-                .find(|kept| kept.domain == domain && kept.catalog.language == candidate);
-            if let Some(said) = found.and_then(|kept| kept.catalog.message(id)) {
-                return Some((said, candidate.to_owned()));
+                .find(|kept| kept.domain == domain && *kept.catalog.language == **candidate);
+            if let Some((kept, said)) =
+                found.and_then(|kept| Some((kept, kept.catalog.message(id)?)))
+            {
+                return Some((kept, said, candidate.to_string()));
             }
         }
     }
     None
 }
 
-/// `fr-CA`, then `fr`: a tag, then shorter by a subtag at a time.
-fn fallbacks(tag: &str) -> impl Iterator<Item = &str> {
-    let mut next = Some(tag);
-    std::iter::from_fn(move || {
-        let tag = next?;
-        next = tag.rsplit_once('-').map(|(shorter, _)| shorter);
-        Some(tag)
-    })
+/// The catalogs registered, and what moves as they come and go.
+type Registry = (Vec<Registered>, u64);
+
+/// The tags of the catalogs each reader's tag finds, the closest first
+/// (`locale::matching`), as read for the catalogs registered at a
+/// revision: kept until they change, as every message said asks.
+type Matched = (u64, HashMap<Box<str>, Arc<[Box<str>]>>);
+
+static MATCHED: RwLock<Option<Matched>> = RwLock::new(None);
+
+/// The tags of the catalogs `reader` finds among those registered, the
+/// closest first, English (`en`) where its closeness puts it for a reader
+/// of English.
+fn matched(catalogs: &Registry, reader: &str) -> Arc<[Box<str>]> {
+    if let Some((revision, by_reader)) = MATCHED.read().as_ref()
+        && *revision == catalogs.1
+        && let Some(found) = by_reader.get(reader)
+    {
+        return Arc::clone(found);
+    }
+    let mut languages: Vec<&str> = catalogs
+        .0
+        .iter()
+        .map(|kept| kept.catalog.language.as_str())
+        .collect();
+    languages.sort_unstable();
+    languages.dedup();
+    let found: Arc<[Box<str>]> = crate::locale::matching(reader, languages)
+        .into_iter()
+        .map(Box::from)
+        .collect();
+    let mut kept = MATCHED.write();
+    let (revision, by_reader) = kept.get_or_insert_with(|| (catalogs.1, HashMap::new()));
+    if *revision != catalogs.1 {
+        *revision = catalogs.1;
+        by_reader.clear();
+    }
+    by_reader.insert(reader.into(), Arc::clone(&found));
+    found
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Catalog, Element, fallbacks};
+    use super::{Catalog, Element, find, find_attribute, register, withdraw};
 
     #[test]
     fn a_catalog_is_indexed_once_and_each_message_read_as_asked() {
@@ -429,12 +523,107 @@ mod tests {
         ));
     }
 
+    /// A reader's tag finds a catalog by its script and region, as CLDR's
+    /// likely subtags say them: each message from the closest catalog that
+    /// has it, English once the closest is the code's own.
     #[test]
-    fn a_tag_falls_back_a_subtag_at_a_time() {
+    fn a_reader_finds_the_catalog_of_its_script() {
+        const DOMAIN: &str = "skwir-test-catalog-scripts";
+        let said = |id: &str, languages: &[&str]| {
+            let languages: Vec<String> = languages.iter().map(|l| (*l).to_owned()).collect();
+            find(DOMAIN, id, &languages).map(|(said, tag)| {
+                let Some(Element::Text(text)) = said.first() else {
+                    panic!("a plain message");
+                };
+                (text.to_string(), tag)
+            })
+        };
+        for (tag, source) in [
+            ("zh-Hans", "word = 简\n"),
+            ("zh-Hant", "word = 繁\nonly = 只\n"),
+            ("zh-HK", "word = 港\n"),
+            ("sr", "word = ћ\n"),
+            ("pt-BR", "word = br\n"),
+            ("pt-PT", "word = pt\nonly = só\n"),
+            ("fr", "word = fr\nnoun = dossier\n    .gender = masculine\n"),
+            ("en-GB", "word = colour\n"),
+        ] {
+            register(DOMAIN, DOMAIN, Catalog::new(tag, source));
+        }
+        let of = |text: &str, tag: &str| Some((text.to_owned(), tag.to_owned()));
+        assert_eq!(said("word", &["zh-CN"]), of("简", "zh-Hans"));
+        assert_eq!(said("word", &["zh-SG"]), of("简", "zh-Hans"));
+        assert_eq!(said("word", &["zh"]), of("简", "zh-Hans"));
+        assert_eq!(said("word", &["zh-TW"]), of("繁", "zh-Hant"));
+        assert_eq!(said("word", &["zh-MO"]), of("繁", "zh-Hant"));
         assert_eq!(
-            fallbacks("sr-Latn-RS").collect::<Vec<_>>(),
-            ["sr-Latn-RS", "sr-Latn", "sr"]
+            said("word", &["zh-HK"]),
+            of("港", "zh-HK"),
+            "its own region first"
         );
-        assert_eq!(fallbacks("fr").collect::<Vec<_>>(), ["fr"]);
+        assert_eq!(
+            said("only", &["zh-HK"]),
+            of("只", "zh-Hant"),
+            "then its script's"
+        );
+        assert_eq!(
+            said("only", &["zh-CN", "en"]),
+            None,
+            "never another script's"
+        );
+        // Serbian: Cyrillic is its likely script, Latin another.
+        assert_eq!(said("word", &["sr-RS"]), of("ћ", "sr"));
+        assert_eq!(said("word", &["sr-Cyrl"]), of("ћ", "sr"));
+        assert_eq!(said("word", &["sr-Latn", "en"]), None);
+        // Portuguese, as written; another region's only for what its own
+        // lacks.
+        assert_eq!(said("word", &["pt-BR"]), of("br", "pt-BR"));
+        assert_eq!(said("word", &["pt-PT"]), of("pt", "pt-PT"));
+        assert_eq!(said("word", &["pt"]), of("br", "pt-BR"), "pt is Brazil's");
+        assert_eq!(said("only", &["pt-BR"]), of("só", "pt-PT"));
+        // A catalog named by its language alone, for each of its regions.
+        assert_eq!(said("word", &["fr-CA"]), of("fr", "fr"));
+        assert_eq!(said("word", &["fr-Latn-BE"]), of("fr", "fr"));
+        assert_eq!(
+            find_attribute(DOMAIN, "noun", "gender", &["fr-CA".to_owned()])
+                .map(|(gender, tag)| (gender.is_some(), tag)),
+            Some((true, "fr".to_owned()))
+        );
+        assert_eq!(
+            find_attribute(DOMAIN, "word", "gender", &["fr".to_owned()])
+                .map(|(gender, tag)| (gender.is_some(), tag)),
+            Some((false, "fr".to_owned()))
+        );
+        // English: a British reader's own catalog first, the code's before
+        // another region's.
+        assert_eq!(said("word", &["en-GB"]), of("colour", "en-GB"));
+        assert_eq!(said("word", &["en-US", "fr"]), None);
+        assert_eq!(said("word", &["en", "fr"]), None);
+        assert_eq!(said("word", &["de", "fr"]), of("fr", "fr"));
+        withdraw(DOMAIN);
+        assert_eq!(said("word", &["fr"]), None, "withdrawn");
+    }
+
+    #[test]
+    fn an_attribute_is_read_as_asked() {
+        let catalog = Catalog::new(
+            "fr",
+            "folder = dossier\n    .gender = masculine\n    .plural = dossiers\nplain = mot\n",
+        );
+        assert_eq!(
+            catalog.attribute("folder", "gender").as_deref(),
+            Some(&[Element::Text("masculine".into())][..])
+        );
+        assert_eq!(
+            catalog.attribute("folder", "plural").as_deref(),
+            Some(&[Element::Text("dossiers".into())][..])
+        );
+        assert!(catalog.attribute("folder", "case").is_none());
+        assert!(catalog.attribute("plain", "gender").is_none());
+        assert!(catalog.attribute("missing", "gender").is_none());
+        assert_eq!(
+            catalog.message("folder").as_deref(),
+            Some(&[Element::Text("dossier".into())][..])
+        );
     }
 }

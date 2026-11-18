@@ -455,7 +455,7 @@ impl Shell {
             let said = match self.keys_for("ui.terminal", &serde_json::json!({})) {
                 Some(keys) => words!(
                     terminal_open_first_keys = "Open the terminal first ({ $keys })",
-                    keys = keys,
+                    keys = skwir_core::words::Keys(keys),
                     note = "Said where paths are to be typed at the terminal while it has no \
                             shell; keys: the keys that open it (F4)."
                 ),

@@ -248,8 +248,8 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
 pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "fr",
-        messages: 6_797,
-        translated: 6_797,
+        messages: 6_803,
+        translated: 6_803,
         reviewed: 0,
         offered: false,
     },

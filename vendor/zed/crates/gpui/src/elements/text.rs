@@ -391,6 +391,7 @@ impl IntoElement for SharedString {
 pub struct StyledText {
     text: SharedString,
     said: Option<SharedString>,
+    language: Option<SharedString>,
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
@@ -403,6 +404,7 @@ impl StyledText {
         StyledText {
             text: text.into(),
             said: None,
+            language: None,
             runs: None,
             delayed_highlights: None,
             delayed_font_family_overrides: None,
@@ -415,6 +417,14 @@ impl StyledText {
     /// for words its character does not say.
     pub fn with_said(mut self, said: impl Into<SharedString>) -> Self {
         self.said = Some(said.into());
+        self
+    }
+
+    /// The language the text's words are in, a BCP 47 tag, where it is not
+    /// the window's (`Window::set_a11y_language`): assistive technology reads
+    /// them in it where the text is a node of its own (`InteractiveText`).
+    pub fn aria_language(mut self, language: impl Into<SharedString>) -> Self {
+        self.language = Some(language.into());
         self
     }
 
@@ -841,7 +851,7 @@ impl TextLayout {
                         lines: Default::default(),
                         len: 0,
                         line_height,
-                        text_align: text_style.text_align,
+                        text_align: text_style.text_align.resolve(text_style.layout_direction),
                         wrap_width,
                         truncate_width,
                         size: Some(Size::default()),
@@ -861,7 +871,7 @@ impl TextLayout {
                     lines,
                     len,
                     line_height,
-                    text_align: text_style.text_align,
+                    text_align: text_style.text_align.resolve(text_style.layout_direction),
                     wrap_width,
                     truncate_width,
                     size: Some(size),
@@ -922,7 +932,7 @@ impl TextLayout {
                 line.paint_background(
                     line_origin,
                     line_height,
-                    text_style.text_align,
+                    text_style.text_align.resolve(text_style.layout_direction),
                     Some(bounds),
                     window,
                     cx,
@@ -933,7 +943,7 @@ impl TextLayout {
                 line.paint(
                     line_origin,
                     line_height,
-                    text_style.text_align,
+                    text_style.text_align.resolve(text_style.layout_direction),
                     Some(bounds),
                     window,
                     cx,
@@ -1284,6 +1294,9 @@ impl Element for InteractiveText {
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
         node.set_value(self.text.said().to_string());
+        if let Some(language) = &self.text.language {
+            node.set_language(language.to_string());
+        }
     }
 
     fn request_layout(
@@ -1492,6 +1505,69 @@ impl IntoElement for InteractiveText {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A text aligned to its start (inherited, as its direction is) lies on
+    /// the left laid out left to right, on the right laid out right to left.
+    #[crate::test]
+    fn a_text_aligned_to_its_start_follows_the_layout_direction(cx: &mut crate::TestAppContext) {
+        use crate::{
+            AvailableSpace, LayoutDirection, ParentElement as _, Styled as _, TextAlign, div,
+            point, px,
+        };
+        let cx = cx.add_empty_window();
+        for (direction, align, drawn) in [
+            (
+                LayoutDirection::LeftToRight,
+                TextAlign::Start,
+                TextAlign::Left,
+            ),
+            (
+                LayoutDirection::RightToLeft,
+                TextAlign::Start,
+                TextAlign::Right,
+            ),
+            (
+                LayoutDirection::RightToLeft,
+                TextAlign::End,
+                TextAlign::Left,
+            ),
+            (
+                LayoutDirection::RightToLeft,
+                TextAlign::Center,
+                TextAlign::Center,
+            ),
+        ] {
+            let text = StyledText::new("abc");
+            let layout = text.layout().clone();
+            cx.draw(
+                point(px(0.), px(0.)),
+                AvailableSpace::max_size(),
+                move |_, _| {
+                    div()
+                        .w(px(200.))
+                        .layout_direction(direction)
+                        .text_align(align)
+                        .child(div().child(text))
+                },
+            );
+            let laid = layout.0.borrow().as_ref().map(|inner| inner.text_align);
+            assert_eq!(laid, Some(drawn), "{direction:?} {align:?}");
+        }
+    }
+
+    #[test]
+    fn a_text_says_its_language_where_it_has_one() {
+        let quoted = InteractiveText::new("quoted", StyledText::new("Hallo").aria_language("de"));
+        let mut node = accesskit::Node::new(accesskit::Role::Label);
+        quoted.write_a11y_info(&mut node);
+        assert_eq!(node.value(), Some("Hallo"));
+        assert_eq!(node.language(), Some("de"));
+
+        let plain = InteractiveText::new("plain", StyledText::new("Bonjour"));
+        let mut node = accesskit::Node::new(accesskit::Role::Label);
+        plain.write_a11y_info(&mut node);
+        assert_eq!(node.language(), None, "the window's, inherited");
+    }
 
     #[test]
     fn test_into_element_for() {

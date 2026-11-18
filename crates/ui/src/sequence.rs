@@ -4,6 +4,7 @@
 //! the foot of the window lists what can follow: the hints that apply
 //! where the focus is and begin with what was typed.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, Keystroke, Window, div, prelude::*};
@@ -86,7 +87,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let sequence = shell.sequence.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let caps = |keys: &str, theme: &Theme| {
-        let mut row = div().flex().flex_none().items_center().gap(sized(6.));
+        // Strokes and keys left to right in every language, as shortcuts
+        // are written (`sides::shortcut`).
+        let mut row = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(sized(6.))
+            .left_to_right();
         for stroke in keymap::key_caps(keys) {
             let mut caps = div().flex().items_center().gap(sized(3.));
             for cap in stroke {

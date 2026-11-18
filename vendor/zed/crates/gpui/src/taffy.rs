@@ -1,6 +1,6 @@
 use crate::{
-    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
-    Style, Window, size,
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, LayoutDirection, Length,
+    Pixels, Point, Size, Style, Window, size,
     util::{
         ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
         round_to_device_pixel,
@@ -64,9 +64,11 @@ impl TaffyLayoutEngine {
         style: Style,
         rem_size: Pixels,
         scale_factor: f32,
+        direction: LayoutDirection,
         children: &[LayoutId],
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let mut taffy_style = style.to_taffy(rem_size, scale_factor);
+        taffy_style.direction = direction.into();
 
         if children.is_empty() {
             self.taffy
@@ -94,8 +96,10 @@ impl TaffyLayoutEngine {
             &mut App,
         ) -> Size<Pixels>
         + 'static,
+        direction: LayoutDirection,
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let mut taffy_style = style.to_taffy(rem_size, scale_factor);
+        taffy_style.direction = direction.into();
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
@@ -440,6 +444,15 @@ fn border_widths_to_taffy(
         right: snap(&widths.right),
         bottom: snap(&widths.bottom),
         left: snap(&widths.left),
+    }
+}
+
+impl From<LayoutDirection> for taffy::style::Direction {
+    fn from(direction: LayoutDirection) -> Self {
+        match direction {
+            LayoutDirection::LeftToRight => taffy::style::Direction::Ltr,
+            LayoutDirection::RightToLeft => taffy::style::Direction::Rtl,
+        }
     }
 }
 

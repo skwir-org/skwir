@@ -1343,6 +1343,12 @@ keymap_where = Where
 # pane, selection, single, dir, file and folder are words the field takes: never translated.
 keymap_where_description = Where the keys work: empty for anywhere, pane for the file list, with conditions such as selection, single, dir, file, folder
 
+# The mark that closes a name Skwir quotes in a sentence: your language's closing quotation mark, with the space it takes inside it, if any (in French, a narrow no-break space then »: { "\u202F" }»).
+name_quote_close = ”
+
+# The mark that opens a name Skwir quotes in a sentence (a file's, a place's, a tag's): your language's opening quotation mark, with the space it takes inside it, if any (in French, « then a narrow no-break space: «{ "\u202F" }). Skwir puts it before every name it quotes: write no quotation marks around a name's argument in a message.
+name_quote_open = “
+
 # A step of a plan: write a file's notes alike to every place that keeps them. Begins in lower case.
 notes_agree = make the notes of { $name } agree
 
@@ -2310,6 +2316,9 @@ settings_language_incomplete = { $language } — incomplete, { $translated }% tr
 
 # The pseudo-language, English accented and longer, offered in builds for testing.
 settings_language_pseudo = Pseudo (for testing)
+
+# The right-to-left pseudo-language, English drawn as a right-to-left language is, the window mirrored, offered in builds for testing.
+settings_language_pseudo_rtl = Pseudo, right to left (for testing)
 
 # This language's name in itself, as the Language setting lists it in every language: Français in the French catalog, Deutsch in the German one.
 settings_language_self = English

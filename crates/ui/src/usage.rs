@@ -1459,6 +1459,11 @@ impl PaneView for UsageView {
     fn id(&self) -> &'static str {
         crate::view::USAGE
     }
+    /// The treemap is drawn as the screen is, never mirrored: Left goes to
+    /// the box at the left.
+    fn drawn_as_read(&self) -> bool {
+        false
+    }
     fn refresh(&mut self, shell: &mut Shell, cx: &mut Context<Shell>) {
         shell.refresh_usage(cx);
     }
@@ -1920,7 +1925,7 @@ fn deleting_frees(shell: &Shell) -> Option<String> {
         |keys| {
             words!(
                 usage_trash_keys_frees_nothing = "{ $keys } moves to the Trash, which frees no room until it is emptied",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "The line under Usage's map while something is selected. keys: the keys that move it to the Trash (Delete)."
             )
         },
@@ -1928,7 +1933,7 @@ fn deleting_frees(shell: &Shell) -> Option<String> {
     let delete = shell.keys_here("delete", &args).map(|keys| {
         words!(
             usage_delete_keys = "{ $keys } deletes for good",
-            keys = keys,
+            keys = skwir_core::words::Keys(keys),
             note = "The line under Usage's map while something is selected, after what the Trash frees. keys: the keys that delete it for good (Shift+Delete)."
         )
         .say()

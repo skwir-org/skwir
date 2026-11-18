@@ -18,6 +18,7 @@ jump_plugin_description = Frecency jump from zoxide and recently used files; the
 jump_plugin_title = Jump
 
 # The place listing the files recently used in any application, in the sidebar and the address.
+# noun
 jump_recent = Recent
 
 jump_recent_empty = No recent files

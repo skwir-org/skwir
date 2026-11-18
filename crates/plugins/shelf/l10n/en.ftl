@@ -68,6 +68,7 @@ shelf_remove_description = Take entries off the shelf
 shelf_remove_verb = Remove from Shelf
 
 # The shelf as a place: in the sidebar, its tab, its count in the footer.
+# noun
 shelf_title = Shelf
 
 shelf_trash = Trash shelf

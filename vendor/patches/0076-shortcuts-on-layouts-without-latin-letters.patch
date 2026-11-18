@@ -1,0 +1,510 @@
+0076 shortcuts-on-layouts-without-latin-letters: Linux: a shortcut on a layout whose letters are not Latin is named by the keymap's first Latin layout, or a US one where it has none, never by its own ASCII symbols; a shortcut on a digit row that types no digit names its digit; guess_ascii knows the digit row, minus and equals, and no longer swaps less and greater
+
+diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
+index f519ed9..4e54aaa 100644
+--- a/crates/gpui_linux/src/linux/platform.rs
++++ b/crates/gpui_linux/src/linux/platform.rs
+@@ -1452,9 +1452,35 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
+     }
+ }
+ 
++/// What the key at `keycode` gives on a US layout, with Shift or without:
++/// what names a shortcut on a layout that has no Latin letters.
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
+     let c = match (keycode.raw(), shift) {
++        (10, false) => '1',
++        (11, false) => '2',
++        (12, false) => '3',
++        (13, false) => '4',
++        (14, false) => '5',
++        (15, false) => '6',
++        (16, false) => '7',
++        (17, false) => '8',
++        (18, false) => '9',
++        (19, false) => '0',
++        (10, true) => '!',
++        (11, true) => '@',
++        (12, true) => '#',
++        (13, true) => '$',
++        (14, true) => '%',
++        (15, true) => '^',
++        (16, true) => '&',
++        (17, true) => '*',
++        (18, true) => '(',
++        (19, true) => ')',
++        (20, false) => '-',
++        (20, true) => '_',
++        (21, false) => '=',
++        (21, true) => '+',
+         (24, _) => 'q',
+         (25, _) => 'w',
+         (26, _) => 'e',
+@@ -1494,9 +1520,9 @@ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
+         (57, _) => 'n',
+         (58, _) => 'm',
+         (59, false) => ',',
+-        (59, true) => '>',
++        (59, true) => '<',
+         (60, false) => '.',
+-        (60, true) => '<',
++        (60, true) => '>',
+         (61, false) => '/',
+         (61, true) => '?',
+ 
+@@ -1517,6 +1543,108 @@ fn shifts_space(state: &State, keycode: Keycode) -> bool {
+         && state.get_keymap().key_get_syms_by_level(keycode, layout, 0) == [Keysym::space]
+ }
+ 
++/// Whether each layout of a keymap is Latin: gives a letter from a to z at
++/// the first level of some key (as Firefox's `IsLatinGroup` asks). Kept with
++/// the keymap last asked about, which it holds so no other is made at its
++/// address meanwhile.
++#[cfg(any(feature = "wayland", feature = "x11"))]
++fn latin_layouts(keymap: &xkb::Keymap) -> std::rc::Rc<[bool]> {
++    thread_local! {
++        static KEPT: RefCell<Option<(xkb::Keymap, std::rc::Rc<[bool]>)>> =
++            const { RefCell::new(None) };
++    }
++    KEPT.with(|kept| {
++        let mut kept = kept.borrow_mut();
++        if let Some((cached, latin)) = kept.as_ref()
++            && cached.get_raw_ptr() == keymap.get_raw_ptr()
++        {
++            return latin.clone();
++        }
++        let latin: std::rc::Rc<[bool]> = (0..keymap.num_layouts())
++            .map(|layout| {
++                (keymap.min_keycode().raw()..=keymap.max_keycode().raw()).any(|code| {
++                    keymap
++                        .key_get_syms_by_level(Keycode::new(code), layout, 0)
++                        .iter()
++                        .any(|sym| (Keysym::a.raw()..=Keysym::z.raw()).contains(&sym.raw()))
++                })
++            })
++            .collect();
++        *kept = Some((keymap.clone(), latin.clone()));
++        latin
++    })
++}
++
++/// What names a shortcut's key (Control, Alt or Super held) on a layout
++/// whose letters are not Latin.
++#[cfg(any(feature = "wayland", feature = "x11"))]
++enum ShortcutKey {
++    /// The key's own: its layout is Latin.
++    Own,
++    /// What the key gives in the keymap's first Latin layout, at the level
++    /// the same modifiers give there.
++    Latin(xkb::LayoutIndex, Keysym),
++    /// What it gives on a US layout (`guess_ascii`): the keymap has no
++    /// Latin layout.
++    UsPosition,
++}
++
++/// What names a shortcut held at `keycode`: a layout of Greek, Cyrillic,
++/// Hebrew or Arabic letters names it as the keymap's first Latin layout
++/// does, or as a US layout does where it has none, never by its own
++/// ASCII symbols (Greek's `;` on Q, Hebrew's `'` on W).
++#[cfg(any(feature = "wayland", feature = "x11"))]
++fn shortcut_key(state: &State, keycode: Keycode) -> ShortcutKey {
++    let keymap = state.get_keymap();
++    let latin = latin_layouts(&keymap);
++    let layout = state.key_get_layout(keycode);
++    if latin.get(layout as usize).copied().unwrap_or(true) {
++        return ShortcutKey::Own;
++    }
++    let Some(first) = latin.iter().position(|is| *is) else {
++        return ShortcutKey::UsPosition;
++    };
++    let first = first as xkb::LayoutIndex;
++    let level = state.key_get_level(keycode, first);
++    match keymap.key_get_syms_by_level(keycode, first, level).first() {
++        Some(sym) => ShortcutKey::Latin(first, *sym),
++        None => ShortcutKey::UsPosition,
++    }
++}
++
++/// The digit a shortcut held on the digit row names, where the key gives
++/// none at its first level (AZERTY's `&` for 1, Persian's `۱`): the one a
++/// level of it gives, the lowest first, else its US digit. `None` off the
++/// row, and where its first level is a digit: a US or German layout's
++/// shifted digits keep their symbols' names (`ctrl-!`).
++#[cfg(any(feature = "wayland", feature = "x11"))]
++fn digit_of_row(state: &State, keycode: Keycode, layout: xkb::LayoutIndex) -> Option<char> {
++    if !(10..=19).contains(&keycode.raw()) {
++        return None;
++    }
++    let keymap = state.get_keymap();
++    let digit = |sym: &Keysym| {
++        (Keysym::_0.raw()..=Keysym::_9.raw())
++            .contains(&sym.raw())
++            .then(|| char::from(b'0' + (sym.raw() - Keysym::_0.raw()) as u8))
++    };
++    if keymap
++        .key_get_syms_by_level(keycode, layout, 0)
++        .iter()
++        .any(|sym| digit(sym).is_some())
++    {
++        return None;
++    }
++    (0..keymap.num_levels_for_key(keycode, layout))
++        .find_map(|level| {
++            keymap
++                .key_get_syms_by_level(keycode, layout, level)
++                .iter()
++                .find_map(digit)
++        })
++        .or_else(|| guess_ascii(keycode, false))
++}
++
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+ pub(super) fn keystroke_from_xkb(
+     state: &State,
+@@ -1525,110 +1653,151 @@ pub(super) fn keystroke_from_xkb(
+ ) -> gpui::Keystroke {
+     let key_utf32 = state.key_get_utf32(keycode);
+     let key_utf8 = state.key_get_utf8(keycode);
++    // A shortcut on a layout whose letters are not Latin is named as the
++    // keymap's Latin layout, or a US one, names it (`shortcut_key`): what
++    // it types stays its own `key_char`.
++    let shortcut = modifiers.control || modifiers.alt || modifiers.platform;
++    let named_by = if shortcut {
++        shortcut_key(state, keycode)
++    } else {
++        ShortcutKey::Own
++    };
++    let (name_layout, name_utf32, name_utf8) = match named_by {
++        ShortcutKey::Latin(layout, sym) => {
++            (layout, xkb::keysym_to_utf32(sym), xkb::keysym_to_utf8(sym))
++        }
++        _ => (state.key_get_layout(keycode), key_utf32, key_utf8.clone()),
++    };
+     // The space bar is Space with Shift too, whatever the layout types there
+     // (a no-break space, a narrow one, a zero-width non-joiner): bindings
+     // name `shift-space`, never those. What it types stays its `key_char`.
+     let key_sym = if modifiers.shift && shifts_space(state, keycode) {
+         Keysym::space
++    } else if let ShortcutKey::Latin(_, sym) = named_by {
++        sym
+     } else {
+         state.key_get_one_sym(keycode)
+     };
++    let us_position = match named_by {
++        ShortcutKey::UsPosition => guess_ascii(keycode, modifiers.shift),
++        _ => None,
++    };
+ 
+-    let key = match key_sym {
+-        Keysym::Return => "enter".to_owned(),
+-        Keysym::Prior => "pageup".to_owned(),
+-        Keysym::Next => "pagedown".to_owned(),
+-        Keysym::ISO_Left_Tab => "tab".to_owned(),
+-        Keysym::KP_Prior => "pageup".to_owned(),
+-        Keysym::KP_Next => "pagedown".to_owned(),
+-        Keysym::XF86_Back => "back".to_owned(),
+-        Keysym::XF86_Forward => "forward".to_owned(),
+-        Keysym::XF86_Cut => "cut".to_owned(),
+-        Keysym::XF86_Copy => "copy".to_owned(),
+-        Keysym::XF86_Paste => "paste".to_owned(),
+-        Keysym::XF86_New => "new".to_owned(),
+-        Keysym::XF86_Open => "open".to_owned(),
+-        Keysym::XF86_Save => "save".to_owned(),
+-
+-        Keysym::comma => ",".to_owned(),
+-        Keysym::period => ".".to_owned(),
+-        Keysym::less => "<".to_owned(),
+-        Keysym::greater => ">".to_owned(),
+-        Keysym::slash => "/".to_owned(),
+-        Keysym::question => "?".to_owned(),
+-
+-        Keysym::semicolon => ";".to_owned(),
+-        Keysym::colon => ":".to_owned(),
+-        Keysym::apostrophe => "'".to_owned(),
+-        Keysym::quotedbl => "\"".to_owned(),
+-
+-        Keysym::bracketleft => "[".to_owned(),
+-        Keysym::braceleft => "{".to_owned(),
+-        Keysym::bracketright => "]".to_owned(),
+-        Keysym::braceright => "}".to_owned(),
+-        Keysym::backslash => "\\".to_owned(),
+-        Keysym::bar => "|".to_owned(),
+-
+-        Keysym::grave => "`".to_owned(),
+-        Keysym::asciitilde => "~".to_owned(),
+-        Keysym::exclam => "!".to_owned(),
+-        Keysym::at => "@".to_owned(),
+-        Keysym::numbersign => "#".to_owned(),
+-        Keysym::dollar => "$".to_owned(),
+-        Keysym::percent => "%".to_owned(),
+-        Keysym::asciicircum => "^".to_owned(),
+-        Keysym::ampersand => "&".to_owned(),
+-        Keysym::asterisk => "*".to_owned(),
+-        Keysym::parenleft => "(".to_owned(),
+-        Keysym::parenright => ")".to_owned(),
+-        Keysym::minus => "-".to_owned(),
+-        Keysym::underscore => "_".to_owned(),
+-        Keysym::equal => "=".to_owned(),
+-        Keysym::plus => "+".to_owned(),
+-        Keysym::space => "space".to_owned(),
+-        Keysym::BackSpace => "backspace".to_owned(),
+-        Keysym::Tab => "tab".to_owned(),
+-        Keysym::Delete => "delete".to_owned(),
+-        Keysym::Escape => "escape".to_owned(),
+-
+-        Keysym::Left => "left".to_owned(),
+-        Keysym::Right => "right".to_owned(),
+-        Keysym::Up => "up".to_owned(),
+-        Keysym::Down => "down".to_owned(),
+-        Keysym::Home => "home".to_owned(),
+-        Keysym::End => "end".to_owned(),
+-        Keysym::Insert => "insert".to_owned(),
+-
+-        _ => {
+-            let name = xkb::keysym_get_name(key_sym).to_lowercase();
+-            if key_sym.is_keypad_key() {
+-                name.replace("kp_", "")
+-            } else if let Some(key) = key_utf8.chars().next()
+-                && key_utf8.len() == 1
+-                && key.is_ascii()
+-            {
+-                if key.is_ascii_graphic() {
+-                    key_utf8.to_lowercase()
+-                // map ctrl-a to `a`
+-                // ctrl-0..9 may emit control codes like ctrl-[, but
+-                // we don't want to map them to `[`
+-                } else if key_utf32 <= 0x1f
+-                    && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
++    let key = if let Some(key) = us_position {
++        key.to_string()
++    } else {
++        match key_sym {
++            Keysym::Return => "enter".to_owned(),
++            Keysym::Prior => "pageup".to_owned(),
++            Keysym::Next => "pagedown".to_owned(),
++            Keysym::ISO_Left_Tab => "tab".to_owned(),
++            Keysym::KP_Prior => "pageup".to_owned(),
++            Keysym::KP_Next => "pagedown".to_owned(),
++            Keysym::XF86_Back => "back".to_owned(),
++            Keysym::XF86_Forward => "forward".to_owned(),
++            Keysym::XF86_Cut => "cut".to_owned(),
++            Keysym::XF86_Copy => "copy".to_owned(),
++            Keysym::XF86_Paste => "paste".to_owned(),
++            Keysym::XF86_New => "new".to_owned(),
++            Keysym::XF86_Open => "open".to_owned(),
++            Keysym::XF86_Save => "save".to_owned(),
++
++            Keysym::comma => ",".to_owned(),
++            Keysym::period => ".".to_owned(),
++            Keysym::less => "<".to_owned(),
++            Keysym::greater => ">".to_owned(),
++            Keysym::slash => "/".to_owned(),
++            Keysym::question => "?".to_owned(),
++
++            Keysym::semicolon => ";".to_owned(),
++            Keysym::colon => ":".to_owned(),
++            Keysym::apostrophe => "'".to_owned(),
++            Keysym::quotedbl => "\"".to_owned(),
++
++            Keysym::bracketleft => "[".to_owned(),
++            Keysym::braceleft => "{".to_owned(),
++            Keysym::bracketright => "]".to_owned(),
++            Keysym::braceright => "}".to_owned(),
++            Keysym::backslash => "\\".to_owned(),
++            Keysym::bar => "|".to_owned(),
++
++            Keysym::grave => "`".to_owned(),
++            Keysym::asciitilde => "~".to_owned(),
++            Keysym::exclam => "!".to_owned(),
++            Keysym::at => "@".to_owned(),
++            Keysym::numbersign => "#".to_owned(),
++            Keysym::dollar => "$".to_owned(),
++            Keysym::percent => "%".to_owned(),
++            Keysym::asciicircum => "^".to_owned(),
++            Keysym::ampersand => "&".to_owned(),
++            Keysym::asterisk => "*".to_owned(),
++            Keysym::parenleft => "(".to_owned(),
++            Keysym::parenright => ")".to_owned(),
++            Keysym::minus => "-".to_owned(),
++            Keysym::underscore => "_".to_owned(),
++            Keysym::equal => "=".to_owned(),
++            Keysym::plus => "+".to_owned(),
++            Keysym::space => "space".to_owned(),
++            Keysym::BackSpace => "backspace".to_owned(),
++            Keysym::Tab => "tab".to_owned(),
++            Keysym::Delete => "delete".to_owned(),
++            Keysym::Escape => "escape".to_owned(),
++
++            Keysym::Left => "left".to_owned(),
++            Keysym::Right => "right".to_owned(),
++            Keysym::Up => "up".to_owned(),
++            Keysym::Down => "down".to_owned(),
++            Keysym::Home => "home".to_owned(),
++            Keysym::End => "end".to_owned(),
++            Keysym::Insert => "insert".to_owned(),
++
++            _ => {
++                let name = xkb::keysym_get_name(key_sym).to_lowercase();
++                if key_sym.is_keypad_key() {
++                    name.replace("kp_", "")
++                } else if let Some(key) = name_utf8.chars().next()
++                    && name_utf8.len() == 1
++                    && key.is_ascii()
++                {
++                    if key.is_ascii_graphic() {
++                        name_utf8.to_lowercase()
++                    // map ctrl-a to `a`
++                    // ctrl-0..9 may emit control codes like ctrl-[, but
++                    // we don't want to map them to `[`
++                    } else if name_utf32 <= 0x1f
++                        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
++                    {
++                        ((name_utf32 as u8 + 0x40) as char)
++                            .to_ascii_lowercase()
++                            .to_string()
++                    } else {
++                        name
++                    }
++                // The digit row and the two keys after it keep their own
++                // names here, as before (a Latin layout's `ß`, `é`): only a
++                // shortcut on a layout without Latin letters takes their US
++                // positions (`ShortcutKey::UsPosition`), and a shortcut on
++                // the digit row its digit (`digit_of_row`).
++                } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift)
++                    .filter(|_| !(10..=21).contains(&keycode.raw()))
+                 {
+-                    ((key_utf32 as u8 + 0x40) as char)
+-                        .to_ascii_lowercase()
+-                        .to_string()
++                    String::from(key_en)
+                 } else {
+                     name
+                 }
+-            } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
+-                String::from(key_en)
+-            } else {
+-                name
+             }
+         }
+     };
+ 
++    // A shortcut on the digit row names its digit where the key's own is
++    // none (`digit_of_row`): AZERTY's Ctrl+& is ctrl-1, as Ctrl+Shift+& is.
++    let key = match digit_of_row(state, keycode, name_layout) {
++        Some(digit) if shortcut && !(key.len() == 1 && key.chars().all(|c| c.is_ascii_digit())) => {
++            digit.to_string()
++        }
++        _ => key,
++    };
++
+     if modifiers.shift {
+         // we only include the shift for upper-case letters by convention,
+         // so don't include for numbers and symbols, but do include for
+@@ -1929,6 +2098,107 @@ mod tests {
+         assert_ne!(afnor.key, "space");
+     }
+ 
++    /// The keystroke the key at `keycode` (evdev's plus eight) names, with
++    /// `held` down (37 Control, 50 Shift, 64 Alt) and `modifiers` said, on
++    /// `layouts(variants)` with layout `active` locked: as a binding writes
++    /// it.
++    #[cfg(any(feature = "wayland", feature = "x11"))]
++    fn named(layouts: &str, variants: &str, active: u32, held: &[u32], keycode: u32) -> String {
++        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
++        let keymap = xkb::Keymap::new_from_names(
++            &context,
++            "evdev",
++            "pc105",
++            layouts,
++            variants,
++            None,
++            xkb::COMPILE_NO_FLAGS,
++        )
++        .expect("layouts of xkeyboard-config");
++        let mut state = State::new(&keymap);
++        state.update_mask(0, 0, 0, 0, 0, active);
++        for &key in held {
++            state.update_key(Keycode::new(key), xkb::KeyDirection::Down);
++        }
++        let modifiers = gpui::Modifiers {
++            control: held.contains(&37),
++            alt: held.contains(&64),
++            shift: held.contains(&50),
++            ..Default::default()
++        };
++        let keystroke = keystroke_from_xkb(&state, modifiers, Keycode::new(keycode));
++        let mut said = String::new();
++        for (held, name) in [
++            (keystroke.modifiers.control, "ctrl-"),
++            (keystroke.modifiers.alt, "alt-"),
++            (keystroke.modifiers.shift, "shift-"),
++        ] {
++            if held {
++                said.push_str(name);
++            }
++        }
++        said + &keystroke.key
++    }
++
++    /// A shortcut on a layout whose letters are not Latin is named by the
++    /// keymap's Latin layout, or a US one, never by the ASCII symbols its
++    /// keys type; a digit row's shortcut by its digit.
++    #[cfg(any(feature = "wayland", feature = "x11"))]
++    #[test]
++    fn a_shortcut_is_named_by_a_latin_layout() {
++        const CTRL: u32 = 37;
++        const SHIFT: u32 = 50;
++        const ALT: u32 = 64;
++        // Greek's `;` on Q, Hebrew's `'` on W: their US positions.
++        assert_eq!(named("gr", "", 0, &[CTRL], 24), "ctrl-q");
++        assert_eq!(named("il", "", 0, &[CTRL], 25), "ctrl-w");
++        // Russian's comma on the slash key, Shift held: the US `?`.
++        assert_eq!(named("ru", "", 0, &[CTRL, SHIFT], 61), "ctrl-?");
++        // Arabic's `~` on Shift+Z: the letter, Shift kept with it.
++        assert_eq!(named("ara", "", 0, &[CTRL, SHIFT], 52), "ctrl-shift-z");
++        // A keymap with a Latin layout names it so whichever is active.
++        assert_eq!(named("us,ru", "", 1, &[CTRL, SHIFT], 61), "ctrl-?");
++        assert_eq!(named("fr,ru", "", 1, &[ALT], 24), "alt-a");
++        // The digit row: AZERTY's `&`, Persian's `۱` are 1.
++        assert_eq!(named("fr", "", 0, &[CTRL], 10), "ctrl-1");
++        assert_eq!(named("fr", "", 0, &[CTRL, SHIFT], 10), "ctrl-1");
++        assert_eq!(named("ir", "", 0, &[CTRL], 10), "ctrl-1");
++        // A Latin layout's own keys, and keys held alone, as they were.
++        assert_eq!(named("de", "", 0, &[CTRL], 29), "ctrl-z");
++        assert_eq!(named("us", "", 0, &[CTRL, SHIFT], 10), "ctrl-!");
++        assert_eq!(named("us", "", 0, &[CTRL, SHIFT], 59), "ctrl-<");
++        assert_eq!(named("us", "", 0, &[], 61), "/");
++        assert_eq!(named("il", "", 0, &[], 24), "/");
++    }
++
++    /// The US positions a layout with no Latin letters takes: the digit row
++    /// and its symbols, the comma and period with Shift (`<` and `>`, which
++    /// were swapped).
++    #[cfg(any(feature = "wayland", feature = "x11"))]
++    #[test]
++    fn a_us_position_is_as_a_us_layout_has_it() {
++        let us = |code: u32, shift: bool| guess_ascii(Keycode::new(code), shift);
++        assert_eq!(us(10, false), Some('1'));
++        assert_eq!(us(19, false), Some('0'));
++        assert_eq!(us(10, true), Some('!'));
++        assert_eq!(us(19, true), Some(')'));
++        assert_eq!(us(20, true), Some('_'));
++        assert_eq!(us(21, false), Some('='));
++        assert_eq!(us(59, true), Some('<'));
++        assert_eq!(us(60, true), Some('>'));
++        // As a US keymap names them.
++        for code in (10..=21).chain(24..=35).chain(38..=49).chain(51..=61) {
++            for (shift, held) in [(false, &[37][..]), (true, &[37, 50][..])] {
++                if let Some(c) = us(code, shift) {
++                    let name = named("us", "", 0, held, code);
++                    let key = name.rsplit('-').next().unwrap_or(&name);
++                    let key = if name.ends_with("--") { "-" } else { key };
++                    assert_eq!(key, c.to_ascii_lowercase().to_string(), "{code} {shift}");
++                }
++            }
++        }
++    }
++
+     #[test]
+     fn test_is_within_click_distance() {
+         let zero = Point::new(px(0.0), px(0.0));

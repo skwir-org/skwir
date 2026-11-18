@@ -1,5 +1,7 @@
 //! A message's shape: text, arguments, and selectors that choose a variant
-//! by an argument (a plural category, a kind's word, an exact number).
+//! by an argument (a plural category, a kind's word, an exact number). A
+//! translation may also choose by a noun's gender and place a noun in one of
+//! its forms (`GENDER`, `FORM`: ADR-139, 5), its noun's attributes.
 //! The `words!` macro writes English as statics of it at build time; a
 //! translation is turned into it from Fluent's syntax when first said.
 //! One evaluator says both.
@@ -20,7 +22,34 @@ pub enum Element {
         variants: Cow<'static, [Variant]>,
         default: usize,
     },
+    /// One of `variants`, chosen by the gender of the argument `on`
+    /// (`GENDER($place)`): its noun's `.gender` in the language the message
+    /// is said in; `other` for an argument that is no noun (a file's name,
+    /// a path, text as written). `default` where none is.
+    Gender {
+        on: Cow<'static, str>,
+        variants: Cow<'static, [Variant]>,
+        default: usize,
+    },
+    /// The argument `of` in its form `case` (`FORM($place, case:
+    /// "dative")`): its noun's attribute of that name in the language the
+    /// message is said in; an argument that is no noun, as it is said.
+    Form {
+        of: Cow<'static, str>,
+        case: Cow<'static, str>,
+    },
 }
+
+/// The functions a translation may call (ADR-139, 3): what chooses by a
+/// noun's gender, and what places a noun in one of its forms.
+pub const GENDER: &str = "GENDER";
+pub const FORM: &str = "FORM";
+/// `FORM`'s one named argument: the form, as the language names it.
+pub const CASE: &str = "case";
+/// The attribute a noun's gender is: its other attributes are its forms.
+pub const GENDER_ATTRIBUTE: &str = "gender";
+/// The gender of what is no noun, the default of every `GENDER` selector.
+pub const NO_GENDER: &str = "other";
 
 /// A selector's variant: what chooses it, and what it says.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -40,10 +69,11 @@ pub enum Key {
 }
 
 /// The parts of a message's value written in Fluent's syntax, as Skwir
-/// reads it (ADR-139, 3): text, variables, selectors on a variable. `Err`
-/// says what it holds beyond (a term, a function, another message).
+/// reads it (ADR-139, 3): text, variables, selectors on a variable or on a
+/// noun's gender (`GENDER`), a noun's form (`FORM`). `Err` says what it
+/// holds beyond (a term, another function, another message).
 pub fn from_fluent(pattern: &fluent_syntax::ast::Pattern<&str>) -> Result<Vec<Element>, String> {
-    use fluent_syntax::ast::{Expression, InlineExpression, PatternElement, VariantKey};
+    use fluent_syntax::ast::{Expression, InlineExpression, PatternElement};
     let mut out = Vec::new();
     for element in &pattern.elements {
         match element {
@@ -61,35 +91,43 @@ pub fn from_fluent(pattern: &fluent_syntax::ast::Pattern<&str>) -> Result<Vec<El
                 Expression::Inline(InlineExpression::NumberLiteral { value }) => {
                     out.push(Element::Text(Cow::Owned((*value).to_owned())));
                 }
+                Expression::Inline(InlineExpression::FunctionReference { id, arguments })
+                    if id.name == FORM =>
+                {
+                    let (of, case) = form_of(arguments)?;
+                    out.push(Element::Form {
+                        of: Cow::Owned(of),
+                        case: Cow::Owned(case),
+                    });
+                }
                 Expression::Select { selector, variants } => {
-                    let InlineExpression::VariableReference { id } = selector else {
-                        return Err("a selector chooses by a variable only".into());
-                    };
-                    let mut chosen = Vec::with_capacity(variants.len());
-                    let mut default = 0;
-                    for (at, variant) in variants.iter().enumerate() {
-                        let key = match &variant.key {
-                            VariantKey::Identifier { name } => {
-                                Key::Word(Cow::Owned((*name).to_owned()))
-                            }
-                            VariantKey::NumberLiteral { value } => Key::Number(
-                                value
-                                    .parse()
-                                    .map_err(|_| format!("`{value}` is no whole number"))?,
-                            ),
-                        };
-                        if variant.default {
-                            default = at;
+                    let (on, by_gender) = match selector {
+                        InlineExpression::VariableReference { id } => (id.name, false),
+                        InlineExpression::FunctionReference { id, arguments }
+                            if id.name == GENDER =>
+                        {
+                            (gender_of(arguments)?, true)
                         }
-                        chosen.push(Variant {
-                            key,
-                            value: Cow::Owned(from_fluent(&variant.value)?),
-                        });
-                    }
-                    out.push(Element::Select {
-                        on: Cow::Owned(id.name.to_owned()),
-                        variants: Cow::Owned(chosen),
-                        default,
+                        _ => {
+                            return Err(
+                                "a selector chooses by a variable, or by GENDER($noun)".into()
+                            );
+                        }
+                    };
+                    let (variants, default) = variants_of(variants)?;
+                    let (on, variants) = (Cow::Owned(on.to_owned()), Cow::Owned(variants));
+                    out.push(if by_gender {
+                        Element::Gender {
+                            on,
+                            variants,
+                            default,
+                        }
+                    } else {
+                        Element::Select {
+                            on,
+                            variants,
+                            default,
+                        }
                     });
                 }
                 Expression::Inline(other) => {
@@ -101,11 +139,72 @@ pub fn from_fluent(pattern: &fluent_syntax::ast::Pattern<&str>) -> Result<Vec<El
     Ok(out)
 }
 
+/// A selector's variants, and which is the default.
+fn variants_of(
+    variants: &[fluent_syntax::ast::Variant<&str>],
+) -> Result<(Vec<Variant>, usize), String> {
+    use fluent_syntax::ast::VariantKey;
+    let mut chosen = Vec::with_capacity(variants.len());
+    let mut default = 0;
+    for (at, variant) in variants.iter().enumerate() {
+        let key = match &variant.key {
+            VariantKey::Identifier { name } => Key::Word(Cow::Owned((*name).to_owned())),
+            VariantKey::NumberLiteral { value } => Key::Number(
+                value
+                    .parse()
+                    .map_err(|_| format!("`{value}` is no whole number"))?,
+            ),
+        };
+        if variant.default {
+            default = at;
+        }
+        chosen.push(Variant {
+            key,
+            value: Cow::Owned(from_fluent(&variant.value)?),
+        });
+    }
+    Ok((chosen, default))
+}
+
+/// `GENDER($noun)`'s argument: one variable, nothing else.
+fn gender_of<'s>(
+    arguments: &fluent_syntax::ast::CallArguments<&'s str>,
+) -> Result<&'s str, String> {
+    use fluent_syntax::ast::InlineExpression;
+    match (arguments.positional.as_slice(), arguments.named.is_empty()) {
+        ([InlineExpression::VariableReference { id }], true) => Ok(id.name),
+        _ => Err("GENDER takes one argument, a variable: GENDER($place)".into()),
+    }
+}
+
+/// `FORM($noun, case: "dative")`'s argument and form.
+fn form_of(
+    arguments: &fluent_syntax::ast::CallArguments<&str>,
+) -> Result<(String, String), String> {
+    use fluent_syntax::ast::InlineExpression;
+    let wrong =
+        || format!("FORM takes a variable and its {CASE}: FORM($place, {CASE}: \"dative\")");
+    let ([InlineExpression::VariableReference { id }], [named]) =
+        (arguments.positional.as_slice(), arguments.named.as_slice())
+    else {
+        return Err(wrong());
+    };
+    match &named.value {
+        InlineExpression::StringLiteral { value } if named.name.name == CASE => {
+            Ok((id.name.to_owned(), unescape(value)))
+        }
+        _ => Err(wrong()),
+    }
+}
+
 /// What a placeable Skwir does not read is.
 fn what(expression: &fluent_syntax::ast::InlineExpression<&str>) -> &'static str {
     use fluent_syntax::ast::InlineExpression as E;
     match expression {
-        E::FunctionReference { .. } => "a function",
+        E::FunctionReference { id, .. } if id.name == GENDER => {
+            "GENDER alone (it chooses a variant: { GENDER($place) -> … })"
+        }
+        E::FunctionReference { .. } => "a function other than GENDER and FORM",
         E::MessageReference { .. } => "another message",
         E::TermReference { .. } => "a term",
         E::Placeable { .. } => "a placeable in a placeable",
@@ -203,12 +302,57 @@ mod tests {
         assert!(
             parsed("a = { NUMBER($n) }")
                 .unwrap_err()
-                .contains("a function")
+                .contains("a function other than GENDER and FORM")
         );
         assert!(
             parsed("a = { other }")
                 .unwrap_err()
                 .contains("another message")
         );
+    }
+
+    /// A translation chooses by a noun's gender and places a noun in one of
+    /// its forms: exactly `GENDER($x)` as a selector and `FORM($x, case:
+    /// "…")` as a placeable, nothing else of either.
+    #[test]
+    fn a_noun_s_gender_and_forms_are_read() {
+        let elements = parsed(
+            "a = { GENDER($place) ->\n    [feminine] dans { FORM($place, case: \"definite\") }\n   *[other] dans { $place }\n}\n",
+        )
+        .unwrap();
+        let [
+            Element::Gender {
+                on,
+                variants,
+                default,
+            },
+        ] = elements.as_slice()
+        else {
+            panic!("{elements:?}");
+        };
+        assert_eq!((on.as_ref(), *default), ("place", 1));
+        assert_eq!(variants[0].key, Key::Word("feminine".into()));
+        assert_eq!(
+            variants[0].value.as_ref(),
+            [
+                Element::Text("dans ".into()),
+                Element::Form {
+                    of: "place".into(),
+                    case: "definite".into()
+                }
+            ]
+        );
+        for wrong in [
+            "a = { FORM($place) }",
+            "a = { FORM($place, form: \"dative\") }",
+            "a = { FORM($place, case: 3) }",
+            "a = { FORM(\"x\", case: \"dative\") }",
+            "a = { GENDER($a, $b) ->\n   *[other] x\n}\n",
+            "a = { GENDER($a, case: \"x\") ->\n   *[other] x\n}\n",
+            "a = { GENDER($place) }",
+            "a = { CASE($place) ->\n   *[other] x\n}\n",
+        ] {
+            assert!(parsed(wrong).is_err(), "{wrong}");
+        }
     }
 }

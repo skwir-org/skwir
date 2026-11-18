@@ -193,7 +193,7 @@ pub fn split(
 /// border that sets it apart from the container.
 fn edge(beside: bool, cx: &mut Context<Shell>) -> AnyElement {
     use crate::elements::edge::{Side, edge, gutter};
-    let side = if beside { Side::Left } else { Side::Top };
+    let side = if beside { Side::Start } else { Side::Top };
     let reset = move |this: &mut Shell| this.preview.members_share.set(beside, SHARE);
     // As cards, the gutter between the container's card and the member's.
     if cx.global::<Theme>().cards {
@@ -230,7 +230,10 @@ impl Shell {
         let beside = ev.drag(cx).beside;
         let keep = keep(cx.global::<Theme>(), beside);
         let (along, size) = if beside {
-            (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
+            (
+                crate::sides::from_start_edge(ev.bounds, ev.event.position.x),
+                ev.bounds.size.width,
+            )
         } else {
             (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };

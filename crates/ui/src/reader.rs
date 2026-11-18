@@ -1,6 +1,7 @@
 //! Stateful document reader: selection, search, outline and link navigation.
 //! Engine operations run on the scheduler; this module only owns UI state.
 
+use crate::sides::Sides;
 use crate::{
     latest::Latest, preview::PreviewContent, preview_bar::Field, shell::Shell, theme::Theme,
 };
@@ -603,12 +604,15 @@ pub fn page_element(
     .size_0();
     let single = &shell.preview.reader.scroll.single;
     // The bars are beside the canvas, not in it, where they would scroll
-    // with the page; the wrapper keeps the column the canvas grew in.
+    // with the page; the wrapper keeps the column the canvas grew in. The
+    // pages are the document's, laid out left to right whatever the
+    // window's direction (`sides`).
     div()
         .relative()
         .flex_1()
         .min_h_0()
         .w_full()
+        .left_to_right()
         .flex()
         .flex_col()
         .child(

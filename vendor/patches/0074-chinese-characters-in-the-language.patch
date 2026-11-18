@@ -1,0 +1,228 @@
+0074 chinese-characters-in-the-language: Linux: the fallback for Chinese characters takes their forms in the language (Japanese, Korean, Traditional or Simplified Chinese) by the locale's script and region, at start and as TextSystem::set_language asks
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 282933a..da2313f 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -1616,6 +1616,14 @@ pub trait PlatformDispatcher: Send + Sync {
+ #[expect(missing_docs)]
+ pub trait PlatformTextSystem: Send + Sync {
+     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
++    /// Picks the fonts that fall back for characters the asked ones lack by
++    /// `language`, a BCP 47 tag, where the platform picks them by language
++    /// (Linux's: the form Chinese characters take in Japanese, Korean, or
++    /// Traditional or Simplified Chinese). Whether its fallbacks changed:
++    /// what was laid out before is then laid out again. Elsewhere, nothing.
++    fn set_language(&self, _language: &str) -> bool {
++        false
++    }
+     /// Installs a nonblocking sink for unresolved grapheme clusters.
+     fn set_missing_glyph_sink(&self, _sink: Option<Arc<dyn MissingGlyphSink>>) {}
+     /// Get all available font names.
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index 293fae3..dc9dd8b 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -309,6 +309,19 @@ impl TextSystem {
+         Ok(())
+     }
+ 
++    /// Sets the language text is read in, a BCP 47 tag (`ja`, `zh-TW`), for
++    /// the fonts that fall back where the asked ones lack a character: on
++    /// Linux, Chinese characters take the forms of Japanese, Korean, or
++    /// Traditional or Simplified Chinese by it, as the system's locale picks
++    /// them at start. Where that changes, cached layouts are laid out again,
++    /// as after `add_fonts`; a window shows it once it is drawn again.
++    pub fn set_language(&self, language: &str) {
++        if self.platform_text_system.set_language(language) {
++            self.missing_glyph_reporter.reset();
++            self.font_generation.fetch_add(1, Ordering::Release);
++        }
++    }
++
+     /// Takes the receiver for missing-glyph reports.
+     ///
+     /// Only one receiver is available for each text system. Returns `None` when
+diff --git a/crates/gpui_wgpu/Cargo.toml b/crates/gpui_wgpu/Cargo.toml
+index debea6b..6fd2cf2 100644
+--- a/crates/gpui_wgpu/Cargo.toml
++++ b/crates/gpui_wgpu/Cargo.toml
+@@ -24,6 +24,8 @@ anyhow.workspace = true
+ bytemuck.workspace = true
+ collections.workspace = true
+ cosmic-text = "0.19.0"
++# A language's script, for the form Chinese characters take (`han_key`).
++icu_locale = { version = "2.4", default-features = false, features = ["compiled_data"] }
+ etagere.workspace = true
+ itertools.workspace = true
+ image = { workspace = true, optional = true }
+diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
+index f09b9ae..02486eb 100644
+--- a/crates/gpui_wgpu/src/cosmic_text_system.rs
++++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
+@@ -201,7 +201,10 @@ impl CosmicTextSystem {
+     }
+ 
+     pub fn new(system_font_fallback: &str) -> Self {
+-        let font_system = FontSystem::new();
++        // The system's fonts, its fallbacks picked by the locale's language
++        // as cosmic-text names it for Chinese characters (`han_key`).
++        let (locale, db) = FontSystem::new().into_locale_and_db();
++        let font_system = FontSystem::new_with_locale_and_db(han_key(&locale), db);
+ 
+         Self(RwLock::new(CosmicTextSystemState {
+             font_system,
+@@ -241,6 +244,23 @@ impl PlatformTextSystem for CosmicTextSystem {
+         self.0.write().add_fonts(fonts)
+     }
+ 
++    fn set_language(&self, language: &str) -> bool {
++        let key = han_key(language);
++        let mut state = self.0.write();
++        if state.font_system.locale() == key {
++            return false;
++        }
++        // A font system's fallbacks are chosen by its locale when it is made:
++        // made again from its own database, which moves whole, so the faces
++        // loaded from it keep their ids.
++        let empty =
++            FontSystem::new_with_locale_and_db(String::new(), cosmic_text::fontdb::Database::new());
++        let (_, db) = std::mem::replace(&mut state.font_system, empty).into_locale_and_db();
++        state.font_system = FontSystem::new_with_locale_and_db(key, db);
++        state.font_ids_by_family_cache.clear();
++        true
++    }
++
+     fn set_missing_glyph_sink(&self, sink: Option<Arc<dyn MissingGlyphSink>>) {
+         self.0.write().missing_glyph_sink = sink;
+     }
+@@ -1351,6 +1371,54 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
+     postscript_name == "NotoColorEmoji"
+ }
+ 
++use han::han_key;
++
++/// A module of its own, away from the `anyhow::Ok` imported above, which
++/// ICU4X's subtag macros would take for the `Ok` they match.
++mod han {
++    /// The locale cosmic-text is given for `language`, a BCP 47 tag, so that its
++    /// fallback for Chinese characters, which it looks up by an exact tag ("ja",
++    /// "ko", "zh-HK", "zh-TW", Simplified Chinese otherwise), takes their forms
++    /// in the language: what its script and region are, likely where it says
++    /// none (ICU4X's likely subtags), names the forms. Any other language is
++    /// given as it is.
++    pub(super) fn han_key(language: &str) -> String {
++        use icu_locale::{
++            LanguageIdentifier, LocaleExpander,
++            subtags::{Language, Region, Script, language, region, script},
++        };
++        const JA: Language = language!("ja");
++        const KO: Language = language!("ko");
++        const YUE: Language = language!("yue");
++        const HANT: Script = script!("Hant");
++        const HANS: Script = script!("Hans");
++        const HK: Region = region!("HK");
++        const MO: Region = region!("MO");
++        // A POSIX locale's encoding and modifier are no part of its tag.
++        let tag = language
++            .split(['.', '@'])
++            .next()
++            .unwrap_or(language)
++            .replace('_', "-");
++        let Ok(mut id) = LanguageIdentifier::try_from_str(&tag) else {
++            return language.to_string();
++        };
++        match id.language {
++            JA => return "ja".to_string(),
++            KO => return "ko".to_string(),
++            _ => {}
++        }
++        let cantonese = id.language == YUE;
++        LocaleExpander::new_common().maximize(&mut id);
++        match id.script {
++            Some(HANT) if cantonese || matches!(id.region, Some(HK | MO)) => "zh-HK".to_string(),
++            Some(HANT) => "zh-TW".to_string(),
++            Some(HANS) => "zh-CN".to_string(),
++            _ => language.to_string(),
++        }
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -1422,6 +1490,74 @@ mod tests {
+         Ok(text_system)
+     }
+ 
++    /// The locale cosmic-text picks Chinese characters' fallback by: one of
++    /// the exact tags it knows, by the language's script and region.
++    #[test]
++    fn han_key_names_the_forms_of_chinese_characters() {
++        for (language, key) in [
++            ("ja-JP", "ja"),
++            ("ja", "ja"),
++            ("ja_JP.UTF-8", "ja"),
++            ("ko-KR", "ko"),
++            ("zh-Hant", "zh-TW"),
++            ("zh-TW", "zh-TW"),
++            ("zh-HK", "zh-HK"),
++            ("zh-MO", "zh-HK"),
++            ("zh-Hant-HK", "zh-HK"),
++            ("yue", "zh-HK"),
++            ("zh", "zh-CN"),
++            ("zh-SG", "zh-CN"),
++            ("zh-CN", "zh-CN"),
++            ("zh-Hans-HK", "zh-CN"),
++            ("fr-FR", "fr-FR"),
++            ("en-US", "en-US"),
++            ("C", "C"),
++        ] {
++            assert_eq!(han_key(language), key, "{language}");
++        }
++    }
++
++    /// A language set anew makes the font system again by it, its faces kept;
++    /// the same one changes nothing, and the text system lays out again only
++    /// where it changed.
++    #[test]
++    fn a_language_set_picks_its_fallbacks_and_keeps_the_faces() -> Result<()> {
++        let platform = Arc::new(text_system()?);
++        let text_system = gpui::TextSystem::new(platform.clone());
++        let font_id = text_system.resolve_font(&gpui::font("IBM Plex Sans"));
++        let metrics = platform.font_metrics(font_id);
++        assert_eq!(platform.0.read().font_system.locale(), "en-US");
++
++        assert!(platform.set_language("ja-JP"));
++        assert_eq!(platform.0.read().font_system.locale(), "ja");
++        assert!(!platform.set_language("ja"), "the same forms");
++        assert_eq!(
++            platform.font_metrics(font_id).units_per_em,
++            metrics.units_per_em
++        );
++        assert_eq!(platform.all_font_names(), ["IBM Plex Sans"]);
++        text_system.set_language("zh-HK");
++        assert_eq!(platform.0.read().font_system.locale(), "zh-HK");
++        let layout = platform.layout_line(
++            "abc",
++            gpui::px(16.),
++            &[FontRun {
++                len: 3,
++                font_id,
++                position: Default::default(),
++            }],
++        );
++        assert_eq!(
++            layout
++                .runs
++                .iter()
++                .map(|run| run.glyphs.len())
++                .sum::<usize>(),
++            3
++        );
++        Ok(())
++    }
++
+     #[test]
+     fn cached_font_resolution_does_not_wait_for_cold_lookups() -> Result<()> {
+         for family in [".ZedSans", "Missing Font"] {

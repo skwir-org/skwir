@@ -21,6 +21,12 @@ where Dolphin shows "Dossier personnel".
 Designed; nothing is built. The steps are PLAN.md's "Words in every
 language".
 
+Amended 2026-11-18, on the user's choice of the design recommended to
+them: Skwir's nouns (a place's title) carry their gender and forms in
+each language's catalog, as attributes a sentence naming them reads with
+two functions, `GENDER` and `FORM` (3, 5); the quotes around a name are
+each language's catalog data, not a table in the code (5).
+
 ## Context
 
 - **Skwir speaks English only, and its English is finished text
@@ -51,6 +57,16 @@ language".
   from strftime patterns holding English words, sizes divided by 1024
   and labelled KB. French and German make words agree with a noun's
   gender: "1 dossier sélectionné", "1 image sélectionnée".
+- **A sentence that names one of Skwir's places needs the place's
+  grammar** (amended 2026-11-18): "Moved to { $place }" is « dans la
+  Corbeille » but « dans Récents » in French, „in den Papierkorb“ but „in
+  die Bibliothek“ in German, and Czech, Polish, Russian, Arabic and
+  Finnish take a case too. Until then only a `Kind` (file, folder, link,
+  item) gave a message something to agree with, and the English worked
+  around it a message per place. Fluent's own answer is a term's
+  attributes and parametrised terms (`-brand-name.gender`,
+  `{ -brand-name(case: "locative") }`), which Skwir's catalogs, made of
+  messages only, do not have.
 - **Some text already comes in the user's language** from the system
   (desktop entries' names, macOS's and Windows' type names, GVfs's and
   KDE's dialogs), so a translated system shows a window of two
@@ -124,13 +140,22 @@ language".
    `l10n/<language>.ftl` in each crate, its messages by the English's
    ids.
    - **The part of Fluent Skwir uses:** text, arguments, selectors on a
-     plural category or on an argument's word (a kind), attributes. No
-     terms, no message referring to another, no functions: arguments
-     arrive formatted (5).
+     plural category or on an argument's word (a kind); and a noun's
+     grammar (amended 2026-11-18, 5): a translation of a noun of Skwir's
+     gives it attributes, its gender and forms (`.gender = feminine`,
+     `.dative = dem Papierkorb`), and a sentence naming one chooses by its
+     gender, `{ GENDER($place) -> [feminine] … *[other] … }`, or places it
+     in a form, `{ FORM($place, case: "dative") }`. Both are written in
+     Fluent's function syntax, so a catalog stays Fluent that any of its
+     tools (Weblate's) reads. No terms, no message referring to another,
+     no other function: arguments arrive formatted (5).
    - **Isolation marks are off**: a name isolates itself (5).
    - **A check holds every catalog to its English**: the same ids, the
-     same arguments and attributes, every selector with its default, and
-     Fluent's syntax.
+     same arguments, every selector with its default, and Fluent's
+     syntax; attributes on a noun only, each its language's (5), every
+     noun given each of them; `GENDER` and `FORM` only by the language's
+     genders and forms, on an argument the English gives that is no
+     count or kind, every `GENDER` with `*[other]` its default.
 
 4. **Skwir says them itself**, with a resolver of its own over
    `fluent-syntax`'s parser: none of the runtimes read fits (context).
@@ -149,6 +174,11 @@ language".
    - **A message missing in a language is said in the next of the
      reader's languages**, English last, and always whole: never half a
      sentence in one language and half in another.
+   - **A noun's gender and forms are read where a sentence names it**
+     (amended 2026-11-18): from the catalog that says the noun, while it
+     is the sentence's language (a tag with more or fewer subtags
+     included). A noun said in English, or in another of the reader's
+     languages, has none there, as a name has none.
    - **If the idle reading or the first frame shows the cost**, the next
      step is translations compiled into indexed tables at build time, as
      Slint does.
@@ -156,7 +186,34 @@ language".
 5. **Arguments are typed, and formatted before the message reads them.**
    - **A name** (`Name`: a file's, a place's, a tag's) is quoted as its
      language quotes ("…", « … », „…“) and isolated from the sentence
-     around it where a window draws it.
+     around it where a window draws it. The quotes are each language's
+     data (amended 2026-11-18): two of core's messages,
+     `name_quote_open` and `name_quote_close` (“ and ” in English), so a
+     new language quotes as it does without code, and Simplified and
+     Traditional Chinese, their catalogs found by script, quote apart
+     (“…” and 「…」).
+   - **A noun of Skwir's** (amended 2026-11-18, the user's choice: a
+     place's title, Home, Trash, Recent, Shelf, Nearby) is marked so where
+     it is written (`words!(trash_title = "Trash", noun)`), takes no
+     argument, and is given to sentences as `Words`.
+     - Each language's catalog gives it its grammar as attributes: its
+       gender (`.gender = feminine`) and every form the language's
+       sentences take a noun in (`.dative = dem Papierkorb`, French
+       `.definite = la Corbeille` and `.de = de la Corbeille`).
+     - Which genders and forms a language uses it declares once, in
+       `tools/words/grammar`, named as CLDR's grammatical features name
+       them (masculine, feminine, neuter; nominative, accusative,
+       dative…; definite), a form fusing a preposition with the noun's
+       article (French « du », de and le) marked as one a name has not.
+       English declares none and writes no attribute.
+     - What is no noun (a file's name, a path, text as written, a folder
+       the user named) has no gender, `other`, and is its own form, so a
+       sentence written for nouns still says a name right: « dans
+       { FORM($place, case: "definite") } » is « dans la Corbeille » and
+       « dans Docs ». A form a name has not is taken only in a `GENDER`
+       variant other than `*[other]`, which says what a name takes.
+     - Nothing of it is code: a language's grammar is its catalogs' and
+       its line in `tools/words/grammar`.
    - **A name's bidirectional controls are shown, never obeyed** (the
      user's choice). The overrides, embeddings and isolates (U+202A to
      U+202E, U+2066 to U+2069) are each drawn as a small muted tag
@@ -172,7 +229,8 @@ language".
    - **A count** (`Count`) chooses the plural and is written with the
      locale's digits and groups.
    - **A kind** (`Kind`: file, folder, link, picture…) lets a language
-     make its words agree.
+     make its words agree; a noun's gender lets it agree with one of
+     Skwir's places.
    - **A size** (`Size`) is written as the setting says (9).
    - **A moment and a span of time** (`Instant`, `Span`) are written by
      ICU4X in the locale's words, on the days of
@@ -341,6 +399,14 @@ language".
   `fluent-syntax`, and ICU4X's `icu_plurals`, `icu_decimal`, `icu_list`
   and `icu_datetime` with data for the languages shipped. Each is
   measured against `just idle-pss` and the first frame as it lands.
+- **A sentence naming a place reads its noun's attributes** (amended
+  2026-11-18), each parsed from its catalog when first asked and kept
+  beside the catalog's messages, as a message is. English reads none.
+- **The checks cannot see an argument's type** (amended 2026-11-18):
+  the catalogs' test refuses `GENDER` and `FORM` on what the English
+  chooses by (a count, a kind), and the resolver treats any argument
+  that is no noun as having no gender and being its own form, so a
+  `GENDER` on a name is never wrong, only useless.
 - **Amended:**
   - **ADR-099:** a shared submenu is named by core's id (8).
   - **ADR-037:** on Linux a type's name is read in the user's language

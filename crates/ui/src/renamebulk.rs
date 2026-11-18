@@ -824,7 +824,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     matched,
                     mark,
                 ))
-                .child(div().flex_none().child("→"))
+                .child(div().flex_none().child(crate::sides::becomes()))
                 .child(clipped_marked(
                     // Known by what it says: the pattern typed on, a name
                     // pointed at does not keep the one before's tooltip.
@@ -980,21 +980,21 @@ fn footer_hint(shell: &Shell) -> String {
             renamebulk_keys_case_reference = "Tab switches fields · { $case } changes case · \
                                               { $reference } says what one takes · Enter \
                                               renames (undoable) · Escape cancels",
-            case = case,
-            reference = reference,
+            case = skwir_core::words::Keys(case),
+            reference = skwir_core::words::Keys(reference),
             note = "The bulk rename's keys. case: the keys that change the case (Ctrl+K); \
                     reference: the keys that say what a field takes (F1)."
         ),
         (Some(case), None) => words!(
             renamebulk_keys_case = "Tab switches fields · { $case } changes case · Enter \
                                     renames (undoable) · Escape cancels",
-            case = case,
+            case = skwir_core::words::Keys(case),
             note = "The bulk rename's keys. case: the keys that change the case (Ctrl+K)."
         ),
         (None, Some(reference)) => words!(
             renamebulk_keys_reference = "Tab switches fields · { $reference } says what one \
                                          takes · Enter renames (undoable) · Escape cancels",
-            reference = reference,
+            reference = skwir_core::words::Keys(reference),
             note = "The bulk rename's keys. reference: the keys that say what a field takes \
                     (F1)."
         ),

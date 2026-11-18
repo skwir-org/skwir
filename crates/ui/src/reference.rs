@@ -38,6 +38,7 @@
 //! - The address field says its own in its card (`Typed::Help`, F1 or
 //!   its `?`): taking the keyboard from the field would end what is typed.
 
+use crate::sides::Sides;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -244,7 +245,7 @@ pub(crate) fn question<V: 'static>(
         // Within the field's frame, as tall as its text allows, as a form's
         // list button (`inner_chevron`).
         .size(sized(crate::controls::HEIGHT - 8.))
-        .mr(px(-4.))
+        .margin_end(px(-4.))
         .flex()
         .items_center()
         .justify_center()
@@ -281,7 +282,7 @@ pub(crate) fn tip(keys: Option<String>) -> SharedString {
     match keys {
         Some(keys) => words!(
             reference_tip_keys = "What it takes · { $keys }",
-            keys = keys,
+            keys = skwir_core::words::Keys(keys),
             note = "The tooltip of a field's ? button, which lists what the field takes; keys: its shortcut."
         )
         .say()
@@ -644,7 +645,7 @@ fn list<V: Helps>(
                     div()
                         .flex_none()
                         .max_w(gpui::relative(0.3))
-                        .pl_2()
+                        .pad_start(crate::sides::step(2.))
                         .truncate()
                         .text_small()
                         .font_family(theme.code_font.clone())

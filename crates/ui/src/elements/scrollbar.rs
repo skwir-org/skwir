@@ -94,10 +94,17 @@ impl Metrics {
 }
 
 impl Scrolls {
-    fn metrics(&self, axis: Axis) -> Metrics {
+    /// How far along `axis` it is scrolled, from its start: `from_end` for
+    /// a scroll laid out right to left sideways, whose offset gpui counts
+    /// from 0 at its right end up (CSS's scrollLeft, sign turned).
+    fn metrics(&self, axis: Axis, from_end: bool) -> Metrics {
         match self {
             Scrolls::Offset(handle) => Metrics {
-                offset: -f32::from(handle.offset().along(axis)),
+                offset: if from_end {
+                    f32::from(handle.offset().along(axis))
+                } else {
+                    -f32::from(handle.offset().along(axis))
+                },
                 max: f32::from(handle.max_offset().along(axis)),
                 viewport: f32::from(handle.bounds().size.along(axis)),
             },
@@ -128,10 +135,18 @@ impl Scrolls {
         }
     }
 
-    fn scroll_to(&self, axis: Axis, to: f32, window: &mut gpui::Window, cx: &mut App) {
+    fn scroll_to(
+        &self,
+        axis: Axis,
+        to: f32,
+        from_end: bool,
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) {
         match self {
             Scrolls::Offset(handle) => {
-                handle.set_offset(handle.offset().apply_along(axis, |_| px(-to)));
+                let to = if from_end { to } else { -to };
+                handle.set_offset(handle.offset().apply_along(axis, |_| px(to)));
             }
             Scrolls::Items(list) => list.set_offset_from_scrollbar(gpui::point(px(0.), px(-to))),
             Scrolls::Rows(scroll) => match axis {
@@ -237,7 +252,7 @@ fn thumb(track: Bounds<Pixels>, metrics: Metrics, axis: Axis) -> Option<Bounds<P
 
 impl Element for Scrollbar {
     type RequestLayoutState = ();
-    type PrepaintState = (Hitbox, Option<Bounds<Pixels>>, Metrics);
+    type PrepaintState = (Hitbox, Option<Bounds<Pixels>>, Metrics, bool);
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -259,9 +274,16 @@ impl Element for Scrollbar {
             ..Style::default()
         };
         match self.axis {
+            // At the area's end side, its left where the area is laid out
+            // right to left (the direction it inherits: a document's stays
+            // at its right), as a right-to-left desktop draws it.
             Axis::Vertical => {
                 style.inset.top = px(0.).into();
-                style.inset.right = px(0.).into();
+                if window.layout_direction() == gpui::LayoutDirection::RightToLeft {
+                    style.inset.left = px(0.).into();
+                } else {
+                    style.inset.right = px(0.).into();
+                }
                 style.size.width = px(GUTTER).into();
                 style.size.height = relative(1.).into();
             }
@@ -284,15 +306,29 @@ impl Element for Scrollbar {
         window: &mut Window,
         _: &mut App,
     ) -> Self::PrepaintState {
-        let metrics = self.scrolls.metrics(self.axis);
+        // A sideways scroll laid out right to left (the direction the bar
+        // inherits, `sides`) starts at its right: its thumb too.
+        let from_end = self.axis == Axis::Horizontal
+            && window.layout_direction().is_rtl()
+            && matches!(self.scrolls, Scrolls::Offset(_));
+        let metrics = self.scrolls.metrics(self.axis, from_end);
         let corner = self
             .across
             .as_ref()
             .unwrap_or(&self.scrolls)
-            .metrics(self.axis.invert())
+            .metrics(self.axis.invert(), false)
             .scrolls();
         let track = track_along(bounds, self.axis, corner);
-        let thumb = thumb(track, metrics, self.axis);
+        let thumb = thumb(track, metrics, self.axis).map(|thumb| {
+            if from_end {
+                Bounds::new(
+                    gpui::point(track.left() + track.right() - thumb.right(), thumb.top()),
+                    thumb.size,
+                )
+            } else {
+                thumb
+            }
+        });
         // The gutter takes the pointer only while there is a bar in it: a
         // press here must scroll, not select the row underneath. With
         // nothing to scroll it is not there at all.
@@ -301,7 +337,12 @@ impl Element for Scrollbar {
         } else {
             HitboxBehavior::Normal
         };
-        (window.insert_hitbox(track, behavior), thumb, metrics)
+        (
+            window.insert_hitbox(track, behavior),
+            thumb,
+            metrics,
+            from_end,
+        )
     }
 
     fn paint(
@@ -310,7 +351,7 @@ impl Element for Scrollbar {
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         (): &mut (),
-        (hitbox, thumb, metrics): &mut Self::PrepaintState,
+        (hitbox, thumb, metrics, from_end): &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -320,15 +361,23 @@ impl Element for Scrollbar {
         // The track: the gutter, less a corner left to the other bar.
         let bounds = hitbox.bounds;
         let metrics = *metrics;
+        let from_end = *from_end;
         let scrolls = self.scrolls.clone();
         let axis = self.axis;
         // Across the bar: the thickness drawn, against the far side of
-        // the gutter, so the bar hugs the area's edge.
+        // the gutter, so the bar hugs the area's edge (a vertical bar's
+        // left, mirrored).
         let across = axis.invert();
+        let near = axis == Axis::Vertical
+            && window.layout_direction() == gpui::LayoutDirection::RightToLeft;
         let hug = move |area: Bounds<Pixels>, thickness: Pixels| {
             Bounds::new(
                 area.origin.apply_along(across, |start| {
-                    start + bounds.size.along(across) - thickness
+                    if near {
+                        start
+                    } else {
+                        start + bounds.size.along(across) - thickness
+                    }
                 }),
                 area.size.apply_along(across, |_| thickness),
             )
@@ -356,11 +405,19 @@ impl Element for Scrollbar {
 
             let travel = f32::from(bounds.size.along(axis) - thumb.size.along(axis));
             let start = bounds.origin.along(axis);
+            let end = start + bounds.size.along(axis);
+            let length = f32::from(thumb.size.along(axis));
+            // `grabbed`: how far into the thumb from its left (its top)
+            // it was taken; counted from its right where it runs so.
             let to_offset = move |at: gpui::Point<Pixels>, grabbed: f32| {
                 if travel <= 0. {
                     return 0.;
                 }
-                let position = f32::from(at.along(axis) - start) - grabbed;
+                let position = if from_end {
+                    f32::from(end - at.along(axis)) - (length - grabbed)
+                } else {
+                    f32::from(at.along(axis) - start) - grabbed
+                };
                 (position / travel).clamp(0., 1.) * metrics.max
             };
 
@@ -377,7 +434,13 @@ impl Element for Scrollbar {
                     f32::from(event.position.along(axis) - thumb.origin.along(axis))
                 } else {
                     let middle = f32::from(thumb.size.along(axis)) / 2.;
-                    handle.scroll_to(axis, to_offset(event.position, middle), window, cx);
+                    handle.scroll_to(
+                        axis,
+                        to_offset(event.position, middle),
+                        from_end,
+                        window,
+                        cx,
+                    );
                     middle
                 };
                 down.0.set(Some(grabbed));
@@ -400,7 +463,13 @@ impl Element for Scrollbar {
                     handle.dragging(false);
                     return;
                 }
-                handle.scroll_to(axis, to_offset(event.position, grabbed), window, cx);
+                handle.scroll_to(
+                    axis,
+                    to_offset(event.position, grabbed),
+                    from_end,
+                    window,
+                    cx,
+                );
                 window.refresh();
             });
 

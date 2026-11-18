@@ -20,6 +20,7 @@
 //! by itself: what a folder holds in all is counted when asked
 //! (`ui.properties_count`, `Show::Count`).
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, SharedString, div, prelude::*};
@@ -3067,15 +3068,15 @@ fn row_element(
                             }),
                     )
                 })
-                .children(inline.map(|links| links.when(!bare, gpui::Styled::ml_auto))),
+                .children(inline.map(|links| links.when(!bare, crate::sides::Sides::margin_start_auto))),
         )
         .children(over.map(|links| {
             links
                 .absolute()
                 .bottom_0()
-                .right_0()
+                .inset_end(gpui::px(0.))
                 .py(sized(ROW_PAD))
-                .pl_3()
+                .pad_start(crate::sides::step(3.))
                 .rounded_sm()
                 // Over the row's words: opaque, as the row it covers is.
                 .bg(theme.bg.blend(theme.hover))
@@ -3100,7 +3101,7 @@ pub fn edged(body: AnyElement, room: Room, cx: &mut Context<Shell>) -> AnyElemen
         .child(body)
         .child(edge(
             "properties-resize",
-            if beside { Side::Left } else { Side::Top },
+            if beside { Side::Start } else { Side::Top },
             PropertiesResize { beside },
             move |this| this.preview.properties_share.set(beside, SHARE),
             cx,
@@ -3115,7 +3116,7 @@ pub fn gutter(room: Room, cx: &mut Context<Shell>) -> AnyElement {
     let beside = room == Room::Beside;
     gutter(
         "properties-resize",
-        if beside { Side::Left } else { Side::Top },
+        if beside { Side::Start } else { Side::Top },
         PropertiesResize { beside },
         move |this| this.preview.properties_share.set(beside, SHARE),
         cx,
@@ -3143,7 +3144,10 @@ impl Shell {
         let beside = ev.drag(cx).beside;
         let keep = keep(cx.global::<Theme>(), beside);
         let (along, size) = if beside {
-            (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
+            (
+                crate::sides::from_start_edge(ev.bounds, ev.event.position.x),
+                ev.bounds.size.width,
+            )
         } else {
             (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };

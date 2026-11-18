@@ -15,6 +15,7 @@
 //! are built; the keys walk the rows read, so one out of view is reached
 //! too, and comes into view.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::collections::{HashMap, HashSet};
@@ -457,7 +458,7 @@ fn with_keys(tip: Words, keys: Option<String>) -> SharedString {
         Some(keys) => words!(
             history_with_keys = "{ $tip } ({ $keys })",
             tip = tip,
-            keys = keys,
+            keys = skwir_core::words::Keys(keys),
             note = "A tooltip, then the keys that do the same (Undo copy 3 items to Docs \
                     (Ctrl+Z))."
         ),
@@ -541,7 +542,7 @@ pub fn undo_control(
         .gap_1()
         .h(sized(20.))
         .px_2()
-        .rounded_l_md()
+        .rounded_start(gpui::rems(0.375))
         .border_1()
         .border_color(gpui::transparent_black())
         .text_color(color)
@@ -585,7 +586,7 @@ pub fn undo_control(
         .justify_center()
         .h(sized(20.))
         .w(sized(18.))
-        .rounded_r_md()
+        .rounded_end(gpui::rems(0.375))
         .border_1()
         .border_color(gpui::transparent_black())
         .cursor_pointer()
@@ -1022,12 +1023,12 @@ fn history_row(
         .flex()
         .flex_col()
         .py_0p5()
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .when(lit, |d| d.bg(theme.hover))
         .child(line)
         // Under the title, past the glyph.
-        .children(reason.map(|reason| reason.pl(sized(21.)).pb_1()))
+        .children(reason.map(|reason| reason.pad_start(sized(21.)).pb_1()))
         .into_any_element()
 }
 

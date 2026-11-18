@@ -15,6 +15,7 @@
 //! `playing::NowPlaying`, and what others ask of it (`PlayerRequest`: the
 //! desktop's media keys through a plugin, a script, an agent) is taken here
 //! when the shell wakes. Nothing calls into the UI from another thread.
+use crate::sides::Sides;
 use crate::sizes::sized;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -2622,34 +2623,39 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
             .gap_1()
             .max_w(sized(420.))
             .text_color(theme.text)
+            // Previous, play and next keep their order in every language,
+            // as media's controls do (`sides`); the title follows them.
             .child(
-                request(
-                    "pin-previous",
-                    "skip-previous",
-                    &crate::media::previous_track(),
-                    "previous",
-                )
-                .enabled(pinned.can_step(-1, shell.prefs.player.continue_with))
-                .render(shell, cx),
-            )
-            .child(
-                request(
-                    "pin-play",
-                    if state.playing() { "pause" } else { "play" },
-                    &crate::media::play_pause(),
-                    "play_pause",
-                )
-                .render(shell, cx),
-            )
-            .child(
-                request(
-                    "pin-next",
-                    "skip-next",
-                    &crate::media::next_track(),
-                    "next",
-                )
-                    .enabled(pinned.can_step(1, shell.prefs.player.continue_with))
-                    .render(shell, cx),
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_1()
+                    .left_to_right()
+                    .child(
+                        request(
+                            "pin-previous",
+                            "skip-previous",
+                            &crate::media::previous_track(),
+                            "previous",
+                        )
+                        .enabled(pinned.can_step(-1, shell.prefs.player.continue_with))
+                        .render(shell, cx),
+                    )
+                    .child(
+                        request(
+                            "pin-play",
+                            if state.playing() { "pause" } else { "play" },
+                            &crate::media::play_pause(),
+                            "play_pause",
+                        )
+                        .render(shell, cx),
+                    )
+                    .child(
+                        request("pin-next", "skip-next", &crate::media::next_track(), "next")
+                            .enabled(pinned.can_step(1, shell.prefs.player.continue_with))
+                            .render(shell, cx),
+                    ),
             )
             .child(
                 crate::elements::clip::clipped_with(

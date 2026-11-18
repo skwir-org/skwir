@@ -19,6 +19,7 @@
 //! where a place the user keeps is its owner's to arrange (`Role`). F6
 //! gives the sidebar the keyboard (`Keys`, `Shell::sidebar_key`).
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -740,7 +741,7 @@ pub fn render(
         .track_focus(&shell.sidebar_keys.focus)
         .key_context(crate::keymap::SIDEBAR)
         .on_any_mouse_down(|_, window, _| window.prevent_default())
-        .when(theme.lines(), |d| d.border_r_1().border_color(theme.border))
+        .when(theme.lines(), |d| d.border_end(px(1.)).border_color(theme.border))
         .py_1()
         // A folder dropped beside the rows becomes a bookmark; a drop on a
         // row is that row's and never reaches here.
@@ -1135,7 +1136,7 @@ pub fn render(
     // gives the sidebar its default width back.
     let edge = crate::elements::edge::edge(
         "sidebar-resize",
-        crate::elements::edge::Side::Right,
+        crate::elements::edge::Side::End,
         SidebarResize,
         |this| this.sidebar_width = DEFAULT_WIDTH,
         cx,
@@ -1502,8 +1503,8 @@ fn movable_pill(
         cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
     });
     if let Some(moves) = moves {
-        pill.child(gap(order, &moves, index, Edge::Left, cx))
-            .child(gap(order, &moves, index + 1, Edge::Right, cx))
+        pill.child(gap(order, &moves, index, Edge::Start, cx))
+            .child(gap(order, &moves, index + 1, Edge::End, cx))
     } else {
         pill
     }
@@ -1514,8 +1515,10 @@ fn movable_pill(
 enum Edge {
     Top,
     Bottom,
-    Left,
-    Right,
+    /// A pill's start: its left, its right mirrored (`sides`).
+    Start,
+    /// A pill's end.
+    End,
 }
 
 /// A movable place's row. It can be dragged, and while a place of its
@@ -1542,7 +1545,7 @@ fn movable_row(
 /// Half of a movable place, over it: the drop zone of the gap before the
 /// place at `before` among those that move as it does (`moves`: its group
 /// and the command that moves them), drawn as a line on `side` (a row's
-/// top or bottom, a pill's left or right). Its hitbox does not block the
+/// top or bottom, a pill's start or end). Its hitbox does not block the
 /// place's own clicks.
 fn gap(
     order: &std::sync::Arc<[serde_json::Value]>,
@@ -1558,8 +1561,16 @@ fn gap(
     let zone = match side {
         Edge::Top => zone.left_0().right_0().h(gpui::relative(0.5)).top_0(),
         Edge::Bottom => zone.left_0().right_0().h(gpui::relative(0.5)).bottom_0(),
-        Edge::Left => zone.top_0().bottom_0().w(gpui::relative(0.5)).left_0(),
-        Edge::Right => zone.top_0().bottom_0().w(gpui::relative(0.5)).right_0(),
+        Edge::Start => zone
+            .top_0()
+            .bottom_0()
+            .w(gpui::relative(0.5))
+            .inset_start(px(0.)),
+        Edge::End => zone
+            .top_0()
+            .bottom_0()
+            .w(gpui::relative(0.5))
+            .inset_end(px(0.)),
     };
     zone.drag_over::<PlaceDrag>(move |s, drag, _, _| {
         if drag.mover().as_ref() != Some(&shown) || drag.index == before || drag.index + 1 == before
@@ -1570,8 +1581,8 @@ fn gap(
         match side {
             Edge::Top => s.border_t_2(),
             Edge::Bottom => s.border_b_2(),
-            Edge::Left => s.border_l_2(),
-            Edge::Right => s.border_r_2(),
+            Edge::Start => s.border_start(px(2.)),
+            Edge::End => s.border_end(px(2.)),
         }
     })
     .on_drop(cx.listener(move |this, drag: &PlaceDrag, window, cx| {
@@ -1621,15 +1632,19 @@ impl Shell {
     }
 
     /// The sidebar's edge follows the pointer: the sidebar starts at the
-    /// window's left edge (its body's, within the margin of a frame skwir
-    /// draws), so the pointer's x from there is its width.
+    /// window's start edge (its body's, within the margin of a frame skwir
+    /// draws: the left, the right mirrored), so the pointer's distance from
+    /// there is its width.
     pub fn on_sidebar_drag(
         &mut self,
         ev: &gpui::DragMoveEvent<SidebarResize>,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let x = f32::from(ev.event.position.x - crate::title_bar::body(window).left());
+        let x = f32::from(crate::sides::from_start_edge(
+            crate::title_bar::body(window),
+            ev.event.position.x,
+        ));
         let drawn = x.clamp(MIN_WIDTH, self.sidebar_width_limit(window));
         self.sidebar_width = crate::sizes::Scale::of(window).at_100(drawn);
         cx.notify();

@@ -3784,28 +3784,58 @@ name order by the locale (15); user folders named as their system shows
 them, with `core.folder_names` for the names on disk (16).
 
 **Later tracks**, each its own step once A to G are done:
-- **Name order by the locale** (ADR-139, 15): ICU4X's numeric sort keys
-  behind `collate`'s seam, with a bench case on `flat100k`. Built
-  2026-11-17 (`LC_COLLATE`, the folded order kept for C and POSIX,
-  type-to-find and Group by Name following it); its gate, a streamed
-  listing within budget, is being met.
+- **Name order by the locale** (ADR-139, 15): built 2026-11-17
+  (`LC_COLLATE`, ICU4X's numeric sort keys behind `collate`'s seam, the
+  folded order kept for C and POSIX, type-to-find following it, keys of a
+  batch made on workers; `folder_whole_us` within budget). Group by Name
+  by CLDR's index headings in every script since 2026-11-18 (ADR-130
+  amended): pinyin and strokes for Han, kana rows, Hangul initials, Other
+  letters for kanji and hanja.
+- **Every language's text and grammar** (built the night of 2026-11-18):
+  - catalogs found by script and region (likely subtags: `zh-HK` finds
+    `zh-Hant`), the system's own translations ranked the same way
+    (`locale::Ranker`), the pseudo-languages English to every locale;
+  - Skwir's places carry their grammar for translations (`.gender`,
+    forms, `GENDER()`/`FORM()`, `tools/words/grammar`; ADR-139 amended),
+    French first; quotes are each catalog's;
+  - word boundaries by ICU4X's word segmenter (text fields, the settings
+    search, the address field's terms: `skwir_core::segment`);
+  - short counts in the language's own powers (万, lakh), CLDR's;
+  - a key sequence in a sentence kept left to right (`Arg::Keys`).
 - **User folders' shown names** on Windows and macOS (ADR-139, 16), and
   `core.folder_names`, unavailable on Linux.
-- **The screen reader's language:** AccessKit, and a gpui patch.
-- **gpui patches:** built 2026-11-17, right-to-left text laid out,
-  wrapped and edited right on every system (0069; macOS's rows came from
-  gpui's own wrapping), DirectWrite's right-to-left runs (0070, compiled
-  only), and word characters by Unicode property for every script, the
-  bidirectional controls as glue (0071). Left:
-  - the CJK fallback's language;
+- **The screen reader's language:** built 2026-11-18 (gpui 0073, the
+  window's root says its language; isolation marks left out for
+  assistive technology, 0077). Left: AccessKit's AT-SPI adapter answers
+  `Locale` with nothing, so Orca on Linux cannot use it yet (upstream).
+- **gpui patches:** built 2026-11-17 and 18: right-to-left text laid
+  out, wrapped and edited right (0069), DirectWrite's right-to-left runs
+  (0070, compiled only), line breaks by UAX #14 with ICU4X's dictionaries
+  (0072: kinsoku, Thai, Lao, Khmer, Burmese, Tibetan; replacing 0071's
+  rule), the screen reader's language (0073), the CJK fallback by
+  language (0074: Japanese forms on a `ja_JP` system), a layout direction
+  and right-to-left scrolling (0075), shortcuts on non-Latin keyboard
+  layouts and AZERTY's digits (0076), isolates left out for assistive
+  technology (0077). Left:
   - macOS's Window menu found by a flag rather than by its English
-    title.
-- **Right-to-left windows** (level 3): a mirrored layout, and a
-  right-to-left paragraph aligned from its right edge (today drawn from
-  the left, its trailing space showing at each wrapped row's left).
+    title;
+  - `uniform_list` and `list` ignore the layout direction.
+- **Right-to-left windows** (level 3): the window mirrors since
+  2026-11-18 when it speaks a right-to-left language (only the
+  pseudo-language `ar-XB` does: `crates/ui/src/sides.rs`, shell.md
+  "Start and end"); text fields start at their right; documents stay
+  left to right. Left: the video preview's bar (its buttons mirror), a
+  right-to-left paragraph's alignment in documents, a real right-to-left
+  catalog and its review.
+- **Fonts for every script:** the CJK forms by language (0074), a
+  warning when no installed font draws a script the reader reads, the
+  guide's packages per system (`docs/guide.md`, docs only, the user's
+  choice).
 - **A grid's names** balanced on two lines (`name_lines.rs`) may cut a
   long word in any script, Latin included.
-
+- **A row's segmented choice falling back to its dropdown** still keeps
+  the buttons' width beside it (`elements::beside` with a `Fit`), so the
+  description beside it wraps needlessly (seen 2026-11-18, older).
 ---
 
 ## Phase 8: Polish and release

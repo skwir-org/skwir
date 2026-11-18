@@ -297,6 +297,11 @@ impl PaneView for MapView {
         ID
     }
 
+    /// A map is the land's, drawn as the screen is: Left pans west.
+    fn drawn_as_read(&self) -> bool {
+        false
+    }
+
     fn scroll_to(&mut self, _: usize) {}
 
     fn nav_delta(&self, _: Nav, _: &Shell) -> Option<isize> {

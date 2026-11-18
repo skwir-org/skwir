@@ -27,9 +27,10 @@ impl PopoverAnchor {
         )
     }
 
-    /// `panel` under the anchor's right edge, reaching left: it stays
-    /// where it is as what is before the anchor comes and goes (the view
-    /// buttons' menu).
+    /// `panel` under the anchor's end edge (its right, its left mirrored,
+    /// `sides::corner`), reaching back toward the start: it stays where it
+    /// is as what is before the anchor comes and goes (the view buttons'
+    /// menu).
     pub fn popup_right(&self, panel: impl IntoElement) -> AnyElement {
         let mut panel = Some(panel.into_any_element());
         hang(
@@ -68,8 +69,18 @@ impl PopoverAnchor {
                         .max(least)
                         .min(viewport.width - MARGIN * 2.)
                         .max(px(0.));
-                    let right = (viewport.width - MARGIN).max(bounds.right() + pad);
-                    let left = (bounds.left() - pad).min(right - width).max(px(0.));
+                    let left = if crate::sides::rtl() {
+                        // Mirrored: never short of the anchor's left edge,
+                        // moved right to stay in the window.
+                        let start = MARGIN.min(bounds.left() - pad);
+                        let end = (bounds.right() + pad)
+                            .max(start + width)
+                            .min(viewport.width);
+                        (end - width).max(px(0.))
+                    } else {
+                        let right = (viewport.width - MARGIN).max(bounds.right() + pad);
+                        (bounds.left() - pad).min(right - width).max(px(0.))
+                    };
                     let top = bounds.top() - pad;
                     let room = (viewport.height - top - MARGIN).max(px(120.));
                     let mut popup = column()
@@ -98,8 +109,9 @@ impl PopoverAnchor {
         .into_any_element()
     }
 
-    /// `panel` under the anchor's left edge, `width` wide but never wider
-    /// than the window (moved left to stay in it), at most as tall as the
+    /// `panel` under the anchor's start edge (its left, its right
+    /// mirrored), `width` wide but never wider than the window (moved to
+    /// stay in it), at most as tall as the
     /// window: above the anchor where the window's foot leaves too little
     /// under it and its top enough, else as low as it fits. The list under
     /// a field (`reference::FieldHelp`, ADR-137), which must not cover the
@@ -124,10 +136,18 @@ impl PopoverAnchor {
                         cx,
                     );
                     let gap = px(6.);
-                    let left = bounds
-                        .left()
-                        .min(viewport.width - MARGIN - width)
-                        .max(px(0.));
+                    // From the anchor's start (its left, its right
+                    // mirrored), moved to stay in the window.
+                    let left = if crate::sides::rtl() {
+                        (bounds.right() - width)
+                            .max(MARGIN)
+                            .min((viewport.width - MARGIN - width).max(px(0.)))
+                    } else {
+                        bounds
+                            .left()
+                            .min(viewport.width - MARGIN - width)
+                            .max(px(0.))
+                    };
                     let under = bounds.bottom() + gap;
                     let over = bounds.top() - gap - laid.height;
                     let top = if under + laid.height <= viewport.height - MARGIN {
@@ -169,9 +189,9 @@ impl PopoverAnchor {
         })
     }
 
-    /// `popup_for`, hanging above the anchor and reaching left from its
-    /// right edge: for a button at the window's foot (the dock's More),
-    /// where there is no room below it.
+    /// `popup_for`, hanging above the anchor and reaching back from its end
+    /// edge (as `popup_right`): for a button at the window's foot (the
+    /// dock's More), where there is no room below it.
     pub fn popup_above_for(
         &self,
         chosen: &crate::elements::adaptive::Chosen,
@@ -190,9 +210,9 @@ impl PopoverAnchor {
         )
     }
 
-    /// `panel` standing above the anchor, reaching left from its right
-    /// edge, drawn at `priority` among deferred draws: what stays open at
-    /// the window's foot while popups open over it (Activity).
+    /// `panel` standing above the anchor, reaching back from its end edge,
+    /// drawn at `priority` among deferred draws: what stays open at the
+    /// window's foot while popups open over it (Activity).
     pub fn stand_above(&self, priority: usize, panel: AnyElement) -> AnyElement {
         let mut panel = Some(panel);
         hang(
@@ -240,8 +260,9 @@ impl PopoverAnchor {
         )
     }
 
-    /// A menu whose corner is at `position`, where the pointer pressed,
-    /// taking the window's height (`Room::Window`).
+    /// A menu whose corner is at `position`, where the pointer pressed
+    /// (its top left, its top right mirrored), taking the window's height
+    /// (`Room::Window`).
     pub fn popup_at(position: Point<Pixels>, priority: usize, panel: AnyElement) -> AnyElement {
         let mut panel = Some(panel);
         place(
@@ -250,6 +271,7 @@ impl PopoverAnchor {
                 let room = window.viewport_size().height - MARGIN * 2.;
                 Some((
                     gpui::anchored()
+                        .anchor(crate::sides::corner(gpui::Anchor::TopLeft))
                         .position(position)
                         .snap_to_window_with_margin(MARGIN),
                     room,
@@ -261,8 +283,9 @@ impl PopoverAnchor {
 
     /// A submenu beside the row the anchor is over: its first row level
     /// with that row, `inset` being the room between its panel's edge and
-    /// its rows, the panel meeting the menu's. On the row's right, or its
-    /// left where the window has no room for it there; moved up to stay in
+    /// its rows, the panel meeting the menu's. At the row's end (its right,
+    /// its left mirrored), or its start where the window has no room for
+    /// it there; moved up to stay in
     /// the window, and as tall as the window at most. Measured, then
     /// placed, in the deferred prepaint, after the row's (`priority`
     /// above the menu's).
@@ -281,10 +304,20 @@ impl PopoverAnchor {
                     // Its panel's edge meets the menu's: the row's edge
                     // plus the menu's own inset, less the two borders.
                     let reach = inset - px(2.);
-                    let x = if row.right() + reach + size.width <= view.width - MARGIN {
-                        row.right() + reach
+                    // At the row's end (its right, its left mirrored), else
+                    // its start where the window has no room there.
+                    let after = row.right() + reach;
+                    let before = row.left() - reach - size.width;
+                    let x = if crate::sides::rtl() {
+                        if before >= MARGIN {
+                            before
+                        } else {
+                            after.min(view.width - MARGIN - size.width).max(MARGIN)
+                        }
+                    } else if after + size.width <= view.width - MARGIN {
+                        after
                     } else {
-                        (row.left() - reach - size.width).max(MARGIN)
+                        before.max(MARGIN)
                     };
                     let y = (row.top() - inset)
                         .min(view.height - MARGIN - size.height)
@@ -366,7 +399,8 @@ fn below(
 
 /// `below`, the panel's `corner` at the anchor's opposite edge: a top
 /// corner hangs under the anchor, a bottom one stands above it, with the
-/// height `room` gives.
+/// height `room` gives. `corner` is said left to right, and mirrored where
+/// the window is (`sides::corner`).
 fn hang(
     anchors: &[PopoverAnchor],
     priority: usize,
@@ -375,6 +409,9 @@ fn hang(
     panel: impl FnMut() -> Option<AnyElement> + 'static,
 ) -> AnyElement {
     let anchors: Vec<_> = anchors.iter().map(|a| a.0.clone()).collect();
+    // Its start's corner, as the window reads (`sides`): a menu under a
+    // button reaches toward the line's end.
+    let corner = crate::sides::corner(corner);
     place(
         priority,
         move |window| {

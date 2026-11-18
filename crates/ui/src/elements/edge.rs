@@ -14,6 +14,7 @@
 use gpui::{Context, Div, ElementId, Stateful, div, prelude::*, px};
 
 use crate::shell::Shell;
+use crate::sides::Sides;
 use crate::theme::Theme;
 
 /// How thick an edge is to the pointer.
@@ -25,11 +26,13 @@ pub const THICKNESS: f32 = 6.;
 /// keeps its size whatever the text's.
 pub const SNAP: f32 = 12.;
 
-/// Which edge of its area it is, the area being its parent (`relative`).
+/// Which edge of its area it is, the area being its parent (`relative`):
+/// its start or its end along the line (its left or right, mirrored where
+/// the window is, `sides`), or its top.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    Left,
-    Right,
+    Start,
+    End,
     Top,
 }
 
@@ -44,8 +47,8 @@ pub fn edge<T: 'static>(
 ) -> Stateful<Div> {
     let el = dragged(div().id(id).absolute().top_0(), drag, reset, cx);
     match side {
-        Side::Left => el.left_0().h_full().w(px(THICKNESS)),
-        Side::Right => el.right_0().h_full().w(px(THICKNESS)),
+        Side::Start => el.inset_start(px(0.)).h_full().w(px(THICKNESS)),
+        Side::End => el.inset_end(px(0.)).h_full().w(px(THICKNESS)),
         Side::Top => el.left_0().w_full().h(px(THICKNESS)),
     }
     .cursor(cursor(side))
@@ -65,7 +68,7 @@ pub fn gutter<T: 'static>(
     let across = px(crate::elements::frame::GUTTER);
     let el = dragged(div().id(id).flex_none().rounded_full(), drag, reset, cx);
     match side {
-        Side::Left | Side::Right => el.w(across).h_full(),
+        Side::Start | Side::End => el.w(across).h_full(),
         Side::Top => el.h(across).w_full(),
     }
     .cursor(cursor(side))
@@ -117,7 +120,7 @@ fn dragged<T: 'static>(
 pub struct Share {
     /// Above the other.
     pub above: f32,
-    /// At its left.
+    /// At its start (its left, its right mirrored).
     pub beside: f32,
 }
 

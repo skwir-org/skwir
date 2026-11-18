@@ -1577,7 +1577,7 @@ pub(crate) fn seek_bar_of(
         };
         scrub(this, phase, slid.at, window, cx);
     });
-    crate::controls::slider(id, fraction, held, theme, Rc::new(slid))
+    crate::controls::time_slider(id, fraction, held, theme, Rc::new(slid))
         .aria_label(
             words!(
                 media_position = "Position",

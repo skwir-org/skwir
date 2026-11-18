@@ -6345,13 +6345,17 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // As a card, its right edge is the frame's, the pointer in the
-        // middle of the gutter at its left.
+        // As a card, its end edge is the frame's (the window's right, its
+        // left mirrored), the pointer in the middle of the gutter at its
+        // start.
         let theme = cx.global::<Theme>().clone();
-        let total = f32::from(crate::title_bar::body(window).right())
-            - self.frame_inset(&theme, window).right;
-        let x = f32::from(ev.event.position.x) + crate::terminal::half_gutter(cx);
-        self.preview.width = (total - x).clamp(MIN_WIDTH, self.preview_width_limit(window));
+        let inset = self.frame_inset(&theme, window);
+        let mut room = crate::title_bar::body(window);
+        room.origin.x += px(inset.left);
+        room.size.width -= px(inset.left + inset.right);
+        let width = f32::from(crate::sides::from_end_edge(room, ev.event.position.x))
+            - crate::terminal::half_gutter(cx);
+        self.preview.width = width.clamp(MIN_WIDTH, self.preview_width_limit(window));
         cx.notify();
     }
 
@@ -7186,7 +7190,12 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
         .take(last + 1);
     for (depth, name_at) in names.enumerate() {
         if depth > 0 {
-            line = line.child(div().flex_none().text_color(theme.text_muted).child("›"));
+            line = line.child(
+                div()
+                    .flex_none()
+                    .text_color(theme.text_muted)
+                    .child(crate::sides::onward()),
+            );
         }
         line = line.child(if depth == last {
             name(name_at, depth).into_any_element()
@@ -8097,8 +8106,8 @@ pub fn render_panel(
         match (bottom, theme.cards) {
             (true, false) => edge(id, Side::Top, ResizeHeightHandle, height, cx),
             (true, true) => gutter(id, Side::Top, ResizeHeightHandle, height, cx),
-            (false, false) => edge(id, Side::Left, ResizeHandle, width, cx),
-            (false, true) => gutter(id, Side::Left, ResizeHandle, width, cx),
+            (false, false) => edge(id, Side::Start, ResizeHandle, width, cx),
+            (false, true) => gutter(id, Side::Start, ResizeHandle, width, cx),
         }
     };
     // While peek shows the preview, the panel is only a picture of it: the

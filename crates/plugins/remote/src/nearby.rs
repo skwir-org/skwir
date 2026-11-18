@@ -151,6 +151,7 @@ impl LocationProvider for Provider {
     fn title(&self, _location: &Location) -> Option<Words> {
         Some(words!(
             remote_nearby_title = "Nearby",
+            noun,
             note = "The place that lists the servers found on this network."
         ))
     }

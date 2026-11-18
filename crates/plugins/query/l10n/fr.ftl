@@ -43,7 +43,7 @@ query_chip_contains = Contient
 query_chip_created = Créé
 
 # draft
-query_chip_in = Dans { $place }
+query_chip_in = Dans { FORM($place, case: "definite") }
 
 # draft
 query_chip_kind = Genre
@@ -190,7 +190,11 @@ query_expects_type = { $key } attend { $file }, { $dir } ou { $link }, et non `{
 query_expects_value = { $key } attend une valeur
 
 # draft
-query_field_among = parmi les fichiers de { $place }
+query_field_among = parmi les fichiers { GENDER($place) ->
+        [masculine] { FORM($place, case: "de") }
+        [feminine] { FORM($place, case: "de") }
+       *[other] de { $place }
+    }
 
 # draft
 query_field_close_quote = Fermez le guillemet pour rechercher
@@ -199,7 +203,7 @@ query_field_close_quote = Fermez le guillemet pour rechercher
 query_field_home = partout dans le dossier personnel
 
 # draft
-query_field_in_folders = dans { $place } et ses sous-dossiers
+query_field_in_folders = dans { FORM($place, case: "definite") } et ses sous-dossiers
 
 # draft
 query_field_more_tags = { $count ->
@@ -211,10 +215,10 @@ query_field_more_tags = { $count ->
 query_field_narrow_tags = Tapez davantage du nom pour affiner
 
 # draft
-query_field_recent_in = dans { $place }
+query_field_recent_in = dans { FORM($place, case: "definite") }
 
 # draft
-query_field_saved_in = { $filter } dans { $place }
+query_field_saved_in = { $filter } dans { FORM($place, case: "definite") }
 
 # draft
 query_field_search = Rechercher « { $search } »
@@ -238,7 +242,7 @@ query_field_type_value = Tapez une valeur pour rechercher
 query_field_whole_disk = sur tout le disque
 
 # draft
-query_field_within = parmi tous les fichiers sous { $place }
+query_field_within = parmi tous les fichiers sous { FORM($place, case: "definite") }
 
 # draft
 query_filter = Filtrer le dossier
@@ -343,6 +347,9 @@ query_group_no_tags = Sans étiquette
 query_group_other_kind = Autres
 
 # draft
+query_group_other_letters = Autres lettres
+
+# draft
 query_group_other_names = Autres
 
 # draft
@@ -356,6 +363,12 @@ query_group_over_24_mp = Plus de 24 Mpx
 
 # draft
 query_group_state_unknown = Inconnu
+
+# draft
+query_group_strokes = { $strokes ->
+        [one] { $strokes } trait
+       *[other] { $strokes } traits
+    }
 
 # draft
 query_group_today = Aujourd’hui

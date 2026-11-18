@@ -379,10 +379,20 @@ impl Element for Rows {
             scroll.x
         };
         let row = Rc::clone(&self.row);
+        // What a row says is a document's (a text, code, bytes), laid out
+        // left to right whatever the window's direction, never aligned at
+        // the mirrored window's start (`sides`).
+        let document = gpui::TextStyleRefinement {
+            text_align: Some(gpui::TextAlign::Left),
+            layout_direction: Some(gpui::LayoutDirection::LeftToRight),
+            ..Default::default()
+        };
         let measure = |i: u64, window: &mut Window, cx: &mut App| -> (AnyElement, Size<Pixels>) {
-            let mut element = row(i, shift, window, cx);
-            let size = element.layout_as_root(space, window, cx);
-            (element, size)
+            window.with_text_style(Some(document.clone()), |window| {
+                let mut element = row(i, shift, window, cx);
+                let size = element.layout_as_root(space, window, cx);
+                (element, size)
+            })
         };
         let mut scroll = self.scroll.borrow_mut();
         scroll.viewport = viewport;

@@ -565,6 +565,75 @@ draws none, Compact; below).
   the preview at the right, its bar is a row of the frame and its card
   starts under it, level with the files.
 
+### Start and end: the mirrored window (ADR-139, 12)
+
+The window is laid out in the direction of the first language it speaks
+its words in (`skwir_core::direction::window`, from the language's
+script by ICU4X): mirrored while that is written right to left. No
+shipped language is yet; the right-to-left pseudo-language (`ar-XB`,
+debug builds' Language setting) is, to try it. Left to right, nothing
+changes. One seam says which side a side is (`sides.rs`); nothing else
+asks the direction.
+
+- **Sides are start and end.** A padding, a margin, a border, an inset,
+  a rounded corner and a text's alignment that belong to the reading's
+  direction say start or end (`Sides::pad_start`, `margin_end`,
+  `border_start`, `inset_end`, `rounded_start`, `text_end`), never `pl`,
+  `mr`, `border_l`, `left` or `rounded_l`. What stays physical says why:
+  the window's own edges and corners (the title bar's frame, its resize
+  grips, the cards' gutter at the window's top), what follows the pointer
+  (a drag's picture), what pictures paper (a booklet's sheet, a page).
+  An edge dragged is `edge::Side::Start` or `End`; a drop zone's half,
+  `Start` or `End` (the tabs', the sidebar's pills).
+- **The root says the direction** (`Sides::window_direction`: gpui's
+  `LayoutDirection`, inherited as CSS's `direction`, so a flex row's
+  children start at its right, and `TextAlign::Start`). Everything in it
+  follows: a row lays itself out mirrored, so a row of the window never
+  says its own order. What runs left to right in every language says so
+  on its root (`Sides::left_to_right`): a document (the rows of a text,
+  code or bytes, `elements::rows`; a read inspection; the PDF reader's
+  pages), media's controls (the pinned player's previous, play and next)
+  and time, a shortcut (`sides::shortcut` beside a menu's row, the key
+  caps' rows), the terminal. What Skwir lists of a file (an archive's
+  members, a table's rows, a history and its graph) is the window's.
+- **What prepaint places by hand** asks the seam, never
+  `bounds.left() + x`: `sides::from_start` (a column of the newspaper
+  layout, a chip of a strip, a lane of a history's graph), `mirrored`;
+  the grid's columns run from the right in their own math
+  (`Columns::mirrored`: tiles drawn, a point told the tile under it, a
+  band's tiles). A drag of an edge measures from the area's start or end
+  (`sides::from_start_edge`, `from_end_edge`: the sidebar, the split, the
+  preview, Properties, the archive's members), a column's width by the
+  distance moved along the line (`sides::along`).
+- **Popups hang by their start's corner** (`sides::corner`, in
+  `popover::hang`): a menu under its button reaches toward the line's
+  end, a context menu's top right is at the pointer, a submenu opens at
+  its row's end, a list under a field starts at its start.
+- **Icons that point a way are mirrored** (`sides::symbol`, the list
+  `sides::POINTING`): back and forward, a chevron to the side, undo and
+  redo, the sidebar's and the preview's panels, a bulleted list. Media's,
+  a clock's, an arrow up or down and what pictures a thing are not.
+- **Controls:** a switch is on at its end; a value's slider runs from
+  the start (`controls::slider`), a time's left to right in every
+  language (`controls::time_slider`: the player's, a film's). The
+  vertical scroll bar is at the area's end side (its left mirrored).
+- **Keys go the way they point.** A view drawn in the reading's direction
+  (`PaneView::drawn_as_read`: the grid, the list's tree, the columns, the
+  board) is given Left and Right along its line (`Nav::along_line`); a
+  map and Usage's treemap, drawn as the screen is, as pressed. In the
+  places `keymap::ALONG_LINE` lists (menus, toolbars' choices and
+  submenus, the sidebar, the settings' rows, a review, Bulk Rename's
+  cases, the quick look), the shell's, schemes' and plugins' arrows are
+  swapped as the keymap is installed while mirrored (`Stamp` carries the
+  direction, so a change installs it again); the user's own keys stay as
+  written.
+- **A row never mirrors itself.** No `flex_row_reverse`, no order picked
+  by the direction: gpui lays it out (a wrapping trail given last first
+  says `flex_row_reverse` once for its wrapping, and taffy's `Start`
+  follows the direction). A vertical scroll bar takes its side from the
+  direction its area inherits (`window.layout_direction()`): a
+  document's stays at its right.
+
 ## The address field (`omnibox.rs`, ADR-070, ADR-098)
 
 - **A scope before the text.** The field may hold a token: where words

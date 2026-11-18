@@ -45,6 +45,7 @@ places_forget_passphrase_description = Remove from the keyring the passphrase Sk
 places_forget_passphrase_menu = Forget Passphrase
 
 # The home folder's place in the sidebar.
+# noun
 places_home = Home
 
 # The folder asked to be bookmarked.

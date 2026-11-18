@@ -759,6 +759,9 @@ remote_nearby_server_kind = Serveur { $protocol }
 
 # draft
 remote_nearby_title = À proximité
+    .gender = masculine
+    .definite = À proximité
+    .de = d’À proximité
 
 # draft
 remote_nearby_wsdd_ended = wsdd s’est arrêté dès son démarrage ({ $status }) : il est peut-être trop ancien pour découvrir les serveurs

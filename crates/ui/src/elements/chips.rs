@@ -359,7 +359,10 @@ impl Element for ChipStrip {
         });
         let gap = px(metrics.gap);
         let centered = |h: Pixels| bounds.origin.y + (height - h) / 2.;
-        let mut x = bounds.origin.x;
+        // How far from the strip's start each is placed: its left, its
+        // right where the window is mirrored (`sides::from_start`).
+        let at = |x: Pixels, width: Pixels| crate::sides::from_start(bounds, x, width);
+        let mut x = px(0.);
         if metrics.center {
             let more = counts
                 .iter()
@@ -368,7 +371,11 @@ impl Element for ChipStrip {
             x += ((bounds.size.width - span(&widths, fit, &metrics, more)) / 2.).max(px(0.));
         }
         for (item, measured) in self.built.iter_mut().zip(&sizes).take(fit.whole) {
-            item.prepaint_at(point(x, centered(measured.height)), window, cx);
+            item.prepaint_at(
+                point(at(x, measured.width), centered(measured.height)),
+                window,
+                cx,
+            );
             x += measured.width + gap;
         }
         let dot = px(metrics.dot);
@@ -376,7 +383,7 @@ impl Element for ChipStrip {
         for i in fit.whole..fit.whole + fit.dots {
             let mut d = (self.dot)(i);
             d.layout_as_root(size(dot, dot).map(AvailableSpace::Definite), window, cx);
-            d.prepaint_at(point(x, centered(dot)), window, cx);
+            d.prepaint_at(point(at(x, dot), centered(dot)), window, cx);
             dots.push(d);
             x += px(metrics.dot_step);
         }
@@ -385,9 +392,13 @@ impl Element for ChipStrip {
         }
         let more = (fit.more > 0)
             .then(|| {
-                let at = counts.iter().position(|(left, _, _)| *left == fit.more)?;
-                let (_, mut count, measured) = counts.swap_remove(at);
-                count.prepaint_at(point(x, centered(measured.height)), window, cx);
+                let found = counts.iter().position(|(left, _, _)| *left == fit.more)?;
+                let (_, mut count, measured) = counts.swap_remove(found);
+                count.prepaint_at(
+                    point(at(x, measured.width), centered(measured.height)),
+                    window,
+                    cx,
+                );
                 Some(count)
             })
             .flatten();

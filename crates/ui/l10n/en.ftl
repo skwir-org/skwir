@@ -2848,6 +2848,12 @@ fullscreen_slideshow_ended = The slideshow ended at the last picture
 # Said where a slideshow is asked of something that is no picture.
 fullscreen_slideshow_pictures = A slideshow shows pictures
 
+# A warning shown once a run, when text in a script the user reads cannot be drawn. The font is a family's name (Noto Sans Devanagari, Noto Sans CJK JP), written as it is.
+glyphs_missing = No installed font has the letters of some text here, so they show as boxes. Install { $font } to read them: Skwir's guide names its package on each system.
+
+# A warning shown once a run, when text in a script the user reads cannot be drawn and Skwir knows no font for it. The letter is a code point, written as Unicode writes it (U+1E900).
+glyphs_missing_letter = No installed font has the letters of some text here (the first is { $letter }), so they show as boxes. Install a font that has them: Skwir's guide names Noto's packages on each system.
+
 # A setting's description: whether each tile of the grid says this under its name.
 grid_caption_accessed_description = Under each name in the grid, when it was last read, as the system keeps it.
 
@@ -7518,9 +7524,6 @@ timeline_later_files = { $count ->
        *[other] { $count } files later
     }
 
-# A count in the room of a timeline's bar, in millions (1.5M, 25M): n has at most one digit after the decimal sign.
-timeline_millions = { $n }M
-
 # Beside the timeline's buttons where there are no dates to count.
 timeline_no_data = no data
 
@@ -7554,14 +7557,20 @@ timeline_selected = { $count ->
        *[other] { $count } selected
     }
 
+# A count in the room of a timeline's bar, shortened in a power of ten (power) as CLDR's short compact numbers for the catalog's language count: 3, 6, 9 and 12 in English and French (1.2k, 12k, 1.5M), 4, 8 and 12 in Chinese and Japanese (1.2万, 3億), 3, 5, 7… in Hindi (lakhs, crores). n is the count in that power, with at most one digit after the decimal sign. Give a variant for each power your language counts in.
+timeline_short_count = { $power ->
+        [3] { $n }k
+        [6] { $n }M
+        [9] { $n }B
+        [12] { $n }T
+       *[other] { $n }×10^{ $power }
+    }
+
 # A button of the timeline: count the files of the folders inside too.
 timeline_subtree = subtree
 
 # Pointing at the timeline's subtree button.
 timeline_subtree_tip = Count the files of the folders inside too
-
-# A count in the room of a timeline's bar, in thousands (1.2k, 12k): n has at most one digit after the decimal sign.
-timeline_thousands = { $n }k
 
 # The strip under the files with a bar for each day, week, month or year: its heading.
 timeline_title = Timeline

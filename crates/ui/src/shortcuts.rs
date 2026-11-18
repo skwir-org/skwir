@@ -12,6 +12,7 @@
 //!   earns one toast naming it. Once per command, ever: the commands already
 //!   hinted are kept with the settings.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::collections::HashMap;
@@ -463,7 +464,7 @@ impl Shell {
             Toast::new(
                 words!(
                     shortcuts_tip = "Tip: press { $keys } for “{ $action }”. F1 lists the keys for where you are.",
-                    keys = keymap::display_keys(&hint.keys),
+                    keys = skwir_core::words::Keys(keymap::display_keys(&hint.keys)),
                     action = keymap::title_of(&self.app, &hint),
                     note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title as its menu writes it, quoted (Copy, Rename…)."
                 ),
@@ -515,7 +516,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     } else {
         found(&overview.elsewhere, &query)
     };
-    let mut lists = div().flex().flex_col().gap_6().pr_3();
+    let mut lists = div()
+        .flex()
+        .flex_col()
+        .gap_6()
+        .pad_end(crate::sides::step(3.));
     if here.is_empty() && elsewhere.is_empty() {
         lists = lists.child(
             div().text_color(theme.text_muted).child(
@@ -769,7 +774,13 @@ fn row_element(row: &Row, id: &gpui::ElementId, theme: &Theme) -> columns::Row {
                         );
                     }
                     // A sequence's strokes, apart.
-                    let mut strokes = div().flex().flex_none().items_center().gap(sized(8.));
+                    // Left to right in every language (`sides::shortcut`).
+                    let mut strokes = div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(sized(8.))
+                        .left_to_right();
                     for stroke in keymap::key_caps(chord) {
                         strokes = strokes.child(caps(&stroke));
                     }

@@ -10,7 +10,8 @@ ADR-121 (an order asked anew is made on a worker). Amended by ADR-131
 (2026-11-11): headings the keys reach (9, 12), and phase 5 settled and
 built; and on 2026-11-12 (below): groups told from their counts, costly
 keys asked on every core; what sorts, shows (a column and a caption for
-every criterion), Under names a submenu.
+every criterion), Under names a submenu; and on 2026-11-18 (below): a
+name's heading in every script, as CLDR's index for the locale says it.
 
 ## Context
 
@@ -81,9 +82,13 @@ every criterion), Under names a submenu.
      at midnight.
    - **Size**: Empty, Under 100 KB, 100 KB to 1 MB, 1 to 100 MB, 100 MB
      to 1 GB, Over 1 GB; Folders.
-   - **Name**: the first letter as the name sort folds it (É with E),
-     0–9, and Other for a name that begins with neither; letters of
-     other scripts each a group of their own.
+   - **Name**: the heading the names' order puts a name under, as
+     CLDR's index for the locale says it (É with E; Ä apart in Swedish;
+     か for ガ; ㄱ for 가; pinyin's A for 阿), 0–9, Other for a name that
+     begins with neither, and Other letters, last, for the kanji and
+     hanja no heading is for. (Amended 2026-11-18, below: it was the
+     first letter as the name sort folds it, letters of other scripts
+     each a group of their own.)
    - **Kind**: the type database's kinds (`mime::Kind`), a file of
      several in its first; **Type**: the type's name; **Extension**: the
      extension, No extension, Folders; **Rating**: one group per rating,
@@ -253,3 +258,41 @@ Dimensions, Duration, Owner or Kind and none of them seen.
   place is gone.
 - Not done (offered, not chosen): Dolphin's Permissions, Group, a link's
   target and Comment, and Pages and a song's tags, which need readers.
+
+## Amended 2026-11-18: a name's heading in every script
+
+Names are ordered by the locale's collation (ADR-139, 15); grouped by
+Name, they are headed as that order's language heads them, ICU's
+alphabetic index the model (ICU4X has none). The C and POSIX locales
+keep the first letter folded.
+
+- **The headings are CLDR's index characters for the locale**
+  (`icu_locale`'s exemplar characters, the index set): A to Z with the
+  letters a language adds (Swedish Å Ä Ö, Turkish İ apart from I),
+  headings of more than one letter (Hungarian CS and DZS, Czech CH,
+  Bengali ক্ষ), Japanese's kana rows (あ か さ…, Katakana with Hiragana),
+  Korean's first consonants (ㄱ ㄴ ㄷ…), the letters of Cyrillic, Greek,
+  Arabic, Hebrew, Devanagari, Thai. A name is under the last heading of
+  its script the order puts at or before its beginning: its first letter
+  with the marks written on it (an accent apart, a vowel sign), as many
+  letters as a heading of more holds, Thai's vowel written before its
+  letter read with that letter (`collate::initial`).
+- **A script the locale's index has no headings in** takes those of the
+  language CLDR says most likely writes it: Russian's for a Cyrillic name
+  in an English order, English's for a Latin one in a Japanese order. A
+  letter of a script no index heads is under itself, in its uppercase as
+  the locale writes it.
+- **Han characters are headed as the order holds them**: by the
+  boundaries CLDR's Chinese orders keep among them, pinyin's initials in
+  Chinese (阿 under A, one group with the Latin names beginning with A),
+  the count of strokes in Traditional Chinese ("16 strokes", its words a
+  message; ICU writes "16劃"). CLDR heads them by nothing elsewhere (a
+  Japanese name's kanji, Korean hanja, Han in an English order): one group
+  after the letters, Other letters, as ICU puts them in its overflow.
+  Thousands of characters would be thousands of groups.
+- **Read once**: a character's heading the first time a name begins with
+  it, a beginning with marks the first time it is met (at most 4096 kept
+  for a locale). Measured on 100,000 names (release build, a machine
+  loaded by other builds): 0.12 to 0.25 µs a name in English, Japanese
+  and Chinese orders, 0.2 to 0.4 µs in Hungarian's, whose letters that begin a longer heading are
+  compared with those headings.

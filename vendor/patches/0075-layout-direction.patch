@@ -1,0 +1,839 @@
+0075 layout-direction: A layout right to left, inherited as CSS's direction through the text style (LayoutDirection, Styled::layout_direction, Window::layout_direction): taffy mirrors flex rows, start and end alignments, wrapped lines and grid columns; a box that scrolls sideways starts at its right; TextAlign::Start and End
+
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 379e413..41087a3 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -20,7 +20,7 @@ use crate::{
+     DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
+     ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
+     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
++    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutDirection, LayoutId, LongPressEvent,
+     ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+     MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+     PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
+@@ -2642,7 +2642,16 @@ impl Interactivity {
+             // were removed or the bounds became larger).
+             let mut scroll_offset = scroll_offset.borrow_mut();
+ 
+-            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
++            // Laid out right to left, what overflows lies to the left: it is
++            // scrolled into view rightward, the offset running from 0 (the
++            // right end, where the content starts) up to the maximum, as
++            // CSS's `scrollLeft` runs down from 0 there.
++            let direction = window.layout_direction();
++            scroll_offset.x = if direction.is_rtl() {
++                scroll_offset.x.clamp(px(0.), scroll_max.x)
++            } else {
++                scroll_offset.x.clamp(-scroll_max.x, px(0.))
++            };
+             if scroll_to_bottom {
+                 scroll_offset.y = -scroll_max.y;
+             } else {
+@@ -2652,6 +2661,7 @@ impl Interactivity {
+             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
+                 scroll_handle_state.max_offset = scroll_max;
+                 scroll_handle_state.bounds = bounds;
++                scroll_handle_state.direction = direction;
+             }
+ 
+             *scroll_offset
+@@ -3504,6 +3514,14 @@ impl Interactivity {
+             let overflow = style.overflow;
+             let allow_concurrent_scroll = style.allow_concurrent_scroll;
+             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
++            // A wheel turned on a box that scrolls only sideways moves it
++            // toward its end as it turns down: leftward, laid out right to
++            // left. What the platform reports sideways stays where it points.
++            let forward = if window.layout_direction().is_rtl() {
++                -1.
++            } else {
++                1.
++            };
+             let line_height = window.line_height();
+             let hitbox = hitbox.clone();
+             let current_view = window.current_view();
+@@ -3527,7 +3545,7 @@ impl Interactivity {
+                         Overflow::Scroll
+                             if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
+                         {
+-                            delta.y
++                            delta.y * forward
+                         }
+                         _ => Pixels::ZERO,
+                     };
+@@ -4433,6 +4451,9 @@ struct ScrollHandleState {
+     child_bounds: Vec<Bounds<Pixels>>,
+     scroll_to_bottom: bool,
+     overflow: Point<Overflow>,
++    /// The direction the element lays out in, as last prepainted: right to
++    /// left, its offset runs from 0 up (`Interactivity::clamp_scroll_position`).
++    direction: LayoutDirection,
+     active_item: Option<ScrollActiveItem>,
+ }
+ 
+@@ -4467,7 +4488,9 @@ impl ScrollHandle {
+         Self(Rc::default())
+     }
+ 
+-    /// Get the current scroll offset.
++    /// Get the current scroll offset: from 0 down to `-max_offset`, but
++    /// sideways where the element is laid out right to left, from 0 up to
++    /// `max_offset` (`LayoutDirection`).
+     pub fn offset(&self) -> Point<Pixels> {
+         *self.0.borrow().offset.borrow()
+     }
+@@ -4581,7 +4604,12 @@ impl ScrollHandle {
+                     let child_width = bounds.size.width;
+                     let viewport_width = state.bounds.size.width;
+                     if child_width > viewport_width {
+-                        scroll_offset.x = state.bounds.left() - bounds.left();
++                        // Its start in view: its right edge, right to left.
++                        scroll_offset.x = if state.direction.is_rtl() {
++                            state.bounds.right() - bounds.right()
++                        } else {
++                            state.bounds.left() - bounds.left()
++                        };
+                     } else if bounds.left() + scroll_offset.x < state.bounds.left() {
+                         scroll_offset.x = state.bounds.left() - bounds.left();
+                     } else if bounds.right() + scroll_offset.x > state.bounds.right() {
+@@ -4603,7 +4631,9 @@ impl ScrollHandle {
+ 
+     /// Set the offset explicitly. The offset is the distance from the top left of the
+     /// parent container to the top left of the first child.
+-    /// As you scroll further down the offset becomes more negative.
++    /// As you scroll further down the offset becomes more negative; sideways
++    /// where the element is laid out right to left, more positive as what is
++    /// to the left comes into view.
+     pub fn set_offset(&self, position: Point<Pixels>) {
+         let state = self.0.borrow();
+         *state.offset.borrow_mut() = position;
+@@ -6011,13 +6041,143 @@ mod tests {
+     }
+ }
+ 
++#[cfg(test)]
++mod layout_direction_tests {
++    use crate::{
++        AvailableSpace, Bounds, InteractiveElement as _, IntoElement, LayoutDirection,
++        ParentElement as _, Pixels, Styled as _, TestAppContext, canvas, div, point, px,
++    };
++    use std::{cell::RefCell, rc::Rc};
++
++    /// The children of a row 300 px wide, three boxes 50 px wide in it,
++    /// laid out in `direction`, its own (`justify_end` too where `end`), and
++    /// what direction a box inside sees as it is prepainted.
++    fn row(
++        cx: &mut TestAppContext,
++        direction: Option<LayoutDirection>,
++        end: bool,
++    ) -> (Vec<f32>, LayoutDirection) {
++        let cx = cx.add_empty_window();
++        let seen: Rc<RefCell<Vec<Bounds<Pixels>>>> = Rc::default();
++        let inside = Rc::new(RefCell::new(LayoutDirection::LeftToRight));
++        let (kept, found) = (seen.clone(), inside.clone());
++        cx.draw(
++            point(px(0.), px(0.)),
++            AvailableSpace::max_size(),
++            move |_, _| {
++                let mut row = div()
++                    .flex()
++                    .w(px(300.))
++                    .on_children_prepainted(move |bounds, _, _| *kept.borrow_mut() = bounds);
++                if let Some(direction) = direction {
++                    row = row.layout_direction(direction);
++                }
++                if end {
++                    row = row.justify_end();
++                }
++                row.children((0..2).map(|_| div().flex_none().w(px(50.)).h(px(10.))))
++                    .child(
++                        div().flex_none().w(px(50.)).h(px(10.)).child(
++                            canvas(
++                                move |_, window, _| *found.borrow_mut() = window.layout_direction(),
++                                |_, _, _, _| {},
++                            )
++                            .size_full(),
++                        ),
++                    )
++            },
++        );
++        let lefts = seen
++            .borrow()
++            .iter()
++            .map(|bounds| f32::from(bounds.left()))
++            .collect();
++        (lefts, *inside.borrow())
++    }
++
++    #[crate::test]
++    fn a_row_laid_out_left_to_right_is_as_it_was(cx: &mut TestAppContext) {
++        assert_eq!(
++            row(cx, None, false),
++            (vec![0., 50., 100.], LayoutDirection::LeftToRight)
++        );
++        assert_eq!(
++            row(cx, Some(LayoutDirection::LeftToRight), true),
++            (vec![150., 200., 250.], LayoutDirection::LeftToRight)
++        );
++    }
++
++    #[crate::test]
++    fn a_row_laid_out_right_to_left_runs_from_its_right(cx: &mut TestAppContext) {
++        assert_eq!(
++            row(cx, Some(LayoutDirection::RightToLeft), false),
++            (vec![250., 200., 150.], LayoutDirection::RightToLeft)
++        );
++        // Its end is its left.
++        assert_eq!(
++            row(cx, Some(LayoutDirection::RightToLeft), true),
++            (vec![100., 50., 0.], LayoutDirection::RightToLeft)
++        );
++    }
++
++    /// A direction is inherited, as CSS's: a row in a box laid out right to
++    /// left runs from its right; an island left to right inside it (a code
++    /// view, a terminal) runs from its left again, and its boxes' paddings
++    /// stay where they are said.
++    #[crate::test]
++    fn a_direction_is_inherited_but_where_one_says_its_own(cx: &mut TestAppContext) {
++        let cx = cx.add_empty_window();
++        let outer: Rc<RefCell<Vec<Bounds<Pixels>>>> = Rc::default();
++        let island: Rc<RefCell<Vec<Bounds<Pixels>>>> = Rc::default();
++        let (kept_outer, kept_island) = (outer.clone(), island.clone());
++        cx.draw(
++            point(px(0.), px(0.)),
++            AvailableSpace::max_size(),
++            move |_, _| {
++                div()
++                    .layout_direction(LayoutDirection::RightToLeft)
++                    .w(px(300.))
++                    .child(
++                        div()
++                            .flex()
++                            .pl(px(20.))
++                            .on_children_prepainted(move |bounds, _, _| {
++                                *kept_outer.borrow_mut() = bounds
++                            })
++                            .child(div().flex_none().w(px(50.)).h(px(10.)))
++                            .child(div().flex_none().w(px(50.)).h(px(10.))),
++                    )
++                    .child(
++                        div()
++                            .flex()
++                            .layout_direction(LayoutDirection::LeftToRight)
++                            .on_children_prepainted(move |bounds, _, _| {
++                                *kept_island.borrow_mut() = bounds
++                            })
++                            .child(div().flex_none().w(px(50.)).h(px(10.)))
++                            .child(div().flex_none().w(px(50.)).h(px(10.))),
++                    )
++            },
++        );
++        let lefts = |seen: &Rc<RefCell<Vec<Bounds<Pixels>>>>| {
++            seen.borrow()
++                .iter()
++                .map(|bounds| f32::from(bounds.left()))
++                .collect::<Vec<_>>()
++        };
++        // The left padding stays on the left: the row's right end is 300.
++        assert_eq!(lefts(&outer), [250., 200.]);
++        assert_eq!(lefts(&island), [0., 50.]);
++    }
++}
++
+ #[cfg(test)]
+ mod scroll_axis_tests {
+     use crate::{
+-        self as gpui, AppContext as _, Context, InteractiveElement as _, IntoElement, Modifiers,
+-        ParentElement as _, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+-        StatefulInteractiveElement as _, Styled as _, TestAppContext, VisualTestContext, Window,
+-        div, point, px, size,
++        self as gpui, AppContext as _, Context, InteractiveElement as _, IntoElement,
++        LayoutDirection, Modifiers, ParentElement as _, Render, ScrollDelta, ScrollHandle,
++        ScrollWheelEvent, StatefulInteractiveElement as _, Styled as _, TestAppContext,
++        VisualTestContext, Window, div, point, px, size,
+     };
+ 
+     /// A row of columns that scrolls sideways, its first column scrolling
+@@ -6108,4 +6268,89 @@ mod scroll_axis_tests {
+         assert_eq!(board.row.offset(), point(px(-40.), px(0.)));
+         assert_eq!(board.column.offset(), point(px(0.), px(-40.)));
+     }
++
++    /// A strip 300 px wide of four boxes 150 px wide that scrolls sideways,
++    /// laid out in `direction`.
++    struct Strip {
++        handle: ScrollHandle,
++        direction: LayoutDirection,
++    }
++
++    impl Render for Strip {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let mut strip = div()
++                .id("strip")
++                .size_full()
++                .flex()
++                .layout_direction(self.direction)
++                .overflow_x_scroll()
++                .track_scroll(&self.handle);
++            strip.style().restrict_scroll_to_axis = Some(false);
++            strip.children((0..4).map(|_| div().w(px(150.)).h_full().flex_none()))
++        }
++    }
++
++    fn strip(
++        cx: &mut TestAppContext,
++        direction: LayoutDirection,
++    ) -> (&mut VisualTestContext, ScrollHandle) {
++        let cx = cx.add_empty_window();
++        let handle = ScrollHandle::new();
++        draw_strip(cx, &handle, direction);
++        (cx, handle)
++    }
++
++    fn draw_strip(cx: &mut VisualTestContext, handle: &ScrollHandle, direction: LayoutDirection) {
++        let handle = handle.clone();
++        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
++            cx.new(|_| Strip { handle, direction }).into_any_element()
++        });
++    }
++
++    #[gpui::test]
++    fn a_strip_left_to_right_scrolls_as_it_did(cx: &mut TestAppContext) {
++        let direction = LayoutDirection::LeftToRight;
++        let (cx, handle) = strip(cx, direction);
++        assert_eq!(handle.max_offset().x, px(300.));
++        assert_eq!(handle.bounds_for_item(3).unwrap().left(), px(450.));
++        // The wheel turned down moves it toward its end, rightward.
++        wheel(cx, 0., -40., false);
++        assert_eq!(handle.offset().x, px(-40.));
++        handle.scroll_to_item(3);
++        draw_strip(cx, &handle, direction);
++        assert_eq!(handle.offset().x, px(-300.));
++        handle.scroll_to_item(0);
++        draw_strip(cx, &handle, direction);
++        assert_eq!(handle.offset().x, px(0.));
++    }
++
++    /// Laid out right to left, a strip starts at its right, what overflows
++    /// lies to its left, and its offset runs from 0 up to its maximum, as
++    /// CSS's `scrollLeft` runs down from 0: the wheel and `scroll_to_item`
++    /// reach every box as left to right.
++    #[gpui::test]
++    fn a_strip_right_to_left_starts_at_its_right(cx: &mut TestAppContext) {
++        let direction = LayoutDirection::RightToLeft;
++        let (cx, handle) = strip(cx, direction);
++        assert_eq!(handle.offset().x, px(0.));
++        assert_eq!(handle.max_offset().x, px(300.));
++        assert_eq!(handle.bounds_for_item(0).unwrap().left(), px(150.));
++        assert_eq!(handle.bounds_for_item(3).unwrap().left(), px(-300.));
++        // The wheel turned down moves it toward its end, now leftward: what
++        // is to the left comes into view.
++        wheel(cx, 0., -40., false);
++        assert_eq!(handle.offset().x, px(40.));
++        draw_strip(cx, &handle, direction);
++        assert_eq!(handle.offset().x, px(40.), "within its range");
++        // Sideways, as the platform reports it, it moves where it points.
++        wheel(cx, -60., 0., true);
++        draw_strip(cx, &handle, direction);
++        assert_eq!(handle.offset().x, px(0.), "no further than its start");
++        handle.scroll_to_item(3);
++        draw_strip(cx, &handle, direction);
++        assert_eq!(handle.offset().x, px(300.));
++        handle.scroll_to_item(0);
++        draw_strip(cx, &handle, direction);
++        assert_eq!(handle.offset().x, px(0.));
++    }
+ }
+diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
+index f67fbb9..f89dac5 100644
+--- a/crates/gpui/src/elements/text.rs
++++ b/crates/gpui/src/elements/text.rs
+@@ -851,7 +851,7 @@ impl TextLayout {
+                         lines: Default::default(),
+                         len: 0,
+                         line_height,
+-                        text_align: text_style.text_align,
++                        text_align: text_style.text_align.resolve(text_style.layout_direction),
+                         wrap_width,
+                         truncate_width,
+                         size: Some(Size::default()),
+@@ -871,7 +871,7 @@ impl TextLayout {
+                     lines,
+                     len,
+                     line_height,
+-                    text_align: text_style.text_align,
++                    text_align: text_style.text_align.resolve(text_style.layout_direction),
+                     wrap_width,
+                     truncate_width,
+                     size: Some(size),
+@@ -932,7 +932,7 @@ impl TextLayout {
+                 line.paint_background(
+                     line_origin,
+                     line_height,
+-                    text_style.text_align,
++                    text_style.text_align.resolve(text_style.layout_direction),
+                     Some(bounds),
+                     window,
+                     cx,
+@@ -943,7 +943,7 @@ impl TextLayout {
+                 line.paint(
+                     line_origin,
+                     line_height,
+-                    text_style.text_align,
++                    text_style.text_align.resolve(text_style.layout_direction),
+                     Some(bounds),
+                     window,
+                     cx,
+@@ -1506,6 +1506,55 @@ impl IntoElement for InteractiveText {
+ mod tests {
+     use super::*;
+ 
++    /// A text aligned to its start (inherited, as its direction is) lies on
++    /// the left laid out left to right, on the right laid out right to left.
++    #[crate::test]
++    fn a_text_aligned_to_its_start_follows_the_layout_direction(cx: &mut crate::TestAppContext) {
++        use crate::{
++            AvailableSpace, LayoutDirection, ParentElement as _, Styled as _, TextAlign, div,
++            point, px,
++        };
++        let cx = cx.add_empty_window();
++        for (direction, align, drawn) in [
++            (
++                LayoutDirection::LeftToRight,
++                TextAlign::Start,
++                TextAlign::Left,
++            ),
++            (
++                LayoutDirection::RightToLeft,
++                TextAlign::Start,
++                TextAlign::Right,
++            ),
++            (
++                LayoutDirection::RightToLeft,
++                TextAlign::End,
++                TextAlign::Left,
++            ),
++            (
++                LayoutDirection::RightToLeft,
++                TextAlign::Center,
++                TextAlign::Center,
++            ),
++        ] {
++            let text = StyledText::new("abc");
++            let layout = text.layout().clone();
++            cx.draw(
++                point(px(0.), px(0.)),
++                AvailableSpace::max_size(),
++                move |_, _| {
++                    div()
++                        .w(px(200.))
++                        .layout_direction(direction)
++                        .text_align(align)
++                        .child(div().child(text))
++                },
++            );
++            let laid = layout.0.borrow().as_ref().map(|inner| inner.text_align);
++            assert_eq!(laid, Some(drawn), "{direction:?} {align:?}");
++        }
++    }
++
+     #[test]
+     fn a_text_says_its_language_where_it_has_one() {
+         let quoted = InteractiveText::new("quoted", StyledText::new("Hallo").aria_language("de"));
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 930b4d7..b977324 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -433,6 +433,55 @@ pub enum TextAlign {
+ 
+     /// Align the text to the right of the element
+     Right,
++
++    /// Align the text to the side its element's lines start at: the left
++    /// where it is laid out left to right, the right where right to left
++    /// (`TextStyle::layout_direction`, `TextAlign::resolve`).
++    Start,
++
++    /// Align the text to the side its element's lines end at: the right
++    /// where it is laid out left to right, the left where right to left.
++    End,
++}
++
++impl TextAlign {
++    /// The side this aligns to in a box laid out in `direction`: `Start`
++    /// and `End` turned into `Left` or `Right`, the others as they are.
++    pub fn resolve(self, direction: LayoutDirection) -> TextAlign {
++        match (self, direction) {
++            (TextAlign::Start, LayoutDirection::LeftToRight)
++            | (TextAlign::End, LayoutDirection::RightToLeft) => TextAlign::Left,
++            (TextAlign::Start, LayoutDirection::RightToLeft)
++            | (TextAlign::End, LayoutDirection::LeftToRight) => TextAlign::Right,
++            (align, _) => align,
++        }
++    }
++}
++
++/// The direction a box lays out what it holds in, as CSS's `direction`:
++/// right to left, a flex row runs from the right, a flex row or a grid's
++/// start and end alignments are on the other side, wrapped lines and grid
++/// columns go the other way, and a box that scrolls sideways starts at its
++/// right. Paddings, margins, borders and insets stay where they are said
++/// (left is left). Inherited through the text style, as CSS's is
++/// (`Styled::layout_direction`, `Window::layout_direction`); a text's own
++/// paragraph reads in the direction of its first strong letter whatever
++/// this says.
++#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
++pub enum LayoutDirection {
++    /// Left to right, as gpui lays everything out where nothing says
++    /// otherwise.
++    #[default]
++    LeftToRight,
++    /// Right to left: a mirrored layout, for Arabic, Hebrew, Persian.
++    RightToLeft,
++}
++
++impl LayoutDirection {
++    /// Whether this is right to left.
++    pub fn is_rtl(self) -> bool {
++        self == LayoutDirection::RightToLeft
++    }
+ }
+ 
+ /// The properties that can be used to style text in GPUI
+@@ -481,6 +530,10 @@ pub struct TextStyle {
+     /// How the text should be aligned within the element
+     pub text_align: TextAlign,
+ 
++    /// The direction the element lays out what it holds in (inherited, as
++    /// CSS's `direction`).
++    pub layout_direction: LayoutDirection,
++
+     /// The number of lines to display before truncating the text
+     pub line_clamp: Option<usize>,
+ 
+@@ -507,6 +560,7 @@ impl Default for TextStyle {
+             white_space: WhiteSpace::Normal,
+             text_overflow: None,
+             text_align: TextAlign::default(),
++            layout_direction: LayoutDirection::default(),
+             line_clamp: None,
+             position: RunPosition::Baseline,
+         }
+@@ -1795,4 +1849,29 @@ mod tests {
+             style.text_style().unwrap().font_weight
+         );
+     }
++
++    #[test]
++    fn start_and_end_align_by_the_layout_direction() {
++        use LayoutDirection::{LeftToRight, RightToLeft};
++        for (align, ltr, rtl) in [
++            (TextAlign::Start, TextAlign::Left, TextAlign::Right),
++            (TextAlign::End, TextAlign::Right, TextAlign::Left),
++            (TextAlign::Left, TextAlign::Left, TextAlign::Left),
++            (TextAlign::Center, TextAlign::Center, TextAlign::Center),
++            (TextAlign::Right, TextAlign::Right, TextAlign::Right),
++        ] {
++            assert_eq!(align.resolve(LeftToRight), ltr, "{align:?}");
++            assert_eq!(align.resolve(RightToLeft), rtl, "{align:?}");
++        }
++        // Left to right where nothing says otherwise, and inherited through
++        // the text style: an inner refinement that says none keeps it.
++        let mut style = TextStyle::default();
++        assert_eq!(style.layout_direction, LeftToRight);
++        style.refine(&TextStyleRefinement {
++            layout_direction: Some(RightToLeft),
++            ..Default::default()
++        });
++        style.refine(&TextStyleRefinement::default());
++        assert_eq!(style.layout_direction, RightToLeft);
++    }
+ }
+diff --git a/crates/gpui/src/styled.rs b/crates/gpui/src/styled.rs
+index ce48db5..114b461 100644
+--- a/crates/gpui/src/styled.rs
++++ b/crates/gpui/src/styled.rs
+@@ -1,9 +1,9 @@
+ use crate::{
+     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
+     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
+-    FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
+-    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
+-    TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
++    FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent,
++    LayoutDirection, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
++    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+ };
+ pub use gpui_macros::{
+     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
+@@ -119,6 +119,14 @@ pub trait Styled: Sized {
+         self
+     }
+ 
++    /// Sets the direction this element and what it holds are laid out in,
++    /// as CSS's `direction`, inherited by the elements inside but those that
++    /// set their own (`LayoutDirection`).
++    fn layout_direction(mut self, direction: LayoutDirection) -> Self {
++        self.text_style().layout_direction = Some(direction);
++        self
++    }
++
+     /// Sets the text alignment to left
+     fn text_left(self) -> Self {
+         self.text_align(TextAlign::Left)
+diff --git a/crates/gpui/src/taffy.rs b/crates/gpui/src/taffy.rs
+index 5debecc..4b36e17 100644
+--- a/crates/gpui/src/taffy.rs
++++ b/crates/gpui/src/taffy.rs
+@@ -1,6 +1,6 @@
+ use crate::{
+-    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
+-    Style, Window, size,
++    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, LayoutDirection, Length,
++    Pixels, Point, Size, Style, Window, size,
+     util::{
+         ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
+         round_to_device_pixel,
+@@ -64,9 +64,11 @@ impl TaffyLayoutEngine {
+         style: Style,
+         rem_size: Pixels,
+         scale_factor: f32,
++        direction: LayoutDirection,
+         children: &[LayoutId],
+     ) -> LayoutId {
+-        let taffy_style = style.to_taffy(rem_size, scale_factor);
++        let mut taffy_style = style.to_taffy(rem_size, scale_factor);
++        taffy_style.direction = direction.into();
+ 
+         if children.is_empty() {
+             self.taffy
+@@ -94,8 +96,10 @@ impl TaffyLayoutEngine {
+             &mut App,
+         ) -> Size<Pixels>
+         + 'static,
++        direction: LayoutDirection,
+     ) -> LayoutId {
+-        let taffy_style = style.to_taffy(rem_size, scale_factor);
++        let mut taffy_style = style.to_taffy(rem_size, scale_factor);
++        taffy_style.direction = direction.into();
+         let measure = Box::new(measure) as Box<MeasureFn>;
+         #[cfg(feature = "stacker")]
+         let measure = StackSafe::new(measure);
+@@ -443,6 +447,15 @@ fn border_widths_to_taffy(
+     }
+ }
+ 
++impl From<LayoutDirection> for taffy::style::Direction {
++    fn from(direction: LayoutDirection) -> Self {
++        match direction {
++            LayoutDirection::LeftToRight => taffy::style::Direction::Ltr,
++            LayoutDirection::RightToLeft => taffy::style::Direction::Rtl,
++        }
++    }
++}
++
+ trait ToTaffy<Output> {
+     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> Output;
+ }
+diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
+index 534bbeb..ce9c310 100644
+--- a/crates/gpui/src/text_system/line.rs
++++ b/crates/gpui/src/text_system/line.rs
+@@ -1096,7 +1096,9 @@ fn line_paint_bounds(
+ ) -> Bounds<Pixels> {
+     let rows = layout.rows(line_height, wrap_boundaries);
+     let mut bounds = Bounds::new(origin, size(layout.width, rows.height_of_all()));
+-    if align == TextAlign::Left || layout.len == 0 {
++    // `Start` and `End` unresolved (`TextAlign::resolve`) read as left to
++    // right.
++    if matches!(align, TextAlign::Left | TextAlign::Start) || layout.len == 0 {
+         return bounds;
+     }
+ 
+@@ -1113,9 +1115,9 @@ fn line_paint_bounds(
+     for (row, row_end) in row_ends.enumerate() {
+         let width = row_end - row_start;
+         let offset = match align {
+-            TextAlign::Left => Pixels::ZERO,
++            TextAlign::Left | TextAlign::Start => Pixels::ZERO,
+             TextAlign::Center => (align_width - width) / 2.,
+-            TextAlign::Right => align_width - width,
++            TextAlign::Right | TextAlign::End => align_width - width,
+         };
+         bounds = bounds.union(&Bounds::new(
+             point(origin.x + offset, origin.y + rows.top(row)),
+@@ -1143,9 +1145,9 @@ fn aligned_origin_x(
+     let line_width = end_of_line - last_glyph_x;
+ 
+     match align {
+-        TextAlign::Left => origin.x,
++        TextAlign::Left | TextAlign::Start => origin.x,
+         TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
+-        TextAlign::Right => origin.x + align_width - line_width,
++        TextAlign::Right | TextAlign::End => origin.x + align_width - line_width,
+     }
+ }
+ 
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 07a1278..eecbad3 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -13,19 +13,19 @@ use crate::{
+     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPainted, MeshPreparation,
+-    MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+-    MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay,
+-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
+-    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+-    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+-    Style, SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+-    Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+-    TextStyleRefinement, ThermalState, Tiling, TransformationMatrix, Underline, UnderlineStyle,
+-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+-    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+-    prelude::*, px, rems, size, transparent_black,
++    Keystroke, KeystrokeEvent, LayoutDirection, LayoutId, LineLayoutIndex, Mesh, MeshPainted,
++    MeshPreparation, MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
++    MouseEvent, MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas,
++    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
++    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
++    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
++    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
++    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
++    SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
++    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, Tiling, TransformationMatrix,
++    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
++    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
++    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+ };
+ 
+ use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
+@@ -1259,6 +1259,9 @@ pub struct Window {
+     pub(crate) root: Option<AnyView>,
+     pub(crate) element_id_stack: ElementIdStack,
+     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
++    /// How many of `text_style_stack`'s refinements set a layout direction:
++    /// with none, it is left to right without looking.
++    layout_directions_set: usize,
+     pub(crate) rendered_entity_stack: Vec<EntityId>,
+     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+     pub(crate) element_opacity: f32,
+@@ -2236,6 +2239,7 @@ impl Window {
+             root: None,
+             element_id_stack: ElementIdStack::default(),
+             text_style_stack: Vec::new(),
++            layout_directions_set: 0,
+             rendered_entity_stack: Vec::new(),
+             element_offset_stack: Vec::new(),
+             content_mask_stack: Vec::new(),
+@@ -2610,6 +2614,32 @@ impl Window {
+         &self.text_system
+     }
+ 
++    /// The direction the element being laid out, prepainted or painted lays
++    /// out what it holds in: the one the innermost text style that says one
++    /// says (`Styled::layout_direction`), inherited as CSS's `direction`;
++    /// left to right where none does. For elements that place what they hold
++    /// by hand.
++    pub fn layout_direction(&self) -> LayoutDirection {
++        if self.layout_directions_set == 0 {
++            return LayoutDirection::LeftToRight;
++        }
++        self.text_style_stack
++            .iter()
++            .rev()
++            .find_map(|style| style.layout_direction)
++            .unwrap_or_default()
++    }
++
++    /// How many of `stack`'s refinements set a layout direction
++    /// (`Window::layout_directions_set`), counted again once the stack was
++    /// replaced whole.
++    fn layout_directions_in(stack: &[TextStyleRefinement]) -> usize {
++        stack
++            .iter()
++            .filter(|style| style.layout_direction.is_some())
++            .count()
++    }
++
+     /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
+     pub fn text_style(&self) -> TextStyle {
+         let mut style = TextStyle::default();
+@@ -4111,6 +4141,7 @@ impl Window {
+                         .clone_from(&deferred_draw.element_id_stack);
+                     self.text_style_stack
+                         .clone_from(&deferred_draw.text_style_stack);
++                    self.layout_directions_set = Self::layout_directions_in(&self.text_style_stack);
+                     (
+                         deferred_draw.element.take(),
+                         deferred_draw.parent_node,
+@@ -4142,6 +4173,7 @@ impl Window {
+ 
+             self.element_id_stack.clear();
+             self.text_style_stack.clear();
++            self.layout_directions_set = 0;
+             round_start = round_end;
+         }
+     }
+@@ -4163,6 +4195,7 @@ impl Window {
+                 .clone_from(&deferred_draw.element_id_stack);
+             self.text_style_stack
+                 .clone_from(&deferred_draw.text_style_stack);
++            self.layout_directions_set = Self::layout_directions_in(&self.text_style_stack);
+             self.next_frame
+                 .dispatch_tree
+                 .set_active_node(deferred_draw.parent_node);
+@@ -4186,6 +4219,7 @@ impl Window {
+         self.next_frame.deferred_draws = deferred_draws;
+         self.element_id_stack.clear();
+         self.text_style_stack.clear();
++        self.layout_directions_set = 0;
+     }
+ 
+     fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
+@@ -4326,9 +4360,12 @@ impl Window {
+     {
+         self.invalidator.debug_assert_paint_or_prepaint();
+         if let Some(style) = style {
++            let sets_direction = usize::from(style.layout_direction.is_some());
++            self.layout_directions_set += sets_direction;
+             self.text_style_stack.push(style);
+             let result = f(self);
+             self.text_style_stack.pop();
++            self.layout_directions_set -= sets_direction;
+             result
+         } else {
+             f(self)
+@@ -5599,11 +5636,13 @@ impl Window {
+         cx.layout_id_buffer.extend(children);
+         let rem_size = self.rem_size();
+         let scale_factor = self.scale_factor();
++        let direction = self.layout_direction();
+ 
+         self.layout_engine.as_mut().unwrap().request_layout(
+             style,
+             rem_size,
+             scale_factor,
++            direction,
+             &cx.layout_id_buffer,
+         )
+     }
+@@ -5625,10 +5664,11 @@ impl Window {
+ 
+         let rem_size = self.rem_size();
+         let scale_factor = self.scale_factor();
++        let direction = self.layout_direction();
+         self.layout_engine
+             .as_mut()
+             .unwrap()
+-            .request_measured_layout(style, rem_size, scale_factor, measure)
++            .request_measured_layout(style, rem_size, scale_factor, measure, direction)
+     }
+ 
+     /// Compute the layout for the given id within the given available space.

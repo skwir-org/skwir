@@ -324,6 +324,9 @@ query_group_no_tags = No tags
 # A group's heading, grouped by kind: files of no kind (images, documents…).
 query_group_other_kind = Other
 
+# A group's heading, grouped by name, after the letters' groups: names that begin with a letter no heading is for (a Japanese name's kanji, a Han character in an order other than Chinese's).
+query_group_other_letters = Other letters
+
 # A group's heading, grouped by name: names that begin with neither a digit nor a letter.
 query_group_other_names = Other
 
@@ -338,6 +341,12 @@ query_group_over_24_mp = Over 24 MP
 
 # A group's heading, grouped by Git state: files nothing was said of (in no repository, not read yet).
 query_group_state_unknown = Not known
+
+# A group's heading, grouped by name in Traditional Chinese's order, which heads Han characters by how many strokes they are written in (1劃, 2劃…).
+query_group_strokes = { $strokes ->
+        [one] { $strokes } stroke
+       *[other] { $strokes } strokes
+    }
 
 # A group's heading, grouped by a date.
 query_group_today = Today

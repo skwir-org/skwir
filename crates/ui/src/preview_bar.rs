@@ -22,6 +22,7 @@
 //! copy the path are the entry's: under a container's view they are in its
 //! More, not the member's (`Bar::always`). Another way of looking at the
 //! file (View as hex) is last, after them (`Bar::otherwise`).
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::rc::Rc;
@@ -556,7 +557,7 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
             // keeps, three shares of the spare room to a caption's one.
             spare()
                 .flex_grow(NAMED)
-                .pl_1()
+                .pad_start(crate::sides::step(1.))
                 .flex()
                 .items_baseline()
                 .gap_1()
@@ -794,7 +795,7 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
             // keeps, three shares of the spare room to a caption's one.
             spare()
                 .flex_grow(NAMED)
-                .pl_1()
+                .pad_start(crate::sides::step(1.))
                 .flex()
                 .items_center()
                 .overflow_hidden()
@@ -1084,7 +1085,15 @@ pub fn render(
         root = root.child(anchor.popup_for(&chosen, panels));
         // Above More, beside the row that opens it.
         if let Some(name) = popup.sub.open.clone() {
-            let panel = toolbar::fly_out(popup, &name, shell.submenu_rows(&name), shell, theme, cx);
+            let title = crate::menu::submenu_title(&shell.preview.menu_entry, &name);
+            let panel = toolbar::fly_out(
+                popup,
+                title.into(),
+                shell.submenu_rows(&name),
+                shell,
+                theme,
+                cx,
+            );
             root = root.child(popup.sub.row.popup_beside(4, crate::menu::SUB_INSET, panel));
         }
     } else if let Some(panel) = bar

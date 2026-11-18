@@ -80,6 +80,31 @@ class Messages(unittest.TestCase):
             self.assertEqual(sum(found.values()), drafts, path)
 
 
+class Calls(unittest.TestCase):
+    def test_a_noun_says_so_after_its_note(self):
+        source = "\n".join(
+            [
+                'fn title() -> Words { words!(trash_title = "Trash", noun, note = "The place.") }',
+                'fn last() -> Words { words!(shelf_title = "Shelf", noun) }',
+                'fn other() -> Words { words!(moved = "Moved { $noun }", noun = n) }',
+            ]
+        )
+        found = {id_: (english, note, noun) for id_, english, note, noun in extract.calls(source)}
+        self.assertEqual(
+            found,
+            {
+                "trash_title": ("Trash", "The place.", True),
+                "shelf_title": ("Shelf", "", True),
+                # An argument named noun is no flag.
+                "moved": ("Moved { $noun }", "", False),
+            },
+        )
+        written = extract.ftl({id_: found[id_] for id_ in found})
+        self.assertIn("# The place.\n# noun\ntrash_title = Trash\n", written)
+        self.assertIn("\n# noun\nshelf_title = Shelf\n", written)
+        self.assertNotIn("# noun\nmoved", written)
+
+
 class Crates(unittest.TestCase):
     def setUp(self):
         self.held = tempfile.TemporaryDirectory()

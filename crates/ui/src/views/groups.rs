@@ -6,6 +6,7 @@
 //! selection, a screen reader's position and count) in positions, as
 //! when nothing is grouped.
 
+use crate::sides::Sides;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -674,7 +675,10 @@ fn heading_saying(
         .pb(scale.px(5.))
         .when(!first, |d| d.border_t_1().border_color(theme.border))
         .map(|d| match left {
-            Some(left) => d.pl(px(left)).pr_2().child(words),
+            Some(left) => d
+                .pad_start(px(left))
+                .pad_end(crate::sides::step(2.))
+                .child(words),
             // In line with the rows' content, inside their 1 px ring.
             None => d.px_2().child(words.mx(px(1.))),
         })
@@ -716,12 +720,7 @@ pub fn chevron(
             },
         )
         .child(
-            gpui::svg()
-                .path(if folded {
-                    "toolbar/right.svg"
-                } else {
-                    "toolbar/chevron.svg"
-                })
+            crate::sides::symbol(if folded { "right" } else { "chevron" })
                 .size(px(side))
                 .text_color(theme.text_muted),
         )

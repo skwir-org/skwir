@@ -375,80 +375,54 @@ fn collect_entries(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
     }
 }
 
-/// The user's language, as desktop entries localize keys: `Name[fr_FR]`,
-/// then `Name[fr]`.
+/// The user's languages, as a desktop entry's translations are chosen for
+/// them: of `Name[zh_TW]`, `Name[sr@latin]`, `Name[fr]`…, the one
+/// `skwir_core::locale::matching` finds for the first of the languages
+/// that has one, by script and region (`zh-HK` reaching `zh_TW`, `sr-Latn`
+/// never the Cyrillic `sr`), else the untranslated value, English's.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Locale {
-    /// Most specific first.
-    keys: Vec<String>,
+    ranker: std::sync::Arc<skwir_core::locale::Ranker>,
 }
 
 impl Locale {
-    /// The languages skwir speaks (`skwir_core::locale`: the user's
-    /// choice, then the system's), as keys: those of each, most wanted
-    /// first, up to English, which a desktop entry's plain value is.
-    fn from_languages(languages: &[String]) -> Self {
-        let mut keys = Vec::new();
-        for language in languages {
-            let mut subtags = language.split('-');
-            let lang = subtags.next().unwrap_or_default();
-            let (mut country, mut modifier) = (None, None);
-            for subtag in subtags {
-                match subtag {
-                    "Latn" => modifier = Some("latin"),
-                    "Cyrl" => modifier = Some("cyrillic"),
-                    "Deva" => modifier = Some("devanagari"),
-                    "valencia" => modifier = Some("valencia"),
-                    region if region.len() == 2 => country = Some(region),
-                    _ => {}
-                }
-            }
-            let mut posix = lang.to_owned();
-            if let Some(country) = country {
-                posix = format!("{posix}_{country}");
-            }
-            if let Some(modifier) = modifier {
-                posix = format!("{posix}@{modifier}");
-            }
-            for key in Self::parse(&posix).keys {
-                // English is the plain value: a key of it past its region
-                // would only reach another language's.
-                if key == "en" {
-                    return Locale { keys };
-                }
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
+    /// For the languages the user reads (`skwir_core::locale::preferred`:
+    /// the user's choice, then the system's, English last).
+    pub(crate) fn from_languages(languages: &[String]) -> Self {
+        Locale {
+            ranker: std::sync::Arc::new(skwir_core::locale::Ranker::new(languages)),
         }
-        Locale { keys }
     }
 
-    /// `lang_COUNTRY.ENCODING@MODIFIER`, per the desktop entry spec.
-    fn parse(value: &str) -> Self {
-        let (rest, modifier) = value
-            .split_once('@')
-            .map_or((value, None), |(r, m)| (r, Some(m)));
-        let rest = rest.split('.').next().unwrap_or_default();
-        let (lang, country) = rest
-            .split_once('_')
-            .map_or((rest, None), |(l, c)| (l, Some(c)));
-        if lang.is_empty() || lang == "C" || lang == "POSIX" {
-            return Locale::default();
-        }
-        let mut keys = Vec::new();
-        if let (Some(c), Some(m)) = (country, modifier) {
-            keys.push(format!("{lang}_{c}@{m}"));
-        }
-        if let Some(c) = country {
-            keys.push(format!("{lang}_{c}"));
-        }
-        if let Some(m) = modifier {
-            keys.push(format!("{lang}@{m}"));
-        }
-        keys.push(lang.to_owned());
-        Locale { keys }
+    /// Of a key's translations, each by the language its brackets name
+    /// (`zh_TW`), the value to show: `None` for the untranslated one.
+    fn chosen<'a>(&self, translations: &[(&str, &'a str)]) -> Option<&'a str> {
+        self.ranker.closest(
+            translations
+                .iter()
+                .filter_map(|(language, value)| Some((*value, language_tag(language)?))),
+        )
     }
+}
+
+/// The BCP 47 tag of a language as a desktop entry's key or the type
+/// database's `xml:lang` names it: POSIX (`zh_TW` as `zh-TW`, `sr@latin`
+/// as `sr-Latn`, `ca@valencia` as `ca-valencia`, `pt_BR` as `pt-BR`) or a
+/// tag already (`zh-Hant-TW`). `None` for a modifier no tag holds (an
+/// English in Shavian, `en@shaw`, is no English), and for what names no
+/// language.
+pub(crate) fn language_tag(key: &str) -> Option<String> {
+    if !key.contains(['_', '@']) {
+        return Some(key.to_owned());
+    }
+    if let Some((_, modifier)) = key.split_once('@')
+        && !["latin", "cyrillic", "devanagari", "valencia"]
+            .iter()
+            .any(|kept| modifier.eq_ignore_ascii_case(kept))
+    {
+        return None;
+    }
+    crate::locale::bcp47(key)
 }
 
 /// The `[Desktop Entry]` group of an application. `None` for another type,
@@ -462,18 +436,25 @@ pub(crate) fn parse_entry(
     desktops: &[String],
 ) -> Option<Application> {
     let mut values: HashMap<&str, &str> = HashMap::new();
+    // Each key's translations, by the language its brackets name.
+    let mut translated: HashMap<&str, Vec<(&str, &str)>> = HashMap::new();
     for (group, key, value) in keyfile::entries(text) {
-        if group == "Desktop Entry" {
+        if group != "Desktop Entry" {
+            continue;
+        }
+        if let Some((base, language)) = key.strip_suffix(']').and_then(|key| key.split_once('[')) {
+            // A language given twice: the first is chosen, as for a key.
+            translated.entry(base).or_default().push((language, value));
+        } else {
             values.entry(key).or_insert(value);
         }
     }
     let localized = |key: &str| {
-        locale
-            .keys
-            .iter()
-            .find_map(|l| values.get(format!("{key}[{l}]").as_str()))
-            .or_else(|| values.get(key))
-            .map(|v| keyfile::unescape(v))
+        translated
+            .get(key)
+            .and_then(|translations| locale.chosen(translations))
+            .or_else(|| values.get(key).copied())
+            .map(keyfile::unescape)
             .filter(|v| !v.is_empty())
     };
     if values.get("Type").copied() != Some("Application")
@@ -1006,31 +987,59 @@ mod tests {
     }
 
     #[test]
-    fn locales_fall_back_from_the_most_specific() {
-        assert_eq!(
-            Locale::parse("fr_FR.UTF-8@euro").keys,
-            ["fr_FR@euro", "fr_FR", "fr@euro", "fr"]
-        );
-        assert!(Locale::parse("C.UTF-8").keys.is_empty());
+    fn an_entry_s_languages_are_read_as_tags() {
+        assert_eq!(language_tag("zh_TW").as_deref(), Some("zh-TW"));
+        assert_eq!(language_tag("sr@latin").as_deref(), Some("sr-Latn"));
+        assert_eq!(language_tag("sr_RS@latin").as_deref(), Some("sr-Latn-RS"));
+        assert_eq!(language_tag("ca@valencia").as_deref(), Some("ca-valencia"));
+        assert_eq!(language_tag("pt_BR").as_deref(), Some("pt-BR"));
+        assert_eq!(language_tag("zh-Hant-TW").as_deref(), Some("zh-Hant-TW"));
+        assert_eq!(language_tag("fr").as_deref(), Some("fr"));
+        assert_eq!(language_tag("en@shaw"), None, "no English");
     }
 
-    /// The languages skwir speaks, as a desktop entry's keys: each most
-    /// specific first, up to English, whose words are the plain value.
+    /// A desktop entry's name in the first of the user's languages it has
+    /// one in, found by script and region; the untranslated one, English's,
+    /// where English comes first or nothing else is found.
     #[test]
-    fn the_languages_skwir_speaks_are_an_entry_s_keys() {
-        let keys = |languages: &[&str]| {
+    fn an_entry_is_named_in_the_closest_of_its_languages() {
+        let text = "[Desktop Entry]\nType=Application\nExec=viewer %F\nName=Viewer\n\
+            Name[zh_CN]=简\nName[zh_TW]=繁\nName[sr]=Ћир\nName[sr@latin]=Lat\n\
+            Name[pt_BR]=Visualizador\nName[fr]=Visionneuse\nName[ar]=عارض\n\
+            Name[en_GB]=Viewer (GB)\nGenericName=Image viewer\nGenericName[fr]=Visionneuse d’images\n";
+        let name = |languages: &[&str]| {
             let languages: Vec<String> = languages.iter().map(|l| (*l).to_owned()).collect();
-            Locale::from_languages(&languages).keys
+            let app = parse_entry(
+                "viewer.desktop",
+                Path::new("/usr/share/applications/viewer.desktop"),
+                text,
+                &Locale::from_languages(&languages),
+                &[],
+            )
+            .unwrap();
+            (app.name, app.generic_name.unwrap_or_default())
         };
-        assert_eq!(keys(&["fr-FR", "en"]), ["fr_FR", "fr"]);
+        let named = |languages: &[&str]| name(languages).0;
+        assert_eq!(named(&["zh-HK", "en"]), "繁", "Hong Kong reads Taiwan's");
+        assert_eq!(named(&["zh-SG", "en"]), "简");
+        assert_eq!(named(&["sr-Latn-RS", "en"]), "Lat");
+        assert_eq!(named(&["sr-RS", "en"]), "Ћир");
+        assert_eq!(named(&["pt-PT", "en"]), "Visualizador");
+        assert_eq!(named(&["fr-CA", "en"]), "Visionneuse");
+        assert_eq!(named(&["en-GB", "fr"]), "Viewer (GB)");
+        assert_eq!(named(&["en", "fr-FR"]), "Viewer", "English chosen first");
+        assert_eq!(named(&["de", "en", "fr"]), "Viewer");
         assert_eq!(
-            keys(&["sr-Latn-RS", "de", "en"]),
-            ["sr_RS@latin", "sr_RS", "sr@latin", "sr", "de"]
+            named(&["ar-XB", "en"]),
+            "Viewer",
+            "a pseudo-language reaches none"
         );
-        // English chosen before the system's French: the plain value.
-        assert!(keys(&["en", "fr-FR"]).is_empty());
-        assert_eq!(keys(&["en-GB", "fr"]), ["en_GB"]);
-        assert!(keys(&["en"]).is_empty());
+        assert_eq!(named(&[]), "Viewer");
+        assert_eq!(
+            name(&["fr-FR", "en"]),
+            ("Visionneuse".to_owned(), "Visionneuse d’images".to_owned())
+        );
+        assert_eq!(name(&["zh-TW", "en"]).1, "Image viewer", "untranslated");
     }
 
     // The free desktops' files (step E, ADR-035).
@@ -1092,7 +1101,7 @@ mod tests {
         let catalog = Catalog::read(
             &[user, system],
             &[user_list, system_list],
-            &Locale::parse("fr_FR.UTF-8"),
+            &Locale::from_languages(&["fr-FR".to_owned(), "en".to_owned()]),
             &[],
         );
         let ids =

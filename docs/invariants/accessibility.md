@@ -20,6 +20,15 @@ like `AGENTS.md`.
   otherwise: a frame without a screen reader costs what it did.
 - Nodes are the same node across frames when their global element ids
   are: an id that changes says a node went and another came.
+- **What a reader gets is said plainly** (ADR-139): no name's isolation
+  mark (FSI, PDI) in a name, a description, a value or an announcement,
+  as `Words::say_plain` says them. Speech needs no isolation, and a
+  braille display shows a mark as a stray cell. One rule in one place:
+  gpui leaves U+2066 to U+2069 out of every node's label, description,
+  value and placeholder as it ends the frame's tree (patch 0077,
+  `window/a11y.rs`, `finalize`), so a string said for drawing (`say()`, a drawn text's own
+  value, the window's title) reaches the reader plain. A text's runs keep
+  their characters: the caret counts them.
 - **The tree reads as the screen does.** Where the layout gives children
   in another order than they read (the trail, laid out from the right so
   that its first folders wrap out of sight), the container puts its
@@ -51,6 +60,13 @@ like `AGENTS.md`.
   along the toolbars.
 - The window is named by the active pane's location ("‹location› —
   skwir", `Shell::sync_title`).
+- **The window says the language its words are said in** (ADR-139): the
+  first of `locale::languages`, on the tree's root
+  (`a11y_language::apply`, gpui patch 0073), which every node inherits,
+  so a voice reads French in French. A part known to be written in
+  another language (a document's own `lang`) says its own
+  (`aria_language`); none does yet. A file's name says the window's: what
+  it is written in is not known.
 
 ## Controls and dialogs
 
@@ -166,7 +182,7 @@ like `AGENTS.md`.
 
 | Place | Role | Name |
 | --- | --- | --- |
-| window | frame | "‹location› — skwir" |
+| window | frame, in the language its words are said in | "‹location› — skwir" |
 | list and grid | list box of options; grouped, a heading for each group among them; what a plan brings and has not landed, an option disabled among them (ADR-135) | the location; a heading its group and count ("Today, 3 items"), a group's first option described by them too; what arrives its name, described by how far it has come |
 | tree | tree of items | the location |
 | columns, board | group of list boxes | the location; each column its folder |
@@ -220,6 +236,10 @@ Not yet: a scanned page's text (no engine reads it).
 
 - The adapter passes neither a tree item's level nor whether it is
   expanded: on Linux the tree view's items say their names only.
+- The adapter answers AT-SPI's `Locale` with nothing: the window's
+  language reaches a client only as each text's "language" attribute
+  (`Text.GetAttributes`, what `just a11y-check` reads), so Orca does not
+  choose its voice by it yet.
 - libatspi refuses the signature of AccessKit's `RemoveAccessible`
   ("dbind-WARNING … Unknown signature so"): a client keeps a removed
   node until it reads its parent's children again.

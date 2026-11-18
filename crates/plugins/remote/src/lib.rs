@@ -1717,6 +1717,7 @@ impl Remotes {
                 GROUP,
                 words!(
                     remote_nearby_title = "Nearby",
+                    noun,
                     note = "The place that lists the servers found on this network."
                 ),
                 "network-workgroup",

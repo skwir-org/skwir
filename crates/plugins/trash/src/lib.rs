@@ -62,6 +62,7 @@ fn empty_trash() -> Words {
 fn trash_title() -> Words {
     words!(
         trash_title = "Trash",
+        noun,
         note = "The place that holds what was moved to the trash."
     )
 }

@@ -13,19 +13,19 @@ use crate::{
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPainted, MeshPreparation,
-    MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
-    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
-    Style, SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, Tiling, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
-    prelude::*, px, rems, size, transparent_black,
+    Keystroke, KeystrokeEvent, LayoutDirection, LayoutId, LineLayoutIndex, Mesh, MeshPainted,
+    MeshPreparation, MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, Tiling, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1259,6 +1259,9 @@ pub struct Window {
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    /// How many of `text_style_stack`'s refinements set a layout direction:
+    /// with none, it is left to right without looking.
+    layout_directions_set: usize,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -2236,6 +2239,7 @@ impl Window {
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
+            layout_directions_set: 0,
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -2608,6 +2612,32 @@ impl Window {
     /// Accessor for the text system.
     pub fn text_system(&self) -> &Rc<WindowTextSystem> {
         &self.text_system
+    }
+
+    /// The direction the element being laid out, prepainted or painted lays
+    /// out what it holds in: the one the innermost text style that says one
+    /// says (`Styled::layout_direction`), inherited as CSS's `direction`;
+    /// left to right where none does. For elements that place what they hold
+    /// by hand.
+    pub fn layout_direction(&self) -> LayoutDirection {
+        if self.layout_directions_set == 0 {
+            return LayoutDirection::LeftToRight;
+        }
+        self.text_style_stack
+            .iter()
+            .rev()
+            .find_map(|style| style.layout_direction)
+            .unwrap_or_default()
+    }
+
+    /// How many of `stack`'s refinements set a layout direction
+    /// (`Window::layout_directions_set`), counted again once the stack was
+    /// replaced whole.
+    fn layout_directions_in(stack: &[TextStyleRefinement]) -> usize {
+        stack
+            .iter()
+            .filter(|style| style.layout_direction.is_some())
+            .count()
     }
 
     /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
@@ -3212,6 +3242,15 @@ impl Window {
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
         self.a11y.set_window_title(title.to_string());
+    }
+
+    /// Sets the language the window's words are in, a BCP 47 tag (`fr`,
+    /// `pt-BR`), for assistive technology to read them in: the root of the
+    /// window's accessibility tree says it, which holds for every node in it
+    /// but those that say their own (`aria_language`). `None` says none, the
+    /// reader's own then. Sent with the next frame's tree.
+    pub fn set_a11y_language(&mut self, language: Option<SharedString>) {
+        self.a11y.set_language(language);
     }
 
     /// Sets the position of the macOS traffic light buttons.
@@ -4102,6 +4141,7 @@ impl Window {
                         .clone_from(&deferred_draw.element_id_stack);
                     self.text_style_stack
                         .clone_from(&deferred_draw.text_style_stack);
+                    self.layout_directions_set = Self::layout_directions_in(&self.text_style_stack);
                     (
                         deferred_draw.element.take(),
                         deferred_draw.parent_node,
@@ -4133,6 +4173,7 @@ impl Window {
 
             self.element_id_stack.clear();
             self.text_style_stack.clear();
+            self.layout_directions_set = 0;
             round_start = round_end;
         }
     }
@@ -4154,6 +4195,7 @@ impl Window {
                 .clone_from(&deferred_draw.element_id_stack);
             self.text_style_stack
                 .clone_from(&deferred_draw.text_style_stack);
+            self.layout_directions_set = Self::layout_directions_in(&self.text_style_stack);
             self.next_frame
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
@@ -4177,6 +4219,7 @@ impl Window {
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
         self.text_style_stack.clear();
+        self.layout_directions_set = 0;
     }
 
     fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
@@ -4317,9 +4360,12 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(style) = style {
+            let sets_direction = usize::from(style.layout_direction.is_some());
+            self.layout_directions_set += sets_direction;
             self.text_style_stack.push(style);
             let result = f(self);
             self.text_style_stack.pop();
+            self.layout_directions_set -= sets_direction;
             result
         } else {
             f(self)
@@ -5590,11 +5636,13 @@ impl Window {
         cx.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let direction = self.layout_direction();
 
         self.layout_engine.as_mut().unwrap().request_layout(
             style,
             rem_size,
             scale_factor,
+            direction,
             &cx.layout_id_buffer,
         )
     }
@@ -5616,10 +5664,11 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let direction = self.layout_direction();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(style, rem_size, scale_factor, measure, direction)
     }
 
     /// Compute the layout for the given id within the given available space.

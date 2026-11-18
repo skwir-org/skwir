@@ -2,6 +2,7 @@ mod bidi;
 mod font_fallbacks;
 mod font_features;
 mod line;
+mod line_breaks;
 mod line_layout;
 mod line_wrapper;
 
@@ -236,6 +237,8 @@ pub struct TextSystem {
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<CharWidthCache>>>,
+    /// Where texts the line wrappers wrapped may wrap (`line_breaks`).
+    kept_breaks: Mutex<line_breaks::KeptBreaks>,
     fallback_font_stack: SmallVec<[Font; 2]>,
     font_generation: Arc<AtomicUsize>,
     missing_glyph_reporter: Arc<MissingGlyphReporter>,
@@ -260,6 +263,7 @@ impl TextSystem {
             raster_bounds: RwLock::default(),
             font_ids_by_font: RwLock::default(),
             wrapper_pool: Mutex::default(),
+            kept_breaks: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
@@ -306,6 +310,19 @@ impl TextSystem {
         self.missing_glyph_reporter.reset();
         self.font_generation.fetch_add(1, Ordering::Release);
         Ok(())
+    }
+
+    /// Sets the language text is read in, a BCP 47 tag (`ja`, `zh-TW`), for
+    /// the fonts that fall back where the asked ones lack a character: on
+    /// Linux, Chinese characters take the forms of Japanese, Korean, or
+    /// Traditional or Simplified Chinese by it, as the system's locale picks
+    /// them at start. Where that changes, cached layouts are laid out again,
+    /// as after `add_fonts`; a window shows it once it is drawn again.
+    pub fn set_language(&self, language: &str) {
+        if self.platform_text_system.set_language(language) {
+            self.missing_glyph_reporter.reset();
+            self.font_generation.fetch_add(1, Ordering::Release);
+        }
     }
 
     /// Takes the receiver for missing-glyph reports.
@@ -555,6 +572,28 @@ impl TextSystem {
             wrapper: Some(wrapper),
             text_system: self.clone(),
         }
+    }
+
+    /// Where `text` may wrap, for a line wrapper: kept by the text beyond
+    /// ASCII, so a text wrapped again at another width is not segmented
+    /// again (`line_breaks::KeptBreaks`); ASCII found anew.
+    pub(crate) fn line_breaks(&self, text: &str) -> line_breaks::LineBreaks {
+        if text.is_ascii() {
+            return line_breaks::LineBreaks::of(text);
+        }
+        let mut kept = self.kept_breaks.lock();
+        if let Some(breaks) = kept.get(text) {
+            return breaks;
+        }
+        let found = line_breaks::LineBreaks::of(text);
+        kept.insert(text, found.clone());
+        found
+    }
+
+    /// How many texts' breaks are kept (`line_breaks`).
+    #[cfg(test)]
+    pub(crate) fn kept_breaks_len(&self) -> usize {
+        self.kept_breaks.lock().len()
     }
 
     /// Get the rasterized size and location of a specific, rendered glyph:

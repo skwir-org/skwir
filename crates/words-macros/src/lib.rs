@@ -1,6 +1,8 @@
 //! `words!(id = "English", argument = value, …, note = "…")`: a message of
 //! the crate that writes it, in English beside its id (ADR-139, 2;
-//! `docs/invariants/words.md`).
+//! `docs/invariants/words.md`). `noun` among them marks a noun of Skwir's (a
+//! place's title): its translations may give it its gender and forms, which
+//! a sentence naming it reads (ADR-139, 5); it takes no argument.
 //!
 //! At compile time the English is read as Fluent's syntax, as much of it
 //! as Skwir says (text, arguments, selectors on an argument): what it holds
@@ -35,6 +37,8 @@ struct Call {
     english: LitStr,
     args: Vec<(Ident, Expr)>,
     note: Option<LitStr>,
+    /// Where `noun` was written: a noun of Skwir's.
+    noun: Option<Ident>,
 }
 
 impl Parse for Call {
@@ -44,23 +48,34 @@ impl Parse for Call {
         let english: LitStr = input.parse()?;
         let mut args = Vec::new();
         let mut note = None;
+        let mut noun = None;
         if input.parse::<Option<Token![,]>>()?.is_some() {
             let rest = Punctuated::<Named, Token![,]>::parse_terminated(input)?;
-            for named in rest {
-                if named.name == "note" {
+            for Named { name, value } in rest {
+                let Some(value) = value else {
+                    if name != NOUN {
+                        return Err(syn::Error::new_spanned(
+                            &name,
+                            "an argument is given as `name = value`; alone, only `noun` is written",
+                        ));
+                    }
+                    noun = Some(name);
+                    continue;
+                };
+                if name == "note" {
                     let Expr::Lit(syn::ExprLit {
                         lit: syn::Lit::Str(text),
                         ..
-                    }) = named.value
+                    }) = value
                     else {
                         return Err(syn::Error::new_spanned(
-                            named.value,
+                            value,
                             "a note is a string: what a translator needs to know",
                         ));
                     };
                     note = Some(text);
                 } else {
-                    args.push((named.name, named.value));
+                    args.push((name, value));
                 }
             }
         }
@@ -69,23 +84,29 @@ impl Parse for Call {
             english,
             args,
             note,
+            noun,
         })
     }
 }
 
-/// `name = value`.
+/// What marks a noun of Skwir's (`words!(trash_title = "Trash", noun)`).
+const NOUN: &str = "noun";
+
+/// `name = value`, or a flag alone (`noun`).
 struct Named {
     name: Ident,
-    value: Expr,
+    value: Option<Expr>,
 }
 
 impl Parse for Named {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let name = input.parse()?;
-        input.parse::<Token![=]>()?;
+        if input.parse::<Option<Token![=]>>()?.is_none() {
+            return Ok(Named { name, value: None });
+        }
         Ok(Named {
             name,
-            value: input.parse()?,
+            value: Some(input.parse()?),
         })
     }
 }
@@ -144,6 +165,14 @@ fn expand(call: &Call) -> syn::Result<Tokens> {
             ));
         }
     }
+    // A noun's forms are text a translation writes whole: nothing in it
+    // varies.
+    if let (Some(noun), false) = (&call.noun, named.is_empty()) {
+        return Err(syn::Error::new_spanned(
+            noun,
+            "a noun names one thing and takes no argument: its translations write its forms whole",
+        ));
+    }
     let note = call.note.as_ref().map_or_else(String::new, LitStr::value);
     let args = call.args.iter().map(|(name, value)| {
         let name = name.to_string();
@@ -198,7 +227,10 @@ fn pattern(
                 }
                 Expression::Select { selector, variants } => {
                     let InlineExpression::VariableReference { id } = selector else {
-                        return Err(syn::Error::new(span, "a selector chooses by an argument"));
+                        return Err(syn::Error::new(
+                            span,
+                            "a selector chooses by an argument (GENDER is a translation's)",
+                        ));
                     };
                     let on = id.name;
                     if !named.iter().any(|n| n == on) {
@@ -245,7 +277,7 @@ fn pattern(
                 Expression::Inline(InlineExpression::FunctionReference { .. }) => {
                     return Err(syn::Error::new(
                         span,
-                        "no functions: an argument arrives formatted (a Count, a Size)",
+                        "no functions in English: an argument arrives formatted (a Count, a Size); GENDER and FORM are a translation's (ADR-139, 5)",
                     ));
                 }
                 Expression::Inline(InlineExpression::TermReference { .. }) => {

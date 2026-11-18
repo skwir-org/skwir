@@ -55,6 +55,12 @@ pub mod math {
         /// Slot width: a tile, its gutter, and its share of the spare width.
         pub pitch: f32,
         pub tile: f32,
+        /// The width shared, and whether the columns run from its right
+        /// (the window mirrored, `sides`): column 0 at the right, every x
+        /// told and asked reflected across it, so the math within stays
+        /// left to right.
+        pub width: f32,
+        pub mirrored: bool,
     }
 
     impl Columns {
@@ -77,7 +83,30 @@ pub mod math {
                 left: ((width - cols as f32 * pitch) / 2.).floor().max(0.),
                 pitch,
                 tile,
+                width,
+                mirrored: false,
             }
+        }
+
+        /// The same columns, run from the right where `mirrored`.
+        #[must_use]
+        pub fn mirrored(self, mirrored: bool) -> Self {
+            Columns { mirrored, ..self }
+        }
+
+        /// A tile's left edge `x` from the left, as drawn: reflected where
+        /// the columns run from the right.
+        fn drawn_x(&self, x: f32) -> f32 {
+            if self.mirrored {
+                self.width - x - self.tile
+            } else {
+                x
+            }
+        }
+
+        /// A point's `x` from the left, as the columns count it.
+        fn counted_x(&self, x: f32) -> f32 {
+            if self.mirrored { self.width - x } else { x }
         }
 
         /// A tile is centred in its slot.
@@ -87,7 +116,7 @@ pub mod math {
 
         /// The column whose tile holds `x`. The gutters belong to no tile.
         fn at(&self, x: f32) -> Option<usize> {
-            let x = x - self.left;
+            let x = self.counted_x(x) - self.left;
             if self.pitch <= 0. || x < 0. {
                 return None;
             }
@@ -98,6 +127,11 @@ pub mod math {
 
         /// Columns whose tiles a span touches.
         fn touched(&self, lo: f32, hi: f32) -> Option<(usize, usize)> {
+            let (lo, hi) = if self.mirrored {
+                (self.counted_x(hi), self.counted_x(lo))
+            } else {
+                (lo, hi)
+            };
             let (lo, hi) = (lo - self.left, hi - self.left);
             if self.pitch <= 0. || self.cols == 0 || hi < self.inset() {
                 return None;
@@ -290,14 +324,17 @@ pub mod math {
             self.heights.get(ix).copied().unwrap_or(0.)
         }
 
-        /// Top left corner of tile `ix`.
+        /// Top left corner of tile `ix`, as drawn (from the right where
+        /// the columns run so).
         pub fn origin(&self, ix: usize) -> (f32, f32) {
             let row = self.line_of(ix);
             let first = self.lines.get(row).map_or(0, Line::first);
             (
-                self.columns.left
-                    + ix.saturating_sub(first) as f32 * self.columns.pitch
-                    + self.columns.inset(),
+                self.columns.drawn_x(
+                    self.columns.left
+                        + ix.saturating_sub(first) as f32 * self.columns.pitch
+                        + self.columns.inset(),
+                ),
                 self.tops.get(row).copied().unwrap_or(0.) + self.inset(),
             )
         }
@@ -339,7 +376,8 @@ pub mod math {
             Some((ix, share, -start))
         }
 
-        /// Where a tile's picture begins, from the content's left: where a
+        /// Where a tile's picture begins, from the content's start (its
+        /// left, its right where the columns run from the right): where a
         /// heading's words begin, in line with the first column.
         pub fn left(&self) -> f32 {
             self.columns.left + self.columns.inset()
@@ -984,13 +1022,15 @@ impl Element for UniformGrid {
         let viewport_w = f32::from(padded_bounds.size.width);
         let viewport_h = f32::from(padded_bounds.size.height);
 
-        // Everything size-dependent is decided here, from the real bounds.
+        // Everything size-dependent is decided here, from the real bounds;
+        // the first column at the start (`sides`).
         let columns = math::Columns::fit(
             viewport_w,
             f32::from(self.tile_width),
             gap.0,
             self.max_gap.map_or(f32::INFINITY, f32::from),
-        );
+        )
+        .mirrored(crate::sides::rtl());
         // Groups that do not hold the tiles, one after the other, group
         // nothing.
         let groups = self
@@ -1253,6 +1293,32 @@ mod tests {
         // A pane narrower than one slot still holds a column.
         let narrow = Columns::fit(50., 100., 12., 40.);
         assert_eq!((narrow.cols, narrow.pitch, narrow.left), (1, 112., 0.));
+    }
+
+    /// Mirrored, the first column is at the right: every tile is drawn
+    /// reflected, and a point is told the tile drawn under it.
+    #[test]
+    fn mirrored_columns_run_from_the_right() {
+        let columns = Columns::fit(600., 100., 12., 16.).mirrored(true);
+        let slots = Slots::new(columns, 8., 12, |_| 140.);
+        let plain = Slots::new(columns.mirrored(false), 8., 12, |_| 140.);
+        for ix in 0..12 {
+            let (x, y) = slots.origin(ix);
+            let (left, top) = plain.origin(ix);
+            assert_eq!((x, y), (600. - left - 100., top), "{ix}");
+            // The middle of what is drawn is that tile.
+            assert_eq!(slots.tile_at(x + 50., y + 10.), Some(ix), "{ix}");
+        }
+        // Capped gutters leave 10 px margins: the first tile's picture
+        // starts 18 px from the right (the margin and half a gutter), where
+        // a heading's words do.
+        assert_eq!(slots.origin(0).0 + 100., 600. - slots.left());
+        assert_eq!(slots.left(), 18.);
+        // A band over the right end covers the first column, not the last.
+        let y = slots.origin(0).1;
+        assert_eq!(slots.covered((560., 590.), (y, y + 1.)), vec![0]);
+        // The gutters belong to no tile, mirrored too.
+        assert_eq!(slots.tile_at(595., y + 10.), None);
     }
 
     #[test]

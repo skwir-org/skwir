@@ -1096,7 +1096,9 @@ fn line_paint_bounds(
 ) -> Bounds<Pixels> {
     let rows = layout.rows(line_height, wrap_boundaries);
     let mut bounds = Bounds::new(origin, size(layout.width, rows.height_of_all()));
-    if align == TextAlign::Left || layout.len == 0 {
+    // `Start` and `End` unresolved (`TextAlign::resolve`) read as left to
+    // right.
+    if matches!(align, TextAlign::Left | TextAlign::Start) || layout.len == 0 {
         return bounds;
     }
 
@@ -1113,9 +1115,9 @@ fn line_paint_bounds(
     for (row, row_end) in row_ends.enumerate() {
         let width = row_end - row_start;
         let offset = match align {
-            TextAlign::Left => Pixels::ZERO,
+            TextAlign::Left | TextAlign::Start => Pixels::ZERO,
             TextAlign::Center => (align_width - width) / 2.,
-            TextAlign::Right => align_width - width,
+            TextAlign::Right | TextAlign::End => align_width - width,
         };
         bounds = bounds.union(&Bounds::new(
             point(origin.x + offset, origin.y + rows.top(row)),
@@ -1143,9 +1145,9 @@ fn aligned_origin_x(
     let line_width = end_of_line - last_glyph_x;
 
     match align {
-        TextAlign::Left => origin.x,
+        TextAlign::Left | TextAlign::Start => origin.x,
         TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
-        TextAlign::Right => origin.x + align_width - line_width,
+        TextAlign::Right | TextAlign::End => origin.x + align_width - line_width,
     }
 }
 

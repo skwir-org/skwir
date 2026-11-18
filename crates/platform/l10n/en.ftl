@@ -523,6 +523,7 @@ places_no_config_dir = no configuration directory
 places_passphrase_refused = The passphrase was not accepted
 
 # The name of the volume the system runs from (/), in the sidebar's Devices.
+# noun
 places_root = Root
 
 # Skwir asks for an encrypted volume's passphrase on this system; the system has no dialog of its own for it.

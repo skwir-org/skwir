@@ -12,6 +12,7 @@
 //! has every `count::REPORT_EVERY`. Only the rows on screen are drawn: an
 //! emptied trash lists thousands. Closing the question stops the worker.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::ops::Range;
@@ -969,7 +970,7 @@ fn rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<
                             .flex_none()
                             .text_small()
                             .text_color(theme.text_muted)
-                            .text_right()
+                            .text_end()
                             .truncate()
                             .child(weight),
                     )

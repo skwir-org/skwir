@@ -15,6 +15,7 @@
 //! opens when the answer arrives, if it is still wanted. The folders above
 //! one are known from its path alone.
 
+use crate::sides::Sides;
 use crate::sizes::sized;
 use std::path::{Path, PathBuf};
 
@@ -579,7 +580,9 @@ fn rows(shell: &Shell, range: std::ops::Range<usize>, cx: &mut Context<Shell>) -
             .enabled(row.enabled)
             .render(shell, cx)
             .track_focus(focus)
-            .when(row.depth > 0, |d| d.pl(sized(8. + 12. * row.depth as f32)));
+            .when(row.depth > 0, |d| {
+                d.pad_start(sized(8. + 12. * row.depth as f32))
+            });
             Some(
                 div()
                     .relative()

@@ -7,6 +7,7 @@
 //! more precisely where it can (`refine`), reads the bytes, and holds the
 //! hierarchy and the aliases, whose names are the ones skwir speaks.
 
+use skwir_core::locale::Ranker;
 use skwir_core::preview::FileSource;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -264,16 +265,33 @@ fn text_or_binary(head: &[u8]) -> Mime {
 /// user's languages (`locale::preferred`) that the file has, whatever
 /// Skwir's own words are said in (ADR-139, F: the database's own
 /// translations, reviewed by its project), else its untranslated one;
-/// capitalized.
+/// capitalized. The languages are ranked once while they stay as they are
+/// (`locale::revision`): each type's file names the same few dozen.
 fn comment_of(xml: &str) -> Option<String> {
-    comment_in(xml, &skwir_core::locale::preferred())
+    use std::sync::{Arc, PoisonError};
+    static RANKED: RwLock<Option<(u64, Arc<Ranker>)>> = RwLock::new(None);
+    let now = skwir_core::locale::revision();
+    let kept = RANKED
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .filter(|(at, _)| *at == now)
+        .map(|(_, ranker)| Arc::clone(ranker));
+    let ranker = kept.unwrap_or_else(|| {
+        let ranker = Arc::new(Ranker::new(&skwir_core::locale::preferred()));
+        *RANKED.write().unwrap_or_else(PoisonError::into_inner) = Some((now, Arc::clone(&ranker)));
+        ranker
+    });
+    comment_in(xml, &ranker)
 }
 
-/// `xml`'s comment in the first of `languages` it has (`fr-FR` finding
-/// `fr`, `pt-BR` finding `pt_BR`), English its untranslated one.
-fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
+/// `xml`'s comment in the first of `ranker`'s languages it has, found by
+/// script and region (`locale::matching`: `fr-FR` finding `fr`, `pt-BR`
+/// `pt_BR`, `zh-HK` `zh-Hant-TW`, `sr-Latn` never `sr`), English its
+/// untranslated one.
+fn comment_in(xml: &str, ranker: &Ranker) -> Option<String> {
     // Each comment: its language (none for the untranslated) and its text.
-    let mut comments: Vec<(Option<String>, &str)> = Vec::new();
+    let mut comments: Vec<(Option<&str>, &str)> = Vec::new();
     let mut rest = xml;
     while let Some(at) = rest.find("<comment") {
         rest = &rest[at + "<comment".len()..];
@@ -284,7 +302,7 @@ fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
         let lang = attributes
             .split_once("xml:lang=\"")
             .and_then(|(_, after)| after.split_once('"'))
-            .map(|(lang, _)| lang.replace('_', "-").to_lowercase());
+            .map(|(lang, _)| lang);
         comments.push((lang, &body[..end]));
         rest = &body[end..];
     }
@@ -292,28 +310,12 @@ fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
         .iter()
         .find(|(lang, _)| lang.is_none())
         .map(|(_, text)| *text);
-    let wanted = languages.iter().find_map(|language| {
-        let language = language.to_lowercase();
-        if language == skwir_core::locale::ENGLISH || language.starts_with("en-") {
-            return Some(untranslated);
-        }
-        let found = |tag: &str| {
-            comments
-                .iter()
-                .find(|(lang, _)| lang.as_deref() == Some(tag))
-                .map(|(_, text)| *text)
-        };
-        // The whole tag, then cut a subtag at a time: sr-latn-rs, sr-latn,
-        // sr.
-        let mut tag = language.as_str();
-        loop {
-            if let Some(text) = found(tag) {
-                return Some(Some(text));
-            }
-            tag = tag.rsplit_once('-')?.0;
-        }
-    });
-    let raw = wanted.flatten().or(untranslated)?;
+    let translated = ranker.closest(
+        comments
+            .iter()
+            .filter_map(|(lang, text)| Some((*text, crate::apps::language_tag(lang.as_ref()?)?))),
+    );
+    let raw = translated.or(untranslated)?;
     let text = raw
         .trim()
         .replace("&amp;", "&")
@@ -1569,28 +1571,30 @@ mod tests {
     fn a_type_is_named_in_the_reader_s_language_where_the_database_has_it() {
         let xml = r#"<mime-type type="image/png"><comment>PNG image</comment>
             <comment xml:lang="fr">image PNG</comment><comment xml:lang="pt_BR">imagem PNG</comment>
+            <comment xml:lang="zh_TW">PNG 影像</comment><comment xml:lang="zh-Hans-CN">PNG 图像</comment>
+            <comment xml:lang="sr">ПНГ слика</comment><comment xml:lang="sr@latin">PNG slika</comment>
+            <comment xml:lang="ar">صورة PNG</comment><comment xml:lang="en-GB">PNG image (GB)</comment>
             </mime-type>"#;
-        let langs = |l: &[&str]| l.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        assert_eq!(
-            comment_in(xml, &langs(&["fr-FR", "en"])).as_deref(),
-            Some("Image PNG")
-        );
-        assert_eq!(
-            comment_in(xml, &langs(&["pt-BR", "en"])).as_deref(),
-            Some("Imagem PNG")
-        );
-        assert_eq!(
-            comment_in(xml, &langs(&["de", "en"])).as_deref(),
-            Some("PNG image")
-        );
-        assert_eq!(
-            comment_in(xml, &langs(&["en-GB", "fr"])).as_deref(),
-            Some("PNG image")
-        );
-        assert_eq!(
-            comment_in(xml, &langs(&["fr-Latn-FR", "en"])).as_deref(),
-            Some("Image PNG")
-        );
+        let said = |l: &[&str]| {
+            let languages = l.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+            comment_in(xml, &Ranker::new(&languages))
+        };
+        assert_eq!(said(&["fr-FR", "en"]).as_deref(), Some("Image PNG"));
+        assert_eq!(said(&["pt-BR", "en"]).as_deref(), Some("Imagem PNG"));
+        assert_eq!(said(&["pt-PT", "en"]).as_deref(), Some("Imagem PNG"));
+        assert_eq!(said(&["de", "en"]).as_deref(), Some("PNG image"));
+        assert_eq!(said(&["en", "fr"]).as_deref(), Some("PNG image"));
+        assert_eq!(said(&["en-GB", "fr"]).as_deref(), Some("PNG image (GB)"));
+        assert_eq!(said(&["fr-Latn-FR", "en"]).as_deref(), Some("Image PNG"));
+        // By script and region: Hong Kong reads Taiwan's, Singapore
+        // China's, Latin Serbian never Cyrillic.
+        assert_eq!(said(&["zh-HK", "en"]).as_deref(), Some("PNG 影像"));
+        assert_eq!(said(&["zh-SG", "en"]).as_deref(), Some("PNG 图像"));
+        assert_eq!(said(&["sr-Latn-RS", "en"]).as_deref(), Some("PNG slika"));
+        assert_eq!(said(&["sr-RS", "en"]).as_deref(), Some("ПНГ слика"));
+        // A pseudo-language is English: no Arabic.
+        assert_eq!(said(&["ar-XB", "en"]).as_deref(), Some("PNG image"));
+        assert_eq!(said(&["ar-XB"]).as_deref(), Some("PNG image"));
     }
 
     #[test]

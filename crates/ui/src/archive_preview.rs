@@ -3,13 +3,14 @@
 //! (`views::list::line`). They are written at the files' size, as the list
 //! is (ADR-117): the inspector draws them in its rem (`rem`), and their
 //! lengths follow it.
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::{
     format, icons,
     theme::Theme,
     views::list::{DEFAULT_ROW_ZOOM, column, files_scale, line, row_height},
 };
-use gpui::{Div, div, prelude::*, px, svg};
+use gpui::{Div, div, prelude::*, px};
 use skwir_core::inspection::Row;
 
 const SIZE_WIDTH: f32 = 90.;
@@ -32,7 +33,7 @@ pub fn header(theme: &Theme) -> Div {
     // size, and the two gaps of a row (`gap_1`), which grow with the text.
     let name = div()
         .min_w_0()
-        .pl(px(DISCLOSURE_SIZE + ICON_SIZE + scale.f(8.)))
+        .pad_start(px(DISCLOSURE_SIZE + ICON_SIZE + scale.f(8.)))
         .child(skwir_core::SortKey::Name.title_words().say());
     div()
         .h(px(height))
@@ -48,7 +49,7 @@ pub fn header(theme: &Theme) -> Div {
         .child(
             line(name, NAME_MIN, height, scale).child(
                 column(scale.f(SIZE_WIDTH), theme.text_muted, height)
-                    .text_right()
+                    .text_end()
                     .child(skwir_core::SortKey::Size.title_words().say()),
             ),
         )
@@ -84,19 +85,14 @@ pub fn row(
         .overflow_hidden()
         .gap_1()
         // Indentation belongs to Name only; sizes must stay aligned at every depth.
-        .pl(px(row.depth.min(32) as f32 * scale.f(14.)))
+        .pad_start(px(row.depth.min(32) as f32 * scale.f(14.)))
         .child(
             div()
                 .w(px(DISCLOSURE_SIZE))
                 .flex_none()
                 .when(row.branch, |d| {
                     d.child(
-                        svg()
-                            .path(if collapsed {
-                                "toolbar/right.svg"
-                            } else {
-                                "toolbar/chevron.svg"
-                            })
+                        crate::sides::symbol(if collapsed { "right" } else { "chevron" })
                             .size(px(DISCLOSURE_SIZE))
                             .text_color(theme.text_muted),
                     )
@@ -126,7 +122,7 @@ pub fn row(
         );
     }
     let size = column(scale.f(SIZE_WIDTH), theme.text, height)
-        .text_right()
+        .text_end()
         .child(row.bytes.map_or_else(|| "—".into(), format::size));
     div()
         .h(px(height))

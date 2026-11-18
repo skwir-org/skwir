@@ -17,6 +17,7 @@
 //! (`tags.edit`): each entry keeps the tags nobody touched, so a selection
 //! of files tagged differently never gains the others' tags.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -223,12 +224,12 @@ fn chip_frame(color: usize, theme: &Theme) -> Div {
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(sized(6.))
-        .pr(sized(7.))
+        .pad_start(sized(6.))
+        .pad_end(sized(7.))
         .rounded_sm()
         .text_body()
         .bg(theme.tag_fill(color))
-        .child(dot(color, theme).size(px(8.)).mr(px(5.)))
+        .child(dot(color, theme).size(px(8.)).margin_end(px(5.)))
 }
 
 /// A tag's place in the sidebar: the views' chip (its dot, its tint, its
@@ -243,12 +244,12 @@ pub fn place_chip(color: usize, kept: bool, theme: &Theme) -> Div {
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(sized(7.))
-        .pr(sized(8.))
+        .pad_start(sized(7.))
+        .pad_end(sized(8.))
         .rounded_sm()
         .text_body()
         .when(kept, |d| d.bg(theme.tag_fill(color)))
-        .child(dot(color, theme).size(px(8.)).mr(px(6.)))
+        .child(dot(color, theme).size(px(8.)).margin_end(px(6.)))
 }
 
 /// A tag's place's height in the sidebar.
@@ -457,15 +458,15 @@ fn picture_chip(tag: &str, color: usize, zoom: f32, theme: &Theme) -> Div {
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(sized(4.))
-        .pr(sized(5.))
+        .pad_start(sized(4.))
+        .pad_end(sized(5.))
         .rounded_sm()
         .border_1()
         .border_color(theme.bg)
         .bg(theme.tag_solid(color))
         .text_color(theme.text)
         .map(|d| picture_text(d, zoom))
-        .child(dot(color, theme).size(px(6.)).mr(px(3.)))
+        .child(dot(color, theme).size(px(6.)).margin_end(px(3.)))
         .child(tag_leaf(tag).to_owned())
 }
 
@@ -1451,7 +1452,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         crate::toolbar::tooltip(
                             words!(
                                 tag_editor_apply_tip = "Apply ({ $keys })",
-                                keys = keys.clone(),
+                                keys = skwir_core::words::Keys(keys.clone()),
                                 note = "The tooltip of the tag editor's Apply button: its shortcut (Ctrl+Enter)."
                             )
                             .say()
@@ -1524,8 +1525,8 @@ fn color_strip(
     let current = colors.of_or(tag, given);
     let chosen = colors.chosen(tag);
     let mut strip = div()
-        .pl(sized(52.))
-        .pr_3()
+        .pad_start(sized(52.))
+        .pad_end(crate::sides::step(3.))
         .pb_1()
         .flex()
         .items_center()
@@ -1563,7 +1564,7 @@ fn color_strip(
     strip.child(
         div()
             .id("tag-color-auto")
-            .ml_2()
+            .margin_start(crate::sides::step(2.))
             .px_2()
             .rounded_sm()
             .text_body()

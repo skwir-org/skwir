@@ -17,6 +17,7 @@
 
 mod save;
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::theme::Chosen;
 use std::rc::Rc;
@@ -925,7 +926,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .flex()
         .flex_col()
         .gap_3()
-        .pr_1();
+        .pad_end(crate::sides::step(1.));
     if !form.intro.is_empty() {
         body = body.child(
             div()
@@ -1119,7 +1120,7 @@ fn inner_chevron(
     )
     // Within the field's frame, as tall as its text allows.
     .size(crate::sizes::sized(controls::HEIGHT - 8.))
-    .mr(gpui::px(-4.))
+    .margin_end(gpui::px(-4.))
     .aria_expanded(open)
 }
 

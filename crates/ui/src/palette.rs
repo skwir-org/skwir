@@ -1015,7 +1015,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                             .whitespace_nowrap()
                             .text_small()
                             .text_color(muted)
-                            .child(k)
+                            .child(crate::sides::shortcut(k))
                     })),
             );
         }

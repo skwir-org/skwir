@@ -14,6 +14,7 @@
     clippy::ignored_unit_patterns
 )]
 
+mod a11y_language;
 mod about;
 mod activity;
 pub mod address;
@@ -41,6 +42,7 @@ pub mod fonts;
 pub mod form;
 pub mod format;
 mod fullscreen;
+mod glyphs;
 mod held_before;
 mod history;
 mod history_view;
@@ -100,6 +102,7 @@ mod settings_view;
 pub mod shell;
 pub mod shortcuts;
 pub mod sidebar;
+pub mod sides;
 pub mod sizes;
 pub mod status;
 pub mod suggestions;
@@ -269,6 +272,8 @@ pub fn run_from(
             tracing::trace!(keystroke = %keymap::unparse(&ev.keystroke), "keystroke");
         })
         .detach();
+        // Text no font draws, said once a run in a script the user reads.
+        glyphs::watch(&app, cx);
         // Every way out passes here: Quit and Stop and quit, the last
         // window closing with nothing left, a signal (`finishing.rs`).
         let quitting = Arc::clone(&app);

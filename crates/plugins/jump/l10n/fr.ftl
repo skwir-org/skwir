@@ -23,6 +23,9 @@ jump_plugin_title = Saut
 
 # draft
 jump_recent = Récents
+    .gender = masculine
+    .definite = Récents
+    .de = de Récents
 
 # draft
 jump_recent_empty = Aucun fichier récent

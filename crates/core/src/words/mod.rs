@@ -12,6 +12,12 @@
 //! a sentence are isolated from it (`isolated`): between FSI and PDI, inside
 //! the quotes. Nothing else carries those marks: not English, not words said
 //! in given languages, not text that leaves the window (`Words::say_plain`).
+//!
+//! What a language needs to say is its catalogs' data, never code: the
+//! quotes around a name are two of core's messages (`quotes`), and a noun
+//! of Skwir's (a place's title: `words!(…, noun)`) carries its gender and
+//! forms as its translation's attributes, which a sentence naming it reads
+//! (`GENDER($place)`, `FORM($place, case: "dative")`, `noun_attribute`).
 
 mod catalog;
 mod pattern;
@@ -21,10 +27,16 @@ use std::fmt;
 use std::sync::Arc;
 
 pub use catalog::{
-    Catalog, Share, Shipped, find, languages_of, register, register_shipped,
+    Catalog, Share, Shipped, find, find_attribute, languages_of, register, register_shipped,
     register_shipped_of_program, share_of, ship, ship_shares, shipped_languages, withdraw,
 };
 pub use pattern::{Element, Key, Variant, from_fluent};
+
+/// What a translation's functions and a noun's attributes are named
+/// (ADR-139, 3 and 5).
+pub mod grammar {
+    pub use super::pattern::{CASE, FORM, GENDER, GENDER_ATTRIBUTE, NO_GENDER};
+}
 
 /// English, the language the code writes its words in.
 pub const ENGLISH: &str = crate::locale::ENGLISH;
@@ -116,6 +128,12 @@ pub enum Arg {
     /// its bidirectional controls shown, never obeyed, isolated from the
     /// sentence where the window draws it.
     Folder(String),
+    /// Keys a shortcut is pressed with ("Ctrl+Shift+C"), as they are named
+    /// where they are drawn (`Keys`): left to right in every language,
+    /// isolated from the sentence where the window draws it (LRI, PDI), so a
+    /// sentence written right to left never reorders its strokes; plain
+    /// elsewhere.
+    Keys(String),
     /// A count: chooses the plural, written with its groups as the
     /// reader's language writes them ("1,234", « 1 234 »).
     Count(i64),
@@ -199,6 +217,11 @@ impl Folder {
         )
     }
 }
+
+/// Keys a shortcut is pressed with, for `Arg::Keys`: as the window names
+/// them (`Ctrl+Shift+C`, `Strg+Umschalt+C`), each stroke's keys joined by
+/// `+`, strokes by a space.
+pub struct Keys(pub String);
 
 /// A size, for `Arg::Size`.
 pub struct Size(pub u64);
@@ -414,6 +437,12 @@ impl From<Folder> for Arg {
     }
 }
 
+impl From<Keys> for Arg {
+    fn from(keys: Keys) -> Self {
+        Arg::Keys(keys.0)
+    }
+}
+
 impl From<Size> for Arg {
     fn from(size: Size) -> Self {
         Arg::Size(size.0)
@@ -487,6 +516,18 @@ impl Words {
     /// a choice's detail). A message or an error always says something.
     pub fn is_empty(&self) -> bool {
         matches!(&self.0, Inner::Written(text) if text.is_empty())
+    }
+
+    /// The message these words say, by its domain and id (a heading's, one
+    /// come back from its data): what a noun's attributes are found by.
+    /// `None` for text as written or an error.
+    fn said_message(&self) -> Option<(&str, &str)> {
+        match &self.0 {
+            Inner::Message(message, _) => Some((message.domain, message.id)),
+            Inner::Heading(words) => words.said_message(),
+            Inner::Carried(carried) => Some((&carried.domain, &carried.id)),
+            Inner::Written(_) | Inner::Error(_) => None,
+        }
     }
 
     /// Its message, `None` for text as written or an error.
@@ -640,7 +681,7 @@ impl Words {
                 return out.push_str(&casing::heading(language, &said));
             }
             Inner::Carried(carried) => {
-                if languages.first().is_some_and(|first| first == PSEUDO) {
+                if let Some(pseudo) = pseudo_of(languages) {
                     // As a message is: its arguments marked, where its
                     // pattern came with it.
                     let Some(english) = &carried.pattern else {
@@ -665,8 +706,8 @@ impl Words {
             }
             Inner::Message(message, args) => (*message, args),
         };
-        if languages.first().is_some_and(|first| first == PSEUDO) {
-            // Its English accented, nested words said in the
+        if let Some(pseudo) = pseudo_of(languages) {
+            // Its English made strange, nested words said in the
             // pseudo-language too (bracketed apart from what is as written).
             let mut english = String::new();
             say(
@@ -742,8 +783,73 @@ fn say<N: AsRef<str>>(
                 });
                 say(value, args, language, languages, out, marked);
             }
+            Element::Gender {
+                on,
+                variants,
+                default,
+            } => {
+                let gender = arg(on).and_then(|value| {
+                    noun_attribute(value, pattern::GENDER_ATTRIBUTE, language, languages)
+                });
+                let gender = gender.as_deref().map_or(pattern::NO_GENDER, str::trim);
+                let value = pattern::choose(variants, *default, None, Some(gender), |_| {
+                    pattern::NO_GENDER
+                });
+                say(value, args, language, languages, out, marked);
+            }
+            Element::Form { of, case } => {
+                let Some(value) = arg(of) else {
+                    out.push_str("{$");
+                    out.push_str(of);
+                    out.push('}');
+                    continue;
+                };
+                if marked {
+                    out.push('‹');
+                }
+                match noun_attribute(value, case, language, languages) {
+                    Some(form) => out.push_str(&form),
+                    // No noun, or none in this language: as it is said.
+                    None => said_arg(value, language, languages, out),
+                }
+                if marked {
+                    out.push('›');
+                }
+            }
         }
     }
+}
+
+/// Attribute `name` (`gender`, one of its forms) of the noun `arg` is, said
+/// as the catalog that says the noun has it (`catalog::find_attribute`),
+/// where that catalog's words are the sentence's: one language in one
+/// script (`locale::same_writing`: `fr` and `fr-CA`, `zh-Hant` and `zh-HK`).
+///
+/// `None` where `arg` is no noun (no message of Skwir's: a file's name, a
+/// path, text as written), where the noun is said in English, which gives
+/// none, or in another language than the sentence's (a reader's language
+/// the sentence's catalog lacks: its grammar is not the sentence's), and
+/// where its catalog gives it no such attribute. Then a `GENDER` says
+/// `other` and a `FORM` the argument as it is.
+fn noun_attribute(arg: &Arg, name: &str, language: &str, languages: &[String]) -> Option<String> {
+    let Arg::Words(words) = arg else {
+        return None;
+    };
+    let (domain, id) = words.said_message()?;
+    let (said, found_in) = catalog::find_attribute(domain, id, name, languages)?;
+    if !crate::locale::same_writing(&found_in, language) {
+        return None;
+    }
+    let mut out = String::new();
+    say(
+        &said?,
+        &[] as &[(&str, Arg)],
+        language,
+        languages,
+        &mut out,
+        false,
+    );
+    Some(out)
 }
 
 /// An argument said in `language`.
@@ -752,6 +858,7 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
         Arg::Folder(name) => isolated(&shown_controls(name), out),
+        Arg::Keys(keys) => left_to_right(keys, out),
         Arg::Count(n) => out.push_str(&numbers::grouped(&formats::numbers(), *n)),
         Arg::Decimal(value, digits) => {
             out.push_str(&numbers::decimal(&formats::numbers(), *value, *digits));
@@ -804,22 +911,59 @@ fn say_error(failure: &Failure, languages: &[String], out: &mut String) {
     SAYING_IN.with_borrow_mut(|saying| *saying = before);
 }
 
-/// `name` quoted as `language` quotes: “…” in English, « … » in French
-/// (narrow spaces inside), „…“ in German, «…» in Spanish, Italian and
-/// Russian, 「…」 in Japanese and Chinese; isolated inside its quotes where
-/// the window draws it (`isolated`).
+/// `name` quoted as `language` quotes (`quotes`), isolated inside its quotes
+/// where the window draws it (`isolated`).
 fn quoted(language: &str, name: &str, out: &mut String) {
-    let base = language.split('-').next().unwrap_or(language);
-    let (open, close) = match base {
-        "fr" => ("«\u{202f}", "\u{202f}»"),
-        "de" | "cs" | "sk" | "pl" | "ro" | "hu" | "bg" | "lt" => ("„", "“"),
-        "es" | "it" | "pt" | "ru" | "uk" | "ca" | "el" | "no" | "nb" | "nn" => ("«", "»"),
-        "ja" | "zh" => ("「", "」"),
-        _ => ("“", "”"),
-    };
-    out.push_str(open);
-    isolated(name, out);
-    out.push_str(close);
+    quotes(language, |open, close| {
+        out.push_str(open);
+        isolated(name, out);
+        out.push_str(close);
+    });
+}
+
+/// `f` given the marks `language` opens and closes a quoted name with:
+/// core's two messages said in it, its catalog's data (“…” in English, « … »
+/// in French, „…“ in German, 「…」 in Japanese and Traditional Chinese), so
+/// a language needs no code to quote as it does. Where the catalogs it
+/// finds (as words find theirs: `fr-CA` finds `fr`) have none, English's.
+/// Kept on each thread while what is said stays as it was (`revision`): a
+/// frame quotes many names.
+fn quotes<T>(language: &str, f: impl FnOnce(&str, &str) -> T) -> T {
+    type Marks = std::rc::Rc<(String, String)>;
+    thread_local! {
+        // A few languages at most (a sentence's, English where one falls
+        // back): looked through rather than hashed.
+        static QUOTES: std::cell::RefCell<(u64, Vec<(String, Marks)>)> =
+            const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
+    }
+    let now = revision();
+    let kept = QUOTES.with_borrow_mut(|(at, kept)| {
+        if *at != now {
+            kept.clear();
+            *at = now;
+        }
+        kept.iter()
+            .find(|(tag, _)| tag == language)
+            .map(|(_, marks)| marks.clone())
+    });
+    let marks = kept.unwrap_or_else(|| {
+        let languages = [language.to_owned()];
+        let marks: Marks = std::rc::Rc::new((
+            crate::words!(
+                name_quote_open = "“",
+                note = "The mark that opens a name Skwir quotes in a sentence (a file's, a place's, a tag's): your language's opening quotation mark, with the space it takes inside it, if any (in French, « then a narrow no-break space: «{ \"\\u202F\" }). Skwir puts it before every name it quotes: write no quotation marks around a name's argument in a message."
+            )
+            .say_in(&languages),
+            crate::words!(
+                name_quote_close = "”",
+                note = "The mark that closes a name Skwir quotes in a sentence: your language's closing quotation mark, with the space it takes inside it, if any (in French, a narrow no-break space then »: { \"\\u202F\" }»)."
+            )
+            .say_in(&languages),
+        ));
+        QUOTES.with_borrow_mut(|(_, kept)| kept.push((language.to_owned(), marks.clone())));
+        marks
+    });
+    f(&marks.0, &marks.1)
 }
 
 /// FIRST STRONG ISOLATE and POP DIRECTIONAL ISOLATE (UAX #9): what keeps a
@@ -888,6 +1032,38 @@ fn isolated(name: &str, out: &mut String) {
     }
     out.push(FSI);
     out.push_str(name);
+    out.push(PDI);
+}
+
+/// LEFT-TO-RIGHT ISOLATE (UAX #9): what keeps keys left to right inside
+/// a sentence, whatever its direction, where the window draws it.
+const LRI: char = '\u{2066}';
+
+/// `keys`, said in a sentence: between LRI and PDI where the window draws
+/// it (`Words::say`), so "Ctrl+Shift+C" reads so in a sentence written right
+/// to left, and the sentence's punctuation around it stays the sentence's.
+/// As it is wherever else words are said (`Isolation::None`: English, data,
+/// text that leaves the window), and where it is a mark a sentence is cut
+/// around (`Isolation::NotCut`: its caller draws it apart); empty keys take
+/// no marks.
+fn left_to_right(keys: &str, out: &mut String) {
+    let cut = || {
+        let mut chars = keys.chars();
+        matches!(
+            (chars.next(), chars.next()),
+            (Some(c), None) if (CUT..=u32::from(CUT_ONE)).contains(&u32::from(c))
+        )
+    };
+    let isolates = match formats::isolation() {
+        Isolation::None => false,
+        Isolation::Names => true,
+        Isolation::NotCut => !cut(),
+    };
+    if !isolates || keys.is_empty() {
+        return out.push_str(keys);
+    }
+    out.push(LRI);
+    out.push_str(keys);
     out.push(PDI);
 }
 
@@ -1207,6 +1383,19 @@ mod numbers {
     }
 }
 
+/// What English is made into where the first of `languages` is a
+/// pseudo-language: the English said with each argument between ‹ and ›,
+/// made strange: accented and longer (`pseudo`: CLDR's `en-XA`), or drawn
+/// right to left (`direction::pseudo_rtl`: CLDR's `ar-XB`). `None` for a
+/// real language.
+fn pseudo_of(languages: &[String]) -> Option<fn(&str) -> String> {
+    match languages.first().map(String::as_str) {
+        Some(PSEUDO) => Some(pseudo),
+        Some(crate::direction::PSEUDO_RTL) => Some(crate::direction::pseudo_rtl),
+        _ => None,
+    }
+}
+
 /// English made strange but readable: each letter accented, its vowels
 /// doubled (a third longer, as other languages often are), in brackets.
 fn pseudo(english: &str) -> String {
@@ -1421,8 +1610,23 @@ pub mod data {
 
     /// A message's English shape as data: text as a string, an argument
     /// as `{"arg": name}`, a selector as `{"select": on, "variants": [{"key":
-    /// word or number, "value": [...]}], "default": index}`.
+    /// word or number, "value": [...]}], "default": index}` (`"gender"` for
+    /// `"select"` where it chooses by a noun's gender), a noun's form as
+    /// `{"form": of, "case": form}`. English chooses by no gender and names
+    /// no form, but the shape says what any pattern holds.
     fn pattern_of(elements: &[Element]) -> Value {
+        let variants_of = |variants: &[Variant]| -> Vec<Value> {
+            variants
+                .iter()
+                .map(|variant| {
+                    let key = match &variant.key {
+                        Key::Word(word) => json!(word),
+                        Key::Number(n) => json!(n),
+                    };
+                    json!({ "key": key, "value": pattern_of(&variant.value) })
+                })
+                .collect()
+        };
         Value::Array(
             elements
                 .iter()
@@ -1434,18 +1638,16 @@ pub mod data {
                         variants,
                         default,
                     } => {
-                        let variants: Vec<Value> = variants
-                            .iter()
-                            .map(|variant| {
-                                let key = match &variant.key {
-                                    Key::Word(word) => json!(word),
-                                    Key::Number(n) => json!(n),
-                                };
-                                json!({ "key": key, "value": pattern_of(&variant.value) })
-                            })
-                            .collect();
-                        json!({ "select": on, "variants": variants, "default": default })
+                        json!({ "select": on, "variants": variants_of(variants), "default": default })
                     }
+                    Element::Gender {
+                        on,
+                        variants,
+                        default,
+                    } => {
+                        json!({ "gender": on, "variants": variants_of(variants), "default": default })
+                    }
+                    Element::Form { of, case } => json!({ "form": of, "case": case }),
                 })
                 .collect(),
         )
@@ -1456,6 +1658,7 @@ pub mod data {
             Arg::Text(text) => json!({ "text": text }),
             Arg::Name(name) => json!({ "name": name }),
             Arg::Folder(folder) => json!({ "folder": folder }),
+            Arg::Keys(keys) => json!({ "keys": keys }),
             Arg::Count(n) => json!({ "count": n }),
             Arg::Decimal(value, digits) => json!({ "decimal": [value, digits] }),
             Arg::Moment(moment) => json!({ "moment": [moment.at, moment.shape.word()] }),
@@ -1514,6 +1717,15 @@ pub mod data {
             variants: Vec<VariantData>,
             default: usize,
         },
+        Gender {
+            gender: String,
+            variants: Vec<VariantData>,
+            default: usize,
+        },
+        Form {
+            form: String,
+            case: String,
+        },
     }
 
     #[derive(serde::Deserialize)]
@@ -1529,6 +1741,22 @@ pub mod data {
         Number(i64),
     }
 
+    impl VariantData {
+        fn into_variant(self) -> Variant {
+            Variant {
+                key: match self.key {
+                    KeyData::Word(word) => Key::Word(word.into()),
+                    KeyData::Number(n) => Key::Number(n),
+                },
+                value: self
+                    .value
+                    .into_iter()
+                    .map(ElementData::into_element)
+                    .collect(),
+            }
+        }
+    }
+
     impl ElementData {
         fn into_element(self) -> Element {
             match self {
@@ -1542,19 +1770,25 @@ pub mod data {
                     on: select.into(),
                     variants: variants
                         .into_iter()
-                        .map(|variant| Variant {
-                            key: match variant.key {
-                                KeyData::Word(word) => Key::Word(word.into()),
-                                KeyData::Number(n) => Key::Number(n),
-                            },
-                            value: variant
-                                .value
-                                .into_iter()
-                                .map(ElementData::into_element)
-                                .collect(),
-                        })
+                        .map(VariantData::into_variant)
                         .collect(),
                     default,
+                },
+                ElementData::Gender {
+                    gender,
+                    variants,
+                    default,
+                } => Element::Gender {
+                    on: gender.into(),
+                    variants: variants
+                        .into_iter()
+                        .map(VariantData::into_variant)
+                        .collect(),
+                    default,
+                },
+                ElementData::Form { form, case } => Element::Form {
+                    of: form.into(),
+                    case: case.into(),
                 },
             }
         }
@@ -1566,6 +1800,7 @@ pub mod data {
         Text(String),
         Name(String),
         Folder(String),
+        Keys(String),
         Count(i64),
         Decimal((i64, u8)),
         Moment((i64, String)),
@@ -1606,6 +1841,7 @@ pub mod data {
                 ArgData::Text(text) => Arg::Text(text.into()),
                 ArgData::Name(name) => Arg::Name(name),
                 ArgData::Folder(folder) => Arg::Folder(folder),
+                ArgData::Keys(keys) => Arg::Keys(keys),
                 ArgData::Count(n) => Arg::Count(n),
                 ArgData::Decimal((value, digits)) => Arg::Decimal(value, digits),
                 ArgData::Moment((at, shape)) => Arg::Moment(super::Moment {

@@ -27,6 +27,7 @@
 //! that meet no other window or the screen's (`Window::tiling`); nothing of
 //! it in fullscreen.
 
+use crate::sides::Sides;
 use gpui::{
     AnyElement, App, Context, CursorStyle, Decorations, MouseButton, ResizeEdge, Tiling, Window,
     WindowButton, WindowControlArea, WindowDecorations, div, prelude::*, px,
@@ -424,8 +425,8 @@ fn buttons(shell: &Shell, end: End, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .flex_none()
                 .h_full()
                 .flex()
-                .ml(sized(4.))
-                .mr(-sized(6.))
+                .margin_start(sized(4.))
+                .margin_end(-sized(6.))
                 .children(
                     listed
                         .iter()
@@ -444,8 +445,8 @@ fn buttons(shell: &Shell, end: End, cx: &mut Context<Shell>) -> Option<AnyElemen
             .flex()
             .items_center()
             .gap(sized(6.))
-            .when(end == End::Start, |d| d.mr(sized(6.)))
-            .when(end == End::End, |d| d.ml(sized(6.)))
+            .when(end == End::Start, |d| d.margin_end(sized(6.)))
+            .when(end == End::End, |d| d.margin_start(sized(6.)))
             .children(buttons)
             .into_any_element(),
     )
@@ -583,11 +584,7 @@ fn caption(
                 s.bg(hover)
             }
         })
-        .child(
-            gpui::svg()
-                .path(format!("toolbar/{icon}.svg"))
-                .size(px(14.)),
-        )
+        .child(crate::sides::symbol(icon).size(px(14.)))
         .into_any_element()
 }
 

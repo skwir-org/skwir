@@ -3,6 +3,7 @@
 //! bounds so the lines meet from row to row, then its summary after the
 //! branches and tags at it, and its short id, author and date under it;
 //! and a commit's menu, which copies its id.
+use crate::sides::Sides;
 use gpui::{Bounds, Div, PathBuilder, Pixels, Window, div, point, prelude::*, px};
 use skwir_core::inspection::{GraphPart, GraphRow, REFS_JOIN, RefKind, Row};
 
@@ -72,8 +73,8 @@ pub fn row(row: &Row, lanes: u16, chosen: bool, theme: &Theme) -> Div {
         .w_full()
         .flex()
         .py_1()
-        .pr_2()
-        .pl(px(lead))
+        .pad_end(crate::sides::step(2.))
+        .pad_start(px(lead))
         .when_some(row.graph.clone(), |d, graph| {
             let colors = theme.lanes;
             let ink = chosen.then_some(theme.selection_text);
@@ -85,7 +86,7 @@ pub fn row(row: &Row, lanes: u16, chosen: bool, theme: &Theme) -> Div {
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .left_0()
+                .inset_start(px(0.))
                 .w(px(BEFORE + width)),
             )
         })
@@ -237,7 +238,10 @@ fn paint(
     ink: Option<gpui::Hsla>,
     window: &mut Window,
 ) {
-    let x = |lane: u16| bounds.left() + px(BEFORE + LANE * (f32::from(lane) + 0.5));
+    // The first lane at the start: the left, the right mirrored (`sides`).
+    let x = |lane: u16| {
+        crate::sides::from_start(bounds, px(BEFORE + LANE * (f32::from(lane) + 0.5)), px(0.))
+    };
     let (top, bottom) = (bounds.top(), bottom_of(bounds));
     let node_y = top + bounds.size.height * NODE_AT;
     let color = |index: u8| ink.unwrap_or(colors[usize::from(index) % colors.len()]);

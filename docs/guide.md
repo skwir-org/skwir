@@ -972,6 +972,37 @@ font's list says which family Automatic is now. A change shows at once. A
 long list of choices, and a font's, opens with a field that narrows it
 as you type, and a font's list writes the one you point at in itself.
 
+**Fonts for every script.** Skwir's own fonts have the letters of the
+Latin, Greek and Cyrillic alphabets; text in any other script (a file's
+name, a document, the window itself in a language written in one) is
+drawn in a font your system has for it. On macOS and Windows the system
+has one for nearly every script. On Linux, text that no installed font
+has the letters of shows as boxes. The first time that happens to a
+script one of your languages is written in, Skwir says so once, and names
+a font that draws it: the Noto family Skwir looks for first. A script
+none of your languages is written in (a name in Tibetan on a French
+desktop) is only noted in Skwir's log. A font installed shows at Skwir's
+next start. Chinese, Japanese and Korean share characters that each
+writes in its own forms (直, 骨): on Linux Skwir draws them as the first
+of your languages written in them writes them (the one chosen on
+General, else your system's), and as Simplified Chinese does where you
+read none; a language chosen shows there at the next start. On macOS and
+Windows the system chooses. Each system's packages:
+
+| Script | Debian, Ubuntu | Fedora | Arch | NixOS |
+| --- | --- | --- | --- | --- |
+| Chinese, Japanese, Korean | `fonts-noto-cjk` | `google-noto-sans-cjk-fonts` | `noto-fonts-cjk` | `noto-fonts-cjk-sans` |
+| Arabic, Hebrew, Devanagari and India's other scripts, Thai, Khmer, Ethiopic, Georgian, Armenian and the others | `fonts-noto-core` (the rarer scripts: `fonts-noto-extra`) | `google-noto-sans-<script>-fonts` (`google-noto-sans-devanagari-fonts`) | `noto-fonts` | `noto-fonts` |
+| Emoji | `fonts-noto-color-emoji` | `google-noto-color-emoji-fonts` | `noto-fonts-emoji` | `noto-fonts-color-emoji` |
+
+On Fedora, `langpacks-<language>` (`langpacks-ja`, `langpacks-hi`)
+installs a language's fonts with the rest of its support. On NixOS, fonts
+are the system's: list them in `fonts.packages` in `configuration.nix`
+(`fonts.packages = [ pkgs.noto-fonts pkgs.noto-fonts-cjk-sans ];`), or in
+Home Manager's `home.packages` with `fonts.fontconfig.enable = true`.
+Skwir's packages depend on none of these: which scripts you read is
+yours to say.
+
 **Text sizes** (ADR-117) are percentages, from 80 to 200: **Text size**
 on Appearance for the whole window, **Files text size** for the file
 views alone, **Reading text size** and **Code text size** on Reading for

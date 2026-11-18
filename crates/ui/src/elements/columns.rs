@@ -291,7 +291,12 @@ impl Element for Columns {
             rows: Vec::new(),
         };
         for (at, pieces) in columns.iter().enumerate() {
-            let x = bounds.origin.x + px((column + metrics.gutter) * at as f32);
+            // The first column at the start: the left, the right mirrored.
+            let x = crate::sides::from_start(
+                bounds,
+                px((column + metrics.gutter) * at as f32),
+                px(column),
+            );
             let mut y = 0.;
             for piece in pieces {
                 if y > 0. {

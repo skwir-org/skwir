@@ -1,11 +1,12 @@
 //! Shared command-backed toolbar buttons, bundled symbolic icons and popovers.
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
 use crate::{keymap::RunCommand, shell::Shell, theme::Theme};
 use gpui::{
     AnyView, App, Context, Div, FocusHandle, Render, ScrollHandle, SharedString, Stateful, Window,
-    div, prelude::*, px, svg,
+    div, prelude::*, px,
 };
 use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
@@ -504,7 +505,7 @@ impl Button {
             (None, Some(keys)) => skwir_core::words!(
                 toolbar_title_keys = "{ $title } · { $keys }",
                 title = self.title.clone(),
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "A button's tooltip: what it does, then its shortcut (Back · Alt+Left)."
             )
             .say()
@@ -709,7 +710,7 @@ impl Button {
                 d.child(if menu {
                     menu_glyph(&self.icon, &theme).size(px(16.))
                 } else {
-                    glyph(svg().path(format!("toolbar/{}.svg", self.icon)))
+                    glyph(crate::sides::symbol(&self.icon))
                         .size(px(if tiled {
                             18.
                         } else if segment {
@@ -736,10 +737,10 @@ impl Button {
             .children(menu_keys.map(|keys| {
                 div()
                     .flex_none()
-                    .pl_6()
+                    .pad_start(crate::sides::step(6.))
                     .text_small()
                     .text_color(theme.text_muted)
-                    .child(keys)
+                    .child(crate::sides::shortcut(keys))
             }))
             // On, with an icon of its own: the check after the words.
             .when(
@@ -751,7 +752,7 @@ impl Button {
             })
             .when(self.shape == Shape::Dropdown, |d| {
                 d.gap(sized(2.)).child(
-                    glyph(svg().path("toolbar/chevron.svg"))
+                    glyph(crate::sides::symbol("chevron"))
                         .size(px(10.))
                         .flex_none(),
                 )
@@ -763,15 +764,14 @@ impl Button {
                     .children(self.value.map(|value| {
                         div()
                             .min_w_0()
-                            .pl_4()
+                            .pad_start(crate::sides::step(4.))
                             .truncate()
                             .text_body()
                             .text_color(theme.text_muted)
                             .child(value.say())
                     }))
                     .child(
-                        svg()
-                            .path("toolbar/chevron-right.svg")
+                        crate::sides::symbol("chevron-right")
                             .size(px(13.))
                             .flex_none()
                             .text_color(theme.text_muted),
@@ -854,8 +854,7 @@ pub(crate) const MENU_ROW: f32 = 28.;
 /// A bundled icon on a menu's row, muted: drawn in the selection's ink
 /// while the row is highlighted (`Chosen`).
 pub(crate) fn menu_glyph(icon: &str, theme: &Theme) -> gpui::Svg {
-    svg()
-        .path(format!("toolbar/{icon}.svg"))
+    crate::sides::symbol(icon)
         .flex_none()
         .text_color(theme.text_muted)
 }
@@ -1269,12 +1268,13 @@ pub fn submenu_row(
         .into_any_element()
 }
 
-/// `popup`'s submenu `name`, beside its row: `rows`, each button one the
+/// `popup`'s open submenu, beside its row: `rows`, each button one the
 /// keyboard reaches (`Submenu::rows`, walked by `ui.toolbar_submenu`), a
-/// menu of its own to assistive technology, named by its row.
+/// menu of its own to assistive technology, named by its row's words
+/// (`title`), never by the submenu's id (ADR-139, 8).
 pub fn fly_out(
     popup: &Popup,
-    name: &str,
+    title: SharedString,
     rows: Vec<FlyRow>,
     shell: &Shell,
     theme: &Theme,
@@ -1344,7 +1344,7 @@ pub fn fly_out(
     div()
         .id("popup-submenu")
         .role(gpui::Role::Menu)
-        .aria_label(name.to_owned())
+        .aria_label(title)
         .key_context("ToolbarSubmenu")
         .relative()
         .min_w(sized(180.))
@@ -1564,7 +1564,7 @@ pub fn menu_part_elements(
                 .h(sized(26.))
                 // One line, all it holds (a row of fixed height).
                 .whitespace_nowrap()
-                .pl_2()
+                .pad_start(crate::sides::step(2.))
                 .pt_1()
                 .text_small()
                 .text_color(theme.text_muted)
@@ -1605,7 +1605,7 @@ pub fn menu_part_elements(
                 .child(
                     div()
                         .flex_1()
-                        .pr_4()
+                        .pad_end(crate::sides::step(4.))
                         .text_body()
                         .text_color(theme.text)
                         .child(name.clone()),

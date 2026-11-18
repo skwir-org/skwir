@@ -1,4 +1,5 @@
 //! Virtual document scrolling and bounded, demand-driven page rendering.
+use crate::sides::Sides;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 
 use gpui::{
@@ -1371,9 +1372,12 @@ pub fn continuous_element(
                 sideways.clone(),
             )
             .across(crate::elements::scrollbar::Scrolls::Items(bar_list));
+            // The pages are the document's, left to right whatever the
+            // window's direction (`sides`).
             div()
                 .relative()
                 .size_full()
+                .left_to_right()
                 .child(
                     div()
                         .id("document-horizontal-scroll")

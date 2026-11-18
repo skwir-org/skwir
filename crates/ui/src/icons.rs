@@ -30,6 +30,7 @@
 //! lately are kept (`OwnIcons`); the window gives back the others' when a
 //! frame begins (`let_go`).
 
+use crate::sides::Sides;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1312,13 +1313,17 @@ pub fn marked(
         .flex_none()
         .child(picture)
         .when_some(corner, |d, (glyph, color)| {
-            d.child(on(glyph, color).bottom(px(-1.)).right(px(-1.)))
+            d.child(on(glyph, color).bottom(px(-1.)).inset_end(px(-1.)))
         })
         .when(marks.hidden, |d| {
-            d.child(on("eye-off", theme.text).bottom(px(-1.)).left(px(-1.)))
+            d.child(
+                on("eye-off", theme.text)
+                    .bottom(px(-1.))
+                    .inset_start(px(-1.)),
+            )
         })
         .when_some(vcs, |d, (glyph, color)| {
-            d.child(on(glyph, color).top(px(-1.)).right(px(-1.)))
+            d.child(on(glyph, color).top(px(-1.)).inset_end(px(-1.)))
         })
         .when_some(marks.plays, |d, plays| {
             d.child(playing_badge(plays, size, theme))

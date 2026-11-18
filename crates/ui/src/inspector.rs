@@ -1,4 +1,5 @@
 //! Shared native viewers for optional structured preview plugins.
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::{
     elements::zoom_wheel::{self, Zoomed},
@@ -4398,7 +4399,7 @@ pub fn content(
                     .flex()
                     .gap_3()
                     .text_body()
-                    .pl(px(8. + r.depth.min(32) as f32 * 14.))
+                    .pad_start(px(8. + r.depth.min(32) as f32 * 14.))
                     .when(data.kind == InspectionKind::Table, |d| {
                         // A grid: cells touch, rules between them, numbers
                         // on the right, every other row tinted.
@@ -4450,7 +4451,7 @@ pub fn content(
                         .when(data.kind == InspectionKind::Table, |d| {
                             d.px_2()
                                 .py(px(3.))
-                                .border_r_1()
+                                .border_end(px(1.))
                                 .border_color(theme.border)
                                 .truncate()
                                 .when(numeric, gpui::Styled::text_right)
@@ -4571,6 +4572,15 @@ pub fn content(
         })
         .when_some(state.focus.as_ref(), gpui::InteractiveElement::track_focus);
     let archive = display.data.kind == InspectionKind::Archive;
+    let document = matches!(
+        display.data.kind,
+        InspectionKind::Text
+            | InspectionKind::Markdown
+            | InspectionKind::Code
+            | InspectionKind::Hex
+            | InspectionKind::Book
+            | InspectionKind::Mail
+    );
     if archive {
         body = body.child(crate::archive_preview::rem(
             theme,
@@ -4633,7 +4643,7 @@ pub fn content(
                         d.relative()
                             .px_2()
                             .py(px(4.))
-                            .border_r_1()
+                            .border_end(px(1.))
                             .border_color(theme.border)
                             .truncate()
                             .cursor_pointer()
@@ -4674,6 +4684,11 @@ pub fn content(
                 div()
                     .w_full()
                     .h_full()
+                    // What is read (a text, code, a page of a book or a
+                    // mail, bytes) is the document's, never mirrored with
+                    // the window; what Skwir lists of a file (an archive's
+                    // members, a table's rows, a history) is (`sides`).
+                    .when(document, Sides::left_to_right)
                     .when_some(measure, |d, measure| d.max_w(px(measure)))
                     .map(|d| match rows.or(bytes_rows) {
                         Some(rows) => d.child(rows),
@@ -4851,7 +4866,7 @@ pub struct TableColumnResize(pub usize);
 fn table_column_edge(column: usize, cx: &mut Context<Shell>) -> gpui::Stateful<gpui::Div> {
     crate::elements::edge::edge(
         ("table-column-edge", column),
-        crate::elements::edge::Side::Right,
+        crate::elements::edge::Side::End,
         TableColumnResize(column),
         move |shell| shell.preview.inspection.dragged.forget(column),
         cx,
@@ -4860,7 +4875,8 @@ fn table_column_edge(column: usize, cx: &mut Context<Shell>) -> gpui::Stateful<g
 
 impl Shell {
     /// A table column's edge dragged: the column is as much wider as the
-    /// pointer moved right since the drag began, narrower as it moved left.
+    /// pointer moved toward its end since the drag began (right, left
+    /// mirrored), narrower as it moved back.
     pub(crate) fn on_table_column_drag(
         &mut self,
         ev: &gpui::DragMoveEvent<TableColumnResize>,
@@ -4883,7 +4899,8 @@ impl Shell {
         let (start_x, start_width) = *self
             .edge_start
             .get_or_insert_with(|| (pressed, dragged.width(shape, column).unwrap_or(140.)));
-        dragged.set(column, start_width + (x - start_x) / scale);
+        let moved = f32::from(crate::sides::along(px(x - start_x)));
+        dragged.set(column, start_width + moved / scale);
         cx.notify();
     }
 }
@@ -4917,7 +4934,7 @@ pub(crate) fn hex_row(
     let mut line = div()
         .id(("inspect-row", index))
         .p_2()
-        .pl(px(8.))
+        .pad_start(px(8.))
         .w_full()
         .flex()
         .gap_3()
@@ -4935,7 +4952,9 @@ pub(crate) fn hex_row(
                 .id(("cell", column))
                 .w(px(column_width(None, InspectionKind::Hex, column, size)))
                 .flex_none()
-                .when(column < 2, |d| d.border_r_1().border_color(theme.border))
+                .when(column < 2, |d| {
+                    d.border_end(px(1.)).border_color(theme.border)
+                })
                 .child(hex_cell(cell, column, selected, theme)),
         );
     }

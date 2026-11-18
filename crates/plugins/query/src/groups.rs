@@ -131,18 +131,24 @@ impl<K: std::hash::Hash + Eq> Made<K> {
     }
 }
 
-/// By the first letter as the names' order puts it (`collate::initial`:
-/// É under E; Ä under A in German, after Z in Swedish): Other for a name
-/// that begins with neither a letter nor a digit, then 0–9, first; a
-/// letter of another script a group of its own. Each group found by the
-/// name's first character, as the collation reads it once: nothing made
-/// per entry.
+/// By the heading the names' order puts each under (`collate::initial`,
+/// CLDR's index for the locale: É under E; Ä under A in German, after Z
+/// in Swedish; か for ガ in Japanese, ㄱ for 가 in Korean, pinyin's A for
+/// 阿 in Chinese): Other for a name that begins with neither a letter nor
+/// a digit, then 0–9, first; the letters no heading is for (a kanji) last.
+/// Each group found by the name's beginning, as the collation reads it
+/// once: nothing made per entry.
 fn by_name() -> Keyer {
+    by_name_in(skwir_core::collate::current())
+}
+
+/// [`by_name`] by `collation`'s headings.
+fn by_name_in(collation: &'static skwir_core::collate::Collation) -> Keyer {
     use skwir_core::collate::Initial;
     let made = Made::<Initial>::new();
     Arc::new(move |e: &Of<'_>| {
-        let initial = skwir_core::collate::initial(&e.name);
-        match initial {
+        let initial = collation.initial(&e.name);
+        match &initial {
             Initial::Digit => made.get(initial, || {
                 Group::ranked(
                     1,
@@ -153,9 +159,41 @@ fn by_name() -> Keyer {
                     .say(),
                 )
             }),
-            // Ordered among the letters by the letter's collation key.
-            Initial::Letter(letter) => made.get(initial, || {
-                Group::new(2, letter.encode_utf8(&mut [0; 4]))
+            // Ordered among the letters by the heading's collation key.
+            Initial::Letter(heading) => {
+                let heading = Arc::clone(heading);
+                made.get(initial, || Group::new(2, &heading))
+            }
+            // Where the order puts that count, among the letters.
+            Initial::Strokes { strokes, key } => {
+                let (strokes, key) = (*strokes, Arc::clone(key));
+                made.get(initial, || Group {
+                    rank: 2,
+                    key,
+                    label: Arc::from(
+                        words!(
+                            query_group_strokes = "{ $strokes ->
+                                [one] { $strokes } stroke
+                               *[other] { $strokes } strokes
+                            }",
+                            strokes = strokes,
+                            note = "A group's heading, grouped by name in Traditional Chinese's order, which heads Han characters by how many strokes they are written in (1劃, 2劃…)."
+                        )
+                        .say(),
+                    ),
+                    folders: false,
+                    term: None,
+                })
+            }
+            Initial::Unheaded => made.get(initial, || {
+                Group::ranked(
+                    3,
+                    &words!(
+                        query_group_other_letters = "Other letters",
+                        note = "A group's heading, grouped by name, after the letters' groups: names that begin with a letter no heading is for (a Japanese name's kanji, a Han character in an order other than Chinese's)."
+                    )
+                    .say(),
+                )
             }),
             Initial::Other => made.get(initial, || {
                 Group::ranked(
@@ -1306,6 +1344,55 @@ mod tests {
         assert!(of("_draft").standing(&of("2024")).is_lt());
         assert!(of("2024").standing(&of("apple")).is_lt());
         assert!(of("apple").standing(&of("zebra")).is_lt());
+    }
+
+    /// By name in any script: Japanese's kana rows, Katakana with
+    /// Hiragana, the kanji no heading is for after the letters; Traditional
+    /// Chinese's counts of strokes, in their order.
+    #[test]
+    fn name_groups_take_the_headings_of_every_script() {
+        use skwir_core::collate::Collation;
+        let ja: &'static Collation = Box::leak(Box::new(Collation::of(Some("ja-JP"))));
+        let group = by_name_in(ja);
+        let of = |name: &str| group(&Of::entry(&entry(1, name, EntryKind::File)));
+        let labels = [
+            "かな",
+            "ガイド",
+            "さくら",
+            "漢字",
+            "東京",
+            "Apple",
+            "_x",
+            "10",
+        ]
+        .map(|name| of(name).label.to_string());
+        assert_eq!(
+            labels,
+            [
+                "か",
+                "か",
+                "さ",
+                "Other letters",
+                "Other letters",
+                "A",
+                "Other",
+                "0–9"
+            ]
+        );
+        assert!(Arc::ptr_eq(&of("かな"), &of("ガイド")));
+        assert!(Arc::ptr_eq(&of("漢字"), &of("東京")));
+        assert!(
+            of("さくら").standing(&of("漢字")).is_lt(),
+            "after the letters"
+        );
+        assert!(of("Apple").standing(&of("漢字")).is_lt());
+        let tw: &'static Collation = Box::leak(Box::new(Collation::of(Some("zh-TW"))));
+        let group = by_name_in(tw);
+        let of = |name: &str| group(&Of::entry(&entry(1, name, EntryKind::File)));
+        let labels = ["一", "二", "龍", "Apple"].map(|name| of(name).label.to_string());
+        assert_eq!(labels, ["1 stroke", "2 strokes", "16 strokes", "A"]);
+        assert!(of("一").standing(&of("二")).is_lt());
+        assert!(of("二").standing(&of("龍")).is_lt());
     }
 
     /// What its repository said of a file: its state, Unchanged where it

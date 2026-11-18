@@ -433,6 +433,55 @@ pub enum TextAlign {
 
     /// Align the text to the right of the element
     Right,
+
+    /// Align the text to the side its element's lines start at: the left
+    /// where it is laid out left to right, the right where right to left
+    /// (`TextStyle::layout_direction`, `TextAlign::resolve`).
+    Start,
+
+    /// Align the text to the side its element's lines end at: the right
+    /// where it is laid out left to right, the left where right to left.
+    End,
+}
+
+impl TextAlign {
+    /// The side this aligns to in a box laid out in `direction`: `Start`
+    /// and `End` turned into `Left` or `Right`, the others as they are.
+    pub fn resolve(self, direction: LayoutDirection) -> TextAlign {
+        match (self, direction) {
+            (TextAlign::Start, LayoutDirection::LeftToRight)
+            | (TextAlign::End, LayoutDirection::RightToLeft) => TextAlign::Left,
+            (TextAlign::Start, LayoutDirection::RightToLeft)
+            | (TextAlign::End, LayoutDirection::LeftToRight) => TextAlign::Right,
+            (align, _) => align,
+        }
+    }
+}
+
+/// The direction a box lays out what it holds in, as CSS's `direction`:
+/// right to left, a flex row runs from the right, a flex row or a grid's
+/// start and end alignments are on the other side, wrapped lines and grid
+/// columns go the other way, and a box that scrolls sideways starts at its
+/// right. Paddings, margins, borders and insets stay where they are said
+/// (left is left). Inherited through the text style, as CSS's is
+/// (`Styled::layout_direction`, `Window::layout_direction`); a text's own
+/// paragraph reads in the direction of its first strong letter whatever
+/// this says.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum LayoutDirection {
+    /// Left to right, as gpui lays everything out where nothing says
+    /// otherwise.
+    #[default]
+    LeftToRight,
+    /// Right to left: a mirrored layout, for Arabic, Hebrew, Persian.
+    RightToLeft,
+}
+
+impl LayoutDirection {
+    /// Whether this is right to left.
+    pub fn is_rtl(self) -> bool {
+        self == LayoutDirection::RightToLeft
+    }
 }
 
 /// The properties that can be used to style text in GPUI
@@ -481,6 +530,10 @@ pub struct TextStyle {
     /// How the text should be aligned within the element
     pub text_align: TextAlign,
 
+    /// The direction the element lays out what it holds in (inherited, as
+    /// CSS's `direction`).
+    pub layout_direction: LayoutDirection,
+
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
 
@@ -507,6 +560,7 @@ impl Default for TextStyle {
             white_space: WhiteSpace::Normal,
             text_overflow: None,
             text_align: TextAlign::default(),
+            layout_direction: LayoutDirection::default(),
             line_clamp: None,
             position: RunPosition::Baseline,
         }
@@ -1794,5 +1848,30 @@ mod tests {
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
         );
+    }
+
+    #[test]
+    fn start_and_end_align_by_the_layout_direction() {
+        use LayoutDirection::{LeftToRight, RightToLeft};
+        for (align, ltr, rtl) in [
+            (TextAlign::Start, TextAlign::Left, TextAlign::Right),
+            (TextAlign::End, TextAlign::Right, TextAlign::Left),
+            (TextAlign::Left, TextAlign::Left, TextAlign::Left),
+            (TextAlign::Center, TextAlign::Center, TextAlign::Center),
+            (TextAlign::Right, TextAlign::Right, TextAlign::Right),
+        ] {
+            assert_eq!(align.resolve(LeftToRight), ltr, "{align:?}");
+            assert_eq!(align.resolve(RightToLeft), rtl, "{align:?}");
+        }
+        // Left to right where nothing says otherwise, and inherited through
+        // the text style: an inner refinement that says none keeps it.
+        let mut style = TextStyle::default();
+        assert_eq!(style.layout_direction, LeftToRight);
+        style.refine(&TextStyleRefinement {
+            layout_direction: Some(RightToLeft),
+            ..Default::default()
+        });
+        style.refine(&TextStyleRefinement::default());
+        assert_eq!(style.layout_direction, RightToLeft);
     }
 }

@@ -33,6 +33,7 @@ pub const SCHEME: &str = "shelf";
 fn shelf_title() -> Words {
     words!(
         shelf_title = "Shelf",
+        noun,
         note = "The shelf as a place: in the sidebar, its tab, its count in the footer."
     )
 }

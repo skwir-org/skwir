@@ -24,8 +24,8 @@ Tests covering the patches run on a copy, so gpui's dev dependencies stay out
 of Skwir's workspace. `just gpui-check` runs, alongside upstream's tests of the
 same modules:
 
-- gpui's list, wheel-axis, line wrapper, line layout, style and key dispatch
-  tests;
+- gpui's list, wheel-axis, line breaks, line wrapper, line layout, style and
+  key dispatch tests;
 - all of gpui_wgpu's library tests (the atlas, the context, the renderer,
   the text system), which need a wgpu adapter (lavapipe will do), and the
   text system's again with font-kit choosing the faces, as Skwir builds it;
@@ -104,6 +104,13 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0069-right-to-left-text` | A line holding right-to-left text keeps each byte's bidi level (UAX #9) and its glyphs in the order they are drawn: its carets, hit tests and selections answer where it is drawn (`LineLayout::selection_ranges`, `index_left_of`, `index_right_of`), it wraps in its text's order, each row laid out as it reads, and a decoration follows its characters | — |
 | `0070-directwrite-right-to-left-runs` | Windows: a run read right to left is placed from its origin leftward, as DirectWrite draws it, and a line that starts right to left reads so | zed#31102 (open) |
 | `0071-word-characters` | The letters, marks and digits of every script that puts spaces between its words are word characters by their Unicode properties (a Greek, Hebrew, Arabic or Devanagari word wraps whole); Chinese, Japanese, Korean, Thai and the like break between characters, never before a mark; bidi controls and joiners are glue | — |
+| `0072-line-breaks-by-uax-14` | A line wraps where the Unicode line breaking algorithm (UAX #14) lets it, by ICU4X's line segmenter, its data compiled in behind one seam (`text_system::line_breaks`): kinsoku, Thai, Lao, Khmer and Burmese by dictionary, Tibetan, the bidi controls' glue; ASCII by its classes, without the segmenter; no row is spaces alone; 0071's rule goes | — |
+| `0073-language-for-assistive-technology` | A window says the language its words are in to assistive technology (`Window::set_a11y_language`, on its tree's root), a div or a text where it is another (`aria_language`) | — |
+| `0074-chinese-characters-in-the-language` | Linux: the fallback for Chinese characters takes their forms in the language, Japanese, Korean, Traditional (Taiwan's, Hong Kong's) or Simplified Chinese, by the locale's script and region (ICU4X's likely subtags), at start and as `TextSystem::set_language` asks | — |
+| `0075-layout-direction` | A layout right to left, inherited as CSS's `direction` through the text style (`LayoutDirection`, `Styled::layout_direction`, `Window::layout_direction`): taffy mirrors flex rows, start and end alignments, wrapped lines and grid columns; a box that scrolls sideways starts at its right; `TextAlign::Start` and `End` | — |
+| `0076-shortcuts-on-layouts-without-latin-letters` | Linux: a shortcut (Control, Alt or Super held) on a layout whose letters are not Latin is named by the keymap's first Latin layout, or a US one where it has none, never by its own ASCII symbols; a shortcut on a digit row that types no digit names its digit; the US positions of the digit row, `-` and `=`, and `<` and `>` no longer swapped | — |
+| `0077-no-isolates-for-assistive-technology` | What a node says to assistive technology (its label, description, value, placeholder) has its bidirectional isolates (U+2066 to U+2069) taken out, but a text run's, whose offsets a caret counts | — |
+| `0078-kept-breaks-for-line-wrappers` | A text beyond ASCII that a line wrapper wraps (a name a grid counts the lines of) is segmented once: its breaks kept by its text in the text system, two generations of 4,096 texts, so counted again at another width it costs about what it did before 0072 | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1130,7 +1137,8 @@ requirement under its card, 2026-11-12). CSS takes the longest word.
   two places the line may wrap, measured as `compute_wrap_boundaries`
   measures a line, so wrapped there no word is cut. The places are one
   rule both ask (`wraps_before`): before a word after a space, and before
-  any other character but a space, after the first that is not one.
+  any other character but a space, after the first that is not one. Since
+  0072 they are UAX #14's (`LineBreaks`).
 - **The probe.** A text that wraps (`WhiteSpace::Normal`, not truncated)
   answers it with its lines' minimum content sizes
   (`WrappedLineLayout::min_content_size`: that width, and the rows it
@@ -1487,7 +1495,8 @@ ASCII, which keeps its rules and goes first:
   time; ASCII 7 against 12. A page costs its 256 look-ups once.
 
 Tibetan (no break before its tsheg, after it) and Japanese kinsoku beyond
-the closing punctuation listed are not done.
+the closing punctuation listed are not done. 0072 replaces this rule by
+UAX #14's, and keeps its cases as tests.
 
 The tests are `text_system::line_wrapper::tests::test_is_word_char` (each
 script, the marks, the glue, every page against the characters worked
@@ -1495,3 +1504,351 @@ out) and `text_system::line_layout::tests::a_word_of_any_script_is_kept_whole`
 (the narrowest width of Greek, Devanagari, Georgian, a name isolated in
 its quotes, Chinese and Thai), and the Hebrew paragraph's narrowest width
 in 0069's `a_hebrew_paragraph_wraps_from_its_first_row`.
+
+### 0072: Line breaks by UAX #14
+
+0071 told a word by its characters' properties, and a line wrapped by a
+rule between two characters (`wraps_before`): before a word after a space,
+before any other character but a space. That rule can say nothing of what
+needs more than two: a closing bracket or full stop that must not start a
+line (Japanese and Chinese kinsoku), a Thai sentence whose words only a
+dictionary tells apart (0071 broke it between any two letters), Tibetan's
+tsheg, French guillemets kept with their words. `text_system::line_breaks`
+answers where a line may wrap by the Unicode line breaking algorithm, UAX
+#14, as ICU4X's line segmenter has it (`icu_segmenter` 2.4, the standard's
+version 15.1, its strict default, no locale's tailoring), found once for a
+line's text (`LineBreaks::of`: a bit a byte, 256 bytes inline):
+
+- **Who asks.** The shaped layout's wraps (`compute_wrap_boundaries`, and
+  0069's `wrap_in_text_order`), its narrowest width (`min_wrap_width`,
+  0061) and the line wrapper (`wrap_line`, `truncate_wrapped_line`) ask the
+  same breaks, so they never disagree; 0071's `is_word_char` and its pages
+  are gone, and with them gpui's `unicode-properties` and `unicode-script`.
+  A glyph after the first of its character is no place to wrap (0071's
+  rule let a CJK character drawn in two glyphs be cut between them).
+- **ASCII** is answered without the segmenter (`line_breaks::ascii`): its
+  classes (`LineBreak.txt`) and the rules that apply to them, LB4 to LB31,
+  in a pass over the bytes. A test compares it with the segmenter on every
+  pair of ASCII characters, every string of up to four of its classes and
+  3,000 longer ones at random: the same answer for each.
+- **Where it parts from 0071's rule**, the standard is followed: a hyphen
+  lets a line wrap after it (`non-|English`, `x-|ray`, but `a-1`, `x -1`
+  and `file_2026-11-18.txt` whole), a slash and a question mark after them
+  rather than before (`a/|b/|c.txt`, `foo?|b=2`); `&`, `*`, `<`, `>`, `+`
+  and `=` are letters and numeric prefixes (`a=1&b=2`, `2+3` whole; `C+|+`);
+  no break between a word and its bracket (`a(b)c`, `photo(1).jpg`), nor
+  before punctuation after a space (`a !`); `×` is a letter (`2×3`); a
+  word's marks and the joiners, no-break spaces and bidi controls glue as
+  in 0071.
+- **Gpui's tailoring.** A line's indent, the spaces it starts with (and
+  each line's after a newline), is no place to wrap, nor the place before
+  its first other character (an editor's continuation rows keep the indent,
+  `IndentAdjustment`). And a row a space overflowed into starts with it: no
+  place to wrap comes before its first word, so no row is a space alone.
+  0071's wrapper had that only by accident (the character before was not
+  updated after a forced wrap, so Zed's `test_extra_columns_overflow_guard`
+  passed), its shaped layout not at all; both say it now.
+- **Kept while wrapped.** A text's breaks are kept by the text in the line
+  layout cache (`LineLayoutCache::breaks_of`), frame to frame as its lines
+  are, whatever width or font it is wrapped at: a window resized wraps its
+  texts again without segmenting them again. `LineLayout::wrapped` and
+  `compute_wrap_boundaries` take the breaks found; `min_wrap_width` and the
+  wrapper find their own.
+- **An element** of a line (`LineFragment::Element`, Zed's inlays) reads as
+  a letter where its line's breaks are found: a line wraps before one after
+  a space, never between one and the word it stands in, as before.
+- **The data** is compiled in: the rules, and the Thai, Lao, Khmer and
+  Burmese dictionaries (`LineSegmenter::new_dictionary`; ICU4X's LSTM model,
+  smaller, segments Thai about 100 times slower). It is named in one place,
+  `line_breaks::segmenter`, where a data pack read at run time could take
+  its place (`try_new_dictionary_with_buffer_provider`).
+
+**What it costs**, measured on release builds of gpui's library tests,
+0071's and 0072's, run one after the other ten times on a machine others
+used (load 5 to 15 on 20 threads), the fastest batch of each kept; a line
+of glyphs 8 px wide (Chinese 16), wrapped at a third of its width; lines of
+a name's length and paragraphs four sentences long (`wrap_bench.rs` in the
+night's scratchpad, not kept):
+
+| line | chars | wrapped (ns) | narrowest | wrapper | resized |
+| --- | --- | --- | --- | --- | --- |
+| ASCII | 63 | 342 → 409 | 212 → 224 | 293 → 424 | 614 → 581 |
+| French | 71 | 391 → 937 | 252 → 651 | 398 → 921 | 716 → 646 |
+| Japanese | 34 | 268 → 914 | 167 → 709 | 279 → 877 | 431 → 455 |
+| Thai | 61 | 366 → 2,675 | 260 → 2,452 | 419 → 2,800 | 644 → 666 |
+| ASCII | 576 | 2,681 → 3,370 | 1,990 → 1,937 | 2,500 → 3,898 | 3,389 → 2,884 |
+| French | 652 | 3,054 → 8,530 | 2,334 → 7,015 | 2,981 → 9,072 | 3,963 → 3,332 |
+| Japanese | 312 | 1,595 → 7,248 | 1,409 → 6,133 | 2,252 → 7,680 | 2,321 → 2,465 |
+| Thai | 596 | 3,507 → 23,302 | 2,718 → 21,479 | 4,083 → 24,339 | 5,053 → 3,889 |
+
+"Wrapped" is `compute_wrap_boundaries` with the breaks found anew,
+"narrowest" `min_wrap_width`, "wrapper" `LineWrapper::wrap_line`, and
+"resized" a line wrapped through the line layout cache at another width
+each frame, its shaped layout kept: what a window being resized costs, the
+breaks kept. Found alone, the breaks cost 2.5 ns a character for ASCII (the
+table of steps), 10.5 to 12.5 for French, 23 to 26 for Japanese and 44 to
+46 for Thai (the segmenter). Kept, a resized line costs what it did, within
+the noise; found anew, ASCII costs 1 to 1.6 times what it did, French 2.3
+to 3, Japanese 3 to 4.5, Thai 6 to 9.5. The wrapper keeps nothing (Skwir's
+grid counts its names' lines with it as its order or zoom changes,
+`GridView::measure`).
+
+**What the data weighs**, stripped: gpui's `hello_world` example, release,
+is 1,091,528 bytes larger (26,768,184 → 27,859,712). Alone in a binary, the
+line segmenter's rules and code are about 68 KB and the four dictionaries
+about 1.05 MB (ICU4X's LSTM models instead: 400 KB in all). Skwir's core
+finds word boundaries with ICU4X's word segmenter and the same
+dictionaries (`skwir_core::segment`): beside it, the line segmenter adds
+about 37.6 KB (a probe binary of each, 3,475,160 → 3,512,760 bytes).
+
+Checked: gpui's library tests (`just gpui-check`: 168 in gpui, gpui_wgpu's
+and gpui_linux's), Skwir's UI tests (743), gpui and gpui_windows compiled
+for Windows, gpui for macOS. Not seen in a window.
+
+The tests are `text_system::line_breaks::tests` (ASCII against the
+segmenter; where ASCII parts from 0071's rule; the indent; 0071's words of
+every script, kept; glue, isolated names and guillemets; kinsoku, small
+kana; Thai, Lao, Khmer, Burmese and Tibetan),
+`text_system::line_wrapper::tests::test_wrap_line_where_the_standard_allows`,
+`text_system::line_layout::tests::a_row_a_space_overflowed_into_is_not_left_alone`,
+`text_system::line_layout::breaks_kept_tests` and 0071's
+`a_word_of_any_script_is_kept_whole`, a Chinese full stop and a Thai
+sentence added.
+
+### 0073: The language for assistive technology
+
+A screen reader picks a voice by the language of what it reads, and gpui
+gave AccessKit none: Skwir's words in French were read with an English
+voice's rules (ADR-139). AccessKit's nodes say a language
+(`Node::set_language`, a BCP 47 tag), which holds for the nodes below one
+but those that say their own.
+
+- **The window's**: `Window::set_a11y_language(Option<SharedString>)`,
+  kept beside the window's title (`A11y::language`) and said by the root
+  node of every frame's tree from the next one; `None` says none.
+- **An element's**, where it is not the window's (a name in another
+  language, a quotation): `aria_language` on a div with an id and a role
+  (beside `aria_label`), and on a `StyledText`, said by the
+  `InteractiveText` that is its node.
+
+Not done by AccessKit itself on Linux: accesskit_unix 0.22.1 answers
+AT-SPI's `Accessible.Locale` with an empty string whatever the nodes say,
+and exposes a node's language only among a text's attributes
+(accesskit_atspi_common's `text_attributes`), which gpui's nodes have none
+of: Orca on Linux reads no language from it yet. What macOS's and Windows'
+adapters make of it was not checked.
+
+The tests are `window::a11y::tests::the_window_s_language_is_said_by_its_root`
+(none until set, the root's every frame, a node's own kept, unset),
+`elements::div::tests::test_write_a11y_info_aria_language_builder` and
+`elements::text::tests::a_text_says_its_language_where_it_has_one`.
+
+### 0074: Chinese characters in the language's forms
+
+A Chinese character is drawn in the fallback font when the font asked for
+has none (Skwir's own, Inter and JetBrains Mono, have none), and its form
+differs by language: 直, 骨 and 誤 are not drawn alike in Japanese,
+Korean, Traditional and Simplified Chinese. cosmic-text picks the
+fallback by its locale (`han_unification` in its `fallback/unix.rs`), but
+by an exact tag, "ja", "ko", "zh-HK" or "zh-TW", Simplified Chinese
+otherwise, while the system's locale comes as `ja-JP` or `ko-KR`: a
+Japanese or Korean desktop drew Simplified Chinese forms (seen on Xvfb,
+`LANG=ja_JP.UTF-8` and `ko_KR`, 2026-11-18). harfrust is given no language,
+so a font's `locl` feature does not mend it.
+
+- **The key** (`han_key`, in `gpui_wgpu`): Japanese is "ja", Korean "ko";
+  another language's script and region, likely where it says none (ICU4X's
+  `LocaleExpander::new_common`), name the forms: Traditional Chinese is
+  "zh-HK" in Hong Kong and Macao and for Cantonese, "zh-TW" elsewhere;
+  Simplified Chinese "zh-CN". Any other language is given as it is. A POSIX
+  locale's encoding and modifier (`ja_JP.UTF-8`) are left out.
+- **At start**, `CosmicTextSystem::new` makes its font system again with
+  that key (`into_locale_and_db`, `new_with_locale_and_db`: the database
+  moves whole).
+- **When asked**: `TextSystem::set_language(&str)` (for a language chosen
+  in the application) reaches `PlatformTextSystem::set_language`, which
+  answers whether the fallbacks changed; cosmic-text's font system is then
+  made again from its own database, so the faces loaded keep their ids, and
+  the text system lays out again what it had laid out, as after
+  `add_fonts` (its font generation moves). macOS and Windows, which pick
+  their own fallback, change nothing.
+
+The tests are `cosmic_text_system::tests::han_key_names_the_forms_of_chinese_characters`
+(ja-JP, ko-KR, zh-Hant, zh-TW, zh-HK, zh-MO, yue, zh, zh-SG, zh-CN,
+zh-Hans-HK, fr-FR, C) and
+`cosmic_text_system::tests::a_language_set_picks_its_fallbacks_and_keeps_the_faces`.
+The forms themselves were not looked at in a window after the change.
+
+### 0075: Layout direction
+
+gpui handed taffy every box left to right, though taffy 0.15 lays out right
+to left too (`Style::direction`): a window in Arabic, Hebrew or Persian
+could not be mirrored (docs/i18n.md, level 3). This gives gpui CSS's
+`direction`:
+
+- **`LayoutDirection`** (`LeftToRight`, the default, or `RightToLeft`), a
+  field of `TextStyle` (`layout_direction`), so inherited as CSS's is:
+  `Styled::layout_direction` sets it on an element and what it holds, an
+  element inside setting its own back where it must stay left to right
+  (a code view, a terminal).
+- **To taffy.** `Window::request_layout` and `request_measured_layout`
+  hand taffy the direction inherited where they are called (a div pushes
+  its own text style first), and taffy mirrors what it mirrors: a flex
+  row runs from the right, `justify_start` and `justify_end` (and a grid's
+  start and end) change sides, wrapped lines and grid columns go the other
+  way. Paddings, margins, borders and insets stay where they are said:
+  left is left (Skwir turns those itself).
+- **`Window::layout_direction()`**: the inherited direction where it is
+  asked (laying out, prepainting, painting), for elements that place what
+  they hold by hand. A window keeps how many text style refinements on its
+  stack say a direction (`layout_directions_set`), so where none does, as
+  in every window left to right, it is answered without looking.
+- **Text alignment.** `TextAlign::Start` and `TextAlign::End`, resolved
+  against the inherited direction where a text is laid out and painted
+  (`TextAlign::resolve`; a line painted with one unresolved reads it as
+  left to right). The default stays `Left`; a window right to left sets
+  `Start` on its root. A text's own paragraph still reads in the
+  direction of its first strong letter (0069).
+- **Scrolling sideways.** A box laid out right to left that scrolls
+  sideways (`overflow_x_scroll`) starts at its right: what overflows lies
+  to its left, and its offset runs from 0, the right end where its content
+  starts, up to `max_offset`, as CSS's `scrollLeft` runs down from 0 there
+  (`ScrollHandle::offset`'s sign is the other way round from left to
+  right's). `ScrollHandle::scroll_to_item` brings an item into view as left
+  to right, one wider than the box with its right edge in view. A wheel
+  turned on a box that scrolls only sideways moves it toward its end as it
+  turns down, leftward there; what the platform reports sideways (a
+  trackpad, a tilted wheel, Shift and the wheel) moves it where it points.
+
+Left to right, nothing changes: gpui's 486 library tests and Skwir's UI
+tests (744) pass as before.
+
+Not done: `uniform_list` and `list`, which scroll vertically, know nothing
+of it; a scrollbar Skwir draws reads `ScrollHandle::offset` and must turn
+its sign right to left.
+
+The tests are `elements::div::layout_direction_tests` (a row left to right
+as before, right to left from its right and its end on the left, a
+direction inherited but where an island says its own, paddings where
+they are said, `Window::layout_direction` in prepaint),
+`elements::div::scroll_axis_tests::a_strip_left_to_right_scrolls_as_it_did`
+and `a_strip_right_to_left_starts_at_its_right` (offsets, maximum, items'
+places, the wheel both ways, `scroll_to_item` to the far end and back),
+`style::tests::start_and_end_align_by_the_layout_direction` and
+`elements::text::tests::a_text_aligned_to_its_start_follows_the_layout_direction`.
+Compiled for Windows and macOS; not seen in a window.
+
+### 0076: Shortcuts on layouts without Latin letters
+
+gpui named a key by what it types (`keystroke_from_xkb`), its US position
+(`guess_ascii`) only where that was no ASCII character. On a layout of
+Greek, Cyrillic, Hebrew or Arabic letters, the ASCII symbols it types
+named its shortcuts: Greek Ctrl+Q was `ctrl-;`, Hebrew Ctrl+W `ctrl-'`,
+Russian Ctrl+Shift+/ `ctrl-,` (it opened Skwir's settings), Arabic
+Ctrl+Shift+Z `ctrl-~`. A digit row that types none named its shortcuts by
+what it types: AZERTY's Ctrl+1 was `ctrl-&`, Persian's `ctrl-farsi_1`. And
+`guess_ascii` gave `>` for Shift and the comma, `<` for Shift and the
+period. Only while Control, Alt or Super is held, what a key types (its
+`key_char`) unchanged:
+
+- **A layout whose letters are not Latin** (none of its keys gives a
+  letter from a to z at its first level, as Firefox's `IsLatinGroup` asks;
+  kept with the keymap, `latin_layouts`) names a shortcut as the keymap's
+  first Latin layout does, at the level the same modifiers give there
+  (`ShortcutKey::Latin`: Russian beside a US layout, Ctrl+Shift on the
+  slash key is `ctrl-?`), or as a US layout does where the keymap has none
+  (`ShortcutKey::UsPosition`, `guess_ascii`). Then the names as before:
+  Shift on a symbol left out (`ctrl-?`), kept on a letter (`ctrl-shift-z`).
+- **The digit row** (keycodes 10 to 19): a key whose first level gives no
+  digit (AZERTY's `&`, `é`; Persian's `۱`) names a shortcut by the digit a
+  level of it gives, the lowest first, else its US digit
+  (`digit_of_row`): AZERTY's Ctrl+& and Ctrl+Shift+& are both `ctrl-1`.
+  Where its first level is a digit, its shifted symbols keep their names:
+  a US layout's Ctrl+Shift+1 is still `ctrl-!`, a German one's
+  Ctrl+Shift+2 `ctrl-"`.
+- **`guess_ascii`** knows the digit row (`1` to `0`, `!` to `)` with
+  Shift), `-` and `_`, `=` and `+`, and gives `<` and `>` where they are.
+  Its new keys name only what is above: a key of a Latin layout that types
+  no ASCII character there keeps its own name (German's `ß`, AZERTY's `é`
+  outside a shortcut).
+
+Every key's name, Control, Control and Shift, Alt and none held, was
+compared before and after on US, German, AZERTY, French Ergo-L, Greek,
+Russian, and US with Russian active (a scratch test, not kept): US,
+German and Ergo-L name every key as before (Ergo-L's Ctrl+Shift+1 to 3
+stay `ctrl-shift-eurosign`, `-guillemotleft`, `-guillemotright`, no US
+key's names), keys held alone as before but for Shift and the comma or
+period of a layout without Latin letters (`<` and `>` now, as a US layout
+gives them). What changed: AZERTY's Ctrl and Alt with the digit row (to
+`ctrl-1` … `ctrl-0`); Greek's Ctrl and Alt with Q (`ctrl-q`,
+`ctrl-shift-q`); Russian's and US-with-Russian's shortcuts on symbol keys
+to their US positions (`ctrl-/`, `ctrl-@`, `ctrl-?`, `ctrl-|`, `ctrl-{`,
+`ctrl-<` on the key beside the left Shift, 49 names in all).
+
+The tests are `linux::platform::tests::a_shortcut_is_named_by_a_latin_layout`
+(Greek, Hebrew, Russian, Arabic, US with Russian, AZERTY with Russian,
+AZERTY's and Persian's digit row, German, US, keys held alone) and
+`linux::platform::tests::a_us_position_is_as_a_us_layout_has_it` (the
+table, against a US keymap's own names). X11 and Wayland both name keys
+by `keystroke_from_xkb`; checked in tests on xkeyboard-config's layouts,
+not in a window.
+
+### 0077: No isolates for assistive technology
+
+Skwir isolates a name inside its sentences (FSI … PDI, ADR-139) so its
+letters are drawn in their order whatever direction they read in. gpui
+hands what it draws to AccessKit as it is: a text's string is its node's
+value (`elements::text`), the window's title its root's label. Speech
+needs no isolate, and braille shows each as a cell of its own.
+`A11yNodeBuilder::finalize`, once a frame's tree is built (only while a
+reader listens), takes U+2066 to U+2069 (LRI, RLI, FSI, PDI) out of each
+node's label, description, value and placeholder, writing a string again
+only where it holds one (`leave_out_isolates`). A text run (a node of role
+`TextRun`, or one with `character_lengths`: a field's, a terminal's, a
+reader's) keeps them, the offsets its caret is told counting them.
+
+The test is `window::a11y::tests::isolates_are_left_out_of_what_a_node_says`
+(a label "Moved “⁨a⁩” to Trash", a description with LRI and RLI, a value
+with FSI, a placeholder without any, a text run's value with FSI kept).
+
+### 0078: Kept breaks for line wrappers
+
+0072 keeps a text's breaks with the window's line layout cache, but a line
+wrapper (`LineWrapper::wrap_line`, `truncate_wrapped_line`) found them anew
+each call: Skwir's grid counts each name's lines with one
+(`name_lines::count`), once for each zoom and text size, and a name beyond
+ASCII was segmented again each time. The text system now keeps them
+(`TextSystem::line_breaks`, `line_breaks::KeptBreaks`), by the text, for a
+wrapper wrapping one text alone (a fragment of a line with elements, an
+editor's, finds them as before):
+
+- **Beyond ASCII only.** ASCII's table of steps costs about what a look-up
+  does; it is found anew and never kept.
+- **Bounded.** Two generations of `KeptBreaks::GENERATION` (4,096) texts:
+  a text asked for is kept in the current one; once it is full it becomes
+  the previous one and what was there goes. A text asked again from the
+  previous generation comes back to the current one. At most 8,192 texts,
+  each its name and a few words of bits (some 0.9 MB at the most).
+- **One lock**, the text system's, taken once a text: a look-up, and on a
+  miss the breaks found and kept under it.
+
+Measured on release builds of gpui's library tests, 0071's, 0077's and
+this one's, each run six times in turn on a machine others used (load 2 to
+8): 2,000 names, counted once at 96 px (as a folder is opened, new names
+each round), then at three other widths (as it is zoomed), the fastest of
+each kept, nanoseconds a name, 9.6 px a character:
+
+| names | 0071 | 0072 | 0078, first | 0078, again |
+| --- | --- | --- | --- | --- |
+| ASCII, `Summer holiday 12 (copy).jpg` | 67 | 135 to 145 | 113 to 116 (not kept) | 113 to 116 |
+| French, `Été à la plage 12, copie déjà triée.jpg` | 86 | 346 | 382 | 94 |
+| Japanese, `夏休みの写真12（コピー）.jpg` | 81 | 304 | 381 | 101 |
+| Thai, `รูปถ่ายวันหยุดพักผ่อน12.jpg` | 109 | 892 | 921 | 130 |
+
+Counted again, a name beyond ASCII costs 1.06 to 1.16 times what it did
+before 0072; counted for the first time, 1.02 to 1.25 times what 0072's
+does (the text kept). ASCII's wrapper costs about twice 0071's, its table
+of steps and the bits it sets.
+
+The tests are `text_system::line_breaks::tests::breaks_are_kept_by_their_text_for_two_generations`
+and `text_system::line_wrapper::tests::a_text_beyond_ascii_is_segmented_once`.

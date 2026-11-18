@@ -187,8 +187,8 @@ pub fn rows(
 /// selected) wholly in view where the last frame laid it out stays as far
 /// along the row as it was, where `now` lays it out in this frame (its
 /// children may change width with the row: the text's size). `now` gives
-/// child `k`'s start and width, `None` past the last. `children` is asked
-/// only then.
+/// child `k`'s start and width, from the row's start (its right, mirrored),
+/// `None` past the last. `children` is asked only then.
 pub fn across(
     row: ScrollHandle,
     memory: Memory,
@@ -204,15 +204,27 @@ pub fn across(
             }
             let children: Vec<(usize, usize)> =
                 children(window, cx).into_iter().map(|k| (k, k)).collect();
+            // Counted from the row's start: its right where it is laid out
+            // right to left, where gpui's offset runs from 0 at the right
+            // end up (`sides`).
+            let rtl = window.layout_direction().is_rtl();
             let laid = |k: usize| {
                 let laid = row.bounds_for_item(k)?;
                 Some((
-                    f32::from(laid.left() - before.left()),
+                    f32::from(if rtl {
+                        before.right() - laid.right()
+                    } else {
+                        laid.left() - before.left()
+                    }),
                     f32::from(laid.size.width),
                 ))
             };
             let offset = row.offset();
-            let from = -f32::from(offset.x);
+            let from = if rtl {
+                f32::from(offset.x)
+            } else {
+                -f32::from(offset.x)
+            };
             let view = f32::from(before.size.width);
             let Some((child, share)) = memory.keep(&children, laid, from, view, 0.) else {
                 return;
@@ -226,7 +238,7 @@ pub fn across(
                 .last()
                 .map_or(0., |(at, len)| at + len);
             let start = start(at, len, share, wide, 0.).clamp(0., (content - wide).max(0.));
-            row.set_offset(point(px(-start), offset.y));
+            row.set_offset(point(px(if rtl { start } else { -start }), offset.y));
             memory.put(child, share, start);
         },
         |_, (), _, _| {},

@@ -1,9 +1,9 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
-    TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+    FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent,
+    LayoutDirection, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
+    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -116,6 +116,14 @@ pub trait Styled: Sized {
     /// Set the text alignment of the element.
     fn text_align(mut self, align: TextAlign) -> Self {
         self.text_style().text_align = Some(align);
+        self
+    }
+
+    /// Sets the direction this element and what it holds are laid out in,
+    /// as CSS's `direction`, inherited by the elements inside but those that
+    /// set their own (`LayoutDirection`).
+    fn layout_direction(mut self, direction: LayoutDirection) -> Self {
+        self.text_style().layout_direction = Some(direction);
         self
     }
 

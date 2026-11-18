@@ -2443,18 +2443,86 @@ pub struct Keymap {
 /// user's bindings.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stamp {
-    pub revisions: (u64, u64, u64),
+    pub revisions: (u64, u64, u64, bool),
     pub user: Vec<UserBinding>,
 }
 
 impl Stamp {
-    /// The registries' revisions now, for a cheap comparison per sync.
-    pub fn revisions(app: &App) -> (u64, u64, u64) {
+    /// The registries' revisions now, and whether the window is mirrored
+    /// (`ALONG_LINE`), for a cheap comparison per sync.
+    pub fn revisions(app: &App) -> (u64, u64, u64, bool) {
         (
             app.registry.keymap.revision(),
             app.registry.schemes.revision(),
             app.plugins.revision(),
+            crate::sides::rtl(),
         )
+    }
+}
+
+/// The places whose rows are drawn in the reading's direction, where Left
+/// and Right go along that line: a menu's (Right opens a submenu, which
+/// hangs at the row's end), a toolbar's choice and submenu, the sidebar's
+/// groups, the settings' pages and what their rows choose (a slider runs
+/// from the right there, `controls::slider`), the view buttons, a
+/// review's choices, Bulk Rename's cases, the quick look's files. While
+/// the window is mirrored (`sides`), the
+/// shell's, schemes' and plugins' Left and Right are swapped there, so an
+/// arrow goes the way it points; the user's own keys are kept as they
+/// wrote them. Not the pane: its views turn the keys themselves
+/// (`Nav::along_line`), a map or a treemap drawn as the screen is keeping
+/// them; nor media's time or the player's, which run left to right in
+/// every language.
+const ALONG_LINE: &[&str] = &[
+    "menu",
+    "toolbar_button",
+    "toolbar_submenu",
+    "toolbar_choice",
+    "settings_nav",
+    "setting_choices",
+    "setting_slider",
+    "setting_keys",
+    "setting_exclusions",
+    "view_buttons",
+    "review",
+    "bulk_case",
+    "peek",
+    "sidebar",
+];
+
+/// `keys` with Left and Right swapped, where it is one stroke of either
+/// (Shift or Ctrl with it kept): `None` for any other keys.
+fn swapped_arrow(keys: &str) -> Option<String> {
+    let mut strokes = keys.split_whitespace();
+    let stroke = strokes.next()?;
+    if strokes.next().is_some() {
+        return None;
+    }
+    let (modifiers, key) = match stroke.rsplit_once('-') {
+        Some((modifiers, key)) => (Some(modifiers), key),
+        None => (None, stroke),
+    };
+    let other = match key {
+        "left" => "right",
+        "right" => "left",
+        _ => return None,
+    };
+    Some(modifiers.map_or_else(|| other.to_owned(), |m| format!("{m}-{other}")))
+}
+
+/// A binding's keys as they are installed: an arrow along a line swapped
+/// where the window is mirrored (`ALONG_LINE`).
+fn as_drawn(spec: Spec, mirrored: bool) -> Spec {
+    let along = mirrored
+        && spec.layer != Layer::User
+        && conditions(&spec.context).first().is_some_and(|place| {
+            ALONG_LINE
+                .iter()
+                .any(|token| context_of(Some(token)) == *place)
+        });
+    match along.then(|| swapped_arrow(&spec.keys)).flatten() {
+        Some(keys) => Spec { keys, ..spec },
+        None => spec,
     }
 }
 
@@ -2665,8 +2733,10 @@ fn shadowed(specs: &[Spec]) -> Vec<Option<usize>> {
 /// `install` binds, and what the Keyboard page lists. Keys GPUI cannot
 /// read are left out, with a warning.
 pub fn bindings(app: &App, user: &[UserBinding]) -> Vec<Bound> {
+    let mirrored = crate::sides::rtl();
     let specs: Vec<Spec> = specs(app, user)
         .into_iter()
+        .map(|spec| as_drawn(spec, mirrored))
         .filter(|spec| {
             let valid = valid_keys(&spec.keys);
             if !valid {
@@ -2845,6 +2915,30 @@ mod tests {
             layer,
             record: None,
         }
+    }
+
+    /// Mirrored, an arrow along a line is swapped where the row is drawn
+    /// in the reading's direction, so it goes the way it points; never the
+    /// user's own keys, nor the pane's (its views turn them).
+    #[test]
+    fn an_arrow_along_a_line_goes_the_way_it_points() {
+        use super::{as_drawn, swapped_arrow};
+        assert_eq!(swapped_arrow("left").as_deref(), Some("right"));
+        assert_eq!(swapped_arrow("shift-right").as_deref(), Some("shift-left"));
+        assert_eq!(swapped_arrow("up"), None);
+        assert_eq!(swapped_arrow("g left"), None);
+        assert_eq!(swapped_arrow("ctrl--"), None);
+        let drawn = |keys: &str, when: &str, layer, mirrored| {
+            as_drawn(spec(keys, "ui.menu_expand", Some(when), layer), mirrored).keys
+        };
+        assert_eq!(drawn("right", "menu", Layer::Shell, true), "left");
+        assert_eq!(drawn("right", "menu", Layer::Shell, false), "right");
+        assert_eq!(drawn("right", "menu", Layer::User, true), "right");
+        assert_eq!(drawn("right", "pane", Layer::Shell, true), "right");
+        assert_eq!(
+            drawn("shift-left", "toolbar_button choice", Layer::Plugin, true),
+            "shift-right"
+        );
     }
 
     /// A scheme's key that does what Delete does takes each of Delete's

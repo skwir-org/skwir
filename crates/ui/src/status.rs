@@ -484,7 +484,7 @@ pub(crate) fn render(
         let text = match (unset, keys) {
             (false, Some(keys)) => words!(
                 status_sweep_selecting_keys = "Selecting as the cursor moves · { $keys } to stop",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "In a pane's footer while a sweep selects what the cursor passes; keys: \
                         the keys that end it (Escape)."
             ),
@@ -495,7 +495,7 @@ pub(crate) fn render(
             (true, Some(keys)) => words!(
                 status_sweep_deselecting_keys = "Deselecting as the cursor moves · { $keys } to \
                                                  stop",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "In a pane's footer while a sweep deselects what the cursor passes; keys: \
                         the keys that end it (Escape)."
             ),
@@ -558,7 +558,7 @@ pub(crate) fn render(
         let tip = match shell.keys_for("clipboard_paste", &serde_json::Value::Null) {
             Some(keys) => words!(
                 status_pending_keys_tip = "Paste with { $keys }. Click to forget.",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "The tooltip of the footer's items waiting for a paste; keys: the keys \
                         that paste (Ctrl+V)."
             ),

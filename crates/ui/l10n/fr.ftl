@@ -557,7 +557,7 @@ address_remove_kept = Retirer de la barre latérale
 address_search_folder = Rechercher dans ce dossier et ses sous-dossiers
 
 # draft
-address_search_place = Rechercher dans { $place }
+address_search_place = Rechercher dans { FORM($place, case: "definite") }
 
 # draft
 address_settings = Paramètres…
@@ -3355,6 +3355,12 @@ fullscreen_slideshow_ended = Le diaporama s’est arrêté à la dernière image
 fullscreen_slideshow_pictures = Un diaporama ne montre que des images
 
 # draft
+glyphs_missing = Aucune police installée n’a les lettres d’un texte affiché ici : elles s’affichent comme des carrés. Installez { $font } pour les lire : le guide de Skwir indique son paquet sur chaque système.
+
+# draft
+glyphs_missing_letter = Aucune police installée n’a les lettres d’un texte affiché ici (la première est { $letter }) : elles s’affichent comme des carrés. Installez une police qui les a : le guide de Skwir indique les paquets Noto sur chaque système.
+
+# draft
 grid_caption_accessed_description = Sous chaque nom de la grille, la date du dernier accès à l’élément, telle que le système la garde.
 
 # draft
@@ -4325,7 +4331,11 @@ loading_location_read = Chargement de l’emplacement… { $count ->
 loading_not_answering = { $name } ne répond pas…
 
 # draft
-loading_opening = Ouverture de { $place }…
+loading_opening = Ouverture { GENDER($place) ->
+        [masculine] { FORM($place, case: "de") }
+        [feminine] { FORM($place, case: "de") }
+       *[other] de { $place }
+    }…
 
 # draft
 loading_partly_failed = Une partie de cet emplacement n’a pas pu être lue : { $error }
@@ -7857,7 +7867,7 @@ shortcuts_tip = Astuce : appuyez sur { $keys } pour « { $action } ». F1 l
 shortcuts_title = Raccourcis disponibles ici
 
 # draft
-sidebar_eject = Éjecter { $place }
+sidebar_eject = Éjecter { FORM($place, case: "definite") }
 
 # draft
 sidebar_fold = Replier
@@ -8328,9 +8338,6 @@ timeline_later_files = { $count ->
     }
 
 # draft
-timeline_millions = { $n } M
-
-# draft
 timeline_no_data = aucune donnée
 
 # draft
@@ -8364,13 +8371,19 @@ timeline_selected = { $count ->
     }
 
 # draft
+timeline_short_count = { $power ->
+        [3] { $n } k
+        [6] { $n } M
+        [9] { $n } Md
+        [12] { $n } Bn
+       *[other] { $n } × 10^{ $power }
+    }
+
+# draft
 timeline_subtree = sous-dossiers
 
 # draft
 timeline_subtree_tip = Compter aussi les fichiers des sous-dossiers
-
-# draft
-timeline_thousands = { $n } k
 
 # draft
 timeline_title = Chronologie

@@ -8,6 +8,7 @@
 //! Activity. An entry already listed under its name (a folder merged into)
 //! is drawn as itself, with the tint and the pill.
 
+use crate::sides::Sides;
 use gpui::{Context, Div, InteractiveElement, Stateful, div, prelude::*, px, relative};
 use skwir_core::op::arriving::{Arrives, Arriving};
 use skwir_core::words;
@@ -145,8 +146,8 @@ pub fn tint(arriving: &Arriving, theme: &Theme) -> Div {
         .absolute()
         .top_0()
         .bottom_0()
-        .left_0()
-        .right(px(SHORT))
+        .inset_start(px(0.))
+        .inset_end(px(SHORT))
         .child(
             div()
                 .h_full()

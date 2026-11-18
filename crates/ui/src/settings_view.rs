@@ -4,6 +4,7 @@
 //! keyboard stop can be brought into view by its child index. Cards are drawn
 //! by giving the first and last row of a group their rounded corners.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -249,7 +250,7 @@ fn swatch(swatch: &skwir_core::settings::Swatch, height: f32) -> gpui::Div {
                         .w(at(0.42))
                         .flex_none()
                         .bg(color(swatch.chrome))
-                        .border_r_1()
+                        .border_end(px(1.))
                         .border_color(color(swatch.line)),
                 )
                 .child(
@@ -452,8 +453,8 @@ impl SettingsView {
             .flex()
             .flex_col()
             .bg(theme.surface)
-            .rounded_l_lg()
-            .border_r_1()
+            .rounded_start(gpui::rems(0.5))
+            .border_end(px(1.))
             .border_color(theme.border)
             .child(
                 div()
@@ -1541,7 +1542,7 @@ impl SettingsView {
         let mut texts = self
             .described(row.spec.title.say(), &row.spec, &key, theme)
             // Beneath the switch it is under.
-            .when(!row.spec.under.is_empty(), |d| d.pl(sized(24.)));
+            .when(!row.spec.under.is_empty(), |d| d.pad_start(sized(24.)));
         if row.spec.restart_required {
             texts = texts.child(
                 div().flex().child(controls::badge(

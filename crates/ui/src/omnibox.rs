@@ -61,6 +61,7 @@
 //! (bound in the address bar's context), a click on a row runs it without
 //! taking the focus. The UI knows no query syntax.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -254,7 +255,7 @@ pub(crate) fn question_room() -> AnyElement {
     div()
         .flex_none()
         .size(sized(crate::controls::HEIGHT - 8.))
-        .mr(px(-4.))
+        .margin_end(px(-4.))
         .into_any_element()
 }
 
@@ -3163,10 +3164,10 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
         div()
             .id(("scope-token", pane.0 as usize))
             .flex_none()
-            .ml(px(3.))
+            .margin_start(px(3.))
             .h(sized(22.))
-            .pl(sized(7.))
-            .pr(sized(5.))
+            .pad_start(sized(7.))
+            .pad_end(sized(5.))
             .flex()
             .items_center()
             .gap(sized(4.))
@@ -3204,8 +3205,7 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                 }),
             )
             .child(
-                gpui::svg()
-                    .path(format!("toolbar/{glyph}.svg"))
+                crate::sides::symbol(glyph)
                     .size(px(13.))
                     .flex_none()
                     .text_color(fg),
@@ -3316,7 +3316,7 @@ fn keys_of(shell: &Shell, row: &Row) -> String {
     let completes = |keys: String| {
         words!(
             omnibox_keys_completes = "Enter · { $keys }",
-            keys = keys,
+            keys = skwir_core::words::Keys(keys),
             note = "At the end of the highlighted row of the address field's list: Enter runs it, and the key that completes it (Tab)."
         )
     };
@@ -3324,7 +3324,7 @@ fn keys_of(shell: &Shell, row: &Row) -> String {
         Row::Help { .. } => and(tab(), |keys| {
             words!(
                 omnibox_keys_writes = "Enter · { $keys } writes it",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "At the end of a row of what the address field takes: Enter, or the key named (Tab), writes its example."
             )
         }),
@@ -3333,7 +3333,7 @@ fn keys_of(shell: &Shell, row: &Row) -> String {
             |keys| {
                 words!(
                     omnibox_keys_opens = "Enter · { $keys } opens",
-                    keys = keys,
+                    keys = skwir_core::words::Keys(keys),
                     note = "At the end of a file's row in the address field's list: Enter shows it, the key named opens it."
                 )
             },
@@ -3347,7 +3347,7 @@ fn keys_of(shell: &Shell, row: &Row) -> String {
             |keys| {
                 words!(
                     omnibox_keys_forgets = "Enter · { $keys } forgets it",
-                    keys = keys,
+                    keys = skwir_core::words::Keys(keys),
                     note = "At the end of a recent search's row: the key named forgets it."
                 )
             },
@@ -3357,7 +3357,7 @@ fn keys_of(shell: &Shell, row: &Row) -> String {
             and(key("ui.search", serde_json::json!({})), |keys| {
                 words!(
                     omnibox_keys_searches = "Enter · { $keys } searches in it",
-                    keys = keys,
+                    keys = skwir_core::words::Keys(keys),
                     note = "At the end of a folder's or a place's row: the key named searches in it."
                 )
             })
@@ -3387,7 +3387,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         key("ui.omnibox_complete", serde_json::json!({}), |keys| {
             words!(
                 omnibox_hint_completes = "{ $keys } completes",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "A hint under the address field's list; keys: the key that completes what is typed (Tab)."
             )
         })
@@ -3420,7 +3420,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
                 Some(keys) if !depths => words!(
                     omnibox_waits_keys = "Only a search can tell { $what }: { $keys }.",
                     what = what,
-                    keys = keys,
+                    keys = skwir_core::words::Keys(keys),
                     note = "Under the address field's list while words filter a folder: what they name that only a search can tell, a list (what files contain, when pictures were taken: query_waits_*), and the key that searches."
                 ),
                 _ => words!(
@@ -3451,7 +3451,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         Typed::Nothing => search(|keys| {
             words!(
                 omnibox_footer_nothing_keys = "A path (/ or ~), a place, or words to filter; { $keys } searches below; > for a command.",
-                keys = keys,
+                keys = skwir_core::words::Keys(keys),
                 note = "Under the address field's list, nothing typed: what it takes; keys: the key that searches the folders below; > begins a command's name."
             )
         })
@@ -3469,7 +3469,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
                 |keys| {
                     words!(
                         omnibox_hint_opens = "{ $keys } opens a file",
-                        keys = keys,
+                        keys = skwir_core::words::Keys(keys),
                         note = "A hint under the address field's list while a path is typed; keys: the key that opens the file."
                     )
                 },
@@ -3477,7 +3477,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
             search(|keys| {
                 words!(
                     omnibox_hint_searches_folder = "{ $keys } on a folder searches in it",
-                    keys = keys,
+                    keys = skwir_core::words::Keys(keys),
                     note = "A hint under the address field's list while a path is typed; keys: the key that searches the folder named."
                 )
             }),
@@ -3491,7 +3491,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
                 key("ui.omnibox_complete", serde_json::json!({}), |keys| {
                     words!(
                         omnibox_hint_writes_or = "Enter or { $keys } writes it",
-                        keys = keys,
+                        keys = skwir_core::words::Keys(keys),
                         note = "A hint under the list of what the address field takes: Enter, or the key named (Tab), writes the example."
                     )
                 })
@@ -3522,7 +3522,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
                 |keys| {
                     words!(
                         omnibox_hint_home = "{ $keys } searches the home folder",
-                        keys = keys,
+                        keys = skwir_core::words::Keys(keys),
                         note = "A hint under the address field's list while words are typed; keys: the key that searches the whole home folder."
                     )
                 },
@@ -3680,8 +3680,7 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                 }),
             )
             .child(
-                gpui::svg()
-                    .path(format!("toolbar/{icon}.svg"))
+                crate::sides::symbol(icon)
                     .size(px(13.))
                     .flex_none()
                     .text_color(if on {
@@ -3844,8 +3843,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
                     .child(div().size(px(8.)).rounded_full().bg(dot))
                     .into_any_element()
             }
-            None => gpui::svg()
-                .path(format!("toolbar/{}.svg", d.icon))
+            None => crate::sides::symbol(&d.icon)
                 .size(px(15.))
                 .flex_none()
                 .text_color(color)
@@ -3986,7 +3984,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             .children(keys.map(|keys| {
                 div()
                     .flex_none()
-                    .pl_4()
+                    .pad_start(crate::sides::step(4.))
                     .text_small()
                     .text_color(muted)
                     .child(keys)
@@ -4139,7 +4137,7 @@ pub fn dropdown(
                 .flex_none()
                 .h(sized(CARD_PAD + crate::address::FIELD_HEIGHT - 1.))
                 .pt(sized(CARD_PAD))
-                .pr(px(QUESTION_INSET))
+                .pad_end(px(QUESTION_INSET))
                 .flex()
                 .items_center()
                 .justify_end()

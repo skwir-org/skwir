@@ -640,6 +640,7 @@ fn take(taken: &mut SmallVec<[Pixels; 32]>, x: Pixels) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::line_breaks::LineBreaks;
     use super::*;
     use crate::{FontId, GlyphId, LineLayout, ShapedRun, WrappedLineLayout, point};
 
@@ -853,7 +854,8 @@ mod tests {
     /// cache wraps it.
     fn wrapped(text: &str, width: f32) -> WrappedLineLayout {
         let layout = Arc::new(laid_out(text));
-        let (unwrapped_layout, wrap_boundaries) = layout.wrapped(text, px(width), None);
+        let (unwrapped_layout, wrap_boundaries) =
+            layout.wrapped(text, &LineBreaks::of(text), px(width), None);
         WrappedLineLayout {
             unwrapped_layout,
             wrap_boundaries,
@@ -940,15 +942,16 @@ mod tests {
         let text = "abc def ghi";
         let layout = Arc::new(laid_out(text));
         assert!(layout.bidi_levels.is_none());
-        let (drawn_from, boundaries) = layout.wrapped(text, px(45.), None);
+        let (drawn_from, boundaries) = layout.wrapped(text, &LineBreaks::of(text), px(45.), None);
         assert!(Arc::ptr_eq(&drawn_from, &layout));
         assert_eq!(
             boundaries,
-            layout.compute_wrap_boundaries(text, px(45.), None)
+            layout.compute_wrap_boundaries(text, &LineBreaks::of(text), px(45.), None)
         );
         // A line holding Hebrew that fits keeps its layout too.
         let hebrew = Arc::new(laid_out(HEBREW));
-        let (drawn_from, boundaries) = hebrew.wrapped(HEBREW, px(100.), None);
+        let (drawn_from, boundaries) =
+            hebrew.wrapped(HEBREW, &LineBreaks::of(HEBREW), px(100.), None);
         assert!(Arc::ptr_eq(&drawn_from, &hebrew) && boundaries.is_empty());
     }
 

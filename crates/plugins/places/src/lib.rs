@@ -424,6 +424,7 @@ pub fn scan() -> Vec<Place> {
         out.push(folder(
             words!(
                 places_home = "Home",
+                noun,
                 note = "The home folder's place in the sidebar."
             ),
             home,

@@ -10,6 +10,7 @@
 //! from agents asks first, in a modal of the dialog. Which folders are on
 //! this computer is looked up on a worker.
 
+use crate::sides::Sides;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -751,7 +752,7 @@ impl SettingsView {
                         div()
                             .flex()
                             .flex_none()
-                            .ml_auto()
+                            .margin_start_auto()
                             .items_center()
                             .gap_2()
                             .child(
@@ -805,7 +806,7 @@ impl SettingsView {
                         div()
                             .flex()
                             .flex_none()
-                            .ml_auto()
+                            .margin_start_auto()
                             .items_center()
                             .gap_2()
                             .child(
@@ -1174,8 +1175,8 @@ impl SettingsView {
                 .when(cursor, StatefulInteractiveElement::aria_active_descendant)
                 .w_full()
                 .h(sized(34.))
-                .pl_1()
-                .pr_2()
+                .pad_start(crate::sides::step(1.))
+                .pad_end(crate::sides::step(2.))
                 .flex()
                 .items_center()
                 .gap_2()

@@ -17,6 +17,7 @@
 //! An action an error stopped stays in the strip, in the error's colour,
 //! until it is retried, Activity is folded, or it is dismissed.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -1258,7 +1259,7 @@ fn filled(bar: gpui::Div, fill: Fill, muted: bool, theme: &Theme) -> gpui::Div {
         div()
             .absolute()
             .top_0()
-            .left_0()
+            .inset_start(px(0.))
             .h_full()
             .rounded_full()
             .bg(color)
@@ -1870,8 +1871,8 @@ fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .flex_none()
         .items_center()
         .justify_between()
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .pt_1()
         .child(
             div()
@@ -2239,8 +2240,8 @@ fn waiting_heading(
         .items_center()
         .justify_between()
         .min_h(sized(26.))
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .child(
             div()
                 .text_small()
@@ -2278,8 +2279,8 @@ fn waiting_row(
         .items_center()
         .gap_2()
         .min_h(sized(26.))
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .py_1()
         .child(
             div()
@@ -2374,8 +2375,8 @@ fn earlier_row(
         .items_center()
         .gap_2()
         .min_h(sized(26.))
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .child(glyph)
         .child(
             div()
@@ -2583,8 +2584,8 @@ fn progress_card(
         .flex_none()
         .items_center()
         .gap_2()
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .py_2()
         .child(
             div()
@@ -2707,8 +2708,8 @@ fn task_card(
         .flex_none()
         .items_center()
         .gap_2()
-        .pl_3()
-        .pr_1()
+        .pad_start(crate::sides::step(3.))
+        .pad_end(crate::sides::step(1.))
         .py_2()
         .child(
             div()

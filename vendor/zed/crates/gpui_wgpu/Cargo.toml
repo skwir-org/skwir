@@ -24,6 +24,8 @@ anyhow.workspace = true
 bytemuck.workspace = true
 collections.workspace = true
 cosmic-text = "0.19.0"
+# A language's script, for the form Chinese characters take (`han_key`).
+icu_locale = { version = "2.4", default-features = false, features = ["compiled_data"] }
 etagere.workspace = true
 itertools.workspace = true
 image = { workspace = true, optional = true }

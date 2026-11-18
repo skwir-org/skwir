@@ -4,6 +4,7 @@
 //! (`reading.contents_pinned`), a column beside the content, which narrows
 //! to make room, open until closed. The part shown is highlighted either
 //! way, and kept in view as the reader moves.
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
@@ -193,7 +194,7 @@ pub fn around(
                     .max_w(relative(PINNED_SHARE))
                     .h_full()
                     .bg(crate::color::overlay(paper, theme.bg))
-                    .border_r_1()
+                    .border_end(px(1.))
                     .border_color(theme.border)
                     .child(contents),
             )
@@ -221,11 +222,11 @@ pub fn around(
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .left_0()
+                    .inset_start(px(0.))
                     .w(sized(WIDTH))
                     .max_w_full()
                     .bg(theme.bg)
-                    .border_r_1()
+                    .border_end(px(1.))
                     .border_color(theme.border)
                     .shadow_md()
                     .occlude()
@@ -262,7 +263,7 @@ fn row(
             (at.index, &entry.title),
         ))
         .optional_tooltip(clip.tooltip(None))
-        .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
+        .pad_start(px(entry.depth.min(12) as f32 * 10. + 8.))
         .py_1()
         .rounded_md()
         .truncate()

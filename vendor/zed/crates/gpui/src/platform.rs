@@ -1616,6 +1616,14 @@ pub trait PlatformDispatcher: Send + Sync {
 #[expect(missing_docs)]
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Picks the fonts that fall back for characters the asked ones lack by
+    /// `language`, a BCP 47 tag, where the platform picks them by language
+    /// (Linux's: the form Chinese characters take in Japanese, Korean, or
+    /// Traditional or Simplified Chinese). Whether its fallbacks changed:
+    /// what was laid out before is then laid out again. Elsewhere, nothing.
+    fn set_language(&self, _language: &str) -> bool {
+        false
+    }
     /// Installs a nonblocking sink for unresolved grapheme clusters.
     fn set_missing_glyph_sink(&self, _sink: Option<Arc<dyn MissingGlyphSink>>) {}
     /// Get all available font names.

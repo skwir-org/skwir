@@ -4,6 +4,7 @@
 //! their entries follow them, indented, and are the pane's like any other,
 //! so selection, commands and drags need nothing of their own.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use std::ops::Range;
 
@@ -376,8 +377,9 @@ pub fn clamp_width(width: f32) -> f32 {
 pub struct ColumnResize(pub Detail);
 
 impl Shell {
-    /// The columns are right-aligned, so a column grows as its left edge
-    /// moves left; the name takes what is left.
+    /// The columns are aligned at the end, so a column grows as its start
+    /// edge moves toward the start (left, right mirrored); the name takes
+    /// what is left.
     pub fn on_column_drag(
         &mut self,
         ev: &gpui::DragMoveEvent<ColumnResize>,
@@ -391,7 +393,8 @@ impl Shell {
             .edge_start
             .get_or_insert((self.edge_pressed, self.column_widths[detail]));
         // Widths are kept at 100 %, whatever the size they are dragged at.
-        self.column_widths[detail] = clamp_width(start_width + scale.at_100(start_x - x));
+        let moved = f32::from(crate::sides::along(px(start_x - x)));
+        self.column_widths[detail] = clamp_width(start_width + scale.at_100(moved));
         cx.notify();
     }
 
@@ -523,18 +526,18 @@ impl Shell {
     }
 }
 
-/// The draggable left edge of a header cell, in the gap before it (inside
+/// The draggable start edge of a header cell, in the gap before it (inside
 /// the line, which clips what leaves it), so it never covers the label. A
 /// double click gives the column back its own width.
 fn resize_edge(detail: Detail, scale: Scale, cx: &mut Context<Shell>) -> Stateful<Div> {
     crate::elements::edge::edge(
         ("column-edge", detail as usize),
-        crate::elements::edge::Side::Left,
+        crate::elements::edge::Side::Start,
         ColumnResize(detail),
         move |shell| shell.column_widths[detail] = detail.column().width,
         cx,
     )
-    .left(px(-(scale.f(DETAIL_GAP)
+    .inset_start(px(-(scale.f(DETAIL_GAP)
         + crate::elements::edge::THICKNESS)
         / 2.))
 }
@@ -1060,12 +1063,7 @@ fn disclosure(r: &RowData, color: gpui::Hsla, scale: Scale, cx: &mut Context<She
                 }),
             )
             .child(
-                gpui::svg()
-                    .path(if r.expanded {
-                        "toolbar/chevron.svg"
-                    } else {
-                        "toolbar/right.svg"
-                    })
+                crate::sides::symbol(if r.expanded { "chevron" } else { "right" })
                     .size(scale.px(DISCLOSURE))
                     .text_color(color),
             ),
@@ -1207,7 +1205,7 @@ fn arriving_row(
         .items_center()
         .gap_1()
         .when_some(in_name, |d, icon| {
-            d.pl(px(r.depth as f32 * scale.f(INDENT)))
+            d.pad_start(px(r.depth as f32 * scale.f(INDENT)))
                 .child(disclosure(r, muted, scale, cx))
                 .child(icon)
         })
@@ -1324,7 +1322,7 @@ fn row_in(
         .items_center()
         .gap_1()
         .when_some(icon, |d, icon| {
-            d.pl(px(r.depth as f32 * scale.f(INDENT)))
+            d.pad_start(px(r.depth as f32 * scale.f(INDENT)))
                 .child(disclosure(r, muted, scale, cx))
                 .child(div().flex_none().child(icon))
         })
@@ -1517,7 +1515,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
         // In the tree, Name stands over the names, past the triangle and
         // the icon a row begins with.
         div()
-            .when(tree, |d| d.pl(px(scale.f(DISCLOSURE + 8.) + icon)))
+            .when(tree, |d| d.pad_start(px(scale.f(DISCLOSURE + 8.) + icon)))
             .child(header_cell(
                 "h-name",
                 SortKey::Name.title_words(),

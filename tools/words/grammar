@@ -1,0 +1,25 @@
+# The grammar each language's catalogs give Skwir's nouns (ADR-139, 5;
+# docs/invariants/words.md, "Nouns"), held to by the catalogs' test
+# (crates/core/src/words/tests.rs). The program reads nothing of it: a
+# noun's attributes are its catalog's, said where a sentence names it.
+#
+# One language a line, by its catalogs' tag:
+# - `genders:` the values of a noun's `.gender`, each a variant a sentence
+#   chooses by `GENDER($place)` beside its default, `*[other]`, which is
+#   what a name, a path or text as written takes;
+# - `forms:` the forms a sentence takes a noun in, `FORM($place, case:
+#   "…")`, each an attribute every noun of the language is given.
+#
+# Named as CLDR's grammatical features name them where it names them
+# (masculine, feminine, neuter, common; nominative, accusative, dative,
+# genitive, locative, instrumental…; definite: the noun with its article).
+# A form ending in `+` holds a preposition the language fuses with the
+# noun's article (French « du », de and le), which a name has not: a
+# sentence takes it only in a GENDER variant other than `*[other]`, and
+# says in `*[other]` what a name takes. A form a name has (a case, the
+# noun with its article) is the name itself.
+#
+# A language not named here gives its nouns nothing, and its sentences
+# choose by no gender.
+
+fr  genders: masculine feminine  forms: definite de+

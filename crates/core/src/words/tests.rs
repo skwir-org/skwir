@@ -124,9 +124,47 @@ fn a_name_is_quoted_as_its_language_quotes_and_its_controls_shown() {
     );
     // Marks that reverse no letters are left as they are.
     assert_eq!(made("a\u{200f}b").english(), "Made “a\u{200f}b”");
-    let mut out = String::new();
-    super::quoted("fr-CA", "a.txt", &mut out);
-    assert_eq!(out, "«\u{202f}a.txt\u{202f}»");
+    // The quotes are each language's data: core's French catalog says them,
+    // and a reader of Canadian French finds it.
+    register_french_quotes();
+    let quoted = |language: &str| {
+        let mut out = String::new();
+        super::quoted(language, "a.txt", &mut out);
+        out
+    };
+    assert_eq!(quoted("fr-CA"), "«\u{202f}a.txt\u{202f}»");
+    // Two scripts of one language quote apart: no code knows either.
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new("zh-Hant", "name_quote_open = 「\nname_quote_close = 」\n"),
+    );
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new("zh-Hans", "name_quote_open = “\nname_quote_close = ”\n"),
+    );
+    assert_eq!(quoted("zh-Hant-TW"), "「a.txt」");
+    assert_eq!(quoted("zh-Hans"), "“a.txt”");
+    // A language whose catalogs say no quotes quotes as English does.
+    assert_eq!(quoted("de"), "“a.txt”");
+    assert_eq!(quoted("en"), "“a.txt”");
+    // Withdrawn, the quotes go with the catalog.
+    withdraw("words-test");
+    assert_eq!(quoted("zh-Hant"), "“a.txt”");
+}
+
+/// French quotes, as a catalog of core's writes them: guillemets, a narrow
+/// no-break space inside each, written as Fluent's escape.
+fn register_french_quotes() {
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new(
+            "fr",
+            "name_quote_open = «{ \"\\u202F\" }\nname_quote_close = { \"\\u202F\" }»\n",
+        ),
+    );
 }
 
 #[test]
@@ -232,6 +270,7 @@ fn a_name_is_isolated_where_the_window_draws_it() {
     );
     // The quotes are the sentence's, in every language: outside the
     // isolate, French's narrow spaces with them.
+    register_french_quotes();
     let mut out = String::new();
     super::formats::within(
         super::formats::Formats::window(super::Isolation::Names),
@@ -251,6 +290,52 @@ fn a_name_is_isolated_where_the_window_draws_it() {
         folder = super::Folder(String::new())
     );
     assert_eq!(nowhere.say(), "Moved to ");
+}
+
+/// Keys inside a sentence are left to right in every language: between
+/// LRI and PDI where the window draws them, plain in English, in words said
+/// plainly or in given languages, and in data, which brings them back as
+/// keys.
+#[test]
+fn keys_are_isolated_left_to_right_where_the_window_draws_them() {
+    const LRI: char = '\u{2066}';
+    const PDI: char = '\u{2069}';
+    let back_with = || {
+        crate::words!(
+            test_keys_back = "Back ({ $keys })",
+            keys = super::Keys("Alt+←".into())
+        )
+    };
+    let said = back_with().say();
+    assert_eq!(said, format!("Back ({LRI}Alt+←{PDI})"));
+    for plain in [
+        back_with().english(),
+        back_with().say_plain(),
+        back_with().say_in(&langs(&["fr", "en"])),
+        back_with().to_string(),
+        serde_json::to_string(&back_with()).unwrap(),
+        back_with().to_data().to_string(),
+    ] {
+        assert!(!plain.contains([LRI, PDI]), "{plain}");
+    }
+    assert_eq!(back_with().english(), "Back (Alt+←)");
+    // As data and back, isolated again where drawn.
+    let back: Words = serde_json::from_value(back_with().to_data()).unwrap();
+    assert_eq!(back.say(), said);
+    assert_eq!(
+        back_with().to_data()["args"]["keys"],
+        serde_json::json!({ "keys": "Alt+←" })
+    );
+    // In the right-to-left pseudo-language, the sentence's words are set
+    // from the right, the keys whole between their marks.
+    let rtl = back_with().say_in(&langs(&[crate::direction::PSEUDO_RTL, "en"]));
+    assert!(rtl.contains("‹Alt+←›"), "{rtl}");
+    // No keys, no marks.
+    let none = crate::words!(
+        test_keys_none = "Press { $keys }",
+        keys = super::Keys(String::new())
+    );
+    assert_eq!(none.say(), "Press ");
 }
 
 /// A sentence cut around a name hands back parts the drawing shows right:
@@ -291,6 +376,15 @@ fn a_sentence_cut_around_a_name_keeps_its_quotes_not_its_marks() {
 fn the_pseudo_language_is_english_accented_longer_and_marked() {
     let made = Words::message(&MADE, vec![("name", Name("a.txt".into()).into())]);
     assert_eq!(made.say_in(&langs(&[PSEUDO, "en"])), "[Máádéé ‹“a.txt”›]");
+    // The right-to-left one is the English, its arguments marked, as the
+    // direction draws it right to left.
+    let rtl = crate::direction::PSEUDO_RTL;
+    assert_eq!(
+        made.say_in(&langs(&[rtl, "en"])),
+        crate::direction::pseudo_rtl("Made ‹“a.txt”›")
+    );
+    let back: Words = serde_json::from_value(made.to_data()).unwrap();
+    assert_eq!(back.say_in(&langs(&[rtl])), made.say_in(&langs(&[rtl])));
 }
 
 #[test]
@@ -500,7 +594,7 @@ fn words_sent_as_data_come_back_as_themselves() {
         env!("CARGO_PKG_NAME"),
         Catalog::new(
             "fr",
-            "test_carried = Bonjour { $who }, { $count ->\n    [one] un fichier\n   *[other] { $count } fichiers\n}\n",
+            "name_quote_open = «{ \"\\u202F\" }\nname_quote_close = { \"\\u202F\" }»\ntest_carried = Bonjour { $who }, { $count ->\n    [one] un fichier\n   *[other] { $count } fichiers\n}\n",
         ),
     );
     assert_eq!(
@@ -514,82 +608,91 @@ fn words_sent_as_data_come_back_as_themselves() {
     assert_eq!(text.english(), "as an agent wrote it");
 }
 
-/// Every translated catalog of the workspace (`crates/**/l10n/<lang>.ftl`)
-/// says what its crate's English says: each message one the English has,
-/// in the part of Fluent Skwir speaks, naming only the arguments the
-/// English gives, and keeping on one line what the English keeps there: an
-/// argument the English joins to the words beside it by a no-break space
-/// (a number to its unit, `{ $n }\u{a0}MB`, `10\u{a0}{ $unit }`) or to a
-/// percent sign (`{ $n }%`) is never parted from them by a plain one. How
-/// much of each language is there, and how much is still a draft (a
-/// message whose comment says `draft`), is printed.
-#[test]
-fn every_catalog_says_what_its_english_says() {
+/// What the catalogs' test reads of a catalog: each message, by its id.
+mod reading {
     use std::collections::{BTreeMap, BTreeSet};
 
-    /// The words beside each argument of `elements`: the arguments joined
+    use super::super::{Element, Key, grammar};
+
+    /// The words beside each argument of a message: the arguments joined
     /// to them by a no-break space (or to a percent sign, with none), and
     /// those parted from them by a plain one, each with the side (`<` the
     /// words before, `>` those after).
     #[derive(Default)]
-    struct Follows {
-        joined: BTreeSet<String>,
-        parted: BTreeSet<String>,
+    pub struct Follows {
+        pub joined: BTreeSet<String>,
+        pub parted: BTreeSet<String>,
+    }
+
+    /// A message of a catalog, as the test holds it to its English.
+    pub struct Read {
+        /// The arguments it names.
+        pub names: BTreeSet<String>,
+        /// Those it chooses a variant by, as a plural's count or a kind:
+        /// never a noun.
+        pub chosen_by: BTreeSet<String>,
+        /// Whether its comment says `draft`.
+        pub draft: bool,
+        /// Whether its comment says `noun` (`words!(…, noun)`, in English).
+        pub noun: bool,
+        pub follows: Follows,
+        pub elements: Vec<Element>,
+        /// Its attributes (a noun's gender and forms), by name, in order.
+        pub attributes: Vec<(String, Vec<Element>)>,
     }
 
     fn follows(elements: &[Element], into: &mut Follows) {
         const NO_BREAK: [char; 2] = ['\u{a0}', '\u{202f}'];
         for (at, element) in elements.iter().enumerate() {
-            match element {
-                Element::Arg(name) => {
-                    if let Some(Element::Text(after)) = elements.get(at + 1) {
-                        if after.starts_with(NO_BREAK) || after.starts_with('%') {
-                            into.joined.insert(format!("{name}>"));
-                        } else if after.starts_with(' ') {
-                            into.parted.insert(format!("{name}>"));
-                        }
-                    }
-                    if let Some(Element::Text(before)) = at.checked_sub(1).map(|b| &elements[b]) {
-                        if before.ends_with(NO_BREAK) {
-                            into.joined.insert(format!("{name}<"));
-                        } else if before.ends_with(' ') {
-                            into.parted.insert(format!("{name}<"));
-                        }
-                    }
-                }
-                Element::Select { variants, .. } => {
+            let name = match element {
+                Element::Arg(name) | Element::Form { of: name, .. } => name,
+                Element::Select { variants, .. } | Element::Gender { variants, .. } => {
                     for variant in variants.iter() {
                         follows(&variant.value, into);
                     }
+                    continue;
                 }
-                Element::Text(_) => {}
+                Element::Text(_) => continue,
+            };
+            if let Some(Element::Text(after)) = elements.get(at + 1) {
+                if after.starts_with(NO_BREAK) || after.starts_with('%') {
+                    into.joined.insert(format!("{name}>"));
+                } else if after.starts_with(' ') {
+                    into.parted.insert(format!("{name}>"));
+                }
+            }
+            if let Some(Element::Text(before)) = at.checked_sub(1).map(|b| &elements[b]) {
+                if before.ends_with(NO_BREAK) {
+                    into.joined.insert(format!("{name}<"));
+                } else if before.ends_with(' ') {
+                    into.parted.insert(format!("{name}<"));
+                }
             }
         }
     }
 
-    fn named(elements: &[Element], into: &mut BTreeSet<String>) {
+    fn named(elements: &[Element], into: &mut BTreeSet<String>, chosen_by: &mut BTreeSet<String>) {
         for element in elements {
             match element {
                 Element::Text(_) => {}
-                Element::Arg(name) => {
+                Element::Arg(name) | Element::Form { of: name, .. } => {
                     into.insert(name.to_string());
                 }
-                Element::Select { on, variants, .. } => {
+                Element::Select { on, variants, .. } | Element::Gender { on, variants, .. } => {
                     into.insert(on.to_string());
+                    if matches!(element, Element::Select { .. }) {
+                        chosen_by.insert(on.to_string());
+                    }
                     for variant in variants.iter() {
-                        named(&variant.value, into);
+                        named(&variant.value, into, chosen_by);
                     }
                 }
             }
         }
     }
 
-    /// Each message of `source`: its id, the arguments it names, whether it
-    /// is a draft, what follows its arguments; or why it cannot be read.
-    #[expect(clippy::type_complexity, reason = "a test's own reading, used once")]
-    fn messages(
-        source: &str,
-    ) -> Result<BTreeMap<String, (BTreeSet<String>, bool, Follows)>, Vec<String>> {
+    /// Each message of `source`, by its id; or why it cannot be read.
+    pub fn messages(source: &str) -> Result<BTreeMap<String, Read>, Vec<String>> {
         let resource = match fluent_syntax::parser::parse(source) {
             Ok(resource) => resource,
             Err((_, errors)) => return Err(errors.iter().map(|e| format!("{e:?}")).collect()),
@@ -601,24 +704,42 @@ fn every_catalog_says_what_its_english_says() {
                 continue;
             };
             let id = message.id.name.to_owned();
-            let draft = message
-                .comment
-                .as_ref()
-                .is_some_and(|comment| comment.content.iter().any(|line| line.trim() == "draft"));
+            let said = |word: &str| {
+                message
+                    .comment
+                    .as_ref()
+                    .is_some_and(|comment| comment.content.iter().any(|line| line.trim() == word))
+            };
+            let (draft, noun) = (said("draft"), said("noun"));
             let Some(value) = &message.value else {
                 problems.push(format!("{id}: says nothing"));
                 continue;
             };
-            if !message.attributes.is_empty() {
-                problems.push(format!("{id}: has attributes"));
+            let mut attributes = Vec::new();
+            for attribute in &message.attributes {
+                match super::super::pattern::from_fluent(&attribute.value) {
+                    Ok(elements) => attributes.push((attribute.id.name.to_owned(), elements)),
+                    Err(why) => problems.push(format!("{id}: .{}: {why}", attribute.id.name)),
+                }
             }
-            match super::pattern::from_fluent(value) {
+            match super::super::pattern::from_fluent(value) {
                 Ok(elements) => {
-                    let mut names = BTreeSet::new();
-                    named(&elements, &mut names);
+                    let (mut names, mut chosen_by) = (BTreeSet::new(), BTreeSet::new());
+                    named(&elements, &mut names, &mut chosen_by);
                     let mut after = Follows::default();
                     follows(&elements, &mut after);
-                    found.insert(id, (names, draft, after));
+                    found.insert(
+                        id,
+                        Read {
+                            names,
+                            chosen_by,
+                            draft,
+                            noun,
+                            follows: after,
+                            elements,
+                            attributes,
+                        },
+                    );
                 }
                 Err(why) => problems.push(format!("{id}: {why}")),
             }
@@ -630,7 +751,253 @@ fn every_catalog_says_what_its_english_says() {
         }
     }
 
-    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    /// What a language gives its nouns (`tools/words/grammar`): its genders,
+    /// and its forms, each with whether it holds a preposition a name has
+    /// not (`+`).
+    #[derive(Default)]
+    pub struct Grammar {
+        pub genders: BTreeSet<String>,
+        pub forms: BTreeMap<String, bool>,
+    }
+
+    /// Each language's grammar, by its tag, as `tools/words/grammar`
+    /// declares it.
+    pub fn grammars(source: &str) -> Result<BTreeMap<String, Grammar>, String> {
+        let mut out = BTreeMap::new();
+        for line in source.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut words = line.split_whitespace();
+            let language = words.next().unwrap_or_default().to_owned();
+            let mut grammar = Grammar::default();
+            let mut list = None;
+            for word in words {
+                match word {
+                    "genders:" | "forms:" => list = Some(word),
+                    _ if !word
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "+-_".contains(c)) =>
+                    {
+                        return Err(format!("{language}: `{word}` names nothing Fluent can"));
+                    }
+                    _ => match list {
+                        Some("genders:") if word != grammar::NO_GENDER => {
+                            grammar.genders.insert(word.to_owned());
+                        }
+                        Some("forms:") if word != grammar::GENDER_ATTRIBUTE => {
+                            let fused = word.ends_with('+');
+                            grammar
+                                .forms
+                                .insert(word.trim_end_matches('+').to_owned(), fused);
+                        }
+                        _ => return Err(format!("{language}: `{word}` is out of place")),
+                    },
+                }
+            }
+            if out.insert(language.clone(), grammar).is_some() {
+                return Err(format!("{language} is declared twice"));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `elements` are text alone (a noun's form, its gender).
+    fn text_of(elements: &[Element]) -> Option<String> {
+        elements
+            .iter()
+            .map(|element| match element {
+                Element::Text(text) => Some(text.as_ref()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// What is wrong with the grammar of message `id` of a catalog in
+    /// `language`, held to its English: attributes only on a noun, each
+    /// from the language's declared set, a noun given every one; `GENDER`
+    /// and `FORM` only on an argument the English gives that is no count or
+    /// kind, every `GENDER` defaulting to `*[other]` among declared
+    /// genders, every form declared, a form a name has not only where the
+    /// argument is a noun.
+    pub fn grammar_problems(
+        id: &str,
+        english: &Read,
+        translated: &Read,
+        language: &str,
+        grammar: Option<&Grammar>,
+    ) -> Vec<String> {
+        let mut problems = Vec::new();
+        let declared = || format!("{language} declares none in tools/words/grammar");
+        if !translated.attributes.is_empty() && !english.noun {
+            problems.push(format!(
+                "{id}: has attributes, but its English is no noun (`words!(…, noun)`): only a noun carries its gender and forms"
+            ));
+        }
+        for (name, value) in &translated.attributes {
+            let Some(grammar) = grammar else {
+                problems.push(format!("{id}: .{name}: {}", declared()));
+                continue;
+            };
+            let Some(text) = text_of(value) else {
+                problems.push(format!(
+                    "{id}: .{name} is text alone: a noun's form holds no argument"
+                ));
+                continue;
+            };
+            if name == grammar::GENDER_ATTRIBUTE {
+                if !grammar.genders.contains(text.trim()) {
+                    problems.push(format!(
+                        "{id}: .gender = {text} is none of {language}'s genders ({})",
+                        grammar
+                            .genders
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            } else if !grammar.forms.contains_key(name) {
+                problems.push(format!("{id}: .{name} is no form {language} declares"));
+            }
+        }
+        if let (true, Some(grammar)) = (english.noun, grammar) {
+            let given: BTreeSet<&str> = translated
+                .attributes
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect();
+            let wanted = (!grammar.genders.is_empty())
+                .then_some(grammar::GENDER_ATTRIBUTE)
+                .into_iter()
+                .chain(grammar.forms.keys().map(String::as_str));
+            for name in wanted {
+                if !given.contains(name) {
+                    problems.push(format!(
+                        "{id}: a noun in {language} is given its .{name}: a sentence may ask for it"
+                    ));
+                }
+            }
+        }
+        walk(
+            &translated.elements,
+            &mut Vec::new(),
+            &mut |element, within| {
+                let argument = |on: &str| {
+                    english.chosen_by.contains(on).then(|| {
+                    format!("{id}: the English chooses by ${on} (a count or a kind), which is no noun")
+                })
+                };
+                match element {
+                    Element::Gender {
+                        on,
+                        variants,
+                        default,
+                    } => {
+                        let Some(grammar) = grammar.filter(|g| !g.genders.is_empty()) else {
+                            problems.push(format!("{id}: GENDER(${on}): {}", declared()));
+                            return;
+                        };
+                        problems.extend(argument(on));
+                        if variants.get(*default).map(|v| &v.key)
+                            != Some(&Key::Word(grammar::NO_GENDER.into()))
+                        {
+                            problems.push(format!(
+                            "{id}: GENDER(${on}) defaults to *[other], what a name, a path or text as written takes"
+                        ));
+                        }
+                        for variant in variants.iter() {
+                            let known = matches!(&variant.key, Key::Word(word)
+                            if word == grammar::NO_GENDER || grammar.genders.contains(word.as_ref()));
+                            if !known {
+                                problems.push(format!(
+                                "{id}: GENDER(${on}) chooses [{:?}], none of {language}'s genders",
+                                variant.key
+                            ));
+                            }
+                        }
+                    }
+                    Element::Form { of, case } => {
+                        let Some(fused) = grammar.and_then(|g| g.forms.get(case.as_ref())) else {
+                            problems.push(format!(
+                                "{id}: FORM(${of}, case: \"{case}\") is no form {language} declares"
+                            ));
+                            return;
+                        };
+                        problems.extend(argument(of));
+                        let as_noun = within
+                            .iter()
+                            .any(|(on, key)| on == of && key != grammar::NO_GENDER);
+                        if *fused && !as_noun {
+                            problems.push(format!(
+                            "{id}: FORM(${of}, case: \"{case}\") holds what a name has not: take it in a GENDER(${of}) variant, and say in *[other] what a name takes"
+                        ));
+                        }
+                    }
+                    _ => {}
+                }
+            },
+        );
+        problems
+    }
+
+    /// Each element of `elements` and of their variants, with the `GENDER`
+    /// variants it stands in (their argument and key).
+    fn walk(
+        elements: &[Element],
+        within: &mut Vec<(String, String)>,
+        f: &mut impl FnMut(&Element, &[(String, String)]),
+    ) {
+        for element in elements {
+            f(element, within);
+            match element {
+                Element::Select { variants, .. } => {
+                    for variant in variants.iter() {
+                        walk(&variant.value, within, f);
+                    }
+                }
+                Element::Gender { on, variants, .. } => {
+                    for variant in variants.iter() {
+                        let key = match &variant.key {
+                            Key::Word(word) => word.to_string(),
+                            Key::Number(n) => n.to_string(),
+                        };
+                        within.push((on.to_string(), key));
+                        walk(&variant.value, within, f);
+                        within.pop();
+                    }
+                }
+                Element::Text(_) | Element::Arg(_) | Element::Form { .. } => {}
+            }
+        }
+    }
+}
+
+/// Every translated catalog of the workspace (`crates/**/l10n/<lang>.ftl`)
+/// says what its crate's English says: each message one the English has,
+/// in the part of Fluent Skwir speaks, naming only the arguments the
+/// English gives, and keeping on one line what the English keeps there: an
+/// argument the English joins to the words beside it by a no-break space
+/// (a number to its unit, `{ $n }\u{a0}MB`, `10\u{a0}{ $unit }`) or to a
+/// percent sign (`{ $n }%`) is never parted from them by a plain one. Its
+/// grammar is its language's (`tools/words/grammar`, `grammar_problems`):
+/// a noun's attributes, `GENDER` and `FORM`. How much of each language is
+/// there, and how much is still a draft (a message whose comment says
+/// `draft`), is printed.
+#[test]
+fn every_catalog_says_what_its_english_says() {
+    use std::collections::BTreeMap;
+
+    use reading::{grammar_problems, grammars, messages};
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("core is two folders below the repository's root");
+    let grammar_file = root.join("tools/words/grammar");
+    let grammars = grammars(&std::fs::read_to_string(&grammar_file).unwrap())
+        .unwrap_or_else(|why| panic!("{}: {why}", grammar_file.display()));
+    let crates = root.join("crates");
     let mut folders = Vec::new();
     let mut walk = vec![crates];
     while let Some(dir) = walk.pop() {
@@ -661,6 +1028,14 @@ fn every_catalog_says_what_its_english_says() {
                 continue;
             }
         };
+        for (id, read) in &english {
+            if !read.attributes.is_empty() {
+                problems.push(format!(
+                    "{}: en.ftl: {id}: English gives no attributes",
+                    folder.display()
+                ));
+            }
+        }
         for entry in std::fs::read_dir(&folder).unwrap().flatten() {
             let path = entry.path();
             let Some(language) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -678,21 +1053,22 @@ fn every_catalog_says_what_its_english_says() {
             };
             let tally = said.entry(language.to_owned()).or_default();
             tally.0 += english.len();
-            for (id, (names, draft, after)) in &translated {
-                let Some((given, _, kept)) = english.get(id) else {
+            for (id, read) in &translated {
+                let Some(given) = english.get(id) else {
                     problems.push(format!(
                         "{}: {id}: the English has no such message",
                         path.display()
                     ));
                     continue;
                 };
-                for name in names.difference(given) {
+                for name in read.names.difference(&given.names) {
                     problems.push(format!(
                         "{}: {id}: names ${name}, which the English gives not",
                         path.display()
                     ));
                 }
-                for side in after.parted.intersection(&kept.joined) {
+                let kept = &given.follows;
+                for side in read.follows.parted.intersection(&kept.joined) {
                     if !kept.parted.contains(side) {
                         let (name, words) = match side.strip_suffix('>') {
                             Some(name) => (name, "what follows"),
@@ -705,8 +1081,13 @@ fn every_catalog_says_what_its_english_says() {
                         ));
                     }
                 }
+                problems.extend(
+                    grammar_problems(id, given, read, language, grammars.get(language))
+                        .into_iter()
+                        .map(|why| format!("{}: {why}", path.display())),
+                );
                 tally.1 += 1;
-                if *draft {
+                if read.draft {
                     tally.2 += 1;
                 }
             }
@@ -978,4 +1359,253 @@ fn the_desktop_s_hours_outweigh_the_locale_s() {
     }
     set_hours(None);
     set_formats(None, None);
+}
+
+/// A noun of Skwir's (a place's title) carries its grammar in each
+/// language's catalog: a German sentence takes its case, a French one its
+/// article, a preposition fused with it where it is a noun; what is no
+/// noun (a folder's name as written, a file's quoted name) has no gender
+/// and is its own form, in either.
+#[test]
+fn a_sentence_takes_its_noun_s_gender_and_forms() {
+    let bin = || crate::words!(test_noun_bin = "Trash", noun);
+    let library = || crate::words!(test_noun_library = "Library", noun);
+    let shelf = || crate::words!(test_noun_shelf = "Shelf", noun);
+    let moved =
+        |place: Words| crate::words!(test_noun_moved = "Moved to { $place }", place = place);
+    let full = |place: Arg| crate::words!(test_noun_full = "{ $place } is full", place = place);
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new(
+            "de",
+            "name_quote_open = „\nname_quote_close = “\n\
+             test_noun_bin = Papierkorb\n    .gender = masculine\n    .accusative = den Papierkorb\n    .dative = dem Papierkorb\n\
+             test_noun_library = Bibliothek\n    .gender = feminine\n    .accusative = die Bibliothek\n    .dative = der Bibliothek\n\
+             test_noun_moved = In { FORM($place, case: \"accusative\") } verschoben\n\
+             test_noun_full = { GENDER($place) ->\n    [masculine] Der { $place } ist voll\n    [feminine] Die { $place } ist voll\n   *[other] { $place } ist voll\n}\n",
+        ),
+    );
+    let de = langs(&["de-AT", "en"]);
+    assert_eq!(moved(bin()).say_in(&de), "In den Papierkorb verschoben");
+    assert_eq!(moved(library()).say_in(&de), "In die Bibliothek verschoben");
+    assert_eq!(full(bin().into()).say_in(&de), "Der Papierkorb ist voll");
+    assert_eq!(
+        full(library().into()).say_in(&de),
+        "Die Bibliothek ist voll"
+    );
+    // No noun: a folder's name as written, a file's name, quoted as German
+    // quotes; and a noun German's catalog lacks, said in English.
+    assert_eq!(
+        moved(Words::as_written("Docs")).say_in(&de),
+        "In Docs verschoben"
+    );
+    assert_eq!(
+        full(Name("a.txt".into()).into()).say_in(&de),
+        "„a.txt“ ist voll"
+    );
+    assert_eq!(moved(shelf()).say_in(&de), "In Shelf verschoben");
+    assert_eq!(full(shelf().into()).say_in(&de), "Shelf ist voll");
+    // A noun said in a language that is not the sentence's (a reader's next
+    // one, which has it): its grammar is not the sentence's.
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new("fr", "test_noun_shelf = Étagère\n    .gender = feminine\n"),
+    );
+    assert_eq!(
+        full(shelf().into()).say_in(&langs(&["de", "fr", "en"])),
+        "Étagère ist voll"
+    );
+    // One language in one script, whatever the region: a Hong Kong reader's
+    // sentence from a Traditional Chinese catalog takes its noun's form from
+    // a catalog of Hong Kong's (a form made up for the test).
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new(
+            "zh-Hant",
+            "test_noun_moved = 已移至{ FORM($place, case: \"locative\") }\n",
+        ),
+    );
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new(
+            "zh-HK",
+            "test_noun_bin = 回收筒\n    .locative = 回收筒中\n",
+        ),
+    );
+    assert_eq!(moved(bin()).say_in(&langs(&["zh-HK"])), "已移至回收筒中");
+    // A heading of a noun is the noun; words come back from their data are
+    // the words they were.
+    assert_eq!(
+        full(bin().heading().into()).say_in(&de),
+        "Der Papierkorb ist voll"
+    );
+    let back: Words = serde_json::from_value(bin().to_data()).unwrap();
+    assert_eq!(moved(back).say_in(&de), "In den Papierkorb verschoben");
+    // English, and agents, read the English as it is.
+    assert_eq!(moved(bin()).english(), "Moved to Trash");
+    assert_eq!(full(library().into()).english(), "Library is full");
+
+    // French: the noun with its article, and « de » fused with it, which a
+    // name has not.
+    let home = || crate::words!(test_noun_home = "Home", noun);
+    let opening =
+        |place: Words| crate::words!(test_noun_opening = "Opening { $place }…", place = place);
+    let search =
+        |place: Words| crate::words!(test_noun_search = "Search { $place }", place = place);
+    register(
+        "words-test",
+        "skwir-core",
+        Catalog::new(
+            "fr",
+            "test_noun_bin = Corbeille\n    .gender = feminine\n    .definite = la Corbeille\n    .de = de la Corbeille\n\
+             test_noun_home = Dossier personnel\n    .gender = masculine\n    .definite = le Dossier personnel\n    .de = du Dossier personnel\n\
+             test_noun_shelf = Étagère\n    .gender = feminine\n    .definite = l’Étagère\n    .de = de l’Étagère\n\
+             test_noun_opening = Ouverture { GENDER($place) ->\n    [masculine] { FORM($place, case: \"de\") }\n    [feminine] { FORM($place, case: \"de\") }\n   *[other] de { $place }\n}…\n\
+             test_noun_search = Rechercher dans { FORM($place, case: \"definite\") }\n",
+        ),
+    );
+    let fr = langs(&["fr-FR", "en"]);
+    assert_eq!(opening(bin()).say_in(&fr), "Ouverture de la Corbeille…");
+    assert_eq!(
+        opening(home()).say_in(&fr),
+        "Ouverture du Dossier personnel…"
+    );
+    assert_eq!(opening(shelf()).say_in(&fr), "Ouverture de l’Étagère…");
+    assert_eq!(
+        opening(Words::as_written("Docs")).say_in(&fr),
+        "Ouverture de Docs…"
+    );
+    assert_eq!(search(shelf()).say_in(&fr), "Rechercher dans l’Étagère");
+    assert_eq!(
+        search(Words::as_written("Docs")).say_in(&fr),
+        "Rechercher dans Docs"
+    );
+    // In the pseudo-language, the English, its argument marked, the noun
+    // in it said in the pseudo-language too.
+    assert_eq!(
+        opening(bin()).say_in(&langs(&[PSEUDO, "en"])),
+        "[ØØpééñííñĝ ‹[Tráášĥ]›…]"
+    );
+    withdraw("words-test");
+    assert_eq!(opening(bin()).say_in(&fr), "Opening Trash…");
+}
+
+/// The catalogs' test holds a translation's grammar to its language's
+/// declaration: attributes on a noun alone, from the declared set, every
+/// one given; GENDER and FORM on what may be a noun, by declared genders
+/// and forms, a form a name has not only where the argument is a noun.
+#[test]
+fn the_catalogs_test_refuses_grammar_a_language_does_not_declare() {
+    use reading::{grammar_problems, grammars, messages};
+    let english = messages(
+        "# noun\nbin = Trash\n\
+         plain = Copy\n\
+         moved = Moved to { $place }\n\
+         counted = { $count ->\n    [one] one item\n   *[other] { $count } items\n} in { $place }\n",
+    )
+    .unwrap();
+    let declared =
+        grammars("# A comment.\nfr  genders: masculine feminine  forms: definite de+\n").unwrap();
+    let problems = |translated: &str, language: &str| -> Vec<String> {
+        let translated = messages(translated).unwrap();
+        translated
+            .iter()
+            .flat_map(|(id, read)| {
+                grammar_problems(id, &english[id], read, language, declared.get(language))
+            })
+            .collect()
+    };
+    // As French declares it: no problem.
+    assert_eq!(
+        problems(
+            "bin = Corbeille\n    .gender = feminine\n    .definite = la Corbeille\n    .de = de la Corbeille\n\
+             moved = Déplacé { GENDER($place) ->\n    [feminine] { FORM($place, case: \"de\") }\n   *[other] dans { FORM($place, case: \"definite\") }\n}\n",
+            "fr",
+        ),
+        Vec::<String>::new()
+    );
+    let refused = |translated: &str, language: &str, why: &str| {
+        let found = problems(translated, language);
+        assert!(found.iter().any(|p| p.contains(why)), "{why}: {found:?}");
+    };
+    // Attributes on what is no noun.
+    refused(
+        "plain = Copier\n    .gender = masculine\n",
+        "fr",
+        "plain: has attributes, but its English is no noun",
+    );
+    // A gender, a form the language does not declare; a form not text.
+    refused(
+        "bin = Corbeille\n    .gender = féminin\n    .definite = la Corbeille\n    .de = de la Corbeille\n",
+        "fr",
+        "is none of fr's genders",
+    );
+    refused(
+        "bin = Corbeille\n    .gender = feminine\n    .definite = la Corbeille\n    .de = de la Corbeille\n    .dativ = x\n",
+        "fr",
+        ".dativ is no form fr declares",
+    );
+    refused(
+        "bin = Corbeille\n    .gender = feminine\n    .definite = la { $x }\n    .de = de la Corbeille\n",
+        "fr",
+        ".definite is text alone",
+    );
+    // A noun without every form its language declares.
+    refused(
+        "bin = Corbeille\n    .gender = feminine\n",
+        "fr",
+        "is given its .definite",
+    );
+    // A language that declares no grammar gives nothing, chooses by none.
+    refused(
+        "bin = Papierkorb\n    .gender = masculine\n",
+        "de",
+        ".gender: de declares none",
+    );
+    refused(
+        "moved = { GENDER($place) ->\n   *[other] Nach { $place } verschoben\n}\n",
+        "de",
+        "GENDER($place): de declares none",
+    );
+    // GENDER defaults to other, chooses among declared genders.
+    refused(
+        "moved = { GENDER($place) ->\n    [other] dans { $place }\n   *[feminine] dans { FORM($place, case: \"definite\") }\n}\n",
+        "fr",
+        "defaults to *[other]",
+    );
+    refused(
+        "moved = { GENDER($place) ->\n    [neuter] x\n   *[other] dans { $place }\n}\n",
+        "fr",
+        "none of fr's genders",
+    );
+    // What the English chooses by is a count or a kind: no noun.
+    refused(
+        "counted = { GENDER($count) ->\n   *[other] { $count } éléments\n} dans { $place }\n",
+        "fr",
+        "the English chooses by $count",
+    );
+    // A form not declared; one a name has not, outside a noun's variant.
+    refused(
+        "moved = Déplacé { FORM($place, case: \"dative\") }\n",
+        "fr",
+        "is no form fr declares",
+    );
+    refused(
+        "moved = Déplacé { FORM($place, case: \"de\") }\n",
+        "fr",
+        "holds what a name has not",
+    );
+    refused(
+        "moved = Déplacé { GENDER($place) ->\n    [feminine] x\n   *[other] { FORM($place, case: \"de\") }\n}\n",
+        "fr",
+        "holds what a name has not",
+    );
+    // The declaration itself names only what Fluent can, once a language.
+    assert!(grammars("fr genders: masculin«\n").is_err());
+    assert!(grammars("fr forms: de\nfr forms: a\n").is_err());
+    assert!(grammars("fr definite\n").is_err());
 }

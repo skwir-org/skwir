@@ -53,6 +53,9 @@ places_forget_passphrase_menu = Oublier la phrase de passe
 
 # draft
 places_home = Dossier personnel
+    .gender = masculine
+    .definite = le Dossier personnel
+    .de = du Dossier personnel
 
 # draft
 places_in_trash = { $name } est dans la corbeille : restaurez-le d’abord

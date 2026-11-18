@@ -1,0 +1,103 @@
+0077 no-isolates-for-assistive-technology: What a node says to assistive technology (its label, description, value and placeholder) has its bidirectional isolates taken out, but a text run's, whose offsets a caret counts
+
+diff --git a/crates/gpui/src/window/a11y.rs b/crates/gpui/src/window/a11y.rs
+index 61d7550..85a4313 100644
+--- a/crates/gpui/src/window/a11y.rs
++++ b/crates/gpui/src/window/a11y.rs
+@@ -603,16 +603,52 @@ impl A11yNodeBuilder {
+         };
+ 
+         let nodes = std::mem::take(&mut self.all_nodes);
+-        let update = TreeUpdate {
++        let mut update = TreeUpdate {
+             nodes,
+             tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+             tree_id: accesskit::TreeId::ROOT,
+             focus,
+         };
++        Self::leave_out_isolates(&mut update);
+ 
+         Self::repair_tree_update(update)
+     }
+ 
++    /// Takes the bidirectional isolates (LRI, RLI, FSI, PDI: U+2066 to
++    /// U+2069) out of what each node says, its label, description, value and
++    /// placeholder: an application isolates a name inside a sentence for its
++    /// letters to be drawn in their order, which speech needs no mark for and
++    /// braille would show as cells of their own. A string is written again
++    /// only where it holds one. A text run (a node whose characters a caret
++    /// counts, `character_lengths`) keeps them, its offsets counting them.
++    fn leave_out_isolates(update: &mut TreeUpdate) {
++        fn is_isolate(c: char) -> bool {
++            matches!(c, '\u{2066}'..='\u{2069}')
++        }
++        fn without(text: Option<&str>) -> Option<String> {
++            let text = text?;
++            text.contains(is_isolate)
++                .then(|| text.chars().filter(|c| !is_isolate(*c)).collect())
++        }
++        for (_, node) in &mut update.nodes {
++            if node.role() == accesskit::Role::TextRun || !node.character_lengths().is_empty() {
++                continue;
++            }
++            if let Some(label) = without(node.label()) {
++                node.set_label(label);
++            }
++            if let Some(description) = without(node.description()) {
++                node.set_description(description);
++            }
++            if let Some(value) = without(node.value()) {
++                node.set_value(value);
++            }
++            if let Some(placeholder) = without(node.placeholder()) {
++                node.set_placeholder(placeholder);
++            }
++        }
++    }
++
+     /// Accesskit panics on invalid [`TreeUpdate`]s. This function defensively
+     /// checks invariants that accesskit panics on, and tries to fix them.
+     fn repair_tree_update(mut update: TreeUpdate) -> TreeUpdate {
+@@ -972,6 +1008,42 @@ mod tests {
+         assert_eq!(update.focus, a);
+     }
+ 
++    // What a node says reaches assistive technology without the isolates
++    // that keep a name's letters in their order where it is drawn; a text
++    // run, whose offsets a caret counts, keeps them.
++    #[test]
++    fn isolates_are_left_out_of_what_a_node_says() {
++        let mut a11y = new_a11y();
++        let mut said = test_node();
++        said.set_label("Moved “\u{2068}a\u{2069}” to Trash");
++        said.set_description("\u{2066}x\u{2069} and \u{2067}y\u{2069}");
++        said.set_value("\u{2068}name\u{2069}");
++        said.set_placeholder("plain");
++        assert!(a11y.nodes.push(NodeId(1), said));
++        a11y.nodes.pop();
++        let mut run = accesskit::Node::new(Role::TextRun);
++        run.set_value("\u{2068}ab\u{2069}");
++        run.set_character_lengths([3, 1, 1, 3]);
++        assert!(a11y.nodes.push(NodeId(2), run));
++        a11y.nodes.pop();
++
++        let update = a11y.end_frame(Default::default());
++        let node = |id| {
++            update
++                .nodes
++                .iter()
++                .find(|(found, _)| *found == id)
++                .map(|(_, node)| node.clone())
++                .unwrap()
++        };
++        let said = node(NodeId(1));
++        assert_eq!(said.label(), Some("Moved “a” to Trash"));
++        assert_eq!(said.description(), Some("x and y"));
++        assert_eq!(said.value(), Some("name"));
++        assert_eq!(said.placeholder(), Some("plain"));
++        assert_eq!(node(NodeId(2)).value(), Some("\u{2068}ab\u{2069}"));
++    }
++
+     // The window's language is said by the root of its tree, every frame
+     // until it is unset; a node keeps its own.
+     #[test]

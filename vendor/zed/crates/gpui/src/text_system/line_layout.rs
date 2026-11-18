@@ -15,8 +15,8 @@ use std::{
 };
 
 use super::{
-    LineWrapper,
     bidi::{BidiLevels, BidiRow, Cell, Row},
+    line_breaks::LineBreaks,
 };
 
 /// A laid out and styled line of text
@@ -334,31 +334,29 @@ impl LineLayout {
     }
 
     /// The narrowest width this line wraps to without cutting a word: the
-    /// widest stretch between two places it may wrap (`wraps_before`),
+    /// widest stretch between two places it may wrap (`LineBreaks`),
     /// measured as `compute_wrap_boundaries` measures a line, so that
     /// wrapped at it, no word is broken. A text's minimum content width,
     /// as CSS has it.
     pub fn min_wrap_width(&self, text: &str) -> Pixels {
+        self.min_wrap_width_at(text, &LineBreaks::of(text))
+    }
+
+    /// `min_wrap_width`, where `text` may wrap at `breaks`.
+    fn min_wrap_width_at(&self, text: &str, breaks: &LineBreaks) -> Pixels {
         if let Some(levels) = &self.bidi_levels {
-            return min_wrap_width_in_text_order(&self.cells_in_text_order(levels), text);
+            return min_wrap_width_in_text_order(&self.cells_in_text_order(levels), text, breaks);
         }
         let mut widest = px(0.);
         let mut stretch_x = px(0.);
-        let mut started = false;
-        let mut prev_ch = '\0';
+        let mut prev_index = None;
         for glyph in self.runs.iter().flat_map(|run| run.glyphs.iter()) {
-            let Some(ch) = text.get(glyph.index..).and_then(|rest| rest.chars().next()) else {
-                continue;
-            };
-            if ch == '\n' {
-                continue;
-            }
-            if wraps_before(prev_ch, ch, started) {
+            // A place to wrap is before the first glyph of its character.
+            if prev_index != Some(glyph.index) && breaks.before(glyph.index) {
                 widest = widest.max(glyph.position.x - stretch_x);
                 stretch_x = glyph.position.x;
             }
-            started |= ch != ' ';
-            prev_ch = ch;
+            prev_index = Some(glyph.index);
         }
         widest.max(self.width - stretch_x)
     }
@@ -367,21 +365,23 @@ impl LineLayout {
     /// layout its rows are drawn from, and where each row after the first
     /// starts in it. A line holding right-to-left text wraps in its text's
     /// order, each row then laid out as it reads (`LineLayout::rows_as_read`);
-    /// any other, and one that fits, is drawn from itself.
+    /// any other, and one that fits, is drawn from itself. It wraps where
+    /// `breaks`, found for `text`, let it.
     pub(crate) fn wrapped(
         self: &Arc<Self>,
         text: &str,
+        breaks: &LineBreaks,
         wrap_width: Pixels,
         max_lines: Option<usize>,
     ) -> (Arc<LineLayout>, SmallVec<[WrapBoundary; 1]>) {
         let Some(levels) = &self.bidi_levels else {
             return (
                 self.clone(),
-                self.compute_wrap_boundaries(text, wrap_width, max_lines),
+                self.compute_wrap_boundaries(text, breaks, wrap_width, max_lines),
             );
         };
         let cells = self.cells_in_text_order(levels);
-        let starts = wrap_in_text_order(&cells, text, wrap_width, max_lines);
+        let starts = wrap_in_text_order(&cells, text, breaks, wrap_width, max_lines);
         if starts.is_empty() {
             return (self.clone(), SmallVec::new());
         }
@@ -389,9 +389,12 @@ impl LineLayout {
         (Arc::new(laid), boundaries)
     }
 
+    /// Where this line wraps at `wrap_width`, in `max_lines` rows at most,
+    /// where `breaks`, found for `text`, let it.
     pub(crate) fn compute_wrap_boundaries(
         &self,
         text: &str,
+        breaks: &LineBreaks,
         wrap_width: Pixels,
         max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
@@ -401,7 +404,7 @@ impl LineLayout {
             // the rows themselves, which `wrapped` lays out.
             let cells = self.cells_in_text_order(levels);
             let mut boundaries: SmallVec<[WrapBoundary; 1]> =
-                wrap_in_text_order(&cells, text, wrap_width, max_lines)
+                wrap_in_text_order(&cells, text, breaks, wrap_width, max_lines)
                     .into_iter()
                     .map(|start| cells[start].first)
                     .collect();
@@ -409,7 +412,10 @@ impl LineLayout {
             return boundaries;
         }
         let mut boundaries = SmallVec::new();
-        let mut first_non_whitespace_ix = None;
+        let mut prev_index = None;
+        // Whether the row holds anything but spaces yet: before that, no
+        // place to wrap, as `LineWrapper::wrap_line` has it.
+        let mut row_has_text = false;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
         let mut last_boundary = WrapBoundary {
@@ -417,7 +423,6 @@ impl LineLayout {
             glyph_ix: 0,
         };
         let mut last_boundary_x = px(0.);
-        let mut prev_ch = '\0';
         let mut glyphs = self
             .runs
             .iter()
@@ -429,28 +434,29 @@ impl LineLayout {
                         WrapBoundary { run_ix, glyph_ix },
                         character,
                         glyph.position.x,
+                        glyph.index,
                     )
                 })
             })
             .peekable();
 
-        while let Some((boundary, ch, x)) = glyphs.next() {
+        while let Some((boundary, ch, x, index)) = glyphs.next() {
             if ch == '\n' {
                 continue;
             }
 
             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
-            // but there are some differences, so we have to duplicate the code here.
-            if wraps_before(prev_ch, ch, first_non_whitespace_ix.is_some()) {
+            // but there are some differences, so we have to duplicate the code here. Both
+            // wrap where `breaks` let them, once the row holds more than spaces; here before
+            // the first glyph of a character.
+            if row_has_text && prev_index != Some(index) && breaks.before(index) {
                 last_candidate_ix = Some(boundary);
                 last_candidate_x = x;
             }
+            prev_index = Some(index);
+            row_has_text |= ch != ' ';
 
-            if ch != ' ' && first_non_whitespace_ix.is_none() {
-                first_non_whitespace_ix = Some(boundary);
-            }
-
-            let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
+            let next_x = glyphs.peek().map_or(self.width, |(_, _, x, _)| *x);
             let width = next_x - last_boundary_x;
 
             if width > wrap_width && boundary > last_boundary {
@@ -464,13 +470,14 @@ impl LineLayout {
                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
                     last_boundary = last_candidate_ix;
                     last_boundary_x = last_candidate_x;
+                    row_has_text = true;
                 } else {
                     last_boundary = boundary;
                     last_boundary_x = x;
+                    row_has_text = ch != ' ';
                 }
                 boundaries.push(last_boundary);
             }
-            prev_ch = ch;
         }
 
         boundaries
@@ -478,20 +485,21 @@ impl LineLayout {
 }
 
 /// Where a line whose cells are `cells`, in its text's order, wraps at
-/// `wrap_width`, in `max_lines` rows at most: the first cell of each row but
-/// the first. As `LineLayout::compute_wrap_boundaries` wraps a line, its
-/// cells measured one after another in the text's order.
+/// `wrap_width`, in `max_lines` rows at most, where `breaks` let it: the
+/// first cell of each row but the first. As
+/// `LineLayout::compute_wrap_boundaries` wraps a line, its cells measured
+/// one after another in the text's order.
 fn wrap_in_text_order(
     cells: &[Cell],
     text: &str,
+    breaks: &LineBreaks,
     wrap_width: Pixels,
     max_lines: Option<usize>,
 ) -> SmallVec<[usize; 1]> {
     let mut starts = SmallVec::new();
-    let mut started = false;
+    let mut row_has_text = false;
     let mut last_candidate: Option<(usize, Pixels)> = None;
     let mut last_boundary = (0, px(0.));
-    let mut prev_ch = '\0';
     let mut x = px(0.);
     for (k, cell) in cells.iter().enumerate() {
         let next_x = x + cell.width();
@@ -503,63 +511,48 @@ fn wrap_in_text_order(
             x = next_x;
             continue;
         }
-        if wraps_before(prev_ch, ch, started) {
+        if row_has_text && breaks.before(cell.index) {
             last_candidate = Some((k, x));
         }
-        started |= ch != ' ';
+        row_has_text |= ch != ' ';
         if next_x - last_boundary.1 > wrap_width && k > last_boundary.0 {
             if let Some(max_lines) = max_lines
                 && starts.len() >= max_lines.saturating_sub(1)
             {
                 break;
             }
-            last_boundary = last_candidate.take().unwrap_or((k, x));
+            last_boundary = match last_candidate.take() {
+                Some(candidate) => candidate,
+                None => {
+                    row_has_text = ch != ' ';
+                    (k, x)
+                }
+            };
             starts.push(last_boundary.0);
         }
-        prev_ch = ch;
         x = next_x;
     }
     starts
 }
 
 /// `LineLayout::min_wrap_width` of a line whose cells are `cells`, in its
-/// text's order.
-fn min_wrap_width_in_text_order(cells: &[Cell], text: &str) -> Pixels {
+/// text's order, where `breaks` let it wrap.
+fn min_wrap_width_in_text_order(cells: &[Cell], text: &str, breaks: &LineBreaks) -> Pixels {
     let mut widest = px(0.);
     let mut stretch_x = px(0.);
-    let mut started = false;
-    let mut prev_ch = '\0';
     let mut x = px(0.);
     for cell in cells {
         let ch = text
             .get(cell.index..)
             .and_then(|rest| rest.chars().next())
             .unwrap_or(' ');
-        if ch != '\n' {
-            if wraps_before(prev_ch, ch, started) {
-                widest = widest.max(x - stretch_x);
-                stretch_x = x;
-            }
-            started |= ch != ' ';
-            prev_ch = ch;
+        if ch != '\n' && breaks.before(cell.index) {
+            widest = widest.max(x - stretch_x);
+            stretch_x = x;
         }
         x += cell.width();
     }
     widest.max(x - stretch_x)
-}
-
-/// Whether a line may wrap before `ch`, coming after `prev_ch`, once a
-/// character other than a space came (`started`): before a word after a
-/// space, and before any other character but a space. The wrapped layout
-/// and the narrowest width it wraps to (`LineLayout::min_wrap_width`) ask
-/// it alike, so they never disagree.
-fn wraps_before(prev_ch: char, ch: char, started: bool) -> bool {
-    started
-        && if LineWrapper::is_word_char(ch) {
-            prev_ch == ' '
-        } else {
-            ch != ' '
-        }
 }
 
 /// A line of text that has been wrapped to fit a given width
@@ -704,8 +697,12 @@ impl WrappedLineLayout {
     ) -> (Size<Pixels>, usize) {
         let (width, wraps) = &*self.min_content.get_or_init(|| {
             let layout = &self.unwrapped_layout;
-            let width = layout.min_wrap_width(text);
-            (width, layout.compute_wrap_boundaries(text, width, None))
+            let breaks = LineBreaks::of(text);
+            let width = layout.min_wrap_width_at(text, &breaks);
+            (
+                width,
+                layout.compute_wrap_boundaries(text, &breaks, width, None),
+            )
         });
         let kept = max_lines.map_or(wraps.len(), |lines| {
             wraps.len().min(lines.saturating_sub(1))
@@ -984,6 +981,9 @@ struct FrameCache {
     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
     used_lines: Vec<Arc<CacheKey>>,
     used_wrapped_lines: Vec<Arc<CacheKey>>,
+    /// Where each text wrapped in the frame may wrap, kept by the text
+    /// alone (`LineLayoutCache::breaks_of`).
+    breaks: FxHashMap<SharedString, Arc<LineBreaks>>,
 }
 
 #[derive(Clone, Default)]
@@ -1072,6 +1072,29 @@ impl LineLayoutCache {
         current_frame.wrapped_lines.clear();
         current_frame.used_lines.clear();
         current_frame.used_wrapped_lines.clear();
+        current_frame.breaks.clear();
+    }
+
+    /// Where `text` may wrap (`LineBreaks`): found once while it is wrapped
+    /// frame after frame, whatever its width and font, so a text wrapped
+    /// anew as its window is resized is not segmented again (a look-up
+    /// costs less than ASCII's pass over the text, far less than the
+    /// segmenter).
+    fn breaks_of(&self, text: &SharedString) -> Arc<LineBreaks> {
+        let mut state = self.state.borrow_mut();
+        let LineLayoutCacheState {
+            previous_frame,
+            current_frame,
+        } = &mut *state;
+        if let Some(breaks) = current_frame.breaks.get(text.as_ref()) {
+            return breaks.clone();
+        }
+        let breaks = previous_frame
+            .breaks
+            .remove(text.as_ref())
+            .unwrap_or_else(|| Arc::new(LineBreaks::of(text)));
+        current_frame.breaks.insert(text.clone(), breaks.clone());
+        breaks
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -1115,7 +1138,8 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let (unwrapped_layout, wrap_boundaries) = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.wrapped(text.as_ref(), wrap_width, max_lines)
+                let breaks = self.breaks_of(&text);
+                unwrapped_layout.wrapped(text.as_ref(), &breaks, wrap_width, max_lines)
             } else {
                 (unwrapped_layout, SmallVec::new())
             };
@@ -1561,12 +1585,13 @@ mod tests {
         let narrowest = layout.min_wrap_width(text);
         assert_eq!(narrowest, px(40.), "efgh");
         let starts: Vec<usize> = layout
-            .compute_wrap_boundaries(text, narrowest, None)
+            .compute_wrap_boundaries(text, &LineBreaks::of(text), narrowest, None)
             .iter()
             .map(|boundary| boundary.glyph_ix)
             .collect();
         assert_eq!(starts, [3, 6], "before cd and efgh");
-        let cut = layout.compute_wrap_boundaries(text, narrowest - px(1.), None);
+        let cut =
+            layout.compute_wrap_boundaries(text, &LineBreaks::of(text), narrowest - px(1.), None);
         assert!(cut.iter().any(|boundary| boundary.glyph_ix > 6), "efgh cut");
         // Spaces before the first word are no place to wrap.
         let text = "  ab";
@@ -1576,6 +1601,27 @@ mod tests {
                 .collect(),
         );
         assert_eq!(layout.min_wrap_width(text), px(100.), "its whole width");
+    }
+
+    /// A row that a space overflowed into starts with it, and no place to
+    /// wrap comes before its first word: it is never left a space alone, as
+    /// `LineWrapper::wrap_line` wraps it.
+    #[test]
+    fn a_row_a_space_overflowed_into_is_not_left_alone() {
+        let text = "abcd efghijk";
+        let mut layout = make_layout(
+            text.char_indices()
+                .map(|(index, _)| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(120.);
+        layout.len = text.len();
+        let starts: Vec<usize> = layout
+            .compute_wrap_boundaries(text, &LineBreaks::of(text), px(40.), None)
+            .iter()
+            .map(|boundary| boundary.glyph_ix)
+            .collect();
+        assert_eq!(starts, [4, 8], "abcd, \" efg\", hijk");
     }
 
     #[test]
@@ -1598,10 +1644,47 @@ mod tests {
         assert_eq!(narrowest("ქართული ენა"), 80., "Georgian");
         // A name isolated in its quotes is a word with them.
         assert_eq!(narrowest("“\u{2068}ab\u{2069}”"), 60.);
-        // Chinese breaks between any two characters; Thai too (no
-        // dictionary), but not before its marks: "กี่" is one character.
+        // Chinese breaks between any two characters, but before its closing
+        // punctuation; Thai between its words, by a dictionary, never
+        // before its marks: "กี่" is one character, "ข้าว" the widest word.
         assert_eq!(narrowest("中文字"), 10.);
+        assert_eq!(narrowest("中文。字"), 20.);
         assert_eq!(narrowest("กี่ข"), 30.);
+        assert_eq!(narrowest("ข้าวมันไก่"), 40.);
+    }
+}
+
+#[cfg(test)]
+mod breaks_kept_tests {
+    use super::*;
+    use crate::platform::NoopTextSystem;
+
+    /// A text beyond ASCII wrapped anew at another width in the next frame
+    /// (its window resized) is not segmented again: its breaks are kept by
+    /// the text, and let go once a frame wraps it no more.
+    #[test]
+    fn a_text_s_breaks_are_kept_while_it_is_wrapped() {
+        let cache = LineLayoutCache::new(
+            Arc::new(NoopTextSystem::new()),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let text = "Le rapport définitif, relu à Noël";
+        let runs = [FontRun {
+            len: text.len(),
+            font_id: FontId(0),
+            position: RunPosition::Baseline,
+        }];
+        let shared = SharedString::from(text);
+        let wrapped = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(100.)), None);
+        assert!(!wrapped.wrap_boundaries.is_empty());
+        let found = cache.breaks_of(&shared);
+        cache.finish_frame();
+        let wider = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(120.)), None);
+        assert!(!wider.wrap_boundaries.is_empty());
+        assert!(Arc::ptr_eq(&found, &cache.breaks_of(&shared)), "kept");
+        cache.finish_frame();
+        cache.finish_frame();
+        assert!(!Arc::ptr_eq(&found, &cache.breaks_of(&shared)), "let go");
     }
 }
 

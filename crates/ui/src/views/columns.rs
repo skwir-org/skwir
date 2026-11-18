@@ -16,6 +16,7 @@
 //! Wider than the pane, the columns scroll sideways, as Finder's do, and
 //! follow their right end, where the folder shown is (`follow_end`).
 
+use crate::sides::Sides;
 use crate::theme::Chosen;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -243,19 +244,28 @@ fn folder_under_cursor(shell: &Shell) -> Option<Location> {
         .or_else(|| p.path_of(id).map(Location::from_path))
 }
 
-/// The strip of columns follows its right end, where the folder shown is,
-/// while it is there: a folder opened lands at the end, and the end stays
-/// in view as the pane narrows (a preview opened). Scrolled away from it,
-/// it stays where it was put. Decided before the strip's prepaint, which
-/// clamps the offset to the end, whatever the strip's width now.
+/// The strip of columns follows its end (its right, its left where it is
+/// laid out right to left), where the folder shown is, while it is there:
+/// a folder opened lands at the end, and the end stays in view as the pane
+/// narrows (a preview opened). Scrolled away from it, it stays where it
+/// was put. Decided before the strip's prepaint, which clamps the offset to
+/// the end, whatever the strip's width now.
 fn follow_end(row: ScrollHandle, to_end: Rc<Cell<bool>>) -> impl IntoElement {
     gpui::canvas(
-        move |_, _, _| {
+        move |_, window, _| {
             // Where the last frame left it, moved since by the wheel or
-            // the bar.
-            let at_end = row.offset().x <= px(0.5) - row.max_offset().x;
+            // the bar. Laid out right to left, gpui counts the offset from
+            // 0 at the right end up (`sides`).
+            let rtl = window.layout_direction().is_rtl();
+            let (x, max) = (row.offset().x, row.max_offset().x);
+            let at_end = if rtl {
+                x >= max - px(0.5)
+            } else {
+                x <= px(0.5) - max
+            };
             if to_end.replace(false) || at_end {
-                row.set_offset(point(px(-f32::MAX), px(0.)));
+                let end = if rtl { f32::MAX } else { -f32::MAX };
+                row.set_offset(point(px(end), px(0.)));
             }
         },
         |_, (), _, _| {},
@@ -625,7 +635,11 @@ fn side_column(
                         ))
                     })
                     .when(row.is_dir, |d| {
-                        d.child(div().text_color(theme.text_muted).child("›"))
+                        d.child(
+                            div()
+                                .text_color(theme.text_muted)
+                                .child(crate::sides::onward()),
+                        )
                     });
                 // A tag dropped on it is its own: these are not the
                 // pane's entries, so never its selection.
@@ -664,7 +678,7 @@ fn side_column(
         .w(files_scale(theme).px(COLUMN_W))
         .h_full()
         .flex_none()
-        .border_r_1()
+        .border_end(px(1.))
         .border_color(theme.border)
         .child(list)
         .child(
@@ -958,7 +972,7 @@ impl PaneView for ColumnsView {
             .w(files_scale(&theme).px(COLUMN_W * 1.25))
             .h_full()
             .flex_none()
-            .border_r_1()
+            .border_end(px(1.))
             .border_color(theme.border)
             // Before the list: it scrolls as these ask, in this frame.
             .child(kept)

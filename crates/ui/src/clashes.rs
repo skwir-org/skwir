@@ -7,6 +7,7 @@
 //! choice. Each row is pictured by what comes, as the views draw it, read
 //! on a worker once the question arrives (`read_pictures`).
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::collections::HashMap;
@@ -673,7 +674,7 @@ fn clash_rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .pl(px(16. * depth as f32))
+                        .pad_start(px(16. * depth as f32))
                         .child(
                             div()
                                 .flex()

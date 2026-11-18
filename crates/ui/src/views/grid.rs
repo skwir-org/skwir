@@ -26,6 +26,7 @@
 //! the same lines, said or blank, so its height is still its name's and
 //! the captions', never what its metadata holds.
 
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -885,7 +886,13 @@ fn cell(
                 look.writing
                     .then(|| crate::views::arriving::writing_pill(theme))
             })
-            .map(|pill| div().absolute().top(px(FRAME)).right(px(FRAME)).child(pill)),
+            .map(|pill| {
+                div()
+                    .absolute()
+                    .top(px(FRAME))
+                    .inset_end(px(FRAME))
+                    .child(pill)
+            }),
     );
     let seat = crate::views::entry::Seat {
         index: ix,
@@ -969,7 +976,7 @@ fn arriving_cell(
             div()
                 .absolute()
                 .top(px(FRAME))
-                .right(px(FRAME))
+                .inset_end(px(FRAME))
                 .child(crate::views::arriving::pill(arriving, theme)),
         );
     let el = crate::views::arriving::acting(el, arriving, shell, cx);

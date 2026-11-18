@@ -1,0 +1,286 @@
+0073 language-for-assistive-technology: A window says the language its words are in to assistive technology, on its accessibility tree's root (Window::set_a11y_language), and a div or a styled text where its words are in another (aria_language), for a screen reader to read them in it
+
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 3e8c1b1..379e413 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -1401,6 +1401,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+         self
+     }
+ 
++    /// Set the language this element's words are in, a BCP 47 tag, where
++    /// it is not the window's (`Window::set_a11y_language`): assistive
++    /// technology reads them, and those of the nodes inside that say none
++    /// of their own, in it.
++    fn aria_language(mut self, language: impl Into<SharedString>) -> Self {
++        self.interactivity().aria.language = Some(language.into());
++        self
++    }
++
+     /// Set the accessible description for this element. Unlike the label (which
+     /// names the element), the description provides supplementary information
+     /// that assistive technology announces after the name, role, and value -
+@@ -2242,6 +2251,7 @@ impl IntoElement for Div {
+ pub(crate) struct AriaProperties {
+     pub(crate) author_id: Option<SharedString>,
+     pub(crate) label: Option<SharedString>,
++    pub(crate) language: Option<SharedString>,
+     pub(crate) description: Option<SharedString>,
+     pub(crate) keyshortcuts: Option<SharedString>,
+     pub(crate) selected: Option<bool>,
+@@ -3695,6 +3705,9 @@ impl Interactivity {
+         if let Some(label) = &self.aria.label {
+             node.set_label(label.to_string());
+         }
++        if let Some(language) = &self.aria.language {
++            node.set_language(language.to_string());
++        }
+         if let Some(description) = &self.aria.description {
+             node.set_description(description.to_string());
+         }
+@@ -5580,11 +5593,28 @@ mod tests {
+         assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+     }
+ 
++    #[test]
++    fn test_write_a11y_info_aria_language_builder() {
++        let mut element = div().id("quoted").aria_language("de");
++        let mut node = accesskit::Node::new(accesskit::Role::Label);
++
++        element.interactivity().write_a11y_info(&mut node);
++
++        assert_eq!(node.language(), Some("de"));
++        let mut unsaid = accesskit::Node::new(accesskit::Role::Label);
++        div()
++            .id("plain")
++            .interactivity()
++            .write_a11y_info(&mut unsaid);
++        assert_eq!(unsaid.language(), None, "the window's, inherited");
++    }
++
+     #[test]
+     fn test_write_a11y_info_string_and_numeric_properties() {
+         let mut interactivity = Interactivity::default();
+         interactivity.aria.author_id = Some("settings.buffer-font-size".into());
+         interactivity.aria.label = Some("Buffer Font Size".into());
++        interactivity.aria.language = Some("de".into());
+         interactivity.aria.value = Some("15".into());
+         interactivity.aria.placeholder = Some("Search".into());
+         interactivity.aria.numeric_value = Some(15.0);
+@@ -5597,6 +5627,7 @@ mod tests {
+ 
+         assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+         assert_eq!(node.label(), Some("Buffer Font Size"));
++        assert_eq!(node.language(), Some("de"));
+         assert_eq!(node.value(), Some("15"));
+         assert_eq!(node.placeholder(), Some("Search"));
+         assert_eq!(node.numeric_value(), Some(15.0));
+diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
+index 0cfeed0..f67fbb9 100644
+--- a/crates/gpui/src/elements/text.rs
++++ b/crates/gpui/src/elements/text.rs
+@@ -391,6 +391,7 @@ impl IntoElement for SharedString {
+ pub struct StyledText {
+     text: SharedString,
+     said: Option<SharedString>,
++    language: Option<SharedString>,
+     runs: Option<Vec<TextRun>>,
+     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
+@@ -403,6 +404,7 @@ impl StyledText {
+         StyledText {
+             text: text.into(),
+             said: None,
++            language: None,
+             runs: None,
+             delayed_highlights: None,
+             delayed_font_family_overrides: None,
+@@ -418,6 +420,14 @@ impl StyledText {
+         self
+     }
+ 
++    /// The language the text's words are in, a BCP 47 tag, where it is not
++    /// the window's (`Window::set_a11y_language`): assistive technology reads
++    /// them in it where the text is a node of its own (`InteractiveText`).
++    pub fn aria_language(mut self, language: impl Into<SharedString>) -> Self {
++        self.language = Some(language.into());
++        self
++    }
++
+     /// What the text says to assistive technology: its own words, or those
+     /// it was given (`with_said`).
+     fn said(&self) -> SharedString {
+@@ -1284,6 +1294,9 @@ impl Element for InteractiveText {
+ 
+     fn write_a11y_info(&self, node: &mut accesskit::Node) {
+         node.set_value(self.text.said().to_string());
++        if let Some(language) = &self.text.language {
++            node.set_language(language.to_string());
++        }
+     }
+ 
+     fn request_layout(
+@@ -1493,6 +1506,20 @@ impl IntoElement for InteractiveText {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn a_text_says_its_language_where_it_has_one() {
++        let quoted = InteractiveText::new("quoted", StyledText::new("Hallo").aria_language("de"));
++        let mut node = accesskit::Node::new(accesskit::Role::Label);
++        quoted.write_a11y_info(&mut node);
++        assert_eq!(node.value(), Some("Hallo"));
++        assert_eq!(node.language(), Some("de"));
++
++        let plain = InteractiveText::new("plain", StyledText::new("Bonjour"));
++        let mut node = accesskit::Node::new(accesskit::Role::Label);
++        plain.write_a11y_info(&mut node);
++        assert_eq!(node.language(), None, "the window's, inherited");
++    }
++
+     #[test]
+     fn test_into_element_for() {
+         use crate::{ParentElement as _, SharedString, div};
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 63dd050..07a1278 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3214,6 +3214,15 @@ impl Window {
+         self.a11y.set_window_title(title.to_string());
+     }
+ 
++    /// Sets the language the window's words are in, a BCP 47 tag (`fr`,
++    /// `pt-BR`), for assistive technology to read them in: the root of the
++    /// window's accessibility tree says it, which holds for every node in it
++    /// but those that say their own (`aria_language`). `None` says none, the
++    /// reader's own then. Sent with the next frame's tree.
++    pub fn set_a11y_language(&mut self, language: Option<SharedString>) {
++        self.a11y.set_language(language);
++    }
++
+     /// Sets the position of the macOS traffic light buttons.
+     #[cfg(target_os = "macos")]
+     pub fn set_traffic_light_position(&self, position: Point<Pixels>) {
+diff --git a/crates/gpui/src/window/a11y.rs b/crates/gpui/src/window/a11y.rs
+index 7f117df..61d7550 100644
+--- a/crates/gpui/src/window/a11y.rs
++++ b/crates/gpui/src/window/a11y.rs
+@@ -152,6 +152,10 @@ pub(crate) struct A11y {
+     /// The window's title, used to label the root node so assistive
+     /// technology can tell windows apart.
+     window_title: Option<SharedString>,
++    /// The language the window's words are in, a BCP 47 tag, said by the
++    /// root node: assistive technology reads every node in it, but those
++    /// that say their own (`aria_language`), in that language.
++    language: Option<SharedString>,
+     /// The focus id we most recently reported as having no accessibility node,
+     /// used to log at most once per focus change rather than every frame.
+     last_focus_without_node: Option<FocusId>,
+@@ -178,6 +182,7 @@ impl A11y {
+             node_bounds: FxHashMap::default(),
+             action_listeners: FxHashMap::default(),
+             window_title,
++            language: None,
+             last_focus_without_node: None,
+             debug: debug::A11yDebug::default(),
+             #[cfg(debug_assertions)]
+@@ -205,6 +210,10 @@ impl A11y {
+         self.window_title = Some(title.into());
+     }
+ 
++    pub(crate) fn set_language(&mut self, language: Option<SharedString>) {
++        self.language = language;
++    }
++
+     /// Ensures that [`Self::is_active`] returns up to date information.
+     ///
+     /// See the docs for [`Self::active_flag`] and [`Self::active_this_frame`]
+@@ -285,7 +294,8 @@ impl A11y {
+         self.focus_ids.clear();
+         self.node_bounds.clear();
+         self.action_listeners.clear();
+-        self.nodes.begin_frame(self.window_title.as_ref());
++        self.nodes
++            .begin_frame(self.window_title.as_ref(), self.language.as_ref());
+     }
+ 
+     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
+@@ -479,8 +489,13 @@ impl A11yNodeBuilder {
+         }
+     }
+ 
+-    /// Push the root node to start a new frame.
+-    fn begin_frame(&mut self, window_title: Option<&SharedString>) {
++    /// Push the root node to start a new frame: labelled with the window's
++    /// title, in the window's language.
++    fn begin_frame(
++        &mut self,
++        window_title: Option<&SharedString>,
++        language: Option<&SharedString>,
++    ) {
+         self.all_nodes.clear();
+         self.ids_stack.clear();
+         self.nodes_stack.clear();
+@@ -491,6 +506,9 @@ impl A11yNodeBuilder {
+         if let Some(title) = window_title {
+             root_node.set_label(title.to_string());
+         }
++        if let Some(language) = language {
++            root_node.set_language(language.to_string());
++        }
+ 
+         self.ids_stack.push(ROOT_NODE_ID);
+         self.nodes_stack.push(root_node);
+@@ -657,7 +675,7 @@ mod tests {
+ 
+     fn new_builder() -> A11yNodeBuilder {
+         let mut builder = A11yNodeBuilder::new();
+-        builder.begin_frame(None);
++        builder.begin_frame(None, None);
+         builder
+     }
+ 
+@@ -953,4 +971,43 @@ mod tests {
+         let update = a11y.end_frame(Default::default());
+         assert_eq!(update.focus, a);
+     }
++
++    // The window's language is said by the root of its tree, every frame
++    // until it is unset; a node keeps its own.
++    #[test]
++    fn the_window_s_language_is_said_by_its_root() {
++        let root = |update: &accesskit::TreeUpdate| {
++            update
++                .nodes
++                .iter()
++                .find(|(id, _)| *id == ROOT_NODE_ID)
++                .map(|(_, node)| node.clone())
++                .expect("the root is in the update")
++        };
++        let mut a11y = new_a11y();
++        let update = a11y.end_frame(Default::default());
++        assert_eq!(root(&update).language(), None, "none until set");
++
++        a11y.set_language(Some("fr".into()));
++        for _ in 0..2 {
++            a11y.begin_frame();
++            let mut quoted = test_node();
++            quoted.set_language("de");
++            assert!(a11y.nodes.push(NodeId(1), quoted));
++            a11y.nodes.pop();
++            let update = a11y.end_frame(Default::default());
++            assert_eq!(root(&update).language(), Some("fr"));
++            let (_, node) = update
++                .nodes
++                .iter()
++                .find(|(id, _)| *id == NodeId(1))
++                .unwrap();
++            assert_eq!(node.language(), Some("de"));
++        }
++
++        a11y.set_language(None);
++        a11y.begin_frame();
++        let update = a11y.end_frame(Default::default());
++        assert_eq!(root(&update).language(), None, "unset");
++    }
+ }

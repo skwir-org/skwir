@@ -56,3 +56,6 @@ trash_restore_title = restaurer depuis la corbeille
 
 # draft
 trash_title = Corbeille
+    .gender = feminine
+    .definite = la Corbeille
+    .de = de la Corbeille

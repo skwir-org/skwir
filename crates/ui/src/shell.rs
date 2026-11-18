@@ -4675,6 +4675,7 @@ impl Shell {
     /// system's list of windows and a screen reader name it by its active
     /// pane's location. Set when that changed, after the panes read it.
     fn sync_title(&mut self, window: &mut Window) {
+        crate::a11y_language::apply(window);
         // Said now, so that a language chosen since shows too.
         let title: gpui::SharedString = crate::title_bar::window_title(&self.ui().place.title)
             .say()
@@ -4900,7 +4901,10 @@ impl Shell {
         let (along, size) = if stacked {
             (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         } else {
-            (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
+            (
+                crate::sides::from_start_edge(ev.bounds, ev.event.position.x),
+                ev.bounds.size.width,
+            )
         };
         // As cards, the panes share the room the gutter between them
         // leaves, the pointer at the gutter's middle.
@@ -4981,7 +4985,7 @@ fn turns_models(window: &Window) -> bool {
 /// apart.
 fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
     use crate::elements::edge::{Side, edge};
-    let side = if stacked { Side::Top } else { Side::Left };
+    let side = if stacked { Side::Top } else { Side::Start };
     edge(
         "split-resize",
         side,
@@ -4996,7 +5000,7 @@ fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
 /// gutter between them.
 fn split_gutter(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
     use crate::elements::edge::{Side, gutter};
-    let side = if stacked { Side::Top } else { Side::Left };
+    let side = if stacked { Side::Top } else { Side::Start };
     gutter(
         "split-resize",
         side,
@@ -5209,6 +5213,10 @@ impl Render for Shell {
             .flex_col()
             .font_family(theme.font.clone())
             .text_body()
+            // Laid out in the window's direction, its texts aligned at
+            // their start: mirrored while it speaks a language written
+            // right to left (`sides`, ADR-139, 12).
+            .map(crate::sides::Sides::window_direction)
             // Nothing painted under the window's areas: each paints its own
             // ground once (`Theme::window_bg`, `window_bar`), so what is
             // behind the window shows through as much as they let it.

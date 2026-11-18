@@ -1,0 +1,1715 @@
+0072 line-breaks-by-uax-14: A line wraps where the Unicode line breaking algorithm (UAX #14) lets it, by ICU4X's line segmenter with its data compiled in behind one seam: kinsoku, Thai, Lao, Khmer and Burmese by dictionary, Tibetan, the bidirectional controls' glue; ASCII by its classes without the segmenter; a text's breaks kept while it is wrapped; no row is spaces alone; 0071's rule goes
+
+diff --git a/crates/gpui/Cargo.toml b/crates/gpui/Cargo.toml
+index 019fdfa..0342da5 100644
+--- a/crates/gpui/Cargo.toml
++++ b/crates/gpui/Cargo.toml
+@@ -115,8 +115,7 @@ taffy = { workspace = true, features = [
+ thiserror.workspace = true
+ gpui_util.workspace = true
+ unicode-bidi.workspace = true
+-unicode-properties = { version = "0.1.3", default-features = false, features = ["general-category"] }
+-unicode-script.workspace = true
++icu_segmenter = { version = "2.4", default-features = false, features = ["compiled_data"] }
+ hdrhistogram = { workspace = true, optional = true }
+ waker-fn = "1.2.0"
+ lyon = "1.0"
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index 1c59e1e..293fae3 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -2,6 +2,7 @@ mod bidi;
+ mod font_fallbacks;
+ mod font_features;
+ mod line;
++mod line_breaks;
+ mod line_layout;
+ mod line_wrapper;
+ 
+diff --git a/crates/gpui/src/text_system/bidi.rs b/crates/gpui/src/text_system/bidi.rs
+index 4e28e82..70395f4 100644
+--- a/crates/gpui/src/text_system/bidi.rs
++++ b/crates/gpui/src/text_system/bidi.rs
+@@ -640,6 +640,7 @@ fn take(taken: &mut SmallVec<[Pixels; 32]>, x: Pixels) {
+ 
+ #[cfg(test)]
+ mod tests {
++    use super::super::line_breaks::LineBreaks;
+     use super::*;
+     use crate::{FontId, GlyphId, LineLayout, ShapedRun, WrappedLineLayout, point};
+ 
+@@ -853,7 +854,8 @@ mod tests {
+     /// cache wraps it.
+     fn wrapped(text: &str, width: f32) -> WrappedLineLayout {
+         let layout = Arc::new(laid_out(text));
+-        let (unwrapped_layout, wrap_boundaries) = layout.wrapped(text, px(width), None);
++        let (unwrapped_layout, wrap_boundaries) =
++            layout.wrapped(text, &LineBreaks::of(text), px(width), None);
+         WrappedLineLayout {
+             unwrapped_layout,
+             wrap_boundaries,
+@@ -940,15 +942,16 @@ mod tests {
+         let text = "abc def ghi";
+         let layout = Arc::new(laid_out(text));
+         assert!(layout.bidi_levels.is_none());
+-        let (drawn_from, boundaries) = layout.wrapped(text, px(45.), None);
++        let (drawn_from, boundaries) = layout.wrapped(text, &LineBreaks::of(text), px(45.), None);
+         assert!(Arc::ptr_eq(&drawn_from, &layout));
+         assert_eq!(
+             boundaries,
+-            layout.compute_wrap_boundaries(text, px(45.), None)
++            layout.compute_wrap_boundaries(text, &LineBreaks::of(text), px(45.), None)
+         );
+         // A line holding Hebrew that fits keeps its layout too.
+         let hebrew = Arc::new(laid_out(HEBREW));
+-        let (drawn_from, boundaries) = hebrew.wrapped(HEBREW, px(100.), None);
++        let (drawn_from, boundaries) =
++            hebrew.wrapped(HEBREW, &LineBreaks::of(HEBREW), px(100.), None);
+         assert!(Arc::ptr_eq(&drawn_from, &hebrew) && boundaries.is_empty());
+     }
+ 
+diff --git a/crates/gpui/src/text_system/line_breaks.rs b/crates/gpui/src/text_system/line_breaks.rs
+new file mode 100644
+index 0000000..f53597a
+--- /dev/null
++++ b/crates/gpui/src/text_system/line_breaks.rs
+@@ -0,0 +1,627 @@
++//! Where a line may wrap: the Unicode line breaking algorithm (UAX #14) in
++//! full, as ICU4X's line segmenter answers it. No line starts with closing
++//! punctuation (`。`, `、`, `」`, `）`, `！`, `？`, `…`: Japanese and Chinese
++//! kinsoku) nor ends with opening punctuation (`「`, `（`); Thai, Lao, Khmer
++//! and Burmese break between their words, found in a dictionary; Tibetan
++//! after its tsheg; Chinese, Japanese and Korean between characters, but not
++//! before a small kana or a prolonged sound mark (the standard's strict
++//! default); a word of any script that puts spaces between its words is
++//! kept whole, its marks with their letters, and the joiners, no-break
++//! spaces and bidirectional controls (an isolated name, ADR-139's) glue.
++//!
++//! The wrapped layout (`LineLayout::compute_wrap_boundaries`), its narrowest
++//! width (`LineLayout::min_wrap_width`) and the line wrapper
++//! (`LineWrapper::wrap_line`, `truncate_wrapped_line`) ask it alike, so they
++//! never disagree.
++//!
++//! One tailoring is gpui's: a line's indent, the spaces it starts with
++//! (and those after each newline), is no place to wrap, nor is the place
++//! before its first other character, so no row is only an indent (an
++//! editor's continuation rows keep it, `IndentAdjustment`).
++//!
++//! Text all ASCII is answered here, by the rules as they apply to its
++//! classes (`ascii`), which give what the segmenter gives (a test compares
++//! them); any other goes to the segmenter. The segmenter's data is compiled
++//! in, behind one seam (`segmenter`), where a data pack read at run time
++//! could take its place.
++
++use icu_segmenter::{LineSegmenter, LineSegmenterBorrowed, options::LineBreakOptions};
++use smallvec::{SmallVec, smallvec};
++use std::sync::LazyLock;
++
++/// The places a line may wrap at, found once for its text: before each of
++/// its byte indices set here.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub(crate) struct LineBreaks {
++    /// A bit for each byte of the text: whether the line may wrap before
++    /// it. Inline up to 256 bytes (a file name).
++    bits: SmallVec<[u64; 4]>,
++}
++
++impl LineBreaks {
++    /// Where `text`, one line or several (each newline starts a new one),
++    /// may wrap: its opportunities (UAX #14), but in each line's indent.
++    pub(crate) fn of(text: &str) -> Self {
++        let mut breaks = Self::opportunities(text);
++        breaks.keep_indents(text);
++        breaks
++    }
++
++    /// Each place `text` may wrap at by UAX #14: the byte indices between
++    /// its start and its end (neither of which is one).
++    fn opportunities(text: &str) -> Self {
++        let mut breaks = Self {
++            bits: smallvec![0; text.len().div_ceil(64)],
++        };
++        if text.is_ascii() {
++            ascii::opportunities(text.as_bytes(), &mut breaks.bits);
++        } else {
++            for index in segmenter().segment_str(text) {
++                if 0 < index && index < text.len() {
++                    breaks.bits[index / 64] |= 1 << (index % 64);
++                }
++            }
++        }
++        breaks
++    }
++
++    /// Whether a line may wrap before the byte at `index`.
++    #[inline]
++    pub(crate) fn before(&self, index: usize) -> bool {
++        self.bits
++            .get(index / 64)
++            .is_some_and(|word| (word >> (index % 64)) & 1 == 1)
++    }
++
++    /// No wrap in a line's indent, nor before its first character other
++    /// than a space.
++    fn keep_indents(&mut self, text: &str) {
++        let bytes = text.as_bytes();
++        let mut start = 0;
++        loop {
++            let mut index = start;
++            while index < bytes.len() && bytes[index] == b' ' {
++                index += 1;
++            }
++            for cleared in start..(index + 1).min(bytes.len()) {
++                self.bits[cleared / 64] &= !(1 << (cleared % 64));
++            }
++            match text[index..].find('\n') {
++                Some(offset) => start = index + offset + 1,
++                None => break,
++            }
++        }
++    }
++}
++
++/// The segmenter that finds where text other than ASCII may wrap: ICU4X's,
++/// the rules of UAX #14 and the dictionaries of Thai, Lao, Khmer and
++/// Burmese compiled in (`compiled_data`), the standard's strict breaks
++/// (`LineBreakStrictness::Strict`, its default) and no locale's tailoring.
++/// Where the data comes from is said here alone: a data pack read at run
++/// time would be loaded here instead
++/// (`LineSegmenter::try_new_dictionary_with_buffer_provider`).
++fn segmenter() -> LineSegmenterBorrowed<'static> {
++    static SEGMENTER: LazyLock<LineSegmenterBorrowed<'static>> =
++        LazyLock::new(|| LineSegmenter::new_dictionary(LineBreakOptions::default()));
++    *SEGMENTER
++}
++
++/// UAX #14 over text all ASCII, by the classes of its characters
++/// (`LineBreak.txt`): what ICU4X's segmenter finds there (the tests compare
++/// them on every string of up to four characters' classes and longer ones
++/// at random), without its tables. The rules that apply to ASCII ask, of
++/// what came before a character, only the class of the last one not a
++/// space (a mark read as its base), whether spaces followed it, and whether
++/// it was an opening bracket: a state, and a table of steps from each state
++/// by each class, worked out from the rules when gpui is built.
++mod ascii {
++    /// The line breaking classes of ASCII.
++    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++    #[repr(u8)]
++    enum Class {
++        /// Letters, `#&*<=>@^_`~`: alphabetic.
++        AL,
++        /// Tab, `|`: a break after.
++        BA,
++        /// Vertical tab, form feed: a mandatory break.
++        BK,
++        /// `}`: closing punctuation.
++        CL,
++        /// Other controls: combining marks, as their base.
++        CM,
++        /// `)`, `]`: closing parentheses.
++        CP,
++        /// Carriage return.
++        CR,
++        /// `!`, `?`: exclamation, interrogation.
++        EX,
++        /// `-`: a hyphen.
++        HY,
++        /// `,.:;`: infix numeric separators.
++        IS,
++        /// Line feed.
++        LF,
++        /// Digits.
++        NU,
++        /// `([{`: opening punctuation.
++        OP,
++        /// `%`: a postfix numeric.
++        PO,
++        /// `$+\`: prefix numerics.
++        PR,
++        /// `"`, `'`: quotation marks.
++        QU,
++        /// The space.
++        SP,
++        /// `/`: a symbol that allows a break after.
++        SY,
++    }
++
++    use Class::*;
++
++    const ALL: [Class; 18] = [
++        AL, BA, BK, CL, CM, CP, CR, EX, HY, IS, LF, NU, OP, PO, PR, QU, SP, SY,
++    ];
++
++    const fn class_of(byte: u8) -> Class {
++        match byte {
++            b'\t' | b'|' => BA,
++            b'\n' => LF,
++            0x0B | 0x0C => BK,
++            b'\r' => CR,
++            0x00..=0x1F | 0x7F => CM,
++            b' ' => SP,
++            b'!' | b'?' => EX,
++            b'"' | b'\'' => QU,
++            b'$' | b'+' | b'\\' => PR,
++            b'%' => PO,
++            b'(' | b'[' | b'{' => OP,
++            b')' | b']' => CP,
++            b'}' => CL,
++            b',' | b'.' | b':' | b';' => IS,
++            b'-' => HY,
++            b'/' => SY,
++            b'0'..=b'9' => NU,
++            _ => AL,
++        }
++    }
++
++    /// What a line reads as before a character: the class of the last
++    /// character before it (a mark's base's, LB9), as a number, but where
++    /// these say otherwise. Never a space's or a mark's.
++    type State = u8;
++    /// After spaces, the last character before them no opening bracket.
++    const SPACES: State = 18;
++    /// After an opening bracket and spaces (LB14).
++    const SPACES_AFTER_OP: State = 19;
++    /// Before the first character.
++    const START: State = 20;
++    /// A step's bit saying a line may wrap before the character.
++    const WRAPS: u16 = 0x8000;
++
++    const fn is(state: State, class: Class) -> bool {
++        state == class as u8
++    }
++
++    /// Whether a line may wrap between a character of class `before` and
++    /// one of class `after`, nothing else between them (no space, no hard
++    /// break, no mark). It may only before a letter, a digit, an opening
++    /// bracket or a numeric prefix or postfix, and there only after what
++    /// allows it.
++    const fn between(before: Class, after: Class) -> bool {
++        match after {
++            // LB13 (× CL, × CP, × EX, × IS, × SY), LB19 (× QU), LB21 (× BA,
++            // × HY).
++            CL | CP | EX | IS | SY | QU | BA | HY => false,
++            AL | NU | OP | PR | PO => match before {
++                // LB19 (QU ×), LB14 (OP ×); LB23, LB24, LB28, LB30 (an
++                // alphabetic or a digit before a letter, a digit, a numeric
++                // prefix or postfix, or an opening bracket), LB25 (NU ×
++                // (NU | PO | PR)).
++                QU | OP | AL | NU => false,
++                // LB31: a break after.
++                BA | EX => true,
++                // LB25 ((HY | SY) × NU).
++                HY | SY => !matches!(after, NU),
++                // LB29 (IS × AL), LB25 (IS × NU).
++                IS => !matches!(after, AL | NU),
++                // LB30 (CP × (AL | NU)), LB25 (CP × (PO | PR)).
++                CP => matches!(after, OP),
++                // LB25 (CL × (PO | PR)).
++                CL => !matches!(after, PO | PR),
++                // LB24 ((PR | PO) × AL), LB25 ((PR | PO) × (OP | NU)).
++                PR | PO => matches!(after, PR | PO),
++                // Never a state.
++                BK | CM | CR | LF | SP => false,
++            },
++            // Answered before.
++            BK | CM | CR | LF | SP => false,
++        }
++    }
++
++    /// Whether a line in `state` may wrap before a character of `class`
++    /// (the rules named are UAX #14's).
++    const fn wraps(state: State, class: Class) -> bool {
++        if state == START {
++            // LB2.
++            false
++        } else if is(state, CR) {
++            // LB5: after a carriage return, but before a line feed.
++            !matches!(class, LF)
++        } else if is(state, BK) || is(state, LF) {
++            // LB4, LB5.
++            true
++        } else if matches!(class, BK | CR | LF | SP) {
++            // LB6, LB7.
++            false
++        } else if state == SPACES {
++            // LB13 (× CL, CP, EX, IS, SY), else LB18 (SP ÷); a mark after a
++            // space is a letter (LB10).
++            !matches!(class, CL | CP | EX | IS | SY)
++        } else if state == SPACES_AFTER_OP {
++            // LB14 (OP SP* ×).
++            false
++        } else if matches!(class, CM) {
++            // LB9: a mark stays with its base.
++            false
++        } else {
++            between(ALL[state as usize], class)
++        }
++    }
++
++    /// The state after a character of `class`, read in `state`.
++    const fn next(state: State, class: Class) -> State {
++        match class {
++            SP if is(state, OP) || state == SPACES_AFTER_OP => SPACES_AFTER_OP,
++            SP => SPACES,
++            // LB9, LB10: a mark reads as its base, or as a letter where it
++            // has none.
++            CM if state >= SPACES || is(state, BK) || is(state, CR) || is(state, LF) => AL as u8,
++            CM => state,
++            _ => class as u8,
++        }
++    }
++
++    /// Each byte's class, then each state's step by each class: where the
++    /// next state's row starts (its number times 32), and `WRAPS` where a
++    /// line may wrap before the character. Rows of 32, so a step is looked
++    /// up without a bound, the row it leads to found by an or.
++    static CLASSES: [u8; 128] = {
++        let mut classes = [0; 128];
++        let mut byte = 0;
++        while byte < 128 {
++            classes[byte] = class_of(byte as u8) as u8;
++            byte += 1;
++        }
++        classes
++    };
++    static STEPS: [u16; 32 * 32] = {
++        let mut steps = [0; 32 * 32];
++        let mut state = 0;
++        while state <= START {
++            let mut class = 0;
++            while class < ALL.len() {
++                let wraps = if wraps(state, ALL[class]) { WRAPS } else { 0 };
++                steps[(state as usize) << 5 | class] =
++                    wraps | (next(state, ALL[class]) as u16) << 5;
++                class += 1;
++            }
++            state += 1;
++        }
++        steps
++    };
++
++    /// Sets in `bits` (one a byte) each place a line of ASCII `text` may
++    /// wrap at, as UAX #14 has it.
++    pub(super) fn opportunities(text: &[u8], bits: &mut [u64]) {
++        let mut row = usize::from(START) << 5;
++        for (chunk, word) in text.chunks(64).zip(bits) {
++            let mut found = 0;
++            for (at, byte) in chunk.iter().enumerate() {
++                let class = usize::from(CLASSES[usize::from(byte & 0x7F)]);
++                let step = STEPS[(row | class) & 0x3FF];
++                found |= u64::from(step >> 15) << at;
++                row = usize::from(step & !WRAPS);
++            }
++            *word = found;
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// Where `text` may wrap, the indent's tailoring left out.
++    fn opportunities_of(text: &str) -> Vec<usize> {
++        let breaks = LineBreaks::opportunities(text);
++        (0..text.len())
++            .filter(|index| breaks.before(*index))
++            .collect()
++    }
++
++    /// What the segmenter finds in `text`, between its ends.
++    fn segmented(text: &str) -> Vec<usize> {
++        segmenter()
++            .segment_str(text)
++            .filter(|index| 0 < *index && *index < text.len())
++            .collect()
++    }
++
++    /// What the ASCII pass finds in `text`.
++    fn by_classes(text: &str) -> Vec<usize> {
++        assert!(text.is_ascii());
++        opportunities_of(text)
++    }
++
++    /// `text` in the pieces a line may end after.
++    fn pieces(text: &str) -> Vec<&str> {
++        let breaks = LineBreaks::of(text);
++        let mut pieces = Vec::new();
++        let mut start = 0;
++        for (index, _) in text.char_indices().skip(1) {
++            if breaks.before(index) {
++                pieces.push(&text[start..index]);
++                start = index;
++            }
++        }
++        pieces.push(&text[start..]);
++        pieces
++    }
++
++    #[track_caller]
++    fn assert_whole(text: &str) {
++        assert_eq!(pieces(text), [text], "{text:?}");
++    }
++
++    #[test]
++    fn ascii_is_answered_as_the_segmenter_answers_it() {
++        // Every pair of ASCII characters.
++        for first in 0u8..128 {
++            for second in 0u8..128 {
++                let text = String::from_utf8(vec![first, second]).unwrap();
++                assert_eq!(by_classes(&text), segmented(&text), "{text:?}");
++            }
++        }
++        // Every string of up to four characters' classes, one character
++        // for each (a mark, a tab, `|`, the hard breaks among them).
++        let one_of_each = "\u{1}\t|\n\u{b}\r !\"a$%()},-/1";
++        let chars: Vec<char> = one_of_each.chars().collect();
++        let mut text = String::new();
++        for length in 1..=4u32 {
++            for mut n in 0..chars.len().pow(length) {
++                text.clear();
++                for _ in 0..length {
++                    text.push(chars[n % chars.len()]);
++                    n /= chars.len();
++                }
++                assert_eq!(by_classes(&text), segmented(&text), "{text:?}");
++            }
++        }
++        // Longer strings at random: words, numbers, punctuation and spaces.
++        let alphabet: Vec<u8> = (0u8..128)
++            .chain(b"aaaaeeeiioo     --..,,()11$%/".iter().copied())
++            .collect();
++        let mut seed = 0x2545_f491_4f6c_dd1du64;
++        let mut random = move || {
++            seed ^= seed << 13;
++            seed ^= seed >> 7;
++            seed ^= seed << 17;
++            seed
++        };
++        for _ in 0..3000 {
++            let length = (random() % 48) as usize + 1;
++            let bytes: Vec<u8> = (0..length)
++                .map(|_| alphabet[(random() % alphabet.len() as u64) as usize])
++                .collect();
++            let text = String::from_utf8(bytes).unwrap();
++            assert_eq!(by_classes(&text), segmented(&text), "{text:?}");
++        }
++    }
++
++    /// Where UAX #14 parts from the rules gpui had for ASCII (a word made
++    /// of letters, digits and `-_.'$%@#^~,=:;!)]}"`, a break before any
++    /// other character but a space), the standard is followed.
++    #[test]
++    fn ascii_wraps_as_the_standard_has_it() {
++        // Kept whole, as before.
++        for word in [
++            "Hello123",
++            "var_name",
++            "3.1415",
++            "10^2",
++            "1~2",
++            "100%",
++            "@mention",
++            "#hashtag",
++            "$variable",
++            "a=1",
++            "Self::is_word_char",
++            "on;",
++            "plz!",
++            "see)",
++            "github.com",
++            "it's",
++            "file_2026-11-18.txt",
++            "photo(1).jpg",
++        ] {
++            assert_whole(word);
++        }
++        // After a hyphen, not inside the word: "non-|English".
++        assert_eq!(pieces("non-English"), ["non-", "English"]);
++        // After a slash, not before it.
++        assert_eq!(pieces("zed-industries/zed"), ["zed-", "industries/", "zed"]);
++        assert_eq!(pieces("a/b/c.txt"), ["a/", "b/", "c.txt"]);
++        // After a question mark, not before it.
++        assert_eq!(pieces("foo?b=2"), ["foo?", "b=2"]);
++        // `&`, `+`, `*`, `<` and `>` are letters and numeric prefixes: no
++        // break before them.
++        assert_whole("a=1&b=2");
++        assert_whole("2+3");
++        assert_whole("a<b>c");
++        assert_eq!(pieces("C++ code"), ["C+", "+ ", "code"]);
++        // Brackets: no break after an opening one, before a closing one,
++        // or between a word and its bracket.
++        assert_eq!(pieces("a (b) c"), ["a ", "(b) ", "c"]);
++        assert_whole("a(b)c");
++        assert_eq!(pieces("()[]{}<>"), ["()", "[]", "{}", "<>"]);
++        // No break before punctuation, even after a space.
++        assert_whole("a !");
++        assert_whole("x .5");
++        // A number keeps its sign and unit.
++        assert_eq!(pieces("x -1"), ["x ", "-1"]);
++        assert_whole("$(5");
++        // A tab allows a break after it.
++        assert_eq!(pieces("a\tb"), ["a\t", "b"]);
++    }
++
++    #[test]
++    fn an_indent_is_no_place_to_wrap() {
++        assert_eq!(pieces("   aaa bb"), ["   aaa ", "bb"]);
++        assert_eq!(pieces("aa   bb"), ["aa   ", "bb"]);
++        // Each line has its own.
++        assert_eq!(
++            pieces("a b\n  c d"),
++            ["a ", "b\n  c ", "d"],
++            "nothing before c"
++        );
++        assert_whole("     ");
++        // The same beyond ASCII.
++        assert_eq!(pieces("  été là"), ["  été ", "là"]);
++    }
++
++    /// What 0071 told by Unicode properties, kept: every script that puts
++    /// spaces between its words keeps them whole, marks with their letters.
++    #[test]
++    fn a_word_of_any_script_is_kept_whole() {
++        for word in [
++            // Latin, its accents composed and typed apart, Vietnamese.
++            "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ",
++            "ĀāĂăĄąĆćĈĉĊċČčĎď",
++            "ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ",
++            "e\u{301}te\u{301}",
++            "ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng",
++            "l'été",
++            "aujourd'hui",
++            "won’t",
++            "‘twas",
++            "quoted”",
++            "well…",
++            "more⋯",
++            "µ²½ªº",
++            "2×3",
++            // Cyrillic, Greek, Armenian, Georgian.
++            "АБВГДЕЖЗИЙКЛМНОП",
++            "Ελληνικά",
++            "Հայերեն",
++            "ქართული",
++            // Hebrew with its points, Arabic with its digits and a vowel.
++            "שלום",
++            "\u{5e9}\u{5c1}\u{5b8}\u{5dc}\u{5d5}\u{5b9}\u{5dd}",
++            "مرحبا",
++            "\u{661}\u{662}\u{663}\u{64e}",
++            // Devanagari (a virama, vowel signs, digits), Bengali, Tamil.
++            "हिन्दी१२३",
++            "গিয়েছিলেন",
++            "ছেলে",
++            "হচ্ছিল",
++            "தமிழ்",
++            // Ethiopic, Canadian syllabics.
++            "አማርኛ",
++            "ᐃᓄᒃᑎᑐᑦ",
++        ] {
++            assert_whole(word);
++        }
++        assert_eq!(pieces("שלום עולם"), ["שלום ", "עולם"]);
++        assert_eq!(pieces("Ελληνικά λέξη"), ["Ελληνικά ", "λέξη"]);
++    }
++
++    /// Glue: no break beside a joiner, a no-break space or hyphen, or a
++    /// bidirectional control (0071's, the standard's): a name isolated
++    /// inside its quotes (ADR-139) wraps as its words and its quotes do.
++    #[test]
++    fn glue_holds() {
++        assert_whole("a\u{202F}b\u{00A0}c\u{2011}d");
++        assert_whole("a\u{200d}b\u{2060}c\u{feff}d");
++        assert_whole("a\u{200f}b\u{202e}c\u{202c}d");
++        assert_whole("\u{2068}name\u{2069}”");
++        assert_eq!(
++            pieces("“\u{2068}a name\u{2069}” x"),
++            ["“\u{2068}a ", "name\u{2069}” ", "x"]
++        );
++        assert_eq!(
++            pieces("a \u{2068}שלום\u{2069} b"),
++            ["a ", "\u{2068}שלום\u{2069} ", "b"]
++        );
++        // French guillemets keep their words, spaces between (LB15a, LB15b).
++        assert_eq!(pieces("« Bonjour » dit-il"), ["« Bonjour » ", "dit-", "il"]);
++        // An emoji's joined sequence is one.
++        assert_eq!(
++            pieces("😀😁👨\u{200d}👩\u{200d}👧"),
++            ["😀", "😁", "👨\u{200d}👩\u{200d}👧"]
++        );
++    }
++
++    /// Chinese, Japanese and Korean break between characters, but no line
++    /// starts with closing punctuation, a small kana or a prolonged sound
++    /// mark, nor ends with opening punctuation (kinsoku).
++    #[test]
++    fn east_asian_text_breaks_between_characters_but_its_punctuation() {
++        assert_eq!(pieces("中文字"), ["中", "文", "字"]);
++        assert_eq!(pieces("ㄅㄆ"), ["ㄅ", "ㄆ"]);
++        assert_eq!(pieces("ꆈꌠ"), ["ꆈ", "ꌠ"]);
++        assert_eq!(pieces("한국어 문장"), ["한", "국", "어 ", "문", "장"]);
++        assert_eq!(
++            pieces("語。語、本，語」日）日！日？日…日"),
++            [
++                "語。", "語、", "本，", "語」", "日）", "日！", "日？", "日…", "日"
++            ]
++        );
++        assert_eq!(pieces("日「本（語"), ["日", "「本", "（語"]);
++        assert_eq!(
++            pieces("「こんにちは」と言った。"),
++            ["「こ", "ん", "に", "ち", "は」", "と", "言っ", "た。"]
++        );
++        assert_eq!(pieces("ちょっとキャー"), ["ちょっ", "と", "キャー"]);
++        // A Japanese voiced mark typed apart stays with its kana.
++        assert_eq!(pieces("か\u{3099}か"), ["か\u{3099}", "か"]);
++    }
++
++    /// Thai, Lao, Khmer and Burmese, written without spaces between their
++    /// words, break between words a dictionary knows, never inside one, nor
++    /// before a mark (0071 broke them between any two letters); Tibetan
++    /// after its tsheg.
++    #[test]
++    fn scripts_without_spaces_break_between_their_words() {
++        assert_eq!(pieces("ข้าวมันไก่อร่อยมาก"), ["ข้าว", "มัน", "ไก่", "อร่อย", "มาก"]);
++        assert_eq!(pieces("ขอบคุณครับ"), ["ขอบคุณ", "ครับ"]);
++        assert_eq!(pieces("กี่ข"), ["กี่", "ข"]);
++        assert_whole("\u{e35}\u{e48}");
++        assert_eq!(pieces("ລາວສາມາດເວົ້າ"), ["ລາວ", "ສາມາດ", "ເວົ້າ"]);
++        assert_eq!(pieces("ខ្ញុំស្រលាញ់ភាសាខ្មែរ"), ["ខ្ញុំ", "ស្រលាញ់", "ភាសាខ្មែរ"]);
++        assert_eq!(pieces("မြန်မာဘာသာစကား"), ["မြန်မာဘာသာ", "စကား"]);
++        assert_eq!(pieces("བོད་ཀྱི་སྐད་ཡིག"), ["བོད་", "ཀྱི་", "སྐད་", "ཡིག"]);
++    }
++
++    #[test]
++    fn breaks_lie_between_characters() {
++        for text in [
++            "日本語ですね",
++            "ข้าวมันไก่",
++            "été là-bas",
++            "a\u{301} b",
++            "😀😁",
++        ] {
++            let found = opportunities_of(text);
++            assert!(!found.is_empty(), "{text:?}");
++            assert!(
++                found.iter().all(|index| text.is_char_boundary(*index)),
++                "{text:?}: {found:?}"
++            );
++        }
++        assert!(opportunities_of("").is_empty());
++        assert!(LineBreaks::of("").bits.is_empty());
++        assert!(!LineBreaks::of("a b").before(99));
++    }
++}
+diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
+index d9eacba..a5ee74e 100644
+--- a/crates/gpui/src/text_system/line_layout.rs
++++ b/crates/gpui/src/text_system/line_layout.rs
+@@ -15,8 +15,8 @@ use std::{
+ };
+ 
+ use super::{
+-    LineWrapper,
+     bidi::{BidiLevels, BidiRow, Cell, Row},
++    line_breaks::LineBreaks,
+ };
+ 
+ /// A laid out and styled line of text
+@@ -334,31 +334,29 @@ impl LineLayout {
+     }
+ 
+     /// The narrowest width this line wraps to without cutting a word: the
+-    /// widest stretch between two places it may wrap (`wraps_before`),
++    /// widest stretch between two places it may wrap (`LineBreaks`),
+     /// measured as `compute_wrap_boundaries` measures a line, so that
+     /// wrapped at it, no word is broken. A text's minimum content width,
+     /// as CSS has it.
+     pub fn min_wrap_width(&self, text: &str) -> Pixels {
++        self.min_wrap_width_at(text, &LineBreaks::of(text))
++    }
++
++    /// `min_wrap_width`, where `text` may wrap at `breaks`.
++    fn min_wrap_width_at(&self, text: &str, breaks: &LineBreaks) -> Pixels {
+         if let Some(levels) = &self.bidi_levels {
+-            return min_wrap_width_in_text_order(&self.cells_in_text_order(levels), text);
++            return min_wrap_width_in_text_order(&self.cells_in_text_order(levels), text, breaks);
+         }
+         let mut widest = px(0.);
+         let mut stretch_x = px(0.);
+-        let mut started = false;
+-        let mut prev_ch = '\0';
++        let mut prev_index = None;
+         for glyph in self.runs.iter().flat_map(|run| run.glyphs.iter()) {
+-            let Some(ch) = text.get(glyph.index..).and_then(|rest| rest.chars().next()) else {
+-                continue;
+-            };
+-            if ch == '\n' {
+-                continue;
+-            }
+-            if wraps_before(prev_ch, ch, started) {
++            // A place to wrap is before the first glyph of its character.
++            if prev_index != Some(glyph.index) && breaks.before(glyph.index) {
+                 widest = widest.max(glyph.position.x - stretch_x);
+                 stretch_x = glyph.position.x;
+             }
+-            started |= ch != ' ';
+-            prev_ch = ch;
++            prev_index = Some(glyph.index);
+         }
+         widest.max(self.width - stretch_x)
+     }
+@@ -367,21 +365,23 @@ impl LineLayout {
+     /// layout its rows are drawn from, and where each row after the first
+     /// starts in it. A line holding right-to-left text wraps in its text's
+     /// order, each row then laid out as it reads (`LineLayout::rows_as_read`);
+-    /// any other, and one that fits, is drawn from itself.
++    /// any other, and one that fits, is drawn from itself. It wraps where
++    /// `breaks`, found for `text`, let it.
+     pub(crate) fn wrapped(
+         self: &Arc<Self>,
+         text: &str,
++        breaks: &LineBreaks,
+         wrap_width: Pixels,
+         max_lines: Option<usize>,
+     ) -> (Arc<LineLayout>, SmallVec<[WrapBoundary; 1]>) {
+         let Some(levels) = &self.bidi_levels else {
+             return (
+                 self.clone(),
+-                self.compute_wrap_boundaries(text, wrap_width, max_lines),
++                self.compute_wrap_boundaries(text, breaks, wrap_width, max_lines),
+             );
+         };
+         let cells = self.cells_in_text_order(levels);
+-        let starts = wrap_in_text_order(&cells, text, wrap_width, max_lines);
++        let starts = wrap_in_text_order(&cells, text, breaks, wrap_width, max_lines);
+         if starts.is_empty() {
+             return (self.clone(), SmallVec::new());
+         }
+@@ -389,9 +389,12 @@ impl LineLayout {
+         (Arc::new(laid), boundaries)
+     }
+ 
++    /// Where this line wraps at `wrap_width`, in `max_lines` rows at most,
++    /// where `breaks`, found for `text`, let it.
+     pub(crate) fn compute_wrap_boundaries(
+         &self,
+         text: &str,
++        breaks: &LineBreaks,
+         wrap_width: Pixels,
+         max_lines: Option<usize>,
+     ) -> SmallVec<[WrapBoundary; 1]> {
+@@ -401,7 +404,7 @@ impl LineLayout {
+             // the rows themselves, which `wrapped` lays out.
+             let cells = self.cells_in_text_order(levels);
+             let mut boundaries: SmallVec<[WrapBoundary; 1]> =
+-                wrap_in_text_order(&cells, text, wrap_width, max_lines)
++                wrap_in_text_order(&cells, text, breaks, wrap_width, max_lines)
+                     .into_iter()
+                     .map(|start| cells[start].first)
+                     .collect();
+@@ -409,7 +412,10 @@ impl LineLayout {
+             return boundaries;
+         }
+         let mut boundaries = SmallVec::new();
+-        let mut first_non_whitespace_ix = None;
++        let mut prev_index = None;
++        // Whether the row holds anything but spaces yet: before that, no
++        // place to wrap, as `LineWrapper::wrap_line` has it.
++        let mut row_has_text = false;
+         let mut last_candidate_ix = None;
+         let mut last_candidate_x = px(0.);
+         let mut last_boundary = WrapBoundary {
+@@ -417,7 +423,6 @@ impl LineLayout {
+             glyph_ix: 0,
+         };
+         let mut last_boundary_x = px(0.);
+-        let mut prev_ch = '\0';
+         let mut glyphs = self
+             .runs
+             .iter()
+@@ -429,28 +434,29 @@ impl LineLayout {
+                         WrapBoundary { run_ix, glyph_ix },
+                         character,
+                         glyph.position.x,
++                        glyph.index,
+                     )
+                 })
+             })
+             .peekable();
+ 
+-        while let Some((boundary, ch, x)) = glyphs.next() {
++        while let Some((boundary, ch, x, index)) = glyphs.next() {
+             if ch == '\n' {
+                 continue;
+             }
+ 
+             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
+-            // but there are some differences, so we have to duplicate the code here.
+-            if wraps_before(prev_ch, ch, first_non_whitespace_ix.is_some()) {
++            // but there are some differences, so we have to duplicate the code here. Both
++            // wrap where `breaks` let them, once the row holds more than spaces; here before
++            // the first glyph of a character.
++            if row_has_text && prev_index != Some(index) && breaks.before(index) {
+                 last_candidate_ix = Some(boundary);
+                 last_candidate_x = x;
+             }
++            prev_index = Some(index);
++            row_has_text |= ch != ' ';
+ 
+-            if ch != ' ' && first_non_whitespace_ix.is_none() {
+-                first_non_whitespace_ix = Some(boundary);
+-            }
+-
+-            let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
++            let next_x = glyphs.peek().map_or(self.width, |(_, _, x, _)| *x);
+             let width = next_x - last_boundary_x;
+ 
+             if width > wrap_width && boundary > last_boundary {
+@@ -464,13 +470,14 @@ impl LineLayout {
+                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
+                     last_boundary = last_candidate_ix;
+                     last_boundary_x = last_candidate_x;
++                    row_has_text = true;
+                 } else {
+                     last_boundary = boundary;
+                     last_boundary_x = x;
++                    row_has_text = ch != ' ';
+                 }
+                 boundaries.push(last_boundary);
+             }
+-            prev_ch = ch;
+         }
+ 
+         boundaries
+@@ -478,20 +485,21 @@ impl LineLayout {
+ }
+ 
+ /// Where a line whose cells are `cells`, in its text's order, wraps at
+-/// `wrap_width`, in `max_lines` rows at most: the first cell of each row but
+-/// the first. As `LineLayout::compute_wrap_boundaries` wraps a line, its
+-/// cells measured one after another in the text's order.
++/// `wrap_width`, in `max_lines` rows at most, where `breaks` let it: the
++/// first cell of each row but the first. As
++/// `LineLayout::compute_wrap_boundaries` wraps a line, its cells measured
++/// one after another in the text's order.
+ fn wrap_in_text_order(
+     cells: &[Cell],
+     text: &str,
++    breaks: &LineBreaks,
+     wrap_width: Pixels,
+     max_lines: Option<usize>,
+ ) -> SmallVec<[usize; 1]> {
+     let mut starts = SmallVec::new();
+-    let mut started = false;
++    let mut row_has_text = false;
+     let mut last_candidate: Option<(usize, Pixels)> = None;
+     let mut last_boundary = (0, px(0.));
+-    let mut prev_ch = '\0';
+     let mut x = px(0.);
+     for (k, cell) in cells.iter().enumerate() {
+         let next_x = x + cell.width();
+@@ -503,65 +511,50 @@ fn wrap_in_text_order(
+             x = next_x;
+             continue;
+         }
+-        if wraps_before(prev_ch, ch, started) {
++        if row_has_text && breaks.before(cell.index) {
+             last_candidate = Some((k, x));
+         }
+-        started |= ch != ' ';
++        row_has_text |= ch != ' ';
+         if next_x - last_boundary.1 > wrap_width && k > last_boundary.0 {
+             if let Some(max_lines) = max_lines
+                 && starts.len() >= max_lines.saturating_sub(1)
+             {
+                 break;
+             }
+-            last_boundary = last_candidate.take().unwrap_or((k, x));
++            last_boundary = match last_candidate.take() {
++                Some(candidate) => candidate,
++                None => {
++                    row_has_text = ch != ' ';
++                    (k, x)
++                }
++            };
+             starts.push(last_boundary.0);
+         }
+-        prev_ch = ch;
+         x = next_x;
+     }
+     starts
+ }
+ 
+ /// `LineLayout::min_wrap_width` of a line whose cells are `cells`, in its
+-/// text's order.
+-fn min_wrap_width_in_text_order(cells: &[Cell], text: &str) -> Pixels {
++/// text's order, where `breaks` let it wrap.
++fn min_wrap_width_in_text_order(cells: &[Cell], text: &str, breaks: &LineBreaks) -> Pixels {
+     let mut widest = px(0.);
+     let mut stretch_x = px(0.);
+-    let mut started = false;
+-    let mut prev_ch = '\0';
+     let mut x = px(0.);
+     for cell in cells {
+         let ch = text
+             .get(cell.index..)
+             .and_then(|rest| rest.chars().next())
+             .unwrap_or(' ');
+-        if ch != '\n' {
+-            if wraps_before(prev_ch, ch, started) {
+-                widest = widest.max(x - stretch_x);
+-                stretch_x = x;
+-            }
+-            started |= ch != ' ';
+-            prev_ch = ch;
++        if ch != '\n' && breaks.before(cell.index) {
++            widest = widest.max(x - stretch_x);
++            stretch_x = x;
+         }
+         x += cell.width();
+     }
+     widest.max(x - stretch_x)
+ }
+ 
+-/// Whether a line may wrap before `ch`, coming after `prev_ch`, once a
+-/// character other than a space came (`started`): before a word after a
+-/// space, and before any other character but a space. The wrapped layout
+-/// and the narrowest width it wraps to (`LineLayout::min_wrap_width`) ask
+-/// it alike, so they never disagree.
+-fn wraps_before(prev_ch: char, ch: char, started: bool) -> bool {
+-    started
+-        && if LineWrapper::is_word_char(ch) {
+-            prev_ch == ' '
+-        } else {
+-            ch != ' '
+-        }
+-}
+-
+ /// A line of text that has been wrapped to fit a given width
+ #[derive(Default, Debug)]
+ pub struct WrappedLineLayout {
+@@ -704,8 +697,12 @@ impl WrappedLineLayout {
+     ) -> (Size<Pixels>, usize) {
+         let (width, wraps) = &*self.min_content.get_or_init(|| {
+             let layout = &self.unwrapped_layout;
+-            let width = layout.min_wrap_width(text);
+-            (width, layout.compute_wrap_boundaries(text, width, None))
++            let breaks = LineBreaks::of(text);
++            let width = layout.min_wrap_width_at(text, &breaks);
++            (
++                width,
++                layout.compute_wrap_boundaries(text, &breaks, width, None),
++            )
+         });
+         let kept = max_lines.map_or(wraps.len(), |lines| {
+             wraps.len().min(lines.saturating_sub(1))
+@@ -984,6 +981,9 @@ struct FrameCache {
+     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
+     used_lines: Vec<Arc<CacheKey>>,
+     used_wrapped_lines: Vec<Arc<CacheKey>>,
++    /// Where each text wrapped in the frame may wrap, kept by the text
++    /// alone (`LineLayoutCache::breaks_of`).
++    breaks: FxHashMap<SharedString, Arc<LineBreaks>>,
+ }
+ 
+ #[derive(Clone, Default)]
+@@ -1072,6 +1072,29 @@ impl LineLayoutCache {
+         current_frame.wrapped_lines.clear();
+         current_frame.used_lines.clear();
+         current_frame.used_wrapped_lines.clear();
++        current_frame.breaks.clear();
++    }
++
++    /// Where `text` may wrap (`LineBreaks`): found once while it is wrapped
++    /// frame after frame, whatever its width and font, so a text wrapped
++    /// anew as its window is resized is not segmented again (a look-up
++    /// costs less than ASCII's pass over the text, far less than the
++    /// segmenter).
++    fn breaks_of(&self, text: &SharedString) -> Arc<LineBreaks> {
++        let mut state = self.state.borrow_mut();
++        let LineLayoutCacheState {
++            previous_frame,
++            current_frame,
++        } = &mut *state;
++        if let Some(breaks) = current_frame.breaks.get(text.as_ref()) {
++            return breaks.clone();
++        }
++        let breaks = previous_frame
++            .breaks
++            .remove(text.as_ref())
++            .unwrap_or_else(|| Arc::new(LineBreaks::of(text)));
++        current_frame.breaks.insert(text.clone(), breaks.clone());
++        breaks
+     }
+ 
+     pub fn layout_wrapped_line<Text>(
+@@ -1115,7 +1138,8 @@ impl LineLayoutCache {
+             let text = SharedString::from(text);
+             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+             let (unwrapped_layout, wrap_boundaries) = if let Some(wrap_width) = wrap_width {
+-                unwrapped_layout.wrapped(text.as_ref(), wrap_width, max_lines)
++                let breaks = self.breaks_of(&text);
++                unwrapped_layout.wrapped(text.as_ref(), &breaks, wrap_width, max_lines)
+             } else {
+                 (unwrapped_layout, SmallVec::new())
+             };
+@@ -1561,12 +1585,13 @@ mod tests {
+         let narrowest = layout.min_wrap_width(text);
+         assert_eq!(narrowest, px(40.), "efgh");
+         let starts: Vec<usize> = layout
+-            .compute_wrap_boundaries(text, narrowest, None)
++            .compute_wrap_boundaries(text, &LineBreaks::of(text), narrowest, None)
+             .iter()
+             .map(|boundary| boundary.glyph_ix)
+             .collect();
+         assert_eq!(starts, [3, 6], "before cd and efgh");
+-        let cut = layout.compute_wrap_boundaries(text, narrowest - px(1.), None);
++        let cut =
++            layout.compute_wrap_boundaries(text, &LineBreaks::of(text), narrowest - px(1.), None);
+         assert!(cut.iter().any(|boundary| boundary.glyph_ix > 6), "efgh cut");
+         // Spaces before the first word are no place to wrap.
+         let text = "  ab";
+@@ -1578,6 +1603,27 @@ mod tests {
+         assert_eq!(layout.min_wrap_width(text), px(100.), "its whole width");
+     }
+ 
++    /// A row that a space overflowed into starts with it, and no place to
++    /// wrap comes before its first word: it is never left a space alone, as
++    /// `LineWrapper::wrap_line` wraps it.
++    #[test]
++    fn a_row_a_space_overflowed_into_is_not_left_alone() {
++        let text = "abcd efghijk";
++        let mut layout = make_layout(
++            text.char_indices()
++                .map(|(index, _)| glyph_at(index as f32 * 10., index))
++                .collect(),
++        );
++        layout.width = px(120.);
++        layout.len = text.len();
++        let starts: Vec<usize> = layout
++            .compute_wrap_boundaries(text, &LineBreaks::of(text), px(40.), None)
++            .iter()
++            .map(|boundary| boundary.glyph_ix)
++            .collect();
++        assert_eq!(starts, [4, 8], "abcd, \" efg\", hijk");
++    }
++
+     #[test]
+     fn a_word_of_any_script_is_kept_whole() {
+         // Each character one glyph 10 px wide: the narrowest a line goes
+@@ -1598,10 +1644,47 @@ mod tests {
+         assert_eq!(narrowest("ქართული ენა"), 80., "Georgian");
+         // A name isolated in its quotes is a word with them.
+         assert_eq!(narrowest("“\u{2068}ab\u{2069}”"), 60.);
+-        // Chinese breaks between any two characters; Thai too (no
+-        // dictionary), but not before its marks: "กี่" is one character.
++        // Chinese breaks between any two characters, but before its closing
++        // punctuation; Thai between its words, by a dictionary, never
++        // before its marks: "กี่" is one character, "ข้าว" the widest word.
+         assert_eq!(narrowest("中文字"), 10.);
++        assert_eq!(narrowest("中文。字"), 20.);
+         assert_eq!(narrowest("กี่ข"), 30.);
++        assert_eq!(narrowest("ข้าวมันไก่"), 40.);
++    }
++}
++
++#[cfg(test)]
++mod breaks_kept_tests {
++    use super::*;
++    use crate::platform::NoopTextSystem;
++
++    /// A text beyond ASCII wrapped anew at another width in the next frame
++    /// (its window resized) is not segmented again: its breaks are kept by
++    /// the text, and let go once a frame wraps it no more.
++    #[test]
++    fn a_text_s_breaks_are_kept_while_it_is_wrapped() {
++        let cache = LineLayoutCache::new(
++            Arc::new(NoopTextSystem::new()),
++            Arc::new(AtomicUsize::new(0)),
++        );
++        let text = "Le rapport définitif, relu à Noël";
++        let runs = [FontRun {
++            len: text.len(),
++            font_id: FontId(0),
++            position: RunPosition::Baseline,
++        }];
++        let shared = SharedString::from(text);
++        let wrapped = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(100.)), None);
++        assert!(!wrapped.wrap_boundaries.is_empty());
++        let found = cache.breaks_of(&shared);
++        cache.finish_frame();
++        let wider = cache.layout_wrapped_line(text, px(16.), &runs, Some(px(120.)), None);
++        assert!(!wider.wrap_boundaries.is_empty());
++        assert!(Arc::ptr_eq(&found, &cache.breaks_of(&shared)), "kept");
++        cache.finish_frame();
++        cache.finish_frame();
++        assert!(!Arc::ptr_eq(&found, &cache.breaks_of(&shared)), "let go");
+     }
+ }
+ 
+diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
+index 262f9f3..8e0916b 100644
+--- a/crates/gpui/src/text_system/line_wrapper.rs
++++ b/crates/gpui/src/text_system/line_wrapper.rs
+@@ -1,17 +1,7 @@
++use super::line_breaks::LineBreaks;
+ use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
+ use collections::HashMap;
+-use std::{
+-    borrow::Cow,
+-    iter,
+-    sync::{Arc, OnceLock},
+-};
+-use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
+-use unicode_script::{Script, UnicodeScript};
+-
+-/// Whether each character of the Basic Multilingual Plane is part of a
+-/// word (`LineWrapper::is_word_char`), a page of 256 at a time, each page
+-/// worked out the first time a character of it is asked about.
+-static WORD_PAGES: [OnceLock<[u64; 4]>; 256] = [const { OnceLock::new() }; 256];
++use std::{borrow::Cow, iter, sync::Arc};
+ 
+ /// Determines whether to truncate text from the start or end.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+@@ -82,20 +72,31 @@ impl LineWrapper {
+     }
+ 
+     /// Wrap a line of text to the given width with this wrapper's font and font size.
++    ///
++    /// It wraps where the line may (`LineBreaks`: UAX #14, but in its
++    /// indent), as the shaped layout does, but before a row's first
++    /// character other than a space: a row a space overflowed into starts
++    /// with it, which leaves no row of spaces alone. An element reads as a
++    /// letter of the word it stands in.
+     pub fn wrap_line<'a>(
+         &'a mut self,
+         fragments: &'a [LineFragment],
+         wrap_width: Pixels,
+         indent_adjustment: IndentAdjustment,
+     ) -> impl Iterator<Item = Boundary> + 'a {
++        let breaks = LineFragment::breaks(fragments);
+         let mut width = px(0.);
+         let mut first_non_whitespace_ix = None;
+         let mut base_indent = None;
+         let mut last_candidate_ix = 0;
+         let mut last_candidate_width = px(0.);
+         let mut last_wrap_ix = 0;
+-        let mut prev_c = '\0';
+         let mut index = 0;
++        // Where the candidate is in the text `breaks` were found in, an
++        // element there one character.
++        let mut text_index = 0;
++        // Whether the row holds anything but spaces yet.
++        let mut row_has_text = false;
+         let mut candidates = fragments
+             .iter()
+             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
+@@ -104,39 +105,31 @@ impl LineWrapper {
+             for candidate in candidates.by_ref() {
+                 let ix = index;
+                 index += candidate.len_utf8();
+-                let mut new_prev_c = prev_c;
++                let at = text_index;
++                text_index += candidate.text_len();
++                let is_space = matches!(candidate, WrapBoundaryCandidate::Char { character: ' ' });
+                 let item_width = match candidate {
+                     WrapBoundaryCandidate::Char { character: c } => {
+                         if c == '\n' {
+                             continue;
+                         }
+ 
+-                        if Self::is_word_char(c) {
+-                            if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
+-                                last_candidate_ix = ix;
+-                                last_candidate_width = width;
+-                            }
+-                        } else {
+-                            // CJK may not be space separated, e.g.: `Hello world你好世界`
+-                            if c != ' ' && first_non_whitespace_ix.is_some() {
+-                                last_candidate_ix = ix;
+-                                last_candidate_width = width;
+-                            }
++                        if row_has_text && breaks.before(at) {
++                            last_candidate_ix = ix;
++                            last_candidate_width = width;
+                         }
+ 
+                         if c != ' ' && first_non_whitespace_ix.is_none() {
+                             first_non_whitespace_ix = Some(ix);
+                         }
+ 
+-                        new_prev_c = c;
+-
+                         self.width_for_char(c)
+                     }
+                     WrapBoundaryCandidate::Element {
+                         width: element_width,
+                         ..
+                     } => {
+-                        if prev_c == ' ' && first_non_whitespace_ix.is_some() {
++                        if row_has_text && breaks.before(at) {
+                             last_candidate_ix = ix;
+                             last_candidate_width = width;
+                         }
+@@ -148,6 +141,7 @@ impl LineWrapper {
+                         element_width
+                     }
+                 };
++                row_has_text |= !is_space;
+ 
+                 width += item_width;
+                 if width > wrap_width && ix > last_wrap_ix {
+@@ -201,14 +195,12 @@ impl LineWrapper {
+                     if wrap_at_candidate {
+                         last_wrap_ix = last_candidate_ix;
+                         width -= last_candidate_width;
+-                        // What overflowed goes on with the next line, after the candidate: a
+-                        // word after a space that overflowed must still see that space, or it
+-                        // is no candidate and the next line breaks inside it (as the shaped
+-                        // layout never does).
+-                        prev_c = new_prev_c;
++                        // It starts with the word the candidate is before.
++                        row_has_text = true;
+                     } else {
+                         last_wrap_ix = ix;
+                         width = item_width;
++                        row_has_text = !is_space;
+                     }
+                     last_candidate_ix = 0;
+ 
+@@ -216,8 +208,6 @@ impl LineWrapper {
+ 
+                     return Some(Boundary::new(last_wrap_ix, next_indent));
+                 }
+-
+-                prev_c = new_prev_c;
+             }
+ 
+             None
+@@ -430,13 +420,17 @@ impl LineWrapper {
+             .map(|c| self.width_for_char(c))
+             .sum();
+ 
++        // Where it may wrap, as `wrap_line` wraps it: each line after a
++        // newline with its own indent, no row before its first character
++        // other than a space.
++        let breaks = LineBreaks::of(&text);
+         let mut width = px(0.);
+         let mut line = 0usize;
+         let mut first_non_whitespace_ix = None;
+         let mut last_candidate_ix = 0usize;
+         let mut last_candidate_width = px(0.);
+         let mut last_wrap_ix = 0usize;
+-        let mut prev_c = '\0';
++        let mut row_has_text = false;
+         let mut indent: Option<u32> = None;
+         let mut truncate_ix = 0usize;
+ 
+@@ -465,7 +459,7 @@ impl LineWrapper {
+                 last_candidate_ix = 0;
+                 last_candidate_width = px(0.);
+                 last_wrap_ix = ix + 1;
+-                prev_c = '\0';
++                row_has_text = false;
+                 indent = None;
+                 truncate_ix = ix + 1;
+                 continue;
+@@ -473,15 +467,11 @@ impl LineWrapper {
+ 
+             let char_width = self.width_for_char(c);
+ 
+-            if Self::is_word_char(c) {
+-                if prev_c == ' ' && first_non_whitespace_ix.is_some() {
+-                    last_candidate_ix = ix;
+-                    last_candidate_width = width;
+-                }
+-            } else if c != ' ' && first_non_whitespace_ix.is_some() {
++            if row_has_text && breaks.before(ix) {
+                 last_candidate_ix = ix;
+                 last_candidate_width = width;
+             }
++            row_has_text |= c != ' ';
+ 
+             if c != ' ' && first_non_whitespace_ix.is_none() {
+                 first_non_whitespace_ix = Some(ix);
+@@ -500,9 +490,11 @@ impl LineWrapper {
+                         last_wrap_ix = last_candidate_ix;
+                         width -= last_candidate_width;
+                         last_candidate_ix = 0;
++                        row_has_text = true;
+                     } else {
+                         last_wrap_ix = ix;
+                         width = char_width;
++                        row_has_text = c != ' ';
+                     }
+ 
+                     if let Some(ind) = indent {
+@@ -533,8 +525,6 @@ impl LineWrapper {
+                     return (result, Cow::Owned(runs));
+                 }
+             }
+-
+-            prev_c = c;
+         }
+ 
+         // Text fits within max_lines without truncation.
+@@ -647,123 +637,6 @@ impl LineWrapper {
+         (result, Cow::Owned(runs))
+     }
+ 
+-    /// Whether `c` is part of a word, which a line does not wrap inside:
+-    /// the letters, marks and digits of every script that puts spaces
+-    /// between its words (Latin, Greek, Cyrillic, Armenian, Georgian, Hebrew,
+-    /// Arabic, Devanagari, Bengali and the rest, by their Unicode
+-    /// properties, not by a list of blocks), the punctuation that stays with
+-    /// its word, and what glues characters together. The letters and digits
+-    /// of scripts written without spaces between words are not: a line
+-    /// wraps between any two of them (`breaks_between_characters`), but
+-    /// never before a mark, which stays with its letter.
+-    pub(crate) fn is_word_char(c: char) -> bool {
+-        if c.is_ascii() {
+-            // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
+-            return c.is_ascii_alphanumeric() ||
+-            // Some other known special characters that should be treated as word characters,
+-            // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+-            // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
+-            // is included so it stays attached to the preceding word when wrapping.
+-            matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
+-            // Closing punctuation never starts a line (UAX #14 LB13: no break
+-            // before `!`, `)`, `]`, `}`, closing quotes or an ellipsis) — `plz!`,
+-            // `see)`, `quoted”` wrap as one word instead of orphaning the mark on
+-            // the next line. `/` and `?` stay break opportunities so long paths
+-            // and URLs (`a/b`, `foo?b=2`) can wrap.
+-            matches!(c, '!' | ')' | ']' | '}' | '"');
+-        }
+-        // Beyond ASCII, a character of the Basic Multilingual Plane is
+-        // answered from its page (256 characters), classified the first
+-        // time one of it is asked about: the category and script look-ups
+-        // below cost a page once, not every character a wrap reads.
+-        let code = u32::from(c);
+-        if code < 0x1_0000 {
+-            let page = WORD_PAGES[(code >> 8) as usize].get_or_init(|| {
+-                let mut bits = [0u64; 4];
+-                for low in 0..256 {
+-                    if char::from_u32((code & !0xFF) | low)
+-                        .is_some_and(Self::is_word_char_beyond_ascii)
+-                    {
+-                        bits[(low >> 6) as usize] |= 1 << (low & 63);
+-                    }
+-                }
+-                bits
+-            });
+-            let low = code & 0xFF;
+-            return (page[(low >> 6) as usize] >> (low & 63)) & 1 == 1;
+-        }
+-        Self::is_word_char_beyond_ascii(c)
+-    }
+-
+-    /// `is_word_char` of a character beyond ASCII, worked out.
+-    fn is_word_char_beyond_ascii(c: char) -> bool {
+-        // As in ASCII: `won’t`, `‘twas`, `quoted”`, `«guillemets»`,
+-        // `well…`; `⋯`, which Zed keeps at the end of a line.
+-        if matches!(c, '’' | '‘' | '”' | '»' | '…' | '⋯') ||
+-            // Non-breaking glue characters
+-            matches!(c, '\u{202F}' | '\u{00A0}' | '\u{2011}') ||
+-            // What a line never breaks before (UAX #14): a joiner (ZWJ,
+-            // LB8a; the word joiner and the zero width no-break space,
+-            // LB11), and the bidirectional marks, embeddings, overrides and
+-            // isolates, which are combining marks to it (CM, LB9). They draw
+-            // nothing, and a name isolated in a sentence (FSI … PDI, inside
+-            // its quotes) wraps as its words and its quotes do.
+-            matches!(
+-                c,
+-                '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{061C}' | '\u{200E}' | '\u{200F}'
+-                    | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+-            )
+-        {
+-            return true;
+-        }
+-        // One look-up of the character's general category.
+-        match c.general_category_group() {
+-            // A mark stays with its letter, in every script.
+-            GeneralCategoryGroup::Mark => true,
+-            // The letters and digits of a script written with spaces
+-            // between its words.
+-            GeneralCategoryGroup::Letter | GeneralCategoryGroup::Number => {
+-                !Self::breaks_between_characters(c)
+-            }
+-            _ => false,
+-        }
+-    }
+-
+-    /// Whether `c` is a letter or digit of a script written without spaces
+-    /// between its words, which a line breaks between any two characters:
+-    /// Chinese, Japanese, Korean (UAX #14 breaks between Hangul syllables,
+-    /// as browsers do but where `word-break: keep-all` is asked), Yi and the
+-    /// other ideographic scripts; and Thai, Lao, Khmer, Myanmar and the Tai
+-    /// scripts, whose words a line should break between by a dictionary
+-    /// (UAX #14 class SA): gpui has none, so they break between characters
+-    /// too, never inside one (a mark stays with its letter), rather than
+-    /// run as one word as wide as the sentence. The scripts before Thai
+-    /// (U+0E00) are none of them: a Latin, Greek, Hebrew or Indic letter
+-    /// looks nothing up.
+-    fn breaks_between_characters(c: char) -> bool {
+-        u32::from(c) >= 0x0E00
+-            && matches!(
+-                c.script(),
+-                Script::Han
+-                    | Script::Hiragana
+-                    | Script::Katakana
+-                    | Script::Bopomofo
+-                    | Script::Hangul
+-                    | Script::Yi
+-                    | Script::Tangut
+-                    | Script::Nushu
+-                    | Script::Khitan_Small_Script
+-                    | Script::Thai
+-                    | Script::Lao
+-                    | Script::Khmer
+-                    | Script::Myanmar
+-                    | Script::Tai_Tham
+-                    | Script::Tai_Viet
+-                    | Script::Tai_Le
+-                    | Script::New_Tai_Lue
+-            )
+-    }
+-
+     #[inline(always)]
+     fn width_for_char(&mut self, c: char) -> Pixels {
+         if (c as u32) < 128 {
+@@ -912,6 +785,25 @@ impl<'a> LineFragment<'a> {
+         LineFragment::Element { width, len_utf8 }
+     }
+ 
++    /// Where a line made of `fragments` may wrap, at the indices of their
++    /// text joined, each element a letter there
++    /// (`WrapBoundaryCandidate::text_len`): it wraps before an element
++    /// after a space, never between one and the word it is in, as it did
++    /// before UAX #14 was asked.
++    fn breaks(fragments: &[LineFragment]) -> LineBreaks {
++        if let [LineFragment::Text { text }] = fragments {
++            return LineBreaks::of(text);
++        }
++        let mut text = String::new();
++        for fragment in fragments {
++            match fragment {
++                LineFragment::Text { text: fragment } => text.push_str(fragment),
++                LineFragment::Element { .. } => text.push(ELEMENT),
++            }
++        }
++        LineBreaks::of(&text)
++    }
++
+     fn wrap_boundary_candidates(&self) -> impl Iterator<Item = WrapBoundaryCandidate> {
+         let text = match self {
+             LineFragment::Text { text } => text,
+@@ -935,6 +827,9 @@ enum WrapBoundaryCandidate {
+     Element { width: Pixels, len_utf8: usize },
+ }
+ 
++/// What an element of a line reads as where its breaks are found: a letter.
++const ELEMENT: char = 'A';
++
+ impl WrapBoundaryCandidate {
+     pub fn len_utf8(&self) -> usize {
+         match self {
+@@ -942,6 +837,15 @@ impl WrapBoundaryCandidate {
+             WrapBoundaryCandidate::Element { len_utf8: len, .. } => *len,
+         }
+     }
++
++    /// Its length in the text a line's breaks are found in
++    /// (`LineFragment::breaks`).
++    fn text_len(&self) -> usize {
++        match self {
++            WrapBoundaryCandidate::Char { character } => character.len_utf8(),
++            WrapBoundaryCandidate::Element { .. } => ELEMENT.len_utf8(),
++        }
++    }
+ }
+ 
+ /// A boundary between two lines of text.
+@@ -1435,143 +1339,48 @@ mod tests {
+         perform_test("abcdefgh…", &[4, 4, 4], &[4, 4, 3]);
+     }
+ 
++    /// The wrapper wraps where UAX #14 lets a line wrap (`LineBreaks`), as
++    /// the shaped layout does: after a hyphen or a slash, between Chinese
++    /// or Japanese characters but never before their closing punctuation,
++    /// between Thai words. Each character is 9.6 px wide here.
+     #[test]
+-    fn test_is_word_char() {
+-        #[track_caller]
+-        fn assert_word(word: &str) {
+-            for c in word.chars() {
+-                assert!(
+-                    LineWrapper::is_word_char(c),
+-                    "assertion failed for '{}' (unicode 0x{:x})",
+-                    c,
+-                    c as u32
+-                );
+-            }
+-        }
+-
+-        #[track_caller]
+-        fn assert_not_word(word: &str) {
+-            let found = word.chars().any(|c| !LineWrapper::is_word_char(c));
+-            assert!(found, "assertion failed for '{}'", word);
+-        }
+-
+-        assert_word("Hello123");
+-        assert_word("non-English");
+-        assert_word("var_name");
+-        assert_word("123456");
+-        assert_word("3.1415");
+-        assert_word("10^2");
+-        assert_word("1~2");
+-        assert_word("100%");
+-        assert_word("@mention");
+-        assert_word("#hashtag");
+-        assert_word("$variable");
+-        assert_word("a=1");
+-        assert_word("Self::is_word_char");
+-        assert_word("on;");
+-        assert_word("more⋯");
+-        assert_word("won’t");
+-        assert_word("‘twas");
+-        assert_word("plz!");
+-        assert_word("see)");
+-        assert_word("quoted”");
+-        assert_word("well…");
+-        // A name isolated inside its quotes: no break beside the marks.
+-        assert_word("\u{2068}name\u{2069}”");
+-        assert_word("a\u{200f}b\u{202e}c\u{202c}");
+-        // Joiners: zero width, word, and the no-break space of zero width.
+-        assert_word("a\u{200d}b\u{2060}c\u{feff}");
+-
+-        // Space
+-        assert_not_word("foo bar");
+-
+-        // URL case
+-        assert_word("github.com");
+-        assert_not_word("zed-industries/zed");
+-        assert_not_word("zed-industries\\zed");
+-        assert_not_word("a=1&b=2");
+-        assert_not_word("foo?b=2");
+-
+-        // Latin-1 Supplement
+-        assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
+-        // Latin Extended-A
+-        assert_word("ĀāĂăĄąĆćĈĉĊċČčĎď");
+-        // Latin Extended-B
+-        assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
+-        // Cyrillic
+-        assert_word("АБВГДЕЖЗИЙКЛМНОП");
+-        // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
+-        assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
+-        // The pages kept answer as each character is worked out.
+-        for c in (0x80..0x1_0000).filter_map(char::from_u32) {
+-            assert_eq!(
+-                LineWrapper::is_word_char(c),
+-                LineWrapper::is_word_char_beyond_ascii(c),
+-                "U+{:04X}",
+-                u32::from(c)
+-            );
+-        }
+-        // Every script that puts spaces between its words, by its letters',
+-        // marks' and digits' properties: Hebrew with its points, Arabic
+-        // with its digits and a vowel mark, Greek, Armenian, Georgian,
+-        // Devanagari (a virama, vowel signs, digits), Tamil, Ethiopic,
+-        // Canadian syllabics, an accent typed apart, Latin-1's letters and
+-        // numbers beyond the blocks once listed.
+-        assert_word("שלום");
+-        assert_word("\u{5e9}\u{5c1}\u{5b8}\u{5dc}\u{5d5}\u{5b9}\u{5dd}");
+-        assert_word("مرحبا");
+-        assert_word("\u{661}\u{662}\u{663}\u{64e}");
+-        assert_not_word("שלום עולם");
+-        assert_word("Ελληνικά");
+-        assert_word("Հայերեն");
+-        assert_word("ქართული");
+-        assert_word("हिन्दी१२३");
+-        assert_word("தமிழ்");
+-        assert_word("አማርኛ");
+-        assert_word("ᐃᓄᒃᑎᑐᑦ");
+-        assert_word("e\u{301}");
+-        assert_word("µ²½ªº");
+-        // A symbol is a place to wrap, as in ASCII (`2+3`).
+-        assert_not_word("2×3");
+-        // Scripts written without spaces between words: a line breaks
+-        // between any two of their letters (Chinese, Japanese, Bopomofo,
+-        // Korean, Yi; Thai and Lao, which gpui breaks by no dictionary)...
+-        for text in [
+-            "中文",
+-            "ひらがな",
+-            "カタカナ",
+-            "ㄅㄆ",
+-            "한국어",
+-            "ꆈꌠ",
+-            "ไทย",
+-            "ລາວ",
+-        ] {
+-            for c in text.chars() {
+-                assert!(!LineWrapper::is_word_char(c), "{c:?} in {text}");
++    fn test_wrap_line_where_the_standard_allows() {
++        let mut wrapper = build_wrapper();
++        let mut wrapped = |text: &'static str, columns: f32| {
++            let mut rows = Vec::new();
++            let mut start = 0;
++            for boundary in wrapper.wrap_line(
++                &[LineFragment::text(text)],
++                px(9.6 * columns),
++                IndentAdjustment::NoIndent,
++            ) {
++                rows.push(&text[start..boundary.ix]);
++                start = boundary.ix;
+             }
+-        }
+-        // ... but never before a mark, which stays with its letter: Thai's
+-        // vowel sign and tone mark, Khmer's coeng, a Japanese voiced mark.
+-        assert_word("\u{e35}\u{e48}");
+-        assert_word("\u{17d2}");
+-        assert_word("\u{3099}");
+-        // Bengali
+-        assert_word("গিয়েছিলেন");
+-        assert_word("ছেলে");
+-        assert_word("হচ্ছিল");
+-
+-        // non-word characters
+-        assert_not_word("你好");
+-        assert_not_word("안녕하세요");
+-        assert_not_word("こんにちは");
+-        assert_not_word("😀😁😂");
+-        assert_not_word("()[]{}<>");
+-
+-        // Non-breaking ("Glue") characters, see https://www.unicode.org/reports/tr14/
+-        // (https://github.com/zed-industries/zed/issues/59664)
+-        assert_word("\u{202F}"); // NNBSP " "
+-        assert_word("\u{00A0}"); // NBSP " "
+-        assert_word("\u{2011}"); // NBH "‑"
++            rows.push(&text[start..]);
++            rows
++        };
++        assert_eq!(wrapped("non-English", 8.), ["non-", "English"]);
++        assert_eq!(wrapped("a/b/c.txt", 6.), ["a/b/", "c.txt"]);
++        assert_eq!(wrapped("语言。语言", 2.), ["语", "言。", "语言"]);
++        assert_eq!(wrapped("日「本」", 3.), ["日", "「本」"]);
++        assert_eq!(wrapped("ข้าวมันไก่", 6.), ["ข้าว", "มันไก่"]);
++        // An indent is no place to wrap: the spaces before the first word
++        // stay with it, cut where it overflows.
++        assert_eq!(wrapped("   abc defgh", 5.), ["   ab", "c ", "defgh"]);
++
++        // Truncated over two lines, the first wraps as `wrap_line` wraps it.
++        let text = "non-English words";
++        let runs = generate_test_runs(&[text.len()]);
++        let (truncated, _) = wrapper.truncate_wrapped_line(
++            text.into(),
++            px(9.6 * 8.),
++            2,
++            "…",
++            &runs,
++            TruncateFrom::End,
++        );
++        assert_eq!(truncated.as_ref(), "non-English…");
+     }
+ 
+     // For compatibility with the test macro

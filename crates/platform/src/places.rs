@@ -1142,6 +1142,7 @@ pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
         let label = if mountpoint == Path::new("/") {
             words!(
                 places_root = "Root",
+                noun,
                 note = "The name of the volume the system runs from (/), in the sidebar's Devices."
             )
         } else {

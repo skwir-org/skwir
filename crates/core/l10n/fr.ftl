@@ -1464,6 +1464,12 @@ keymap_where = Où
 keymap_where_description = Où les touches agissent : vide pour partout, pane pour la liste des fichiers, avec des conditions telles que selection, single, dir, file, folder
 
 # draft
+name_quote_close = { "\u202F" }»
+
+# draft
+name_quote_open = «{ "\u202F" }
+
+# draft
 notes_agree = mettre en accord les annotations de { $name }
 
 # draft
@@ -2491,6 +2497,9 @@ settings_language_incomplete = { $language } — incomplet, traduit à { $transl
 
 # draft
 settings_language_pseudo = Pseudo (pour les tests)
+
+# draft
+settings_language_pseudo_rtl = Pseudo, de droite à gauche (pour les tests)
 
 # draft
 settings_language_self = Français

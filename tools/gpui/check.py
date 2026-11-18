@@ -41,15 +41,24 @@ RUNS = [
         # and the first layout (0040), and an inferred list as tall as its
         # items where they are drawn (0052).
         "elements::list", "elements::div::scroll_axis_tests",
+        # A layout right to left, inherited, and a strip that scrolls
+        # sideways starting at its right (0075; the strips are
+        # scroll_axis_tests', start and end alignment style::tests').
+        "elements::div::layout_direction_tests",
+        "elements::text::tests::a_text_aligned_to_its_start",
         "text_system::line_wrapper", "text_system::line_layout", "style::tests",
+        # Where a line may wrap, UAX #14 by ICU4X and ASCII by its classes
+        # (0072).
+        "text_system::line_breaks",
         # Right-to-left text: levels, carets and spans (0069), a run's colour
         # and underline following its characters.
         "text_system::bidi", "text_system::line::tests::a_decoration_follows",
         # Upstream's, and what an action sees of a key held down (0032).
         "key_dispatch",
         # The accessibility tree (0030) and what an element writes into it
-        # (0031).
+        # (0031), the window's language and a node's (0073).
         "window::a11y", "elements::div::tests::test_write_a11y_info",
+        "elements::text::tests::a_text_says_its_language",
         # A mesh and its normals (0033).
         "mesh::",
         # Upstream's tooltips, and a press before one shows (0038).
@@ -81,7 +90,10 @@ RUNS = [
     # The text system again, faces chosen by font-kit as Skwir builds it.
     ("gpui_wgpu", ["--features", "font-kit"], ["cosmic_text_system"]),
     # The clipboard (0024), and the space bar with Shift (0039).
-    ("gpui_linux", [], ["clipboard", "the_space_bar_with_shift"]),
+    # Shortcuts named on layouts whose letters are not Latin, the digit
+    # row, the US positions (0076).
+    ("gpui_linux", [], ["clipboard", "the_space_bar_with_shift", "a_shortcut_is_named",
+                        "a_us_position_is"]),
 ]
 
 

@@ -20,7 +20,7 @@ use crate::{
     DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
     ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
+    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutDirection, LayoutId, LongPressEvent,
     ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
     PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
@@ -1401,6 +1401,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the language this element's words are in, a BCP 47 tag, where
+    /// it is not the window's (`Window::set_a11y_language`): assistive
+    /// technology reads them, and those of the nodes inside that say none
+    /// of their own, in it.
+    fn aria_language(mut self, language: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.language = Some(language.into());
+        self
+    }
+
     /// Set the accessible description for this element. Unlike the label (which
     /// names the element), the description provides supplementary information
     /// that assistive technology announces after the name, role, and value -
@@ -2242,6 +2251,7 @@ impl IntoElement for Div {
 pub(crate) struct AriaProperties {
     pub(crate) author_id: Option<SharedString>,
     pub(crate) label: Option<SharedString>,
+    pub(crate) language: Option<SharedString>,
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
     pub(crate) selected: Option<bool>,
@@ -2632,7 +2642,16 @@ impl Interactivity {
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
 
-            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
+            // Laid out right to left, what overflows lies to the left: it is
+            // scrolled into view rightward, the offset running from 0 (the
+            // right end, where the content starts) up to the maximum, as
+            // CSS's `scrollLeft` runs down from 0 there.
+            let direction = window.layout_direction();
+            scroll_offset.x = if direction.is_rtl() {
+                scroll_offset.x.clamp(px(0.), scroll_max.x)
+            } else {
+                scroll_offset.x.clamp(-scroll_max.x, px(0.))
+            };
             if scroll_to_bottom {
                 scroll_offset.y = -scroll_max.y;
             } else {
@@ -2642,6 +2661,7 @@ impl Interactivity {
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
                 scroll_handle_state.max_offset = scroll_max;
                 scroll_handle_state.bounds = bounds;
+                scroll_handle_state.direction = direction;
             }
 
             *scroll_offset
@@ -3494,6 +3514,14 @@ impl Interactivity {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
+            // A wheel turned on a box that scrolls only sideways moves it
+            // toward its end as it turns down: leftward, laid out right to
+            // left. What the platform reports sideways stays where it points.
+            let forward = if window.layout_direction().is_rtl() {
+                -1.
+            } else {
+                1.
+            };
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
@@ -3517,7 +3545,7 @@ impl Interactivity {
                         Overflow::Scroll
                             if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
                         {
-                            delta.y
+                            delta.y * forward
                         }
                         _ => Pixels::ZERO,
                     };
@@ -3694,6 +3722,9 @@ impl Interactivity {
         }
         if let Some(label) = &self.aria.label {
             node.set_label(label.to_string());
+        }
+        if let Some(language) = &self.aria.language {
+            node.set_language(language.to_string());
         }
         if let Some(description) = &self.aria.description {
             node.set_description(description.to_string());
@@ -4420,6 +4451,9 @@ struct ScrollHandleState {
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
+    /// The direction the element lays out in, as last prepainted: right to
+    /// left, its offset runs from 0 up (`Interactivity::clamp_scroll_position`).
+    direction: LayoutDirection,
     active_item: Option<ScrollActiveItem>,
 }
 
@@ -4454,7 +4488,9 @@ impl ScrollHandle {
         Self(Rc::default())
     }
 
-    /// Get the current scroll offset.
+    /// Get the current scroll offset: from 0 down to `-max_offset`, but
+    /// sideways where the element is laid out right to left, from 0 up to
+    /// `max_offset` (`LayoutDirection`).
     pub fn offset(&self) -> Point<Pixels> {
         *self.0.borrow().offset.borrow()
     }
@@ -4568,7 +4604,12 @@ impl ScrollHandle {
                     let child_width = bounds.size.width;
                     let viewport_width = state.bounds.size.width;
                     if child_width > viewport_width {
-                        scroll_offset.x = state.bounds.left() - bounds.left();
+                        // Its start in view: its right edge, right to left.
+                        scroll_offset.x = if state.direction.is_rtl() {
+                            state.bounds.right() - bounds.right()
+                        } else {
+                            state.bounds.left() - bounds.left()
+                        };
                     } else if bounds.left() + scroll_offset.x < state.bounds.left() {
                         scroll_offset.x = state.bounds.left() - bounds.left();
                     } else if bounds.right() + scroll_offset.x > state.bounds.right() {
@@ -4590,7 +4631,9 @@ impl ScrollHandle {
 
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
-    /// As you scroll further down the offset becomes more negative.
+    /// As you scroll further down the offset becomes more negative; sideways
+    /// where the element is laid out right to left, more positive as what is
+    /// to the left comes into view.
     pub fn set_offset(&self, position: Point<Pixels>) {
         let state = self.0.borrow();
         *state.offset.borrow_mut() = position;
@@ -5581,10 +5624,27 @@ mod tests {
     }
 
     #[test]
+    fn test_write_a11y_info_aria_language_builder() {
+        let mut element = div().id("quoted").aria_language("de");
+        let mut node = accesskit::Node::new(accesskit::Role::Label);
+
+        element.interactivity().write_a11y_info(&mut node);
+
+        assert_eq!(node.language(), Some("de"));
+        let mut unsaid = accesskit::Node::new(accesskit::Role::Label);
+        div()
+            .id("plain")
+            .interactivity()
+            .write_a11y_info(&mut unsaid);
+        assert_eq!(unsaid.language(), None, "the window's, inherited");
+    }
+
+    #[test]
     fn test_write_a11y_info_string_and_numeric_properties() {
         let mut interactivity = Interactivity::default();
         interactivity.aria.author_id = Some("settings.buffer-font-size".into());
         interactivity.aria.label = Some("Buffer Font Size".into());
+        interactivity.aria.language = Some("de".into());
         interactivity.aria.value = Some("15".into());
         interactivity.aria.placeholder = Some("Search".into());
         interactivity.aria.numeric_value = Some(15.0);
@@ -5597,6 +5657,7 @@ mod tests {
 
         assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
         assert_eq!(node.label(), Some("Buffer Font Size"));
+        assert_eq!(node.language(), Some("de"));
         assert_eq!(node.value(), Some("15"));
         assert_eq!(node.placeholder(), Some("Search"));
         assert_eq!(node.numeric_value(), Some(15.0));
@@ -5981,12 +6042,142 @@ mod tests {
 }
 
 #[cfg(test)]
+mod layout_direction_tests {
+    use crate::{
+        AvailableSpace, Bounds, InteractiveElement as _, IntoElement, LayoutDirection,
+        ParentElement as _, Pixels, Styled as _, TestAppContext, canvas, div, point, px,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    /// The children of a row 300 px wide, three boxes 50 px wide in it,
+    /// laid out in `direction`, its own (`justify_end` too where `end`), and
+    /// what direction a box inside sees as it is prepainted.
+    fn row(
+        cx: &mut TestAppContext,
+        direction: Option<LayoutDirection>,
+        end: bool,
+    ) -> (Vec<f32>, LayoutDirection) {
+        let cx = cx.add_empty_window();
+        let seen: Rc<RefCell<Vec<Bounds<Pixels>>>> = Rc::default();
+        let inside = Rc::new(RefCell::new(LayoutDirection::LeftToRight));
+        let (kept, found) = (seen.clone(), inside.clone());
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                let mut row = div()
+                    .flex()
+                    .w(px(300.))
+                    .on_children_prepainted(move |bounds, _, _| *kept.borrow_mut() = bounds);
+                if let Some(direction) = direction {
+                    row = row.layout_direction(direction);
+                }
+                if end {
+                    row = row.justify_end();
+                }
+                row.children((0..2).map(|_| div().flex_none().w(px(50.)).h(px(10.))))
+                    .child(
+                        div().flex_none().w(px(50.)).h(px(10.)).child(
+                            canvas(
+                                move |_, window, _| *found.borrow_mut() = window.layout_direction(),
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                    )
+            },
+        );
+        let lefts = seen
+            .borrow()
+            .iter()
+            .map(|bounds| f32::from(bounds.left()))
+            .collect();
+        (lefts, *inside.borrow())
+    }
+
+    #[crate::test]
+    fn a_row_laid_out_left_to_right_is_as_it_was(cx: &mut TestAppContext) {
+        assert_eq!(
+            row(cx, None, false),
+            (vec![0., 50., 100.], LayoutDirection::LeftToRight)
+        );
+        assert_eq!(
+            row(cx, Some(LayoutDirection::LeftToRight), true),
+            (vec![150., 200., 250.], LayoutDirection::LeftToRight)
+        );
+    }
+
+    #[crate::test]
+    fn a_row_laid_out_right_to_left_runs_from_its_right(cx: &mut TestAppContext) {
+        assert_eq!(
+            row(cx, Some(LayoutDirection::RightToLeft), false),
+            (vec![250., 200., 150.], LayoutDirection::RightToLeft)
+        );
+        // Its end is its left.
+        assert_eq!(
+            row(cx, Some(LayoutDirection::RightToLeft), true),
+            (vec![100., 50., 0.], LayoutDirection::RightToLeft)
+        );
+    }
+
+    /// A direction is inherited, as CSS's: a row in a box laid out right to
+    /// left runs from its right; an island left to right inside it (a code
+    /// view, a terminal) runs from its left again, and its boxes' paddings
+    /// stay where they are said.
+    #[crate::test]
+    fn a_direction_is_inherited_but_where_one_says_its_own(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let outer: Rc<RefCell<Vec<Bounds<Pixels>>>> = Rc::default();
+        let island: Rc<RefCell<Vec<Bounds<Pixels>>>> = Rc::default();
+        let (kept_outer, kept_island) = (outer.clone(), island.clone());
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                div()
+                    .layout_direction(LayoutDirection::RightToLeft)
+                    .w(px(300.))
+                    .child(
+                        div()
+                            .flex()
+                            .pl(px(20.))
+                            .on_children_prepainted(move |bounds, _, _| {
+                                *kept_outer.borrow_mut() = bounds
+                            })
+                            .child(div().flex_none().w(px(50.)).h(px(10.)))
+                            .child(div().flex_none().w(px(50.)).h(px(10.))),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .layout_direction(LayoutDirection::LeftToRight)
+                            .on_children_prepainted(move |bounds, _, _| {
+                                *kept_island.borrow_mut() = bounds
+                            })
+                            .child(div().flex_none().w(px(50.)).h(px(10.)))
+                            .child(div().flex_none().w(px(50.)).h(px(10.))),
+                    )
+            },
+        );
+        let lefts = |seen: &Rc<RefCell<Vec<Bounds<Pixels>>>>| {
+            seen.borrow()
+                .iter()
+                .map(|bounds| f32::from(bounds.left()))
+                .collect::<Vec<_>>()
+        };
+        // The left padding stays on the left: the row's right end is 300.
+        assert_eq!(lefts(&outer), [250., 200.]);
+        assert_eq!(lefts(&island), [0., 50.]);
+    }
+}
+
+#[cfg(test)]
 mod scroll_axis_tests {
     use crate::{
-        self as gpui, AppContext as _, Context, InteractiveElement as _, IntoElement, Modifiers,
-        ParentElement as _, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-        StatefulInteractiveElement as _, Styled as _, TestAppContext, VisualTestContext, Window,
-        div, point, px, size,
+        self as gpui, AppContext as _, Context, InteractiveElement as _, IntoElement,
+        LayoutDirection, Modifiers, ParentElement as _, Render, ScrollDelta, ScrollHandle,
+        ScrollWheelEvent, StatefulInteractiveElement as _, Styled as _, TestAppContext,
+        VisualTestContext, Window, div, point, px, size,
     };
 
     /// A row of columns that scrolls sideways, its first column scrolling
@@ -6076,5 +6267,90 @@ mod scroll_axis_tests {
         wheel(cx, 0., -40., false);
         assert_eq!(board.row.offset(), point(px(-40.), px(0.)));
         assert_eq!(board.column.offset(), point(px(0.), px(-40.)));
+    }
+
+    /// A strip 300 px wide of four boxes 150 px wide that scrolls sideways,
+    /// laid out in `direction`.
+    struct Strip {
+        handle: ScrollHandle,
+        direction: LayoutDirection,
+    }
+
+    impl Render for Strip {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut strip = div()
+                .id("strip")
+                .size_full()
+                .flex()
+                .layout_direction(self.direction)
+                .overflow_x_scroll()
+                .track_scroll(&self.handle);
+            strip.style().restrict_scroll_to_axis = Some(false);
+            strip.children((0..4).map(|_| div().w(px(150.)).h_full().flex_none()))
+        }
+    }
+
+    fn strip(
+        cx: &mut TestAppContext,
+        direction: LayoutDirection,
+    ) -> (&mut VisualTestContext, ScrollHandle) {
+        let cx = cx.add_empty_window();
+        let handle = ScrollHandle::new();
+        draw_strip(cx, &handle, direction);
+        (cx, handle)
+    }
+
+    fn draw_strip(cx: &mut VisualTestContext, handle: &ScrollHandle, direction: LayoutDirection) {
+        let handle = handle.clone();
+        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
+            cx.new(|_| Strip { handle, direction }).into_any_element()
+        });
+    }
+
+    #[gpui::test]
+    fn a_strip_left_to_right_scrolls_as_it_did(cx: &mut TestAppContext) {
+        let direction = LayoutDirection::LeftToRight;
+        let (cx, handle) = strip(cx, direction);
+        assert_eq!(handle.max_offset().x, px(300.));
+        assert_eq!(handle.bounds_for_item(3).unwrap().left(), px(450.));
+        // The wheel turned down moves it toward its end, rightward.
+        wheel(cx, 0., -40., false);
+        assert_eq!(handle.offset().x, px(-40.));
+        handle.scroll_to_item(3);
+        draw_strip(cx, &handle, direction);
+        assert_eq!(handle.offset().x, px(-300.));
+        handle.scroll_to_item(0);
+        draw_strip(cx, &handle, direction);
+        assert_eq!(handle.offset().x, px(0.));
+    }
+
+    /// Laid out right to left, a strip starts at its right, what overflows
+    /// lies to its left, and its offset runs from 0 up to its maximum, as
+    /// CSS's `scrollLeft` runs down from 0: the wheel and `scroll_to_item`
+    /// reach every box as left to right.
+    #[gpui::test]
+    fn a_strip_right_to_left_starts_at_its_right(cx: &mut TestAppContext) {
+        let direction = LayoutDirection::RightToLeft;
+        let (cx, handle) = strip(cx, direction);
+        assert_eq!(handle.offset().x, px(0.));
+        assert_eq!(handle.max_offset().x, px(300.));
+        assert_eq!(handle.bounds_for_item(0).unwrap().left(), px(150.));
+        assert_eq!(handle.bounds_for_item(3).unwrap().left(), px(-300.));
+        // The wheel turned down moves it toward its end, now leftward: what
+        // is to the left comes into view.
+        wheel(cx, 0., -40., false);
+        assert_eq!(handle.offset().x, px(40.));
+        draw_strip(cx, &handle, direction);
+        assert_eq!(handle.offset().x, px(40.), "within its range");
+        // Sideways, as the platform reports it, it moves where it points.
+        wheel(cx, -60., 0., true);
+        draw_strip(cx, &handle, direction);
+        assert_eq!(handle.offset().x, px(0.), "no further than its start");
+        handle.scroll_to_item(3);
+        draw_strip(cx, &handle, direction);
+        assert_eq!(handle.offset().x, px(300.));
+        handle.scroll_to_item(0);
+        draw_strip(cx, &handle, direction);
+        assert_eq!(handle.offset().x, px(0.));
     }
 }

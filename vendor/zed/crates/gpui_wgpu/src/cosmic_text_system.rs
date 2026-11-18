@@ -201,7 +201,10 @@ impl CosmicTextSystem {
     }
 
     pub fn new(system_font_fallback: &str) -> Self {
-        let font_system = FontSystem::new();
+        // The system's fonts, its fallbacks picked by the locale's language
+        // as cosmic-text names it for Chinese characters (`han_key`).
+        let (locale, db) = FontSystem::new().into_locale_and_db();
+        let font_system = FontSystem::new_with_locale_and_db(han_key(&locale), db);
 
         Self(RwLock::new(CosmicTextSystemState {
             font_system,
@@ -239,6 +242,23 @@ impl CosmicTextSystem {
 impl PlatformTextSystem for CosmicTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
+    }
+
+    fn set_language(&self, language: &str) -> bool {
+        let key = han_key(language);
+        let mut state = self.0.write();
+        if state.font_system.locale() == key {
+            return false;
+        }
+        // A font system's fallbacks are chosen by its locale when it is made:
+        // made again from its own database, which moves whole, so the faces
+        // loaded from it keep their ids.
+        let empty =
+            FontSystem::new_with_locale_and_db(String::new(), cosmic_text::fontdb::Database::new());
+        let (_, db) = std::mem::replace(&mut state.font_system, empty).into_locale_and_db();
+        state.font_system = FontSystem::new_with_locale_and_db(key, db);
+        state.font_ids_by_family_cache.clear();
+        true
     }
 
     fn set_missing_glyph_sink(&self, sink: Option<Arc<dyn MissingGlyphSink>>) {
@@ -1351,6 +1371,54 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     postscript_name == "NotoColorEmoji"
 }
 
+use han::han_key;
+
+/// A module of its own, away from the `anyhow::Ok` imported above, which
+/// ICU4X's subtag macros would take for the `Ok` they match.
+mod han {
+    /// The locale cosmic-text is given for `language`, a BCP 47 tag, so that its
+    /// fallback for Chinese characters, which it looks up by an exact tag ("ja",
+    /// "ko", "zh-HK", "zh-TW", Simplified Chinese otherwise), takes their forms
+    /// in the language: what its script and region are, likely where it says
+    /// none (ICU4X's likely subtags), names the forms. Any other language is
+    /// given as it is.
+    pub(super) fn han_key(language: &str) -> String {
+        use icu_locale::{
+            LanguageIdentifier, LocaleExpander,
+            subtags::{Language, Region, Script, language, region, script},
+        };
+        const JA: Language = language!("ja");
+        const KO: Language = language!("ko");
+        const YUE: Language = language!("yue");
+        const HANT: Script = script!("Hant");
+        const HANS: Script = script!("Hans");
+        const HK: Region = region!("HK");
+        const MO: Region = region!("MO");
+        // A POSIX locale's encoding and modifier are no part of its tag.
+        let tag = language
+            .split(['.', '@'])
+            .next()
+            .unwrap_or(language)
+            .replace('_', "-");
+        let Ok(mut id) = LanguageIdentifier::try_from_str(&tag) else {
+            return language.to_string();
+        };
+        match id.language {
+            JA => return "ja".to_string(),
+            KO => return "ko".to_string(),
+            _ => {}
+        }
+        let cantonese = id.language == YUE;
+        LocaleExpander::new_common().maximize(&mut id);
+        match id.script {
+            Some(HANT) if cantonese || matches!(id.region, Some(HK | MO)) => "zh-HK".to_string(),
+            Some(HANT) => "zh-TW".to_string(),
+            Some(HANS) => "zh-CN".to_string(),
+            _ => language.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1420,6 +1488,74 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         Ok(text_system)
+    }
+
+    /// The locale cosmic-text picks Chinese characters' fallback by: one of
+    /// the exact tags it knows, by the language's script and region.
+    #[test]
+    fn han_key_names_the_forms_of_chinese_characters() {
+        for (language, key) in [
+            ("ja-JP", "ja"),
+            ("ja", "ja"),
+            ("ja_JP.UTF-8", "ja"),
+            ("ko-KR", "ko"),
+            ("zh-Hant", "zh-TW"),
+            ("zh-TW", "zh-TW"),
+            ("zh-HK", "zh-HK"),
+            ("zh-MO", "zh-HK"),
+            ("zh-Hant-HK", "zh-HK"),
+            ("yue", "zh-HK"),
+            ("zh", "zh-CN"),
+            ("zh-SG", "zh-CN"),
+            ("zh-CN", "zh-CN"),
+            ("zh-Hans-HK", "zh-CN"),
+            ("fr-FR", "fr-FR"),
+            ("en-US", "en-US"),
+            ("C", "C"),
+        ] {
+            assert_eq!(han_key(language), key, "{language}");
+        }
+    }
+
+    /// A language set anew makes the font system again by it, its faces kept;
+    /// the same one changes nothing, and the text system lays out again only
+    /// where it changed.
+    #[test]
+    fn a_language_set_picks_its_fallbacks_and_keeps_the_faces() -> Result<()> {
+        let platform = Arc::new(text_system()?);
+        let text_system = gpui::TextSystem::new(platform.clone());
+        let font_id = text_system.resolve_font(&gpui::font("IBM Plex Sans"));
+        let metrics = platform.font_metrics(font_id);
+        assert_eq!(platform.0.read().font_system.locale(), "en-US");
+
+        assert!(platform.set_language("ja-JP"));
+        assert_eq!(platform.0.read().font_system.locale(), "ja");
+        assert!(!platform.set_language("ja"), "the same forms");
+        assert_eq!(
+            platform.font_metrics(font_id).units_per_em,
+            metrics.units_per_em
+        );
+        assert_eq!(platform.all_font_names(), ["IBM Plex Sans"]);
+        text_system.set_language("zh-HK");
+        assert_eq!(platform.0.read().font_system.locale(), "zh-HK");
+        let layout = platform.layout_line(
+            "abc",
+            gpui::px(16.),
+            &[FontRun {
+                len: 3,
+                font_id,
+                position: Default::default(),
+            }],
+        );
+        assert_eq!(
+            layout
+                .runs
+                .iter()
+                .map(|run| run.glyphs.len())
+                .sum::<usize>(),
+            3
+        );
+        Ok(())
     }
 
     #[test]
