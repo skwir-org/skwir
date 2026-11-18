@@ -3737,8 +3737,10 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   (STATUS-LOG): +6 MiB for an English window once the startup list is
   made again, +4.2 MiB to a download. The languages' names, read from
   every catalog at each start, are counted at build time since
-  (`words::Share::name`). Left: a data export for the languages shipped,
-  the lighter way, if the data is what weighs.
+  (`words::Share::name`). Left, if the data ever weighs: an ICU4X data
+  export keeping only the kinds of data Skwir uses (every locale stays:
+  dates, numbers and sorting follow the system's locale, not the
+  window's language; the dictionaries serve file names in any window).
   - ICU4X's decimal, list and datetime, with data for English and the
     languages shipped. `Count`, `Size`, `Instant` and `Span` are
     formatted by them: `format.rs`'s dates, the timeline's months, the
