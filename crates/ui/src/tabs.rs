@@ -73,12 +73,35 @@ pub struct Label {
     pub active: usize,
     /// Each pane's full location, a line each, for the tooltip.
     pub tip: SharedString,
-    /// The theme icon of the place it shows, if it shows one.
-    pub icon: Option<String>,
-    /// The bundled icon otherwise: a folder, a search, the shelf.
+    /// What the icon theme draws for it, as the sidebar and the views draw
+    /// it: the place's icon where it shows one, else a folder's for a
+    /// folder; `None` for what is no folder (a search, the shelf).
+    pub themed: Option<Themed>,
+    /// The bundled glyph: what is no folder's (`LocationProvider::icon`),
+    /// and what stands in while the theme has no icon for it.
     pub glyph: &'static str,
     /// The folder a drop on the tab goes into: the active pane's.
     pub folder: Option<std::path::PathBuf>,
+}
+
+/// A tab's icon from the icon theme.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Themed {
+    /// The place's (`user-home`, `folder-download`).
+    Named(String),
+    /// A folder's, as the views draw one (`IconCache::folder`).
+    Folder,
+}
+
+/// What the theme draws for a tab showing a place whose icon is
+/// `place_icon` (`None` when it shows no place, or one with no icon), of
+/// a provider that names `not_folder`'s glyph for what is no folder: the
+/// place's icon, else a folder's for a folder, whether or not the sidebar
+/// names it.
+fn themed(place_icon: Option<String>, not_folder: Option<&str>) -> Option<Themed> {
+    place_icon
+        .map(Themed::Named)
+        .or_else(|| not_folder.is_none().then_some(Themed::Folder))
 }
 
 impl Label {
@@ -539,7 +562,9 @@ impl Shell {
                         .iter()
                         .find(|p| p.is_its_location() && p.location.same_place(l))
                 });
-                let glyph = location.map_or("folder", |l| crate::trail::glyph(&self.app, l));
+                let not_folder = location.and_then(|l| self.app.location_icon(l));
+                let themed = themed(place.and_then(|p| p.icon.clone()), not_folder);
+                let glyph = not_folder.unwrap_or("folder");
                 Label {
                     tab: *tab,
                     names: shows
@@ -564,7 +589,7 @@ impl Shell {
                         .collect::<Vec<_>>()
                         .join("\n")
                         .into(),
-                    icon: place.and_then(|p| p.icon.clone()),
+                    themed,
                     glyph,
                     folder: location.and_then(Location::path),
                 }
@@ -896,7 +921,7 @@ fn close(id: TabId, size: f32, cx: &mut Context<Shell>) -> gpui::Stateful<gpui::
 }
 
 /// A tab's icon: split, the two panes as the Split button draws them; else
-/// the place it shows, its theme's icon or the bundled one.
+/// what it shows, the theme's icon (`Label::themed`) or the bundled one.
 fn icon(
     shell: &mut Shell,
     label: &Label,
@@ -911,11 +936,12 @@ fn icon(
     } else {
         "split"
     };
-    let themed = label
-        .icon
-        .as_deref()
-        .filter(|_| !label.is_split())
-        .and_then(|name| shell.icons.named(name, 16));
+    let themed = match &label.themed {
+        _ if label.is_split() => None,
+        Some(Themed::Named(name)) => shell.icons.named(name, 16),
+        Some(Themed::Folder) => shell.icons.folder(16),
+        None => None,
+    };
     match themed {
         Some(path) => crate::icons::themed(&path, size, crate::icons::Ink::of(theme, color)),
         None => crate::sides::symbol(glyph)
@@ -1214,7 +1240,25 @@ fn new_tab() -> Words {
 
 #[cfg(test)]
 mod tests {
-    use super::{gives_way, move_target, spoken};
+    use super::{Themed, gives_way, move_target, spoken, themed};
+
+    #[test]
+    fn a_folder_tab_is_drawn_by_the_theme_whether_or_not_it_is_a_place() {
+        // A folder no place names: the theme's folder, as the views draw it.
+        assert_eq!(themed(None, None), Some(Themed::Folder));
+        // A place: its own icon.
+        assert_eq!(
+            themed(Some("folder-download".into()), None),
+            Some(Themed::Named("folder-download".into()))
+        );
+        // A place that is no folder (the trash): its icon still.
+        assert_eq!(
+            themed(Some("user-trash".into()), Some("trash")),
+            Some(Themed::Named("user-trash".into()))
+        );
+        // What is no folder and no place (a search): the bundled glyph.
+        assert_eq!(themed(None, Some("search")), None);
+    }
 
     #[test]
     fn a_split_tab_is_said_by_both_its_panes_names() {

@@ -1929,6 +1929,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   others their names alone until pointed at (`hover`). In the sidebar, a
   row like a place's, the tab shown the same card, never the selection's
   color: that says which place the pane shows.
+- **A tab's icon is what it shows, as the window draws it elsewhere**
+  (`tabs::Label::themed`): the theme's icon of the place it shows, as
+  the sidebar draws it; else, for a folder, the theme's folder icon, as
+  the views draw one (`IconCache::folder`), whether or not the sidebar
+  names it. A bundled glyph only for what is no folder
+  (`LocationProvider::icon`: a search, the shelf, a tag) and while the
+  theme has no icon for it: two folders side by side are never drawn
+  from two sets of icons because one is bookmarked.
 - A tab's × is on the tab shown and the one under the pointer
   (`Shell::tab_hovered`, `tabs::closes`), never on a lone tab.
 - A tab is named like the place it shows (`App::location_title`). Split,
