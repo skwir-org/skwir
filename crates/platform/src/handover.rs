@@ -13,7 +13,8 @@
 //!
 //! - Linux: a name on the session bus, `org.skwir.skwir.I<key>`, held while
 //!   taking over, its object `/org/skwir/skwir` serving
-//!   `org.skwir.skwir.Finishing.Open(ay location, ay cwd, s token)` on
+//!   `org.skwir.skwir.Finishing.Open(ay location, ay cwd, s token,
+//!   aay select, b properties)` on
 //!   the program's one connection (`crate::bus`), and served again
 //!   there when the session's bus is started again. A path travels as its
 //!   bytes; an empty location or token is none. Once the name is held, a
@@ -111,7 +112,7 @@ fn apart() -> bool {
 }
 
 /// What a later launch asks of the Skwir it hands itself to.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Opening {
     /// The launch's first argument as given: a folder (perhaps relative
     /// to `cwd`), or a location a plugin opens (`trash:`); `None` to open
@@ -123,6 +124,12 @@ pub struct Opening {
     /// The desktop's token to bring the window forward: Wayland's
     /// `XDG_ACTIVATION_TOKEN`, X11's `DESKTOP_STARTUP_ID`.
     pub token: Option<String>,
+    /// The names in `location` to select once it is listed: the files
+    /// another program asks shown in their folder (ADR-140); none for a
+    /// launch.
+    pub select: Vec<OsString>,
+    /// With them, Properties shown (`ShowItemProperties`).
+    pub properties: bool,
 }
 
 /// How long a launch waits for the finishing Skwir's answer, and (on
@@ -212,6 +219,37 @@ pub fn hand_over_to_holder(opening: &Opening) -> bool {
     }
 }
 
+/// For a program the bus started to show files for other programs
+/// (`--file-manager`, ADR-140) that finds another Skwir of its instance
+/// taking launches over ([`NotTaken::Elsewhere`]): take the request that
+/// started it, which the bus holds until someone has the name
+/// `org.freedesktop.FileManager1`, hand its launches to that Skwir
+/// ([`hand_over_to_holder`]), and let the name go. Waits up to `wait` for
+/// the request: call it on a worker. Whether a request came and was
+/// handed whole. Always false on other systems, and once [`keep_apart`]
+/// was asked.
+#[must_use]
+pub fn answer_for_holder(wait: std::time::Duration) -> bool {
+    if apart() {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match crate::bus::session() {
+            Ok(bus) => linux::answer_for_holder_on(&bus, wait, hand_over_to_holder),
+            Err(error) => {
+                tracing::debug!("no session bus: {error}");
+                false
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = wait;
+        false
+    }
+}
+
 /// Why later launches are not taken over here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotTaken {
@@ -272,9 +310,46 @@ pub struct TakingOver {
     held: Option<linux::Held>,
     #[cfg(windows)]
     held: Option<pipe::Held>,
+    #[cfg(target_os = "linux")]
+    answer: Arc<linux::Answer>,
+}
+
+/// Whether the Skwir that takes launches over answers other programs'
+/// requests to show folders and files too (ADR-140): a handle of
+/// [`TakingOver::answering`], kept by what follows the user's choice.
+/// What it answers is handed in as launches are, through the same
+/// `taken`. Only on Linux: elsewhere it answers nothing.
+#[derive(Clone)]
+pub struct Answering {
+    #[cfg(target_os = "linux")]
+    answer: Arc<linux::Answer>,
+}
+
+impl Answering {
+    /// Answer, or no longer: on Linux the name
+    /// `org.freedesktop.FileManager1` asked (waiting behind a holder that
+    /// does not let go) or let go, again on each connection the bus is
+    /// given on. Waits for the bus: call it on a worker. Once taking over
+    /// stopped, nothing.
+    pub fn set(&self, answer: bool) {
+        #[cfg(target_os = "linux")]
+        self.answer.set(answer);
+        #[cfg(not(target_os = "linux"))]
+        let _ = answer;
+    }
 }
 
 impl TakingOver {
+    /// What says whether this Skwir answers other programs' requests to
+    /// show folders and files ([`Answering`]): not at first.
+    #[must_use]
+    pub fn answering(&self) -> Answering {
+        Answering {
+            #[cfg(target_os = "linux")]
+            answer: Arc::clone(&self.answer),
+        }
+    }
+
     /// Stop taking launches over, unless `waiting` says one already was
     /// (asked with no launch being taken meanwhile): whether it stopped.
     /// Stopped, launches are refused as after [`TakingOver::stop_aside`],
@@ -371,6 +446,10 @@ mod linux {
 
     /// What the bus name of an instance begins with.
     pub(super) const NAME: &str = "org.skwir.skwir";
+    /// The name and object other programs ask to show folders and files
+    /// (ADR-140), as Nautilus and Dolphin serve them.
+    pub(super) const FILE_MANAGER: &str = "org.freedesktop.FileManager1";
+    const FILE_MANAGER_PATH: &str = "/org/freedesktop/FileManager1";
     pub(super) const PATH: &str = "/org/skwir/skwir";
     /// As [`Finishing`] is declared.
     const INTERFACE: &str = "org.skwir.skwir.Finishing";
@@ -436,12 +515,17 @@ mod linux {
                 .map_or(&[][..], OsStr::as_encoded_bytes);
             let cwd = opening.cwd.as_os_str().as_encoded_bytes();
             let token = opening.token.as_deref().unwrap_or_default();
+            let select: Vec<&[u8]> = opening
+                .select
+                .iter()
+                .map(|name| name.as_encoded_bytes())
+                .collect();
             bus.call_method(
                 Some(name),
                 PATH,
                 Some(INTERFACE),
                 "Open",
-                &(location, cwd, token),
+                &(location, cwd, token, select, opening.properties),
             )?;
             Ok(true)
         };
@@ -461,12 +545,26 @@ mod linux {
     impl Finishing {
         /// Open `location` (its bytes; empty for what the window had),
         /// read against `cwd`, the window brought forward with `token`
-        /// (empty for none): answered once taken.
-        fn open(&self, location: Vec<u8>, cwd: Vec<u8>, token: String) -> zbus::fdo::Result<()> {
+        /// (empty for none), the names `select` (bytes each) selected
+        /// there once listed, with `properties` shown: answered once
+        /// taken.
+        fn open(
+            &self,
+            location: Vec<u8>,
+            cwd: Vec<u8>,
+            token: String,
+            select: Vec<Vec<u8>>,
+            properties: bool,
+        ) -> zbus::fdo::Result<()> {
             let opening = Opening {
                 location: (!location.is_empty()).then(|| skwir_core::os_path::from_bytes(location)),
                 cwd: PathBuf::from(skwir_core::os_path::from_bytes(cwd)),
                 token: (!token.is_empty()).then_some(token),
+                select: select
+                    .into_iter()
+                    .map(skwir_core::os_path::from_bytes)
+                    .collect(),
+                properties,
             };
             if self.0.pass(opening) {
                 Ok(())
@@ -476,6 +574,195 @@ mod linux {
                 ))
             }
         }
+    }
+
+    /// What other programs call to show folders and files (ADR-140):
+    /// each request is launches, handed in through the gate.
+    struct FileManager(Arc<Gate>);
+
+    // zbus hands a method its arguments owned, as it read them.
+    #[allow(clippy::needless_pass_by_value)]
+    #[zbus::interface(name = "org.freedesktop.FileManager1")]
+    impl FileManager {
+        /// Open each folder of `uris`, the window brought forward with
+        /// `startup_id`.
+        fn show_folders(&self, uris: Vec<String>, startup_id: String) -> zbus::fdo::Result<()> {
+            self.asked(crate::file_manager::Shown::Folders, &uris, startup_id)
+        }
+
+        /// Open the folder of each item of `uris`, its items selected.
+        fn show_items(&self, uris: Vec<String>, startup_id: String) -> zbus::fdo::Result<()> {
+            self.asked(crate::file_manager::Shown::Items, &uris, startup_id)
+        }
+
+        /// As `ShowItems`, Properties shown.
+        fn show_item_properties(
+            &self,
+            uris: Vec<String>,
+            startup_id: String,
+        ) -> zbus::fdo::Result<()> {
+            self.asked(crate::file_manager::Shown::Properties, &uris, startup_id)
+        }
+    }
+
+    impl FileManager {
+        /// `uris` shown as `shown` asks, as launches: answered once each is
+        /// handed in, as Nautilus's and Dolphin's answer at once. Refused
+        /// when none is a local file, or Skwir no longer takes them, so the
+        /// asking program does what it does when no one answers.
+        fn asked(
+            &self,
+            shown: crate::file_manager::Shown,
+            uris: &[String],
+            startup_id: String,
+        ) -> zbus::fdo::Result<()> {
+            let token = (!startup_id.is_empty()).then_some(startup_id);
+            let openings = crate::file_manager::openings(shown, uris, token);
+            if openings.is_empty() {
+                return Err(zbus::fdo::Error::InvalidArgs(
+                    "Skwir shows local files alone".into(),
+                ));
+            }
+            for opening in openings {
+                if !self.0.pass(opening) {
+                    return Err(zbus::fdo::Error::Failed(
+                        "Skwir no longer shows files for other programs".into(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Whether the program answers other programs (ADR-140), and where:
+    /// shared by the thread that serves on each connection and by what
+    /// follows the user's choice ([`super::Answering`]).
+    pub(super) struct Answer {
+        gate: Arc<Gate>,
+        state: parking_lot::Mutex<Answered>,
+    }
+
+    #[derive(Default)]
+    struct Answered {
+        /// Asked to answer.
+        wanted: bool,
+        /// The connection taken over on, while there is one.
+        bus: Option<Connection>,
+        /// The object served and the name asked there.
+        serving: bool,
+    }
+
+    impl Answer {
+        pub(super) fn new(gate: Arc<Gate>) -> Answer {
+            Answer {
+                gate,
+                state: parking_lot::Mutex::default(),
+            }
+        }
+
+        pub(super) fn set(&self, wanted: bool) {
+            let mut state = self.state.lock();
+            state.wanted = wanted;
+            self.apply(&mut state);
+        }
+
+        /// Taking over is served on `bus`: answered there too if wanted.
+        fn connected(&self, bus: &Connection) {
+            let mut state = self.state.lock();
+            state.bus = Some(bus.clone());
+            state.serving = false;
+            self.apply(&mut state);
+        }
+
+        /// No longer served on the connection it was (ended, or taking
+        /// over stopped): what was asked there let go.
+        fn disconnected(&self) {
+            let mut state = self.state.lock();
+            if state.serving
+                && let Some(bus) = &state.bus
+            {
+                let_go_of_file_manager(bus);
+            }
+            state.bus = None;
+            state.serving = false;
+        }
+
+        fn apply(&self, state: &mut Answered) {
+            let Some(bus) = state.bus.clone() else {
+                return;
+            };
+            if state.wanted && !state.serving {
+                state.serving = serve_file_manager(&bus, &self.gate);
+            } else if !state.wanted && state.serving {
+                let_go_of_file_manager(&bus);
+                state.serving = false;
+            }
+        }
+    }
+
+    /// Serve `/org/freedesktop/FileManager1` on `bus` and ask its name,
+    /// taking it from a holder that lets go (another Skwir), else waiting
+    /// behind it, and letting it go to one asked after: whether it is
+    /// served.
+    pub(super) fn serve_file_manager(bus: &Connection, gate: &Arc<Gate>) -> bool {
+        let objects = bus.object_server();
+        match objects.at(FILE_MANAGER_PATH, FileManager(Arc::clone(gate))) {
+            Ok(_) => {}
+            Err(error) => {
+                tracing::debug!("not showing files for other programs: {error}");
+                return false;
+            }
+        }
+        let flags = RequestNameFlags::ReplaceExisting | RequestNameFlags::AllowReplacement;
+        match bus.request_name_with_flags(FILE_MANAGER, flags) {
+            Ok(reply) => {
+                tracing::info!(?reply, "showing files for other programs");
+                true
+            }
+            Err(error) => {
+                tracing::debug!("not showing files for other programs: {error}");
+                let _ = objects.remove::<FileManager, _>(FILE_MANAGER_PATH);
+                false
+            }
+        }
+    }
+
+    /// The name let go and the object taken down, on `bus`.
+    pub(super) fn let_go_of_file_manager(bus: &Connection) {
+        let _ = bus.release_name(FILE_MANAGER);
+        let _ = bus
+            .object_server()
+            .remove::<FileManager, _>(FILE_MANAGER_PATH);
+        tracing::info!("no longer showing files for other programs");
+    }
+
+    /// [`super::answer_for_holder`] on `bus`, each launch handed by `hand`.
+    pub(super) fn answer_for_holder_on(
+        bus: &Connection,
+        wait: std::time::Duration,
+        hand: impl Fn(&Opening) -> bool,
+    ) -> bool {
+        let (told, asked) = std::sync::mpsc::channel::<Opening>();
+        let gate = Gate::new(move |opening| {
+            let _ = told.send(opening);
+        });
+        if !serve_file_manager(bus, &gate) {
+            return false;
+        }
+        let mut openings = Vec::new();
+        if let Ok(first) = asked.recv_timeout(wait) {
+            openings.push(first);
+            // The rest of that request, handed in as one call: what comes
+            // within a moment of it.
+            while let Ok(more) = asked.recv_timeout(std::time::Duration::from_millis(50)) {
+                openings.push(more);
+            }
+        }
+        gate.close();
+        let_go_of_file_manager(bus);
+        // Each handed, whatever the one before did.
+        let refused = openings.iter().filter(|opening| !hand(opening)).count();
+        !openings.is_empty() && refused == 0
     }
 
     /// The thread that serves on each connection the bus is given on
@@ -504,10 +791,11 @@ mod linux {
         taken: impl Fn(Opening) + Send + Sync + 'static,
     ) -> Result<TakingOver, NotTaken> {
         let gate = Gate::new(taken);
+        let answer = Arc::new(Answer::new(Arc::clone(&gate)));
         let stop = CancelToken::new();
         let (first, answered) = std::sync::mpsc::sync_channel(1);
         let thread = {
-            let (gate, stop) = (Arc::clone(&gate), stop.clone());
+            let (gate, answer, stop) = (Arc::clone(&gate), Arc::clone(&answer), stop.clone());
             std::thread::Builder::new()
                 .name("skwir-finishing".into())
                 .spawn(move || {
@@ -517,7 +805,7 @@ mod linux {
                         // What the bus that ended had is let go of first
                         // (its marker, ours, written again once served).
                         drop(served.take());
-                        let on = Served::on(bus, &gate, &marker, &name);
+                        let on = Served::on(bus, &gate, &answer, &marker, &name);
                         if let Some(first) = first.take() {
                             let _ = first.send(on.as_ref().map(|_| ()).map_err(|not| *not));
                         }
@@ -535,6 +823,7 @@ mod linux {
                 stop,
                 thread: Some(thread),
             }),
+            answer,
         };
         // Not served (dropped: stopped and waited for), or no bus (the
         // thread ended without a word).
@@ -551,6 +840,8 @@ mod linux {
         bus: Connection,
         marker: PathBuf,
         name: String,
+        /// Other programs answered here too while it is wanted.
+        answer: Arc<Answer>,
     }
 
     impl Served {
@@ -561,6 +852,7 @@ mod linux {
         fn on(
             bus: &Connection,
             gate: &Arc<Gate>,
+            answer: &Arc<Answer>,
             marker: &Path,
             name: &str,
         ) -> Result<Served, NotTaken> {
@@ -596,20 +888,23 @@ mod linux {
                 bus: bus.clone(),
                 marker: marker.to_owned(),
                 name: name.to_owned(),
+                answer: Arc::clone(answer),
             };
             if let Err(error) = write_marker(marker) {
                 // Dropped: neither the name nor the object kept.
                 tracing::debug!("not taking launches over: {}: {error}", marker.display());
                 return Err(NotTaken::Cannot);
             }
+            answer.connected(bus);
             Ok(served)
         }
     }
 
     impl Drop for Served {
         fn drop(&mut self) {
-            // The name first: a launch that finds the marker meanwhile
-            // finds no one holds it.
+            // Other programs first, then the name: a launch that finds
+            // the marker meanwhile finds no one holds it.
+            self.answer.disconnected();
             let _ = self.bus.release_name(self.name.as_str());
             let _ = self.bus.object_server().remove::<Finishing, _>(PATH);
             let_go_of_marker(&self.marker);
@@ -968,8 +1263,9 @@ mod pipe {
 #[cfg(any(windows, test))]
 #[cfg_attr(not(windows), allow(dead_code))]
 mod frame {
-    /// What the body starts with.
-    pub(super) const VERSION: u8 = 1;
+    /// What the body starts with: 2 since a launch says what to select
+    /// (ADR-140). Both ends are one build: no other is read.
+    pub(super) const VERSION: u8 = 2;
     /// The answer: taken.
     pub(super) const TAKEN: u8 = 1;
     /// The most a body holds: within a pipe's buffer, so it is written at
@@ -984,6 +1280,8 @@ mod frame {
         pub(super) location: Option<Vec<u16>>,
         pub(super) cwd: Vec<u16>,
         pub(super) token: Option<String>,
+        pub(super) select: Vec<Vec<u16>>,
+        pub(super) properties: bool,
     }
 
     #[cfg(windows)]
@@ -994,6 +1292,12 @@ mod frame {
                 location: opening.location.as_ref().map(|l| l.encode_wide().collect()),
                 cwd: opening.cwd.as_os_str().encode_wide().collect(),
                 token: opening.token.clone(),
+                select: opening
+                    .select
+                    .iter()
+                    .map(|name| name.encode_wide().collect())
+                    .collect(),
+                properties: opening.properties,
             }
         }
 
@@ -1003,6 +1307,12 @@ mod frame {
                 location: self.location.map(|l| std::ffi::OsString::from_wide(&l)),
                 cwd: std::ffi::OsString::from_wide(&self.cwd).into(),
                 token: self.token,
+                select: self
+                    .select
+                    .iter()
+                    .map(|name| std::ffi::OsString::from_wide(name))
+                    .collect(),
+                properties: self.properties,
             }
         }
     }
@@ -1014,6 +1324,17 @@ mod frame {
         units(&mut body, fields.location.as_deref());
         units(&mut body, Some(&fields.cwd));
         field(&mut body, fields.token.as_deref().map(str::as_bytes));
+        // How many names, then each; one too many for a `u32` makes the
+        // body too large.
+        body.extend(
+            u32::try_from(fields.select.len())
+                .unwrap_or(NONE)
+                .to_le_bytes(),
+        );
+        for name in &fields.select {
+            units(&mut body, Some(name));
+        }
+        body.push(u8::from(fields.properties));
         if body.len() > LARGEST {
             return None;
         }
@@ -1059,10 +1380,33 @@ mod frame {
             Field::Bytes(bytes) => Some(String::from_utf8(bytes.to_vec()).ok()?),
             Field::None => None,
         };
+        let (count, after) = rest.split_first_chunk::<4>()?;
+        rest = after;
+        let count = usize::try_from(u32::from_le_bytes(*count)).ok()?;
+        // Each name takes four bytes at least: a count larger than what
+        // is left is refused before anything is kept for it.
+        if count > rest.len() / 4 {
+            return None;
+        }
+        let mut select = Vec::with_capacity(count);
+        for _ in 0..count {
+            let Field::Bytes(name) = take(&mut rest)? else {
+                return None;
+            };
+            select.push(units_of(name)?);
+        }
+        let (&properties, rest) = rest.split_first()?;
+        let properties = match properties {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         rest.is_empty().then_some(Fields {
             location,
             cwd,
             token,
+            select,
+            properties,
         })
     }
 
@@ -1117,6 +1461,14 @@ mod frame_tests {
             ),
             cwd: r"C:\Users\someone".encode_utf16().collect(),
             token: Some("token 1".into()),
+            // Two names to select, one with a lone surrogate, and an
+            // empty one.
+            select: vec![
+                "it's a draft.txt".encode_utf16().collect(),
+                [u16::from(b'a'), 0xDC00].to_vec(),
+                Vec::new(),
+            ],
+            properties: true,
         }
     }
 
@@ -1133,6 +1485,8 @@ mod frame_tests {
                 location: Some(Vec::new()),
                 cwd: Vec::new(),
                 token: Some(String::new()),
+                select: Vec::new(),
+                properties: false,
             },
         ] {
             let message = encode(&fields).unwrap();
@@ -1170,14 +1524,32 @@ mod frame_tests {
             }
             out
         };
+        // Three fields, then no names and no Properties.
         let made = |fields: [Option<&[u8]>; 3]| {
             let mut body = vec![VERSION];
             for f in fields {
                 body.extend(field(f));
             }
+            body.extend(0u32.to_le_bytes());
+            body.push(0);
             body
         };
         assert!(decode(&made([None, Some(b"a\0"), None])).is_some());
+        // More names counted than the body holds; a name that is none;
+        // Properties neither shown nor not.
+        let mut counted = made([None, Some(b"a\0"), None]);
+        let at = counted.len() - 5;
+        counted[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(decode(&counted), None);
+        let mut nameless = made([None, Some(b"a\0"), None]);
+        nameless.truncate(nameless.len() - 5);
+        nameless.extend(1u32.to_le_bytes());
+        nameless.extend(field(None));
+        nameless.push(0);
+        assert_eq!(decode(&nameless), None);
+        let mut neither = made([None, Some(b"a\0"), None]);
+        *neither.last_mut().unwrap() = 2;
+        assert_eq!(decode(&neither), None);
         assert_eq!(decode(&made([Some(b"abc"), Some(b"a\0"), None])), None);
         assert_eq!(decode(&made([None, None, None])), None);
         assert_eq!(decode(&made([None, Some(b"a\0"), Some(b"\xff")])), None);
@@ -1189,9 +1561,12 @@ mod frame_tests {
             location: None,
             cwd: vec![u16::from(b'a'); units],
             token: None,
+            select: Vec::new(),
+            properties: false,
         };
-        // The version, three lengths, the folder.
-        let around = (LARGEST - 1 - 12) / 2;
+        // The version, three lengths, the folder, no names counted, no
+        // Properties.
+        let around = (LARGEST - 1 - 12 - 4 - 1) / 2;
         assert!(encode(&at(around)).is_some());
         assert_eq!(encode(&at(around + 1)), None);
     }
@@ -1315,6 +1690,12 @@ mod linux_tests {
             location: Some(OsString::from_vec(b"/srv/Dossier d'\xe9t\xe9".to_vec())),
             cwd: PathBuf::from(OsString::from_vec(b"/srv/caf\xe9".to_vec())),
             token: Some("activation-1".into()),
+            // Names to select: one not UTF-8, one with an apostrophe.
+            select: vec![
+                OsString::from_vec(b"r\xe9sum\xe9.txt".to_vec()),
+                OsString::from("it's a draft.txt"),
+            ],
+            properties: true,
         }
     }
 
@@ -1419,7 +1800,7 @@ mod linux_tests {
         let bare = Opening {
             location: None,
             cwd: PathBuf::from("/"),
-            token: None,
+            ..Opening::default()
         };
         assert!(hand_over_at(&marker, HELD, patient(&bus.address), &bare));
         assert_eq!(*told.lock(), [first, bare]);
@@ -1647,6 +2028,181 @@ mod linux_tests {
         assert!(!held(&address));
         assert!(!marker.exists());
     }
+
+    /// Who holds `org.freedesktop.FileManager1` on the bus at `address`:
+    /// its unique name.
+    fn file_manager_owner(address: &str) -> Option<String> {
+        let bus = connector(address)().unwrap();
+        zbus::blocking::fdo::DBusProxy::new(&bus)
+            .unwrap()
+            .get_name_owner(super::linux::FILE_MANAGER.try_into().unwrap())
+            .ok()
+            .map(|owner| owner.to_string())
+    }
+
+    /// Another program's request, `method` with `uris`, on its own
+    /// connection to `address`: whether it was answered without an error.
+    fn ask_to_show(address: &str, method: &str, uris: &[&str], token: &str) -> bool {
+        let bus = patient(address)().unwrap();
+        bus.call_method(
+            Some(super::linux::FILE_MANAGER),
+            "/org/freedesktop/FileManager1",
+            Some("org.freedesktop.FileManager1"),
+            method,
+            &(uris, token),
+        )
+        .is_ok()
+    }
+
+    /// While answering, another program's Show in Folder is launches
+    /// taken as a launch is: a folder each, its items to select, the
+    /// token with the last; no longer answering, the name is let go, and
+    /// a request then finds no one (the asker opens the folder itself).
+    #[test]
+    fn a_request_to_show_files_is_launches() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let (told, taken) = taker();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        assert_eq!(
+            file_manager_owner(&bus.address),
+            None,
+            "not answering at first"
+        );
+        taking.answering().set(true);
+        assert!(file_manager_owner(&bus.address).is_some());
+        assert!(ask_to_show(
+            &bus.address,
+            "ShowItems",
+            &[
+                "file:///srv/Field%20Guide/it's%20a%20draft.txt",
+                "file:///srv/Maps/tr%C3%B6isi%C3%A8me.png",
+            ],
+            "token-1",
+        ));
+        let shown = told.lock().clone();
+        assert_eq!(
+            shown
+                .iter()
+                .map(|o| (
+                    o.location.clone().unwrap(),
+                    o.select.clone(),
+                    o.token.clone()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "/srv/Field Guide".into(),
+                    vec![OsString::from("it's a draft.txt")],
+                    None
+                ),
+                (
+                    "/srv/Maps".into(),
+                    vec![OsString::from("tröisième.png")],
+                    Some("token-1".into())
+                ),
+            ]
+        );
+        assert!(ask_to_show(
+            &bus.address,
+            "ShowItemProperties",
+            &["file:///srv/Maps/x.png"],
+            ""
+        ));
+        assert!(told.lock().last().unwrap().properties);
+        assert!(
+            !ask_to_show(&bus.address, "ShowFolders", &["sftp://host/srv"], ""),
+            "nothing local: refused, so the asker does what it does alone"
+        );
+        taking.answering().set(false);
+        assert_eq!(file_manager_owner(&bus.address), None);
+        assert!(!ask_to_show(&bus.address, "ShowFolders", &["/srv"], ""));
+        assert_eq!(told.lock().len(), 3);
+        drop(taking);
+    }
+
+    /// A holder that does not let go (Dolphin's daemon) answers until it
+    /// ends; then the Skwir that waited in the queue does.
+    #[test]
+    fn a_holder_that_does_not_let_go_answers_until_it_ends() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let holder = connector(&bus.address)().unwrap();
+        holder
+            .request_name_with_flags(
+                super::linux::FILE_MANAGER,
+                zbus::fdo::RequestNameFlags::DoNotQueue.into(),
+            )
+            .unwrap();
+        let marker = folder.path().join("skwir").join("finishing");
+        let (_told, taken) = taker();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        taking.answering().set(true);
+        let holder_name = holder.unique_name().unwrap().to_string();
+        assert_eq!(file_manager_owner(&bus.address), Some(holder_name.clone()));
+        drop(holder);
+        until("the Skwir that waited answers", &|| {
+            file_manager_owner(&bus.address).is_some_and(|owner| owner != holder_name)
+        });
+        drop(taking);
+        assert_eq!(file_manager_owner(&bus.address), None);
+    }
+
+    /// A program the bus started finds another Skwir taking launches over:
+    /// the request that started it goes there whole, and the name is let
+    /// go once handed.
+    #[test]
+    fn a_request_started_elsewhere_goes_to_the_skwir_that_runs() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let (told, taken) = taker();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        let started = connector(&bus.address)().unwrap();
+        let address = bus.address.clone();
+        let asker = std::thread::spawn(move || {
+            until("the started program answers", &|| {
+                file_manager_owner(&address).is_some()
+            });
+            ask_to_show(
+                &address,
+                "ShowItems",
+                &["/srv/a/one.txt", "/srv/b/two.txt"],
+                "token-2",
+            )
+        });
+        let address = bus.address.clone();
+        let handed = super::linux::answer_for_holder_on(&started, Duration::from_secs(10), |o| {
+            ask_holder(HELD, patient(&address), o)
+        });
+        assert!(asker.join().unwrap(), "the asker was answered");
+        assert!(handed);
+        let told = told.lock().clone();
+        assert_eq!(told.len(), 2);
+        assert_eq!(told[1].token.as_deref(), Some("token-2"));
+        assert_eq!(file_manager_owner(&bus.address), None, "let go once handed");
+        drop(taking);
+    }
+
+    /// Asked nothing within its wait, it hands nothing and lets go.
+    #[test]
+    fn a_program_asked_nothing_hands_nothing() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let started = connector(&bus.address)().unwrap();
+        let handed =
+            super::linux::answer_for_holder_on(&started, Duration::from_millis(100), |_| true);
+        assert!(!handed);
+        assert_eq!(file_manager_owner(&bus.address), None);
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -1687,6 +2243,8 @@ mod windows_tests {
             )),
             cwd: PathBuf::from(r"C:\Users"),
             token: None,
+            select: vec![OsString::from("it's a draft.txt")],
+            properties: true,
         }
     }
 
@@ -1721,6 +2279,7 @@ mod windows_tests {
             location: None,
             cwd: PathBuf::from(r"D:\"),
             token: Some("token".into()),
+            ..Opening::default()
         };
         assert!(pipe::hand_over_to(&pipe, &bare));
         assert_eq!(*told.lock(), [first, bare]);

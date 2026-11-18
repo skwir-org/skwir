@@ -330,6 +330,13 @@ Left:
 - `platform/apps.rs` **(c)**: desktop entries, `mimeapps.list`, the locale,
   `Exec` codes. Open With lists nothing off Linux (Launch Services and
   Windows' association handlers are not read).
+- Show in folder for other programs (ADR-140, `platform/file_manager.rs`,
+  the FileManager1 object in `handover.rs`): Linux's alone, by decision
+  (the Finder answers every reveal on macOS; Explorer cannot be
+  replaced for the shell's own on Windows). `--file-manager` errors
+  "not available on \<system\> yet" **(n)**; `file_manager::follow`
+  follows nothing **(u)**. The pipe's message carries what to select
+  (its second version), its tests under Wine.
 - Owners: Windows entries carry none (SIDs not read). macOS's are uids named
   through `/etc/passwd` **(c)**, which misses Directory Services' users.
 

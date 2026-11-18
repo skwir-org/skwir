@@ -5475,6 +5475,14 @@ impl Shell {
         self.panel_switched(window, cx);
     }
 
+    /// Properties shown, if they are not: another program asked for a
+    /// file's (`ShowItemProperties`, ADR-140).
+    pub fn show_properties(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.preview.properties_on {
+            self.properties(window, cx);
+        }
+    }
+
     /// One of the panel's switches flipped: the preview's menus go with
     /// the preview, the keyboard leaves a panel that went, and the
     /// window's shape is kept. What the preview read goes at the next

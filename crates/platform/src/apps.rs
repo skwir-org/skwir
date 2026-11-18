@@ -671,6 +671,95 @@ pub fn type_of(entry: &skwir_core::Entry, path: &Path) -> Mime {
         .unwrap_or_else(|| Mime("application/octet-stream".into()))
 }
 
+// ------------------------------------------------------ the default named
+
+/// The default the lists name for `mime`, as the desktop reads them (the
+/// XDG MIME Applications specification): the first one installed, of the
+/// most important list first. A choice someone made (the user, the
+/// desktop's settings, the system), never an application that merely
+/// says it opens the type. Reads the lists and only the entries they
+/// name, not every application as [`Catalog::load`] does: call from a
+/// worker.
+#[must_use]
+pub fn named_default(mime: &str) -> Option<Application> {
+    let sources = Sources::from_env();
+    named_default_in(
+        &sources.app_dirs,
+        &sources.lists,
+        mime,
+        &Locale::from_languages(&skwir_core::locale::preferred()),
+        &current_desktops(),
+    )
+}
+
+/// [`named_default`] among explicit directories and lists, most important
+/// first.
+fn named_default_in(
+    app_dirs: &[PathBuf],
+    lists: &[PathBuf],
+    mime: &str,
+    locale: &Locale,
+    desktops: &[String],
+) -> Option<Application> {
+    let mime = canonical(mime);
+    lists
+        .iter()
+        .filter_map(|list| crate::file::read_regular_text(list, crate::file::DESKTOP_FILE).ok())
+        .flat_map(|text| {
+            keyfile::entries(&text)
+                .filter(|&(group, key, _)| {
+                    group == "Default Applications" && canonical(key) == mime
+                })
+                .flat_map(|(_, _, value)| keyfile::list(value))
+                .collect::<Vec<_>>()
+        })
+        .find_map(|id| installed(app_dirs, &id, locale, desktops))
+}
+
+/// The entry of desktop file ID `id`, as the catalog would take it: from
+/// the first directory that has one under that ID (a subdirectory's `-`
+/// a `/`), which a hidden entry there hides.
+fn installed(
+    app_dirs: &[PathBuf],
+    id: &str,
+    locale: &Locale,
+    desktops: &[String],
+) -> Option<Application> {
+    let paths = id_paths(id);
+    app_dirs.iter().find_map(|dir| {
+        let path = paths
+            .iter()
+            .map(|relative| dir.join(relative))
+            .find(|path| path.is_file())?;
+        let text = crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE).ok()?;
+        // Found here, the ID is taken: a hidden entry is not looked past.
+        Some(parse_entry(id, &path, &text, locale, desktops))
+    })?
+}
+
+/// Where an entry of desktop file ID `id` may be, relative to an
+/// applications directory: as written, then with any of its `-` a folder's
+/// `/` (`kde4-okular.desktop` may be `kde4/okular.desktop`). An ID with
+/// more than a few is looked for as written alone.
+fn id_paths(id: &str) -> Vec<PathBuf> {
+    const DASHES: usize = 4;
+    let dashes: Vec<usize> = id.match_indices('-').map(|(at, _)| at).collect();
+    if dashes.is_empty() || dashes.len() > DASHES {
+        return vec![PathBuf::from(id)];
+    }
+    (0..1u32 << dashes.len())
+        .map(|folders| {
+            let mut path = id.as_bytes().to_vec();
+            for (n, at) in dashes.iter().enumerate() {
+                if folders & (1 << n) != 0 {
+                    path[*at] = b'/';
+                }
+            }
+            PathBuf::from(String::from_utf8(path).unwrap_or_else(|_| id.to_owned()))
+        })
+        .collect()
+}
+
 // ------------------------------------------------------ choosing a default
 
 /// What one type's lines say in one `mimeapps.list`, as data: what a
@@ -1196,6 +1285,71 @@ mod tests {
             "what opens any stream of bytes, as the desktop would"
         );
         assert_eq!(default(&["inode/directory"]), None, "nothing opens it");
+    }
+
+    /// The default named for folders, as `named_default` reads it: the
+    /// first installed of the most important list, a hidden entry hiding
+    /// one further on, an entry in a subfolder found by its ID; an
+    /// application that merely declares the type is no default.
+    #[test]
+    fn the_default_named_is_the_first_installed_the_lists_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (user, system) = (tmp.path().join("user"), tmp.path().join("system"));
+        let entry = |name: &str| {
+            format!(
+                "[Desktop Entry]\nType=Application\nName={name}\nExec={name} %f\nMimeType=inode/directory;\n"
+            )
+        };
+        write(&system, "files.desktop", &entry("files"));
+        write(&system, "kde4/browser.desktop", &entry("browser"));
+        write(&system, "hidden.desktop", &entry("hidden"));
+        write(
+            &user,
+            "hidden.desktop",
+            "[Desktop Entry]\nType=Application\nName=hidden\nExec=hidden\nHidden=true\n",
+        );
+        let named = |lists: &[&str]| {
+            let paths: Vec<PathBuf> = lists
+                .iter()
+                .enumerate()
+                .map(|(n, text)| {
+                    let name = format!("{n}-mimeapps.list");
+                    write(tmp.path(), &name, text);
+                    tmp.path().join(name)
+                })
+                .collect();
+            named_default_in(
+                &[user.clone(), system.clone()],
+                &paths,
+                "inode/directory",
+                &Locale::default(),
+                &[],
+            )
+            .map(|app| app.id)
+        };
+        assert_eq!(
+            named(&[
+                "[Default Applications]\ninode/directory=gone.desktop;hidden.desktop;files.desktop;\n",
+                "[Default Applications]\ninode/directory=kde4-browser.desktop;\n",
+            ])
+            .as_deref(),
+            Some("files.desktop"),
+            "one not installed and one hidden passed over, in the first list"
+        );
+        assert_eq!(
+            named(&[
+                "[Added Associations]\ninode/directory=files.desktop;\n",
+                "[Default Applications]\ninode/directory=kde4-browser.desktop;\n",
+            ])
+            .as_deref(),
+            Some("kde4-browser.desktop"),
+            "a list naming none passed over; a subfolder's entry by its ID"
+        );
+        assert_eq!(
+            named(&["[Default Applications]\ntext/plain=files.desktop;\n"]),
+            None,
+            "entries that declare folders are no default"
+        );
     }
 
     #[test]

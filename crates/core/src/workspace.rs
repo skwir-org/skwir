@@ -1110,10 +1110,10 @@ pub struct Pane {
     /// entry the cursor was on, which Back and Forward select again
     /// (`go_to`), and what filtered it, which they show it with (ADR-109).
     left_at: Vec<StepLeft>,
-    /// A name to select once the listing has it, and how; see
-    /// [`Pane::reveal`].
-    reveal: Option<(OsString, Revealing)>,
-    /// The listing's names when the reveal last looked for its name: it
+    /// The names to select once the listing has them, and how; see
+    /// [`Pane::reveal`] and [`Pane::reveal_names`].
+    reveal: Option<(Vec<OsString>, Revealing)>,
+    /// The listing's names when the reveal last looked for its names: it
     /// looks again only once they change, not at every pump.
     reveal_looked: Option<u64>,
     /// Which opened folder holds each entry the pane shows beside its own
@@ -3528,48 +3528,68 @@ impl Pane {
     /// the next navigation forgets it, and so does a listing that
     /// completes without that name.
     pub fn reveal(&mut self, name: OsString) {
-        self.reveal_as(name, Revealing::Asked);
+        self.reveal_as(vec![name], Revealing::Asked);
+    }
+
+    /// `reveal` several names at once (another program's Show in Folder
+    /// naming files of one folder, ADR-140): all selected as soon as the
+    /// listing has them all, or those it has once it is complete.
+    pub fn reveal_names(&mut self, names: Vec<OsString>) {
+        if !names.is_empty() {
+            self.reveal_as(names, Revealing::Asked);
+        }
     }
 
     /// `reveal` an entry that its location lists a moment after it is
     /// complete (a tag just made, listed by a worker): the name is kept
     /// until it is listed or the pane shows another location.
     pub fn reveal_coming(&mut self, name: OsString) {
-        self.reveal_as(name, Revealing::Coming);
+        self.reveal_as(vec![name], Revealing::Coming);
     }
 
     /// `reveal` the way back down, gone up from it (`App::way_down`):
     /// selected only if shown, so a hidden folder left turns no hidden
     /// files on and a folder the filter leaves out is not selected.
     pub fn reveal_way_down(&mut self, name: OsString) {
-        self.reveal_as(name, Revealing::WayDown);
+        self.reveal_as(vec![name], Revealing::WayDown);
     }
 
-    fn reveal_as(&mut self, name: OsString, how: Revealing) {
-        self.reveal = Some((name, how));
+    fn reveal_as(&mut self, names: Vec<OsString>, how: Revealing) {
+        self.reveal = Some((names, how));
         self.reveal_looked = None;
         self.take_reveal();
     }
 
+    /// Select what the reveal waits for once the listing has it all, or,
+    /// once complete, what of it the listing has. Looks again only when
+    /// the listing's names moved, or it completed: a name each, through
+    /// its index.
     fn take_reveal(&mut self) {
-        let Some((name, how)) = &self.reveal else {
+        let Some((names, how)) = &self.reveal else {
             return;
         };
         let how = *how;
-        let names = Some(self.listing.names_version());
-        let looked = std::mem::replace(&mut self.reveal_looked, names) == names;
-        if looked && !self.listing.is_complete() {
+        let complete = self.listing.is_complete();
+        let version = Some(self.listing.names_version());
+        let looked = std::mem::replace(&mut self.reveal_looked, version) == version;
+        if looked && !complete {
             return;
         }
-        if let Some(id) = (!looked)
-            .then(|| self.listing.find_by_name(name).map(|e| e.id))
-            .flatten()
-        {
-            if how != Revealing::WayDown || self.is_shown(id) {
-                self.select_revealed(&[id]);
+        let found: Vec<EntryId> = names
+            .iter()
+            .filter_map(|name| self.listing.find_by_name(name).map(|e| e.id))
+            .collect();
+        if found.len() == names.len() || (complete && !found.is_empty()) {
+            let chosen: Vec<EntryId> = if how == Revealing::WayDown {
+                found.into_iter().filter(|id| self.is_shown(*id)).collect()
+            } else {
+                found
+            };
+            if !chosen.is_empty() {
+                self.select_revealed(&chosen);
             }
             self.reveal = None;
-        } else if self.listing.is_complete() && how != Revealing::Coming {
+        } else if complete && how != Revealing::Coming {
             self.reveal = None;
         }
     }

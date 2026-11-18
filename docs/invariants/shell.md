@@ -2109,6 +2109,22 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`TakingOver::close_unless`, `finishing::end_unless_handed`).
   macOS: `on_open_urls` hands the Finder's and the Dock's openings in;
   a launch from a terminal is a program of its own there.
+- **Other programs' "Show in folder" is a launch** (ADR-140, Linux): the
+  program that takes launches over answers `org.freedesktop.FileManager1`
+  while skwir is the desktop's default for folders
+  (`file_manager::follow`, asked at start and as the user's lists
+  change; no setting of skwir's own), its requests handed in through the
+  same gate (`handover::Answering`), each folder a launch whose
+  `Opening::select` is selected once listed (`Pane::reveal_names`) and
+  whose `properties` shows Properties (`Shell::show_properties`). It
+  keeps the bus's service file in step (`$XDG_DATA_HOME/dbus-1/services`,
+  only skwir's own, naming the program the desktop entry runs, never the
+  running build's path). Started by the bus (`--file-manager`), the
+  program opens no window until asked, restores nothing, hands the
+  request to a skwir of its instance that runs, and one that ends asked
+  nothing ends with a status that is not 0 (`ended_unasked`), which
+  dbus-daemon would wait for. Nothing here names another program's
+  service, nor takes a name its holder does not let go.
 - **A wake draws the windows it concerns** (`finishing::woken`): the
   listings are pumped once for all the windows, then a window syncs and
   draws if the wake was for all (`App::wake`, an

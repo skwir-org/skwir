@@ -1570,6 +1570,19 @@ impl App {
         self.wake();
     }
 
+    /// Select the entries of `pane` called `names` as soon as its listing
+    /// has them all, or those it has once complete (`Pane::reveal_names`):
+    /// right after navigating there.
+    pub fn reveal_names(&self, pane: PaneId, names: Vec<std::ffi::OsString>) {
+        if names.is_empty() {
+            return;
+        }
+        if let Some(p) = self.workspace.write().pane_mut(pane) {
+            p.reveal_names(names);
+        }
+        self.wake();
+    }
+
     /// What gestures mean in `location` (`LocationProvider::verbs`): a
     /// folder's meanings when its provider says nothing.
     pub fn verbs(&self, location: &Location) -> crate::location::Verbs {

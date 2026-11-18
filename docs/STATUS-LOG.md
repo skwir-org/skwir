@@ -20325,3 +20325,80 @@ folding for 3 pages.
 
 **Not checked:** a `DjVu` in a window (the same path, through the DjVu
 plugin's reader); a solid CBR or CB7 large enough to outlast the wait.
+
+## 2026-11-18: Show in folder for other programs (ADR-140)
+
+Asked by the user, who chose to start with being the default file
+manager before a file chooser for other programs. "Show in folder" from
+another program is `org.freedesktop.FileManager1` on the session bus,
+which the bus starts whoever installed a file for: on the user's
+session Dolphin's daemon held it, so with skwir the default for folders
+other programs still showed their files in Dolphin.
+
+Built, with no setting of skwir's own: the desktop's default for
+`inode/directory`, as the lists name it (`apps::named_default`: the
+first installed, never an entry that merely declares folders), is the
+choice. While it names skwir, the program that takes launches over
+serves `/org/freedesktop/FileManager1` beside its hand-over, through the
+same gate (`handover::Answering`), asking the name with
+`ReplaceExisting | AllowReplacement` and waiting behind a holder that
+does not let go. A request is launches (`file_manager::openings`: a
+folder each, its items to select, the token with the last, local files
+alone); `Opening` carries `select` and `properties` on the bus and on
+Windows' pipe (its message's second version); a pane reveals several
+names (`Pane::reveal_names`). The program keeps
+`$XDG_DATA_HOME/dbus-1/services/org.freedesktop.FileManager1.service` in
+step (skwir's own alone, its `Exec` the program the desktop entry runs
+as `PATH` finds it, never the build's path), asking the bus to read its
+files again. `--file-manager` starts the program without a window,
+restoring nothing; it hands the request to a running skwir of its
+instance, or ends with status 3 when skwir is no longer the default (or
+nothing came within 30 s). Followed as the user's lists change
+(`fs::Settled` on `$XDG_CONFIG_HOME`).
+
+**Checked:** clippy `-D warnings` on skwir-core, -platform, -ui and the
+binary for Linux, and for Windows (and core and platform for macOS);
+rustfmt; the new tests: three of `reveal_names` (asked before listing,
+a hidden name turning hidden files on, a name missing; asked of a
+listed folder; nothing selected later), the default named (the first
+installed of the first list naming one, a hidden entry hiding the next,
+a subfolder's ID; declaring folders is no default), the request's
+launches (grouping, order, duplicates, the root, a remote URI, the
+token), the service file (what it starts, a program off `PATH`, a path
+needing quotes, written, kept, removed, a user's own file untouched,
+one starting nothing removed), and on a private dbus-daemon: a request
+handed in as launches and refused once let go or with nothing local, a
+holder that does not let go answering until it ends, a bus-started
+program handing its request to the running skwir, one asked nothing
+handing nothing; the Windows message (what it carries, refusals, its
+size) and the pipe's hand-over under Wine (11 tests).
+In a window, on Xvfb with a private dbus-daemon reading
+`<standard_session_servicedirs/>` from scratch XDG folders, a
+competitor's service file in the system's data folder, and skwir the
+default: skwir took the name and wrote its file; `ShowItems` of two
+files of one folder opened a window there with both selected (answered
+in 4 ms); `ShowItemProperties` of `tröisième.txt` opened Maps with it
+selected and Properties shown; an `sftp://` folder was refused. The
+default changed to the competitor's entry (the list replaced as tools
+write it): the name let go and the file removed within a moment, the
+next request starting the competitor; changed back: taken again. With
+no skwir running, `ShowItems` was answered in 0.1 s by `skwir
+--file-manager`, the bus having started it, its one window on the
+file's folder with the file selected (after a fix: it first restored
+the windows left). A skwir running unaware (the default set in the
+system's list, which is not followed) took the request from the one the
+bus started, which ended. A file left while skwir was not the default:
+first answered after dbus-daemon's 25 s (the program ended with 0,
+which it waits for); with status 3, failed in 0.15 s, the file gone,
+nothing left running.
+dbus-broker 37's source read: the user's folders before the system's,
+a later duplicate ignored, a folder watched only if it existed when
+read, `ReloadConfig` still answered. On the user's session the bus
+starts programs with its `DISPLAY` and `WAYLAND_DISPLAY`, so the started
+skwir is the instance launches go to.
+
+**Not checked:** dbus-broker itself (it starts programs through
+systemd: whether status 3 fails the request at once there); a real
+asker (Firefox, Chromium, the portal's `OpenDirectory`, Zed); Dolphin's
+own daemon as the holder; the startup id on Wayland; `just
+release-check`.

@@ -1107,12 +1107,41 @@ pushed):
   reproducing vendor/zed.
 Checks in `docs/STATUS-LOG.md` (2026-11-15, afternoon).
 
+## Show in folder for other programs (ADR-140, 2026-11-18)
+
+Asked by the user: whether skwir should take the desktop's "open in
+folder" requests and be the default file manager; they chose to start
+there, before a file chooser for other programs (the portal's
+FileChooser, step 2). Built on Linux, with no setting of skwir's own:
+the desktop's default for folders is the choice (Open With, the
+desktop's settings, `xdg-mime`). While it names skwir, the program that
+takes launches over answers `org.freedesktop.FileManager1` (`ShowFolders`,
+`ShowItems`, `ShowItemProperties`), each folder a launch that selects
+its items (`Opening::select`, `Pane::reveal_names`), and keeps the bus's
+service file so the bus starts skwir (`--file-manager`, no window until
+asked) when none runs; followed as the user's lists change. Not built
+(no ADR closes them): a row in Settings saying who opens folders, with
+the button that makes skwir the default (today Open With on a folder);
+following the system's lists (read at start only). Checks in
+`docs/STATUS-LOG.md` (2026-11-18).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Show in folder for other programs** (ADR-140, 2026-11-18): built on
+Linux and checked against a private dbus-daemon on Xvfb. Left: a real
+session's dbus-broker (its rules read in its source, not run: whether a
+program it starts that ends with 3 fails the request at once, as
+dbus-daemon does); a real asker (Firefox's downloads, Chromium, the
+portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
+holding the name, seen to keep it until it ends (a test's holder, not
+Dolphin); the startup id on Wayland; a row in Settings for discovery;
+the system's lists followed; the portal's FileChooser (the user's step
+2).
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as

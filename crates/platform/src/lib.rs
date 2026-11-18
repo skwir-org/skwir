@@ -46,6 +46,7 @@ pub mod document;
 pub mod exif;
 pub mod facts;
 pub mod file;
+pub mod file_manager;
 pub mod filesystem;
 pub mod fonts;
 pub mod git;

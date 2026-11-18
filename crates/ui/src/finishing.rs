@@ -96,6 +96,16 @@ pub(crate) struct Finishing {
     /// This launch lost the race to take launches over, and was handed
     /// over to the one that won (`take_over`): set by its worker.
     handed_away: Arc<AtomicBool>,
+    /// What follows the user's choice of who shows files for other
+    /// programs (ADR-140), while launches are taken over: set by the
+    /// worker that took them over, for its round, let go with them.
+    following: Arc<Mutex<Option<skwir_platform::file_manager::Following>>>,
+    /// Started by the session bus to show files for another program,
+    /// without a window (`--file-manager`, ADR-140): set, by a worker,
+    /// once nothing is to come (asked nothing within `ASKED_WITHIN`, or
+    /// skwir no longer the default for folders); the program then ends at
+    /// the next wake unless a window opened or something was asked.
+    windowless: Option<Arc<AtomicBool>>,
     /// The launches handed over, for the next wake.
     openings: Openings,
     /// What a window that closed held and no other has taken yet: the next
@@ -118,7 +128,28 @@ impl Global for Finishing {}
 pub(crate) struct Launch {
     pub(crate) initial: Option<Location>,
     pub(crate) asked: Option<Opening>,
+    /// Started by the session bus without a window (ADR-140, 5).
+    pub(crate) windowless: bool,
 }
+
+/// Set as a program started without a window ends asked nothing
+/// (`ended_unasked`), until a window opens.
+static ENDED_UNASKED: AtomicBool = AtomicBool::new(false);
+
+/// Whether this program, started by the session bus without a window
+/// (`--file-manager`), ended with none opened: the binary then ends with
+/// a status that is not 0, which dbus-daemon would read as a program gone
+/// to the background and wait for, the asking program with it (ADR-140,
+/// 5). Read once the UI has returned.
+pub fn ended_unasked() -> bool {
+    ENDED_UNASKED.load(Ordering::Acquire)
+}
+
+/// How long a program the session bus started without a window waits for
+/// the request it was started for (ADR-140, 5): the bus holds it until
+/// the name is taken, so it comes within moments; past this, the program
+/// ends.
+const ASKED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Start the program's life: what it reads once for every window, its
 /// state, the loop taking the core's wakes, what ends it, then a window
@@ -133,7 +164,11 @@ pub(crate) fn start(
     openings: Openings,
     launch: Launch,
 ) {
-    let Launch { initial, asked } = launch;
+    let Launch {
+        initial,
+        asked,
+        windowless,
+    } = launch;
     // The program ends when nothing keeps it (`closed`), not with its last
     // window.
     cx.set_quit_mode(gpui::QuitMode::Explicit);
@@ -158,6 +193,8 @@ pub(crate) fn start(
         taking: Arc::default(),
         round: Arc::default(),
         handed_away: Arc::default(),
+        following: Arc::default(),
+        windowless: windowless.then(Arc::default),
         openings,
         handed: Inbox::default(),
         ending,
@@ -168,7 +205,7 @@ pub(crate) fn start(
     // first: a launch that started with this one finds this one's marker
     // sooner, and one that lost to it finds out before it shows anything
     // (`handed_away`).
-    take_over(cx.global::<Finishing>(), asked);
+    take_over(cx.global::<Finishing>(), asked, windowless);
     prepare(&prepared, cx);
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {
@@ -177,8 +214,31 @@ pub(crate) fn start(
     })
     .detach();
     listen(cx, wakes);
-    if !handed_away(cx) {
+    if windowless {
+        // The request opens the window (`woken`); one that does not come
+        // ends the program.
+        end_unless_asked(cx.global::<Finishing>());
+    } else if !handed_away(cx) {
         show(cx, initial, None, false);
+    }
+}
+
+/// Started without a window: once `ASKED_WITHIN` has passed, the program
+/// ends at the next wake unless a request came (`woken`).
+fn end_unless_asked(state: &Finishing) {
+    let Some(over) = state.windowless.clone() else {
+        return;
+    };
+    let wake = state.app.waker_handle();
+    let started = std::thread::Builder::new()
+        .name("skwir-asked-within".into())
+        .spawn(move || {
+            std::thread::sleep(ASKED_WITHIN);
+            over.store(true, Ordering::Release);
+            wake();
+        });
+    if let Err(error) = started {
+        tracing::debug!("a program started without a window waits for good: {error}");
     }
 }
 
@@ -243,7 +303,13 @@ fn prepare(app: &Arc<skwir_core::App>, cx: &mut App) {
 /// active one last so that it has the focus; the active pane showing
 /// `initial`; the tabs each shows opened. `token` brings the window
 /// forward; `activity` opens Activity in it.
-fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity: bool) {
+/// The active pane, when it was taken to `initial`.
+fn show(
+    cx: &mut App,
+    initial: Option<Location>,
+    token: Option<String>,
+    activity: bool,
+) -> Option<PaneId> {
     let state = cx.global::<Finishing>();
     let app = Arc::clone(&state.app);
     let (windows, active) = {
@@ -272,16 +338,18 @@ fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
         if cx.global::<Finishing>().opened {
             sync(cx);
         }
-        return;
+        return None;
     }
     // The tab left stays drawn until the tab shown is ready (`tabs.rs`),
     // each time windows come back: none being up, the panes slept
     // (`App::suspend_panes`, which lets go of it).
     app.hold_tabs(true);
+    let mut shown = None;
     if let Some(location) = initial {
         let pane = app.workspace.read().active_id();
-        if let Err(error) = app.navigate(pane, &location) {
-            say_in_active(cx, Words::of_error(error));
+        match app.navigate(pane, &location) {
+            Ok(()) => shown = Some(pane),
+            Err(error) => say_in_active(cx, Words::of_error(error)),
         }
     }
     // Tabs restored, or asleep while no window was up, open the one each
@@ -293,6 +361,7 @@ fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
     // comes after what they start on.
     app.set_window_shown();
     cx.global_mut::<Finishing>().raised = Some(active);
+    shown
 }
 
 /// Say `text` as an error in the active window's status.
@@ -395,6 +464,15 @@ fn woken(cx: &mut App) -> bool {
         // No window since one was up: the program takes it in.
         if state.opened {
             sync(cx);
+        } else if state
+            .windowless
+            .as_ref()
+            .is_some_and(|over| over.load(Ordering::Acquire))
+        {
+            // Started without a window, and nothing was asked of it.
+            tracing::info!("started to show files for another program, and asked nothing");
+            ENDED_UNASKED.store(true, Ordering::Release);
+            end_unless_handed(cx);
         }
         return false;
     }
@@ -967,11 +1045,20 @@ fn closed(cx: &mut App) {
 /// Skwir of this instance holds later launches (two launches at once, both
 /// finding no one there), it is handed over there, and this one ends
 /// (`handed_away`).
-fn take_over(state: &Finishing, launch: Option<Opening>) {
+///
+/// Taking them over, it shows files for other programs too while skwir
+/// is the default for folders (`file_manager::follow`, ADR-140). Started by
+/// the session bus without a window (`windowless`), it takes the request
+/// that started it to the Skwir that holds launches, if one does; else,
+/// skwir proving no longer the default, nothing is to come
+/// (`Finishing::windowless`).
+fn take_over(state: &Finishing, launch: Option<Opening>, windowless: bool) {
     let round = state.round.fetch_add(1, Ordering::AcqRel) + 1;
     let (openings, wake) = (Arc::clone(&state.openings), state.app.waker_handle());
     let (taking, rounds) = (Arc::clone(&state.taking), Arc::clone(&state.round));
     let (handed_away, wake_handed) = (Arc::clone(&state.handed_away), wake.clone());
+    let following = Arc::clone(&state.following);
+    let over = state.windowless.clone().filter(|_| windowless);
     let started = std::thread::Builder::new()
         .name("skwir-take-over".into())
         .spawn(move || {
@@ -979,16 +1066,33 @@ fn take_over(state: &Finishing, launch: Option<Opening>) {
                 openings.lock().push(opening);
                 wake();
             });
-            if matches!(taken, Err(NotTaken::Elsewhere))
-                && let Some(launch) = launch
-                && skwir_platform::handover::hand_over_to_holder(&launch)
+            if matches!(taken, Err(NotTaken::Elsewhere)) {
+                let handed = match launch {
+                    Some(launch) => skwir_platform::handover::hand_over_to_holder(&launch),
+                    None if windowless => skwir_platform::handover::answer_for_holder(ASKED_WITHIN),
+                    None => false,
+                };
+                if handed {
+                    handed_away.store(true, Ordering::Release);
+                    wake_handed();
+                }
+            }
+            // Followed while launches are taken over, by the program that
+            // takes them: none, nothing to answer for.
+            let followed = taken
+                .as_ref()
+                .ok()
+                .map(|taking| skwir_platform::file_manager::follow(&taking.answering()));
+            if let Some(over) = over
+                && !followed.as_ref().is_some_and(|(chosen, _)| *chosen)
             {
-                handed_away.store(true, Ordering::Release);
+                over.store(true, Ordering::Release);
                 wake_handed();
             }
             let mut taking = taking.lock();
             if rounds.load(Ordering::Acquire) == round {
                 *taking = taken.ok();
+                *following.lock() = followed.map(|(_, following)| following);
             }
         });
     if let Err(error) = started {
@@ -1019,7 +1123,7 @@ fn end_unless_handed(cx: &mut App) {
             if !goes_on {
                 // Stopped before this one was seen (no gate to ask yet, or
                 // a launch the last moment before): taken over anew.
-                take_over(cx.global::<Finishing>(), None);
+                take_over(cx.global::<Finishing>(), None, false);
             }
         }
         None => quit(cx),
@@ -1032,6 +1136,9 @@ fn end_unless_handed(cx: &mut App) {
 /// for here.
 fn stop_taking_over(state: &Finishing) {
     state.round.fetch_add(1, Ordering::AcqRel);
+    // What follows the choice first: it answers no more once taking over
+    // stops, and asks nothing of what is let go.
+    *state.following.lock() = None;
     let taking = state.taking.lock().take();
     if let Some(taking) = taking {
         taking.stop_aside();
@@ -1090,9 +1197,8 @@ fn sync(cx: &mut App) {
     });
     if let Some(token) = token {
         let opening = Opening {
-            location: None,
-            cwd: std::path::PathBuf::new(),
             token,
+            ..Opening::default()
         };
         reopen(cx, Some(opening), true);
     } else if !keeps {
@@ -1261,7 +1367,7 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
 pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
     let state = cx.global::<Finishing>();
     let app = Arc::clone(&state.app);
-    let (initial, token, launched) = match opening {
+    let (initial, token, launched, to_select) = match opening {
         Some(opening) => (
             opening
                 .location
@@ -1269,11 +1375,18 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
             opening.token,
             // A notice clicked, the presence asked: no launch.
             !activity,
+            ToSelect {
+                select: opening.select,
+                properties: opening.properties,
+            },
         ),
-        None => (None, None, false),
+        None => (None, None, false, ToSelect::default()),
     };
     let Some(window) = active_handle(cx) else {
-        show(cx, initial, token, activity);
+        if let Some(pane) = show(cx, initial, token, activity) {
+            let window = active_handle(cx);
+            to_select.shown_in(cx, &app, window, pane);
+        }
         return;
     };
     let in_tab = app
@@ -1290,8 +1403,14 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         // What another program asks is shown as it is, with no pane's lens.
         let _ = window.update(cx, |shell, window, cx| {
             let pane = shell.window_pane();
-            if let Err(error) = shell.app.new_tab_as_kept(Some(pane), location, None, true) {
-                shell.set_status(Words::of_error(error), true, cx);
+            match shell.app.new_tab_as_kept(Some(pane), location, None, true) {
+                Ok((_, pane)) => {
+                    shell.app.reveal_names(pane, to_select.select);
+                    if to_select.properties {
+                        shell.show_properties(window, cx);
+                    }
+                }
+                Err(error) => shell.set_status(Words::of_error(error), true, cx),
             }
             window.activate_window_with_token(token.as_deref());
         });
@@ -1302,11 +1421,44 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         Location::from_path(skwir_core::settings::startup_folder(&app.settings, &home))
     });
     match app.open_window(location) {
-        Ok((id, _, _)) => {
+        Ok((id, _, pane)) => {
             open_window(cx, id, false, token, false);
             cx.global_mut::<Finishing>().raised = Some(id);
+            let window = cx
+                .global::<Finishing>()
+                .windows
+                .iter()
+                .find(|(up, _)| *up == id)
+                .map(|(_, handle)| *handle);
+            to_select.shown_in(cx, &app, window, pane);
         }
         Err(error) => say_in_active(cx, Words::of_error(error)),
+    }
+}
+
+/// What a launch asks of its folder once shown: another program's files
+/// selected there, Properties shown (ADR-140).
+#[derive(Default)]
+struct ToSelect {
+    select: Vec<std::ffi::OsString>,
+    properties: bool,
+}
+
+impl ToSelect {
+    /// Asked of `pane`, in `window`: its names selected once listed.
+    fn shown_in(
+        self,
+        cx: &mut App,
+        app: &skwir_core::App,
+        window: Option<WindowHandle<Shell>>,
+        pane: PaneId,
+    ) {
+        app.reveal_names(pane, self.select);
+        if self.properties
+            && let Some(window) = window
+        {
+            let _ = window.update(cx, Shell::show_properties);
+        }
     }
 }
 
@@ -1453,6 +1605,9 @@ fn open_window(
     let state = cx.global_mut::<Finishing>();
     state.windows.push((id, window));
     state.opened = true;
+    // A request that came as the program ended unasked opened this: it
+    // was asked after all.
+    ENDED_UNASKED.store(false, Ordering::Release);
     if state.shown.take().is_some() {
         state.work.borrow().present(None);
     }

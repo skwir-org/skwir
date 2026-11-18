@@ -180,20 +180,25 @@ mod dev_thumbs {
     }
 }
 
+pub use finishing::ended_unasked;
+
 /// Run the UI until the window closes. `initial` is opened in the active pane.
 pub fn run(app: Arc<App>, initial: Option<Location>) -> anyhow::Result<()> {
-    run_from(app, initial, Instant::now(), None)
+    run_from(app, initial, Instant::now(), None, false)
 }
 
 /// Like [`run`], with the instant the process started, for first-frame
 /// timing, and what this launch asked (`launch`), handed to another Skwir
 /// of this instance if it proves to hold later launches
-/// (`finishing::take_over`).
+/// (`finishing::take_over`). `windowless`: started by the session bus to
+/// show files for another program (`--file-manager`, ADR-140), no window
+/// opens until it is asked.
 pub fn run_from(
     app: Arc<App>,
     initial: Option<Location>,
     started: Instant,
     launch: Option<skwir_platform::handover::Opening>,
+    windowless: bool,
 ) -> anyhow::Result<()> {
     // Commands that may wait move their waiting off this thread.
     skwir_core::scheduler::mark_window_thread(&app.scheduler);
@@ -242,8 +247,7 @@ pub fn run_from(
                 .filter_map(|url| skwir_platform::uri::local_path_of(url))
                 .map(|path| skwir_platform::handover::Opening {
                     location: Some(path.into_os_string()),
-                    cwd: std::path::PathBuf::new(),
-                    token: None,
+                    ..skwir_platform::handover::Opening::default()
                 })
                 .collect();
             if !opened.is_empty() {
@@ -287,6 +291,7 @@ pub fn run_from(
         let launch = finishing::Launch {
             initial,
             asked: launch,
+            windowless,
         };
         finishing::start(cx, app, keymap, started, wake_rx, openings, launch);
     });

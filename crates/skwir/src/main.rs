@@ -11,6 +11,10 @@ mod gpu;
 /// The argument that makes a launch a program of its own (ADR-122).
 const NEW_INSTANCE: &str = "--new-instance";
 
+/// The status of a program the session bus started to show files for
+/// another program that ended asked nothing (ADR-140, 5).
+const ASKED_NOTHING: i32 = 3;
+
 use std::time::Instant;
 
 use skwir_core::app::AppConfig;
@@ -71,6 +75,21 @@ fn main() -> anyhow::Result<()> {
     if args.len() != before {
         skwir_platform::handover::keep_apart();
     }
+    // Started by the session bus to show files for another program: no
+    // window until the request opens one (ADR-140). Never handed over as
+    // a launch would be, which would only bring a window forward: the
+    // program takes the request, and hands it on if another takes
+    // launches over.
+    let before = args.len();
+    args.retain(|arg| arg != skwir_platform::file_manager::STARTED_BY_BUS);
+    let windowless = args.len() != before;
+    if windowless && !cfg!(target_os = "linux") {
+        eprintln!(
+            "skwir: showing files for other programs is not available on {} yet",
+            skwir_core::system::NAME
+        );
+        std::process::exit(2);
+    }
     // The running Skwir of this build, these settings and this display
     // takes this launch over: it opens a window on what this was asked to,
     // or its windows again while it finishes what runs without one
@@ -80,8 +99,9 @@ fn main() -> anyhow::Result<()> {
         location: args.first().cloned(),
         cwd: cwd.clone(),
         token: skwir_platform::handover::launch_token(),
+        ..skwir_platform::handover::Opening::default()
     };
-    if skwir_platform::handover::hand_over(&opening) {
+    if !windowless && skwir_platform::handover::hand_over(&opening) {
         return Ok(());
     }
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
@@ -135,11 +155,15 @@ fn main() -> anyhow::Result<()> {
 
     // A location on the command line wins: one a plugin opens (`trash:`,
     // `tags:/family`), else a folder. Otherwise the startup preference: a
-    // chosen folder, or the windows and tabs left open (ADR-122).
+    // chosen folder, or the windows and tabs left open (ADR-122). Started
+    // by the bus, what another program asks is that location, as a launch
+    // naming its folder: nothing restored, the request's folder in the
+    // one window (ADR-140).
     let folder =
         |path: std::path::PathBuf| Location::from_path(std::path::absolute(&path).unwrap_or(path));
     let initial = match args.first() {
         Some(arg) => Some(skwir_ui::location_of(&app, arg, &cwd)),
+        None if windowless => None,
         None => match skwir_core::tabs::last_windows(&app.settings) {
             Some(saved) if app.restore_windows(&saved) => None,
             _ => {
@@ -155,5 +179,13 @@ fn main() -> anyhow::Result<()> {
     // The folder is not logged: it can come from a preference, and paths
     // are private.
     tracing::info!("starting");
-    skwir_ui::run_from(app, initial, started, Some(opening))
+    let launch = (!windowless).then_some(opening);
+    let ran = skwir_ui::run_from(app, initial, started, launch, windowless);
+    if windowless && skwir_ui::ended_unasked() {
+        // Started by the bus and ended asked nothing: not 0, which
+        // dbus-daemon reads as a program gone to the background and
+        // waits for, the asking program with it (ADR-140, 5).
+        std::process::exit(ASKED_NOTHING);
+    }
+    ran
 }
