@@ -3824,9 +3824,9 @@ them, with `core.folder_names` for the names on disk (16).
   2026-11-18 when it speaks a right-to-left language (only the
   pseudo-language `ar-XB` does: `crates/ui/src/sides.rs`, shell.md
   "Start and end"); text fields start at their right; documents stay
-  left to right. Left: the video preview's bar (its buttons mirror), a
-  right-to-left paragraph's alignment in documents, a real right-to-left
-  catalog and its review.
+  left to right, and media's controls and time (the preview's player and
+  the dock's since 2026-11-18). Left: a right-to-left paragraph's
+  alignment in documents, a real right-to-left catalog and its review.
 - **Fonts for every script:** the CJK forms by language (0074), a
   warning when no installed font draws a script the reader reads, the
   guide's packages per system (`docs/guide.md`, docs only, the user's

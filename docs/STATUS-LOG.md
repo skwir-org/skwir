@@ -19778,3 +19778,59 @@ Orca by ear; full package builds; the binary's size and idle memory
 with every dictionary (`just idle-pss` is the user's display: an
 English window reads none of the data); Weblate's editing of attributes
 the English lacks.
+
+## 2026-11-18: a choice's dropdown leaves its texts the room; media's controls stay left to right
+
+Two leftovers of the night's round, fixed.
+
+**A row's control as wide as the form drawn** (settings.md, gpui 0079).
+A setting's row (`elements::beside`) gave the control the room left
+beside the texts' share before choosing its form, so where a choice's
+buttons did not fit, its dropdown stood at the row's end with the
+buttons' room empty beside it, and the description wrapped in 35 % of
+the row: "Open at startup" on three lines in a window of the default
+size (1280 px), French's « Ouvrir au démarrage » too. A flex item's
+basis is measured under a max-content constraint whatever the row's
+width, and grows only continuously, so the row could not choose a form
+before its line was laid out. gpui 0079 gives `Length` CSS's
+`fit-content(<length-percentage>)`, which taffy 0.15 measures with its
+limit as the definite room; the end of a `Beside` is now a measured box
+of basis `fit_content(relative(1.))` that takes the width of the first
+form that fits beside the texts' share (a `Fit` says its forms' widths
+to the row while it is measured, `adaptive::versions_laid_out`), else
+the width it takes on a line of its own; the texts grow first and take
+the rest. A field still narrows with the room. Where the texts' widest
+word is wider than their share, a form chosen for the share goes under
+them where a narrower one would have stood beside (the row cannot know
+that word before its line): said in `beside.rs`.
+
+**Media's controls run left to right in a mirrored window** (shell.md
+"Start and end"). The preview's player bar and the dock's transport
+mirrored with the window, while their seek bar did not: in `ar-XB`,
+"0:00" stood at the slider's right end, its knob at the left beside
+"0:20". The bar's media slot (`Bar::left_to_right`: the steps, play,
+the time, the seek bar, the duration) and the dock's transport are now
+islands left to right, as the pinned player's buttons already were; the
+volume, What follows, Fullscreen, More and close stay the window's.
+
+**Checked:** gpui's tests on a copy (184, `taffy::fit_content_tests`
+among them: a basis of `fit_content(relative(0.5))` measured under 150 px
+in a 300 px row, `fit_content(px(100.))` under 100 px, an automatic basis
+never under the row's width, a row as wide as what it holds measuring it
+as its content, the written form read back); the patch series
+reproducing `vendor/zed` from Zed's commit; clippy `-D warnings` and
+skwir-ui's tests (748, the row's widths among them). On Xvfb, the debug
+build against the one before: Settings › General at 1280 px in English
+and French (the description on two lines beside the dropdown, the
+Language row's long dropdown still under its texts, the startup
+folder's field unchanged), Appearance at 1280, 900, 700 and 560 px
+(buttons beside where they fit with their revert slot, else the
+dropdown and the texts the rest, measured: at 700 px Theme's buttons
+need 252 px of 226), 420 px identical to before; the video preview in
+`ar-XB` (play, "0:00", the seek bar, "0:20" left to right) and its dock;
+in English the preview's bar identical pixel for pixel and the dock's
+transport identical; `just check-cross` (Windows' clippy, the window's
+crates included).
+
+**Not checked:** Windows in a window; macOS's window crates (its
+`check-macos` leaves them out, as always); the rest of `release-check`.

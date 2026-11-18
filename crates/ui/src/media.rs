@@ -1639,6 +1639,10 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     use crate::preview_bar::{Bar, Item, Slot};
     let state = &shell.preview.media.state;
     let mut bar = Bar::new("video-tools");
+    // The steps, play, the time and the seek bar run left to right in every
+    // language, as media's controls do (`sides`); the bar around them is the
+    // window's.
+    bar.left_to_right = Some(Slot::Navigate);
     crate::preview_bar::close_tool(&mut bar, shell, theme);
     // Other audio files in the folder: the track before and the one after.
     let (previous, next) = shell.track_neighbours();

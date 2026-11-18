@@ -31,6 +31,7 @@
 //! last pane's footer's strip while the panel is closed (`PinPlace`); with
 //! Properties alone it stays at their foot. Showing the track turns
 //! Preview on (`Shell::player_reveal`).
+use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::rc::Rc;
@@ -427,13 +428,16 @@ fn transport(
         ),
         "play_pause",
     );
-    div()
-        .id("dock-transport")
-        .size_full()
-        .px_1()
+    // The steps, play, the times and the seek bar run left to right in every
+    // language, as media's controls do (`sides`); what follows them is the
+    // window's.
+    let media = div()
         .flex()
+        .flex_1()
+        .min_w_0()
         .items_center()
         .gap_1()
+        .left_to_right()
         .map(|d| {
             if kept.steps {
                 d.child(step("dock-previous", -1, shell).render(shell, cx))
@@ -460,7 +464,15 @@ fn transport(
         })
         .when(kept.steps, |d| {
             d.child(time(crate::media::duration(state), true))
-        })
+        });
+    div()
+        .id("dock-transport")
+        .size_full()
+        .px_1()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(media)
         .when(kept.mute, |d| {
             let speaker =
                 crate::media::volume_button("dock-volume", state, "ui.toolbar_menu", VOLUME)

@@ -592,8 +592,10 @@ asks the direction.
   says its own order. What runs left to right in every language says so
   on its root (`Sides::left_to_right`): a document (the rows of a text,
   code or bytes, `elements::rows`; a read inspection; the PDF reader's
-  pages), media's controls (the pinned player's previous, play and next)
-  and time, a shortcut (`sides::shortcut` beside a menu's row, the key
+  pages), media's controls and time (the pinned player's previous, play
+  and next; the preview's player's steps, play, time and seek bar, its
+  bar's `Bar::left_to_right` slot; the dock's transport), while the bar
+  around them (its volume, More, close) is the window's, a shortcut (`sides::shortcut` beside a menu's row, the key
   caps' rows), the terminal. What Skwir lists of a file (an archive's
   members, a table's rows, a history and its graph) is the window's.
 - **What prepaint places by hand** asks the seam, never

@@ -356,6 +356,10 @@ pub struct Bar {
     /// hex): the end of More, after what is about the entry, as a view a
     /// menu opens comes after copying and making (ADR-099).
     otherwise: Vec<Button>,
+    /// The slot whose tools run left to right in every language, never
+    /// mirrored where the window is (`sides`): a player's buttons, its
+    /// time and its seek bar, as media's controls run everywhere.
+    pub left_to_right: Option<Slot>,
 }
 
 impl Bar {
@@ -368,6 +372,7 @@ impl Bar {
             always: true,
             close: None,
             otherwise: Vec::new(),
+            left_to_right: None,
         }
     }
 
@@ -953,7 +958,30 @@ fn row(
     // What stands at the bar's end, after the spacer: find and the whole
     // screen, then how the file is shown.
     let right = |slot: Slot| slot >= Slot::Tools;
+    // The tools of the slot that runs left to right, gathered in a row of
+    // their own (they follow each other: the items are in slot order), as
+    // wide as what they hold, or the rest where one of them fills.
+    let island = |fills: bool| {
+        div()
+            .flex()
+            .items_center()
+            .gap(sized(2.))
+            .left_to_right()
+            .map(|d| {
+                if fills {
+                    d.flex_1().min_w_0()
+                } else {
+                    d.flex_none()
+                }
+            })
+    };
+    let mut gathered: Option<Div> = None;
     for item in items {
+        if last.is_some_and(|slot| slot != item.slot)
+            && let Some(gathered) = gathered.take()
+        {
+            row = row.child(gathered);
+        }
         if right(item.slot) && !last.is_some_and(right) {
             if !filled {
                 row = row.child(div().flex_1().min_w_0());
@@ -962,7 +990,7 @@ fn row(
             row = row.child(toolbar::separator(theme));
         }
         last = Some(item.slot);
-        row = row.child(match &item.tool {
+        let tool = match &item.tool {
             Tool::Button(button) => {
                 let here = item.opens.is_some() && item.opens == active;
                 anchored |= here;
@@ -994,7 +1022,19 @@ fn row(
                 }
             }
             Tool::Widget(widget) => widget(shell, cx),
-        });
+        };
+        if bar.left_to_right == Some(item.slot) {
+            let fills = bar
+                .items
+                .iter()
+                .any(|other| other.slot == item.slot && other.fills && other.shown(mode));
+            gathered = Some(gathered.unwrap_or_else(|| island(fills)).child(tool));
+        } else {
+            row = row.child(tool);
+        }
+    }
+    if let Some(gathered) = gathered {
+        row = row.child(gathered);
     }
     if !last.is_some_and(right) && !filled {
         row = row.child(div().flex_1().min_w_0());
