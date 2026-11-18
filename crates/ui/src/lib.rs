@@ -34,6 +34,7 @@ mod deleting;
 mod desktop_style;
 pub mod dnd;
 pub mod dock;
+mod drafted;
 mod dragicon;
 mod dragname;
 pub mod elements;

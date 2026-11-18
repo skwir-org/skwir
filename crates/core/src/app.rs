@@ -124,7 +124,12 @@ pub struct Woken {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyLevel {
+    /// Something to know (a translation still a draft, what a plugin
+    /// answered).
     Info,
+    /// Something done, said with its way back where it has one (a tab
+    /// closed and its Undo).
+    Done,
     Warning,
     Error,
 }
@@ -3096,7 +3101,7 @@ impl App {
     /// application), `inverse` carrying `!undo` for the next turn.
     pub fn notify_undoable(&self, text: impl Into<Words>, undo: bool, inverse: Invocation) {
         self.notify_with_action(
-            NotifyLevel::Info,
+            NotifyLevel::Done,
             text,
             if undo {
                 words!(
@@ -5129,7 +5134,7 @@ mod builtin {
                 note = "An action's name, for scripts and agents."
             ),
             words!(
-                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's",
+                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › Exclusions, caches, trash, network folders); `excluded:yes` in the search walks those folders too",
                 note = "kind: whether an entry is a file, a folder or a link, the field's name in the answer."
             ),
             |a, app| {
@@ -5736,7 +5741,7 @@ mod builtin {
                 note = "The name of an action, in the palette, menus and F1's list."
             ),
             words!(
-                app_history_description = "Return the actions Undo can take back, newest first (ADR-079, 13). Each gives its `entry` (what undo and redo are given as `entry`), its `title`, `at`: when it applied (seconds since 1970, UTC), its `state` (running, waiting, done or undone), `can`: what its Undo, or an undone action's Redo, can do now (`now`; `once_ended`, while it runs or waits; `after`, once the action it names is undone or redone first; `going`, while it is being undone or redone; `never`), and `with`: the entries that undo with `with_after` takes back with it"
+                app_history_description = "Return the actions Undo can take back, newest first (ADR-079, 13). Each gives its `entry` (what undo and redo are given as `entry`), its `title`, `at`: when it applied (seconds since 1970, UTC), its `state` (running, waiting, done or undone), `can`: what its Undo, or an undone action's Redo, can do now (`now`; `once_ended`, while it runs or waits; `after`, once the action it names is undone or redone first; `going`, while it is being undone or redone; `never`), and `with`: the entries an undo given `with_after` takes back with it"
             ),
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.history())?)),
         )

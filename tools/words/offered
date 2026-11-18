@@ -1,17 +1,23 @@
 # The languages Skwir offers (ADR-139, 13): Automatic speaks them, and the
-# Language setting lists them by their names alone. Any other language a
-# catalog is in is listed as incomplete, with its share, for whoever
-# chooses it, and Automatic never picks it.
+# Language setting lists them by their names alone, or as a draft. Any
+# other language a catalog is in is listed as incomplete, with its share,
+# for whoever chooses it, and Automatic never picks it.
 #
-# One tag a line, as its catalogs are named (fr). `just words` adds a
-# language once 90% of all Skwir's messages are translated and reviewed in
-# it (a message is reviewed once the `# draft` above it is gone), and every
-# message of what is on by default is: the program's own crates (core, the
-# platform, the window, the host of plugins from outside) and each plugin
-# on by default.
+# One tag a line, as its catalogs are named (fr), followed by `draft` while
+# it is offered as one. `just words` writes a language here as a draft once
+# 90% of all Skwir's messages are translated in it, and every message of
+# what is on by default is: the program's own crates (core, the platform,
+# the window, the host of plugins from outside) and each plugin on by
+# default. Automatic then speaks it, and the window says once that it is a
+# draft, About while it speaks it. `just words` takes its `draft` away once
+# as much is reviewed (a message is reviewed once the `# draft` above it is
+# gone).
 #
-# Only a person takes one out, which lists it as incomplete again: a
-# release refuses a language here with less than 75% of its messages
-# reviewed (`just words --release`), while between releases it stays
-# offered, what it lacks said in English. Its line comes back only once it
-# meets the bar again.
+# Only a person takes a language out, which lists it as incomplete again:
+# a release refuses one here with less than 75% of its messages reviewed,
+# and one here as a draft short of the draft's bar (`just words
+# --release`: new messages are drafted before a release), while between
+# releases each stays offered, what it lacks said in English. Its line
+# comes back only once it meets a bar again.
+fr draft
+zh-Hans draft

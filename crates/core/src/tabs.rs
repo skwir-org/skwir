@@ -1489,7 +1489,7 @@ pub(crate) fn register(app: &App) {
                 .unwrap_or_else(|| app.workspace.read().active_tab().id);
             if let Some((serial, title)) = app.close_tab(tab)? {
                 app.notify_with_action(
-                    NotifyLevel::Info,
+                    NotifyLevel::Done,
                     crate::words!(
                         tabs_closed = "Closed tab “{ $title }”",
                         title = title,

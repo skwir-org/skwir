@@ -286,10 +286,32 @@ pub struct Share {
     pub translated: u32,
     /// How many of those a person reviewed: no longer drafts.
     pub reviewed: u32,
-    /// Whether Automatic speaks it (`tools/words/offered`): once 90 % of
-    /// all messages and every one of what is on by default were reviewed.
-    /// One that is not is listed as incomplete, for whoever chooses it.
-    pub offered: bool,
+    /// Whether Automatic speaks it, and as what (`tools/words/offered`).
+    pub offered: Offer,
+}
+
+/// Whether Automatic speaks a language (ADR-139, 13), as the record of
+/// languages offered says (`tools/words/offered`, which `just words`
+/// writes a language into as it reaches each bar).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offer {
+    /// Not spoken by Automatic: listed as incomplete, said only to whoever
+    /// chooses it.
+    Incomplete,
+    /// Spoken by Automatic as a draft: 90 % of all messages and every one
+    /// of what is on by default translated, not yet reviewed as much. The
+    /// window says so once, and About while it speaks it.
+    Draft,
+    /// Spoken by Automatic: 90 % of all messages and every one of what is
+    /// on by default reviewed by a person who speaks it.
+    Reviewed,
+}
+
+impl Offer {
+    /// Whether Automatic speaks it, as a draft or reviewed.
+    pub fn spoken(self) -> bool {
+        self != Offer::Incomplete
+    }
 }
 
 impl Share {

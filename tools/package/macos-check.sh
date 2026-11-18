@@ -71,10 +71,11 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
 assert info["CFBundleShortVersionString"] == version and info["LSMinimumSystemVersion"] == "12.0", info
-# English and each language skwir offers (ADR-139, 13, tools/words/offered),
-# declared, each with its .lproj saying skwir's name.
+# English and each language skwir offers, reviewed or as a draft (ADR-139,
+# 13, tools/words/offered: a line's first word is its tag), declared, each
+# with its .lproj saying skwir's name.
 offered = pathlib.Path("tools/words/offered").read_text().splitlines()
-languages = ["en", *sorted({line.strip() for line in offered if line.strip() and not line.startswith("#")})]
+languages = ["en", *sorted({line.split()[0] for line in offered if line.strip() and not line.startswith("#")})]
 assert info["CFBundleDevelopmentRegion"] == "en" and info["CFBundleLocalizations"] == languages, info
 for language in languages:
     strings = (app / "Resources" / f"{language}.lproj/InfoPlist.strings").read_text()

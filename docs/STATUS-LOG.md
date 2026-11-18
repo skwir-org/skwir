@@ -19834,3 +19834,72 @@ crates included).
 
 **Not checked:** Windows in a window; macOS's window crates (its
 `check-macos` leaves them out, as always); the rest of `release-check`.
+
+## 2026-11-18: Automatic speaks a draft, and says so; Simplified Chinese drafted
+
+For issue #13 (a request for a Chinese window, with an offer to
+review), on the user's choices: Simplified Chinese ships drafted for a
+speaker to review, and Automatic speaks a translation once it is
+translated rather than once it is reviewed, the window saying it is a
+draft (ADR-139, 13 amended).
+
+**Offered as a draft** (words.md "When a language is offered").
+`tools/words/offered` names a language as `zh-Hans draft` once 90% of all
+messages are translated and every one of what is on by default is; `just
+words` takes the mark away once as much is reviewed. `words::Share`
+carries an `Offer` (`Incomplete`, `Draft`, `Reviewed`); `locale::automatic`
+and `languages` speak a draft, `locale::draft_spoken` says when the window
+does. A release refuses a draft short of the draft's bar, as it refuses a
+reviewed language under 75% (`--release`); macOS's bundle declares the
+drafts too (a line's first word). French, wholly translated and not yet
+reviewed by the user, is spoken as a draft from now on on a French
+system, the user's included.
+
+**A draft says it is one, never who made it.** The first start Automatic
+speaks one, a toast, "This translation is a draft, not fully reviewed
+yet.", with "Use English" (`settings.apply` of `core.language`), once a
+language (`drafted.rs`, kept in the state file as `ui.drafts_told`,
+told after the window's settings are declared: an undeclared key is
+neither read nor saved, which the first window check showed). About's
+language line says it while the window speaks one, chosen or not;
+Settings lists it as "Français — draft, 0% reviewed". A notification with
+a button was always drawn as something done (its check mark):
+`NotifyLevel::Done` now says that (a tab closed, an edit's Undo or Redo,
+a server added), and `Info` with a button is drawn as information.
+
+**Simplified Chinese.** `docs/glossary-zh-Hans.md` first (the terms
+Chinese file managers use, full-width punctuation, a half-width space
+beside Latin and digits, no plural), then all 6,808 messages in 47
+`zh-Hans.ftl`, each `# draft`, by seven agents (the window's crate in
+three parts by id), their recurring terms reconciled after (lens 透镜,
+the sort directions 从新到旧…, Small 最小, Still frames 静止画面, Source
+源代码) and listed in the glossary with what each agent was least sure
+of, for the reviewer. The desktop entry and the metainfo in `zh_CN.po`
+(fuzzy); `l10n.sh installed` reads the metainfo's language as msgfmt
+writes it, BCP 47 (`zh-Hans-CN`), where it looked for `zh_CN`. The drafts
+found five English messages wrong, fixed: `exec_redo_held_for_good`
+("cannot be undone" for "redone"), `app_entries_description` (cut
+mid-sentence), `app_history_description` (garbled), and two descriptions
+naming "Settings › General › Searches", a section that is the
+Exclusions page now.
+
+**Checked:** `just words --check` and `--release` (French and Chinese
+offered as drafts, 100% of 6,808 translated, 0% reviewed); the catalogs'
+test (every `zh-Hans.ftl` says what its English says); a lint of the
+Chinese for half-width punctuation, quotes Skwir adds itself, messages
+left in English and full stops the English lacks; the words tool's
+tests (a draft offered, its mark taken away at the bar, a release
+refusing a draft short of it, a record line refused); `just
+release-tools-check`; `l10n.sh check` (fr and zh_CN merged and found);
+`just lint`; `just test` (3,792 passed); `just check-cross`. On Xvfb with
+`LANG=zh_CN.UTF-8` and Automatic: the window in Chinese, the toast once
+with its information icon, not again at the next start
+(`drafts_told = ["zh-Hans"]` kept), About's 「zh-CN, en（简体中文：草稿，
+尚未完全审阅）」, Settings' 「自动（简体中文 — 草稿，已审阅 0%）」, Use English
+switching the window to English at once (`core.language = "en"`); with
+`fr_FR.UTF-8` the French toast and « Automatique (Français — brouillon,
+relu à 0 %) ».
+
+**Not checked:** a speaker of Chinese reading the drafts (the glossary's
+"For the reviewer" lists where to start); macOS's bundle with the drafts
+declared (`package-macos` not run); Windows in a window.

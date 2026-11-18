@@ -554,7 +554,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         });
                         if plain {
                             app.notify_with_action(
-                                NotifyLevel::Info,
+                                NotifyLevel::Done,
                                 words!(
                                     remote_configure_added_obscured = "{ $server } is added. rclone keeps its secrets only obscured: encrypt its configuration?",
                                     server = Name(name),

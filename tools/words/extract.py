@@ -11,7 +11,9 @@ note as a comment above it. Never edited by hand. A noun of Skwir's
     tools/words/extract.py             write every crate's en.ftl
     tools/words/extract.py --check     fail where one is not what the code says
     tools/words/extract.py --release   the same, and fail where a language
-                                       offered is under 75% reviewed
+                                       offered is under 75% reviewed, or one
+                                       offered as a draft is short of the
+                                       draft's bar
 
 It also writes the program's list of shipped catalogs,
 crates/skwir/src/catalogs.rs: every crate's `l10n/<language>.ftl` but
@@ -20,13 +22,16 @@ counted here so that the program reads nothing to know it (ADR-139, 13).
 
 When a language is offered (ADR-139, 13): Automatic speaks a language once
 it is in the record of languages offered, `tools/words/offered`. This tool
-adds one there once 90% of all Skwir's messages are translated and reviewed
-in it (a message is reviewed once the `# draft` comment above it is gone),
-and every message of what is on by default is: the program's own crates
-and each plugin on by default. Only a person takes one out, which sends it
-back to incomplete: a release refuses a language offered under 75% reviewed
-(`--release`), while between releases it stays offered, its missing
-messages said in English.
+writes one there as a draft (`zh-Hans draft`) once 90% of all Skwir's
+messages are translated in it, and every message of what is on by default
+is: the program's own crates and each plugin on by default; the window then
+says it is a draft. It writes it there as offered (`fr`), its draft mark
+gone, once as much is reviewed (a message is reviewed once the `# draft`
+comment above it is gone). Only a person takes one out, which sends it back
+to incomplete: a release refuses a language offered under 75% reviewed, and
+one offered as a draft short of the draft's bar (`--release`: its new
+messages are drafted before a release), while between releases each stays
+offered, its missing messages said in English.
 
 Refused, in either mode: an id with two Englishes in one crate, and an
 English that parts a number from its unit, or a dimension's numbers from
@@ -265,8 +270,8 @@ def shares(found, names):
     """Each language a catalog is in, by its tag, sorted: of all the
     crates' messages, how many it translates and how many of those are
     reviewed, and whether every message of the crates on by default is
-    reviewed. `found` holds each crate's messages by its folder, `names`
-    its package name. Also the problems met."""
+    translated, and reviewed. `found` holds each crate's messages by its
+    folder, `names` its package name. Also the problems met."""
     problems, defaults = [], {}
     for folder in found:
         try:
@@ -280,7 +285,14 @@ def shares(found, names):
     )
     out = []
     for language in languages:
-        share = {"language": language, "messages": total, "translated": 0, "reviewed": 0, "default_whole": True}
+        share = {
+            "language": language,
+            "messages": total,
+            "translated": 0,
+            "reviewed": 0,
+            "default_whole": True,
+            "default_translated": True,
+        }
         for folder, messages in sorted(found.items()):
             path = folder / "l10n" / f"{language}.ftl"
             said = messages_of(path.read_text()) if path.exists() else {}
@@ -290,6 +302,8 @@ def shares(found, names):
             share["reviewed"] += reviewed
             if reviewed < len(messages) and defaults[folder]:
                 share["default_whole"] = False
+            if len(translated) < len(messages) and defaults[folder]:
+                share["default_translated"] = False
         out.append(share)
     return out, problems
 
@@ -301,8 +315,19 @@ def percent(share, key):
 
 
 def meets_bar(share):
-    """Whether Automatic offers the language from now on (ADR-139, 13)."""
+    """Whether Automatic offers the language, reviewed, from now on
+    (ADR-139, 13)."""
     return bool(share["messages"]) and share["reviewed"] * 100 >= OFFER_AT * share["messages"] and share["default_whole"]
+
+
+def meets_draft_bar(share):
+    """Whether Automatic speaks the language as a draft from now on
+    (ADR-139, 13): translated as much as an offered one is reviewed."""
+    return (
+        bool(share["messages"])
+        and share["translated"] * 100 >= OFFER_AT * share["messages"]
+        and share["default_translated"]
+    )
 
 
 def under_floor(share):
@@ -310,12 +335,42 @@ def under_floor(share):
     return share["reviewed"] * 100 < KEEP_AT * share["messages"]
 
 
+DRAFT = "draft"
+
+
 def read_offered(path):
-    """The languages the record offers, in its order."""
+    """The languages the record offers, in its order, each with whether
+    it is offered as a draft; and the problems met."""
     if not path.exists():
-        return []
-    lines = (line.strip() for line in path.read_text().splitlines())
-    return [line for line in lines if line and not line.startswith("#")]
+        return {}, []
+    record, problems = {}, []
+    for line in path.read_text().splitlines():
+        words = line.split()
+        if not words or words[0].startswith("#"):
+            continue
+        if len(words) > 2 or (len(words) == 2 and words[1] != DRAFT):
+            problems.append(f"{shown(path)}: `{line.strip()}`: a line is a tag, then `{DRAFT}` or nothing")
+            continue
+        record[words[0]] = len(words) == 2
+    return record, problems
+
+
+def write_offered(path, record):
+    """The record again, its comments and order kept: each language in it
+    as `record` says, the new ones last."""
+    lines, written = [], set()
+    for line in (path.read_text().splitlines() if path.exists() else []):
+        words = line.split()
+        if words and not words[0].startswith("#") and words[0] in record:
+            tag = words[0]
+            lines.append(f"{tag} {DRAFT}" if record[tag] else tag)
+            written.add(tag)
+        else:
+            lines.append(line)
+    for tag, draft in record.items():
+        if tag not in written:
+            lines.append(f"{tag} {DRAFT}" if draft else tag)
+    path.write_text("\n".join(lines).rstrip("\n") + "\n")
 
 
 def catalogs():
@@ -384,9 +439,13 @@ def ftl(messages):
 CATALOGS_RS = ROOT / "crates" / "skwir" / "src" / "catalogs.rs"
 
 
+OFFERS = {None: "Incomplete", True: "Draft", False: "Reviewed"}
+
+
 def shipped(language_shares, offered):
     """The program's list of shipped catalogs, and each language's share
-    (`offered` the languages Automatic speaks), as Rust."""
+    (`offered` the languages Automatic speaks, each with whether it is a
+    draft), as Rust."""
     lines = [
         "// Made from the crates' l10n folders by `just words` (tools/words/extract.py):",
         "// never edit by hand. Every catalog but English, compiled in (ADR-139, G),",
@@ -411,8 +470,8 @@ def shipped(language_shares, offered):
         "];",
         "",
         "/// Of all the messages, how many each language's catalogs translate and",
-        "/// how many of those are reviewed, and whether Skwir offers it",
-        "/// (`tools/words/offered`).",
+        "/// how many of those are reviewed, and whether Skwir offers it, as a",
+        "/// draft or reviewed (`tools/words/offered`).",
         "#[rustfmt::skip]",
         "pub static SHARES: &[skwir_core::words::Share] = &[",
     ]
@@ -423,7 +482,7 @@ def shipped(language_shares, offered):
             f"        messages: {share['messages']:_},",
             f"        translated: {share['translated']:_},",
             f"        reviewed: {share['reviewed']:_},",
-            f"        offered: {'true' if share['language'] in offered else 'false'},",
+            f"        offered: skwir_core::words::Offer::{OFFERS[offered.get(share['language'])]},",
             "    },",
         ]
     lines.append("];")
@@ -432,7 +491,7 @@ def shipped(language_shares, offered):
 
 def said_share(share, offered):
     """A language's share, as `just words` tells it."""
-    state = "offered" if share["language"] in offered else "incomplete"
+    state = {None: "incomplete", True: "offered as a draft", False: "offered"}[offered.get(share["language"])]
     return (
         f"{share['language']}: {percent(share, 'translated')}% of {share['messages']} messages translated,"
         f" {percent(share, 'reviewed')}% reviewed; {state}"
@@ -451,34 +510,57 @@ def main():
     names = {folder: crate_of(folder / "Cargo.toml")[1] for folder in found}
     language_shares, share_problems = shares(found, names)
     problems += share_problems
-    record = read_offered(OFFERED)
+    record, record_problems = read_offered(OFFERED)
+    problems += record_problems
     known = {share["language"] for share in language_shares}
     problems += [
         f"{shown(OFFERED)}: {tag} is no language a catalog is in" for tag in record if tag not in known
     ]
-    promoted = [share for share in language_shares if share["language"] not in record and meets_bar(share)]
-    offered = set(record) | {share["language"] for share in promoted}
-    for share in promoted:
-        if check:
-            problems.append(
-                f"{share['language']}: {percent(share, 'reviewed')}% reviewed, and all of what is on by"
-                f" default: offered once `just words` writes it in {shown(OFFERED)}"
-            )
-        else:
-            kept = OFFERED.read_text().rstrip("\n") + "\n" if OFFERED.exists() else ""
-            OFFERED.write_text(f"{kept}{share['language']}\n")
-            print(f"{shown(OFFERED)}: {share['language']} offered from now on ({percent(share, 'reviewed')}% reviewed)")
+    # Each language moves up as it reaches a bar: in as a draft once
+    # translated, its draft mark gone once reviewed; never down.
+    offered = dict(record)
+    moved = []
     for share in language_shares:
-        if share["language"] in record and under_floor(share):
+        tag = share["language"]
+        if record.get(tag, True) and meets_bar(share):
+            offered[tag] = False
+            moved.append(f"{tag} offered from now on ({percent(share, 'reviewed')}% reviewed)")
+        elif tag not in record and meets_draft_bar(share):
+            offered[tag] = True
+            moved.append(
+                f"{tag} offered as a draft from now on ({percent(share, 'translated')}% translated,"
+                f" {percent(share, 'reviewed')}% reviewed)"
+            )
+    if moved:
+        if check:
+            problems += [f"{said}, once `just words` writes it in {shown(OFFERED)}" for said in moved]
+        else:
+            write_offered(OFFERED, offered)
+            for said in moved:
+                print(f"{shown(OFFERED)}: {said}")
+    for share in language_shares:
+        tag = share["language"]
+        if tag not in record:
+            continue
+        if not record[tag] and under_floor(share):
             said = (
-                f"{share['language']} is offered with only {percent(share, 'reviewed')}% of its messages"
+                f"{tag} is offered with only {percent(share, 'reviewed')}% of its messages"
                 f" reviewed, and a release offers none under {KEEP_AT}%: review more of it, or take it out"
                 f" of {shown(OFFERED)}, which lists it as incomplete again"
             )
-            if release:
-                problems.append(said)
-            else:
-                print(f"warning: {said}", file=sys.stderr)
+        elif record[tag] and not meets_draft_bar(share):
+            said = (
+                f"{tag} is offered as a draft with {percent(share, 'translated')}% of its messages translated"
+                f" and {'all' if share['default_translated'] else 'not all'} of what is on by default, and a"
+                f" release offers none short of {OFFER_AT}% and all: draft what it lacks, or take it out of"
+                f" {shown(OFFERED)}, which lists it as incomplete again"
+            )
+        else:
+            continue
+        if release:
+            problems.append(said)
+        else:
+            print(f"warning: {said}", file=sys.stderr)
     wanted_rs = shipped(language_shares, offered)
     now_rs = CATALOGS_RS.read_text() if CATALOGS_RS.exists() else None
     if now_rs != wanted_rs:

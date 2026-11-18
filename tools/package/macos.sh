@@ -113,14 +113,15 @@ body = b"".join(kind.encode() + struct.pack(">I", 8 + len(png)) + png
 out.write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
 EOF
 
-# The languages skwir speaks (ADR-139, 13): English, and each it offers
-# (tools/words/offered, kept by `just words`), declared so that macOS's own
+# The languages skwir speaks (ADR-139, 13): English, and each it offers,
+# reviewed or as a draft (tools/words/offered, kept by `just words`: a
+# line's first word is its tag), declared so that macOS's own
 # menus and its per-app language follow, each an .lproj saying what
 # Info.plist says to a person (the brand alone, the same in every
 # language). A language only shipped, not offered, is left out: Automatic
 # never speaks it, and a Mac in it would mix macOS's menus in it with
 # skwir's English. The development region is English.
-languages="en $(sed '/^#/d; /^[[:space:]]*$/d' tools/words/offered | LC_ALL=C sort -u | tr '\n' ' ')"
+languages="en $(sed '/^#/d; /^[[:space:]]*$/d' tools/words/offered | awk '{ print $1 }' | LC_ALL=C sort -u | tr '\n' ' ')"
 for language in $languages; do
     mkdir -p "$app/Contents/Resources/$language.lproj"
     cat > "$app/Contents/Resources/$language.lproj/InfoPlist.strings" <<'STRINGS'

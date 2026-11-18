@@ -27,7 +27,7 @@ use std::fmt;
 use std::sync::Arc;
 
 pub use catalog::{
-    Catalog, Share, Shipped, find, find_attribute, languages_of, register, register_shipped,
+    Catalog, Offer, Share, Shipped, find, find_attribute, languages_of, register, register_shipped,
     register_shipped_of_program, share_of, ship, ship_shares, shipped_languages, withdraw,
 };
 pub use pattern::{Element, Key, Variant, from_fluent};

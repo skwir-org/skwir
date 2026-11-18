@@ -1,0 +1,73 @@
+# Simplified Chinese translation of skwir's desktop entry and AppStream metainfo.
+# Copyright (C) 2026 The skwir authors
+# This file is distributed under the same license as the skwir package.
+#
+# Drafted by a model after docs/glossary-zh-Hans.md (ADR-139, 13): each
+# message marked fuzzy is a draft, shipped as written until a person who
+# speaks Chinese accepts it and removes the mark.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: skwir\n"
+"Report-Msgid-Bugs-To: https://skwir.org/issues\n"
+"POT-Creation-Date: 2026-11-17 19:27+0100\n"
+"PO-Revision-Date: 2026-11-18 12:00+0100\n"
+"Last-Translator: \n"
+"Language-Team: Chinese (simplified)\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#. Translators: what kind of program skwir is, shown under its name.
+#: org.skwir.skwir.desktop:5
+#, fuzzy
+msgid "File Manager"
+msgstr "文件管理器"
+
+#: org.skwir.skwir.desktop:6 org.skwir.skwir.metainfo.xml:11
+#, fuzzy
+msgid "Browse, find and organize your files"
+msgstr "浏览、查找和整理您的文件"
+
+#. Translators: the words a launcher's search finds skwir by, each followed
+#. by a semicolon, with no space around it. Write those people search with
+#. in your language; they need not be the English words one for one.
+#: org.skwir.skwir.desktop:17
+#, fuzzy
+msgid "files;folders;browser;tags;search;"
+msgstr "文件;文件夹;文件管理器;资源管理器;标签;搜索;"
+
+#. Translators: who makes skwir, as software centres say it.
+#: org.skwir.skwir.metainfo.xml:9
+#, fuzzy
+msgid "The skwir authors"
+msgstr "Skwir 作者"
+
+#: org.skwir.skwir.metainfo.xml:13
+#, fuzzy
+msgid ""
+"Skwir is an augmented file manager, built to be driven by humans and agents "
+"alike."
+msgstr "Skwir 是一款增强型文件管理器，既可由人操作，也可由智能体驱动。"
+
+#: org.skwir.skwir.metainfo.xml:18
+#, fuzzy
+msgid "Lists, grids and columns that stay responsive on very large folders"
+msgstr "列表、网格和分栏视图，在超大文件夹中依然流畅响应"
+
+#: org.skwir.skwir.metainfo.xml:19
+#, fuzzy
+msgid "Previews of documents, pictures, music, films, archives and maps"
+msgstr "预览文档、图片、音乐、影片、压缩文件和地图"
+
+#: org.skwir.skwir.metainfo.xml:20
+#, fuzzy
+msgid "Tags kept on the files themselves, where other applications find them"
+msgstr "标签保存在文件本身，其他应用程序也能读取"
+
+#: org.skwir.skwir.metainfo.xml:21
+#, fuzzy
+msgid "Every change undoable, and planned for review before it is applied"
+msgstr "每项更改均可撤销，并在应用前列入计划供您审阅"

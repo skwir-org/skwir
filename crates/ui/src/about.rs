@@ -213,11 +213,26 @@ fn language_fact() -> Words {
     } else {
         skwir_core::locale::dates()
     };
+    let languages = Words::as_written(skwir_core::locale::languages().join(", "));
+    let numbers = Words::as_written(skwir_core::locale::numbers());
+    let dates = Words::as_written(dates);
+    // A translation still a draft says so for as long as it is spoken
+    // (ADR-139, 13; `drafted.rs`), by its own name.
+    if let Some(draft) = skwir_core::locale::draft_spoken() {
+        return words!(
+            about_language_draft = "{ $languages } ({ $draft }: a draft, not fully reviewed yet); numbers { $numbers }, dates { $dates }",
+            languages = languages,
+            draft = skwir_core::settings::language_name(&draft.language),
+            numbers = numbers,
+            dates = dates,
+            note = "In About, where the window speaks a translation a person who speaks it has not reviewed yet: the languages Skwir speaks, most wanted first (fr, en), the translation by its name in itself (Français), then the locales it writes numbers and dates in (fr-FR), as written. Say a draft, not who made it."
+        );
+    }
     words!(
         about_language_is = "{ $languages }; numbers { $numbers }, dates { $dates }",
-        languages = Words::as_written(skwir_core::locale::languages().join(", ")),
-        numbers = Words::as_written(skwir_core::locale::numbers()),
-        dates = Words::as_written(dates),
+        languages = languages,
+        numbers = numbers,
+        dates = dates,
         note = "In About, the languages Skwir speaks, most wanted first (fr, en), then the locales it writes numbers and dates in (fr-FR), as written."
     )
 }

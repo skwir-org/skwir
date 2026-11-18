@@ -210,7 +210,8 @@ lint:
 # Each crate's English catalog (l10n/en.ftl), made from its words! calls, and
 # the catalogs shipped with how much of each language they say (ADR-139):
 # `--check` fails where one is behind, `--release` also where a language
-# offered (tools/words/offered) is under 75% reviewed (ADR-139, 13).
+# offered (tools/words/offered) is under 75% reviewed, or one offered as a
+# draft is short of the draft's bar (ADR-139, 13).
 words *args:
     tools/words/extract.py {{args}}
 

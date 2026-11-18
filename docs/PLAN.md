@@ -3753,10 +3753,16 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   (`tools/package/linux/po`, merged by every Linux package, French
   drafted, fuzzy), macOS's bundle declaring the languages offered, and
   when a language is offered (`tools/words/offered`, counted by `just
-  words`; Automatic speaks French once the user has reviewed 90 % of it,
-  "incomplete" in Settings until then; `lint-all` refuses a release
-  offering one under 75 %). Left: the user's review of the drafts in the
-  window (and `fr.po`'s nine), Weblate.
+  words`; `lint-all` refuses a release offering one under 75 %). Since
+  2026-11-18 (ADR-139, 13 amended, the user's choice) Automatic speaks a
+  language once it is translated, as a draft, which the window says (a
+  toast once, About, Settings' "draft, 0% reviewed"), and offers it
+  reviewed once 90 % is: French is spoken as a draft until the user's
+  review. Simplified Chinese drafted the same day for issue #13
+  (`docs/glossary-zh-Hans.md`, every `zh-Hans.ftl`, `zh_CN.po`), for a
+  speaker of Chinese to review. Left: the user's review of the French
+  drafts in the window (and `fr.po`'s nine), a review of the Chinese,
+  Weblate.
   - A glossary settled with the user first: Skwir's terms, and French
     typography (« », U+202F before `; : ! ?`).
   - Every crate's `fr.ftl`, drafted by a model crate by crate as each is
@@ -3766,7 +3772,8 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   - The desktop file and the AppStream metainfo through PO (`msgfmt`
     when packaged); macOS's `CFBundleLocalizations` and `.lproj`
     folders.
-  - Offered by Automatic at 90 % translated and reviewed, with everything
+  - Spoken by Automatic as a draft at 90 % translated, offered reviewed
+    at 90 % reviewed (amended 2026-11-18), with everything
     on by default complete; chosen by hand below that, marked
     incomplete; back to incomplete under 75 % for a release.
   - Hosted Weblate (its Libre plan), opened once step E is done: the

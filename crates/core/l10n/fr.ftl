@@ -494,7 +494,7 @@ app_destination_path = la destination doit être un chemin
 app_entries = Lister les éléments
 
 # draft
-app_entries_description = Ce qu’affiche un panneau, dans son ordre (trié, filtré, avec les dossiers ouverts sur place), ou avec `location` ce que contient un dossier, listé sans l’afficher : l’identifiant, le nom, le chemin, la nature, la taille et la date de modification (en secondes depuis 1970) de chaque élément, et s’il est sélectionné ; à partir de `offset`, au plus `limit`. `complete: false` : la liste arrivait encore, redemandez. `as_of`, quand il est présent : la réponse est celle d’un index à sa dernière mise à jour (`by` dit lequel, `updated` quand, en secondes depuis 1970), si bien qu’un fichier créé, renommé ou supprimé depuis n’y est pas. `excluded`, quand il est présent : combien de fichiers et de dossiers sous la racine la recherche a passés (les dossiers écartés dans Paramètres › Général › Recherches, caches, corbeille, dossiers réseau) ; `excluded:yes` dans la recherche parcourt ceux de la liste
+app_entries_description = Ce qu’affiche un panneau, dans son ordre (trié, filtré, avec les dossiers ouverts sur place), ou avec `location` ce que contient un dossier, listé sans l’afficher : l’identifiant, le nom, le chemin, la nature, la taille et la date de modification (en secondes depuis 1970) de chaque élément, et s’il est sélectionné ; à partir de `offset`, au plus `limit`. `complete: false` : la liste arrivait encore, redemandez. `as_of`, quand il est présent : la réponse est celle d’un index à sa dernière mise à jour (`by` dit lequel, `updated` quand, en secondes depuis 1970), si bien qu’un fichier créé, renommé ou supprimé depuis n’y est pas. `excluded`, quand il est présent : combien de fichiers et de dossiers sous la racine la recherche a passés (les dossiers écartés dans Paramètres › Exclusions, caches, corbeille, dossiers réseau) ; `excluded:yes` dans la recherche parcourt aussi ces dossiers
 
 # draft
 app_expand = Déplier le dossier
@@ -554,7 +554,7 @@ app_group_unfold_all = Déplier tous les groupes
 app_history = Historique des annulations
 
 # draft
-app_history_description = Renvoyer les actions qu’Annuler peut défaire, la plus récente d’abord (ADR-079, 13). Chacune donne son `entry` (ce que undo et redo reçoivent comme `entry`), son `title`, `at` : quand elle s’est appliquée (en secondes depuis 1970, UTC), son `state` (en cours, en attente, faite ou annulée), `can` : ce que son Annuler, ou le Rétablir d’une action annulée, peut faire maintenant (`now` ; `once_ended`, tant qu’elle s’exécute ou attend ; `after`, une fois l’action qu’il nomme annulée ou rétablie d’abord ; `going`, pendant qu’elle est annulée ou rétablie ; `never`), et `with` : les entrées que undo avec `with_after` défait avec elle
+app_history_description = Renvoyer les actions qu’Annuler peut défaire, la plus récente d’abord (ADR-079, 13). Chacune donne son `entry` (ce que undo et redo reçoivent comme `entry`), son `title`, `at` : quand elle s’est appliquée (en secondes depuis 1970, UTC), son `state` (en cours, en attente, faite ou annulée), `can` : ce que son Annuler, ou le Rétablir d’une action annulée, peut faire maintenant (`now` ; `once_ended`, tant qu’elle s’exécute ou attend ; `after`, une fois l’action qu’il nomme annulée ou rétablie d’abord ; `going`, pendant qu’elle est annulée ou rétablie ; `never`), et `with` : les entrées qu’une annulation avec `with_after` défait avec elle
 
 # draft
 app_hydrate = Charger les métadonnées
@@ -1242,7 +1242,7 @@ exec_redo = rétablir
 exec_redo_held = « { $title } » ne peut pas être rétabli seul : « { $other } », annulé après, a touché à ce qu’il a fait ; rétablissez-le d’abord
 
 # draft
-exec_redo_held_for_good = « { $title } » ne peut pas être rétabli : « { $other } », annulé après, a touché à ce qu’il a fait et ne peut pas être annulé
+exec_redo_held_for_good = « { $title } » ne peut pas être rétabli : « { $other } », annulé après, a touché à ce qu’il a fait et ne peut pas être rétabli
 
 # draft
 exec_that_not_undone = cette action n’a pas été annulée : { $why }
@@ -2490,7 +2490,10 @@ settings_language_automatic = Automatique
 settings_language_description = La langue que parle la fenêtre de Skwir.
 
 # draft
-settings_language_description_more = Automatique parle la première des langues de votre système dans laquelle la traduction de Skwir est prête, sinon l’anglais. Une langue indiquée comme incomplète n’est parlée que si vous la choisissez, ce qui lui manque étant dit en anglais. Les agents et les scripts reçoivent leurs réponses en anglais, quel que soit votre choix.
+settings_language_description_more = Automatique parle la première des langues de votre système dans laquelle Skwir est traduit, sinon l’anglais ; une traduction encore à l’état de brouillon le signale. Une langue indiquée comme incomplète n’est parlée que si vous la choisissez, ce qui lui manque étant dit en anglais. Les agents et les scripts reçoivent leurs réponses en anglais, quel que soit votre choix.
+
+# draft
+settings_language_draft = { $language } — brouillon, relu à { $reviewed } %
 
 # draft
 settings_language_incomplete = { $language } — incomplet, traduit à { $translated } %, relu à { $reviewed } %

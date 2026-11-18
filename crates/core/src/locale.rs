@@ -2,8 +2,9 @@
 //! `skwir_platform::locale` reads them (handed in as Skwir starts,
 //! [`set_system`]), after the one the user chose (`core.language`), if
 //! they chose one. English is always the last. Of the system's, only
-//! those Skwir offers (ADR-139, 13: `words::Share::offered`); one listed
-//! as incomplete is said only to whoever chooses it.
+//! those Skwir offers (ADR-139, 13: `words::Share::offered`), reviewed or
+//! as a draft, which the window says ([`draft_spoken`]); one listed as
+//! incomplete is said only to whoever chooses it.
 //!
 //! Process-wide, as sizes' units are (`fs::size_units`): every reader of a
 //! language (a desktop entry's name, later every message) asks here.
@@ -23,6 +24,8 @@ use icu_locale::LocaleExpander;
 use icu_locale_core::subtags::{Language, Region, Script, Variants};
 use icu_locale_core::{LanguageIdentifier, Locale};
 use parking_lot::RwLock;
+
+use crate::words::Offer;
 
 /// The setting of the language Skwir speaks: `automatic` (the system's)
 /// or a language's tag.
@@ -215,9 +218,9 @@ pub fn set_chosen(language: Option<String>) {
 }
 
 /// The languages Skwir says its words in, most wanted first: the one
-/// chosen, then those of the system's Skwir offers its words in (ADR-139,
-/// 13: Automatic never picks one listed as incomplete), then English, each
-/// once.
+/// chosen, then those of the system's Skwir offers its words in, reviewed
+/// or as a draft (ADR-139, 13: Automatic never picks one listed as
+/// incomplete), then English, each once.
 pub fn languages() -> Vec<String> {
     let (chosen, system) = {
         let kept = LANGUAGES.read();
@@ -225,8 +228,33 @@ pub fn languages() -> Vec<String> {
     };
     let system = system
         .into_iter()
-        .filter(|language| matches!(has(language), Has::Offered(_)));
+        .filter(|language| matches!(has(language), Has::Offered { .. }));
     once_each(chosen.into_iter().chain(system))
+}
+
+/// A translation the window speaks that is still a draft (ADR-139, 13).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraftSpoken {
+    /// The tag its catalogs are named by (`fr`, `zh-Hans`).
+    pub language: String,
+    /// Whether Automatic chose it: the user did not.
+    pub automatic: bool,
+}
+
+/// The translation Skwir's words are said in, where it is still a draft:
+/// one Automatic speaks before it is reviewed, or one listed as incomplete
+/// that the user chose. `None` where they are said in English, or in a
+/// translation a person reviewed.
+pub fn draft_spoken() -> Option<DraftSpoken> {
+    let automatic = LANGUAGES.read().chosen.is_none();
+    let first = languages().into_iter().next()?;
+    match has(&first) {
+        Has::Offered { tag, draft: true } | Has::Incomplete(tag) => Some(DraftSpoken {
+            language: tag,
+            automatic,
+        }),
+        Has::Offered { draft: false, .. } | Has::Nothing => None,
+    }
 }
 
 /// The languages the user reads, most wanted first: the one chosen, the
@@ -261,11 +289,12 @@ fn once_each(languages: impl Iterator<Item = String>) -> Vec<String> {
 /// What Skwir has of a language a system names.
 enum Has {
     /// Its words, offered: under the tag its catalogs are named by (`fr`
-    /// for `fr-FR`), English the code's own.
-    Offered(String),
-    /// Words that are not offered: listed as incomplete, said only to
-    /// whoever chooses them.
-    Incomplete,
+    /// for `fr-FR`), English the code's own; `draft` while they are not
+    /// yet reviewed.
+    Offered { tag: String, draft: bool },
+    /// Words that are not offered, under the tag their catalogs are named
+    /// by: listed as incomplete, said only to whoever chooses them.
+    Incomplete(String),
     /// No words of its own.
     Nothing,
 }
@@ -277,12 +306,22 @@ fn has(language: &str) -> Has {
     let shipped = crate::words::shipped_languages();
     match matching(language, shipped.iter().copied()).first() {
         None => Has::Nothing,
-        Some(&ENGLISH) => Has::Offered(ENGLISH.to_owned()),
-        Some(&found) => match crate::words::share_of(found) {
-            Some(share) if share.offered => Has::Offered(found.to_owned()),
+        Some(&ENGLISH) => Has::Offered {
+            tag: ENGLISH.to_owned(),
+            draft: false,
+        },
+        Some(&found) => match crate::words::share_of(found).map(|share| share.offered) {
+            Some(Offer::Reviewed) => Has::Offered {
+                tag: found.to_owned(),
+                draft: false,
+            },
+            Some(Offer::Draft) => Has::Offered {
+                tag: found.to_owned(),
+                draft: true,
+            },
             // Shipped uncounted (no share), it is offered no more than one
             // counted short.
-            _ => Has::Incomplete,
+            Some(Offer::Incomplete) | None => Has::Incomplete(found.to_owned()),
         },
     }
 }
@@ -549,15 +588,16 @@ pub fn compact_power(locale: &str, n: u64) -> u8 {
 }
 
 /// The language Automatic speaks: the first of the system's languages
-/// Skwir offers (`fr-FR` finding `fr`, `en-GB` English), else English. A
-/// language listed as incomplete is never it (ADR-139, 13).
+/// Skwir offers, reviewed or as a draft (`fr-FR` finding `fr`, `en-GB`
+/// English), else English. A language listed as incomplete is never it
+/// (ADR-139, 13).
 pub fn automatic() -> String {
     let system = LANGUAGES.read().system.clone();
     system
         .iter()
         .find_map(|language| match has(language) {
-            Has::Offered(tag) => Some(tag),
-            Has::Incomplete | Has::Nothing => None,
+            Has::Offered { tag, .. } => Some(tag),
+            Has::Incomplete(_) | Has::Nothing => None,
         })
         .unwrap_or_else(|| ENGLISH.to_owned())
 }
@@ -576,13 +616,13 @@ pub fn chosen_of(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTOMATIC, automatic, chosen_of, compact_power, languages, matching, preferred, set_chosen,
-        set_system,
+        AUTOMATIC, DraftSpoken, automatic, chosen_of, compact_power, draft_spoken, languages,
+        matching, preferred, set_chosen, set_system,
     };
-    use crate::words::{Share, Shipped};
+    use crate::words::{Offer, Share, Shipped};
 
-    // French drafted, German reviewed and offered, Spanish shipped
-    // uncounted, Traditional Chinese offered.
+    // French drafted and not offered, German reviewed and offered, Spanish
+    // shipped uncounted, Traditional Chinese offered.
     static SHIPPED: [Shipped; 4] = [
         Shipped {
             domain: "skwir-sample",
@@ -611,21 +651,38 @@ mod tests {
             messages: 100,
             translated: 100,
             reviewed: 0,
-            offered: false,
+            offered: Offer::Incomplete,
         },
         Share {
             language: "de",
             messages: 100,
             translated: 95,
             reviewed: 91,
-            offered: true,
+            offered: Offer::Reviewed,
         },
         Share {
             language: "zh-Hant",
             messages: 100,
             translated: 100,
             reviewed: 100,
-            offered: true,
+            offered: Offer::Reviewed,
+        },
+    ];
+    /// French once translated: a draft; German as before.
+    static DRAFTED: [Share; 2] = [
+        Share {
+            language: "fr",
+            messages: 100,
+            translated: 100,
+            reviewed: 10,
+            offered: Offer::Draft,
+        },
+        Share {
+            language: "de",
+            messages: 100,
+            translated: 95,
+            reviewed: 91,
+            offered: Offer::Reviewed,
         },
     ];
     /// French once reviewed.
@@ -634,7 +691,7 @@ mod tests {
         messages: 100,
         translated: 100,
         reviewed: 90,
-        offered: true,
+        offered: Offer::Reviewed,
     }];
 
     /// The languages, as each reader asks for them: the one chosen first,
@@ -690,11 +747,31 @@ mod tests {
         set_chosen(Some("fr".into()));
         assert_eq!(languages(), ["fr", "de-AT", "en"]);
         assert_eq!(automatic(), "de", "Automatic is not what is chosen");
-        // Once offered, French is Automatic's.
-        crate::words::ship_shares(&OFFERED);
+        // Chosen while incomplete, it is a draft the user chose.
+        let drafted = |automatic| {
+            Some(DraftSpoken {
+                language: "fr".into(),
+                automatic,
+            })
+        };
+        assert_eq!(draft_spoken(), drafted(false));
+        // Translated, French is Automatic's as a draft, and says so.
+        crate::words::ship_shares(&DRAFTED);
         set_chosen(None);
         assert_eq!(automatic(), "fr");
+        assert_eq!(languages(), ["fr-FR", "de-AT", "en"]);
+        assert_eq!(draft_spoken(), drafted(true));
+        // German, reviewed, is no draft; nor is English.
+        set_system(vec!["de-AT".into(), "fr-FR".into()]);
+        assert_eq!(draft_spoken(), None);
+        set_system(vec!["en-GB".into(), "fr-FR".into()]);
+        assert_eq!(draft_spoken(), None);
+        // Once offered, French is Automatic's, a draft no more.
+        set_system(vec!["fr-FR".into(), "de-AT".into()]);
+        crate::words::ship_shares(&OFFERED);
+        assert_eq!(automatic(), "fr");
         assert_eq!(languages(), ["fr-FR", "en"]);
+        assert_eq!(draft_spoken(), None);
 
         // A pseudo-language chosen: its words first, but nothing the
         // system translates, and no locale of numbers or dates.

@@ -269,10 +269,11 @@ sentence, never a sentence assembled from pieces.
   `en`, so an `en-GB` one comes first for a British reader. What the
   system translates (a desktop entry's `Name[zh_TW]`, the type database's
   `xml:lang`) is chosen the same way (`locale::Ranker`).
-- **When a language is offered** (ADR-139, 13): Automatic speaks a
-  language only once `tools/words/offered` names it, and Skwir's own
-  words are said in a system language only then (`locale::languages`).
-  Any other language a catalog is in is listed by the Language setting as
+- **When a language is offered** (ADR-139, 13, amended 2026-11-18):
+  Automatic speaks a language only once `tools/words/offered` names it,
+  reviewed or as a draft (`zh-Hans draft`), and Skwir's own words are
+  said in a system language only then (`locale::languages`). Any other
+  language a catalog is in is listed by the Language setting as
   incomplete, with its share ("Français — incomplete, 99% translated, 0%
   reviewed"), and said only to whoever chooses it. What the system
   translates itself (desktop entries' names, the type database's
@@ -283,16 +284,25 @@ sentence, never a sentence assembled from pieces.
     machine's translation is a draft until a person who speaks the
     language removes that line.
   - `just words` counts each language's share into
-    `crates/skwir/src/catalogs.rs` (`words::Share`), so the program reads
-    no catalog to know it; a catalog edited is followed by `just words`.
-    It writes a language into the record once 90% of all messages are
-    reviewed in it and every message of what is on by default is: the
-    crates that are no plugin's, and each plugin whose
-    `enabled_by_default` is not the literal `false`.
+    `crates/skwir/src/catalogs.rs` (`words::Share`, its `Offer`), so the
+    program reads no catalog to know it; a catalog edited is followed by
+    `just words`. It writes a language into the record as a draft once
+    90% of all messages are translated in it and every message of what
+    is on by default is: the crates that are no plugin's, and each plugin
+    whose `enabled_by_default` is not the literal `false`. It takes the
+    `draft` away once as much is reviewed.
+  - **A draft spoken says it is one** (`locale::draft_spoken`): the
+    first start Automatic speaks it, a toast with a button for English,
+    once a language (`drafted.rs`, kept in the state file as
+    `ui.drafts_told`); About's language line while the window speaks
+    one, chosen or not; the Language setting's "draft, 3% reviewed". The
+    words say a draft, never who made it: the catalog does not know.
   - Only a person takes a language out of the record, which lists it as
     incomplete again. Between releases it stays offered, what it lacks
     said in the next of the reader's languages; a release refuses one
-    under 75% reviewed (`just words --release`, run by `lint-all`).
+    offered under 75% reviewed, and one offered as a draft short of the
+    draft's bar (`just words --release`, run by `lint-all`): a draft's
+    new messages are drafted before a release.
 - **The checks:**
   - `en.ftl` is current with the code;
   - each catalog has the English's ids and arguments;

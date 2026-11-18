@@ -34,6 +34,9 @@ about_graphics_software = { $graphics } (rendu par le processeur)
 about_language = Langue
 
 # draft
+about_language_draft = { $languages } ({ $draft } : un brouillon, pas encore entièrement relu) ; nombres { $numbers }, dates { $dates }
+
+# draft
 about_language_is = { $languages } ; nombres { $numbers }, dates { $dates }
 
 # draft
@@ -2730,6 +2733,12 @@ dock_stop = Arrêter et fermer
 
 # draft
 dock_unmute = Rétablir le son
+
+# draft
+drafts_notice = Cette traduction est un brouillon, pas encore entièrement relue.
+
+# draft
+drafts_use_english = Utiliser l’anglais
 
 # draft
 exclusions_add = Ajouter…
@@ -6954,6 +6963,9 @@ settings_differ = { $count ->
 
 # draft
 settings_does_nothing = Sans effet ici. { $why }.
+
+# draft
+settings_drafts_told_state = Langues dont la traduction a déjà été signalée comme brouillon
 
 # draft
 settings_drag_image = Fichiers glissés

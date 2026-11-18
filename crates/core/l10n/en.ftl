@@ -445,7 +445,7 @@ app_destination_path = destination must be a path
 app_entries = List entries
 
 # kind: whether an entry is a file, a folder or a link, the field's name in the answer.
-app_entries_description = What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's
+app_entries_description = What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › Exclusions, caches, trash, network folders); `excluded:yes` in the search walks those folders too
 
 # An action's name: open a folder in place, under the one shown, as a tree does.
 app_expand = Expand folder
@@ -496,7 +496,7 @@ app_group_unfold_all = Unfold all groups
 # The name of an action, in the palette, menus and F1's list.
 app_history = Undo history
 
-app_history_description = Return the actions Undo can take back, newest first (ADR-079, 13). Each gives its `entry` (what undo and redo are given as `entry`), its `title`, `at`: when it applied (seconds since 1970, UTC), its `state` (running, waiting, done or undone), `can`: what its Undo, or an undone action's Redo, can do now (`now`; `once_ended`, while it runs or waits; `after`, once the action it names is undone or redone first; `going`, while it is being undone or redone; `never`), and `with`: the entries that undo with `with_after` takes back with it
+app_history_description = Return the actions Undo can take back, newest first (ADR-079, 13). Each gives its `entry` (what undo and redo are given as `entry`), its `title`, `at`: when it applied (seconds since 1970, UTC), its `state` (running, waiting, done or undone), `can`: what its Undo, or an undone action's Redo, can do now (`now`; `once_ended`, while it runs or waits; `after`, once the action it names is undone or redone first; `going`, while it is being undone or redone; `never`), and `with`: the entries an undo given `with_after` takes back with it
 
 # An action's name, for scripts and agents: read the files' sizes, dates and notes.
 app_hydrate = Load metadata
@@ -1144,8 +1144,8 @@ exec_redo = redo
 # Why an undone action cannot be redone by itself: another action, undone after it, changed the same files. title, other: the two actions' titles.
 exec_redo_held = “{ $title }” cannot be redone alone: “{ $other }”, undone after it, touched what it did; redo that first
 
-# Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be undone. title, other: the two actions' titles.
-exec_redo_held_for_good = “{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be undone
+# Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be redone itself. title, other: the two actions' titles.
+exec_redo_held_for_good = “{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be redone
 
 # Why an action of a chain of undos was left (its title is not known any more): an undo before it stopped. why: what stopped. Begins in lower case.
 exec_that_not_undone = that action was not undone: { $why }
@@ -2308,8 +2308,11 @@ settings_language_automatic = Automatic
 # Automatic is a choice of the setting (settings_language_automatic).
 settings_language_description = The language Skwir's window speaks.
 
-# Automatic is a choice of the setting (settings_language_automatic). A translation is ready once a person who speaks the language has reviewed nearly all of it; an incomplete one is listed with how much of it is translated and reviewed (settings_language_incomplete).
-settings_language_description_more = Automatic speaks the first of your system's languages Skwir's translation is ready in, else English. A language listed as incomplete is spoken only if you choose it, with what it lacks in English. Agents and scripts are answered in English whichever you choose.
+# Automatic is a choice of the setting (settings_language_automatic). A translation is a draft until a person who speaks the language has reviewed nearly all of it (settings_language_draft); an incomplete one, not yet translated, is listed with how much of it is translated and reviewed (settings_language_incomplete).
+settings_language_description_more = Automatic speaks the first of your system's languages Skwir is translated into, else English; a translation still a draft says so. A language listed as incomplete is spoken only if you choose it, with what it lacks in English. Agents and scripts are answered in English whichever you choose.
+
+# A language of the Language setting that Automatic speaks, translated but not yet reviewed enough: its name in itself (Français), then how much of Skwir's words a person who speaks it reviewed, in percents of all of them.
+settings_language_draft = { $language } — draft, { $reviewed }% reviewed
 
 # A language of the Language setting that Automatic does not speak yet: its name in itself (Français), then how much of Skwir's words it has, in percents of all of them. Reviewed words were accepted by a person who speaks the language; the others are drafts.
 settings_language_incomplete = { $language } — incomplete, { $translated }% translated, { $reviewed }% reviewed

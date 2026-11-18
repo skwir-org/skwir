@@ -204,6 +204,9 @@ fn handed_away(cx: &mut App) -> bool {
 /// window declares, the themes and fonts offered, owner names.
 fn prepare(app: &Arc<skwir_core::App>, cx: &mut App) {
     crate::settings::declare(app);
+    // A translation Automatic speaks before it is reviewed, said once: what
+    // was told is a setting of the state file, declared just above.
+    crate::drafted::tell(app);
     // The themes the user added to bat and the fonts installed, on a
     // worker: then a script or an agent can choose one before the
     // settings ever open.

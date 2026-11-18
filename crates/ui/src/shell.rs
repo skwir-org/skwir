@@ -4305,14 +4305,15 @@ impl Shell {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
             match (n.setting, n.action) {
                 (Some(key), _) if error => self.set_status_about(n.text, &key, cx),
-                // Something done outside the journal, with its own way back.
+                // Something done outside the journal, with its own way back,
+                // or something to know, with what to do about it.
                 (_, Some(action)) => self.toast(
                     crate::toast::Toast::new(
                         n.text,
-                        if error {
-                            crate::toast::Tone::Error
-                        } else {
-                            crate::toast::Tone::Success
+                        match n.level {
+                            NotifyLevel::Error | NotifyLevel::Warning => crate::toast::Tone::Error,
+                            NotifyLevel::Done => crate::toast::Tone::Success,
+                            NotifyLevel::Info => crate::toast::Tone::Info,
                         },
                         vec![crate::toast::Action {
                             label: action.label,

@@ -1970,8 +1970,8 @@ pub(crate) fn register(app: &crate::App) {
                     note = "Automatic is a choice of the setting (settings_language_automatic)."
                 ),
                 crate::words!(
-                    settings_language_description_more = "Automatic speaks the first of your system's languages Skwir's translation is ready in, else English. A language listed as incomplete is spoken only if you choose it, with what it lacks in English. Agents and scripts are answered in English whichever you choose.",
-                    note = "Automatic is a choice of the setting (settings_language_automatic). A translation is ready once a person who speaks the language has reviewed nearly all of it; an incomplete one is listed with how much of it is translated and reviewed (settings_language_incomplete)."
+                    settings_language_description_more = "Automatic speaks the first of your system's languages Skwir is translated into, else English; a translation still a draft says so. A language listed as incomplete is spoken only if you choose it, with what it lacks in English. Agents and scripts are answered in English whichever you choose.",
+                    note = "Automatic is a choice of the setting (settings_language_automatic). A translation is a draft until a person who speaks the language has reviewed nearly all of it (settings_language_draft); an incomplete one, not yet translated, is listed with how much of it is translated and reviewed (settings_language_incomplete)."
                 ),
             ),
             crate::locale::AUTOMATIC,
@@ -2164,7 +2164,8 @@ pub(crate) fn register(app: &crate::App) {
 /// window (`direction::PSEUDO_RTL`).
 /// A language Skwir does not offer yet (ADR-139, 13) says so, with how
 /// much of it there is: Automatic never picks it, and it is for whoever
-/// chooses it.
+/// chooses it. One Automatic speaks as a draft says it is one, with how
+/// much of it a person reviewed.
 fn language_choices() -> Vec<(&'static str, Words)> {
     let mut choices = vec![
         (
@@ -2180,20 +2181,28 @@ fn language_choices() -> Vec<(&'static str, Words)> {
     // Each language the program ships, named by its own catalog: the
     // message that says the language's name in itself.
     for language in crate::words::shipped_languages() {
-        let own = crate::words!(
-            settings_language_self = "English",
-            note = "This language's name in itself, as the Language setting lists it in every language: Français in the French catalog, Deutsch in the German one."
-        )
-        .say_in(&[language.to_owned()]);
-        let own = Words::as_written(own);
+        let own = language_name(language);
         let share = crate::words::share_of(language);
-        if share.is_some_and(|share| share.offered) {
+        let offer = share.map_or(crate::words::Offer::Incomplete, |share| share.offered);
+        if offer == crate::words::Offer::Reviewed {
             choices.push((language, own));
             continue;
         }
         let (translated, reviewed) = share.map_or((0, 0), |share| {
             (share.translated_percent(), share.reviewed_percent())
         });
+        if offer == crate::words::Offer::Draft {
+            choices.push((
+                language,
+                crate::words!(
+                    settings_language_draft = "{ $language } — draft, { $reviewed }% reviewed",
+                    language = own,
+                    reviewed = reviewed,
+                    note = "A language of the Language setting that Automatic speaks, translated but not yet reviewed enough: its name in itself (Français), then how much of Skwir's words a person who speaks it reviewed, in percents of all of them."
+                ),
+            ));
+            continue;
+        }
         choices.push((
             language,
             crate::words!(
@@ -2222,6 +2231,19 @@ fn language_choices() -> Vec<(&'static str, Words)> {
         ));
     }
     choices
+}
+
+/// The name of the language a catalog is in (`fr`, `zh-Hans`), in itself
+/// whatever the window speaks (Français, 简体中文): as the Language setting
+/// and About name it.
+pub fn language_name(language: &str) -> Words {
+    Words::as_written(
+        crate::words!(
+            settings_language_self = "English",
+            note = "This language's name in itself, as the Language setting lists it in every language: Français in the French catalog, Deutsch in the German one."
+        )
+        .say_in(&[language.to_owned()]),
+    )
 }
 
 /// A settings file's key no setting has.
@@ -3655,14 +3677,15 @@ pub(crate) fn keep_attributes_title() -> Words {
 
 #[cfg(test)]
 mod language_tests {
-    use crate::words::{Share, Shipped};
+    use crate::words::{Offer, Share, Shipped};
 
     /// The Language setting lists a language Skwir offers by its own name,
-    /// and one it does not as incomplete, with its share in whole percents
-    /// rounded down (ADR-139, 13).
+    /// one Automatic speaks as a draft as one, and one it does not as
+    /// incomplete, with its share in whole percents rounded down (ADR-139,
+    /// 13).
     #[test]
     fn a_language_not_offered_is_listed_as_incomplete_with_its_share() {
-        static SHIPPED: [Shipped; 3] = [
+        static SHIPPED: [Shipped; 4] = [
             Shipped {
                 domain: "skwir-core",
                 language: "fr",
@@ -3678,21 +3701,33 @@ mod language_tests {
                 language: "es",
                 source: "settings_language_self = Español\n",
             },
+            Shipped {
+                domain: "skwir-core",
+                language: "it",
+                source: "settings_language_self = Italiano\n",
+            },
         ];
-        static SHARES: [Share; 2] = [
+        static SHARES: [Share; 3] = [
             Share {
                 language: "fr",
                 messages: 1000,
                 translated: 999,
                 reviewed: 9,
-                offered: false,
+                offered: Offer::Incomplete,
             },
             Share {
                 language: "de",
                 messages: 1000,
                 translated: 950,
                 reviewed: 920,
-                offered: true,
+                offered: Offer::Reviewed,
+            },
+            Share {
+                language: "it",
+                messages: 1000,
+                translated: 1000,
+                reviewed: 129,
+                offered: Offer::Draft,
             },
         ];
         crate::words::ship(&SHIPPED);
@@ -3715,6 +3750,8 @@ mod language_tests {
                 "es",
                 "Español — incomplete, 0% translated, 0% reviewed".to_owned(),
             ),
+            // Spoken by Automatic before it is reviewed.
+            ("it", "Italiano — draft, 12% reviewed".to_owned()),
         ];
         if cfg!(debug_assertions) {
             wanted.push((crate::words::PSEUDO, "Pseudo (for testing)".to_owned()));

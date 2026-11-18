@@ -2730,6 +2730,14 @@ pub fn declare(app: &App) {
         toml::Value::Table(toml::Table::new()),
     ));
     app.settings.declare(SettingSpec::state(
+        crate::drafted::TOLD_KEY,
+        words!(
+            settings_drafts_told_state = "The languages whose translation was said to be a draft",
+            note = "What the window keeps, for agents and scripts."
+        ),
+        toml::Value::Array(Vec::new()),
+    ));
+    app.settings.declare(SettingSpec::state(
         crate::shortcuts::HINTS_KEY,
         words!(
             settings_hints_state = "Commands whose shortcut hint was already shown",

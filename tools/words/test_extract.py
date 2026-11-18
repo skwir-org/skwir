@@ -157,20 +157,42 @@ class Crates(unittest.TestCase):
         self.assertEqual(
             shares,
             [
-                {"language": "de", "messages": 10, "translated": 4, "reviewed": 3, "default_whole": False},
-                {"language": "fr", "messages": 10, "translated": 9, "reviewed": 8, "default_whole": True},
+                {
+                    "language": "de",
+                    "messages": 10,
+                    "translated": 4,
+                    "reviewed": 3,
+                    "default_whole": False,
+                    "default_translated": True,
+                },
+                {
+                    "language": "fr",
+                    "messages": 10,
+                    "translated": 9,
+                    "reviewed": 8,
+                    "default_whole": True,
+                    "default_translated": True,
+                },
             ],
         )
         self.assertEqual([extract.percent(share, "translated") for share in shares], [40, 90])
         self.assertEqual([extract.percent(share, "reviewed") for share in shares], [30, 80])
         self.assertFalse(any(extract.meets_bar(share) for share in shares))
+        # French is translated enough to be spoken as a draft; German not.
+        self.assertEqual([extract.meets_draft_bar(share) for share in shares], [False, True])
         # One more reviewed: 90%, and all of what is on by default.
         self.catalog(off, "fr", "".join(f"off_{n} = Un\n" for n in range(5)))
         shares, _ = extract.shares(found, names)
         self.assertTrue(extract.meets_bar(shares[1]))
-        # The plugin on by default, it would need all of it.
+        # The plugin on by default, it would need all of it, translated
+        # for a draft, reviewed for the bar.
         (off / "src" / "lib.rs").write_text("")
         shares, _ = extract.shares(found, names)
+        self.assertFalse(extract.meets_bar(shares[1]))
+        self.assertFalse(extract.meets_draft_bar(shares[1]), "off_5 untranslated")
+        self.catalog(off, "fr", "".join(f"# draft\noff_{n} = Un\n" for n in range(6)))
+        shares, _ = extract.shares(found, names)
+        self.assertTrue(extract.meets_draft_bar(shares[1]), "all translated, drafts")
         self.assertFalse(extract.meets_bar(shares[1]))
 
     def test_shares_round_down(self):
@@ -182,9 +204,10 @@ class Crates(unittest.TestCase):
 
 
 class Offering(unittest.TestCase):
-    """The whole tool on a made-up tree: a language offered once it meets
-    the bar, kept between releases under it, refused by a release under
-    75%."""
+    """The whole tool on a made-up tree: a language offered as a draft once
+    translated, reviewed once it meets the bar, kept between releases
+    under it, refused by a release under 75% reviewed, or as a draft short
+    of the draft's bar."""
 
     def setUp(self):
         self.held = tempfile.TemporaryDirectory()
@@ -227,32 +250,41 @@ class Offering(unittest.TestCase):
 
     def test_a_language_offered_stays_until_a_release_refuses_it(self):
         self.say(10)
-        self.translate(10, reviewed=8)
+        self.translate(8, reviewed=8)
         code, said = self.run_tool()
         self.assertEqual(code, 0, said)
-        self.assertEqual(extract.read_offered(self.offered), [])
+        self.assertEqual(extract.read_offered(self.offered), ({}, []))
         catalogs = extract.CATALOGS_RS.read_text()
-        self.assertIn('language: "fr",\n        messages: 10,\n        translated: 10,\n        reviewed: 8,', catalogs)
-        self.assertIn("offered: false", catalogs)
+        self.assertIn('language: "fr",\n        messages: 10,\n        translated: 8,\n        reviewed: 8,', catalogs)
+        self.assertIn("offered: skwir_core::words::Offer::Incomplete", catalogs)
         self.assertEqual(self.run_tool("--check")[0], 0)
 
-        # 90% reviewed: offered, written in the record.
-        self.translate(10, reviewed=9)
+        # Translated, 80% reviewed: offered as a draft, written in the record.
+        self.translate(10, reviewed=8)
         code, said = self.run_tool("--check")
         self.assertEqual(code, 1, "the record and the catalogs' list are behind")
-        self.assertIn("offered once `just words`", said)
+        self.assertIn("fr offered as a draft from now on (100% translated, 80% reviewed)", said)
         code, said = self.run_tool()
         self.assertEqual(code, 0, said)
-        self.assertEqual(extract.read_offered(self.offered), ["fr"])
-        self.assertTrue(self.offered.read_text().startswith("# The languages offered.\n"))
-        self.assertIn("offered: true", extract.CATALOGS_RS.read_text())
+        self.assertEqual(extract.read_offered(self.offered), ({"fr": True}, []))
+        self.assertEqual(self.offered.read_text(), "# The languages offered.\nfr draft\n")
+        self.assertIn("offered: skwir_core::words::Offer::Draft", extract.CATALOGS_RS.read_text())
+        self.assertEqual(self.run_tool("--release")[0], 0)
+
+        # 90% reviewed: offered, its draft mark gone from the record.
+        self.translate(10, reviewed=9)
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertIn("fr offered from now on (90% reviewed)", said)
+        self.assertEqual(self.offered.read_text(), "# The languages offered.\nfr\n")
+        self.assertIn("offered: skwir_core::words::Offer::Reviewed", extract.CATALOGS_RS.read_text())
         self.assertEqual(self.run_tool("--release")[0], 0)
 
         # Messages added untranslated: 75%, offered still, a release too.
         self.say(12)
         code, said = self.run_tool()
         self.assertEqual(code, 0, said)
-        self.assertIn("offered: true", extract.CATALOGS_RS.read_text())
+        self.assertIn("offered: skwir_core::words::Offer::Reviewed", extract.CATALOGS_RS.read_text())
         self.assertEqual(self.run_tool("--release")[0], 0)
 
         # Under 75%: offered between releases, with a warning; a release
@@ -261,19 +293,49 @@ class Offering(unittest.TestCase):
         code, said = self.run_tool()
         self.assertEqual(code, 0, said)
         self.assertIn("warning: fr is offered with only 69%", said)
-        self.assertIn("offered: true", extract.CATALOGS_RS.read_text())
+        self.assertIn("offered: skwir_core::words::Offer::Reviewed", extract.CATALOGS_RS.read_text())
         self.assertEqual(self.run_tool("--check")[0], 0)
         code, said = self.run_tool("--release")
         self.assertEqual(code, 1)
         self.assertIn("a release offers none under 75%", said)
 
-        # Taken out of the record: incomplete again, until it meets the bar.
+        # Taken out of the record: incomplete again, until it meets a bar.
         self.offered.write_text("# The languages offered.\n")
         code, said = self.run_tool()
         self.assertEqual(code, 0, said)
-        self.assertIn("offered: false", extract.CATALOGS_RS.read_text())
-        self.assertEqual(extract.read_offered(self.offered), [])
+        self.assertIn("offered: skwir_core::words::Offer::Incomplete", extract.CATALOGS_RS.read_text())
+        self.assertEqual(extract.read_offered(self.offered), ({}, []))
         self.assertEqual(self.run_tool("--release")[0], 0)
+
+    def test_a_draft_short_of_its_bar_stays_until_a_release_refuses_it(self):
+        self.say(10)
+        self.translate(10, reviewed=0)
+        self.assertEqual(self.run_tool()[0], 0)
+        self.assertEqual(extract.read_offered(self.offered), ({"fr": True}, []))
+        # A message added, not drafted: 90% translated, but not all of the
+        # crate (what is on by default would need it): offered as a draft
+        # still, said in English, and a release refuses it.
+        (self.core / "src" / "lib.rs").write_text('fn f() {\n' + "".join(
+            f'words!(said_{n} = "Said {n}");\n' for n in range(11)) + '}\n')
+        code, said = self.run_tool()
+        self.assertEqual(code, 0, said)
+        self.assertIn("warning: fr is offered as a draft with 90% of its messages translated and not all", said)
+        self.assertIn("offered: skwir_core::words::Offer::Draft", extract.CATALOGS_RS.read_text())
+        code, said = self.run_tool("--release")
+        self.assertEqual(code, 1)
+        self.assertIn("draft what it lacks", said)
+        # Drafted: a release takes it again.
+        self.translate(11, reviewed=0)
+        self.assertEqual(self.run_tool()[0], 0)
+        self.assertEqual(self.run_tool("--release")[0], 0)
+
+    def test_a_record_line_is_a_tag_then_draft_or_nothing(self):
+        self.say(2)
+        self.translate(2, reviewed=0)
+        self.offered.write_text("# The languages offered.\nfr maybe\n")
+        code, said = self.run_tool()
+        self.assertEqual(code, 1)
+        self.assertIn("`fr maybe`: a line is a tag, then `draft` or nothing", said)
 
     def test_the_record_names_only_languages_a_catalog_is_in(self):
         self.say(2)

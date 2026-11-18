@@ -865,7 +865,7 @@ Settings are grouped by subject, whichever plugin brings them:
 
 | Page | What it sets |
 | --- | --- |
-| General | The language Skwir speaks (Automatic, your system's, else English; English is the only one so far), what Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, and with what you drag and drop |
+| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, and with what you drag and drop |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | The order of folders and files, how sizes are counted (Decimal, a thousand bytes to a kilobyte as disks are sold; or Binary, 1024), the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |

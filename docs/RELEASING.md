@@ -35,18 +35,21 @@ workers, check performance or build packages.
    `v<major>.<minor>.<patch>` tags are currently supported.
 3. Check the languages the release offers (ADR-139, 13):
    `just words --release`. `tools/words/offered` lists the languages
-   Automatic speaks; any other language a catalog is in is listed in
-   Settings as incomplete, with how much of it is translated and
-   reviewed, for whoever chooses it. `just words` adds a language there
-   once 90% of all messages are reviewed in it (no `# draft` left above
-   them) and every message of what is on by default is (the program's own
-   crates and each plugin on by default), and counts each language's share
-   into `crates/skwir/src/catalogs.rs`. Only a person takes a language
-   out: between releases it stays offered whatever it lacks, said in
-   English, but a release refuses one with less than 75% of its messages
-   reviewed. Review more of it, or take its line out of
+   Automatic speaks, reviewed or as a draft (`zh-Hans draft`); any other
+   language a catalog is in is listed in Settings as incomplete, with how
+   much of it is translated and reviewed, for whoever chooses it. `just
+   words` adds a language there as a draft once 90% of all messages are
+   translated in it and every message of what is on by default is (the
+   program's own crates and each plugin on by default), takes its `draft`
+   away once as much is reviewed (no `# draft` left above them), and
+   counts each language's share into `crates/skwir/src/catalogs.rs`.
+   Only a person takes a language out: between releases it stays offered
+   whatever it lacks, said in English, but a release refuses one offered
+   with less than 75% of its messages reviewed, and one offered as a
+   draft short of the draft's bar. Draft its new messages (each marked
+   `# draft`), review more of it, or take its line out of
    `tools/words/offered`, which lists it as incomplete again until it
-   meets the bar anew; then run `just words` and commit both files.
+   meets a bar anew; then run `just words` and commit both files.
    `lint-all` runs the same check, so `release-check` refuses it too.
 4. After the last fix, run `just startup-order` and commit
    `tools/build/startup-order.txt`: what a start of skwir runs, which the

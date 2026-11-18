@@ -1317,10 +1317,10 @@ fn held_back(direction: Direction, title: &Words, other: &Words, for_good: bool)
             note = "Why an action cannot be undone by itself: another action, asked after it, changed the same files. title, other: the two actions' titles."
         ),
         (Direction::Redo, true) => words!(
-            exec_redo_held_for_good = "“{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be undone",
+            exec_redo_held_for_good = "“{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be redone",
             title = title,
             other = other,
-            note = "Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be undone. title, other: the two actions' titles."
+            note = "Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be redone itself. title, other: the two actions' titles."
         ),
         (Direction::Redo, false) => words!(
             exec_redo_held = "“{ $title }” cannot be redone alone: “{ $other }”, undone after it, touched what it did; redo that first",

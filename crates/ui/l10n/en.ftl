@@ -33,6 +33,9 @@ about_graphics_software = { $graphics } (drawn by the processor)
 # In About, the label of the languages Skwir speaks and how it writes numbers and dates.
 about_language = Language
 
+# In About, where the window speaks a translation a person who speaks it has not reviewed yet: the languages Skwir speaks, most wanted first (fr, en), the translation by its name in itself (Français), then the locales it writes numbers and dates in (fr-FR), as written. Say a draft, not who made it.
+about_language_draft = { $languages } ({ $draft }: a draft, not fully reviewed yet); numbers { $numbers }, dates { $dates }
+
 # In About, the languages Skwir speaks, most wanted first (fr, en), then the locales it writes numbers and dates in (fr-FR), as written.
 about_language_is = { $languages }; numbers { $numbers }, dates { $dates }
 
@@ -2225,6 +2228,12 @@ dock_stop = Stop and let go
 
 # The pinned player's button: give its sound back.
 dock_unmute = Unmute
+
+# Said once, the first time Skwir speaks a translation that a person who speaks the language has not reviewed yet: this one. Say a draft, not who made it.
+drafts_notice = This translation is a draft, not fully reviewed yet.
+
+# The button of the toast saying the translation is a draft: Skwir speaks English from then on (Settings › Language).
+drafts_use_english = Use English
 
 # A button of the Exclusions page: opens the dialog that adds an exclusion.
 exclusions_add = Add…
@@ -6215,6 +6224,9 @@ settings_differ = { $count ->
 
 # Under a setting whose value does nothing on this system: why is the reason, a sentence without its full stop (X11's window manager keeps its frame).
 settings_does_nothing = Does nothing here. { $why }.
+
+# What the window keeps, for agents and scripts.
+settings_drafts_told_state = The languages whose translation was said to be a draft
 
 settings_drag_image = Dragged files
 

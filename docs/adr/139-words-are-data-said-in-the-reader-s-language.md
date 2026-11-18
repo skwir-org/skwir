@@ -27,6 +27,10 @@ each language's catalog, as attributes a sentence naming them reads with
 two functions, `GENDER` and `FORM` (3, 5); the quotes around a name are
 each language's catalog data, not a table in the code (5).
 
+Amended again 2026-11-18, on the user's choice: Automatic speaks a
+translation once it is translated, before it is reviewed, and the window
+says it is a draft (13).
+
 ## Context
 
 - **Skwir speaks English only, and its English is finished text
@@ -320,22 +324,41 @@ each language's catalog data, not a table in the code (5).
     - **The desktop file and the AppStream metainfo** are translated
       through gettext's PO, merged when packaged (`msgfmt --desktop`,
       `--xml`).
-    - **macOS's bundle declares the languages offered**
-      (`CFBundleLocalizations`, one `.lproj` each), so its own menus and
-      the per-app language follow. A language shipped but not offered is
-      left out (amended 2026-11-17): Automatic never speaks it, and a Mac
-      in that language would mix macOS's menus in it with Skwir's
-      English. The Windows installer stays English.
-    - **When a language is offered** (the user's choice). Automatic
-      offers a language once 90 % of its messages are translated and
-      reviewed, and every message of what is on by default (core, the
-      window, the plugins on by default) is. Below that, Settings lists
-      it as incomplete with its share, for whoever chooses it, and
-      Automatic never picks it. An offered language that falls under
-      75 % for a release goes back to incomplete.
+    - **macOS's bundle declares the languages offered**, reviewed or as
+      a draft (`CFBundleLocalizations`, one `.lproj` each), so its own
+      menus and the per-app language follow. A language shipped but not
+      offered is left out (amended 2026-11-17): Automatic never speaks
+      it, and a Mac in that language would mix macOS's menus in it with
+      Skwir's English. The Windows installer stays English.
+    - **When a language is offered** (the user's choice, amended
+      2026-11-18). Automatic speaks a language as a draft once 90 % of
+      its messages are translated, and every message of what is on by
+      default (core, the window, the plugins on by default) is: for most
+      people whose system speaks it, a translation not yet reviewed
+      serves better than English, and a setting to find in a language
+      they may read poorly is the worst first impression. It offers it
+      reviewed once as much is reviewed. Below the first bar, Settings
+      lists it as incomplete with its share, for whoever chooses it, and
+      Automatic never picks it: a window half in English is worse than
+      either. For a release, a language offered reviewed must keep 75 %
+      reviewed, and one offered as a draft the draft's bar (its new
+      messages drafted first), or it goes back to incomplete.
+    - **A draft says it is one** (amended 2026-11-18): the first start
+      on which Automatic speaks a draft, a toast says "This translation
+      is a draft, not fully reviewed yet." with a button for English;
+      About's language line says it while the window speaks one, chosen
+      or not; Settings lists it as a draft with its share reviewed. The
+      words say a draft, not who made it: the catalog records whether a
+      message is reviewed, not whether a model or a person wrote it, and
+      the reader's question is whether anyone checked it. The notice is
+      in the window, not only on the website: whoever updates through a
+      package never visits it, the browser's language is not the
+      system's, and only the window offers English where the drafted
+      words are.
     - **A machine's or a model's translation is a suggestion** until a
       person who speaks the language has accepted it (ADR-000). A draft
-      is kept marked as one, and counts as reviewed only once accepted.
+      is kept marked as one, and counts as reviewed only once accepted;
+      spoken before then, it says it is one (above).
     - **French first, drafted by a model and reviewed by the user** (the
       user's choice). The draft follows a glossary settled with them
       first: Skwir's own terms (entry, place, pane, trail, shelf, lens,
@@ -343,6 +366,10 @@ each language's catalog data, not a table in the code (5).
       `; : ! ?`). The review is done in the window running in French,
       surface by surface, with a list of the messages that have plurals
       and kinds.
+    - **Simplified Chinese next, drafted by a model** (2026-11-18, the
+      user's choice, for issue #13), from a glossary of the terms
+      Chinese file managers use (`docs/glossary-zh-Hans.md`), for a
+      speaker of Chinese to review.
     - **Translators work on Hosted Weblate** (its Libre plan; Skwir is
       Apache-2.0 and public), opened once every crate is converted
       (PLAN.md's step E). Before that, ids still move, and on Weblate a
