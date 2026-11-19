@@ -85,7 +85,9 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    program's filters, its choices (a dropdown each, a switch for a
    boolean), Cancel and the accept button (`accept_label`, else Open,
    Save, Select). Its title is the request's. Enter accepts, Escape
-   cancels, and closing the window cancels. As built: a dialog's
+   cancels (once a name typed to find a file has gone: the first Escape
+   lets go of it, the user's choice of 2026-11-19), and closing the
+   window cancels. As built: a dialog's
    size at most (1000 × 680 at 100 %), never maximized, its shape never
    the next window's; a core window marked a dialog's
    (`WindowTabs::chooses`), never recorded for the next start nor

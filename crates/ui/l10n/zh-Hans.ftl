@@ -2501,6 +2501,12 @@ commands_toolbar_submenu = 预览菜单：子菜单
 commands_toolbar_submenu_description = 在预览的“更多”或“视图”菜单的某行旁打开子菜单（`open`，或 `here`：拥有键盘焦点的那一行的子菜单），返回其所在行（`back`），在其各行间移动键盘焦点（`step`、`end`），或在设置行上选择前一个值（`value` -1）、后一个值（1）或循环到下一个值（0）
 
 # draft
+commands_type_end = 停止键入查找
+
+# draft
+commands_type_end_description = 放弃在文件列表中为按名称找到文件而键入的内容：其标签消失，下一个字符开始一个新名称
+
+# draft
 commands_undo_history = 撤销历史记录
 
 # draft
@@ -3754,6 +3760,9 @@ keymap_flag_split = 分屏视图
 
 # draft
 keymap_flag_sweep = 随光标移动而选择时
+
+# draft
+keymap_flag_typing = 键入名称以查找文件时
 
 # draft
 keymap_go_home = 转到您的主文件夹

@@ -654,6 +654,9 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // A pane filtered by name shows everything again before Escape
     // deselects (`select_none`, the plugins' binding).
     ("escape", "filter", "{}", Some("pane filtered")),
+    // In a dialog's window, a name typed to reach a file goes before the
+    // dialog does (the user's choice, 2026-11-19): after the two above.
+    ("escape", "ui.type_end", "{}", Some("pane choosing typing")),
     // Escape only closes About: bound with arguments of its own, it is not
     // named beside About in the palette (`keys_for` matches them).
     ("escape", "ui.about", r#"{"close":true}"#, Some("about")),
@@ -1762,6 +1765,10 @@ pub(crate) fn condition_words(flag: &str) -> Words {
         "choosing" => words!(
             keymap_flag_choosing = "while the window answers another program's dialog",
             note = "Where keys work: while the window is another program's Open or Save dialog."
+        ),
+        "typing" => words!(
+            keymap_flag_typing = "while a name is typed to find a file",
+            note = "Where keys work: while what was typed in the file list to reach a file by its name shows at its foot."
         ),
         other => Words::as_written(other.to_owned()),
     }
@@ -3383,6 +3390,54 @@ mod tests {
         assert_eq!(
             run("shift-insert", &terminal).as_deref(),
             Some("ui.terminal_paste")
+        );
+    }
+
+    /// In a window answering another program's dialog, Escape lets go of
+    /// a name being typed first, then shows everything a filter hid, and
+    /// only then cancels the dialog (the user's choice, 2026-11-19); in
+    /// another window, a name typed changes nothing of what it does.
+    #[test]
+    fn escape_ends_what_is_typed_before_a_dialog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        let keymap = gpui::Keymap::new(super::gpui_bindings(&super::bindings(&app, &[])));
+        let run = |context: &str| -> Option<String> {
+            let stack = [
+                gpui::KeyContext::parse(super::ROOT).unwrap(),
+                gpui::KeyContext::parse(context).unwrap(),
+            ];
+            let stroke = super::parse_keystroke("escape").unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
+            found.first().map(|binding| {
+                let run = binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>();
+                run.expect("a command").name.clone()
+            })
+        };
+        let pane = super::PANE;
+        assert_eq!(
+            run(&format!("{pane} choosing typing")).as_deref(),
+            Some("ui.type_end")
+        );
+        assert_eq!(
+            run(&format!("{pane} choosing filtered typing")).as_deref(),
+            Some("ui.type_end")
+        );
+        assert_eq!(
+            run(&format!("{pane} choosing filtered")).as_deref(),
+            Some("filter")
+        );
+        assert_eq!(
+            run(&format!("{pane} choosing")).as_deref(),
+            Some("ui.chooser_cancel")
+        );
+        assert_ne!(
+            run(&format!("{pane} typing")).as_deref(),
+            Some("ui.type_end")
         );
     }
 

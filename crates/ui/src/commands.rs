@@ -2221,6 +2221,19 @@ pub fn declare_all(app: &App) {
             commands_chooser_cancel_description = "In a window answering another program's Open or Save dialog: choose nothing, and close the window"
         ),
     );
+    // What Escape does first in a dialog's window while a name is typed to
+    // reach a file (`pane choosing typing`, the user's choice, 2026-11-19).
+    none(
+        Topic::Find,
+        "ui.type_end",
+        words!(
+            commands_type_end = "Stop typing to find",
+            note = "An action's name: let go of what was typed in the file list to reach a file by its name, its label at the foot of the list going."
+        ),
+        words!(
+            commands_type_end_description = "Let go of what was typed in the file list to reach a file by its name: its label goes, and the next character begins a new name"
+        ),
+    );
     declare::<ChooserFilter>(
         app,
         Topic::Window,

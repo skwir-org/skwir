@@ -3395,6 +3395,7 @@ impl Shell {
             "chooser_accept" | "chooser_cancel" | "chooser_filter" | "chooser_choice" => {
                 self.run_chooser(name, args, window, cx);
             }
+            "type_end" => self.end_typed(cx),
             "focus_address" => {
                 self.omnibox_begin(crate::omnibox::Begin::Path, None, window, cx);
             }

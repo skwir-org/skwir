@@ -2050,6 +2050,11 @@ commands_toolbar_submenu = Preview menu: submenu
 # Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take.
 commands_toolbar_submenu_description = Open a submenu of the preview's More or the View menu beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), move the keyboard along its rows (`step`, `end`), or choose the value before (`value` -1), after (1) or the next round (0) on a setting's row
 
+# An action's name: let go of what was typed in the file list to reach a file by its name, its label at the foot of the list going.
+commands_type_end = Stop typing to find
+
+commands_type_end_description = Let go of what was typed in the file list to reach a file by its name: its label goes, and the next character begins a new name
+
 commands_undo_history = Undo history
 
 commands_undo_history_description = Open or close the history of what Undo can take back, above the footer's Undo. Each action there has its own Undo, an undone one its own Redo, which takes it back alone when nothing done after it touched what it did; else the history names the action that did, and offers to undo it with those after it (ADR-079, 13)
@@ -3362,6 +3367,9 @@ keymap_flag_single = one item selected
 keymap_flag_split = split view
 
 keymap_flag_sweep = selecting as the cursor moves
+
+# Where keys work: while what was typed in the file list to reach a file by its name shows at its foot.
+keymap_flag_typing = while a name is typed to find a file
 
 # A key that goes to the home folder.
 keymap_go_home = Go to your home folder

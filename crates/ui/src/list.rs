@@ -1394,9 +1394,16 @@ impl Shell {
         if sweeping {
             kc.add("sweep");
         }
-        // Escape cancels another program's dialog (ADR-141).
+        // Escape cancels another program's dialog (ADR-141), once what is
+        // typed to reach a name has gone (`typing`, while its label shows).
         if self.chooser.is_some() {
             kc.add("choosing");
+        }
+        if self.ui().list.typed.as_ref().is_some_and(|typed| {
+            self.ui().list.listing == Some(typed.listing)
+                && typed.goes_on(typed.listing, Instant::now())
+        }) {
+            kc.add("typing");
         }
         kc
     }
@@ -2036,6 +2043,14 @@ impl Shell {
             this.update(cx, |_, cx| cx.notify()).ok();
         }));
         cx.notify();
+    }
+
+    /// Let go of what is typed to reach a name (`ui.type_end`): its label
+    /// goes, and the next character begins a new name.
+    pub(crate) fn end_typed(&mut self, cx: &mut Context<Self>) {
+        if self.ui_mut().list.typed.take().is_some() {
+            cx.notify();
+        }
     }
 
     /// What is being typed to reach a name, at the foot of the pane until

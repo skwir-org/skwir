@@ -532,7 +532,8 @@ working in an area, also read that area's rules (see
   shows), `offers` (while a row of it is lit for Tab: what goes on with
   its text, or one the arrows chose), `planning` (while a plan is worked
   out for the window, `shell/planning.rs`), `choosing` (while the window
-  answers another program's dialog, ADR-141), and a place by its
+  answers another program's dialog, ADR-141), `typing` (while a name
+  typed to find a file shows), and a place by its
   token (`pane`, `address`, `palette`, `sidebar`,
   `preview`, `menu`…, each listed once in `keymap::PLACES` with its key
   context and what F1 calls it). `a|b` holds when either does, `!a` when it does not.

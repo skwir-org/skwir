@@ -2541,6 +2541,12 @@ commands_toolbar_submenu = Menu de l’aperçu : sous-menu
 commands_toolbar_submenu_description = Ouvrir un sous-menu du menu Plus de l’aperçu ou du menu Affichage à côté de sa ligne (`open`, ou `here` : celui dont la ligne a le focus clavier), revenir à sa ligne (`back`), déplacer le focus clavier dans ses lignes (`step`, `end`), ou choisir sur la ligne d’un paramètre la valeur précédente (`value` -1), la suivante (1) ou la suivante en reprenant au début après la dernière (0)
 
 # draft
+commands_type_end = Arrêter de taper pour trouver
+
+# draft
+commands_type_end_description = Abandonner ce qui a été tapé dans la liste des fichiers pour atteindre un fichier par son nom : son étiquette s’en va, et le caractère suivant commence un nouveau nom
+
+# draft
 commands_undo_history = Historique des annulations
 
 # draft
@@ -3899,6 +3905,9 @@ keymap_flag_split = vue divisée
 
 # draft
 keymap_flag_sweep = quand la sélection suit le curseur
+
+# draft
+keymap_flag_typing = pendant qu’un nom est tapé pour trouver un fichier
 
 # draft
 keymap_go_home = Aller au dossier personnel

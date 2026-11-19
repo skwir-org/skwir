@@ -2148,7 +2148,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   Cancel and the program's accept label), its title the request's. While
   it chooses, `open` (Enter, a double click) answers with a file (a
   folder still opens), Escape (`pane choosing`, the bar's `chooser`) and
-  the close button cancel, a name taken is asked Replace? in skwir
+  the close button cancel, Escape first letting go of a name typed to
+  find a file (`pane choosing typing`, `ui.type_end`) and of a filter, a
+  name taken is asked Replace? in skwir
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no
