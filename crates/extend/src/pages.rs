@@ -86,8 +86,8 @@ impl Pages {
     ) -> anyhow::Result<Option<Pages>> {
         let closed_links = (!runner.granted.has(Capability::Network)).then(|| {
             skwir_core::words!(
-                extend_pages_links_closed = "Links are not followed in pages “{ $plugin }” drew: it may not use the network",
-                plugin = runner.title.clone(),
+                extend_pages_links_closed = "Links are not followed in pages { $plugin } drew: it may not use the network",
+                plugin = skwir_core::words::Named(runner.title.clone()),
                 note = "Under pages a plugin from outside Skwir (its title, its author's words) drew, which may not use the network: their links are not followed."
             )
         });

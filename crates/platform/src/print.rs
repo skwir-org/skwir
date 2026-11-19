@@ -348,8 +348,8 @@ mod portal {
                 Pages::Ranges(skwir_core::print::from_zero_based(&ranges).map_err(
                         |refused| {
                             anyhow::Error::from(skwir_core::words!(
-                                print_dialog_pages = "the print dialog's pages “{ $ranges }”: { $refused }",
-                                ranges = ranges.clone(),
+                                print_dialog_pages = "the print dialog's pages { $ranges }: { $refused }",
+                                ranges = skwir_core::words::Name(ranges.clone()),
                                 refused = refused,
                                 note = "The pages chosen in the desktop's print dialog cannot be read. ranges: what it answered (1-2,4); refused: why."
                             ))

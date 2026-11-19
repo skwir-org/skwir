@@ -265,7 +265,7 @@ archives_two_as_one = 两个项目会被解压为同一个{ $name }
 archives_unasked = { $name }已加密：其密码只能在 Skwir 的窗口中输入
 
 # draft
-archives_unknown_format = “{ $format }”不是此处可用的格式：请使用 { $endings } 之一
+archives_unknown_format = { $format }不是此处可用的格式：请使用 { $endings } 之一
 
 # draft
 archives_unreadable = 无法读取{ $name }

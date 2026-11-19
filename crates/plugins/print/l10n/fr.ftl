@@ -215,19 +215,19 @@ print_no_page_dialog = Aucune de ses pages n’est parmi celles que la boîte de
 print_no_page_shown = Aucune de ses pages n’est affichée
 
 # draft
-print_no_paper = « { $paper } » n’est pas un format de papier : a4, letter, a5, a3 ou legal
+print_no_paper = { $paper } n’est pas un format de papier : a4, letter, a5, a3 ou legal
 
 # draft
 print_no_picture = Aucun n’est une image
 
 # draft
-print_no_such_folder = Enregistrer sous : le dossier « { $path } » n’existe pas
+print_no_such_folder = Enregistrer sous : le dossier { $path } n’existe pas
 
 # draft
 print_no_such_pane = Ce panneau n’existe pas
 
 # draft
-print_no_whole_path = Enregistrer sous : « { $typed } » n’est pas un chemin complet : tapez-le depuis la racine, ou depuis ~
+print_no_whole_path = Enregistrer sous : { $typed } n’est pas un chemin complet : tapez-le depuis la racine, ou depuis ~
 
 # draft
 print_none_printable = Aucun ne peut être imprimé

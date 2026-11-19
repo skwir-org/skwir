@@ -783,8 +783,8 @@ fn plan(a: CompressArgs, app: &App) -> anyhow::Result<Plan> {
         .map(|f| {
             Format::named(f).ok_or_else(|| {
                 anyhow::Error::from(words!(
-                    archives_unknown_format = "“{ $format }” is no format here: say one of { $endings }",
-                    format = f.to_owned(),
+                    archives_unknown_format = "{ $format } is no format here: say one of { $endings }",
+                    format = skwir_core::words::Name(f.to_owned()),
                     endings = endings(),
                     note = "An error an agent or a script reads: the format it gave, as written, is none Skwir makes."
                 ))

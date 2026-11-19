@@ -78,10 +78,10 @@ shrink_make_verb = Make Smaller Copy
 shrink_no_folder = The file is in no folder
 
 # What was typed for a size, as typed.
-shrink_no_size = “{ $typed }” is no size
+shrink_no_size = { $typed } is no size
 
 # The unit typed after a size, as typed; KB and MB are units as written.
-shrink_no_unit = “{ $unit }” is no unit: write KB or MB
+shrink_no_unit = { $unit } is no unit: write KB or MB
 
 # What follows the file's name is why (it is protected by a password).
 shrink_none_made_note = No smaller copy of { $name } was made: { $said }

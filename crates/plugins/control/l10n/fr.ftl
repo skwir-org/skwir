@@ -4,7 +4,7 @@
 control_another_listens = une autre fenêtre de Skwir est à l’écoute
 
 # draft
-control_ask = Un agent demande à exécuter « { $command } »
+control_ask = Un agent demande à exécuter { $command }
 
 # draft
 control_ask_detail = { $command } : { $description }

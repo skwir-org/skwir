@@ -40,7 +40,7 @@ places_bookmarked = 已将{ $name }添加到书签
 places_bookmarks_not_changed = 未能更改书签：{ $error }
 
 # draft
-places_filter_not_kept = { $done }；其筛选“{ $filter }”未随书签保留
+places_filter_not_kept = { $done }；其筛选{ $filter }未随书签保留
 
 # draft
 places_forget_passphrase = 忘记密码短语

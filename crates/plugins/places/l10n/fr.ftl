@@ -40,7 +40,7 @@ places_bookmarked = { $name } ajouté aux signets
 places_bookmarks_not_changed = Les signets n’ont pas été modifiés : { $error }
 
 # draft
-places_filter_not_kept = { $done } ; son filtre « { $filter } » n’est pas gardé avec lui
+places_filter_not_kept = { $done } ; son filtre { $filter } n’est pas gardé avec lui
 
 # draft
 places_forget_passphrase = Oublier la phrase de passe

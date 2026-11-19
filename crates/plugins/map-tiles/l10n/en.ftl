@@ -15,7 +15,7 @@ map_tiles_avif_notice = AVIF tiles are not drawn: the map shows where the file h
 map_tiles_check_header_line = { $name }: a header's value is one line
 
 # name: a tile server's, as the user named it; header: what was typed as a header's name.
-map_tiles_check_header_name = { $name }: “{ $header }” is not a header name
+map_tiles_check_header_name = { $name }: { $header } is not a header name
 
 # name: a tile server's, as the user named it; header: an HTTP header's name (Host).
 map_tiles_check_header_reserved = { $name }: Skwir sets the { $header } header itself

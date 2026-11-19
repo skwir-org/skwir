@@ -265,7 +265,7 @@ archives_two_as_one = two items would be extracted as { $name }
 archives_unasked = { $name } is encrypted: its password is asked in Skwir's window
 
 # An error an agent or a script reads: the format it gave, as written, is none Skwir makes.
-archives_unknown_format = “{ $format }” is no format here: say one of { $endings }
+archives_unknown_format = { $format } is no format here: say one of { $endings }
 
 # Why an archive was not made: a folder going in could not be read; why follows.
 archives_unreadable = { $name } could not be read

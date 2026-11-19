@@ -3,33 +3,6 @@
 # language's, so each is given as a `Name` (a `Folder`, a `Path`) or said
 # unquoted, and its line taken out. Each line: a crate's folder, a
 # message's id, the argument. The list only shrinks: nothing is added.
-crates/extend extend_pages_links_closed plugin
-crates/extend extend_preview_links_closed plugin
-crates/extend extend_shows_nothing plugin
-crates/extend extend_turned_off plugin
-crates/platform preview_pdfium_library_missing path
-crates/platform print_dialog_pages ranges
-crates/platform shares_no_address address
-crates/plugins/archives archives_unknown_format format
-crates/plugins/control control_ask command
-crates/plugins/map-tiles map_tiles_check_header_name header
-crates/plugins/open-with open_with_not_installed id
-crates/plugins/places places_filter_not_kept filter
-crates/plugins/print print_no_paper paper
-crates/plugins/print print_no_such_folder path
-crates/plugins/print print_no_whole_path typed
-crates/plugins/query query_field_search search
-crates/plugins/query query_field_search_for words
-crates/plugins/query query_nothing_found_detail text
-crates/plugins/remote remote_under_way_title title
-crates/plugins/shrink shrink_no_size typed
-crates/plugins/shrink shrink_no_unit unit
-crates/plugins/tags tags_filter_not_kept filter
-crates/plugins/tags tags_looking_in root
-crates/plugins/tags tags_none_tagged_in root
-crates/plugins/tags tags_plan_note_in root
-crates/plugins/tags tags_plan_note_in_merged root
-crates/plugins/xmp xmp_summary_comment comment
 crates/ui history_held_done title
 crates/ui history_held_for_good title
 crates/ui history_held_running title

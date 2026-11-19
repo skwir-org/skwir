@@ -304,8 +304,8 @@ pub(crate) fn size(typed: &str) -> Result<u64, Words> {
     let typed = typed.trim();
     let no_size = || {
         words!(
-            shrink_no_size = "“{ $typed }” is no size",
-            typed = typed.to_owned(),
+            shrink_no_size = "{ $typed } is no size",
+            typed = skwir_core::words::Name(typed.to_owned()),
             note = "What was typed for a size, as typed."
         )
     };
@@ -324,8 +324,8 @@ pub(crate) fn size(typed: &str) -> Result<u64, Words> {
         "gib" => 1_073_741_824.0,
         other => {
             return Err(words!(
-                shrink_no_unit = "“{ $unit }” is no unit: write KB or MB",
-                unit = other.to_owned(),
+                shrink_no_unit = "{ $unit } is no unit: write KB or MB",
+                unit = skwir_core::words::Name(other.to_owned()),
                 note = "The unit typed after a size, as typed; KB and MB are units as written."
             ));
         }

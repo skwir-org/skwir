@@ -79,10 +79,10 @@ shrink_make_verb = 制作精简副本
 shrink_no_folder = 该文件不在任何文件夹中
 
 # draft
-shrink_no_size = “{ $typed }”不是有效的大小
+shrink_no_size = { $typed }不是有效的大小
 
 # draft
-shrink_no_unit = “{ $unit }”不是有效的单位：请写 KB 或 MB
+shrink_no_unit = { $unit }不是有效的单位：请写 KB 或 MB
 
 # draft
 shrink_none_made_note = 未制作{ $name }的精简副本：{ $said }

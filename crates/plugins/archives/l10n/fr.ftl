@@ -282,7 +282,7 @@ archives_two_as_one = deux éléments seraient extraits sous le nom { $name }
 archives_unasked = { $name } est chiffré : son mot de passe est demandé dans la fenêtre de Skwir
 
 # draft
-archives_unknown_format = « { $format } » n’est pas un format connu ici : indiquez { $endings }
+archives_unknown_format = { $format } n’est pas un format connu ici : indiquez { $endings }
 
 # draft
 archives_unreadable = { $name } n’a pas pu être lu

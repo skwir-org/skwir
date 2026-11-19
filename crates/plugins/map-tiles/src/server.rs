@@ -321,9 +321,9 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
             anyhow::ensure!(
                 is_token(header),
                 words!(
-                    map_tiles_check_header_name = "{ $name }: “{ $header }” is not a header name",
+                    map_tiles_check_header_name = "{ $name }: { $header } is not a header name",
                     name = name.clone(),
-                    header = header,
+                    header = skwir_core::words::Name(header.to_owned()),
                     note = "name: a tile server's, as the user named it; header: what was typed \
                             as a header's name."
                 )

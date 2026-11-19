@@ -111,8 +111,8 @@ fn private_file() -> Words {
 /// title is its own words.
 pub(crate) fn shows_nothing(plugin: &Words) -> Words {
     words!(
-        extend_shows_nothing = "“{ $plugin }” shows nothing of this file",
-        plugin = plugin.clone(),
+        extend_shows_nothing = "{ $plugin } shows nothing of this file",
+        plugin = skwir_core::words::Named(plugin.clone()),
         note = "In place of a file's preview: the plugin from outside Skwir (its title, its author's words) made nothing of it."
     )
 }
@@ -402,8 +402,8 @@ impl Previews {
             .has(skwir_core::permissions::Capability::Network))
         .then(|| {
             words!(
-                extend_preview_links_closed = "Links are not followed in a preview “{ $plugin }” made: it may not use the network",
-                plugin = self.runner.title.clone(),
+                extend_preview_links_closed = "Links are not followed in a preview { $plugin } made: it may not use the network",
+                plugin = skwir_core::words::Named(self.runner.title.clone()),
                 note = "Under a preview a plugin from outside Skwir (its title, its author's words) made, which may not use the network: its links are not followed."
             )
         });

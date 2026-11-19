@@ -13,7 +13,7 @@ xmp_plugin_title = XMP
 xmp_store_title = XMP sidecars (darktable, digiKam, Lightroom)
 
 # Part of what Properties says of the XMP inside a picture: its description, as written in it, quoted.
-xmp_summary_comment = “{ $comment }”
+xmp_summary_comment = { $comment }
 
 # Part of what Properties says of the XMP inside a picture: its keywords, as written in it.
 xmp_summary_keywords = Keywords { $keywords }

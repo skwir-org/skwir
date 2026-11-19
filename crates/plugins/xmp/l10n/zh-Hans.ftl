@@ -16,7 +16,7 @@ xmp_plugin_title = XMP
 xmp_store_title = XMP 附属文件（darktable、digiKam、Lightroom）
 
 # draft
-xmp_summary_comment = “{ $comment }”
+xmp_summary_comment = { $comment }
 
 # draft
 xmp_summary_keywords = 关键词 { $keywords }

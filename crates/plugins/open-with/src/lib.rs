@@ -1355,8 +1355,8 @@ fn files_of(mime: &str) -> (Kind, String) {
 /// The error of an application asked by an ID no desktop entry has.
 fn not_installed(id: &str) -> Words {
     words!(
-        open_with_not_installed = "no application “{ $id }” is installed",
-        id = id.to_owned(),
+        open_with_not_installed = "no application { $id } is installed",
+        id = skwir_core::words::Name(id.to_owned()),
         note = "An error: the application's desktop file ID (org.gnome.Loupe.desktop) is as it was given."
     )
 }

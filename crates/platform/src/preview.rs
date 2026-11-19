@@ -702,8 +702,8 @@ impl PreviewProvider for DocumentPreviews {
             && !library.is_file()
         {
             anyhow::bail!(words!(
-                preview_pdfium_library_missing = "PDFium's library is not at “{ $path }”, where the settings say it is (Settings › Reading › Documents › PDFium library)",
-                path = library.display().to_string(),
+                preview_pdfium_library_missing = "PDFium's library is not at { $path }, where the settings say it is (Settings › Reading › Documents › PDFium library)",
+                path = skwir_core::words::Arg::Path(library.display().to_string()),
                 note = "Why a PDF is not shown. path: where the setting says the library is; Settings › Reading › Documents › PDFium library is where that setting is, as the window names it."
             ));
         }

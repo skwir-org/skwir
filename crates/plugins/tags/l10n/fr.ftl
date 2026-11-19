@@ -229,7 +229,7 @@ tags_files_menu_description = Le sous-menu Étiquettes du menu contextuel : les
 tags_files_not_found = Les fichiers étiquetés { $tag } n’ont pas été trouvés : { $error }
 
 # draft
-tags_filter_not_kept = { $done } ; son filtre « { $filter } » n’est pas gardé avec elle
+tags_filter_not_kept = { $done } ; son filtre { $filter } n’est pas gardé avec elle
 
 # draft
 tags_finder_limits = une note, ou une couleur d’étiquette autre que les sept du Finder
@@ -346,7 +346,7 @@ tags_list_description = Les étiquettes utilisées dans ce qu’affiche le panne
 tags_looking_home = Recherche des fichiers étiquetés { $tags } dans le dossier personnel…
 
 # draft
-tags_looking_in = Recherche des fichiers étiquetés { $tags } dans « { $root } »…
+tags_looking_in = Recherche des fichiers étiquetés { $tags } dans { $root }…
 
 # draft
 tags_merge_accept = Fusionner
@@ -478,7 +478,7 @@ tags_no_such_pane = ce panneau n’existe pas
 tags_none_tagged_home = Aucun fichier du dossier personnel n’est étiqueté { $tags }
 
 # draft
-tags_none_tagged_in = Aucun fichier de « { $root } » n’est étiqueté { $tags }
+tags_none_tagged_in = Aucun fichier de { $root } n’est étiqueté { $tags }
 
 # draft
 tags_one_at_a_time = Une étiquette de { $category } à la fois
@@ -563,13 +563,13 @@ tags_plan_note_home_merged = { $count ->
 tags_plan_note_in = { $count ->
         [one] { $count } fichier
        *[other] { $count } fichiers
-    } dans « { $root } » ; ce que vos exclusions écartent est laissé de côté.
+    } dans { $root } ; ce que vos exclusions écartent est laissé de côté.
 
 # draft
 tags_plan_note_in_merged = { $count ->
         [one] { $count } fichier
        *[other] { $count } fichiers
-    } dans « { $root } » ; ce que vos exclusions écartent est laissé de côté. { $merged }
+    } dans { $root } ; ce que vos exclusions écartent est laissé de côté. { $merged }
 
 # draft
 tags_plugin_description = Étiquettes, notes et commentaires conservés dans les attributs étendus des fichiers, sans base de données ; la provenance des téléchargements

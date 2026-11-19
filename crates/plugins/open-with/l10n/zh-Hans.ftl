@@ -118,7 +118,7 @@ open_with_not_a_file = { $name }不是普通文件：Skwir 不会打开它
 open_with_not_changed = 未更改默认应用：{ $error }
 
 # draft
-open_with_not_installed = 未安装应用“{ $id }”
+open_with_not_installed = 未安装应用{ $id }
 
 # draft
 open_with_not_your_list = { $path } 不是您的默认应用列表之一

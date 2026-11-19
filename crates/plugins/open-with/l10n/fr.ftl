@@ -119,7 +119,7 @@ open_with_not_a_file = { $name } n’est pas un fichier : Skwir ne l’ouvre pa
 open_with_not_changed = L’application par défaut n’a pas été changée : { $error }
 
 # draft
-open_with_not_installed = aucune application « { $id } » n’est installée
+open_with_not_installed = aucune application { $id } n’est installée
 
 # draft
 open_with_not_your_list = { $path } n’est pas l’une de vos listes d’applications par défaut

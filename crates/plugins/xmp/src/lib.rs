@@ -479,8 +479,8 @@ pub fn summary(shown: &Shown) -> Option<skwir_core::words::Words> {
     }
     if let Some(c) = &shown.comment {
         parts.push(words!(
-            xmp_summary_comment = "“{ $comment }”",
-            comment = c.as_str(),
+            xmp_summary_comment = "{ $comment }",
+            comment = skwir_core::words::Name(c.clone()),
             note = "Part of what Properties says of the XMP inside a picture: its description, as written in it, quoted."
         ));
     }

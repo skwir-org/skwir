@@ -399,8 +399,8 @@ fn into_folder(
         && is_folder(dest) == Some(false)
     {
         return Err(words!(
-            print_no_such_folder = "Save as: there is no folder “{ $path }”",
-            path = skwir_core::os_path::from_home(dest),
+            print_no_such_folder = "Save as: there is no folder { $path }",
+            path = skwir_core::words::Arg::Path(skwir_core::os_path::from_home(dest)),
             note = "Said in the dialog: the folder typed in the Save as field is none. The path is as typed, from ~ where it is the home's."
         ));
     }
@@ -932,8 +932,8 @@ fn folder_typed(typed: &str) -> Result<PathBuf, Words> {
     }
     save_folder(typed, home.as_deref()).ok_or_else(|| {
         words!(
-            print_no_whole_path = "Save as: “{ $typed }” is no whole path: type it from the top, or from ~",
-            typed = typed.to_owned(),
+            print_no_whole_path = "Save as: { $typed } is no whole path: type it from the top, or from ~",
+            typed = skwir_core::words::Arg::Path(typed.to_owned()),
             note = "Said in the dialog: the folder typed, as typed, is neither from the top nor from the home folder (~)."
         )
     })

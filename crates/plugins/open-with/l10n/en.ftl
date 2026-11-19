@@ -108,7 +108,7 @@ open_with_not_a_file = { $name } is not a file: Skwir does not open it
 open_with_not_changed = The default application was not changed: { $error }
 
 # An error: the application's desktop file ID (org.gnome.Loupe.desktop) is as it was given.
-open_with_not_installed = no application “{ $id }” is installed
+open_with_not_installed = no application { $id } is installed
 
 # An error: the file named is not one of the user's mimeapps.list files.
 open_with_not_your_list = { $path } is not one of your lists of default applications

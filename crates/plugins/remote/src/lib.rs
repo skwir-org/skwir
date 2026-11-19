@@ -2700,8 +2700,8 @@ fn under_way(app: &App, point: &Path) -> anyhow::Result<()> {
         .into_iter()
         .map(|title| {
             words!(
-                remote_under_way_title = "“{ $title }”",
-                title = title,
+                remote_under_way_title = "{ $title }",
+                title = skwir_core::words::Named(title),
                 note = "An action's title (copy 3 items to Docs), quoted."
             )
         })

@@ -215,8 +215,8 @@ impl LocationProvider for QueryProvider {
             .filter(|text| !text.is_empty())
             .map(|text| {
                 words!(
-                    query_nothing_found_detail = "No file matches “{ $text }” here. Check the spelling or search a folder higher up.",
-                    text = text,
+                    query_nothing_found_detail = "No file matches { $text } here. Check the spelling or search a folder higher up.",
+                    text = skwir_core::words::Name(text.clone()),
                     note = "Under Nothing found, in a search's pane. text: the words searched for, as typed."
                 )
             })

@@ -221,7 +221,7 @@ query_field_recent_in = dans { FORM($place, case: "definite") }
 query_field_saved_in = { $filter } dans { FORM($place, case: "definite") }
 
 # draft
-query_field_search = Rechercher « { $search } »
+query_field_search = Rechercher { $search }
 
 # draft
 query_field_search_contents = Contenu
@@ -230,7 +230,7 @@ query_field_search_contents = Contenu
 query_field_search_disk = Tout le disque
 
 # draft
-query_field_search_for = Rechercher « { $words } »
+query_field_search_for = Rechercher { $words }
 
 # draft
 query_field_search_names = Noms
@@ -602,7 +602,7 @@ query_not_within_search = une recherche ne peut pas chercher dans une autre rech
 query_nothing_found = Aucun résultat
 
 # draft
-query_nothing_found_detail = Aucun fichier ne correspond à « { $text } » ici. Vérifiez l’orthographe ou cherchez dans un dossier plus haut.
+query_nothing_found_detail = Aucun fichier ne correspond à { $text } ici. Vérifiez l’orthographe ou cherchez dans un dossier plus haut.
 
 # draft
 query_nothing_opens = rien n’ouvre { $place } : un dossier s’écrit avec son chemin complet

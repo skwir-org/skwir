@@ -1234,7 +1234,7 @@ remote_under_way = { $count ->
     }
 
 # An action's title (copy 3 items to Docs), quoted.
-remote_under_way_title = “{ $title }”
+remote_under_way_title = { $title }
 
 remote_unfinished_data = The remotes of rclone's Skwir began to set up and did not finish, by name
 

@@ -274,8 +274,8 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         let mut row = Suggestion::new(
             Section::Run,
             words!(
-                query_field_search = "Search “{ $search }”",
-                search = expr.as_str(),
+                query_field_search = "Search { $search }",
+                search = skwir_core::words::Name(expr.clone()),
                 note = "The address field's first row: runs the search typed. search: the search, as written."
             ),
         )
@@ -438,8 +438,8 @@ fn at_words(app: &App, ask: &Ask) -> Suggestion {
     Suggestion::new(
         Section::Run,
         words!(
-            query_field_search_for = "Search for “{ $words }”",
-            words = words,
+            query_field_search_for = "Search for { $words }",
+            words = skwir_core::words::Name(words.to_owned()),
             note = "A row of the address field: the words typed after @ searched in names, as written."
         ),
     )

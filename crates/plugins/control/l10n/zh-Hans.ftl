@@ -4,7 +4,7 @@
 control_another_listens = 另一个 Skwir 窗口正在监听
 
 # draft
-control_ask = 一个智能体请求运行“{ $command }”
+control_ask = 一个智能体请求运行{ $command }
 
 # draft
 control_ask_detail = { $command }：{ $description }

@@ -35,7 +35,7 @@ places_bookmarked = Bookmarked { $name }
 places_bookmarks_not_changed = The bookmarks were not changed: { $error }
 
 # What was done to a bookmark (a sentence of its own: "Bookmarked “Docs”"), then that the filter the folder was shown with, as typed, is not kept with the bookmark.
-places_filter_not_kept = { $done }; its filter “{ $filter }” is not kept with it
+places_filter_not_kept = { $done }; its filter { $filter } is not kept with it
 
 places_forget_passphrase = Forget passphrase
 

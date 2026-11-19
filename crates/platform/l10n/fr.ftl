@@ -593,7 +593,7 @@ preview_office_not_pdf = la conversion n’a pas produit de PDF
 preview_output_too_large = la sortie de l’aperçu est trop grande
 
 # draft
-preview_pdfium_library_missing = La bibliothèque de PDFium n’est pas à « { $path } », où les paramètres l’indiquent (Paramètres › Lecture › Documents › Bibliothèque PDFium)
+preview_pdfium_library_missing = La bibliothèque de PDFium n’est pas à { $path }, où les paramètres l’indiquent (Paramètres › Lecture › Documents › Bibliothèque PDFium)
 
 # draft
 preview_too_wide = les dimensions de l’aperçu dépassent la limite
@@ -608,7 +608,7 @@ print_accept = Imprimer
 print_dialog_ended = la boîte de dialogue d’impression s’est terminée ({ $code })
 
 # draft
-print_dialog_pages = les pages « { $ranges } » de la boîte de dialogue d’impression : { $refused }
+print_dialog_pages = les pages { $ranges } de la boîte de dialogue d’impression : { $refused }
 
 # draft
 print_dialog_stopped = la boîte de dialogue d’impression s’est arrêtée
@@ -738,7 +738,7 @@ shares_login_refused = le serveur a refusé l’identification
 shares_netfs_not_yet = Le montage d’un partage par NetFS n’est pas encore disponible sous { $system }
 
 # draft
-shares_no_address = « { $address } » n’est pas une adresse que le système sait lire
+shares_no_address = { $address } n’est pas une adresse que le système sait lire
 
 # draft
 shares_no_mount_point = NetFS n’a indiqué aucun point de montage

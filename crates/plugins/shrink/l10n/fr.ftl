@@ -88,10 +88,10 @@ shrink_make_verb = Faire une copie allégée
 shrink_no_folder = Le fichier n’est dans aucun dossier
 
 # draft
-shrink_no_size = « { $typed } » n’est pas une taille
+shrink_no_size = { $typed } n’est pas une taille
 
 # draft
-shrink_no_unit = « { $unit } » n’est pas une unité : écrivez ko ou Mo
+shrink_no_unit = { $unit } n’est pas une unité : écrivez ko ou Mo
 
 # draft
 shrink_none_made_note = Aucune copie allégée de { $name } n’a été faite : { $said }

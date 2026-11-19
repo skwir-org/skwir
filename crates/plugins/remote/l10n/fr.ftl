@@ -1516,7 +1516,7 @@ remote_under_way = { $count ->
     }
 
 # draft
-remote_under_way_title = « { $title } »
+remote_under_way_title = { $title }
 
 # draft
 remote_unfinished_data = Les stockages rclone dont Skwir a commencé la configuration sans la terminer, par nom

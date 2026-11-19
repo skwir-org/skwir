@@ -583,7 +583,7 @@ preview_office_not_pdf = 转换未生成 PDF
 preview_output_too_large = 预览输出太大
 
 # draft
-preview_pdfium_library_missing = PDFium 的库不在设置中指定的位置“{ $path }”（设置 › 阅读 › 文档 › PDFium 库）
+preview_pdfium_library_missing = PDFium 的库不在设置中指定的位置{ $path }（设置 › 阅读 › 文档 › PDFium 库）
 
 # draft
 preview_too_wide = 预览尺寸超出上限
@@ -598,7 +598,7 @@ print_accept = 打印
 print_dialog_ended = 打印对话框已结束（{ $code }）
 
 # draft
-print_dialog_pages = 打印对话框的页面范围“{ $ranges }”：{ $refused }
+print_dialog_pages = 打印对话框的页面范围{ $ranges }：{ $refused }
 
 # draft
 print_dialog_stopped = 打印对话框已停止
@@ -721,7 +721,7 @@ shares_login_refused = 服务器拒绝了登录
 shares_netfs_not_yet = { $system } 暂不支持通过 NetFS 挂载共享
 
 # draft
-shares_no_address = “{ $address }”不是系统能识别的地址
+shares_no_address = { $address }不是系统能识别的地址
 
 # draft
 shares_no_mount_point = NetFS 未给出挂载点

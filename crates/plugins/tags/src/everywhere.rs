@@ -326,9 +326,9 @@ fn start_all(
                 note = "tags: the tags' names, a list of those any of which the files have."
             ),
             Some(root) => words!(
-                tags_looking_in = "Looking for the files tagged { $tags } in “{ $root }”…",
+                tags_looking_in = "Looking for the files tagged { $tags } in { $root }…",
                 tags = any_of(&tags),
-                root = root.as_str(),
+                root = skwir_core::words::Arg::Path(root.clone()),
                 note = "tags: the tags' names, a list of those any of which the files have; root: a folder's path."
             ),
         },
@@ -427,8 +427,8 @@ fn start_all(
                             note = "tags: the tags' names, a list of those any of which the files have."
                         ),
                         Some(root) => words!(
-                            tags_none_tagged_in = "No file in “{ $root }” is tagged { $tags }",
-                            root = root.as_str(),
+                            tags_none_tagged_in = "No file in { $root } is tagged { $tags }",
+                            root = skwir_core::words::Arg::Path(root.clone()),
                             tags = any_of(&tags),
                             note = "tags: the tags' names, a list of those any of which the files have; root: a folder's path."
                         ),
@@ -480,18 +480,18 @@ fn start_all(
                     tags_plan_note_in = "{ $count ->
                             [one] { $count } file
                            *[other] { $count } files
-                        } in “{ $root }”; what your exclusions leave out is left out.",
+                        } in { $root }; what your exclusions leave out is left out.",
                     count = n,
-                    root = root.as_str(),
+                    root = skwir_core::words::Arg::Path(root.clone()),
                     note = "Said of a plan renaming or removing tags on every file under a folder: how many files it changes. root: the folder's path."
                 ),
                 (Some(root), Some(merged)) => words!(
                     tags_plan_note_in_merged = "{ $count ->
                             [one] { $count } file
                            *[other] { $count } files
-                        } in “{ $root }”; what your exclusions leave out is left out. { $merged }",
+                        } in { $root }; what your exclusions leave out is left out. { $merged }",
                     count = n,
-                    root = root.as_str(),
+                    root = skwir_core::words::Arg::Path(root.clone()),
                     merged = merged,
                     note = "As tags_plan_note_in, then merged: how many files kept one tag of two (tags_merged_into, tags_merged_names)."
                 ),

@@ -4,7 +4,7 @@
 control_another_listens = another Skwir window listens
 
 # A question in the window: may an AI agent run this command (its title)? The user allows or refuses.
-control_ask = An agent asks to run “{ $command }”
+control_ask = An agent asks to run { $command }
 
 # Under the question whether an agent may run a command: the command's id, then what it does.
 control_ask_detail = { $command }: { $description }

@@ -147,8 +147,8 @@ pub fn mount_url(
     let url = CFURL::from_string(None, &CFString::from_str(url), None).ok_or_else(|| {
         Refused::Other(
             skwir_core::words!(
-                shares_no_address = "“{ $address }” is no address the system reads",
-                address = url,
+                shares_no_address = "{ $address } is no address the system reads",
+                address = skwir_core::words::Name(url.to_owned()),
                 note = "address: what was typed to connect to a server (smb://server/share)."
             )
             .into(),

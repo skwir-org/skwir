@@ -429,8 +429,8 @@ impl Plugin for PrintPlugin {
                         anyhow::ensure!(
                             skwir_core::print::Paper::named(paper).is_some(),
                             words!(
-                                print_no_paper = "“{ $paper }” is no paper: a4, letter, a5, a3 or legal",
-                                paper = paper.to_owned(),
+                                print_no_paper = "{ $paper } is no paper: a4, letter, a5, a3 or legal",
+                                paper = skwir_core::words::Name(paper.to_owned()),
                                 note = "An error an agent or a script reads: the paper it gave, and those the command takes, as written."
                             )
                         );

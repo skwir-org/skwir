@@ -596,8 +596,8 @@ fn allowed(
     };
     let (id, answer) = app.ask(
         words!(
-            control_ask = "An agent asks to run “{ $command }”",
-            command = spec.title.clone(),
+            control_ask = "An agent asks to run { $command }",
+            command = skwir_core::words::Named(spec.title.clone()),
             note = "A question in the window: may an AI agent run this command (its title)? The user allows or refuses."
         ),
         detail,

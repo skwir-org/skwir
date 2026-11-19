@@ -214,7 +214,7 @@ query_field_recent_in = 在 { $place } 中
 query_field_saved_in = { $place } 中的 { $filter }
 
 # draft
-query_field_search = 搜索“{ $search }”
+query_field_search = 搜索{ $search }
 
 # draft
 query_field_search_contents = 内容
@@ -223,7 +223,7 @@ query_field_search_contents = 内容
 query_field_search_disk = 整个磁盘
 
 # draft
-query_field_search_for = 搜索“{ $words }”
+query_field_search_for = 搜索{ $words }
 
 # draft
 query_field_search_names = 名称
@@ -592,7 +592,7 @@ query_not_within_search = 搜索不能在另一个搜索中查找
 query_nothing_found = 未找到任何内容
 
 # draft
-query_nothing_found_detail = 此处没有与“{ $text }”匹配的文件。请检查拼写，或在更上层的文件夹中搜索。
+query_nothing_found_detail = 此处没有与{ $text }匹配的文件。请检查拼写，或在更上层的文件夹中搜索。
 
 # draft
 query_nothing_opens = 没有插件能打开 { $place }：文件夹应写成完整路径

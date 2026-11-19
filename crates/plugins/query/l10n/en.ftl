@@ -205,7 +205,7 @@ query_field_recent_in = in { $place }
 query_field_saved_in = { $filter } in { $place }
 
 # The address field's first row: runs the search typed. search: the search, as written.
-query_field_search = Search “{ $search }”
+query_field_search = Search { $search }
 
 # A row of the address field: the words typed searched in what the files hold.
 query_field_search_contents = Contents
@@ -214,7 +214,7 @@ query_field_search_contents = Contents
 query_field_search_disk = Whole disk
 
 # A row of the address field: the words typed after @ searched in names, as written.
-query_field_search_for = Search for “{ $words }”
+query_field_search_for = Search for { $words }
 
 # A row of the address field: words written #tag searched in names, not as tags.
 query_field_search_names = Names
@@ -565,7 +565,7 @@ query_not_within_search = a search cannot look within another search
 query_nothing_found = Nothing found
 
 # Under Nothing found, in a search's pane. text: the words searched for, as typed.
-query_nothing_found_detail = No file matches “{ $text }” here. Check the spelling or search a folder higher up.
+query_nothing_found_detail = No file matches { $text } here. Check the spelling or search a folder higher up.
 
 # An error of a search whose in: names what no plugin opens. place: what it names, as written.
 query_nothing_opens = nothing opens { $place }: a folder is written as its whole path

@@ -52,13 +52,13 @@ extend_not_reading = 插件未读取发给它的请求
 extend_page_not_base64 = 插件返回的页面不是 base64 编码
 
 # draft
-extend_pages_links_closed = 不会打开“{ $plugin }”所绘页面中的链接：该插件不得使用网络
+extend_pages_links_closed = 不会打开{ $plugin }所绘页面中的链接：该插件不得使用网络
 
 # draft
 extend_plugin_off = 插件已停用
 
 # draft
-extend_preview_links_closed = 不会打开“{ $plugin }”所生成预览中的链接：该插件不得使用网络
+extend_preview_links_closed = 不会打开{ $plugin }所生成预览中的链接：该插件不得使用网络
 
 # draft
 extend_private_file = 私密文件：外部插件无法看到它（设置 › 隐私）
@@ -76,7 +76,7 @@ extend_protocol_version = 该插件使用第 { $version } 版协议；Skwir 支�
 extend_requirement_module = 运行此插件的 WebAssembly 模块
 
 # draft
-extend_shows_nothing = “{ $plugin }”未显示此文件的任何内容
+extend_shows_nothing = { $plugin }未显示此文件的任何内容
 
 # draft
 extend_stopped = 插件已停止运行
@@ -86,8 +86,8 @@ extend_thumbnail_not_base64 = 缩略图不是 base64 编码
 
 # draft
 extend_turned_off = { $count ->
-        [1] 已停用插件“{ $plugin }”：它停止了响应
-       *[other] 已停用插件“{ $plugin }”：它连续 { $count } 次停止响应
+        [1] 已停用插件{ $plugin }：它停止了响应
+       *[other] 已停用插件{ $plugin }：它连续 { $count } 次停止响应
     }
 
 # draft

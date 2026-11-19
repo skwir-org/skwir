@@ -52,13 +52,13 @@ extend_not_reading = the plugin does not read what it is asked
 extend_page_not_base64 = the plugin's page is no base64
 
 # Under pages a plugin from outside Skwir (its title, its author's words) drew, which may not use the network: their links are not followed.
-extend_pages_links_closed = Links are not followed in pages “{ $plugin }” drew: it may not use the network
+extend_pages_links_closed = Links are not followed in pages { $plugin } drew: it may not use the network
 
 # An error: a plugin from outside Skwir was asked something once turned off. In lower case.
 extend_plugin_off = the plugin is off
 
 # Under a preview a plugin from outside Skwir (its title, its author's words) made, which may not use the network: its links are not followed.
-extend_preview_links_closed = Links are not followed in a preview “{ $plugin }” made: it may not use the network
+extend_preview_links_closed = Links are not followed in a preview { $plugin } made: it may not use the network
 
 # An error: a command of a plugin from outside Skwir was given a file the user keeps private. Settings, Privacy is where. In lower case.
 extend_private_file = a private file: a plugin from outside Skwir does not see it (Settings, Privacy)
@@ -76,7 +76,7 @@ extend_protocol_version = the plugin speaks version { $version } of the protocol
 extend_requirement_module = Running this plugin's WebAssembly module
 
 # In place of a file's preview: the plugin from outside Skwir (its title, its author's words) made nothing of it.
-extend_shows_nothing = “{ $plugin }” shows nothing of this file
+extend_shows_nothing = { $plugin } shows nothing of this file
 
 # An error: the program of a plugin from outside Skwir ended while it was asked something. In lower case.
 extend_stopped = the plugin stopped
@@ -86,8 +86,8 @@ extend_thumbnail_not_base64 = a thumbnail that is no base64
 
 # A notification: a plugin from outside Skwir (its title, its author's words) failed again and again, and Skwir turned it off.
 extend_turned_off = { $count ->
-        [one] The plugin “{ $plugin }” was turned off: it stopped answering
-       *[other] The plugin “{ $plugin }” was turned off: it stopped answering { $count } times in a row
+        [one] The plugin { $plugin } was turned off: it stopped answering
+       *[other] The plugin { $plugin } was turned off: it stopped answering { $count } times in a row
     }
 
 # A notification's button: opens the Plugins page of the settings, where a plugin is turned on again.

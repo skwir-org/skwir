@@ -1494,9 +1494,9 @@ impl Places {
         // The bookmark is the folder alone: its filter is said to be left.
         let said = |done: Words| match unkept {
             Some(filter) => words!(
-                places_filter_not_kept = "{ $done }; its filter “{ $filter }” is not kept with it",
+                places_filter_not_kept = "{ $done }; its filter { $filter } is not kept with it",
                 done = done,
-                filter = filter,
+                filter = skwir_core::words::Name(filter.to_owned()),
                 note = "What was done to a bookmark (a sentence of its own: \"Bookmarked “Docs”\"), then that the filter the folder was shown with, as typed, is not kept with the bookmark."
             ),
             None => done,

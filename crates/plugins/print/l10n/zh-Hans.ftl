@@ -207,19 +207,19 @@ print_no_page_dialog = 它的页面均不在打印对话框所要求的范围内
 print_no_page_shown = 未显示它的任何页面
 
 # draft
-print_no_paper = “{ $paper }”不是纸张规格：a4、letter、a5、a3 或 legal
+print_no_paper = { $paper }不是纸张规格：a4、letter、a5、a3 或 legal
 
 # draft
 print_no_picture = 其中没有图片
 
 # draft
-print_no_such_folder = 另存为：没有文件夹“{ $path }”
+print_no_such_folder = 另存为：没有文件夹{ $path }
 
 # draft
 print_no_such_pane = 没有该窗格
 
 # draft
-print_no_whole_path = 另存为：“{ $typed }”不是完整路径：请从根目录或从 ~ 开始输入
+print_no_whole_path = 另存为：{ $typed }不是完整路径：请从根目录或从 ~ 开始输入
 
 # draft
 print_none_printable = 其中没有可打印的内容

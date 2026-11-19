@@ -192,7 +192,7 @@ tags_files_menu_description = The context menu's Tags submenu: the tags the sele
 tags_files_not_found = The files tagged { $tag } were not found: { $error }
 
 # done: what was done to the sidebar's pinned tags (tags_pinned…); filter: the filter the tag's place was shown with, as typed.
-tags_filter_not_kept = { $done }; its filter “{ $filter }” is not kept with it
+tags_filter_not_kept = { $done }; its filter { $filter } is not kept with it
 
 # What a Mac's Finder tags cannot hold that other places notes are kept can, placed after "What it cannot hold:" in its settings (app_notes_read_limits).
 tags_finder_limits = a rating, or a tag color other than the Finder's seven
@@ -328,7 +328,7 @@ tags_list_description = Tags used in the pane's listing, with counts (tags that 
 tags_looking_home = Looking for the files tagged { $tags } in the home folder…
 
 # tags: the tags' names, a list of those any of which the files have; root: a folder's path.
-tags_looking_in = Looking for the files tagged { $tags } in “{ $root }”…
+tags_looking_in = Looking for the files tagged { $tags } in { $root }…
 
 # The button that merges the tags into the one typed.
 tags_merge_accept = Merge
@@ -446,7 +446,7 @@ tags_no_such_pane = no such pane
 tags_none_tagged_home = No file in the home folder is tagged { $tags }
 
 # tags: the tags' names, a list of those any of which the files have; root: a folder's path.
-tags_none_tagged_in = No file in “{ $root }” is tagged { $tags }
+tags_none_tagged_in = No file in { $root } is tagged { $tags }
 
 # An item of a tag's menu, checked while on: the tags within a category become the values of one field, a file having one of them at a time. category: its name.
 tags_one_at_a_time = One { $category } Tag at a Time
@@ -514,13 +514,13 @@ tags_plan_note_home_merged = { $count ->
 tags_plan_note_in = { $count ->
         [one] { $count } file
        *[other] { $count } files
-    } in “{ $root }”; what your exclusions leave out is left out.
+    } in { $root }; what your exclusions leave out is left out.
 
 # As tags_plan_note_in, then merged: how many files kept one tag of two (tags_merged_into, tags_merged_names).
 tags_plan_note_in_merged = { $count ->
         [one] { $count } file
        *[other] { $count } files
-    } in “{ $root }”; what your exclusions leave out is left out. { $merged }
+    } in { $root }; what your exclusions leave out is left out. { $merged }
 
 tags_plugin_description = Tags, ratings and comments kept in the files' extended attributes, no database; where downloads came from
 

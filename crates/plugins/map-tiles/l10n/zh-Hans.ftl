@@ -16,7 +16,7 @@ map_tiles_avif_notice = 不绘制 AVIF 瓦片：地图显示文件中有瓦片�
 map_tiles_check_header_line = { $name }：请求头的值须为一行
 
 # draft
-map_tiles_check_header_name = { $name }：“{ $header }”不是有效的请求头名称
+map_tiles_check_header_name = { $name }：{ $header }不是有效的请求头名称
 
 # draft
 map_tiles_check_header_reserved = { $name }：Skwir 会自行设置 { $header } 请求头

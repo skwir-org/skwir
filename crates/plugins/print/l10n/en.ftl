@@ -202,19 +202,19 @@ print_no_page_dialog = No page of it is among those the print dialog asked
 print_no_page_shown = No page of it is shown
 
 # An error an agent or a script reads: the paper it gave, and those the command takes, as written.
-print_no_paper = “{ $paper }” is no paper: a4, letter, a5, a3 or legal
+print_no_paper = { $paper } is no paper: a4, letter, a5, a3 or legal
 
 # Why a contact sheet was not made: none of the files chosen is a picture.
 print_no_picture = None of them is a picture
 
 # Said in the dialog: the folder typed in the Save as field is none. The path is as typed, from ~ where it is the home's.
-print_no_such_folder = Save as: there is no folder “{ $path }”
+print_no_such_folder = Save as: there is no folder { $path }
 
 # An error: the pane whose listing is printed is not there any more.
 print_no_such_pane = No such pane
 
 # Said in the dialog: the folder typed, as typed, is neither from the top nor from the home folder (~).
-print_no_whole_path = Save as: “{ $typed }” is no whole path: type it from the top, or from ~
+print_no_whole_path = Save as: { $typed } is no whole path: type it from the top, or from ~
 
 print_none_printable = None of them can be printed
 

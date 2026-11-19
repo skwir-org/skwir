@@ -590,7 +590,7 @@ preview_office_not_pdf = conversion did not produce a PDF
 preview_output_too_large = preview output is too large
 
 # Why a PDF is not shown. path: where the setting says the library is; Settings › Reading › Documents › PDFium library is where that setting is, as the window names it.
-preview_pdfium_library_missing = PDFium's library is not at “{ $path }”, where the settings say it is (Settings › Reading › Documents › PDFium library)
+preview_pdfium_library_missing = PDFium's library is not at { $path }, where the settings say it is (Settings › Reading › Documents › PDFium library)
 
 # Why a picture of a file is not shown: the program that drew it made it larger than asked.
 preview_too_wide = preview dimensions exceed limit
@@ -605,7 +605,7 @@ print_accept = Print
 print_dialog_ended = the print dialog ended ({ $code })
 
 # The pages chosen in the desktop's print dialog cannot be read. ranges: what it answered (1-2,4); refused: why.
-print_dialog_pages = the print dialog's pages “{ $ranges }”: { $refused }
+print_dialog_pages = the print dialog's pages { $ranges }: { $refused }
 
 # Windows' print dialog ended before it answered.
 print_dialog_stopped = the print dialog stopped
@@ -734,7 +734,7 @@ shares_login_refused = the server refused the login
 shares_netfs_not_yet = Mounting a share through NetFS is not available on { $system } yet
 
 # address: what was typed to connect to a server (smb://server/share).
-shares_no_address = “{ $address }” is no address the system reads
+shares_no_address = { $address } is no address the system reads
 
 # NetFS is macOS's service that connects servers' shared folders (a name): it said it connected one, and not where.
 shares_no_mount_point = NetFS said no mount point

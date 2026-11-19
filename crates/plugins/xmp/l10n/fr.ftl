@@ -16,7 +16,7 @@ xmp_plugin_title = XMP
 xmp_store_title = Fichiers annexes XMP (darktable, digiKam, Lightroom)
 
 # draft
-xmp_summary_comment = « { $comment } »
+xmp_summary_comment = { $comment }
 
 # draft
 xmp_summary_keywords = Mots-clés { $keywords }

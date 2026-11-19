@@ -1479,7 +1479,7 @@ remote_tools_failed = { $failures }
 remote_under_way = 那里仍有操作正在进行：{ $actions }
 
 # draft
-remote_under_way_title = “{ $title }”
+remote_under_way_title = { $title }
 
 # draft
 remote_unfinished_data = Skwir 开始设置但未完成的 rclone 远程，按名称

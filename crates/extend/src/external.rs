@@ -353,10 +353,10 @@ impl Runner {
             skwir_core::app::NotifyLevel::Warning,
             words!(
                 extend_turned_off = "{ $count ->
-                    [one] The plugin “{ $plugin }” was turned off: it stopped answering
-                   *[other] The plugin “{ $plugin }” was turned off: it stopped answering { $count } times in a row
+                    [one] The plugin { $plugin } was turned off: it stopped answering
+                   *[other] The plugin { $plugin } was turned off: it stopped answering { $count } times in a row
                 }",
-                plugin = self.title.clone(),
+                plugin = skwir_core::words::Named(self.title.clone()),
                 count = BROKEN_AT_MOST,
                 note = "A notification: a plugin from outside Skwir (its title, its author's words) failed again and again, and Skwir turned it off."
             ),

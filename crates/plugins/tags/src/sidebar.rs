@@ -269,10 +269,9 @@ pub fn edit(
             // (the core `keep` with nothing that keeps a filter, ADR-109).
             let words = match &unkept {
                 Some(filter) => words!(
-                    tags_filter_not_kept =
-                        "{ $done }; its filter “{ $filter }” is not kept with it",
+                    tags_filter_not_kept = "{ $done }; its filter { $filter } is not kept with it",
                     done = edit.words(&was),
-                    filter = filter.as_str(),
+                    filter = skwir_core::words::Name(filter.clone()),
                     note = "done: what was done to the sidebar's pinned tags (tags_pinned…); filter: the filter the tag's place was shown with, as typed."
                 ),
                 None => edit.words(&was),

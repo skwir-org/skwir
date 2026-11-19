@@ -16,7 +16,7 @@ map_tiles_avif_notice = Les tuiles AVIF ne sont pas dessinées : la carte montr
 map_tiles_check_header_line = { $name } : la valeur d’un en-tête tient sur une seule ligne
 
 # draft
-map_tiles_check_header_name = { $name } : « { $header } » n’est pas un nom d’en-tête
+map_tiles_check_header_name = { $name } : { $header } n’est pas un nom d’en-tête
 
 # draft
 map_tiles_check_header_reserved = { $name } : Skwir définit lui-même l’en-tête { $header }

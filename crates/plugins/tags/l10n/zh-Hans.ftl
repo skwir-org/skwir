@@ -217,7 +217,7 @@ tags_files_menu_description = 右键菜单中的“标签”子菜单：先是�
 tags_files_not_found = 未能找到带有标签{ $tag }的文件：{ $error }
 
 # draft
-tags_filter_not_kept = { $done }；其筛选“{ $filter }”未随之保留
+tags_filter_not_kept = { $done }；其筛选{ $filter }未随之保留
 
 # draft
 tags_finder_limits = 评分，或访达七种颜色以外的标签颜色
@@ -328,7 +328,7 @@ tags_list_description = 窗格列表中使用的标签及其计数（仅大小�
 tags_looking_home = 正在主文件夹中查找带有标签{ $tags }的文件…
 
 # draft
-tags_looking_in = 正在“{ $root }”中查找带有标签{ $tags }的文件…
+tags_looking_in = 正在{ $root }中查找带有标签{ $tags }的文件…
 
 # draft
 tags_merge_accept = 合并
@@ -454,7 +454,7 @@ tags_no_such_pane = 没有该窗格
 tags_none_tagged_home = 主文件夹中没有带有标签{ $tags }的文件
 
 # draft
-tags_none_tagged_in = “{ $root }”中没有带有标签{ $tags }的文件
+tags_none_tagged_in = { $root }中没有带有标签{ $tags }的文件
 
 # draft
 tags_one_at_a_time = { $category }中仅限一个标签
@@ -529,10 +529,10 @@ tags_plan_note_home = 主文件夹中的 { $count } 个文件；排除项所排�
 tags_plan_note_home_merged = 主文件夹中的 { $count } 个文件；排除项所排除的内容不计在内。{ $merged }
 
 # draft
-tags_plan_note_in = “{ $root }”中的 { $count } 个文件；排除项所排除的内容不计在内。
+tags_plan_note_in = { $root }中的 { $count } 个文件；排除项所排除的内容不计在内。
 
 # draft
-tags_plan_note_in_merged = “{ $root }”中的 { $count } 个文件；排除项所排除的内容不计在内。{ $merged }
+tags_plan_note_in_merged = { $root }中的 { $count } 个文件；排除项所排除的内容不计在内。{ $merged }
 
 # draft
 tags_plugin_description = 保存在文件扩展属性中的标签、评分和注释，无需数据库；以及下载文件的来源
