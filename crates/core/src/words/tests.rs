@@ -672,6 +672,78 @@ fn a_heading_begins_as_its_language_begins_a_sentence() {
     // In the pseudo-language, its bracket comes first: nothing is cased.
     let said = title.heading().say_in(&langs(&[PSEUDO, "en"]));
     assert!(said.starts_with("[ç"), "{said}");
+    // Cased as the language its words are said in: English's, where the
+    // reader's lacks them (a Turkish reader's i keeps no dot in English).
+    let import = crate::words!(test_import = "import { $n } files", n = 3);
+    assert_eq!(
+        import.heading().say_in(&langs(&["tr", "en"])),
+        "Import 3 files"
+    );
+    // Words it places first are cased as they begin one; an argument that
+    // is no words of Skwir's never is, in the window and plainly alike.
+    let failed = crate::words!(test_plan_failed = "{ $plan } failed", plan = import.clone());
+    assert_eq!(failed.heading().english(), "Import 3 files failed");
+    let full = crate::words!(
+        test_heading_full = "{ $folder } is full",
+        folder = super::Folder("docs".into())
+    );
+    assert_eq!(full.heading().say_plain(), "docs is full");
+    assert_eq!(full.heading().english(), "docs is full");
+    let typed = crate::words!(test_heading_typed = "{ $text } not found", text = "abc");
+    assert_eq!(typed.heading().english(), "abc not found");
+}
+
+/// A sentence holds words of its own language, whole (ADR-139, 4): where
+/// the reader's catalog lacks the sentence, the words it places are said
+/// in English too, though the catalog has them; where it has the sentence,
+/// in its language first.
+#[test]
+fn a_sentence_holds_words_of_its_own_language() {
+    let bin = || crate::words!(test_whole_bin = "Trash", noun);
+    let moved = || {
+        crate::words!(
+            test_whole_moved = "Moved { $n } items to { $place }",
+            n = 3,
+            place = bin()
+        )
+    };
+    let size = || {
+        crate::words!(
+            test_whole_size = "Freed { $size }",
+            size = super::Size(1500)
+        )
+    };
+    register(
+        "words-test",
+        env!("CARGO_PKG_NAME"),
+        Catalog::new("fr", "test_whole_bin = Corbeille\n"),
+    );
+    let fr = langs(&["fr", "en"]);
+    assert_eq!(moved().say_in(&fr), "Moved 3 items to Trash");
+    assert_eq!(bin().say_in(&fr), "Corbeille", "alone, the reader's");
+    register(
+        "words-test",
+        env!("CARGO_PKG_NAME"),
+        Catalog::new(
+            "fr",
+            "test_whole_bin = Corbeille\ntest_whole_moved = { $n } éléments mis dans { $place }\n",
+        ),
+    );
+    assert_eq!(moved().say_in(&fr), "3 éléments mis dans Corbeille");
+    // A reader of two languages: the sentence's own first for what it
+    // places, though another comes first to the reader.
+    register(
+        "words-test",
+        env!("CARGO_PKG_NAME"),
+        Catalog::new("de", "test_whole_bin = Papierkorb\n"),
+    );
+    assert_eq!(
+        moved().say_in(&langs(&["de", "fr", "en"])),
+        "3 éléments mis dans Corbeille",
+        "said in French, never Papierkorb"
+    );
+    withdraw("words-test");
+    assert_eq!(size().english(), "Freed 1.5\u{a0}kB");
 }
 
 /// A list is joined as its language joins one.

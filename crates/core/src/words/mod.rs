@@ -551,7 +551,7 @@ impl Words {
         let said = match english {
             Some(pattern) => formats::within(formats::Formats::english(), || {
                 let mut said = String::new();
-                say(pattern, &args, ENGLISH, &[], &mut said, false);
+                say(pattern, &args, ENGLISH, &[], &mut said, false, &mut false);
                 said
             }),
             None => id.clone(),
@@ -796,36 +796,57 @@ impl Words {
     }
 
     fn say_into(&self, out: &mut String, languages: &[String]) {
-        self.say_found(out, languages, catalog::find);
+        self.say_found(out, languages, catalog::find, false);
     }
 
     /// Said as `say_into` says it, its message found in the catalogs by
     /// `find`: those registered, or, for words describing a plugin, its own
     /// whether registered or not (`catalog::find_describing`). The words it
     /// places are said as they are, from the catalogs registered.
-    fn say_found(&self, out: &mut String, languages: &[String], find: Finder) {
+    ///
+    /// As a `heading`, its own first letter is cased as the language it is
+    /// said in begins a sentence: the message's own text where it comes
+    /// first, or words it places first, cased so in theirs; never an
+    /// argument that is no words of Skwir's (a name, a folder, a path, text
+    /// as written), which the window and plain text alike show as it is.
+    fn say_found(&self, out: &mut String, languages: &[String], find: Finder, heading: bool) {
         let (message, args) = match &self.0 {
+            Inner::Written(text) if heading => {
+                let language = languages.first().map_or(ENGLISH, String::as_str);
+                return out.push_str(&casing::heading(language, text));
+            }
             Inner::Written(text) => return out.push_str(text),
             Inner::Name(name) => return isolated(&shown_controls(name), out),
-            Inner::Error(failure) => return say_error(failure, languages, out),
-            Inner::Describing(words) => {
-                return words.say_found(out, languages, catalog::find_describing);
-            }
-            Inner::Heading(words) => {
+            Inner::Error(failure) if heading => {
                 let mut said = String::new();
-                words.say_found(&mut said, languages, find);
+                say_error(failure, languages, &mut said);
                 let language = languages.first().map_or(ENGLISH, String::as_str);
                 return out.push_str(&casing::heading(language, &said));
             }
+            Inner::Error(failure) => return say_error(failure, languages, out),
+            Inner::Describing(words) => {
+                return words.say_found(out, languages, catalog::find_describing, heading);
+            }
+            Inner::Heading(words) => return words.say_found(out, languages, find, true),
             Inner::Carried(carried) => {
+                let mut heading = heading;
                 if let Some(pseudo) = pseudo_of(languages) {
                     // As a message is: its arguments marked, where its
                     // pattern came with it.
                     let Some(english) = &carried.pattern else {
                         return out.push_str(&pseudo(&carried.english));
                     };
+                    // Its bracket first: nothing cased.
                     let mut said = String::new();
-                    say(english, &carried.args, ENGLISH, languages, &mut said, true);
+                    say(
+                        english,
+                        &carried.args,
+                        ENGLISH,
+                        languages,
+                        &mut said,
+                        true,
+                        &mut false,
+                    );
                     return out.push_str(&pseudo(&said));
                 }
                 return match (
@@ -833,19 +854,40 @@ impl Words {
                     &carried.pattern,
                 ) {
                     (Some((said, language)), _) => {
-                        say(&said, &carried.args, &language, languages, out, false);
+                        say(
+                            &said,
+                            &carried.args,
+                            &language,
+                            languages,
+                            out,
+                            false,
+                            &mut heading,
+                        );
                     }
                     (None, Some(english)) => {
-                        say(english, &carried.args, ENGLISH, languages, out, false);
+                        say(
+                            english,
+                            &carried.args,
+                            ENGLISH,
+                            languages,
+                            out,
+                            false,
+                            &mut heading,
+                        );
+                    }
+                    (None, None) if heading => {
+                        out.push_str(&casing::heading(ENGLISH, &carried.english));
                     }
                     (None, None) => out.push_str(&carried.english),
                 };
             }
             Inner::Message(message, args) => (*message, args),
         };
+        let mut heading = heading;
         if let Some(pseudo) = pseudo_of(languages) {
             // Its English made strange, nested words said in the
-            // pseudo-language too (bracketed apart from what is as written).
+            // pseudo-language too (bracketed apart from what is as written:
+            // its bracket first, nothing cased).
             let mut english = String::new();
             say(
                 message.english,
@@ -854,12 +896,23 @@ impl Words {
                 languages,
                 &mut english,
                 true,
+                &mut false,
             );
             return out.push_str(&pseudo(&english));
         }
         match find(message.domain, message.id, languages) {
-            Some((said, language)) => say(&said, args, &language, languages, out, false),
-            None => say(message.english, args, ENGLISH, languages, out, false),
+            Some((said, language)) => {
+                say(&said, args, &language, languages, out, false, &mut heading);
+            }
+            None => say(
+                message.english,
+                args,
+                ENGLISH,
+                languages,
+                out,
+                false,
+                &mut heading,
+            ),
         }
     }
 }
@@ -870,8 +923,15 @@ impl Words {
 type Finder = fn(&str, &str, &[String]) -> Option<(catalog::Said, String)>;
 
 /// Say `elements` with `args` in `language` (its plurals, its quotes);
-/// nested words in `languages`. In the pseudo-language each argument is
-/// marked, so what is placed wrong shows.
+/// nested words in `language` first, then `languages`, so that a sentence
+/// said in one language holds words of that one, whole (ADR-139, 4): an
+/// English sentence (its translation missing) English words, though the
+/// reader's catalog has them. In the pseudo-language each argument is
+/// marked, so what is placed wrong shows, and nested words are said in it
+/// too. While `heading` holds, nothing is said yet: the first text the
+/// message says itself is cased as `language` begins a sentence, and
+/// words it places first are cased in theirs; any other argument said
+/// first leaves the sentence as it is.
 fn say<N: AsRef<str>>(
     elements: &[Element],
     args: &[(N, Arg)],
@@ -879,21 +939,29 @@ fn say<N: AsRef<str>>(
     languages: &[String],
     out: &mut String,
     marked: bool,
+    heading: &mut bool,
 ) {
     let arg = |name: &str| {
         args.iter()
             .find(|(n, _)| n.as_ref() == name)
             .map(|(_, a)| a)
     };
+    // Nested words' languages: the sentence's first, made once asked.
+    let mut kept: Option<Vec<String>> = None;
     for element in elements {
         match element {
+            Element::Text(text) if *heading && !text.is_empty() => {
+                *heading = false;
+                out.push_str(&casing::heading(language, text));
+            }
             Element::Text(text) => out.push_str(text),
             Element::Arg(name) => {
                 if let Some(value) = arg(name) {
                     if marked {
                         out.push('‹');
                     }
-                    said_arg(value, language, languages, out);
+                    let nested = nested(&mut kept, value, language, languages, marked);
+                    placed(value, language, nested, out, heading);
                     if marked {
                         out.push('›');
                     }
@@ -923,7 +991,7 @@ fn say<N: AsRef<str>>(
                 let value = pattern::choose(variants, *default, count, word, |n| {
                     plurals::category(language, n)
                 });
-                say(value, args, language, languages, out, marked);
+                say(value, args, language, languages, out, marked, heading);
             }
             Element::Gender {
                 on,
@@ -931,13 +999,14 @@ fn say<N: AsRef<str>>(
                 default,
             } => {
                 let gender = arg(on).and_then(|value| {
-                    noun_attribute(value, pattern::GENDER_ATTRIBUTE, language, languages)
+                    let nested = nested(&mut kept, value, language, languages, marked);
+                    noun_attribute(value, pattern::GENDER_ATTRIBUTE, language, nested)
                 });
                 let gender = gender.as_deref().map_or(pattern::NO_GENDER, str::trim);
                 let value = pattern::choose(variants, *default, None, Some(gender), |_| {
                     pattern::NO_GENDER
                 });
-                say(value, args, language, languages, out, marked);
+                say(value, args, language, languages, out, marked, heading);
             }
             Element::Form { of, case } => {
                 let Some(value) = arg(of) else {
@@ -949,16 +1018,64 @@ fn say<N: AsRef<str>>(
                 if marked {
                     out.push('‹');
                 }
-                match noun_attribute(value, case, language, languages) {
+                let nested = nested(&mut kept, value, language, languages, marked);
+                match noun_attribute(value, case, language, nested) {
+                    // A noun's form, Skwir's words: cased where it begins a
+                    // heading, as its own text would be.
+                    Some(form) if *heading && !form.is_empty() => {
+                        *heading = false;
+                        out.push_str(&casing::heading(language, &form));
+                    }
                     Some(form) => out.push_str(&form),
                     // No noun, or none in this language: as it is said.
-                    None => said_arg(value, language, languages, out),
+                    None => placed(value, language, nested, out, heading),
                 }
                 if marked {
                     out.push('›');
                 }
             }
         }
+    }
+}
+
+/// The languages a sentence said in `language` says `value` in, where it
+/// holds words (words, a size's, an error's, a list's): `language` first,
+/// then the reader's `languages` (kept in `kept`, made once a sentence);
+/// the reader's alone where they begin with it, where `value` holds no
+/// words, or where the sentence is the pseudo-language's (`marked`), whose
+/// nested words are said in it too.
+fn nested<'a>(
+    kept: &'a mut Option<Vec<String>>,
+    value: &Arg,
+    language: &str,
+    languages: &'a [String],
+    marked: bool,
+) -> &'a [String] {
+    let holds_words = matches!(
+        value,
+        Arg::Words(_) | Arg::Size(_) | Arg::Error(_) | Arg::List(..)
+    );
+    if !holds_words || marked || languages.first().is_some_and(|first| first == language) {
+        return languages;
+    }
+    kept.get_or_insert_with(|| {
+        std::iter::once(language.to_owned())
+            .chain(languages.iter().cloned())
+            .collect()
+    })
+}
+
+/// Argument `value`, placed in a sentence said in `language`, its nested
+/// words in `nested`. Where it begins a `heading`, words of Skwir's are
+/// cased as they begin one; any other argument leaves it as it is.
+fn placed(value: &Arg, language: &str, nested: &[String], out: &mut String, heading: &mut bool) {
+    let before = out.len();
+    match value {
+        Arg::Words(words) if *heading => words.say_found(out, nested, catalog::find, true),
+        _ => said_arg(value, language, nested, out),
+    }
+    if out.len() > before {
+        *heading = false;
     }
 }
 
@@ -990,6 +1107,7 @@ fn noun_attribute(arg: &Arg, name: &str, language: &str, languages: &[String]) -
         languages,
         &mut out,
         false,
+        &mut false,
     );
     Some(out)
 }
