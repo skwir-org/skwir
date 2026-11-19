@@ -154,14 +154,15 @@ pub struct Asked {
 
 impl Asked {
     /// The name a save starts with: the file saved again's, else the one
-    /// suggested (ADR-141, 5).
-    pub fn save_name(&self) -> Option<String> {
+    /// suggested (ADR-141, 5); as bytes, as a folder holds it (a name not
+    /// UTF-8 is that file's, never another's said alike).
+    pub fn save_name(&self) -> Option<OsString> {
         match &self.kind {
             Kind::Save { name, file } => file
                 .as_deref()
                 .and_then(std::path::Path::file_name)
-                .map(|name| name.to_string_lossy().into_owned())
-                .or_else(|| name.clone()),
+                .map(std::ffi::OsStr::to_os_string)
+                .or_else(|| name.clone().map(OsString::from)),
             _ => None,
         }
     }
@@ -1110,12 +1111,29 @@ mod tests {
             name: Some("Untitled.txt".into()),
             file: Some(PathBuf::from("/srv/example/Lettre d'été.odt")),
         };
-        assert_eq!(save.save_name().as_deref(), Some("Lettre d'été.odt"));
+        assert_eq!(
+            save.save_name().as_deref(),
+            Some(std::ffi::OsStr::new("Lettre d'été.odt"))
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            // A name not UTF-8 is its bytes, never its lossy form.
+            let latin = OsString::from_vec(b"r\xe9sum\xe9.txt".to_vec());
+            save.kind = Kind::Save {
+                name: None,
+                file: Some(PathBuf::from("/srv/example").join(&latin)),
+            };
+            assert_eq!(save.save_name(), Some(latin));
+        }
         save.kind = Kind::Save {
             name: Some("Untitled.txt".into()),
             file: None,
         };
-        assert_eq!(save.save_name().as_deref(), Some("Untitled.txt"));
+        assert_eq!(
+            save.save_name().as_deref(),
+            Some(std::ffi::OsStr::new("Untitled.txt"))
+        );
         let filter = |name: &str| Filter {
             name: name.into(),
             patterns: vec![Pattern::Glob(format!("*.{name}"))],

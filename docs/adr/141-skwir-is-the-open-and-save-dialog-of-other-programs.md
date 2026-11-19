@@ -102,9 +102,13 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    started from `current_file` (its folder and name), else
    `current_folder` and `current_name`, the name selected without its
    extension; a name that exists is asked Replace? in skwir before the
-   answer, as the portal expects of a back end. `SaveFiles`: a folder
-   chosen, each name of `files` in it, names taken asked Replace? once
-   for all. Only local files, as `file://` URIs, said writable (as KDE's
+   answer, as the portal expects of a back end. The name is taken as
+   typed, its spaces kept, and as the bytes it was given while the
+   field still says them (a name not UTF-8 is shown in its lossy form);
+   a file chosen (Enter, a double click) is the answer at its own path,
+   asked Replace? on it. `SaveFiles`: a folder chosen, each name of
+   `files` in it, names taken asked Replace? once for all. Only local
+   files, as `file://` URIs, said writable (as KDE's
    back end says them: the interface's default is read access alone,
    which a sandboxed program would be given); the choices as set; the
    filter in use. A name the program gives (`current_name`, each of

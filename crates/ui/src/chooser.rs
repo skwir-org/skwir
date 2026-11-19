@@ -7,6 +7,7 @@
 //! takes while it chooses (`Shell::chooser_open`).
 
 use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -85,6 +86,10 @@ pub(crate) struct Chooser {
     pub(crate) choosing: Choosing,
     /// The name typed (saving one file).
     name: Option<Entity<TextInput>>,
+    /// The name as bytes the field says (the file saved again's, a file
+    /// chosen): answered as they are while its text still says them, a
+    /// name not UTF-8 shown in its lossy form (`save_name`).
+    given: Option<OsString>,
     /// The filter in use: one of the request's, or all files (`None`).
     filter: Option<usize>,
     /// What it admits, set on the pane shown (`Shell::chooser_sync`).
@@ -144,6 +149,20 @@ fn admits_of(asked: &Asked, filter: Option<usize>) -> Option<Admits> {
     }
     let filter = asked.filters.get(filter?)?;
     Some(Admits(Arc::new(filter.admits())))
+}
+
+/// The name to save under, of the field's `text`: none while it is empty
+/// (or spaces alone); `given`'s bytes while the text still says them (a
+/// name not UTF-8 is shown in its lossy form), else the text as typed,
+/// its spaces kept (a name may begin or end with one).
+fn save_name(text: &str, given: Option<&OsStr>) -> Option<OsString> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(match given {
+        Some(given) if given.to_string_lossy() == text => given.to_os_string(),
+        _ => OsString::from(text),
+    })
 }
 
 /// How much of `name` is its stem: what is selected to be typed over.
@@ -224,8 +243,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let asked = choosing.asked().clone();
+        let given = asked.save_name().filter(|name| !name.is_empty());
         let name = matches!(asked.kind, Kind::Save { .. }).then(|| {
-            let start = asked.save_name().unwrap_or_default();
+            let start = given
+                .as_deref()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             cx.new(|cx| {
                 let mut input = TextInput::new(
                     words!(
@@ -288,6 +311,7 @@ impl Shell {
             cancel_focus: cx.focus_handle(),
             accept_focus: cx.focus_handle(),
             asking: 0,
+            given,
             _name_events: events,
         });
         self.chooser_sync(window, cx);
@@ -532,13 +556,11 @@ impl Shell {
     /// typed is gone into, a name taken asked Replace? first. Whether a
     /// name is taken is read on a worker, in the folder's lane.
     fn chooser_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let typed = self
-            .chooser
-            .as_ref()
-            .and_then(|c| c.name.as_ref())
-            .map(|input| input.read(cx).text().trim().to_owned())
-            .unwrap_or_default();
-        if typed.is_empty() {
+        let typed = self.chooser.as_ref().and_then(|c| {
+            let text = c.name.as_ref()?.read(cx).text().to_owned();
+            save_name(&text, c.given.as_deref())
+        });
+        let Some(typed) = typed else {
             self.set_status(
                 words!(
                     chooser_type_name = "Type a name to save under",
@@ -548,11 +570,16 @@ impl Shell {
                 cx,
             );
             return;
-        }
+        };
         let Some(folder) = self.chooser_folder(cx) else {
             return;
         };
-        let path = folder.join(&typed);
+        self.chooser_save_at(folder.join(typed), window, cx);
+    }
+
+    /// Save one file at `path`: a folder there is gone into, a name taken
+    /// asked Replace? first, read on a worker in its folder's lane.
+    fn chooser_save_at(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let asking = self.chooser_asks();
         self.off_thread(
             skwir_core::fs::reach::lane(&path),
@@ -719,9 +746,10 @@ impl Shell {
         let Some(chooser) = &self.chooser else {
             return false;
         };
+        let (kind, field) = (chooser.asked().kind.clone(), chooser.name.clone());
         let selected = self.chooser_selected();
         let files = selected.iter().any(|(_, dir)| !dir);
-        match chooser.asked().kind {
+        match kind {
             // A folder opens; choosing folders, the button answers.
             Kind::Open {
                 directory: true, ..
@@ -731,16 +759,26 @@ impl Shell {
                 self.chooser_accept(window, cx);
                 true
             }
+            // The file chosen is the answer at its own path, its name as its
+            // bytes are, asked Replace? on it.
             Kind::Save { .. } if files => {
-                let name = selected
-                    .iter()
+                let Some(path) = selected
+                    .into_iter()
                     .find(|(_, dir)| !dir)
-                    .and_then(|(path, _)| path.file_name())
-                    .map(|name| name.to_string_lossy().into_owned());
-                if let (Some(name), Some(input)) = (name, chooser.name.clone()) {
-                    input.update(cx, |input, cx| input.set_text(name, cx));
+                    .map(|(path, _)| path)
+                else {
+                    return false;
+                };
+                if let Some(name) = path.file_name() {
+                    let shown = name.to_string_lossy().into_owned();
+                    if let Some(chooser) = &mut self.chooser {
+                        chooser.given = Some(name.to_os_string());
+                    }
+                    if let Some(input) = field {
+                        input.update(cx, |input, cx| input.set_text(shown, cx));
+                    }
                 }
-                self.chooser_accept(window, cx);
+                self.chooser_save_at(path, window, cx);
                 true
             }
             Kind::Open { .. } | Kind::Save { .. } => false,
@@ -1081,6 +1119,42 @@ mod tests {
         assert_eq!(stem_len("archive.tar.gz"), "archive.tar".len());
         assert_eq!(stem_len(".bashrc"), ".bashrc".len());
         assert_eq!(stem_len("Untitled"), "Untitled".len());
+    }
+
+    /// The name saved under is the field's text as typed, its spaces kept,
+    /// or, while the text still says them, the bytes of the name it was
+    /// given (a name not UTF-8, shown in its lossy form): the path
+    /// answered is that file's, never another's said alike.
+    #[test]
+    fn a_name_is_saved_under_as_its_bytes() {
+        let folder = Path::new("/srv/Field Guide");
+        assert_eq!(save_name("", None), None);
+        assert_eq!(save_name("   ", None), None);
+        assert_eq!(
+            save_name(" plan .txt", None).map(|n| folder.join(n)),
+            Some(folder.join(" plan .txt"))
+        );
+        assert_eq!(
+            save_name("it's #1 %20.txt", Some(OsStr::new("other.txt"))),
+            Some(OsString::from("it's #1 %20.txt")),
+            "typed over, the text"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let latin = OsString::from_vec(b"r\xe9sum\xe9.txt".to_vec());
+            let shown = latin.to_string_lossy().into_owned();
+            assert_eq!(
+                save_name(&shown, Some(&latin)).map(|n| folder.join(n)),
+                Some(folder.join(&latin)),
+                "the file's own bytes"
+            );
+            assert_eq!(
+                save_name("r\u{fffd}sum\u{fffd}2.txt", Some(&latin)),
+                Some(OsString::from("r\u{fffd}sum\u{fffd}2.txt")),
+                "another name typed"
+            );
+        }
     }
 
     /// The asking window is read as the portal writes it; anything else
