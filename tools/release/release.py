@@ -226,6 +226,13 @@ def portable(version):
     return [f"skwir-{version}-x86_64.AppImage", f"skwir-{version}-linux-x86_64.tar.gz"]
 
 
+def updating():
+    """What AppImage's updaters read beside the AppImage (ADR-142): its zsync
+    file, named without a version, so the latest release's is found by its
+    name (skwir.org's `/latest/`). It holds the image's own checksums."""
+    return ["skwir-x86_64.AppImage.zsync"]
+
+
 def tried(version):
     """Windows' and macOS's builds to try, by system (ADR-074, ADR-075)."""
     return {"windows": [f"skwir-{version}-windows-x86_64.msi", f"skwir-{version}-windows-x86_64.zip"],
@@ -248,7 +255,8 @@ def patterns(version):
     """Derive split package names from their owning manifests, not a second list."""
     package = tomllib.loads((ROOT / "crates/skwir/Cargo.toml").read_text())["package"]
     result = {"appimage": [rf"{re.escape(name)}{suffix}" for name in portable(version)
-                           for suffix in ("", r"\.sha256")]}
+                           for suffix in ("", r"\.sha256")]
+              + [re.escape(name) for name in updating()]}
     for system, names in tried(version).items():
         result[system] = [rf"{re.escape(name)}{suffix}" for name in names for suffix in ("", r"\.sha256")]
     for distro, key, template in (

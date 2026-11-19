@@ -9,6 +9,7 @@ distributions in CI.
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import pathlib
@@ -359,6 +360,68 @@ def check_helpers(app, build):
             raise AssertionError(f"{program} --probe failed: {why}")
 
 
+def elf_section(path, wanted):
+    """The bytes of the section named `wanted` of the 64-bit ELF file at
+    `path` (an AppImage's runtime), read by its section headers."""
+    with path.open("rb") as elf:
+        head = elf.read(64)
+        assert head[:4] == b"\x7fELF" and head[4] == 2, f"{path.name}: not a 64-bit ELF file"
+        (table_at,) = struct.unpack_from("<Q", head, 0x28)
+        size, count, names_index = struct.unpack_from("<HHH", head, 0x3A)
+        elf.seek(table_at)
+        table = elf.read(size * count)
+
+        def section(index):
+            name, _, _, _, offset, length = struct.unpack_from("<IIQQQQ", table, index * size)
+            return name, offset, length
+
+        _, names_at, names_length = section(names_index)
+        elf.seek(names_at)
+        names = elf.read(names_length)
+        for index in range(count):
+            name, offset, length = section(index)
+            if names[name:names.index(b"\0", name)] == wanted:
+                elf.seek(offset)
+                return elf.read(length)
+    raise AssertionError(f"{path.name}: no {wanted.decode()} section")
+
+
+def check_updates(image):
+    """What AppImage's updaters read (ADR-142): the image's update
+    information names the latest release's zsync file on skwir.org, and the
+    zsync file beside it, named without a version, describes this image at
+    an address of its own."""
+    cargo = (ROOT / "Cargo.toml").read_text()
+    site = re.search(r'^homepage = "(.*)"$', cargo, re.M).group(1)
+    version = re.search(r'^version = "(.*)"$', cargo, re.M).group(1)
+    said = elf_section(image, b".upd_info").rstrip(b"\0").decode()
+    assert said == f"zsync|{site}/latest/skwir-x86_64.AppImage.zsync", said
+    zsync = image.with_name("skwir-x86_64.AppImage.zsync")
+    head = {}
+    with zsync.open("rb") as described:
+        for line in described:
+            if line == b"\n":
+                break
+            key, _, value = line.decode().rstrip("\n").partition(": ")
+            head[key] = value
+    assert head.get("URL") == f"{site}/files/v{version}/{image.name}", head.get("URL")
+    sha1 = hashlib.sha1()
+    with image.open("rb") as read:
+        while chunk := read.read(1 << 20):
+            sha1.update(chunk)
+    assert head.get("SHA-1") == sha1.hexdigest(), "the zsync file describes another image"
+    assert int(head.get("Length", -1)) == image.stat().st_size, "the zsync file's length"
+    print(f"ok: the update information and {zsync.name}", flush=True)
+
+
+def check_channel(app, word):
+    """How the copy came, as skwir reads it (ADR-142, tools/package/channel):
+    the AppImage's word, or the tarball's."""
+    said = (app / "usr/share/skwir/channel").read_text()
+    assert said == f"{word}\n", (word, said)
+    print(f"ok: the channel says {word}", flush=True)
+
+
 def check_fonts(app):
     """Skwir's own fonts where skwir finds them, with their licences
     (ADR-118, tools/package/fonts.py)."""
@@ -447,11 +510,13 @@ def main():
         check_elf(app)
         if artifact.name.endswith(".AppImage"):
             run([artifact, "--version"], env=dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1"))
+            check_updates(artifact)
         said = run([app / launcher, "--version"], capture_output=True, text=True).stdout.strip()
         print(said, flush=True)
         assert said.startswith("skwir "), said
         check_helpers(app, said.removeprefix("skwir "))
         check_fonts(app)
+        check_channel(app, "appimage" if artifact.name.endswith(".AppImage") else "tarball")
         for engine in ("pdfium", "poppler", "mupdf"):
             worker = "skwir-pdf-worker" if engine == "pdfium" else f"skwir-{engine}-worker"
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,

@@ -86,6 +86,8 @@ cp -R "$out/work/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
 python3 tools/package/fonts.py "$out/work/fonts"
 mkdir -p "$app/Contents/Resources/share/skwir"
 cp -R "$out/work/fonts/fonts" "$app/Contents/Resources/share/skwir/"
+# How the copy came (ADR-142).
+cp tools/package/channel/macos "$app/Contents/Resources/share/skwir/channel"
 cp -R "$out/work/fonts/licenses/fonts" "$app/Contents/Resources/licenses/"
 cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$app/Contents/Resources/licenses/"
 cp -R "$gstreamer/runtime/GStreamer.framework" "$app/Contents/Frameworks/"

@@ -90,6 +90,8 @@ lib="$(zig env | sed -n 's/^ *\.lib_dir = "\(.*\)",$/\1/p')"
 cp "$lib/libc/mingw/COPYING" "$folder/licenses/mingw-w64/"
 tools/package/mime-database.sh "$folder/share/mime" >/dev/null
 
+# How the copy came (ADR-142): the zip's word, then the installer's.
+cp tools/package/channel/windows-zip "$folder/share/skwir/channel"
 # The zip: one folder, its entries sorted and dated by the commit.
 python3 - "$out" "$name" "$(git log -1 --format=%ct)" <<'EOF'
 import os, pathlib, sys, time, zipfile
@@ -104,6 +106,7 @@ with zipfile.ZipFile(out / f"{name}.zip", "w", zipfile.ZIP_DEFLATED, compresslev
             zipped.writestr(entry, path.read_bytes())
 EOF
 
+cp tools/package/channel/windows-installer "$folder/share/skwir/channel"
 # The installer: every file of the folder (wixl-heat), under skwir.wxs's
 # folder, shortcut and upgrade, with the icon skwir.exe carries (its
 # group icon, resource type 14).

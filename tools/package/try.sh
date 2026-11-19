@@ -211,8 +211,15 @@ arch)
     enter "$fresh" 0 sh -c 'pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm && pacman -U --noconfirm /package/main/*.pkg.tar.zst' >/dev/null
     ;;
 esac
+# How the copy came (ADR-142): what skwir's .deb and .rpm write, none in
+# the AUR's.
+case "$distribution" in
+debian | ubuntu) channel=deb ;;
+fedora) channel=rpm ;;
+arch) channel=none ;;
+esac
 echo "== $distribution: skwir alone"
-enter "$fresh" 0 /tools/package/linux/check.sh minimal ${fonts:+"$fonts"}
+enter "$fresh" 0 /tools/package/linux/check.sh minimal ${fonts:+"$fonts"} "channel=$channel"
 case "$distribution" in
 debian | ubuntu)
     enter "$fresh" 0 sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -q /package/extra/*.deb' >/dev/null
@@ -225,7 +232,7 @@ arch)
     ;;
 esac
 echo "== $distribution: with the others and what they recommend"
-enter "$fresh" 0 /tools/package/linux/check.sh ${fonts:+"$fonts"}
+enter "$fresh" 0 /tools/package/linux/check.sh ${fonts:+"$fonts"} "channel=$channel"
 # Only packages that passed both installations leave the test root.
 for package in "$fresh"/package/main/* "$fresh"/package/extra/*; do
     cp "$package" "$out/"

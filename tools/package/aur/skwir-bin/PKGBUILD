@@ -59,6 +59,9 @@ sha256sums=('SKIP')
 package() {
   install -d "$pkgdir/opt" "$pkgdir/usr/bin" "$pkgdir/usr/share/licenses"
   cp -a --no-preserve=ownership "skwir-$pkgver-linux-x86_64" "$pkgdir/opt/skwir"
+  # The AUR updates this copy: it is never told of new versions by
+  # skwir, which asks only one the tarball's word names (ADR-142).
+  rm "$pkgdir/opt/skwir/usr/share/skwir/channel"
   # skwir finds its helpers, libraries and licences beside the program
   # the link leads to.
   ln -s /opt/skwir/usr/bin/skwir "$pkgdir/usr/bin/skwir"

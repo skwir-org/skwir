@@ -75,6 +75,7 @@ wanted = [at(p) for p in programs] + [
     "pdfium.dll", "share/mime/globs2", "share/mime/magic", "share/mime/COPYING",
     "licenses/LICENSE", "licenses/THIRD-PARTY-NOTICES", "licenses/mingw-w64/COPYING",
     "licenses/pdfium/LICENSE", "licenses/libarchive/COPYING", "licenses/libarchive/VERSIONS",
+    "share/skwir/channel",
     "share/skwir/fonts/Inter-Regular.ttf", "share/skwir/fonts/Inter-Bold.ttf",
     "share/skwir/fonts/JetBrainsMono-Regular.ttf", "licenses/fonts/Inter/LICENSE.txt",
     "licenses/fonts/JetBrainsMono/OFL.txt",
@@ -84,6 +85,8 @@ wanted = [at(p) for p in programs] + [
     "licenses/gstreamer/SOURCES", "licenses/gstreamer/ffmpeg/LGPL-2.1-or-later.txt"]
 missing = [w for w in wanted if not (folder / w).is_file()]
 assert not missing, f"missing from the zip: {missing}"
+# How the copy came (ADR-142): the zip's word, not the installer's.
+assert (folder / "share/skwir/channel").read_text() == "windows-zip\n", "the zip's channel"
 top = {p.name for p in folder.iterdir()}
 beside = {f"{p}.exe" for p in programs if "/" not in at(p)}
 assert top == beside | {"pdfium.dll", "share", "licenses", "gstreamer"}, top
@@ -173,6 +176,10 @@ wine msiexec /i "$made/$name.msi" /qn
 [ -f "$installed/skwir.exe" ] && [ -f "$installed/licenses/THIRD-PARTY-NOTICES" ] \
     && [ -f "$installed/share/mime/globs2" ] || { echo "the installer put nothing in $installed" >&2; exit 1; }
 echo "ok: installed in %LocalAppData%\\Programs\\skwir, $(find "$installed" -type f | wc -l) files"
+# How the copy came (ADR-142): the installer's word, not the zip's.
+[ "$(cat "$installed/share/skwir/channel")" = windows-installer ] \
+    || { echo "the installed copy's channel is not windows-installer" >&2; exit 1; }
+echo "ok: the installed copy's channel says windows-installer"
 [ -f "$shortcut" ] || { echo "no Start menu entry: $shortcut" >&2; exit 1; }
 echo "ok: a Start menu entry"
 answer "$installed"

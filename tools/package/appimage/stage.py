@@ -82,6 +82,9 @@ def main():
     copy(TOOLS / "linux" / service, APP / "usr/share/dbus-1/services" / service)
     # Skwir's own fonts, read when they are drawn (ADR-118).
     shutil.copytree(ROOT / "target/fonts/fonts", APP / "usr/share/skwir/fonts")
+    # How the copy came (ADR-142): the tarball of the same tree says its own
+    # (build.sh).
+    copy(TOOLS / "channel/appimage", APP / "usr/share/skwir/channel")
     # This marker identifies the private, read-only runtime to sandboxes.
     copy(TOOLS / "appimage/runtime", APP / "usr/share/skwir/appimage-runtime")
     licences = APP / "usr/share/licenses/skwir"

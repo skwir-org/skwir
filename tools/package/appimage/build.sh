@@ -33,9 +33,20 @@ install -m755 tools/package/appimage/AppRun /build/AppDir/AppRun
 desktop-file-validate /build/AppDir/usr/share/applications/org.skwir.skwir.desktop
 tools/package/linux/l10n.sh installed /build/AppDir/usr/share
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+site="$(sed -n 's/^homepage = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
 image="/build/skwir-$version-x86_64.AppImage"
+# What AppImage's updaters read (ADR-142): the image says where the latest
+# release's zsync file is, on skwir.org, which sends it on to the release
+# (its `/latest/` redirect); that file, named without a version, says
+# where this image is, by an address of its own (`/files/`), never
+# relative to a redirect.
+zsync=skwir-x86_64.AppImage.zsync
 ARCH=x86_64 /opt/appimagetool/squashfs-root/AppRun \
-    --runtime-file /inputs/runtime-x86_64 /build/AppDir "$image"
+    --runtime-file /inputs/runtime-x86_64 -u "zsync|$site/latest/$zsync" /build/AppDir "$image"
+# appimagetool's own zsync file, named after the image, relative: not
+# what the update information names.
+rm -f "$image.zsync" "./$(basename "$image").zsync"
+zsyncmake -u "$site/files/v$version/$(basename "$image")" -o "/build/$zsync" "$image"
 # The same usr tree as a tarball, for a system without FUSE or a folder
 # of the user's choosing: the program at its top, none of the AppImage's
 # own files. Names sorted, owned by root and dated by the source, so the
@@ -44,12 +55,17 @@ tarball="skwir-$version-linux-x86_64"
 rm -rf /build/tarball
 mkdir -p "/build/tarball/$tarball"
 cp -al /build/AppDir/usr "/build/tarball/$tarball/usr"
+# How the copy came (ADR-142): the tarball's own word, not the
+# AppImage's, which the link would share.
+rm "/build/tarball/$tarball/usr/share/skwir/channel"
+install -m644 tools/package/channel/tarball "/build/tarball/$tarball/usr/share/skwir/channel"
 ln -s usr/bin/skwir "/build/tarball/$tarball/skwir"
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$source_date" \
     -C /build/tarball -cf - "$tarball" | gzip -n > "/build/$tarball.tar.gz"
 # The caller checks these in a separate runtime-only root.
 install -m755 "$image" "/out/$(basename "$image")"
 install -m644 "/build/$tarball.tar.gz" "/out/$tarball.tar.gz"
+install -m644 "/build/$zsync" "/out/$zsync"
 for artifact in "$(basename "$image")" "$tarball.tar.gz"; do
     (cd /out && sha256sum "$artifact" > "$artifact.sha256")
 done

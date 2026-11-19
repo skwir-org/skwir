@@ -16,19 +16,24 @@
 # package carries (ADR-118); with `system-fonts`, for a package that
 # carries none (the AUR's source package), they are the system's optional
 # packages instead: found through fontconfig once what skwir recommends is
-# installed, and not asked of skwir alone.
+# installed, and not asked of skwir alone. How the copy came is the word
+# its package wrote (ADR-142, tools/package/channel), `channel=deb` or
+# `channel=rpm`, or none at all for a package a package manager updates
+# (`channel=none`, the AUR's).
 #
-#     tools/package/linux/check.sh [minimal] [system-fonts]
+#     tools/package/linux/check.sh [minimal] [system-fonts] [channel=WORD|none]
 set -eu
 here="$(cd "$(dirname "$0")/.." && pwd)"
 minimal=""
 fonts=carried
+channel=""
 for argument in "$@"; do
     case "$argument" in
     minimal) minimal=minimal ;;
     system-fonts) fonts=system ;;
+    channel=*) channel="${argument#channel=}" ;;
     *)
-        echo "usage: $0 [minimal] [system-fonts]" >&2
+        echo "usage: $0 [minimal] [system-fonts] [channel=WORD|none]" >&2
         exit 2
         ;;
     esac
@@ -122,6 +127,22 @@ elif [ -f /usr/share/skwir/fonts/Inter-Regular.ttf ] &&
 else
     echo "missing: skwir's own fonts or their licences"
     failed=1
+fi
+# How the copy came (ADR-142): the word its package wrote, or none.
+if [ "$channel" = none ]; then
+    if [ -e /usr/share/skwir/channel ]; then
+        echo "found: /usr/share/skwir/channel, in a package a package manager updates"
+        failed=1
+    else
+        echo "ok: no channel, as a package manager updates it"
+    fi
+elif [ -n "$channel" ]; then
+    if [ "$(cat /usr/share/skwir/channel 2>/dev/null)" = "$channel" ]; then
+        echo "ok: the channel says $channel"
+    else
+        echo "missing: /usr/share/skwir/channel saying $channel"
+        failed=1
+    fi
 fi
 # The desktop entry and the icon it names, where the desktop finds them.
 for file in /usr/share/applications/org.skwir.skwir.desktop \

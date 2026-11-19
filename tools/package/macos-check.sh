@@ -53,6 +53,7 @@ for program in programs:
 for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/share/mime/globs2",
                "Resources/share/mime/magic", "Resources/licenses/LICENSE",
                "Resources/licenses/THIRD-PARTY-NOTICES", "Resources/licenses/pdfium/LICENSE",
+               "Resources/share/skwir/channel",
                "Resources/share/skwir/fonts/Inter-Regular.ttf",
                "Resources/share/skwir/fonts/Inter-Bold.ttf",
                "Resources/share/skwir/fonts/JetBrainsMono-Regular.ttf",
@@ -68,6 +69,8 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
                "Frameworks/GStreamer.framework/GStreamer",
                "Resources/licenses/gstreamer/VERSIONS", "Resources/licenses/gstreamer/SOURCES"]:
     assert (app / wanted).is_file(), f"missing: {wanted}"
+# How the copy came (ADR-142).
+assert (app / "Resources/share/skwir/channel").read_text() == "macos\n", "the app's channel"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
 assert info["CFBundleShortVersionString"] == version and info["LSMinimumSystemVersion"] == "12.0", info

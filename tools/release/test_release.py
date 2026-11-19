@@ -34,6 +34,7 @@ if args == ['package-appimage']:
         (out / name).write_bytes(b'synthetic ' + name.encode())
         sha = hashlib.sha256((out / name).read_bytes()).hexdigest()
         (out / (name + '.sha256')).write_text(f'{sha}  {name}\n')
+    (out / 'skwir-x86_64.AppImage.zsync').write_bytes(b'synthetic zsync')
 elif args == ['package-try', 'debian']:
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}_1.2.3-1_amd64.deb').write_bytes(b'synthetic deb')
@@ -415,8 +416,10 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         stale.write_bytes(b"old release")
         self.cli("build")
         self.cli("verify")
-        # Linux's 15, then Windows' and macOS's builds to try with their sums.
-        self.assertEqual(len(list(self.bundle.iterdir())), 23)
+        # Linux's 16 (the AppImage's zsync file among them, ADR-142), then
+        # Windows' and macOS's builds to try with their sums.
+        self.assertEqual(len(list(self.bundle.iterdir())), 24)
+        self.assertTrue((self.bundle / "skwir-x86_64.AppImage.zsync").is_file())
         for name in ["skwir-1.2.3-windows-x86_64.msi", "skwir-1.2.3-macos-arm64.dmg"]:
             self.assertTrue((self.bundle / name).is_file() and (self.bundle / f"{name}.sha256").is_file())
         self.assertNotIn("Old notes", (self.bundle / "notes.md").read_text())

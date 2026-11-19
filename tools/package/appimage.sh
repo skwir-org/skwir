@@ -86,4 +86,6 @@ for name in "$image" "$tarball"; do
     mv "$dist/$name.part" "$dist/$name"
     mv "$dist/$name.sha256.part" "$dist/$name.sha256"
 done
-echo "AppImage, tarball and their checksums: $dist"
+# What AppImage's updaters read (ADR-142), checked with the image.
+install -m644 "$out/skwir-x86_64.AppImage.zsync" "$dist/skwir-x86_64.AppImage.zsync"
+echo "AppImage, tarball, their checksums and the zsync file: $dist"
