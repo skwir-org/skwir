@@ -2235,8 +2235,10 @@ pub fn display_keys(keys: &str) -> String {
 /// `shift-delete`), one of its `bindings` (GPUI notation) holding every
 /// key named, the other words in its `words`: `ctrl t` finds Ctrl+T and
 /// Ctrl+Shift+T, `rename f2` Rename… on F2. A letter is a key there, never
-/// a word. `query` is matched ignoring case, its words as the settings
-/// find everything (`collate::Words`: Latin accents folded too).
+/// a word. A key is named as the window names it too (`maj+suppr` where
+/// it says Maj+Suppr: `said_key_names`). `query` is matched ignoring case,
+/// its words as the settings find everything (`collate::Words`: Latin
+/// accents folded too).
 pub fn finds(query: &str, words: &[&str], bindings: &[&str]) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
@@ -2246,33 +2248,118 @@ pub fn finds(query: &str, words: &[&str], bindings: &[&str]) -> bool {
         return true;
     }
     let said = skwir_core::collate::folded(&words.join(" "));
-    let mut tokens: Vec<String> = Vec::new();
-    for part in query
-        .split(|c: char| c.is_whitespace() || c == '+' || c == '-')
-        .filter(|part| !part.is_empty())
-    {
-        // `Page Down` in two words.
-        if let ("up" | "down", Some("page")) = (part, tokens.last().map(String::as_str)) {
-            tokens.pop();
-            tokens.push(format!("page{part}"));
-        } else {
-            tokens.push(part.to_owned());
+    let typed: Vec<String> = key_search_words(&query);
+    let names = said_key_names();
+    // Each word typed, or each run of them naming a key as the window
+    // does (`Page Down`, « Pg préc »), as the key it names, with what was
+    // typed.
+    let mut tokens: Vec<(String, String)> = Vec::new();
+    let mut at = 0;
+    while at < typed.len() {
+        let longest = names
+            .iter()
+            .filter(|(name, _)| typed[at..].starts_with(name))
+            .max_by_key(|(name, _)| name.len());
+        if let Some((name, key)) = longest {
+            tokens.push(((*key).to_owned(), typed[at..at + name.len()].concat()));
+            at += name.len();
+            continue;
         }
+        let part = &typed[at];
+        // `Page Down` in two words.
+        if let ("up" | "down", Some("page")) = (part.as_str(), tokens.last().map(|t| t.0.as_str()))
+        {
+            tokens.pop();
+            tokens.push((format!("page{part}"), format!("page{part}")));
+        } else {
+            tokens.push((key_word(part).to_owned(), part.clone()));
+        }
+        at += 1;
     }
     let names_keys = query.contains('+')
-        || tokens.iter().any(|token| {
-            let key = key_word(token);
-            KEY_MODIFIERS.contains(&key) || named_key(key)
-        });
+        || tokens
+            .iter()
+            .any(|(key, _)| KEY_MODIFIERS.contains(&key.as_str()) || named_key(key));
     names_keys
         && bindings.iter().any(|binding| {
             let parts = key_parts(binding);
-            tokens.iter().all(|token| {
-                parts.iter().any(|part| part == key_word(token))
+            tokens.iter().all(|(key, typed)| {
+                parts.iter().any(|part| part == key)
                     // `ctrl t` is no search for Ctrl+Tab, "Next tab".
-                    || (token.chars().count() > 1 && said.contains(token.as_str()))
+                    || (typed.chars().count() > 1 && said.contains(typed.as_str()))
             })
         })
+}
+
+/// What a search for keys reads of `text`: its words apart where a space,
+/// a `+` or a `-` parts them, each folded as the settings fold what they
+/// find (`collate::folded`), without the punctuation around a word (« Pg
+/// préc. »; a key that is a sign, `.`, is kept).
+fn key_search_words(text: &str) -> Vec<String> {
+    text.split(|c: char| c.is_whitespace() || c == '+' || c == '-')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let word = part.trim_matches(|c: char| c.is_ascii_punctuation());
+            skwir_core::collate::folded(if word.is_empty() { part } else { word })
+        })
+        .collect()
+}
+
+/// Every key the window names by words or a sign (`key_cap`: Maj, Suppr,
+/// ⌘, ←), as a search reads its name (`key_search_words`), and in English
+/// too, each with the key as the keymap's notation names it: what a search
+/// for keys finds a key by beside that notation. Made once each time what
+/// is said moves (`words::revision`), on each thread that searches.
+fn said_key_names() -> std::rc::Rc<[(Vec<String>, &'static str)]> {
+    /// The keys GPUI names that have a name or a sign of their own.
+    const NAMED: [&str; 21] = [
+        "ctrl",
+        "shift",
+        "alt",
+        "super",
+        "fn",
+        "escape",
+        "enter",
+        "tab",
+        "space",
+        "backspace",
+        "delete",
+        "insert",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+        "menu",
+        "left",
+        "right",
+        "up",
+        "down",
+    ];
+    thread_local! {
+        static NAMES: std::cell::RefCell<Option<(u64, std::rc::Rc<[(Vec<String>, &'static str)]>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let revision = words::revision();
+    NAMES.with_borrow_mut(|names| {
+        if let Some((at, names)) = names.as_ref()
+            && *at == revision
+        {
+            return std::rc::Rc::clone(names);
+        }
+        let mut made: Vec<(Vec<String>, &'static str)> = Vec::new();
+        for key in NAMED {
+            let english = key_name(key).map(|name| name.english());
+            for name in std::iter::once(key_cap(key)).chain(english) {
+                let name = key_search_words(&name.to_lowercase());
+                if !name.is_empty() && !made.iter().any(|(known, _)| *known == name) {
+                    made.push((name, key));
+                }
+            }
+        }
+        let made: std::rc::Rc<[(Vec<String>, &'static str)]> = made.into();
+        *names = Some((revision, std::rc::Rc::clone(&made)));
+        made
+    })
 }
 
 /// The modifiers as a search names them, after `key_word`.
@@ -2401,6 +2488,43 @@ mod finds_tests {
             &["ctrl-q"]
         ));
         assert!(finds("", &["anything"], &[]));
+    }
+
+    /// Keys are found by the names the window says them by, folded as
+    /// every search folds (a catalog of the test's own names Shift, Delete,
+    /// Escape and Page Up as French does), and by English's still (UA-3).
+    #[test]
+    fn a_search_finds_keys_by_the_names_the_window_says() {
+        const OWNER: &str = "test-key-names";
+        skwir_core::words::register(
+            OWNER,
+            "skwir-ui",
+            skwir_core::words::Catalog::new(
+                "fr",
+                "keymap_key_shift = Maj\nkeymap_key_delete = Suppr\nkeymap_key_escape = Échap\nkeymap_key_page_up = Pg préc.\n",
+            ),
+        );
+        skwir_core::locale::set_chosen(Some("fr".into()));
+        let erase = (
+            ["Supprimer définitivement", "Liste", "ui.delete"],
+            ["shift-delete"],
+        );
+        let back = (["Revenir", "Liste", "ui.back"], ["escape"]);
+        let up = (["Page précédente", "Liste", "ui.page"], ["ctrl-pageup"]);
+        let found = |query: &str, (words, keys): &([&str; 3], [&str; 1])| finds(query, words, keys);
+        let said = [
+            found("maj+suppr", &erase),
+            found("MAJ SUPPR", &erase),
+            found("echap", &back),
+            found("ctrl pg préc", &up),
+            found("ctrl+pg prec.", &up),
+            found("shift delete", &erase),
+            found("ctrl page up", &up),
+            !found("maj+échap", &erase),
+        ];
+        skwir_core::locale::set_chosen(None);
+        skwir_core::words::withdraw(OWNER);
+        assert_eq!(said, [true; 8]);
     }
 }
 
