@@ -1,7 +1,7 @@
 0085 foreign-parent: WindowOptions::foreign_parent: a window shown for another program (a dialog it asked for, the desktop portal's parent_window) is that program's window's child, WM_TRANSIENT_FOR on X11, imported through xdg-foreign (unstable v2) and set its parent on Wayland, so the window manager keeps it over it; a handle that names nothing leaves a window of its own
 
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 723c92ac..69f28bb2 100644
+index 723c92a..69f28bb 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
 @@ -2732,6 +2732,18 @@ pub enum TextInputAction {
@@ -55,7 +55,7 @@ index 723c92ac..69f28bb2 100644
              window_decorations: None,
              tabbing_identifier: None,
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index eecbad39..dc220b00 100644
+index eecbad3..dc220b0 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -1659,6 +1659,7 @@ impl Window {
@@ -75,16 +75,16 @@ index eecbad39..dc220b00 100644
                  #[cfg(target_os = "macos")]
                  tabbing_identifier,
 diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
-index 84076ac4..db6bc325 100644
+index 84076ac..db2818f 100644
 --- a/crates/gpui_linux/src/linux/wayland/client.rs
 +++ b/crates/gpui_linux/src/linux/wayland/client.rs
-@@ -62,6 +62,7 @@ use wayland_protocols::wp::text_input::zv3::client::{
- };
- use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
- use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
-+use wayland_protocols::xdg::foreign::zv2::client::{zxdg_imported_v2, zxdg_importer_v2};
+@@ -65,6 +65,7 @@ use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xd
  use wayland_protocols::xdg::decoration::zv1::client::{
      zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
+ };
++use wayland_protocols::xdg::foreign::zv2::client::{zxdg_imported_v2, zxdg_importer_v2};
+ use wayland_protocols::xdg::shell::client::{
+     xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
  };
 @@ -262,6 +263,9 @@ pub struct Globals {
      pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
@@ -116,7 +116,7 @@ index 84076ac4..db6bc325 100644
  delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
  delegate_noop!(WaylandClientStatePtr: ignore zwp_idle_inhibit_manager_v1::ZwpIdleInhibitManagerV1);
 diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
-index eac998f5..589cb09b 100644
+index eac998f..589cb09 100644
 --- a/crates/gpui_linux/src/linux/wayland/window.rs
 +++ b/crates/gpui_linux/src/linux/wayland/window.rs
 @@ -28,6 +28,7 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
@@ -191,20 +191,29 @@ index eac998f5..589cb09b 100644
                  // The role object (toplevel) must always be destroyed before the xdg_surface.
                  // See https://wayland.app/protocols/xdg-shell#xdg_surface:request:destroy
 diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
-index 8f5f2eb2..86a87060 100644
+index 8f5f2eb..e736709 100644
 --- a/crates/gpui_linux/src/linux/x11/window.rs
 +++ b/crates/gpui_linux/src/linux/x11/window.rs
-@@ -3,7 +3,8 @@ use x11rb::connection::RequestConnection;
+@@ -3,12 +3,12 @@ use x11rb::connection::RequestConnection;
  
  use crate::linux::X11ClientStatePtr;
  use gpui::{
 -    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
+-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
+-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+-    WindowDecorations, WindowKind, WindowParams, WindowVisibility, popup::PopupNotSupportedError,
+-    px,
 +    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, ForeignParent,
-+    GpuSpecs, Modifiers,
-     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-@@ -656,6 +657,21 @@ impl X11WindowState {
++    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
++    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
++    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
++    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowVisibility,
++    popup::PopupNotSupportedError, px,
+ };
+ use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
+ 
+@@ -656,6 +656,21 @@ impl X11WindowState {
                  }
              }
  

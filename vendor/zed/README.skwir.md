@@ -2092,3 +2092,43 @@ for pixel as before. Compiled for Windows (Skwir's UI with clippy,
 gpui_windows's tests) and type-checked for macOS (Skwir's UI against the
 SDK, gpui_apple's text system with it); DirectWrite's and Core Text's
 paths not run.
+
+### 0085: A foreign parent
+
+A window shown for another program (the dialog the desktop portal asks
+for, ADR-141) opened as a window of its own: the window manager could
+put it behind the window that asked, and moved neither with the other.
+`WindowOptions::foreign_parent` names that program's window as its
+display server does (`ForeignParent`, the portal's `parent_window`), and
+the window is opened as its child:
+
+- **X11** (`ForeignParent::X11`, a window's id): the window's
+  `WM_TRANSIENT_FOR` names it, written before the window maps, as ICCCM
+  has a dialog say whose it is. The window manager keeps it over that
+  window; an id that names no window is ignored by the window manager,
+  and the window is one of its own.
+- **Wayland** (`ForeignParent::Wayland`, the handle the asking client
+  was given when it exported its toplevel): the handle is imported
+  through xdg-foreign, unstable v2 (`zxdg_importer_v2`, bound only where
+  the compositor offers it), and the imported toplevel is made the
+  parent of the window's surface (`set_parent_of`, sent once the surface
+  is a toplevel, as the protocol asks). A handle that names nothing is
+  told by the compositor's `destroyed`, which is not a destructor: the
+  imported object stays inert, and the window a toplevel of its own. The
+  imported object is destroyed before the toplevel. A compositor without
+  the protocol leaves a window of its own.
+
+A handle of the other display server (an `x11:` id on Wayland, a Wayland
+handle on X11) is ignored. Windows and macOS have no such handle from
+another program here, and leave the field unread. Skwir sets it on the
+window that answers another program's Open or Save dialog
+(`chooser::foreign_parent`, from the request's `parent_window`).
+
+Checked in a window (Skwir on Xvfb and on a headless sway, 2026-11-19):
+on Xvfb, a dialog asked with `x11:` and another window's id had
+`WM_TRANSIENT_FOR` naming it, one asked with no window and one whose id
+named nothing had none; on sway 1.12, a dialog asked by a toplevel that
+had exported itself through xdg-foreign v2 floated over it (the asker
+tiled), and one asked with no window tiled. Not checked: KWin, mutter and
+Hyprland (whose 0.57.1 offers `zxdg_importer_v2`); no test, as gpui's
+tests have no display server to answer.
