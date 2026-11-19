@@ -207,6 +207,42 @@ fn a_pane_s_headings_follow_the_language() {
     assert_eq!(headings(&app), english);
 }
 
+/// Grouped by size, the headings are said in the units sizes are shown
+/// in: other units chosen, their bounds and words follow at the next
+/// pump (ADR-139, 9).
+#[test]
+fn a_pane_s_size_headings_follow_the_units() {
+    use skwir_core::fs::{SizeUnits, set_size_units};
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("sizes");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("note.txt"), "a short note").unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    run(&app, "group", &serde_json::json!({ "by": "size" }));
+    let headed = |label: &'static str| {
+        move |p: &Pane| {
+            settled(p)
+                && p.groups()
+                    .first()
+                    .and_then(|span| span.group.as_ref())
+                    .is_some_and(|g| &*g.label == label)
+        }
+    };
+    assert!(pump_until(&app, pane, headed("Under 100\u{a0}kB")), "in kB");
+    set_size_units(SizeUnits::Binary);
+    assert!(
+        pump_until(&app, pane, headed("Under 100\u{a0}KiB")),
+        "in KiB"
+    );
+    assert_eq!(shown(&app, pane)[0].1, ["note.txt"]);
+    set_size_units(SizeUnits::Decimal);
+}
+
 /// A search grouped by Folder: each folder a group, called by its path,
 /// in their paths' order, as the search knows where each file is; sorted
 /// by Folder, its files together.
