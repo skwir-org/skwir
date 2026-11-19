@@ -1155,6 +1155,12 @@ fn closed(cx: &mut App) {
     let app = Arc::clone(&state.app);
     if state.opened == Opened::Own {
         crate::remember_location(&app);
+    } else if let Err(error) = app.settings.save() {
+        // What dialogs' windows keep (where each program chose,
+        // `ui.chooser_folders`) is saved now, as the windows' places are: a
+        // skwir the bus started for one ends at once, and a save left to a
+        // worker may never run (ADR-141, 7).
+        tracing::warn!("what other programs' dialogs keep is not saved: {error:#}");
     }
     if state.stopping {
         quit(cx);
