@@ -1,7 +1,9 @@
 //! What the plugin keeps from one run to the next, in the state file
 //! (`updates.kept`, ADR-056): when the copy was first seen and the
 //! question asked, the last check's day and answer, what was told and
-//! when, the highest version run. Days are the user's calendar days
+//! when, the highest version run. Two skwirs on one state file merge what
+//! they keep (`Kept::merged`), neither taking back what the other kept.
+//! Days are the user's calendar days
 //! (`skwir_platform::calendar`, ADR-017). Lost, it costs at most a notice
 //! said again; never a request more than once a day.
 //!
@@ -25,7 +27,7 @@ pub const ASKS: u32 = 3;
 /// Days between two notices of a new version, unless one is important.
 pub const SPACING: i64 = 14;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Kept {
     /// The day a downloaded copy was first looked at.
@@ -54,6 +56,10 @@ pub struct Kept {
     /// The highest version this user has run (What's new).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub highest_run: Option<String>,
+    /// What a later skwir keeps that this one does not know, kept as it
+    /// is: an older copy run in between takes nothing of it away.
+    #[serde(flatten)]
+    pub later: toml::Table,
 }
 
 /// A version to tell of, and whether it is told as important.
@@ -69,12 +75,71 @@ impl Kept {
         settings.get::<Kept>(KEY).unwrap_or_default()
     }
 
+    /// What this process holds, merged with what the state file holds now
+    /// (`merged`): another skwir on the same file (two releases side by
+    /// side, ADR-115) writes it too, and a save writes the key whole. Reads
+    /// the disk: on a worker, under the plugin's lock of what is kept.
+    pub fn now(settings: &skwir_core::settings::Settings) -> Kept {
+        let mine = Kept::read(settings);
+        match Kept::on_disk(settings) {
+            Some(theirs) => mine.merged(&theirs),
+            None => mine,
+        }
+    }
+
+    /// What the state file holds now, if it holds it: another skwir's
+    /// writes too. Reads the disk.
+    pub fn on_disk(settings: &skwir_core::settings::Settings) -> Option<Kept> {
+        settings
+            .kept_on_disk(KEY)
+            .and_then(|theirs| theirs.try_into::<Kept>().ok())
+    }
+
     /// Written back into the state file (saved by the caller).
     pub fn write(&self, settings: &skwir_core::settings::Settings) {
         match toml::Value::try_from(self) {
             Ok(value) => settings.set(KEY, value),
             Err(error) => tracing::warn!(%error, "what the updates plugin keeps is not written"),
         }
+    }
+
+    /// What this copy keeps and what `other` keeps (another skwir's, on the
+    /// same state file: two releases side by side, ADR-115), merged field
+    /// by field the one way each moves: the earliest day first seen, the
+    /// most asks and the last day asked, answered by either, the later
+    /// check's answer, the newest version told with its day, the highest
+    /// version run, and what a later skwir keeps. Neither takes back what
+    /// the other kept.
+    #[must_use]
+    pub fn merged(mut self, other: &Kept) -> Kept {
+        let version = |text: &Option<String>| text.as_deref().and_then(Version::parse);
+        self.first_seen = match (self.first_seen, other.first_seen) {
+            (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
+            (mine, theirs) => mine.or(theirs),
+        };
+        self.asked = self.asked.max(other.asked);
+        self.asked_on = self.asked_on.max(other.asked_on);
+        self.answered |= other.answered;
+        if other.checked_on > self.checked_on {
+            self.checked_on = other.checked_on;
+            self.latest.clone_from(&other.latest);
+            self.important_since.clone_from(&other.important_since);
+        }
+        match version(&other.told).cmp(&version(&self.told)) {
+            std::cmp::Ordering::Greater => {
+                self.told.clone_from(&other.told);
+                self.told_on = other.told_on;
+            }
+            std::cmp::Ordering::Equal => self.told_on = self.told_on.max(other.told_on),
+            std::cmp::Ordering::Less => {}
+        }
+        if version(&other.highest_run) > version(&self.highest_run) {
+            self.highest_run.clone_from(&other.highest_run);
+        }
+        for (key, value) in &other.later {
+            self.later.insert(key.clone(), value.clone());
+        }
+        self
     }
 
     /// What is kept as of `today`: a day kept after it (a clock once set
@@ -341,10 +406,68 @@ mod tests {
             told: Some("0.6.2".into()),
             told_on: Some(20_003),
             highest_run: Some("0.5.1".into()),
+            later: toml::Table::new(),
         };
         let value = toml::Value::try_from(&kept).unwrap();
-        assert_eq!(value.try_into::<Kept>().unwrap(), kept);
+        assert_eq!(value.clone().try_into::<Kept>().unwrap(), kept);
+        // What a later skwir keeps is read back and written as it was.
+        let mut table = value.as_table().unwrap().clone();
+        table.insert("to_come".into(), toml::Value::Integer(3));
+        let read: Kept = toml::Value::Table(table.clone()).try_into().unwrap();
+        assert_eq!(read.later.get("to_come"), Some(&toml::Value::Integer(3)));
+        assert_eq!(
+            toml::Value::try_from(&read).unwrap(),
+            toml::Value::Table(table)
+        );
         let empty: Kept = toml::Value::Table(toml::Table::new()).try_into().unwrap();
         assert_eq!(empty, Kept::default());
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::Kept;
+
+    /// Two copies on one state file merge what they kept the one way each
+    /// field moves, whichever merges which.
+    #[test]
+    fn what_two_copies_kept_merges_the_way_each_moves() {
+        let older = Kept {
+            first_seen: Some(10),
+            asked: 1,
+            asked_on: Some(12),
+            checked_on: Some(15),
+            latest: Some("0.6.1".into()),
+            told: Some("0.6.1".into()),
+            told_on: Some(15),
+            highest_run: Some("0.6.0".into()),
+            ..Kept::default()
+        };
+        let newer = Kept {
+            first_seen: Some(11),
+            asked: 2,
+            asked_on: Some(13),
+            answered: true,
+            checked_on: Some(16),
+            latest: Some("0.6.2".into()),
+            important_since: Some("0.6.2".into()),
+            told: Some("0.6.2".into()),
+            told_on: Some(16),
+            highest_run: Some("0.6.1".into()),
+            later: [("to_come".to_owned(), toml::Value::Integer(1))]
+                .into_iter()
+                .collect(),
+        };
+        let merged = older.clone().merged(&newer);
+        assert_eq!(
+            merged,
+            Kept {
+                first_seen: Some(10),
+                ..newer.clone()
+            }
+        );
+        assert_eq!(newer.clone().merged(&older), merged, "either way");
+        assert_eq!(merged.clone().merged(&merged), merged, "once is enough");
+        assert_eq!(older.clone().merged(&Kept::default()), older);
     }
 }

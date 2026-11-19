@@ -3470,6 +3470,17 @@ impl Settings {
             .collect()
     }
 
+    /// What the file `key` is kept apart in (the state, the user's data)
+    /// holds for it as it stands now, read from the disk: another skwir's
+    /// may be newer than this process's, which a save writes over whole.
+    /// `None` where `key` is kept in no file apart, or the file holds none
+    /// or cannot be read. Reads the disk: on a worker.
+    pub fn kept_on_disk(&self, key: &str) -> Option<toml::Value> {
+        let store = self.apart_of(&self.kept.read(), key)?;
+        let path = self.apart.get(&store)?.as_ref()?;
+        Self::lookup(&Self::on_disk(path).ok()?, key).cloned()
+    }
+
     /// The file as it stands: empty when there is none.
     ///
     /// # Errors
@@ -4079,5 +4090,39 @@ mod language_tests {
         crate::words::withdraw("skwir");
         crate::words::ship_shares(&[]);
         crate::words::ship(&[]);
+    }
+}
+
+#[cfg(test)]
+mod on_disk_tests {
+    use super::{SettingSpec, Settings};
+    use crate::words::Words;
+
+    /// What another skwir wrote in the state file is read from it, while
+    /// this one's own copy stays as it read it; a key kept in no file
+    /// apart is read from none.
+    #[test]
+    fn a_key_kept_apart_is_read_as_its_file_stands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let open = || {
+            let settings = Settings::load(tmp.path().join("settings.toml"))
+                .with_state(tmp.path().join("state.toml"));
+            settings.declare(SettingSpec::state(
+                "a.kept",
+                Words::as_written("What a test keeps."),
+                toml::Value::Table(toml::Table::new()),
+            ));
+            settings
+        };
+        let (one, other) = (open(), open());
+        assert_eq!(one.kept_on_disk("a.kept"), None, "nothing written yet");
+        let value = toml::Value::Integer(2);
+        other.set("a.kept", value.clone());
+        other.save().unwrap();
+        assert_eq!(one.kept_on_disk("a.kept"), Some(value));
+        assert_eq!(one.stored::<i64>("a.kept"), None, "its own as it read it");
+        one.set("a.setting", toml::Value::Integer(1));
+        one.save().unwrap();
+        assert_eq!(one.kept_on_disk("a.setting"), None, "the settings file's");
     }
 }

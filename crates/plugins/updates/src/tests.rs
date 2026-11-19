@@ -115,7 +115,7 @@ impl Site {
 /// copy that came as `here`, asking `site`, on the test's day and minute,
 /// on a connection the test says metered or not.
 struct Fixture {
-    _folder: tempfile::TempDir,
+    _folder: Option<tempfile::TempDir>,
     app: Arc<App>,
     plugin: Arc<UpdatesPlugin>,
     day: Arc<AtomicI64>,
@@ -136,7 +136,29 @@ impl Fixture {
         here: Arc<dyn Fn() -> Here + Send + Sync>,
     ) -> Fixture {
         let folder = tempfile::tempdir().unwrap();
-        let app = App::new(skwir_core::app::AppConfig::ephemeral(folder.path())).unwrap();
+        let config = skwir_core::app::AppConfig::ephemeral(folder.path());
+        Fixture::made(config, Some(folder), site, running, here)
+    }
+
+    /// A downloaded copy whose settings and state are files in `folder`,
+    /// as another skwir's may be the same files.
+    fn sharing(folder: &std::path::Path, site: &str, running: Version) -> Fixture {
+        let config = skwir_core::app::AppConfig {
+            settings_path: Some(folder.join("settings.toml")),
+            state_path: Some(folder.join("state.toml")),
+            ..skwir_core::app::AppConfig::ephemeral(folder.join(running.to_string()))
+        };
+        Fixture::made(config, None, site, running, Arc::new(|| DOWNLOADED))
+    }
+
+    fn made(
+        config: skwir_core::app::AppConfig,
+        folder: Option<tempfile::TempDir>,
+        site: &str,
+        running: Version,
+        here: Arc<dyn Fn() -> Here + Send + Sync>,
+    ) -> Fixture {
+        let app = App::new(config).unwrap();
         let day = Arc::new(AtomicI64::new(20_000));
         let minutes = Arc::new(AtomicU64::new(0));
         let metered = Arc::new(AtomicBool::new(false));
@@ -232,6 +254,15 @@ impl Fixture {
 
     fn kept(&self) -> Kept {
         Kept::read(&self.app.settings)
+    }
+
+    /// What the state file holds of it now.
+    fn kept_on_disk(&self) -> Kept {
+        self.app
+            .settings
+            .kept_on_disk(crate::kept::KEY)
+            .and_then(|kept| kept.try_into().ok())
+            .unwrap_or_default()
     }
 }
 
@@ -763,5 +794,50 @@ fn turned_off_during_a_check_nothing_of_it_stays() {
         site.heads().len(),
         3,
         "not held back an hour by the earlier run's failure"
+    );
+}
+
+/// Two releases on one state file (an older one still running, ADR-115)
+/// take back nothing of what the other kept: What's new is said once, the
+/// question once a day for both.
+#[test]
+fn two_copies_on_one_state_file_take_back_nothing_of_each_other() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let folder = tempfile::tempdir().unwrap();
+    let older = Fixture::sharing(folder.path(), &site.address, Version(0, 6, 0));
+    older.look_on(20_000);
+    older.wait_until("its first run is kept", |f| {
+        f.kept_on_disk().highest_run.as_deref() == Some("0.6.0")
+    });
+
+    let newer = Fixture::sharing(folder.path(), &site.address, Version(0, 6, 1));
+    newer.look_on(20_001);
+    assert_eq!(newer.texts(), ["Skwir was updated to 0.6.1"]);
+    newer.wait_until("the newer run is kept", |f| {
+        f.kept_on_disk().highest_run.as_deref() == Some("0.6.1")
+    });
+
+    // The older asks on its day, keeping what the newer kept.
+    older.look_on(20_002);
+    assert!(older.said().iter().any(|n| n.stays), "asked");
+    older.wait_until("the question is kept", |f| f.kept_on_disk().asked == 1);
+    let kept = older.kept_on_disk();
+    assert_eq!(kept.highest_run.as_deref(), Some("0.6.1"), "{kept:?}");
+    assert_eq!(kept.first_seen, Some(20_000));
+
+    // Asked today already, by the other.
+    newer.look_on(20_002);
+    assert!(newer.said().is_empty(), "asked once a day for both");
+
+    // The newer started again says nothing of what is new.
+    drop(newer);
+    let again = Fixture::sharing(folder.path(), &site.address, Version(0, 6, 1));
+    again.look_on(20_003);
+    assert!(
+        again
+            .texts()
+            .iter()
+            .all(|text| !text.starts_with("Skwir was updated")),
+        "What's new said once"
     );
 }

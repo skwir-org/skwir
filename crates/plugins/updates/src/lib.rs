@@ -385,24 +385,39 @@ fn said_out(telling: Telling) -> Words {
     }
 }
 
-/// Save what was set, on a worker: the window's thread never writes.
-fn save_later(app: &App) {
-    let weak = app.weak();
-    app.scheduler.spawn(
-        skwir_core::scheduler::Priority::Background,
-        "updates-save",
-        app.lifetime().child(),
-        move || {
-            if let Some(app) = weak.upgrade()
-                && let Err(error) = app.settings.save()
-            {
-                tracing::warn!("cannot save what the updates plugin keeps: {error:#}");
-            }
-        },
-    );
-}
-
 impl Inner {
+    /// Save what is kept, merged once more with what the state file holds
+    /// just before (`Kept::merged`), written again only where that file
+    /// brought something. Reads and writes the disk: on a worker.
+    fn save(&self, app: &App) {
+        let _held = self.kept.lock();
+        if let Some(theirs) = Kept::on_disk(&app.settings) {
+            let mine = Kept::read(&app.settings);
+            let merged = mine.clone().merged(&theirs);
+            if merged != mine {
+                merged.write(&app.settings);
+            }
+        }
+        if let Err(error) = app.settings.save() {
+            tracing::warn!("cannot save what the updates plugin keeps: {error:#}");
+        }
+    }
+
+    /// `save`, on a worker: the window's thread never writes.
+    fn save_later(self: &Arc<Self>, app: &App) {
+        let (inner, weak) = (Arc::clone(self), app.weak());
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Background,
+            "updates-save",
+            app.lifetime().child(),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    inner.save(&app);
+                }
+            },
+        );
+    }
+
     fn here(&self) -> Option<Here> {
         self.run.lock().here
     }
@@ -513,8 +528,8 @@ impl Inner {
         let today = (self.setup.today)();
         let check = {
             let _held = self.kept.lock();
-            let mut kept = Kept::read(&app.settings);
-            let before = kept.clone();
+            let before = Kept::read(&app.settings);
+            let mut kept = Kept::now(&app.settings);
             kept.as_of(today);
             if look_for_whats_new
                 && let Some(running) = self.setup.running
@@ -550,7 +565,7 @@ impl Inner {
             }
             if kept != before {
                 kept.write(&app.settings);
-                save_later(app);
+                self.save_later(app);
             }
             check
         };
@@ -629,14 +644,14 @@ impl Inner {
     }
 
     /// The question is never asked again.
-    fn answered(&self, app: &App) {
+    fn answered(self: &Arc<Self>, app: &App) {
         let _held = self.kept.lock();
         let mut kept = Kept::read(&app.settings);
         if !kept.answered {
             kept.answered = true;
             kept.write(&app.settings);
         }
-        save_later(app);
+        self.save_later(app);
     }
 
     /// `updates.check`: a check now, whatever the day.
@@ -809,7 +824,7 @@ impl Inner {
             if !downloaded || !tells(&app) {
                 return;
             }
-            let mut kept = Kept::read(&app.settings);
+            let mut kept = Kept::now(&app.settings);
             kept.as_of(today);
             kept.latest = Some(answer.latest.to_string());
             kept.important_since = answer.important_since.map(|v| v.to_string());
@@ -849,9 +864,7 @@ impl Inner {
             kept.write(&app.settings);
             self.stand_with(&app, &kept);
         }
-        if let Err(error) = app.settings.save() {
-            tracing::warn!("cannot save what the updates plugin keeps: {error:#}");
-        }
+        self.save(&app);
     }
 
     /// What About and More say, from what is kept.
