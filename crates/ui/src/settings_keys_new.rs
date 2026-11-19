@@ -194,6 +194,13 @@ fn anywhere() -> String {
     .say()
 }
 
+/// Whether what is typed finds a command, as the dialog finds everything:
+/// each word in its title or its name, case and accents folded
+/// (`collate::Words`).
+fn finds(words: &skwir_core::collate::Words, (spec, _, title): &Candidate) -> bool {
+    words.found_in(&[title.as_str(), &*spec.name])
+}
+
 /// Every command a shortcut may run: each form, and each command as it
 /// is, asking for its arguments when it takes some; the shell's own as the
 /// palette offers them, their other forms being keys of a place.
@@ -411,7 +418,7 @@ impl SettingsView {
         let Some(new) = &self.keys.new else {
             return Vec::new();
         };
-        let query = new.search.read(cx).text().trim().to_lowercase();
+        let query = new.search.read(cx).text().trim().to_owned();
         let kept = new
             .found
             .borrow()
@@ -419,15 +426,12 @@ impl SettingsView {
             .filter(|(asked, _)| *asked == query)
             .map(|(_, found)| Rc::clone(found));
         let found = kept.unwrap_or_else(|| {
+            let words = skwir_core::collate::Words::new(&query);
             let found: Rc<Vec<usize>> = Rc::new(
                 new.candidates
                     .iter()
                     .enumerate()
-                    .filter(|(_, (spec, _, title))| {
-                        query.is_empty()
-                            || title.to_lowercase().contains(&query)
-                            || spec.name.to_lowercase().contains(&query)
-                    })
+                    .filter(|(_, candidate)| finds(&words, candidate))
                     .map(|(n, _)| n)
                     .take(SHOWN)
                     .collect(),
@@ -1043,7 +1047,33 @@ mod tests {
     use serde_json::json;
     use skwir_core::words::Words;
 
-    use super::{Kind, candidates, kind_of};
+    use super::{Kind, candidates, finds, kind_of};
+
+    /// A command is found by any of the words of its title, in any order,
+    /// case and accents folded, as every search of the dialog finds (UA-8).
+    #[test]
+    fn a_command_is_found_as_the_dialog_finds_everything() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.commands.register::<skwir_core::command::NoArgs, _>(
+            "plug",
+            skwir_core::command::Topic::Files,
+            "plug.new_folder",
+            Words::as_written("Créer un dossier"),
+            Words::as_written(""),
+            |_, _| Ok(skwir_core::command::Outcome::Done),
+        );
+        let made = candidates(&app);
+        let found = made
+            .iter()
+            .find(|(spec, _, _)| &*spec.name == "plug.new_folder")
+            .unwrap();
+        let typed = |query: &str| finds(&skwir_core::collate::Words::new(query), found);
+        assert!(typed("creer"));
+        assert!(typed("DOSSIER créer"));
+        assert!(typed("new_folder"));
+        assert!(!typed("créer fichier"));
+    }
 
     #[derive(serde::Deserialize, schemars::JsonSchema)]
     struct Tag {
