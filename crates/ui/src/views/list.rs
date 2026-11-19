@@ -906,8 +906,11 @@ impl Shell {
         let value = |key: &str| e.metadata.value(key);
         let time = |key: &str| value(key).and_then(skwir_core::Value::as_time);
         // What its type's database says of it: a place by what it is,
-        // a folder as one, a link that leads nowhere as such.
-        let typed = |words: &str| -> Option<std::sync::Arc<str>> {
+        // a folder as one, a link that leads nowhere as such. A folder's
+        // words are said once while the words stand (`TypeNames::folder`).
+        let folder_type = (e.is_dir() && (columns[Detail::Type] || columns[Detail::Kind]))
+            .then(|| self.type_names.folder());
+        let typed = || -> Option<std::sync::Arc<str>> {
             if e.is_place() {
                 Some(
                     value(keys::PLACE_KIND)
@@ -924,8 +927,8 @@ impl Shell {
                         )
                         .into(),
                 )
-            } else if e.is_dir() {
-                Some(words.into())
+            } else if let Some(folder) = &folder_type {
+                Some(std::sync::Arc::clone(folder))
             } else if e.is_broken_link() {
                 Some(crate::typenames::broken_link().say().into())
             } else {
@@ -988,23 +991,19 @@ impl Shell {
                         .and_then(skwir_core::Value::as_u64)
                         .and_then(on_the_clock),
                 ),
-                Detail::Type => Said::text(
-                    &*typed(&crate::typenames::folder().say()).unwrap_or_else(|| {
-                        // Typed only where the column shows it.
-                        skwir_platform::mime::of_entry(e)
-                            .as_ref()
-                            .and_then(|mime| self.type_names.get(mime))
-                            .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
-                    }),
-                ),
-                Detail::Kind => Said::text(
-                    &*typed(&crate::typenames::folder().say()).unwrap_or_else(|| {
-                        skwir_platform::mime::of_entry(e)
-                            .as_ref()
-                            .and_then(|mime| self.type_names.kind(mime))
-                            .unwrap_or_else(|| "".into())
-                    }),
-                ),
+                Detail::Type => Said::text(&*typed().unwrap_or_else(|| {
+                    // Typed only where the column shows it.
+                    skwir_platform::mime::of_entry(e)
+                        .as_ref()
+                        .and_then(|mime| self.type_names.get(mime))
+                        .unwrap_or_else(|| self.type_names.fallback_of(e))
+                })),
+                Detail::Kind => Said::text(&*typed().unwrap_or_else(|| {
+                    skwir_platform::mime::of_entry(e)
+                        .as_ref()
+                        .and_then(|mime| self.type_names.kind(mime))
+                        .unwrap_or_else(|| "".into())
+                })),
                 // A folder's is what it holds, as a screen reader hears it
                 // (`entry::vcs_said`): "Holds changes".
                 Detail::Vcs => Said::text(skwir_core::vcs::State::of(e).map_or_else(
