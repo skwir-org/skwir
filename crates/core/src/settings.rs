@@ -488,7 +488,10 @@ impl RecordSource {
 /// choosing runs `command` with `args` and the value chosen in `field`.
 /// The setting's own value is never read nor saved: `settings.apply`
 /// refuses it, as the owner's command changes it. The dialog lists it
-/// again when `revision` moves ([`ChoiceSource::changed`]).
+/// again when `revision` moves ([`ChoiceSource::changed`]), which the
+/// command choosing moves once it is answered, chosen, as it was or
+/// refused: the dialog asks nothing more of the choice until then (a key
+/// held down would ask again for what the answer holds already).
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ChoiceSource {
     pub list: String,

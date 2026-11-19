@@ -39,13 +39,33 @@ pub(crate) const FOLD: usize = 8;
 /// a `value`, `label`, `detail` and whether `disabled`, and the `command`
 /// choosing runs, with `args` and the value in its `field`), as Left and
 /// Right step through it: the values that may be chosen, in order, and
-/// the one held.
+/// the one held, as its owner's answer listed at `listed` (its revision)
+/// says.
 #[derive(Clone)]
 pub(crate) struct Pick {
     pub(crate) focus: gpui::FocusHandle,
     run: Run,
     values: Vec<String>,
     held: Option<usize>,
+    /// Its setting and its record, what `SettingsView::picks_asked` knows
+    /// it by.
+    asked_as: (String, String),
+    listed: u64,
+}
+
+/// The value `delta` from `held` among values up to `last`, staying at
+/// the ends: from none held, the first going right, the last going left.
+fn stepped(held: Option<usize>, delta: i64, last: usize) -> usize {
+    match held {
+        Some(held) => {
+            let held = i64::try_from(held).unwrap_or(0);
+            usize::try_from((held + delta).max(0))
+                .unwrap_or(0)
+                .min(last)
+        }
+        None if delta < 0 => last,
+        None => 0,
+    }
 }
 
 /// What choosing a record's value runs.
@@ -72,32 +92,48 @@ impl Run {
         })
     }
 
-    /// Run it with `value`; what refuses it is said.
-    fn with(&self, app: &skwir_core::App, value: &str) {
+    /// Run it with `value`; what refuses it is said. Whether it was
+    /// asked: the owner answers then (`ChoiceSource`).
+    fn with(&self, app: &skwir_core::App, value: &str) -> bool {
         let mut args = self.args.clone();
         if !args.is_object() {
             args = serde_json::json!({});
         }
         args[self.field.as_str()] = serde_json::json!(value);
         let invocation = skwir_core::command::Invocation::with_args(self.command.as_str(), &args);
-        if let Err(error) = app.dispatch(&invocation) {
-            app.notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
+        match app.dispatch(&invocation) {
+            Ok(_) => true,
+            Err(error) => {
+                app.notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
+                false
+            }
         }
     }
 }
 
 impl Pick {
-    /// Choose the value `delta` from the one held, staying at the ends.
-    pub(crate) fn step(&self, delta: i64, view: &SettingsView) {
+    /// Choose the value `delta` from the one held, staying at the ends;
+    /// with none of the values held (not chosen), Right the first, Left
+    /// the last. Asked of its owner and not answered yet (its owner's
+    /// revision as when asked), it asks nothing more: a key held down
+    /// would ask again for what its answer, not listed yet, holds already.
+    pub(crate) fn step(&self, delta: i64, view: &mut SettingsView) {
         let Some(last) = self.values.len().checked_sub(1) else {
             return;
         };
-        let held = i64::try_from(self.held.unwrap_or(0)).unwrap_or(0);
-        let at = usize::try_from((held + delta).max(0))
-            .unwrap_or(0)
-            .min(last);
+        if view.picks_asked.get(&self.asked_as) == Some(&self.listed) {
+            return;
+        }
+        let at = stepped(self.held, delta, last);
         if Some(at) != self.held {
-            self.run.with(&view.app, &self.values[at]);
+            self.ask(&self.values[at], view);
+        }
+    }
+
+    /// Run the choice of `value`, and wait for its owner's answer.
+    fn ask(&self, value: &str, view: &mut SettingsView) {
+        if self.run.with(&view.app, value) {
+            view.picks_asked.insert(self.asked_as.clone(), self.listed);
         }
     }
 }
@@ -1362,12 +1398,15 @@ impl SettingsView {
             .filter(|(_, _, _, disabled)| !disabled)
             .map(|(value, ..)| value.clone())
             .collect();
-        self.record_picks.push(Pick {
+        let pick = Pick {
             focus: focus.clone(),
-            run: run.clone(),
+            run,
             held: values.iter().position(|value| *value == held),
             values,
-        });
+            asked_as: (key.to_owned(), id.to_owned()),
+            listed: self.sourced.get(key).map_or(0, |((owner, _), _)| *owner),
+        };
+        self.record_picks.push(pick.clone());
         let open = self
             .record_open
             .as_ref()
@@ -1428,7 +1467,7 @@ impl SettingsView {
                 })));
             for (n, (value, label, detail, disabled)) in offered.into_iter().enumerate() {
                 let selected = value == held;
-                let run = run.clone();
+                let pick = pick.clone();
                 panel = panel.child(
                     div()
                         .id(crate::elements::known_by("pick-choice", (key, id, n)))
@@ -1459,7 +1498,7 @@ impl SettingsView {
                             d.on_click(cx.listener(move |this, _, _, cx| {
                                 this.record_open = None;
                                 if !selected {
-                                    run.with(&this.app, &value);
+                                    pick.ask(&value, this);
                                 }
                                 cx.notify();
                             }))
@@ -1738,7 +1777,19 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{moved, said_answer};
+    use super::{moved, said_answer, stepped};
+
+    /// Left and Right through a choice: from the one held, staying at the
+    /// ends; from none held (Not chosen), Right the first and Left the
+    /// last, never skipping the first (UA-6).
+    #[test]
+    fn a_choice_steps_from_what_it_holds() {
+        assert_eq!(stepped(Some(1), 1, 3), 2);
+        assert_eq!(stepped(Some(3), 1, 3), 3);
+        assert_eq!(stepped(Some(0), -1, 3), 0);
+        assert_eq!(stepped(None, 1, 3), 0);
+        assert_eq!(stepped(None, -1, 3), 3);
+    }
 
     /// An owner's answer says its words' data in the window's language
     /// (here the pseudo-language), as the dialog lists it, where the

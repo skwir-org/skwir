@@ -1368,13 +1368,25 @@ fn not_changed(error: anyhow::Error) -> Words {
 /// Undo. On a worker.
 fn make_default(app: &App, cache: &Cached, mime: &str, id: &str) {
     if catalog(cache).get(id).is_none() {
+        answered(app, cache);
         app.notify(NotifyLevel::Error, not_installed(id));
         return;
     }
     match AssociationEdit::make_default_in(&cache.user_lists(), mime, id) {
         Ok(edit) => apply_edit(app, cache, &edit, false),
-        Err(e) => app.notify(NotifyLevel::Error, not_changed(e)),
+        Err(e) => {
+            answered(app, cache);
+            app.notify(NotifyLevel::Error, not_changed(e));
+        }
     }
+}
+
+/// A default asked and refused: Settings' default file manager is listed
+/// again all the same, as the dialog waits for that before asking anything
+/// more of it (`ChoiceSource`).
+fn answered(app: &App, cache: &Cached) {
+    cache.file_manager.source.changed();
+    app.wake();
 }
 
 /// Write `edit` and say what opens its type now, with the way back: Undo,
@@ -1428,7 +1440,10 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
                 None => app.notify(NotifyLevel::Info, text),
             }
         }
-        Err(e) => app.notify(NotifyLevel::Error, not_changed(e)),
+        Err(e) => {
+            answered(app, cache);
+            app.notify(NotifyLevel::Error, not_changed(e));
+        }
     }
 }
 

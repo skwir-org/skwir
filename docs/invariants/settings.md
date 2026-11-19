@@ -45,7 +45,12 @@ the reasoning.
   list of one record for it. What either command answers says its words
   as data (`Words::to_data`): the dialog says them in the window's
   language as it lists them, and again when that changes, while an agent
-  or a script asking the command reads English; `data` for what the user makes
+  or a script asking the command reads English. A choice asked of its
+  owner is answered by a move of its revision, whatever came of it (made,
+  as it was, refused): the dialog asks nothing more of that choice until
+  then, so a key held down never asks again for what the answer holds;
+  from no value held (Not chosen), Right takes the first and Left the
+  last; `data` for what the user makes
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).

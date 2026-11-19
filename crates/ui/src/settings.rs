@@ -3695,7 +3695,7 @@ pub struct SettingsView {
     /// as last listed, by key: the owner's revision and the words'
     /// (`words::revision`) listed at, and the records' JSON, their words
     /// said (`settings_records::said_answer`).
-    sourced: HashMap<String, ((u64, u64), String)>,
+    pub(crate) sourced: HashMap<String, ((u64, u64), String)>,
     /// The settings file cannot be written (Home Manager's link): read
     /// when the dialog opens and at each wake, never while drawing.
     pub(crate) read_only: bool,
@@ -3739,6 +3739,11 @@ pub struct SettingsView {
     /// focus, and what choosing runs with the values in order, enabled
     /// ones, the one held marked: what Left and Right step through.
     pub(crate) record_picks: Vec<crate::settings_records::Pick>,
+    /// The choices asked of the owners keeping them and not answered yet:
+    /// by setting and record, the owner's revision listed when asked
+    /// (`settings_records::Pick`). Nothing more is asked of one until its
+    /// owner answers.
+    pub(crate) picks_asked: HashMap<(String, String), u64>,
     /// The record whose choice is open, by setting and id.
     pub(crate) record_open: Option<(String, String)>,
     /// A long list's filter, by setting (`settings_records::FOLD`).
@@ -3900,6 +3905,7 @@ impl SettingsView {
             drafts: BTreeMap::new(),
             record_stops: Vec::new(),
             record_picks: Vec::new(),
+            picks_asked: HashMap::new(),
             record_open: None,
             record_filters: BTreeMap::new(),
             records_unfolded: std::collections::BTreeSet::new(),
